@@ -40,7 +40,7 @@ export type TaskUpdate = Partial<
 export type Database = {
   public: {
     Tables: {
-      tasks: {
+      adhdice_clean_tasks: {
         Row: Task;
         Insert: TaskInsert;
         Update: TaskUpdate;
@@ -50,9 +50,9 @@ export type Database = {
     Views: Record<string, never>;
     Functions: Record<string, never>;
     Enums: {
-      task_status: TaskStatus;
-      task_priority: TaskPriority;
-      task_energy: TaskEnergy;
+      adhdice_clean_task_status: TaskStatus;
+      adhdice_clean_task_priority: TaskPriority;
+      adhdice_clean_task_energy: TaskEnergy;
     };
     CompositeTypes: Record<string, never>;
   };

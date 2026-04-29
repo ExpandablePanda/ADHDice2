@@ -60,7 +60,7 @@ export function TaskApp() {
 
     async function loadTasks() {
       const { data, error } = await client
-        .from("tasks")
+        .from("adhdice_clean_tasks")
         .select("*")
         .eq("user_id", userId)
         .neq("status", "archived")
@@ -81,13 +81,13 @@ export function TaskApp() {
     loadTasks();
 
     const channel = client
-      .channel(`tasks:${userId}`)
+      .channel(`adhdice_clean_tasks:${userId}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
-          table: "tasks",
+          table: "adhdice_clean_tasks",
           filter: `user_id=eq.${userId}`,
         },
         () => {
@@ -142,7 +142,7 @@ export function TaskApp() {
   async function addTask(task: TaskDraft) {
     if (!supabase || !session?.user) return;
 
-    const { error } = await supabase.from("tasks").insert({
+    const { error } = await supabase.from("adhdice_clean_tasks").insert({
       ...task,
       user_id: session.user.id,
       sort_order: Date.now(),
@@ -164,7 +164,7 @@ export function TaskApp() {
       sort_order: Date.now() + index,
     }));
 
-    const { error } = await supabase.from("tasks").insert(payload);
+    const { error } = await supabase.from("adhdice_clean_tasks").insert(payload);
 
     setMessage(
       error
@@ -176,7 +176,10 @@ export function TaskApp() {
   async function updateTask(taskId: string, values: TaskUpdate) {
     if (!supabase) return;
 
-    const { error } = await supabase.from("tasks").update(values).eq("id", taskId);
+    const { error } = await supabase
+      .from("adhdice_clean_tasks")
+      .update(values)
+      .eq("id", taskId);
     if (error) setMessage({ tone: "warn", text: error.message });
   }
 
