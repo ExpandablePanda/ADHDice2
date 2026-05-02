@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: any = {
   output: 'export',
+  basePath: '/ADHDice2',
   images: {
     unoptimized: true,
   },
