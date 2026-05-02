@@ -85,7 +85,7 @@ export function FocusPage({
           Choose a category and start your flow state. Your time is tracked persistently across all devices.
         </p>
 
-        <div className="mt-8 flex justify-center gap-4">
+        <div className="mt-4 sm:mt-8 flex justify-center gap-4">
           <button
             className={`px-6 py-2 text-sm font-bold transition hover:-translate-y-0.5 ${lightMode ? "ui-pill-button-light" : "rounded-full bg-white/5 text-[#cabfff]"}`}
             onClick={() => setShowCategoryManager(true)}
@@ -103,7 +103,7 @@ export function FocusPage({
         </div>
       </section>
 
-      <div className="mt-16">
+      <div className="mt-4 sm:mt-16">
         <FocusClockRow
           activeSessions={activeSessions}
           categories={categories}
@@ -124,7 +124,7 @@ export function FocusPage({
         />
       </div>
 
-      <div className="mt-20 flex justify-center">
+      <div className="mt-6 sm:mt-20 flex justify-center">
         <CategoryGoalsSection
           categories={categories}
           history={history}

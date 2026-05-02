@@ -233,10 +233,30 @@ export function FocusClockRow({
 
   return (
     // Mobile: horizontal 2-row scroll carousel. sm+: standard grid.
-    <div className="sm:hidden w-full overflow-x-auto pb-4" style={{ WebkitOverflowScrolling: "touch" }}>
-      <div className="flex gap-6 px-4" style={{ width: "max-content" }}>
-        {sortedCategories.map((cat, i) => (
-          <div key={cat.id} className={i % 2 === 0 ? "mt-0" : "mt-8"}>
+    <div className="sm:hidden w-full overflow-x-auto pt-4 pb-4" style={{ WebkitOverflowScrolling: "touch" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: "repeat(2, auto)",
+          gridAutoFlow: "column",
+          width: "max-content",
+          columnGap: 12,
+          rowGap: 12,
+          paddingLeft: 16,
+          paddingRight: 16,
+        }}
+      >
+        {sortedCategories.map((cat) => (
+          <div
+            key={cat.id}
+            style={{
+              transform: "scale(0.58)",
+              transformOrigin: "top center",
+              width: 272 * 0.58,
+              height: (272 + 72) * 0.58,
+              flexShrink: 0,
+            }}
+          >
             <FocusClock
               activeSession={activeSessions[cat.id]}
               category={cat}

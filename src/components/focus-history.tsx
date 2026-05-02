@@ -141,19 +141,19 @@ export function DailyHistoryGallery({
   };
 
   return (
-    <div className={`w-full max-w-4xl rounded-[var(--radius-modal)] border p-10 transition-all duration-500 hover:-translate-y-1 ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-modal)] backdrop-blur-[12px]" : "border-white/5 bg-white/[0.03] shadow-[0_32px_64px_rgba(0,0,0,0.3)] backdrop-blur-[16px]"}`}>
-      <div className="flex items-center justify-between">
+    <div className={`w-full max-w-4xl rounded-[var(--radius-modal)] border p-4 sm:p-10 transition-all duration-500 hover:-translate-y-1 ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-modal)] backdrop-blur-[12px]" : "border-white/5 bg-white/[0.03] shadow-[0_32px_64px_rgba(0,0,0,0.3)] backdrop-blur-[16px]"}`}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h2 className={`text-2xl font-black ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>Daily History</h2>
-        <div className="flex items-center gap-4">
-          <button className={`flex h-10 w-10 items-center justify-center transition hover:bg-white/10 ${lightMode ? "ui-icon-button-light" : "rounded-full bg-white/5 text-white"}`} onClick={() => shiftDate(-1)} type="button">
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        <div className="flex items-center gap-2">
+          <button className={`flex h-9 w-9 shrink-0 items-center justify-center transition hover:bg-white/10 ${lightMode ? "ui-icon-button-light" : "rounded-full bg-white/5 text-white"}`} onClick={() => shiftDate(-1)} type="button">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
-          <label className={`inline-flex h-10 items-center px-3 text-sm font-semibold ${lightMode ? "ui-pill-button-light" : "rounded-full bg-white/5 text-white"}`}>
-            <span className="mr-2">Calendar</span>
-            <input className={`rounded-md border px-2 py-1 text-xs ${lightMode ? "ui-input-light" : "border-white/15 bg-white/10 text-white"}`} onChange={(event) => setCurrentDate(event.target.value)} type="date" value={currentDate} />
+          <label className={`inline-flex h-9 items-center gap-1 px-2 text-sm font-semibold sm:px-3 ${lightMode ? "ui-pill-button-light" : "rounded-full bg-white/5 text-white"}`}>
+            <span className="hidden sm:inline">Calendar</span>
+            <input className={`w-32 rounded-md border px-2 py-1 text-xs sm:w-auto ${lightMode ? "ui-input-light" : "border-white/15 bg-white/10 text-white"}`} onChange={(event) => setCurrentDate(event.target.value)} type="date" value={currentDate} />
           </label>
-          <button className={`flex h-10 w-10 items-center justify-center transition hover:bg-white/10 ${lightMode ? "ui-icon-button-light" : "rounded-full bg-white/5 text-white"}`} onClick={() => shiftDate(1)} type="button">
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          <button className={`flex h-9 w-9 shrink-0 items-center justify-center transition hover:bg-white/10 ${lightMode ? "ui-icon-button-light" : "rounded-full bg-white/5 text-white"}`} onClick={() => shiftDate(1)} type="button">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         </div>
       </div>

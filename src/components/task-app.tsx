@@ -10,10 +10,12 @@ import {
   CalendarDays,
   Camera,
   ChartPie,
+  Clock,
   Code2,
   Coffee,
   Dice5,
   Dices,
+  FlaskConical,
   DollarSign,
   Dumbbell,
   FileText,
@@ -176,6 +178,8 @@ const ICONS_MAP: Record<string, LucideIcon> = {
   User: UserRound,
   Box,
   Dices,
+  Clock,
+  FlaskConical,
 };
 
 type RawLucideIconName = keyof typeof dynamicIconImports;
@@ -233,7 +237,7 @@ const DEFAULT_PROFILE: UserProfile = {
   created: false,
   displayName: "Andrew Schaffer",
   email: "andrew@adhdice.app",
-  logoSrc: "/ADHDice2/logo.png",
+  logoSrc: "/logo.png",
 };
 let cachedProfileSnapshot: UserProfile = DEFAULT_PROFILE;
 
@@ -241,15 +245,15 @@ const priorityOptions: TaskPriority[] = ["normal", "high", "low"];
 const energyOptions: TaskEnergy[] = ["medium", "low", "high"];
 const dockItems: AppPage[] = ["Home", "Tasks", "Focus", "Roll", "Games", "Stats", "Notes", "Settings", "Test"];
 const dockIcons: Record<AppPage, string> = {
-  Home: "Box",
+  Home: "Home",
   Tasks: "CheckSquare",
-  Focus: "Target",
+  Focus: "Clock",
   Roll: "Dice",
   Games: "Gamepad",
   Stats: "PieChart",
   Notes: "Book",
   Settings: "Monitor",
-  Test: "Zap",
+  Test: "FlaskConical",
 };
 
 export function TaskApp() {
@@ -1449,7 +1453,7 @@ function BrandMark({
 }: {
   profile: UserProfile;
 }) {
-  const logoSrc = profile.logoSrc === "/logo.png" ? "/ADHDice2/logo.png" : (profile.logoSrc || "/ADHDice2/logo.png");
+  const logoSrc = profile.logoSrc || "/logo.png";
 
   if (logoSrc) {
     return (
@@ -2532,6 +2536,7 @@ function BottomDock({
     return { x: window.innerWidth - 96, y: window.innerHeight - 148 };
   });
   const [bubbleRenderPos, setBubbleRenderPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDragReady, setIsDragReady] = useState(false);
   const dragRef = useRef<{
     startX: number;
     startY: number;
@@ -2539,6 +2544,7 @@ function BottomDock({
     originY: number;
     moved: boolean;
   } | null>(null);
+  const dragReadyTimerRef = useRef<number | null>(null);
   const collapseButtonRef = useRef<HTMLButtonElement | null>(null);
   const placementMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
@@ -2648,51 +2654,68 @@ function BottomDock({
   };
 
   const startBubbleDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
-    dragRef.current = {
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: (bubbleRenderPos ?? bubblePos).x,
-      originY: (bubbleRenderPos ?? bubblePos).y,
-      moved: false,
-    };
+    const el = event.currentTarget;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const originX = (bubbleRenderPos ?? bubblePos).x;
+    const originY = (bubbleRenderPos ?? bubblePos).y;
 
-    const handleMove = (moveEvent: PointerEvent) => {
-      if (!dragRef.current) {
-        return;
+    // After 400ms hold, activate drag mode
+    dragReadyTimerRef.current = window.setTimeout(() => {
+      setIsDragReady(true);
+      el.setPointerCapture(event.pointerId);
+      dragRef.current = { startX, startY, originX, originY, moved: false };
+
+      const handleMove = (moveEvent: PointerEvent) => {
+        moveEvent.preventDefault();
+        if (!dragRef.current) return;
+        const dx = moveEvent.clientX - dragRef.current.startX;
+        const dy = moveEvent.clientY - dragRef.current.startY;
+        const next = clampBubblePos(dragRef.current.originX + dx, dragRef.current.originY + dy);
+        dragRef.current.moved = true;
+        setBubblePos(next);
+        setBubbleRenderPos(next);
+      };
+
+      const handleUp = () => {
+        dragRef.current = null;
+        setIsDragReady(false);
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+      };
+
+      window.addEventListener("pointermove", handleMove, { passive: false });
+      window.addEventListener("pointerup", handleUp);
+    }, 400);
+
+    const cancelDragReady = () => {
+      if (dragReadyTimerRef.current) {
+        window.clearTimeout(dragReadyTimerRef.current);
+        dragReadyTimerRef.current = null;
       }
-      const dx = moveEvent.clientX - dragRef.current.startX;
-      const dy = moveEvent.clientY - dragRef.current.startY;
-      const next = clampBubblePos(dragRef.current.originX + dx, dragRef.current.originY + dy);
-      dragRef.current.moved = dragRef.current.moved || Math.abs(dx) > 4 || Math.abs(dy) > 4;
-      setBubblePos(next);
-      setBubbleRenderPos(next);
-    };
-
-    const handleUp = () => {
-      const dragged = dragRef.current?.moved ?? false;
-      dragRef.current = null;
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-      if (!dragged) {
+      setIsDragReady(false);
+      // Short tap = open nav
+      if (!dragRef.current?.moved) {
         setIsBubbleWhooshing(false);
         setIsCollapsed(false);
       }
+      window.removeEventListener("pointerup", cancelDragReady);
     };
 
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointerup", cancelDragReady);
   };
 
   if (isCollapsed) {
     return (
       <div
-        className={`fixed z-20 ${isBubbleWhooshing ? "transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]" : ""}`}
-        style={{ left: (bubbleRenderPos ?? bubblePos).x, top: (bubbleRenderPos ?? bubblePos).y }}
+        className={`fixed z-20 select-none ${isBubbleWhooshing ? "transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]" : ""}`}
+        style={{ left: (bubbleRenderPos ?? bubblePos).x, top: (bubbleRenderPos ?? bubblePos).y, userSelect: "none", WebkitUserSelect: "none", touchAction: isDragReady ? "none" : "auto" }}
       >
         <button
           aria-label="Open navigation"
-          className={`flex h-16 w-16 items-center justify-center rounded-full border shadow-[0_16px_36px_rgba(60,44,140,0.22)] transition hover:scale-105 ${isBubbleWhooshing ? "duration-500 ease-out" : ""} ${lightMode ? "border-[#ece8f8] bg-white/95 text-[#6f57f6]" : "border-white/10 bg-[#171328]/95 text-[#cabfff]"}`}
+          className={`flex h-16 w-16 items-center justify-center rounded-full border shadow-[0_16px_36px_rgba(60,44,140,0.22)] transition-all duration-300 ${isDragReady ? "scale-110 ring-4 ring-[#6f57f6]/40" : "hover:scale-105"} ${isBubbleWhooshing ? "duration-500 ease-out" : ""} ${lightMode ? "border-[#ece8f8] bg-white/95 text-[#6f57f6]" : "border-white/10 bg-[#171328]/95 text-[#cabfff]"}`}
           onPointerDown={startBubbleDrag}
+          style={{ WebkitUserDrag: "none", touchAction: "none" } as React.CSSProperties}
           type="button"
         >
           <CategoryIcon name={dockIcons[activePage]} className="h-6 w-6" />
@@ -2708,7 +2731,7 @@ function BottomDock({
       ? "fixed left-4 top-4 bottom-4 z-10 flex items-center"
       : "fixed right-4 top-4 bottom-4 z-10 flex items-center";
   const dockShapeClass = dockPlacement === "bottom"
-    ? "mx-auto flex w-full max-w-[58rem] items-center justify-between gap-1 rounded-[2rem] px-3 py-3 overflow-x-auto sm:overflow-x-visible [&::-webkit-scrollbar]:hidden"
+    ? "mx-auto flex w-full max-w-[58rem] items-center justify-between gap-1 rounded-[2rem] px-3 py-2 overflow-x-auto sm:overflow-x-visible [&::-webkit-scrollbar]:hidden touch-pan-x"
     : "flex max-h-full w-[5.5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
   const collapsingStyle = isDockCollapsing
     ? dockPlacement === "bottom"
@@ -2717,18 +2740,18 @@ function BottomDock({
     : undefined;
 
   return (
-    <div className={dockPositionClass}>
+    <div className={`${dockPositionClass} select-none`} style={{ userSelect: "none", WebkitUserSelect: "none" }}>
       <div
         className={`relative ${isDockCollapsing ? "overflow-hidden" : "overflow-visible"} border shadow-[0_25px_45px_rgba(60,44,140,0.18)] transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${dockShapeClass} ${lightMode ? "border-[#ece8f8] bg-white/92 backdrop-blur" : "border-white/10 bg-[#171328]/92 backdrop-blur"}`}
         style={collapsingStyle}
       >
         {dockItems.map((item) => (
           <button
-            className={`flex ${isVertical ? "w-full" : "min-w-[4.4rem] shrink-0"} flex-col items-center gap-2 rounded-[1.2rem] px-3 py-2 text-sm font-semibold transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
+            className={`flex ${isVertical ? "w-full" : "min-w-[3.8rem] shrink-0"} flex-col items-center gap-1 rounded-[1.2rem] px-2 py-1.5 text-[10px] font-semibold transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
               activePage === item
                 ? lightMode
-                  ? "bg-[#f1ecff] text-[#6f57f6]"
-                  : "bg-[#2a214f] text-[#cabfff]"
+                  ? "text-[#6f57f6]"
+                  : "text-[#cabfff]"
                 : lightMode
                   ? "text-[#8d94ac]"
                   : "text-white/50"
@@ -2737,11 +2760,7 @@ function BottomDock({
             onClick={() => onNavigate(item)}
             type="button"
           >
-            <span className={`grid h-8 w-8 place-items-center rounded-xl ${activePage === item
-              ? lightMode ? "bg-white text-[#6f57f6]" : "bg-[#cabfff] text-[#1a1431]"
-              : lightMode ? "bg-[#f7f5ff] text-[#9298ad]" : "bg-white/8 text-white/45"}`}>
-              <CategoryIcon name={dockIcons[item]} className="h-4 w-4" />
-            </span>
+            <CategoryIcon name={dockIcons[item]} className="h-6 w-6" />
             <span>{item}</span>
           </button>
         ))}
