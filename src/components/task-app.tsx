@@ -272,10 +272,15 @@ export function TaskApp() {
       return;
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
+    supabase.auth.getSession()
+      .then(({ data }) => {
+        setSession(data.session);
+        setLoading(false);
+      })
+      .catch((error) => {
+        console.error("Failed to get session:", error);
+        setLoading(false);
+      });
 
     const {
       data: { subscription },
