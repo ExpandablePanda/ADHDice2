@@ -233,7 +233,7 @@ const DEFAULT_PROFILE: UserProfile = {
   created: false,
   displayName: "Andrew Schaffer",
   email: "andrew@adhdice.app",
-  logoSrc: "/logo.png",
+  logoSrc: "/ADHDice2/logo.png",
 };
 let cachedProfileSnapshot: UserProfile = DEFAULT_PROFILE;
 
@@ -1442,7 +1442,7 @@ function BrandMark({
 }: {
   profile: UserProfile;
 }) {
-  const logoSrc = profile.logoSrc || "/logo.png";
+  const logoSrc = profile.logoSrc === "/logo.png" ? "/ADHDice2/logo.png" : (profile.logoSrc || "/ADHDice2/logo.png");
 
   if (logoSrc) {
     return (
