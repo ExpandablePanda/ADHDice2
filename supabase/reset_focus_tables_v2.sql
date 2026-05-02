@@ -1,33 +1,6 @@
-create extension if not exists pgcrypto;
-
-create type public.adhdice_clean_task_status as enum ('active', 'done', 'archived');
-create type public.adhdice_clean_task_priority as enum ('low', 'normal', 'high');
-create type public.adhdice_clean_task_energy as enum ('low', 'medium', 'high');
-create type public.adhdice_clean_focus_source as enum ('timer', 'manual', 'import');
-
-create table public.adhdice_clean_tasks (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  title text not null check (char_length(trim(title)) > 0),
-  notes text,
-  status public.adhdice_clean_task_status not null default 'active',
-  priority public.adhdice_clean_task_priority not null default 'normal',
-  energy public.adhdice_clean_task_energy not null default 'medium',
-  due_on date,
-  sort_order bigint not null default 0,
-  completed_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create table public.adhdice_user_profiles (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  display_name text,
-  avatar_src text,
-  logo_src text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+drop table if exists public.adhdice_focus_active_sessions;
+drop table if exists public.adhdice_focus_sessions;
+drop table if exists public.adhdice_focus_categories;
 
 create table public.adhdice_focus_categories (
   id uuid primary key default gen_random_uuid(),
@@ -72,59 +45,18 @@ create table public.adhdice_focus_active_sessions (
   primary key (user_id, category_id)
 );
 
-create index adhdice_clean_tasks_user_status_sort_idx
-  on public.adhdice_clean_tasks (user_id, status, sort_order, created_at desc);
-create index adhdice_user_profiles_updated_at_idx
-  on public.adhdice_user_profiles (updated_at desc);
 create index adhdice_focus_categories_user_sort_idx
   on public.adhdice_focus_categories (user_id, sort_order, created_at desc);
 create index adhdice_focus_sessions_user_date_idx
   on public.adhdice_focus_sessions (user_id, session_date desc, created_at desc);
+create index adhdice_focus_sessions_user_title_idx
+  on public.adhdice_focus_sessions (user_id, title_snapshot);
 create index adhdice_focus_active_sessions_user_updated_idx
   on public.adhdice_focus_active_sessions (user_id, updated_at desc);
 
-alter table public.adhdice_clean_tasks enable row level security;
-alter table public.adhdice_user_profiles enable row level security;
 alter table public.adhdice_focus_categories enable row level security;
 alter table public.adhdice_focus_sessions enable row level security;
 alter table public.adhdice_focus_active_sessions enable row level security;
-
-create policy "Users can read their own clean tasks"
-  on public.adhdice_clean_tasks
-  for select
-  using (auth.uid() = user_id);
-
-create policy "Users can create their own clean tasks"
-  on public.adhdice_clean_tasks
-  for insert
-  with check (auth.uid() = user_id);
-
-create policy "Users can update their own clean tasks"
-  on public.adhdice_clean_tasks
-  for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-
-create policy "Users can delete their own clean tasks"
-  on public.adhdice_clean_tasks
-  for delete
-  using (auth.uid() = user_id);
-
-create policy "Users can read their own profiles"
-  on public.adhdice_user_profiles
-  for select
-  using (auth.uid() = user_id);
-
-create policy "Users can create their own profiles"
-  on public.adhdice_user_profiles
-  for insert
-  with check (auth.uid() = user_id);
-
-create policy "Users can update their own profiles"
-  on public.adhdice_user_profiles
-  for update
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
 
 create policy "Users can read their own focus categories"
   on public.adhdice_focus_categories
@@ -189,26 +121,6 @@ create policy "Users can delete their own active focus sessions"
   for delete
   using (auth.uid() = user_id);
 
-create or replace function public.adhdice_clean_set_updated_at()
-returns trigger
-language plpgsql
-as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
-create trigger adhdice_clean_tasks_set_updated_at
-  before update on public.adhdice_clean_tasks
-  for each row
-  execute function public.adhdice_clean_set_updated_at();
-
-create trigger adhdice_user_profiles_set_updated_at
-  before update on public.adhdice_user_profiles
-  for each row
-  execute function public.adhdice_clean_set_updated_at();
-
 create trigger adhdice_focus_categories_set_updated_at
   before update on public.adhdice_focus_categories
   for each row
@@ -219,7 +131,6 @@ create trigger adhdice_focus_active_sessions_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
-alter publication supabase_realtime add table public.adhdice_clean_tasks;
 alter publication supabase_realtime add table public.adhdice_focus_categories;
 alter publication supabase_realtime add table public.adhdice_focus_sessions;
 alter publication supabase_realtime add table public.adhdice_focus_active_sessions;
