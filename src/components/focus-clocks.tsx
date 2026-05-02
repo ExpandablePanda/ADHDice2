@@ -75,17 +75,12 @@ export function FocusClock({
   return (
     <div className={`group relative flex flex-col items-center gap-3 transition-all duration-500 hover:-translate-y-2 ${showAdjustMenu ? "z-30" : "z-0"}`}>
       <div className="relative flex h-68 w-68 items-center justify-center transition-transform duration-500 group-hover:scale-[1.02]">
-        {/* Glow Shadow Layer */}
-        <div 
-          className="absolute inset-2 rounded-full blur-[52px] transition-all duration-1000"
-          style={{ 
-            backgroundColor: isRunning ? category.color + "30" : "transparent",
-            opacity: isRunning ? 1 : 0 
-          }}
-        />
-
         {/* Outer Ring Background */}
-        <svg className="absolute inset-0 h-full w-full -rotate-90 scale-[1.01]" viewBox="0 0 272 272">
+        <svg
+          className="absolute inset-0 h-full w-full -rotate-90 scale-[1.01] transition-all duration-1000"
+          style={{ filter: isRunning ? `drop-shadow(0 0 18px ${category.color}55)` : "none" }}
+          viewBox="0 0 272 272"
+        >
           <circle
             className={lightMode ? "text-[#f0ecfc]" : "text-white/[0.03]"}
             cx="136"
@@ -229,14 +224,64 @@ export function FocusClockRow({
   const sortedCategories = [...categories].sort((a, b) => {
     const aRunning = activeSessions[a.id]?.isRunning ?? false;
     const bRunning = activeSessions[b.id]?.isRunning ?? false;
-    if (aRunning !== bRunning) {
-      return aRunning ? -1 : 1;
-    }
+    const aActive = aRunning || (activeSessions[a.id]?.accumulatedSeconds ?? 0) > 0;
+    const bActive = bRunning || (activeSessions[b.id]?.accumulatedSeconds ?? 0) > 0;
+    if (aActive !== bActive) return aActive ? -1 : 1;
+    if (aRunning !== bRunning) return aRunning ? -1 : 1;
     return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
   });
 
   return (
-    <div className="grid grid-cols-1 justify-items-center gap-8 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    // Mobile: horizontal 2-row scroll carousel. sm+: standard grid.
+    <div className="sm:hidden w-full overflow-x-auto pb-4" style={{ WebkitOverflowScrolling: "touch" }}>
+      <div className="flex gap-6 px-4" style={{ width: "max-content" }}>
+        {sortedCategories.map((cat, i) => (
+          <div key={cat.id} className={i % 2 === 0 ? "mt-0" : "mt-8"}>
+            <FocusClock
+              activeSession={activeSessions[cat.id]}
+              category={cat}
+              lightMode={lightMode}
+              onAdjust={onAdjust}
+              onFinish={onFinish}
+              onReset={onReset}
+              onToggle={onToggle}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function FocusClockRowDesktop({
+  categories,
+  activeSessions,
+  lightMode,
+  onToggle,
+  onFinish,
+  onAdjust,
+  onReset,
+}: {
+  categories: FocusCategory[];
+  activeSessions: Record<string, ActiveFocusSession>;
+  lightMode: boolean;
+  onToggle: (catId: string) => void;
+  onFinish: (catId: string) => void;
+  onAdjust: (catId: string, deltaSeconds: number) => void;
+  onReset: (catId: string) => void;
+}) {
+  const sortedCategories = [...categories].sort((a, b) => {
+    const aRunning = activeSessions[a.id]?.isRunning ?? false;
+    const bRunning = activeSessions[b.id]?.isRunning ?? false;
+    const aActive = aRunning || (activeSessions[a.id]?.accumulatedSeconds ?? 0) > 0;
+    const bActive = bRunning || (activeSessions[b.id]?.accumulatedSeconds ?? 0) > 0;
+    if (aActive !== bActive) return aActive ? -1 : 1;
+    if (aRunning !== bRunning) return aRunning ? -1 : 1;
+    return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+  });
+
+  return (
+    <div className="hidden sm:grid grid-cols-2 justify-items-center gap-8 lg:grid-cols-3 xl:grid-cols-4">
       {sortedCategories.map((cat) => (
         <FocusClock
           key={cat.id}

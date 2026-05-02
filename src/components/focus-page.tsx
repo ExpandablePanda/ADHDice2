@@ -11,7 +11,7 @@ import {
   DEFAULT_PRIMARY_SUBTYPES,
   DEFAULT_SECONDARY_SUBTYPES
 } from "./task-app";
-import { FocusClockRow } from "./focus-clocks";
+import { FocusClockRow, FocusClockRowDesktop } from "./focus-clocks";
 import { CategoryManager } from "./category-manager";
 import { DailyHistoryGallery } from "./focus-history";
 import { SessionFinishModal, ManualEntryModal } from "./focus-modals";
@@ -105,6 +105,15 @@ export function FocusPage({
 
       <div className="mt-16">
         <FocusClockRow
+          activeSessions={activeSessions}
+          categories={categories}
+          lightMode={lightMode}
+          onAdjust={onAdjustTimer}
+          onFinish={handleFinishClick}
+          onReset={onResetTimer}
+          onToggle={onToggleTimer}
+        />
+        <FocusClockRowDesktop
           activeSessions={activeSessions}
           categories={categories}
           lightMode={lightMode}

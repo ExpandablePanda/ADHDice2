@@ -1385,53 +1385,60 @@ function TopHeader({
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
 }) {
+  const accountButton = (
+    <button
+      className={`flex items-center gap-3 rounded-full px-2 py-2 ${lightMode ? "bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)]" : "bg-white/10"}`}
+      onClick={onOpenAccount}
+      type="button"
+    >
+      <div className="text-right">
+        <p className={`text-sm font-semibold ${lightMode ? "text-[#202743]" : "text-white"}`}>
+          {profile.displayName}
+        </p>
+        <p className={`text-xs ${lightMode ? "text-[#8a84a3]" : "text-white/45"}`}>
+          {profile.created ? "Account" : "Create account"}
+        </p>
+      </div>
+      <div className="relative">
+        <Image
+          alt="Profile avatar"
+          className="h-14 w-14 rounded-full object-cover ring-4 ring-white/70"
+          height={56}
+          src={profile.avatarSrc}
+          unoptimized={profile.avatarSrc.startsWith("data:")}
+          width={56}
+        />
+        <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#f05566] text-[10px] font-semibold text-white">
+          2
+        </span>
+      </div>
+    </button>
+  );
+
   return (
     <header
-      className={`flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-center lg:justify-between ${
+      className={`flex flex-col gap-3 border-b pb-5 lg:flex-row lg:items-center lg:justify-between ${
         lightMode ? "border-[#ece8f8]" : "border-white/10"
       }`}
     >
-      <div className="flex items-center gap-4">
+      {/* Row 1 (mobile): logo + account side by side */}
+      <div className="flex items-center justify-between gap-4 lg:justify-start">
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${lightMode ? "bg-[#f1ecff] text-[#7f6af7]" : "bg-white/10 text-[#c5b8ff]"}`}>
             v.6.5.5
           </span>
         </div>
+        <div className="lg:hidden">{accountButton}</div>
       </div>
 
+      {/* Row 2 (mobile): stats. On desktop these join row 1 on the right. */}
       <div className="flex flex-wrap items-center gap-3">
         <ThemeToggle lightMode={lightMode} theme={theme} onThemeChange={onThemeChange} />
         <ProgressStat lightMode={lightMode} label="Lvl 7" value="919 / 1135 XP" />
         <MiniStat lightMode={lightMode} label="Focus Gems" value="6436" />
         <MiniStat lightMode={lightMode} label="Streak" value={String(doneCount + 50)} />
-        <button
-          className={`flex items-center gap-3 rounded-full px-2 py-2 ${lightMode ? "bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)]" : "bg-white/10"}`}
-          onClick={onOpenAccount}
-          type="button"
-        >
-          <div className="text-right">
-            <p className={`text-sm font-semibold ${lightMode ? "text-[#202743]" : "text-white"}`}>
-              {profile.displayName}
-            </p>
-            <p className={`text-xs ${lightMode ? "text-[#8a84a3]" : "text-white/45"}`}>
-              {profile.created ? "Account" : "Create account"}
-            </p>
-          </div>
-          <div className="relative">
-            <Image
-              alt="Profile avatar"
-              className="h-14 w-14 rounded-full object-cover ring-4 ring-white/70"
-              height={56}
-              src={profile.avatarSrc}
-              unoptimized={profile.avatarSrc.startsWith("data:")}
-              width={56}
-            />
-            <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#f05566] text-[10px] font-semibold text-white">
-              2
-            </span>
-          </div>
-        </button>
+        <div className="hidden lg:block">{accountButton}</div>
       </div>
     </header>
   );
@@ -2701,7 +2708,7 @@ function BottomDock({
       ? "fixed left-4 top-4 bottom-4 z-10 flex items-center"
       : "fixed right-4 top-4 bottom-4 z-10 flex items-center";
   const dockShapeClass = dockPlacement === "bottom"
-    ? "mx-auto flex w-full max-w-[58rem] items-center justify-between gap-1 rounded-[2rem] px-3 py-3"
+    ? "mx-auto flex w-full max-w-[58rem] items-center justify-between gap-1 rounded-[2rem] px-3 py-3 overflow-x-auto sm:overflow-x-visible [&::-webkit-scrollbar]:hidden"
     : "flex max-h-full w-[5.5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
   const collapsingStyle = isDockCollapsing
     ? dockPlacement === "bottom"
@@ -2717,7 +2724,7 @@ function BottomDock({
       >
         {dockItems.map((item) => (
           <button
-            className={`flex ${isVertical ? "w-full" : "min-w-[4.4rem]"} flex-col items-center gap-2 rounded-[1.2rem] px-3 py-2 text-sm font-semibold transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
+            className={`flex ${isVertical ? "w-full" : "min-w-[4.4rem] shrink-0"} flex-col items-center gap-2 rounded-[1.2rem] px-3 py-2 text-sm font-semibold transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
               activePage === item
                 ? lightMode
                   ? "bg-[#f1ecff] text-[#6f57f6]"
