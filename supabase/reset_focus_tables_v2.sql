@@ -1,6 +1,8 @@
 drop table if exists public.adhdice_focus_active_sessions;
 drop table if exists public.adhdice_focus_sessions;
 drop table if exists public.adhdice_focus_categories;
+drop table if exists public.adhdice_task_focus_days;
+drop table if exists public.adhdice_task_grid_layouts;
 
 create table public.adhdice_focus_categories (
   id uuid primary key default gen_random_uuid(),
@@ -45,6 +47,20 @@ create table public.adhdice_focus_active_sessions (
   primary key (user_id, category_id)
 );
 
+create table public.adhdice_task_focus_days (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  focus_date date not null,
+  task_ids uuid[] not null default '{}',
+  updated_at timestamptz not null default now(),
+  primary key (user_id, focus_date)
+);
+
+create table public.adhdice_task_grid_layouts (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  layout_json text not null default '[]',
+  updated_at timestamptz not null default now()
+);
+
 create index adhdice_focus_categories_user_sort_idx
   on public.adhdice_focus_categories (user_id, sort_order, created_at desc);
 create index adhdice_focus_sessions_user_date_idx
@@ -53,10 +69,16 @@ create index adhdice_focus_sessions_user_title_idx
   on public.adhdice_focus_sessions (user_id, title_snapshot);
 create index adhdice_focus_active_sessions_user_updated_idx
   on public.adhdice_focus_active_sessions (user_id, updated_at desc);
+create index adhdice_task_focus_days_user_date_idx
+  on public.adhdice_task_focus_days (user_id, focus_date desc);
+create index adhdice_task_grid_layouts_updated_at_idx
+  on public.adhdice_task_grid_layouts (updated_at desc);
 
 alter table public.adhdice_focus_categories enable row level security;
 alter table public.adhdice_focus_sessions enable row level security;
 alter table public.adhdice_focus_active_sessions enable row level security;
+alter table public.adhdice_task_focus_days enable row level security;
+alter table public.adhdice_task_grid_layouts enable row level security;
 
 create policy "Users can read their own focus categories"
   on public.adhdice_focus_categories
@@ -121,6 +143,48 @@ create policy "Users can delete their own active focus sessions"
   for delete
   using (auth.uid() = user_id);
 
+create policy "Users can read their own task focus days"
+  on public.adhdice_task_focus_days
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can create their own task focus days"
+  on public.adhdice_task_focus_days
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own task focus days"
+  on public.adhdice_task_focus_days
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own task focus days"
+  on public.adhdice_task_focus_days
+  for delete
+  using (auth.uid() = user_id);
+
+create policy "Users can read their own task grid layouts"
+  on public.adhdice_task_grid_layouts
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can create their own task grid layouts"
+  on public.adhdice_task_grid_layouts
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own task grid layouts"
+  on public.adhdice_task_grid_layouts
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own task grid layouts"
+  on public.adhdice_task_grid_layouts
+  for delete
+  using (auth.uid() = user_id);
+
 create trigger adhdice_focus_categories_set_updated_at
   before update on public.adhdice_focus_categories
   for each row
@@ -131,6 +195,18 @@ create trigger adhdice_focus_active_sessions_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
+create trigger adhdice_task_focus_days_set_updated_at
+  before update on public.adhdice_task_focus_days
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_task_grid_layouts_set_updated_at
+  before update on public.adhdice_task_grid_layouts
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
 alter publication supabase_realtime add table public.adhdice_focus_categories;
 alter publication supabase_realtime add table public.adhdice_focus_sessions;
 alter publication supabase_realtime add table public.adhdice_focus_active_sessions;
+alter publication supabase_realtime add table public.adhdice_task_focus_days;
+alter publication supabase_realtime add table public.adhdice_task_grid_layouts;

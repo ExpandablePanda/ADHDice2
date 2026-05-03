@@ -3,6 +3,37 @@ export type TaskPriority = "low" | "normal" | "high";
 export type TaskEnergy = "low" | "medium" | "high";
 export type FocusType = string;
 export type FocusSubtype = string;
+export type TaskFocusDay = {
+  user_id: string;
+  focus_date: string;
+  task_ids: string[];
+  updated_at: string;
+};
+
+export type TaskFocusDayInsert = {
+  user_id: string;
+  focus_date: string;
+  task_ids?: string[];
+};
+
+export type TaskFocusDayUpdate = Partial<
+  Pick<TaskFocusDay, "task_ids">
+>;
+
+export type TaskGridLayout = {
+  user_id: string;
+  layout_json: string;
+  updated_at: string;
+};
+
+export type TaskGridLayoutInsert = {
+  user_id: string;
+  layout_json?: string;
+};
+
+export type TaskGridLayoutUpdate = Partial<
+  Pick<TaskGridLayout, "layout_json">
+>;
 
 export type Task = {
   id: string;
@@ -164,6 +195,18 @@ export type Database = {
         Row: Task;
         Insert: TaskInsert;
         Update: TaskUpdate;
+        Relationships: [];
+      };
+      adhdice_task_focus_days: {
+        Row: TaskFocusDay;
+        Insert: TaskFocusDayInsert;
+        Update: TaskFocusDayUpdate;
+        Relationships: [];
+      };
+      adhdice_task_grid_layouts: {
+        Row: TaskGridLayout;
+        Insert: TaskGridLayoutInsert;
+        Update: TaskGridLayoutUpdate;
         Relationships: [];
       };
       adhdice_focus_active_sessions: {

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
+  ArrowUp,
   BookOpen,
   Box,
   Brain,
@@ -10,6 +11,8 @@ import {
   CalendarDays,
   Camera,
   ChartPie,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Code2,
   Coffee,
@@ -20,6 +23,7 @@ import {
   Dumbbell,
   FileText,
   Gamepad2,
+  GripVertical,
   Headphones,
   Heart,
   House,
@@ -32,6 +36,7 @@ import {
   Palette,
   PenLine,
   Plane,
+  Plus,
   Rocket,
   Search,
   Server,
@@ -41,6 +46,7 @@ import {
   Star,
   Sun,
   Target,
+  Trash2,
   UserRound,
   Utensils,
   Wifi,
@@ -55,6 +61,8 @@ import type {
   FocusCategory as DbFocusCategory,
   Task,
   TaskEnergy,
+  TaskFocusDay as DbTaskFocusDay,
+  TaskGridLayout as DbTaskGridLayout,
   TaskInsert,
   TaskPriority,
   TaskUpdate,
@@ -69,6 +77,34 @@ type AuthMode = "sign-in" | "sign-up";
 type TaskDraft = Omit<TaskInsert, "user_id">;
 type ThemeMode = "light" | "dark";
 type FilterChipTone = "purple" | "orange" | "red" | "neutral";
+type TaskViewMode = "list" | "cards" | "matrix" | "grid";
+type MomentumView = "urgent" | "today" | "focus";
+type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
+type FocusPlannerStep = 0 | 1 | 2;
+type TaskGridWidgetType =
+  | "urgent"
+  | "focus_today"
+  | "due_today"
+  | "active_queue"
+  | "completed"
+  | "quick_capture"
+  | "import"
+  | "focus_stats";
+type TaskGridItem = {
+  h: number;
+  id: string;
+  type: TaskGridWidgetType;
+  w: number;
+  x: number;
+  y: number;
+};
+type TaskUiState = {
+  matchAny: boolean;
+  quickFilters: TaskQuickFilter[];
+  search: string;
+  view: TaskViewMode;
+  energyFilters: TaskEnergy[];
+};
 type AppPage =
   | "Home"
   | "Tasks"
@@ -244,6 +280,15 @@ const PROFILE_STORAGE_KEY = "adhdice-profile";
 const FOCUS_CATEGORIES_STORAGE_KEY = "adhdice_focus_categories";
 const FOCUS_ACTIVE_STORAGE_KEY = "adhdice_active_sessions";
 const FOCUS_HISTORY_STORAGE_KEY = "adhdice_focus_history";
+const TASK_UI_STORAGE_KEY = "adhdice-task-ui";
+const TASK_FOCUS_STORAGE_KEY = "adhdice-task-focus";
+const DEFAULT_TASK_UI_STATE: TaskUiState = {
+  matchAny: true,
+  quickFilters: [],
+  search: "",
+  view: "list",
+  energyFilters: [],
+};
 const DEFAULT_PROFILE: UserProfile = {
   avatarSrc: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80",
   created: false,
@@ -267,6 +312,31 @@ const dockIcons: Record<AppPage, string> = {
   Settings: "Monitor",
   Test: "FlaskConical",
 };
+const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
+const TASK_GRID_MAX_COLUMNS = 4;
+const TASK_GRID_TABLET_COLUMNS = 2;
+const TASK_GRID_PHONE_COLUMNS = 1;
+const TASK_GRID_ROW_HEIGHT = 42;
+const TASK_GRID_WIDGET_LABELS: Record<TaskGridWidgetType, string> = {
+  urgent: "Urgent Tasks",
+  focus_today: "Focus Today",
+  due_today: "Due Today",
+  active_queue: "Active Queue",
+  completed: "Completed",
+  quick_capture: "Quick Capture",
+  import: "Import",
+  focus_stats: "Focus Stats",
+};
+const TASK_GRID_STARTER_LAYOUT: TaskGridItem[] = normalizeTaskGridLayout([
+  { h: 9, id: "grid-urgent", type: "urgent", w: 2, x: 0, y: 0 },
+  { h: 6, id: "grid-focus-today", type: "focus_today", w: 1, x: 0, y: 0 },
+  { h: 8, id: "grid-quick-capture", type: "quick_capture", w: 1, x: 0, y: 0 },
+  { h: 6, id: "grid-due-today", type: "due_today", w: 2, x: 0, y: 0 },
+  { h: 6, id: "grid-active-queue", type: "active_queue", w: 1, x: 0, y: 0 },
+  { h: 6, id: "grid-focus-stats", type: "focus_stats", w: 1, x: 0, y: 0 },
+  { h: 8, id: "grid-import", type: "import", w: 2, x: 0, y: 0 },
+  { h: 6, id: "grid-completed", type: "completed", w: 2, x: 0, y: 0 },
+]);
 
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -280,9 +350,22 @@ export function TaskApp() {
   const [focusCategories, setFocusCategories] = useState<FocusCategory[]>([]);
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
   const [focusHistory, setFocusHistory] = useState<HistoricalFocusSession[]>([]);
+  const [taskUiState, setTaskUiState] = useState<TaskUiState>(DEFAULT_TASK_UI_STATE);
+  const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
+  const [taskGridLayout, setTaskGridLayout] = useState<TaskGridItem[]>(TASK_GRID_STARTER_LAYOUT);
+  const [isGridEditMode, setIsGridEditMode] = useState(false);
+  const [selectedGridWidgetId, setSelectedGridWidgetId] = useState<string | null>(null);
+  const [draggedGridWidgetId, setDraggedGridWidgetId] = useState<string | null>(null);
+  const [showFocusPlanner, setShowFocusPlanner] = useState(false);
+  const [focusPlannerStep, setFocusPlannerStep] = useState<FocusPlannerStep>(0);
+  const [focusDraftIds, setFocusDraftIds] = useState<string[]>([]);
+  const [momentumView, setMomentumView] = useState<MomentumView>("urgent");
+  const [isMomentumListOpen, setIsMomentumListOpen] = useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const profile = useProfileStore();
   const suppressCategoryReload = useRef(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const gridColumns = useResponsiveTaskGridColumns();
 
   useEffect(() => {
     if (!supabase) {
@@ -307,6 +390,10 @@ export function TaskApp() {
         setFocusCategories([]);
         setActiveSessions({});
         setFocusHistory([]);
+        setFocusedTaskIdsByDate({});
+        setTaskGridLayout(TASK_GRID_STARTER_LAYOUT);
+        setIsGridEditMode(false);
+        setSelectedGridWidgetId(null);
         saveProfile(DEFAULT_PROFILE);
       }
       setSession(nextSession);
@@ -331,7 +418,7 @@ export function TaskApp() {
         setIsWorkspaceLoading(true);
       }
 
-      const [taskResult, profileResult, categoryResult, activeResult, historyResult] = await Promise.all([
+      const [taskResult, profileResult, categoryResult, activeResult, historyResult, focusDayResult, gridLayoutResult] = await Promise.all([
         client
           .from("adhdice_clean_tasks")
           .select("*")
@@ -362,6 +449,16 @@ export function TaskApp() {
           .eq("user_id", userId)
           .order("session_date", { ascending: false })
           .order("created_at", { ascending: false }),
+        client
+          .from("adhdice_task_focus_days")
+          .select("*")
+          .eq("user_id", userId)
+          .order("focus_date", { ascending: false }),
+        client
+          .from("adhdice_task_grid_layouts")
+          .select("*")
+          .eq("user_id", userId)
+          .maybeSingle(),
       ]);
 
       if (!isActive) {
@@ -374,6 +471,8 @@ export function TaskApp() {
         categoryResult.error,
         activeResult.error,
         historyResult.error,
+        focusDayResult.error,
+        gridLayoutResult.error,
       ].filter(Boolean);
 
       if (errors.length > 0) {
@@ -385,6 +484,8 @@ export function TaskApp() {
       let nextCategories = mergeStoredFocusCategories((categoryResult.data ?? []).map(mapFocusCategoryRow));
       let nextActiveSessions = mapActiveSessions(activeResult.data ?? []);
       let nextFocusHistory = mergeStoredFocusHistory((historyResult.data ?? []).map(mapFocusSessionRow));
+      let nextFocusedTaskIdsByDate = mapTaskFocusDayRows(focusDayResult.data ?? [], taskResult.data ?? []);
+      const nextTaskGridLayout = resolveTaskGridLayout(gridLayoutResult.data);
 
       if (
         nextCategories.length === 0 &&
@@ -426,10 +527,32 @@ export function TaskApp() {
         }
       }
 
+      if (Object.keys(nextFocusedTaskIdsByDate).length === 0) {
+        const migratedTaskFocusDays = await migrateLocalTaskFocusDays(client, currentUser);
+
+        if (migratedTaskFocusDays) {
+          const freshFocusDays = await client
+            .from("adhdice_task_focus_days")
+            .select("*")
+            .eq("user_id", userId)
+            .order("focus_date", { ascending: false });
+
+          if (!freshFocusDays.error) {
+            nextFocusedTaskIdsByDate = mapTaskFocusDayRows(freshFocusDays.data ?? [], taskResult.data ?? []);
+            setMessage((prev) => prev ?? {
+              tone: "good",
+              text: "Imported your saved Focus Today selections into your account.",
+            });
+          }
+        }
+      }
+
       setTasks(taskResult.data ?? []);
       setFocusCategories(nextCategories);
       setActiveSessions(nextActiveSessions);
       setFocusHistory(nextFocusHistory);
+      setFocusedTaskIdsByDate(nextFocusedTaskIdsByDate);
+      setTaskGridLayout(nextTaskGridLayout);
       saveFocusCategories(nextCategories);
       saveFocusHistory(nextFocusHistory);
       saveProfile(buildProfileSnapshot(profileResult.data, currentUser));
@@ -490,6 +613,30 @@ export function TaskApp() {
           void loadWorkspaceData({ silent: true });
         },
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "adhdice_task_focus_days",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void loadWorkspaceData({ silent: true });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "adhdice_task_grid_layouts",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void loadWorkspaceData({ silent: true });
+        },
+      )
       .subscribe();
 
     return () => {
@@ -497,6 +644,87 @@ export function TaskApp() {
       client.removeChannel(workspaceChannel);
     };
   }, [session?.user, supabase]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId) {
+      setTaskUiState(DEFAULT_TASK_UI_STATE);
+      setFocusedTaskIdsByDate({});
+      setTaskGridLayout(TASK_GRID_STARTER_LAYOUT);
+      setIsGridEditMode(false);
+      setSelectedGridWidgetId(null);
+      return;
+    }
+
+    setTaskUiState({
+      ...DEFAULT_TASK_UI_STATE,
+      ...parseStoredJson<TaskUiState>(getUserScopedStorageKey(TASK_UI_STORAGE_KEY, userId), DEFAULT_TASK_UI_STATE),
+    });
+    setFocusedTaskIdsByDate(
+      parseStoredJson<Record<string, string[]>>(getUserScopedStorageKey(TASK_FOCUS_STORAGE_KEY, userId), {}),
+    );
+    setTaskGridLayout(
+      normalizeTaskGridLayout(
+        parseStoredJson<TaskGridItem[]>(getUserScopedStorageKey(TASK_GRID_STORAGE_KEY, userId), TASK_GRID_STARTER_LAYOUT),
+      ),
+    );
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      getUserScopedStorageKey(TASK_UI_STORAGE_KEY, userId),
+      JSON.stringify(taskUiState),
+    );
+  }, [session?.user?.id, taskUiState]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      getUserScopedStorageKey(TASK_FOCUS_STORAGE_KEY, userId),
+      JSON.stringify(focusedTaskIdsByDate),
+    );
+  }, [focusedTaskIdsByDate, session?.user?.id]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      getUserScopedStorageKey(TASK_GRID_STORAGE_KEY, userId),
+      JSON.stringify(taskGridLayout),
+    );
+  }, [session?.user?.id, taskGridLayout]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleScroll = () => {
+      setShowBackToTop(window.scrollY > 720);
+    };
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    if (selectedGridWidgetId && !taskGridLayout.some((item) => item.id === selectedGridWidgetId)) {
+      setSelectedGridWidgetId(null);
+    }
+  }, [selectedGridWidgetId, taskGridLayout]);
 
   const lightMode = theme === "light";
 
@@ -544,6 +772,8 @@ export function TaskApp() {
 
   const client = supabase;
   const currentUser = session.user;
+  const todayKey = getTodayKey();
+  const focusedTaskIds = focusedTaskIdsByDate[todayKey] ?? [];
 
   const activeTasks = tasks.filter((task) => task.status === "active");
   const doneTasks = tasks.filter((task) => task.status === "done");
@@ -551,11 +781,155 @@ export function TaskApp() {
   const todayTasks = activeTasks.filter((task) => isDueToday(task.due_on));
   const highPriorityTasks = activeTasks.filter((task) => task.priority === "high");
   const lowEnergyTasks = activeTasks.filter((task) => task.energy === "low").slice(0, 4);
+  const focusedTasks = activeTasks.filter((task) => focusedTaskIds.includes(task.id));
   const urgentTasks = [...overdueTasks, ...highPriorityTasks.filter((task) => !isOverdue(task.due_on))]
     .slice(0, 6);
+  const searchQuery = taskUiState.search.trim().toLowerCase();
+  const filteredTasks = tasks.filter((task) => {
+    const matchesSearch = searchQuery.length === 0 || task.title.toLowerCase().includes(searchQuery);
+    if (!matchesSearch) {
+      return false;
+    }
+
+    const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(task, filter, focusedTaskIds));
+    const matchesQuickFilters = quickChecks.length === 0
+      ? true
+      : taskUiState.matchAny
+        ? quickChecks.some(Boolean)
+        : quickChecks.every(Boolean);
+    const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
+    return matchesQuickFilters && matchesEnergy;
+  });
+  const filteredActiveTasks = filteredTasks.filter((task) => task.status === "active");
+  const filteredDoneTasks = filteredTasks.filter((task) => task.status === "done");
+  const filteredUrgentTasks = filteredActiveTasks.filter((task) => isOverdue(task.due_on) || task.priority === "high");
+  const filteredFocusTasks = filteredActiveTasks.filter((task) => focusedTaskIds.includes(task.id));
+  const filteredLowEnergyTasks = filteredActiveTasks.filter((task) => task.energy === "low").slice(0, 4);
+  const filteredHighPriorityTasks = filteredActiveTasks.filter((task) => task.priority === "high");
+  const filteredTodayTasks = filteredActiveTasks.filter((task) => isDueToday(task.due_on));
+  const hasFocusedToday = focusedTaskIds.length > 0;
   const momentumPercent = activeTasks.length === 0
     ? 0
     : Math.min(100, Math.round((doneTasks.length / (doneTasks.length + activeTasks.length)) * 100));
+  const momentumMetric = getMomentumMetric({
+    doneTasks,
+    focusedTaskIds,
+    tasks,
+    todayTasks,
+    urgentTasks,
+  }, momentumView);
+  const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
+  const missingGridWidgetTypes = getMissingTaskGridWidgetTypes(taskGridLayout);
+
+  async function saveFocusSelection(nextTaskIds: string[]) {
+    const normalizedTaskIds = normalizeTaskFocusIds(nextTaskIds, tasks);
+
+    setFocusedTaskIdsByDate((prev) => updateFocusedTaskIdsByDate(prev, todayKey, normalizedTaskIds));
+
+    if (normalizedTaskIds.length === 0) {
+      const { error } = await client
+        .from("adhdice_task_focus_days")
+        .delete()
+        .eq("user_id", currentUser.id)
+        .eq("focus_date", todayKey);
+
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+      }
+
+      return;
+    }
+
+    const { error } = await client
+      .from("adhdice_task_focus_days")
+      .upsert(
+        {
+          user_id: currentUser.id,
+          focus_date: todayKey,
+          task_ids: normalizedTaskIds,
+        },
+        { onConflict: "user_id,focus_date" },
+      );
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+    }
+  }
+
+  async function saveTaskGridLayout(nextLayout: TaskGridItem[]) {
+    const normalizedLayout = normalizeTaskGridLayout(nextLayout);
+    setTaskGridLayout(normalizedLayout);
+
+    const { error } = await client
+      .from("adhdice_task_grid_layouts")
+      .upsert({
+        user_id: currentUser.id,
+        layout_json: JSON.stringify(normalizedLayout),
+      });
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+    }
+  }
+
+  async function updateGridLayout(updater: (current: TaskGridItem[]) => TaskGridItem[]) {
+    const nextLayout = updater(taskGridLayout);
+    await saveTaskGridLayout(nextLayout);
+  }
+
+  async function handleResizeGridWidget(widgetId: string, nextWidth: number, nextHeight: number) {
+    await updateGridLayout((current) => current.map((item) =>
+      item.id === widgetId
+        ? {
+            ...item,
+            h: nextHeight,
+            w: Math.max(1, Math.min(TASK_GRID_MAX_COLUMNS, nextWidth)),
+          }
+        : item
+    ));
+  }
+
+  async function handleMoveGridWidget(widgetId: string, direction: "up" | "down") {
+    await updateGridLayout((current) => moveTaskGridItem(current, widgetId, direction));
+  }
+
+  async function handleDropGridWidget(targetWidgetId: string) {
+    if (!draggedGridWidgetId || draggedGridWidgetId === targetWidgetId) {
+      return;
+    }
+
+    const draggedId = draggedGridWidgetId;
+    setDraggedGridWidgetId(null);
+    await updateGridLayout((current) => reorderTaskGridItems(current, draggedId, targetWidgetId));
+  }
+
+  async function handleRemoveGridWidget(widgetId: string) {
+    setSelectedGridWidgetId((current) => (current === widgetId ? null : current));
+    await updateGridLayout((current) => current.filter((item) => item.id !== widgetId));
+  }
+
+  async function handleAddGridWidget(widgetType: TaskGridWidgetType) {
+    if (taskGridLayout.some((item) => item.type === widgetType)) {
+      return;
+    }
+
+    const nextWidget = buildTaskGridWidget(widgetType);
+    setSelectedGridWidgetId(nextWidget.id);
+    await updateGridLayout((current) => [...current, nextWidget]);
+  }
+
+  function openFocusPlanner() {
+    setFocusPlannerStep(0);
+    setFocusDraftIds(focusedTaskIds);
+    setShowFocusPlanner(true);
+  }
+
+  function scrollToTaskElement(elementId: string) {
+    if (typeof document === "undefined") {
+      return;
+    }
+    document.getElementById(elementId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   async function addTask(task: TaskDraft) {
     const { error } = await client.from("adhdice_clean_tasks").insert({
@@ -1117,62 +1491,237 @@ export function TaskApp() {
           />
         ) : activePage === "Tasks" ? (
           <>
+            {showFocusPlanner ? (
+              <FocusPlannerModal
+                draftIds={focusDraftIds}
+                lightMode={lightMode}
+                onClose={() => setShowFocusPlanner(false)}
+                onFinish={() => {
+                  void saveFocusSelection(focusDraftIds);
+                  setShowFocusPlanner(false);
+                  setMessage({
+                    tone: "good",
+                    text: focusDraftIds.length === 0
+                      ? "Focus list cleared for today."
+                      : hasFocusedToday
+                        ? "Focus list updated."
+                        : "Focus list set for today.",
+                  });
+                }}
+                onSetDraftIds={setFocusDraftIds}
+                onStepChange={setFocusPlannerStep}
+                step={focusPlannerStep}
+                tasks={activeTasks}
+              />
+            ) : null}
+            {isMomentumListOpen ? (
+              <MomentumTaskModal
+                doneTasks={momentumMetric.doneTasks}
+                lightMode={lightMode}
+                onClose={() => setIsMomentumListOpen(false)}
+                remainingTasks={momentumMetric.remainingTasks}
+                title={momentumMetric.label}
+              />
+            ) : null}
             <TaskHero
+              actionLabel={hasFocusedToday ? "Refocus" : "Focus"}
               activeCount={activeTasks.length}
               lightMode={lightMode}
-              momentumPercent={momentumPercent}
-              overdueCount={overdueTasks.length}
+              metric={momentumMetric}
+              onCycleMomentum={() => setMomentumView(getNextMomentumView(momentumView))}
+              onOpenFocusPlanner={openFocusPlanner}
+              onOpenMomentumDetails={() => setIsMomentumListOpen(true)}
               todayCount={todayTasks.length}
             />
 
             <div className="mt-6">
-              <ControlBar lightMode={lightMode} />
-              <FilterRows lightMode={lightMode} />
+              <ControlBar
+                lightMode={lightMode}
+                onOpenComposer={() => scrollToTaskElement("task-composer-card")}
+                onOpenImport={() => scrollToTaskElement("task-import-panel")}
+                onSearchChange={(search) => setTaskUiState((prev) => ({ ...prev, search }))}
+                onViewChange={(view) => setTaskUiState((prev) => ({ ...prev, view }))}
+                search={taskUiState.search}
+                view={taskUiState.view}
+              />
+              <FilterRows
+                activeCount={activeTasks.length}
+                doneCount={doneTasks.length}
+                focusedCount={focusedTasks.length}
+                lightMode={lightMode}
+                matchAny={taskUiState.matchAny}
+                onToggleEnergy={(energy) =>
+                  setTaskUiState((prev) => ({
+                    ...prev,
+                    energyFilters: prev.energyFilters.includes(energy)
+                      ? prev.energyFilters.filter((value) => value !== energy)
+                      : [...prev.energyFilters, energy],
+                  }))
+                }
+                onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
+                onToggleQuickFilter={(filter) =>
+                  setTaskUiState((prev) => ({
+                    ...prev,
+                    quickFilters: prev.quickFilters.includes(filter)
+                      ? prev.quickFilters.filter((value) => value !== filter)
+                      : [...prev.quickFilters, filter],
+                  }))
+                }
+                overdueCount={overdueTasks.length}
+                selectedEnergies={taskUiState.energyFilters}
+                selectedQuickFilters={taskUiState.quickFilters}
+                todayCount={todayTasks.length}
+              />
             </div>
 
-            <div className="mt-7 grid gap-5 xl:grid-cols-[1.45fr_1.1fr_0.9fr]">
-              <UrgentTasksPanel
+            {taskUiState.view === "grid" ? (
+              <TaskGridView
+                activeCount={filteredActiveTasks.length}
+                currentColumns={gridColumns}
+                doneCount={filteredDoneTasks.length}
+                draggedWidgetId={draggedGridWidgetId}
+                focusedTaskIds={focusedTaskIds}
+                gridLayout={taskGridLayout}
+                isEditMode={isGridEditMode}
                 lightMode={lightMode}
-                tasks={urgentTasks}
+                message={message}
+                missingWidgetTypes={missingGridWidgetTypes}
+                onAddTask={addTask}
+                onAddWidget={(widgetType) => {
+                  void handleAddGridWidget(widgetType);
+                }}
+                onImportTasks={importTasks}
+                onMoveWidget={(widgetId, direction) => {
+                  void handleMoveGridWidget(widgetId, direction);
+                }}
+                onRemoveWidget={(widgetId) => {
+                  void handleRemoveGridWidget(widgetId);
+                }}
+                onReorderWidget={(targetWidgetId) => {
+                  void handleDropGridWidget(targetWidgetId);
+                }}
+                onResizeWidget={(widgetId, nextWidth, nextHeight) => {
+                  void handleResizeGridWidget(widgetId, nextWidth, nextHeight);
+                }}
+                onSelectWidget={setSelectedGridWidgetId}
+                onSetDraggedWidget={setDraggedGridWidgetId}
+                onToggleEditMode={() => {
+                  setIsGridEditMode((prev) => !prev);
+                  setSelectedGridWidgetId(null);
+                  setDraggedGridWidgetId(null);
+                }}
+                onToggleTask={(task) =>
+                  updateTask(task.id, {
+                    status: "done",
+                    completed_at: new Date().toISOString(),
+                  })
+                }
+                overdueCount={filteredUrgentTasks.length}
+                selectedWidget={selectedGridWidget}
+                tasksByWidget={{
+                  activeQueue: filteredActiveTasks,
+                  completed: filteredDoneTasks,
+                  dueToday: filteredTodayTasks,
+                  focusToday: filteredFocusTasks,
+                  urgent: filteredUrgentTasks,
+                }}
+              />
+            ) : taskUiState.view === "matrix" ? (
+              <TaskMatrixView
+                lightMode={lightMode}
                 onToggle={(task) =>
                   updateTask(task.id, {
                     status: "done",
                     completed_at: new Date().toISOString(),
                   })
                 }
+                tasks={filteredActiveTasks}
               />
-              <TaskComposerCard lightMode={lightMode} onAdd={addTask} />
-              <SupportPanel
-                doneCount={doneTasks.length}
+            ) : taskUiState.view === "cards" ? (
+              <TaskCardGallery
+                focusedTaskIds={focusedTaskIds}
                 lightMode={lightMode}
-                lowEnergyTasks={lowEnergyTasks}
-                message={message}
-                onImport={importTasks}
+                onToggle={(task) =>
+                  updateTask(task.id, {
+                    status: "done",
+                    completed_at: new Date().toISOString(),
+                  })
+                }
+                tasks={filteredTasks}
               />
-            </div>
+            ) : (
+              <>
+                <div className="mt-7 grid gap-5 xl:grid-cols-[1.45fr_1.1fr_0.9fr]">
+                  <UrgentTasksPanel
+                    focusedTaskIds={focusedTaskIds}
+                    lightMode={lightMode}
+                    tasks={filteredUrgentTasks}
+                    onToggle={(task) =>
+                      updateTask(task.id, {
+                        status: "done",
+                        completed_at: new Date().toISOString(),
+                      })
+                    }
+                  />
+                  <div className="grid gap-5">
+                    <div id="task-composer-card">
+                      <TaskComposerCard lightMode={lightMode} onAdd={addTask} />
+                    </div>
+                    <TaskLane
+                      count={filteredFocusTasks.length}
+                      defaultExpanded
+                      lightMode={lightMode}
+                      title="Focus Today"
+                      tasks={filteredFocusTasks}
+                      tone="purple"
+                    />
+                  </div>
+                  <div id="task-import-panel">
+                    <SupportPanel
+                      doneCount={filteredDoneTasks.length}
+                      lightMode={lightMode}
+                      lowEnergyTasks={filteredLowEnergyTasks}
+                      message={message}
+                      onImport={importTasks}
+                    />
+                  </div>
+                </div>
 
-            <div className="mt-5 grid gap-5 xl:grid-cols-[1.2fr_1.2fr_0.8fr]">
-              <TaskLane
-                count={todayTasks.length}
-                lightMode={lightMode}
-                title="In Progress"
-                tasks={activeTasks.slice(0, 4)}
-                tone="purple"
-              />
-              <TaskLane
-                count={highPriorityTasks.length}
-                lightMode={lightMode}
-                title="One Step At A Time"
-                tasks={activeTasks.slice(4, 8)}
-                tone="soft"
-              />
-              <FocusStatsCard
-                activeCount={activeTasks.length}
-                doneCount={doneTasks.length}
-                lightMode={lightMode}
-                overdueCount={overdueTasks.length}
-              />
-            </div>
+                <div className="mt-5 grid gap-5 xl:grid-cols-[1.2fr_1.2fr_0.8fr]">
+                  <TaskLane
+                    count={filteredTodayTasks.length}
+                    lightMode={lightMode}
+                    title="Due Today"
+                    tasks={filteredTodayTasks}
+                    tone="purple"
+                  />
+                  <TaskLane
+                    count={filteredHighPriorityTasks.length}
+                    lightMode={lightMode}
+                    title="Active Queue"
+                    tasks={filteredActiveTasks.slice(0, 8)}
+                    tone="soft"
+                  />
+                  <FocusStatsCard
+                    activeCount={filteredActiveTasks.length}
+                    doneCount={filteredDoneTasks.length}
+                    lightMode={lightMode}
+                    overdueCount={filteredUrgentTasks.length}
+                  />
+                </div>
+                {filteredDoneTasks.length > 0 ? (
+                  <div className="mt-5">
+                    <TaskLane
+                      count={filteredDoneTasks.length}
+                      lightMode={lightMode}
+                      title="Completed"
+                      tasks={filteredDoneTasks}
+                      tone="soft"
+                    />
+                  </div>
+                ) : null}
+              </>
+            )}
           </>
         ) : activePage === "Focus" ? (
           <FocusPage
@@ -1211,6 +1760,20 @@ export function TaskApp() {
         lightMode={lightMode}
         onNavigate={setActivePage}
       />
+      {showBackToTop ? (
+        <button
+          aria-label="Back to top"
+          className={`fixed bottom-28 right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full shadow-[0_18px_40px_rgba(81,61,168,0.24)] transition hover:-translate-y-0.5 sm:bottom-8 sm:right-8 ${
+            lightMode
+              ? "bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] text-white"
+              : "bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] text-[#171127]"
+          }`}
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          type="button"
+        >
+          <ArrowUp className="h-6 w-6" />
+        </button>
+      ) : null}
     </main>
   );
 }
@@ -1905,7 +2468,8 @@ function ThemeToggle({
     <div className={`inline-flex rounded-full p-1 ${lightMode ? "bg-[#f1ecff]" : "bg-white/10"}`}>
       {(["light", "dark"] as ThemeMode[]).map((mode) => (
         <button
-          className={`rounded-full px-4 py-2 text-sm font-semibold capitalize transition ${
+          aria-label={`Switch to ${mode} mode`}
+          className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
             theme === mode
               ? lightMode
                 ? "bg-white text-[#221d4e] shadow-sm"
@@ -1918,7 +2482,21 @@ function ThemeToggle({
           onClick={() => onThemeChange(mode)}
           type="button"
         >
-          {mode}
+          {mode === "light" ? (
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="2" />
+              <path
+                d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeWidth="2"
+              />
+            </svg>
+          ) : (
+            <svg aria-hidden="true" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M20.742 13.045A8.088 8.088 0 0 1 10.955 3.258a.75.75 0 0 0-.822-1.078A9.589 9.589 0 1 0 21.82 13.867a.75.75 0 0 0-1.078-.822Z" />
+            </svg>
+          )}
         </button>
       ))}
     </div>
@@ -1967,18 +2545,59 @@ function MiniStat({
 }
 
 function TaskHero({
+  actionLabel,
   activeCount,
   lightMode,
-  momentumPercent,
-  overdueCount,
+  metric,
+  onCycleMomentum,
+  onOpenFocusPlanner,
+  onOpenMomentumDetails,
   todayCount,
 }: {
+  actionLabel: string;
   activeCount: number;
   lightMode: boolean;
-  momentumPercent: number;
-  overdueCount: number;
+  metric: {
+    doneTasks: Task[];
+    label: string;
+    percent: number;
+    remainingTasks: Task[];
+    summary: string;
+    totalCount: number;
+  };
+  onCycleMomentum: () => void;
+  onOpenFocusPlanner: () => void;
+  onOpenMomentumDetails: () => void;
   todayCount: number;
 }) {
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
+  const clearLongPress = () => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleMomentumPressStart = () => {
+    clearLongPress();
+    longPressTriggeredRef.current = false;
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      onOpenMomentumDetails();
+    }, 450);
+  };
+
+  const handleMomentumPressEnd = () => {
+    const triggered = longPressTriggeredRef.current;
+    clearLongPress();
+    if (!triggered) {
+      onCycleMomentum();
+    }
+    longPressTriggeredRef.current = false;
+  };
+
   return (
     <section className="pt-8 w-full flex flex-col items-center text-center">
       <div className="flex flex-col items-center gap-4">
@@ -2000,34 +2619,43 @@ function TaskHero({
             ? "bg-[linear-gradient(90deg,#8f6df8_0%,#7359f5_100%)] text-white"
             : "bg-[linear-gradient(90deg,#b39dff_0%,#7d68f8_100%)] text-[#171127]"
         }`}
+        onClick={onOpenFocusPlanner}
         type="button"
       >
-        Refocus
+        {actionLabel}
       </button>
 
       <div className="mt-4 w-full flex flex-col justify-center gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <p className={`text-xl font-bold ${lightMode ? "text-[#1e2642]" : "text-white"}`}>Urgent Momentum</p>
+              <p className={`text-xl font-bold ${lightMode ? "text-[#1e2642]" : "text-white"}`}>{metric.label}</p>
               <span className={`rounded-full px-2 py-1 text-xs font-semibold ${lightMode ? "bg-[#ffe3ea] text-[#f05566]" : "bg-[#472436] text-[#ff9aac]"}`}>
-                {momentumPercent}%
+                {metric.percent}%
               </span>
             </div>
-            <p className={`text-lg font-bold ${lightMode ? "text-[#58637f]" : "text-white/65"}`}>
-              {overdueCount} / {activeCount} urgent done
+            <p className={`text-right text-sm font-bold sm:text-lg ${lightMode ? "text-[#58637f]" : "text-white/65"}`}>
+              {metric.summary}
             </p>
           </div>
-          <div className={`h-4 overflow-hidden rounded-full ${lightMode ? "bg-[#eceffa]" : "bg-white/8"}`}>
+          <button
+            className={`block h-4 w-full overflow-hidden rounded-full ${lightMode ? "bg-[#eceffa]" : "bg-white/8"}`}
+            onPointerCancel={clearLongPress}
+            onPointerDown={handleMomentumPressStart}
+            onPointerLeave={clearLongPress}
+            onPointerUp={handleMomentumPressEnd}
+            type="button"
+          >
             <div
               className={`h-full rounded-full ${lightMode ? "bg-[linear-gradient(90deg,#c5b4ff_0%,#7f6af7_100%)]" : "bg-[linear-gradient(90deg,#cabfff_0%,#8e79ff_100%)]"}`}
-              style={{ width: `${Math.max(momentumPercent, 10)}%` }}
+              style={{ width: `${Math.max(metric.percent, 10)}%` }}
             />
-          </div>
+          </button>
         </div>
         <div className="flex flex-wrap justify-center gap-3">
           <HeroMetaCard lightMode={lightMode} label="Today" value={todayCount} />
-          <HeroMetaCard lightMode={lightMode} label="Urgent" value={overdueCount} />
+          <HeroMetaCard lightMode={lightMode} label="In Play" value={activeCount} />
+          <HeroMetaCard lightMode={lightMode} label="Tracked" value={metric.totalCount} />
         </div>
       </div>
 
@@ -2079,21 +2707,61 @@ function HeroMetaCard({
   );
 }
 
-function ControlBar({ lightMode }: { lightMode: boolean }) {
-  const chipBase = lightMode ? "bg-white text-[#27304c] shadow-[0_10px_28px_rgba(81,61,168,0.08)]" : "bg-white/8 text-white";
-
+function ControlBar({
+  lightMode,
+  onOpenComposer,
+  onOpenImport,
+  onSearchChange,
+  onViewChange,
+  search,
+  view,
+}: {
+  lightMode: boolean;
+  onOpenComposer: () => void;
+  onOpenImport: () => void;
+  onSearchChange: (search: string) => void;
+  onViewChange: (view: TaskViewMode) => void;
+  search: string;
+  view: TaskViewMode;
+}) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <button className={`rounded-full px-5 py-3 text-lg font-semibold ${chipBase}`} type="button">List</button>
-      <button className={`grid h-12 w-12 place-items-center rounded-full text-lg ${chipBase}`} type="button">?</button>
-      <button className={`grid h-12 w-12 place-items-center rounded-full text-lg ${chipBase}`} type="button">=</button>
-      <button className={`grid h-12 w-12 place-items-center rounded-full text-lg ${chipBase}`} type="button">^</button>
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+      <label className={`flex min-w-0 flex-1 items-center gap-3 rounded-[1.4rem] px-4 py-3 ${lightMode ? "bg-white shadow-[0_10px_28px_rgba(81,61,168,0.08)]" : "bg-white/8"}`}>
+        <Search className={`h-5 w-5 shrink-0 ${lightMode ? "text-[#6f57f6]" : "text-[#c9bbff]"}`} />
+        <input
+          className={`min-w-0 flex-1 bg-transparent text-base outline-none ${lightMode ? "text-[#27304c] placeholder:text-[#97a0b9]" : "text-white placeholder:text-white/35"}`}
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder="Search tasks..."
+          value={search}
+        />
+      </label>
+      <label className={`flex items-center gap-3 rounded-[1.4rem] px-4 py-3 ${lightMode ? "bg-white shadow-[0_10px_28px_rgba(81,61,168,0.08)]" : "bg-white/8"}`}>
+        <span className={`text-sm font-semibold ${lightMode ? "text-[#6b738f]" : "text-white/60"}`}>View</span>
+        <select
+          className={`bg-transparent text-base font-semibold outline-none ${lightMode ? "text-[#27304c]" : "text-white"}`}
+          onChange={(event) => onViewChange(event.target.value as TaskViewMode)}
+          value={view}
+        >
+          <option value="list">List</option>
+          <option value="cards">Cards</option>
+          <option value="matrix">Matrix</option>
+          <option value="grid">Grid</option>
+        </select>
+      </label>
       <button
-        className={`rounded-full px-6 py-3 text-lg font-semibold ${
+        className={`rounded-full px-5 py-3 text-base font-semibold ${lightMode ? "bg-white text-[#27304c] shadow-[0_10px_28px_rgba(81,61,168,0.08)]" : "bg-white/8 text-white"}`}
+        onClick={onOpenImport}
+        type="button"
+      >
+        Import
+      </button>
+      <button
+        className={`rounded-full px-6 py-3 text-base font-semibold ${
           lightMode
             ? "bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)]"
             : "bg-[#c9bbff] text-[#1a1431]"
         }`}
+        onClick={onOpenComposer}
         type="button"
       >
         + New
@@ -2102,40 +2770,72 @@ function ControlBar({ lightMode }: { lightMode: boolean }) {
   );
 }
 
-function FilterRows({ lightMode }: { lightMode: boolean }) {
+function FilterRows({
+  activeCount,
+  doneCount,
+  focusedCount,
+  lightMode,
+  matchAny,
+  onToggleEnergy,
+  onToggleMatchMode,
+  onToggleQuickFilter,
+  overdueCount,
+  selectedEnergies,
+  selectedQuickFilters,
+  todayCount,
+}: {
+  activeCount: number;
+  doneCount: number;
+  focusedCount: number;
+  lightMode: boolean;
+  matchAny: boolean;
+  onToggleEnergy: (energy: TaskEnergy) => void;
+  onToggleMatchMode: () => void;
+  onToggleQuickFilter: (filter: TaskQuickFilter) => void;
+  overdueCount: number;
+  selectedEnergies: TaskEnergy[];
+  selectedQuickFilters: TaskQuickFilter[];
+  todayCount: number;
+}) {
   return (
     <div className="mt-5 space-y-3">
       <div className="flex flex-wrap gap-3">
-        <FilterChip count={3} lightMode={lightMode} tone="purple">In Progress</FilterChip>
-        <FilterChip count={3} lightMode={lightMode} tone="orange">Pending</FilterChip>
-        <FilterChip count={133} lightMode={lightMode} tone="red">Missed</FilterChip>
-        <FilterChip count={128} lightMode={lightMode} tone="neutral">Missed Streak</FilterChip>
-        <FilterChip count={10} lightMode={lightMode} tone="purple">One &amp; Done</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("active")} count={activeCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("active")} tone="purple">Active</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("today")} count={todayCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("today")} tone="orange">Due Today</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("urgent")} count={overdueCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("urgent")} tone="red">Urgent</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("focused")} count={focusedCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("focused")} tone="purple">Focused</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("done")} count={doneCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("done")} tone="neutral">Done</FilterChip>
       </div>
       <div className="flex flex-wrap gap-3">
-        <Pill lightMode={lightMode} selected>Untagged</Pill>
-        <Pill lightMode={lightMode} selected>Tags</Pill>
-      </div>
-      <div className="flex flex-wrap gap-3">
-        <Pill lightMode={lightMode}>OR</Pill>
-        <Pill lightMode={lightMode}>Low</Pill>
-        <Pill lightMode={lightMode}>Medium</Pill>
-        <Pill lightMode={lightMode}>High</Pill>
-        <Pill lightMode={lightMode}>No Energy</Pill>
+        <Pill lightMode={lightMode} onClick={onToggleMatchMode} selected>{matchAny ? "OR" : "AND"}</Pill>
+        {energyOptions.map((energy) => (
+          <Pill
+            key={energy}
+            lightMode={lightMode}
+            onClick={() => onToggleEnergy(energy)}
+            selected={selectedEnergies.includes(energy)}
+          >
+            {energy}
+          </Pill>
+        ))}
       </div>
     </div>
   );
 }
 
 function FilterChip({
+  active,
   children,
   count,
   lightMode,
+  onClick,
   tone,
 }: {
+  active?: boolean;
   children: React.ReactNode;
   count: number;
   lightMode: boolean;
+  onClick?: () => void;
   tone: FilterChipTone;
 }) {
   const className = tone === "purple"
@@ -2155,24 +2855,30 @@ function FilterChip({
           : "border-white/10 bg-white/6 text-white/75";
 
   return (
-    <span className={`rounded-full border px-4 py-2 text-lg font-semibold ${className}`}>
+    <button
+      className={`rounded-full border px-4 py-2 text-base font-semibold transition ${active ? "ring-2 ring-[#6f57f6]/35" : ""} ${className}`}
+      onClick={onClick}
+      type="button"
+    >
       {children} <span className="opacity-70">{count}</span>
-    </span>
+    </button>
   );
 }
 
 function Pill({
   children,
   lightMode,
+  onClick,
   selected,
 }: {
   children: React.ReactNode;
   lightMode: boolean;
+  onClick?: () => void;
   selected?: boolean;
 }) {
   return (
-    <span
-      className={`rounded-full px-4 py-2 text-lg font-semibold ${
+    <button
+      className={`rounded-full px-4 py-2 text-base font-semibold ${
         selected
           ? lightMode
             ? "bg-[#f4efff] text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.08)]"
@@ -2181,24 +2887,439 @@ function Pill({
             ? "bg-white text-[#5c647d] shadow-[0_10px_24px_rgba(81,61,168,0.05)]"
             : "bg-white/8 text-white/70"
       }`}
+      onClick={onClick}
+      type="button"
     >
       {children}
-    </span>
+    </button>
+  );
+}
+
+function TaskGridView({
+  activeCount,
+  currentColumns,
+  doneCount,
+  draggedWidgetId,
+  focusedTaskIds,
+  gridLayout,
+  isEditMode,
+  lightMode,
+  message,
+  missingWidgetTypes,
+  onAddTask,
+  onAddWidget,
+  onImportTasks,
+  onMoveWidget,
+  onRemoveWidget,
+  onReorderWidget,
+  onResizeWidget,
+  onSelectWidget,
+  onSetDraggedWidget,
+  onToggleEditMode,
+  onToggleTask,
+  overdueCount,
+  selectedWidget,
+  tasksByWidget,
+}: {
+  activeCount: number;
+  currentColumns: number;
+  doneCount: number;
+  draggedWidgetId: string | null;
+  focusedTaskIds: string[];
+  gridLayout: TaskGridItem[];
+  isEditMode: boolean;
+  lightMode: boolean;
+  message: Message | null;
+  missingWidgetTypes: TaskGridWidgetType[];
+  onAddTask: (task: TaskDraft) => Promise<void>;
+  onAddWidget: (widgetType: TaskGridWidgetType) => void;
+  onImportTasks: (lines: string[]) => Promise<void>;
+  onMoveWidget: (widgetId: string, direction: "up" | "down") => void;
+  onRemoveWidget: (widgetId: string) => void;
+  onReorderWidget: (targetWidgetId: string) => void;
+  onResizeWidget: (widgetId: string, nextWidth: number, nextHeight: number) => void;
+  onSelectWidget: (widgetId: string | null) => void;
+  onSetDraggedWidget: (widgetId: string | null) => void;
+  onToggleEditMode: () => void;
+  onToggleTask: (task: Task) => void;
+  overdueCount: number;
+  selectedWidget: TaskGridItem | null;
+  tasksByWidget: {
+    activeQueue: Task[];
+    completed: Task[];
+    dueToday: Task[];
+    focusToday: Task[];
+    urgent: Task[];
+  };
+}) {
+  const widthPresets = getTaskGridWidthPresets(currentColumns);
+  const heightPresets = getTaskGridHeightPresets();
+  const presentWidgetTypes = new Set(gridLayout.map((item) => item.type));
+  const allWidgetTypes = Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[];
+
+  return (
+    <section className="mt-7 space-y-4">
+      <div className={`rounded-[1.7rem] border p-4 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_16px_40px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className={`text-xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+              Grid View
+            </h2>
+            <p className={`mt-1 text-sm ${lightMode ? "text-[#78829c]" : "text-white/55"}`}>
+              A modular tasks layout that keeps mobile in sync with desktop.
+            </p>
+          </div>
+          <button
+            className={`rounded-full px-5 py-3 text-sm font-semibold ${isEditMode
+              ? lightMode
+                ? "bg-[#6f57f6] text-white"
+                : "bg-[#cabfff] text-[#1a1431]"
+              : lightMode
+                ? "bg-[#f3efff] text-[#6f57f6]"
+                : "bg-[#22193f] text-[#cabfff]"}`}
+            onClick={onToggleEditMode}
+            type="button"
+          >
+            {isEditMode ? "Done Editing" : "Edit Layout"}
+          </button>
+        </div>
+
+        {isEditMode ? (
+          <div className="mt-4 space-y-3">
+            <div className={`rounded-[1.25rem] px-4 py-3 text-sm ${lightMode ? "bg-[#faf7ff] text-[#6b738f]" : "bg-white/[0.04] text-white/65"}`}>
+              Tap a widget to select it. Each widget also shows a visible delete button while editing. Drag to reorder on desktop, or use move controls anywhere. On mobile, width presets map to the current column count automatically.
+            </div>
+
+            <div className={`rounded-[1.25rem] border p-4 ${lightMode ? "border-[#e9e1ff] bg-[#fcfbff]" : "border-white/10 bg-white/[0.04]"}`}>
+              <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>Add Widgets</p>
+              <p className={`mt-1 text-sm ${lightMode ? "text-[#6b738f]" : "text-white/60"}`}>
+                Turn sections on and off here. This list always shows every widget, whether it is currently on the grid or not.
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {allWidgetTypes.map((widgetType) => {
+                  const isPresent = presentWidgetTypes.has(widgetType);
+                  const existingWidget = gridLayout.find((item) => item.type === widgetType) ?? null;
+
+                  return (
+                    <div
+                      className={`flex items-center justify-between gap-3 rounded-[1rem] px-3 py-3 ${lightMode ? "bg-white shadow-[0_8px_20px_rgba(81,61,168,0.05)]" : "bg-white/[0.04]"}`}
+                      key={widgetType}
+                    >
+                      <div className="min-w-0">
+                        <p className={`truncate text-sm font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}>
+                          {TASK_GRID_WIDGET_LABELS[widgetType]}
+                        </p>
+                        <p className={`mt-0.5 text-xs ${lightMode ? "text-[#8a93aa]" : "text-white/45"}`}>
+                          {isPresent ? "On grid" : "Hidden"}
+                        </p>
+                      </div>
+                      {isPresent && existingWidget ? (
+                        <button
+                          className={`shrink-0 rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#fff1f3] text-[#f05566]" : "bg-[#44232f] text-[#ff9eaf]"}`}
+                          onClick={() => onRemoveWidget(existingWidget.id)}
+                          type="button"
+                        >
+                          Remove
+                        </button>
+                      ) : (
+                        <button
+                          className={`shrink-0 rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#edf2ff] text-[#4a5fd3]" : "bg-[#182138] text-[#a7b8ff]"}`}
+                          onClick={() => onAddWidget(widgetType)}
+                          type="button"
+                        >
+                          <Plus className="mr-1 inline h-3.5 w-3.5" />
+                          Add
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {selectedWidget ? (
+              <div className={`rounded-[1.3rem] border p-4 ${lightMode ? "border-[#e7ddff] bg-[#fcfbff]" : "border-white/10 bg-white/[0.04]"}`}>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>Selected Widget</p>
+                    <p className={`mt-1 text-lg font-bold ${lightMode ? "text-[#27304c]" : "text-white"}`}>{TASK_GRID_WIDGET_LABELS[selectedWidget.type]}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+                      onClick={() => onMoveWidget(selectedWidget.id, "up")}
+                      type="button"
+                    >
+                      Move Up
+                    </button>
+                    <button
+                      className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+                      onClick={() => onMoveWidget(selectedWidget.id, "down")}
+                      type="button"
+                    >
+                      Move Down
+                    </button>
+                    <button
+                      className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[#fff1f3] text-[#f05566]" : "bg-[#44232f] text-[#ff9eaf]"}`}
+                      onClick={() => onRemoveWidget(selectedWidget.id)}
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-col gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    {widthPresets.map((preset) => (
+                      <button
+                        className={`rounded-full px-4 py-2 text-sm font-semibold ${Math.min(selectedWidget.w, currentColumns) === preset.width
+                          ? lightMode
+                            ? "bg-[#6f57f6] text-white"
+                            : "bg-[#cabfff] text-[#1a1431]"
+                          : lightMode
+                            ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]"
+                            : "bg-white/8 text-white/75"}`}
+                        key={preset.label}
+                        onClick={() => onResizeWidget(selectedWidget.id, preset.width, selectedWidget.h)}
+                        type="button"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {heightPresets.map((preset) => (
+                      <button
+                        className={`rounded-full px-4 py-2 text-sm font-semibold ${selectedWidget.h === preset.height
+                          ? lightMode
+                            ? "bg-[#6f57f6] text-white"
+                            : "bg-[#cabfff] text-[#1a1431]"
+                          : lightMode
+                            ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]"
+                            : "bg-white/8 text-white/75"}`}
+                        key={preset.label}
+                        onClick={() => onResizeWidget(selectedWidget.id, selectedWidget.w, preset.height)}
+                        type="button"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className={`rounded-[1.25rem] border border-dashed px-4 py-4 text-sm ${lightMode ? "border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0]" : "border-white/10 bg-white/[0.03] text-white/55"}`}>
+                Tap any widget card below to resize it, move it, or remove it.
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      {gridLayout.length === 0 ? (
+        <div className={`rounded-[1.8rem] border border-dashed p-8 text-center ${lightMode ? "border-[#dcd2ff] bg-[#faf8ff] text-[#6b738f]" : "border-white/10 bg-white/[0.03] text-white/65"}`}>
+          <p className="text-lg font-bold">Your grid is empty.</p>
+          <p className="mt-2 text-sm">Turn on edit mode and add widgets back in any order you want.</p>
+        </div>
+      ) : null}
+
+      <div
+        className="grid gap-4 md:gap-5"
+        style={{
+          gridAutoRows: `minmax(${TASK_GRID_ROW_HEIGHT}px, auto)`,
+          gridTemplateColumns: `repeat(${currentColumns}, minmax(0, 1fr))`,
+        }}
+      >
+        {gridLayout.map((item) => (
+          <TaskGridWidgetShell
+            currentColumns={currentColumns}
+            draggedWidgetId={draggedWidgetId}
+            isEditMode={isEditMode}
+            item={item}
+            key={item.id}
+            lightMode={lightMode}
+            onDrop={() => onReorderWidget(item.id)}
+            onDragStart={() => onSetDraggedWidget(item.id)}
+            onDragEnd={() => onSetDraggedWidget(null)}
+            onRemove={() => onRemoveWidget(item.id)}
+            onSelect={() => onSelectWidget(item.id)}
+            selected={selectedWidget?.id === item.id}
+          >
+            {item.type === "urgent" ? (
+              <UrgentTasksPanel
+                focusedTaskIds={focusedTaskIds}
+                lightMode={lightMode}
+                onToggle={onToggleTask}
+                tasks={tasksByWidget.urgent}
+              />
+            ) : item.type === "focus_today" ? (
+              <TaskLane
+                count={tasksByWidget.focusToday.length}
+                defaultExpanded
+                lightMode={lightMode}
+                tasks={tasksByWidget.focusToday}
+                title="Focus Today"
+                tone="purple"
+              />
+            ) : item.type === "due_today" ? (
+              <TaskLane
+                count={tasksByWidget.dueToday.length}
+                lightMode={lightMode}
+                tasks={tasksByWidget.dueToday}
+                title="Due Today"
+                tone="purple"
+              />
+            ) : item.type === "active_queue" ? (
+              <TaskLane
+                count={tasksByWidget.activeQueue.length}
+                lightMode={lightMode}
+                tasks={tasksByWidget.activeQueue}
+                title="Active Queue"
+                tone="soft"
+              />
+            ) : item.type === "completed" ? (
+              <TaskLane
+                count={tasksByWidget.completed.length}
+                lightMode={lightMode}
+                tasks={tasksByWidget.completed}
+                title="Completed"
+                tone="soft"
+              />
+            ) : item.type === "quick_capture" ? (
+              <div id="task-composer-card">
+                <TaskComposerCard lightMode={lightMode} onAdd={onAddTask} />
+              </div>
+            ) : item.type === "import" ? (
+              <div id="task-import-panel">
+                <ImportWidgetCard lightMode={lightMode} message={message} onImport={onImportTasks} />
+              </div>
+            ) : (
+              <FocusStatsCard
+                activeCount={activeCount}
+                doneCount={doneCount}
+                lightMode={lightMode}
+                overdueCount={overdueCount}
+              />
+            )}
+          </TaskGridWidgetShell>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TaskGridWidgetShell({
+  children,
+  currentColumns,
+  draggedWidgetId,
+  isEditMode,
+  item,
+  lightMode,
+  onDragEnd,
+  onDragStart,
+  onDrop,
+  onRemove,
+  onSelect,
+  selected,
+}: {
+  children: React.ReactNode;
+  currentColumns: number;
+  draggedWidgetId: string | null;
+  isEditMode: boolean;
+  item: TaskGridItem;
+  lightMode: boolean;
+  onDragEnd: () => void;
+  onDragStart: () => void;
+  onDrop: () => void;
+  onRemove: () => void;
+  onSelect: () => void;
+  selected: boolean;
+}) {
+  const widthSpan = Math.max(1, Math.min(item.w, currentColumns));
+
+  return (
+    <div
+      className={`relative min-w-0 ${isEditMode ? "cursor-grab" : ""} ${draggedWidgetId === item.id ? "opacity-60" : ""}`}
+      draggable={isEditMode}
+      onClick={() => {
+        if (isEditMode) {
+          onSelect();
+        }
+      }}
+      onDragEnd={onDragEnd}
+      onDragOver={(event) => {
+        if (isEditMode) {
+          event.preventDefault();
+        }
+      }}
+      onDragStart={onDragStart}
+      onDrop={(event) => {
+        if (isEditMode) {
+          event.preventDefault();
+          onDrop();
+        }
+      }}
+      style={{
+        gridColumn: currentColumns === TASK_GRID_MAX_COLUMNS
+          ? `${Math.min(item.x + 1, TASK_GRID_MAX_COLUMNS)} / span ${widthSpan}`
+          : `span ${widthSpan} / span ${widthSpan}`,
+        gridRow: currentColumns === TASK_GRID_MAX_COLUMNS
+          ? `${item.y + 1} / span ${item.h}`
+          : `span ${item.h} / span ${item.h}`,
+      }}
+    >
+      {isEditMode ? (
+        <div className={`pointer-events-none absolute inset-0 z-10 rounded-[2rem] border-2 ${selected
+          ? lightMode
+            ? "border-[#6f57f6] shadow-[0_0_0_4px_rgba(111,87,246,0.16)]"
+            : "border-[#cabfff] shadow-[0_0_0_4px_rgba(202,191,255,0.12)]"
+          : lightMode
+            ? "border-[#dcd2ff]"
+            : "border-white/15"}`} />
+      ) : null}
+      {isEditMode ? (
+        <div className={`absolute left-4 top-4 z-20 rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-white text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.12)]" : "bg-[#171328] text-[#cabfff]"}`}>
+          <GripVertical className="mr-1 inline h-3.5 w-3.5" />
+          {TASK_GRID_WIDGET_LABELS[item.type]}
+        </div>
+      ) : null}
+      {isEditMode ? (
+        <button
+          aria-label={`Remove ${TASK_GRID_WIDGET_LABELS[item.type]}`}
+          className={`absolute right-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-full ${lightMode ? "bg-[#fff1f3] text-[#f05566] shadow-[0_10px_24px_rgba(240,85,102,0.12)]" : "bg-[#44232f] text-[#ff9eaf]"}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+          type="button"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      ) : null}
+      <div className={`h-full min-h-0 ${isEditMode ? "pointer-events-none" : ""}`}>{children}</div>
+    </div>
   );
 }
 
 function UrgentTasksPanel({
+  focusedTaskIds,
   lightMode,
   tasks,
   onToggle,
 }: {
+  focusedTaskIds: string[];
   lightMode: boolean;
   tasks: Task[];
   onToggle: (task: Task) => void;
 }) {
+  const DEFAULT_VISIBLE_COUNT = 4;
+  const [isExpanded, setIsExpanded] = useState(false);
+  const visibleTasks = isExpanded ? tasks : tasks.slice(0, DEFAULT_VISIBLE_COUNT);
+  const hiddenCount = Math.max(0, tasks.length - visibleTasks.length);
+
   return (
-    <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
-      <div className="flex items-center justify-between gap-3 border-b pb-4">
+    <section className={`w-full overflow-hidden rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b pb-4">
         <div className="flex items-center gap-3">
           <span className={`h-3 w-3 rounded-full ${lightMode ? "bg-[#f05566]" : "bg-[#ff9eaf]"}`} />
           <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
@@ -2211,13 +3332,16 @@ function UrgentTasksPanel({
       </div>
 
       <div className="mt-5 space-y-5">
-        {tasks.map((task, index) => (
+        {tasks.length === 0 ? (
+          <EmptyTaskState lightMode={lightMode} text="No urgent tasks match the current filters." />
+        ) : null}
+        {visibleTasks.map((task, index) => (
           <article
-            className={`rounded-[1.4rem] border p-4 transition ${lightMode ? "border-[#ede8fb] bg-[#fcfbff]" : "border-white/10 bg-white/[0.04]"}`}
+            className={`w-full overflow-hidden rounded-[1.4rem] border p-4 transition ${lightMode ? "border-[#ede8fb] bg-[#fcfbff]" : "border-white/10 bg-white/[0.04]"}`}
             key={task.id}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-3">
                   <span className={`h-4 w-4 shrink-0 rounded-full ${index < 2 ? "bg-[#f05566]" : "bg-[#12b886]"}`} />
                   <h3 className={`min-w-0 truncate text-[1.55rem] font-semibold ${lightMode ? "text-[#202844]" : "text-white"}`}>
@@ -2225,17 +3349,14 @@ function UrgentTasksPanel({
                   </h3>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <TaskMetaChip lightMode={lightMode} tone="blue">History</TaskMetaChip>
-                  <TaskMetaChip lightMode={lightMode} tone="purple">One Step at a Time</TaskMetaChip>
-                  <TaskMetaChip lightMode={lightMode} tone="green">{task.energy === "low" ? "Low" : "Medium"}</TaskMetaChip>
+                  {focusedTaskIds.includes(task.id) ? <TaskMetaChip lightMode={lightMode} tone="purple">Focus Today</TaskMetaChip> : null}
+                  <TaskMetaChip lightMode={lightMode} tone="neutral">{task.priority} priority</TaskMetaChip>
+                  <TaskMetaChip lightMode={lightMode} tone="green">{task.energy}</TaskMetaChip>
                   <TaskMetaChip lightMode={lightMode} tone="neutral">{formatDueLabel(task.due_on)}</TaskMetaChip>
-                  <TaskMetaChip lightMode={lightMode} tone="neutral">5/14</TaskMetaChip>
-                  <TaskMetaChip lightMode={lightMode} tone="purple">health</TaskMetaChip>
-                  <TaskMetaChip lightMode={lightMode} tone="purple">diet</TaskMetaChip>
                 </div>
               </div>
               <button
-                className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+                className={`w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto sm:shrink-0 ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
                 onClick={() => onToggle(task)}
                 type="button"
               >
@@ -2255,6 +3376,16 @@ function UrgentTasksPanel({
             </ul>
           </article>
         ))}
+        {tasks.length > DEFAULT_VISIBLE_COUNT ? (
+          <button
+            className={`flex w-full items-center justify-center gap-2 rounded-[1.1rem] border px-4 py-3 text-sm font-semibold ${lightMode ? "border-[#e6defb] bg-[#faf7ff] text-[#6f57f6]" : "border-white/10 bg-white/[0.04] text-[#cabfff]"}`}
+            onClick={() => setIsExpanded((prev) => !prev)}
+            type="button"
+          >
+            {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            {isExpanded ? "Show fewer urgent tasks" : `Show ${hiddenCount} more urgent task${hiddenCount === 1 ? "" : "s"}`}
+          </button>
+        ) : null}
       </div>
     </section>
   );
@@ -2396,6 +3527,9 @@ function SupportPanel({
           Low Energy Wins
         </h2>
         <div className="mt-4 space-y-3">
+          {lowEnergyTasks.length === 0 ? (
+            <EmptyTaskState lightMode={lightMode} text="No low-energy tasks match the current filters." />
+          ) : null}
           {lowEnergyTasks.map((task) => (
             <div className={`rounded-[1.25rem] px-4 py-3 ${lightMode ? "bg-[#f8f5ff]" : "bg-white/8"}`} key={task.id}>
               <p className={`text-base font-semibold ${lightMode ? "text-[#26304c]" : "text-white"}`}>{task.title}</p>
@@ -2451,49 +3585,137 @@ function SupportPanel({
   );
 }
 
+function ImportWidgetCard({
+  lightMode,
+  message,
+  onImport,
+}: {
+  lightMode: boolean;
+  message: Message | null;
+  onImport: (lines: string[]) => Promise<void>;
+}) {
+  const [text, setText] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim().replace(/^[-*]\s+/, ""))
+    .filter(Boolean);
+
+  return (
+    <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+      <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+        Import List
+      </h2>
+      <p className={`mt-2 text-sm ${lightMode ? "text-[#78829c]" : "text-white/55"}`}>
+        Paste a rough list and turn it into calm, structured tasks.
+      </p>
+
+      <form
+        className="mt-4 space-y-3"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setIsSubmitting(true);
+          await onImport(lines);
+          setText("");
+          setIsSubmitting(false);
+        }}
+      >
+        <textarea
+          className={`min-h-40 w-full resize-y rounded-[1.25rem] px-4 py-4 text-base outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+          onChange={(event) => setText(event.target.value)}
+          placeholder={"Call dentist\nDrink water\nChoose dinner"}
+          value={text}
+        />
+        <button
+          className={`w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          disabled={lines.length === 0 || isSubmitting}
+          type="submit"
+        >
+          Import {lines.length || ""}
+        </button>
+      </form>
+
+      <p className={`mt-3 text-sm ${lightMode ? "text-[#8c94ac]" : "text-white/45"}`}>
+        {message?.text}
+      </p>
+    </section>
+  );
+}
+
 function TaskLane({
   count,
+  defaultExpanded = false,
   lightMode,
   title,
   tasks,
   tone,
 }: {
   count: number;
+  defaultExpanded?: boolean;
   lightMode: boolean;
   title: string;
   tasks: Task[];
   tone: "purple" | "soft";
 }) {
+  const DEFAULT_VISIBLE_COUNT = 3;
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const visibleTasks = isExpanded ? tasks : tasks.slice(0, DEFAULT_VISIBLE_COUNT);
+  const hiddenCount = Math.max(0, tasks.length - visibleTasks.length);
+
   return (
-    <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
-      <div className="flex items-center justify-between">
+    <section className={`w-full overflow-hidden rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+      <div className="flex min-w-0 items-center justify-between gap-3">
         <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
           {title}
         </h2>
-        <span className={`rounded-full px-3 py-1 text-sm font-bold ${tone === "purple"
-          ? lightMode ? "bg-[#f2edff] text-[#725af6]" : "bg-[#22193f] text-[#cabfff]"
-          : lightMode ? "bg-[#f6f7fb] text-[#6a738d]" : "bg-white/8 text-white/65"}`}>
-          {count}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`shrink-0 rounded-full px-3 py-1 text-sm font-bold ${tone === "purple"
+            ? lightMode ? "bg-[#f2edff] text-[#725af6]" : "bg-[#22193f] text-[#cabfff]"
+            : lightMode ? "bg-[#f6f7fb] text-[#6a738d]" : "bg-white/8 text-white/65"}`}>
+            {count}
+          </span>
+          {tasks.length > DEFAULT_VISIBLE_COUNT ? (
+            <button
+              aria-label={isExpanded ? `Collapse ${title}` : `Expand ${title}`}
+              className={`flex h-9 w-9 items-center justify-center rounded-full ${lightMode ? "bg-[#f6f2ff] text-[#6f57f6]" : "bg-white/8 text-[#cabfff]"}`}
+              onClick={() => setIsExpanded((prev) => !prev)}
+              type="button"
+            >
+              {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="mt-4 space-y-3">
-        {tasks.map((task, index) => (
-          <div className={`rounded-[1.25rem] border px-4 py-3 ${lightMode ? "border-[#efeaf9] bg-[#fdfcff]" : "border-white/10 bg-white/[0.04]"}`} key={task.id}>
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
+        {tasks.length === 0 ? (
+          <EmptyTaskState lightMode={lightMode} text={`No tasks in ${title.toLowerCase()} right now.`} />
+        ) : null}
+        {visibleTasks.map((task, index) => (
+          <div className={`w-full overflow-hidden rounded-[1.25rem] border px-4 py-3 ${lightMode ? "border-[#efeaf9] bg-[#fdfcff]" : "border-white/10 bg-white/[0.04]"}`} key={task.id}>
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
                 <p className={`truncate text-lg font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}>{task.title}</p>
                 <p className={`mt-1 text-sm ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>
                   {formatDueLabel(task.due_on)} / {task.energy} energy / {task.priority} priority
                 </p>
               </div>
-              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${index % 2 === 0
+              <span className={`self-start rounded-full px-3 py-1 text-xs font-semibold sm:shrink-0 ${index % 2 === 0
                 ? lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"
                 : lightMode ? "bg-[#eef9f4] text-[#12a876]" : "bg-[#17362d] text-[#7de4b8]"}`}>
-                {index % 2 === 0 ? "Focus" : "Ready"}
+                {index % 2 === 0 ? "Visible" : "Queued"}
               </span>
             </div>
           </div>
         ))}
+        {tasks.length > DEFAULT_VISIBLE_COUNT ? (
+          <button
+            className={`w-full rounded-[1rem] border px-4 py-3 text-sm font-semibold ${lightMode ? "border-[#e6defb] bg-[#faf7ff] text-[#6f57f6]" : "border-white/10 bg-white/[0.04] text-[#cabfff]"}`}
+            onClick={() => setIsExpanded((prev) => !prev)}
+            type="button"
+          >
+            {isExpanded ? "Show fewer" : `Show ${hiddenCount} more`}
+          </button>
+        ) : null}
       </div>
     </section>
   );
@@ -2517,7 +3739,7 @@ function FocusStatsCard({
   ];
 
   return (
-    <section className={`rounded-[2rem] border p-5 flex flex-col items-center text-center transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+    <section className={`w-full overflow-hidden rounded-[2rem] border p-5 flex flex-col items-center text-center transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
       <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
         Focus Stats
       </h2>
@@ -2537,6 +3759,277 @@ function FocusStatsCard({
         ))}
       </div>
     </section>
+  );
+}
+
+function EmptyTaskState({
+  lightMode,
+  text,
+}: {
+  lightMode: boolean;
+  text: string;
+}) {
+  return (
+    <div className={`rounded-[1.25rem] border border-dashed px-4 py-5 text-sm ${lightMode ? "border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0]" : "border-white/10 bg-white/[0.03] text-white/55"}`}>
+      {text}
+    </div>
+  );
+}
+
+function TaskCardGallery({
+  focusedTaskIds,
+  lightMode,
+  onToggle,
+  tasks,
+}: {
+  focusedTaskIds: string[];
+  lightMode: boolean;
+  onToggle: (task: Task) => void;
+  tasks: Task[];
+}) {
+  return (
+    <section className="mt-7">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {tasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="No tasks match the current filters." /> : null}
+        {tasks.map((task) => (
+          <article
+            className={`w-full overflow-hidden rounded-[1.7rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}
+            key={task.id}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className={`text-xl font-bold ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{task.title}</h3>
+                <p className={`mt-2 text-sm ${lightMode ? "text-[#77829f]" : "text-white/55"}`}>
+                  {formatDueLabel(task.due_on)} · {task.energy} energy
+                </p>
+              </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#f2edff] text-[#725af6]" : "bg-[#22193f] text-[#cabfff]"}`}>
+                {task.priority}
+              </span>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {focusedTaskIds.includes(task.id) ? <TaskMetaChip lightMode={lightMode} tone="purple">Focus Today</TaskMetaChip> : null}
+              <TaskMetaChip lightMode={lightMode} tone={task.energy === "high" ? "blue" : task.energy === "medium" ? "neutral" : "green"}>
+                {task.energy}
+              </TaskMetaChip>
+            </div>
+            <button
+              className={`mt-5 w-full rounded-[1rem] px-4 py-3 text-sm font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+              onClick={() => onToggle(task)}
+              type="button"
+            >
+              {task.status === "done" ? "Completed" : "Mark Done"}
+            </button>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TaskMatrixView({
+  lightMode,
+  onToggle,
+  tasks,
+}: {
+  lightMode: boolean;
+  onToggle: (task: Task) => void;
+  tasks: Task[];
+}) {
+  const cells = [
+    {
+      key: "urgent-high",
+      title: "Urgent + Higher Energy",
+      tasks: tasks.filter((task) => (isOverdue(task.due_on) || task.priority === "high") && task.energy !== "low"),
+    },
+    {
+      key: "urgent-low",
+      title: "Urgent + Low Energy",
+      tasks: tasks.filter((task) => (isOverdue(task.due_on) || task.priority === "high") && task.energy === "low"),
+    },
+    {
+      key: "later-high",
+      title: "Later + Higher Energy",
+      tasks: tasks.filter((task) => !(isOverdue(task.due_on) || task.priority === "high") && task.energy !== "low"),
+    },
+    {
+      key: "later-low",
+      title: "Later + Low Energy",
+      tasks: tasks.filter((task) => !(isOverdue(task.due_on) || task.priority === "high") && task.energy === "low"),
+    },
+  ];
+
+  return (
+    <section className="mt-7 grid gap-4 lg:grid-cols-2">
+      {cells.map((cell) => (
+        <div className={`rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`} key={cell.key}>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className={`text-xl font-black ${lightMode ? "text-[#28304a]" : "text-white"}`}>{cell.title}</h2>
+            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#f2edff] text-[#725af6]" : "bg-[#22193f] text-[#cabfff]"}`}>
+              {cell.tasks.length}
+            </span>
+          </div>
+          <div className="mt-4 space-y-3">
+            {cell.tasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="No tasks in this bucket." /> : null}
+            {cell.tasks.map((task) => (
+              <button
+                className={`flex w-full items-center justify-between rounded-[1.2rem] border px-4 py-3 text-left ${lightMode ? "border-[#efeaf9] bg-[#fdfcff]" : "border-white/10 bg-white/[0.04]"}`}
+                key={task.id}
+                onClick={() => onToggle(task)}
+                type="button"
+              >
+                <div className="min-w-0">
+                  <p className={`truncate text-base font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}>{task.title}</p>
+                  <p className={`mt-1 text-xs ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>{formatDueLabel(task.due_on)} · {task.energy}</p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}>
+                  Done
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function FocusPlannerModal({
+  draftIds,
+  lightMode,
+  onClose,
+  onFinish,
+  onSetDraftIds,
+  onStepChange,
+  step,
+  tasks,
+}: {
+  draftIds: string[];
+  lightMode: boolean;
+  onClose: () => void;
+  onFinish: () => void;
+  onSetDraftIds: (ids: string[]) => void;
+  onStepChange: (step: FocusPlannerStep) => void;
+  step: FocusPlannerStep;
+  tasks: Task[];
+}) {
+  const [search, setSearch] = useState("");
+  const prompts = [
+    "What tasks must be done today?",
+    "What tasks are causing you stress?",
+    "One task if you had nothing else to do?",
+  ] as const;
+  const filtered = tasks.filter((task) => {
+    const matchesSearch = search.trim().length === 0 || task.title.toLowerCase().includes(search.trim().toLowerCase());
+    const matchesStep = step === 0
+      ? isDueToday(task.due_on) || task.priority === "high"
+      : step === 1
+        ? isOverdue(task.due_on) || task.energy === "high"
+        : true;
+    return matchesSearch && matchesStep;
+  });
+
+  return (
+    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`}>
+      <div className="flex items-center justify-between gap-3">
+        <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7b63f7]" : "text-[#c9bbff]"}`}>Step {step + 1} of 3</p>
+        <button className={`text-2xl ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
+      </div>
+      <h2 className={`mt-4 text-3xl font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{prompts[step]}</h2>
+      <label className={`mt-5 flex items-center gap-3 rounded-[1.3rem] px-4 py-3 ${lightMode ? "bg-[#faf8ff]" : "bg-white/8"}`}>
+        <Search className={`h-5 w-5 ${lightMode ? "text-[#7b63f7]" : "text-[#c9bbff]"}`} />
+        <input
+          className={`w-full bg-transparent outline-none ${lightMode ? "text-[#24304b] placeholder:text-[#9aa2bb]" : "text-white placeholder:text-white/35"}`}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search tasks..."
+          value={search}
+        />
+      </label>
+      <div className={`mt-4 max-h-[24rem] overflow-y-auto rounded-[1.5rem] border ${lightMode ? "border-[#ece8f8] bg-[#fcfbff]" : "border-white/10 bg-white/[0.03]"}`}>
+        {filtered.length === 0 ? (
+          <div className="p-4">
+            <EmptyTaskState lightMode={lightMode} text="No tasks match this step yet." />
+          </div>
+        ) : null}
+        {filtered.map((task) => {
+          const checked = draftIds.includes(task.id);
+          return (
+            <label className={`flex cursor-pointer items-center gap-3 border-b px-4 py-4 last:border-b-0 ${lightMode ? "border-[#ece8f8]" : "border-white/10"}`} key={task.id}>
+              <input
+                checked={checked}
+                className="h-5 w-5 rounded"
+                onChange={() => onSetDraftIds(checked ? draftIds.filter((id) => id !== task.id) : [...draftIds, task.id])}
+                type="checkbox"
+              />
+              <div className="min-w-0 flex-1">
+                <p className={`truncate text-lg font-semibold ${lightMode ? "text-[#24304b]" : "text-white"}`}>{task.title}</p>
+                <p className={`mt-1 text-sm ${lightMode ? "text-[#7b84a0]" : "text-white/55"}`}>{formatDueLabel(task.due_on)} · {task.energy} energy · {task.priority} priority</p>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+      <button
+        className={`mt-5 w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+        onClick={() => {
+          if (step === 2) {
+            onFinish();
+            return;
+          }
+          onStepChange((step + 1) as FocusPlannerStep);
+        }}
+        type="button"
+      >
+        {step === 2 ? "Finish" : "Next Question"}
+      </button>
+    </ModalShell>
+  );
+}
+
+function MomentumTaskModal({
+  doneTasks,
+  lightMode,
+  onClose,
+  remainingTasks,
+  title,
+}: {
+  doneTasks: Task[];
+  lightMode: boolean;
+  onClose: () => void;
+  remainingTasks: Task[];
+  title: string;
+}) {
+  return (
+    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`}>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className={`text-2xl font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{title}</h2>
+        <button className={`text-2xl ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
+      </div>
+      <div className="mt-5 grid gap-5 md:grid-cols-2">
+        <section>
+          <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#0e9b74]" : "text-[#6ef0c4]"}`}>Finished</p>
+          <div className="mt-3 space-y-2">
+            {doneTasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="Nothing finished in this group yet." /> : null}
+            {doneTasks.map((task) => (
+              <div className={`rounded-[1rem] px-4 py-3 ${lightMode ? "bg-[#edf9f4] text-[#23423a]" : "bg-[#103c33] text-[#d7fff2]"}`} key={task.id}>
+                {task.title}
+              </div>
+            ))}
+          </div>
+        </section>
+        <section>
+          <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#f05566]" : "text-[#ff9eaf]"}`}>Remaining</p>
+          <div className="mt-3 space-y-2">
+            {remainingTasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="Everything in this group is finished." /> : null}
+            {remainingTasks.map((task) => (
+              <div className={`rounded-[1rem] px-4 py-3 ${lightMode ? "bg-[#fff4f6] text-[#7c3042]" : "bg-[#44232f] text-[#ffd5dc]"}`} key={task.id}>
+                {task.title}
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -3169,6 +4662,28 @@ function buildProfileSnapshot(
   };
 }
 
+function resolveTaskGridLayout(row: DbTaskGridLayout | null) {
+  if (!row) {
+    return TASK_GRID_STARTER_LAYOUT;
+  }
+
+  return normalizeTaskGridLayout(parseTaskGridLayoutJson(row.layout_json));
+}
+
+function mapTaskFocusDayRows(rows: DbTaskFocusDay[], tasks: Task[]) {
+  const validTaskIds = new Set(tasks.map((task) => task.id));
+
+  return rows.reduce<Record<string, string[]>>((accumulator, row) => {
+    const normalizedTaskIds = normalizeTaskFocusIds(row.task_ids, validTaskIds);
+
+    if (normalizedTaskIds.length > 0) {
+      accumulator[row.focus_date] = normalizedTaskIds;
+    }
+
+    return accumulator;
+  }, {});
+}
+
 async function migrateLocalFocusState(
   supabase: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>,
   user: User,
@@ -3298,6 +4813,46 @@ async function migrateLocalFocusState(
   return true;
 }
 
+async function migrateLocalTaskFocusDays(
+  supabase: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>,
+  user: User,
+) {
+  const storedSelections = parseStoredJson<Record<string, string[]>>(
+    getUserScopedStorageKey(TASK_FOCUS_STORAGE_KEY, user.id),
+    {},
+  );
+
+  const payload = Object.entries(storedSelections)
+    .map(([focusDate, taskIds]) => {
+      const normalizedTaskIds = normalizeTaskFocusIds(taskIds);
+
+      if (!isValidDateKey(focusDate) || normalizedTaskIds.length === 0) {
+        return null;
+      }
+
+      return {
+        user_id: user.id,
+        focus_date: focusDate,
+        task_ids: normalizedTaskIds,
+      };
+    })
+    .filter((entry): entry is {
+      user_id: string;
+      focus_date: string;
+      task_ids: string[];
+    } => entry !== null);
+
+  if (payload.length === 0) {
+    return false;
+  }
+
+  const { error } = await supabase
+    .from("adhdice_task_focus_days")
+    .upsert(payload, { onConflict: "user_id,focus_date" });
+
+  return !error;
+}
+
 function parseStoredJson<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") {
     return fallback;
@@ -3316,8 +4871,265 @@ function parseStoredJson<T>(key: string, fallback: T): T {
   }
 }
 
+function parseTaskGridLayoutJson(layoutJson: string | null | undefined) {
+  if (!layoutJson) {
+    return TASK_GRID_STARTER_LAYOUT;
+  }
+
+  try {
+    const parsed = JSON.parse(layoutJson) as unknown;
+    if (!Array.isArray(parsed)) {
+      return TASK_GRID_STARTER_LAYOUT;
+    }
+
+    return parsed
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return null;
+        }
+
+        const candidate = item as Partial<TaskGridItem>;
+        if (
+          typeof candidate.id !== "string" ||
+          typeof candidate.type !== "string" ||
+          !isTaskGridWidgetType(candidate.type)
+        ) {
+          return null;
+        }
+
+        return {
+          h: typeof candidate.h === "number" ? candidate.h : 6,
+          id: candidate.id,
+          type: candidate.type,
+          w: typeof candidate.w === "number" ? candidate.w : 1,
+          x: typeof candidate.x === "number" ? candidate.x : 0,
+          y: typeof candidate.y === "number" ? candidate.y : 0,
+        } satisfies TaskGridItem;
+      })
+      .filter((item): item is TaskGridItem => item !== null);
+  } catch {
+    return TASK_GRID_STARTER_LAYOUT;
+  }
+}
+
+function getUserScopedStorageKey(baseKey: string, userId: string) {
+  return `${baseKey}:${userId}`;
+}
+
+function getTodayKey() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function matchesTaskQuickFilter(task: Task, filter: TaskQuickFilter, focusedTaskIds: string[]) {
+  switch (filter) {
+    case "active":
+      return task.status === "active";
+    case "done":
+      return task.status === "done";
+    case "urgent":
+      return task.status === "active" && (isOverdue(task.due_on) || task.priority === "high");
+    case "today":
+      return task.status === "active" && isDueToday(task.due_on);
+    case "focused":
+      return task.status === "active" && focusedTaskIds.includes(task.id);
+    default:
+      return true;
+  }
+}
+
+function getNextMomentumView(currentView: MomentumView): MomentumView {
+  return currentView === "urgent" ? "today" : currentView === "today" ? "focus" : "urgent";
+}
+
+function updateFocusedTaskIdsByDate(
+  current: Record<string, string[]>,
+  dateKey: string,
+  taskIds: string[],
+) {
+  const next = { ...current };
+
+  if (taskIds.length === 0) {
+    delete next[dateKey];
+    return next;
+  }
+
+  next[dateKey] = taskIds;
+  return next;
+}
+
+function getMomentumMetric(
+  data: {
+    doneTasks: Task[];
+    focusedTaskIds: string[];
+    tasks: Task[];
+    todayTasks: Task[];
+    urgentTasks: Task[];
+  },
+  view: MomentumView,
+) {
+  if (view === "today") {
+    const doneTasks = data.doneTasks.filter((task) => isDueToday(task.due_on));
+    const remainingTasks = data.todayTasks;
+    const totalCount = doneTasks.length + remainingTasks.length;
+    const percent = totalCount === 0 ? 0 : Math.round((doneTasks.length / totalCount) * 100);
+    return {
+      doneTasks,
+      label: "Today Momentum",
+      percent,
+      remainingTasks,
+      summary: `${doneTasks.length} / ${totalCount} due today finished`,
+      totalCount,
+    };
+  }
+
+  if (view === "focus") {
+    const focusedAllTasks = data.tasks.filter((task) => data.focusedTaskIds.includes(task.id));
+    const doneTasks = focusedAllTasks.filter((task) => task.status === "done");
+    const remainingTasks = focusedAllTasks.filter((task) => task.status !== "done");
+    const totalCount = focusedAllTasks.length;
+    const percent = totalCount === 0 ? 0 : Math.round((doneTasks.length / totalCount) * 100);
+    return {
+      doneTasks,
+      label: "Focus Momentum",
+      percent,
+      remainingTasks,
+      summary: `${doneTasks.length} / ${totalCount} focused tasks finished`,
+      totalCount,
+    };
+  }
+
+  const doneTasks = data.doneTasks.filter((task) => isOverdue(task.due_on) || task.priority === "high");
+  const remainingTasks = data.urgentTasks;
+  const totalCount = doneTasks.length + remainingTasks.length;
+  const percent = totalCount === 0 ? 0 : Math.round((doneTasks.length / totalCount) * 100);
+  return {
+    doneTasks,
+    label: "Urgent Momentum",
+    percent,
+    remainingTasks,
+    summary: `${doneTasks.length} / ${totalCount} urgent tasks finished`,
+    totalCount,
+  };
+}
+
 function normalizeCategoryTitle(value: string) {
   return value.trim().toLowerCase();
+}
+
+function normalizeTaskGridLayout(layout: TaskGridItem[]) {
+  const sanitized = layout
+    .filter((item) => isTaskGridWidgetType(item.type))
+    .map((item) => ({
+      ...item,
+      h: Math.max(4, Math.min(12, Math.round(item.h))),
+      w: Math.max(1, Math.min(TASK_GRID_MAX_COLUMNS, Math.round(item.w))),
+    }));
+
+  let cursorX = 0;
+  let cursorY = 0;
+  let rowHeight = 0;
+
+  return sanitized.map((item) => {
+    if (cursorX + item.w > TASK_GRID_MAX_COLUMNS) {
+      cursorY += rowHeight;
+      cursorX = 0;
+      rowHeight = 0;
+    }
+
+    const normalizedItem = {
+      ...item,
+      x: cursorX,
+      y: cursorY,
+    };
+
+    cursorX += item.w;
+    rowHeight = Math.max(rowHeight, item.h);
+
+    if (cursorX >= TASK_GRID_MAX_COLUMNS) {
+      cursorY += rowHeight;
+      cursorX = 0;
+      rowHeight = 0;
+    }
+
+    return normalizedItem;
+  });
+}
+
+function buildTaskGridWidget(widgetType: TaskGridWidgetType): TaskGridItem {
+  const defaultSize = widgetType === "urgent" || widgetType === "due_today" || widgetType === "completed" || widgetType === "import"
+    ? { h: 8, w: 2 }
+    : widgetType === "focus_stats"
+      ? { h: 6, w: 1 }
+      : { h: 6, w: 1 };
+
+  return {
+    h: defaultSize.h,
+    id: `grid-${widgetType}-${crypto.randomUUID()}`,
+    type: widgetType,
+    w: defaultSize.w,
+    x: 0,
+    y: 0,
+  };
+}
+
+function reorderTaskGridItems(layout: TaskGridItem[], sourceId: string, targetId: string) {
+  const sourceIndex = layout.findIndex((item) => item.id === sourceId);
+  const targetIndex = layout.findIndex((item) => item.id === targetId);
+
+  if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) {
+    return layout;
+  }
+
+  const next = [...layout];
+  const [sourceItem] = next.splice(sourceIndex, 1);
+  next.splice(targetIndex, 0, sourceItem);
+  return normalizeTaskGridLayout(next);
+}
+
+function moveTaskGridItem(layout: TaskGridItem[], widgetId: string, direction: "up" | "down") {
+  const currentIndex = layout.findIndex((item) => item.id === widgetId);
+  if (currentIndex === -1) {
+    return layout;
+  }
+
+  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+  if (targetIndex < 0 || targetIndex >= layout.length) {
+    return layout;
+  }
+
+  const next = [...layout];
+  const [item] = next.splice(currentIndex, 1);
+  next.splice(targetIndex, 0, item);
+  return normalizeTaskGridLayout(next);
+}
+
+function getMissingTaskGridWidgetTypes(layout: TaskGridItem[]) {
+  const usedTypes = new Set(layout.map((item) => item.type));
+  return (Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[]).filter((type) => !usedTypes.has(type));
+}
+
+function getTaskGridWidthPresets(currentColumns: number) {
+  return [
+    { label: "1 Col", width: 1 },
+    ...(currentColumns >= 2 ? [{ label: currentColumns >= 4 ? "2 Cols" : "Full Width", width: 2 }] : []),
+    ...(currentColumns >= 4 ? [{ label: "Full Width", width: 4 }] : []),
+  ];
+}
+
+function getTaskGridHeightPresets() {
+  return [
+    { height: 4, label: "Short" },
+    { height: 6, label: "Medium" },
+    { height: 9, label: "Tall" },
+  ];
+}
+
+function isTaskGridWidgetType(value: string): value is TaskGridWidgetType {
+  return value in TASK_GRID_WIDGET_LABELS;
 }
 
 function preferStoredValue(storedValue: string | null | undefined, currentValue: string | null | undefined) {
@@ -3343,6 +5155,64 @@ function dedupeCategoriesByName(categories: FocusCategory[]) {
       return accumulator;
     }, new Map<string, FocusCategory>()).values(),
   );
+}
+
+function normalizeTaskFocusIds(
+  taskIds: string[] | null | undefined,
+  validTaskIds?: Set<string> | Task[],
+) {
+  const validTaskIdSet = Array.isArray(validTaskIds)
+    ? new Set(validTaskIds.map((task) => task.id))
+    : validTaskIds;
+
+  return Array.from(
+    new Set(
+      (taskIds ?? []).filter((taskId): taskId is string => {
+        if (typeof taskId !== "string" || !isUuid(taskId)) {
+          return false;
+        }
+
+        return validTaskIdSet ? validTaskIdSet.has(taskId) : true;
+      }),
+    ),
+  );
+}
+
+function isValidDateKey(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function useResponsiveTaskGridColumns() {
+  const getColumns = () => {
+    if (typeof window === "undefined") {
+      return TASK_GRID_MAX_COLUMNS;
+    }
+
+    if (window.innerWidth >= 1280) {
+      return TASK_GRID_MAX_COLUMNS;
+    }
+
+    if (window.innerWidth >= 768) {
+      return TASK_GRID_TABLET_COLUMNS;
+    }
+
+    return TASK_GRID_PHONE_COLUMNS;
+  };
+
+  const [columns, setColumns] = useState(getColumns);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleResize = () => setColumns(getColumns());
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  return columns;
 }
 
 function sanitizeFocusLabel(value: string | null | undefined, fallback: string) {
