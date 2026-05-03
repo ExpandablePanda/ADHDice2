@@ -92,6 +92,11 @@
   }
 }
 
+html,
+body {
+  overflow-x: hidden;
+}
+
 html {
   text-rendering: optimizeLegibility;
 }

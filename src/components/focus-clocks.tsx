@@ -31,6 +31,8 @@ export function FocusClock({
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [showAdjustMenu, setShowAdjustMenu] = useState(false);
+  const [adjustSign, setAdjustSign] = useState<1 | -1>(1);
+  const [adjustMinutes, setAdjustMinutes] = useState("5");
   const isRunning = activeSession?.isRunning ?? false;
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const adjustMenuRef = useRef<HTMLDivElement | null>(null);
@@ -134,13 +136,41 @@ export function FocusClock({
         {showAdjustMenu ? (
           <div
             ref={adjustMenuRef}
-            className={`absolute inset-4 z-20 overflow-hidden rounded-full border ${lightMode ? "border-white/40 bg-white/92 shadow-[0_20px_40px_rgba(81,61,168,0.14)] backdrop-blur-[10px]" : "border-white/10 bg-[#171329]/95 shadow-[0_20px_40px_rgba(0,0,0,0.35)] backdrop-blur-[12px]"}`}
+            className={`absolute inset-4 z-20 flex flex-col items-center justify-center gap-4 overflow-hidden rounded-full border ${lightMode ? "border-white/40 bg-white/92 shadow-[0_20px_40px_rgba(81,61,168,0.14)] backdrop-blur-[10px]" : "border-white/10 bg-[#171329]/95 shadow-[0_20px_40px_rgba(0,0,0,0.35)] backdrop-blur-[12px]"}`}
           >
-            <div className="grid h-full w-full grid-cols-2 grid-rows-2">
-              <button className={`flex items-center justify-center text-center text-xl font-black ${lightMode ? "bg-[#fff3f5] text-[#d64b5f]" : "bg-[#311b23] text-[#ff9fbc]"}`} onClick={() => handleAdjustClick(-300)} type="button">-5m</button>
-              <button className={`flex items-center justify-center text-center text-xl font-black ${lightMode ? "bg-[#eef9f4] text-[#12a876]" : "bg-[#19352e] text-[#7de4b8]"}`} onClick={() => handleAdjustClick(300)} type="button">+5m</button>
-              <button className={`flex items-center justify-center text-center text-xl font-black ${lightMode ? "bg-[#fff3f5] text-[#d64b5f]" : "bg-[#311b23] text-[#ff9fbc]"}`} onClick={() => handleAdjustClick(-60)} type="button">-1m</button>
-              <button className={`flex items-center justify-center text-center text-xl font-black ${lightMode ? "bg-[#eef9f4] text-[#12a876]" : "bg-[#19352e] text-[#7de4b8]"}`} onClick={() => handleAdjustClick(60)} type="button">+1m</button>
+            <input
+              className={`w-20 rounded-2xl border-2 px-1 py-5 text-center font-black tabular-nums tracking-tight outline-none ${lightMode ? "border-[#ece8f8] bg-white text-[#1f2746]" : "border-white/10 bg-white/10 text-white"}`}
+              style={{ fontSize: "2.6rem", fontWeight: 900, letterSpacing: "-0.025em" }}
+              min="1"
+              onChange={(e) => setAdjustMinutes(e.target.value)}
+              type="number"
+              value={adjustMinutes}
+            />
+            <div className="flex items-center gap-4 pt-2">
+              <button
+                className={`flex h-14 w-14 items-center justify-center rounded-full transition ${adjustSign === -1 ? (lightMode ? "bg-[#fff3f5] text-[#d64b5f]" : "bg-[#311b23] text-[#ff9fbc]") : (lightMode ? "bg-[#eef9f4] text-[#12a876]" : "bg-[#19352e] text-[#7de4b8]")}`}
+                onClick={() => setAdjustSign((s) => s === 1 ? -1 : 1)}
+                type="button"
+              >
+                {adjustSign === 1 ? (
+                  <svg className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+                    <path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : (
+                  <svg className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+                    <path d="M5 12h14" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </button>
+              <button
+                className={`flex h-14 w-14 items-center justify-center rounded-full transition ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+                onClick={() => handleAdjustClick(adjustSign * (parseInt(adjustMinutes) || 1) * 60)}
+                type="button"
+              >
+                <svg className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+                  <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
             </div>
           </div>
         ) : null}

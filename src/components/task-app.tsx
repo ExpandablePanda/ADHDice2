@@ -137,6 +137,17 @@ type UserProfile = {
   logoSrc: string | null;
 };
 
+function BasketballIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} viewBox="0 0 24 24" {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" x2="12" y1="2" y2="22" />
+      <path d="M2 12 Q12 5 22 12" />
+      <path d="M2 12 Q12 19 22 12" />
+    </svg>
+  );
+}
+
 const ICONS_MAP: Record<string, LucideIcon> = {
   Code: Code2,
   Briefcase: BriefcaseBusiness,
@@ -180,6 +191,7 @@ const ICONS_MAP: Record<string, LucideIcon> = {
   Dices,
   Clock,
   FlaskConical,
+  basketball: BasketballIcon as unknown as LucideIcon,
 };
 
 type RawLucideIconName = keyof typeof dynamicIconImports;
@@ -269,6 +281,7 @@ export function TaskApp() {
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
   const [focusHistory, setFocusHistory] = useState<HistoricalFocusSession[]>([]);
   const profile = useProfileStore();
+  const suppressCategoryReload = useRef(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
 
   useEffect(() => {
@@ -288,8 +301,8 @@ export function TaskApp() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, nextSession) => {
-      if (!nextSession) {
+    } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, nextSession) => {
+      if (event === "SIGNED_OUT") {
         setTasks([]);
         setFocusCategories([]);
         setActiveSessions({});
@@ -448,7 +461,9 @@ export function TaskApp() {
           filter: `user_id=eq.${userId}`,
         },
         () => {
-          void loadWorkspaceData({ silent: true });
+          if (!suppressCategoryReload.current) {
+            void loadWorkspaceData({ silent: true });
+          }
         },
       )
       .on(
@@ -851,6 +866,12 @@ export function TaskApp() {
       return true;
     }
 
+    // Apply optimistically and suppress the realtime-triggered reload so it
+    // can't race and overwrite with stale values while the upsert is in flight.
+    setFocusCategories(uniqueCategories);
+    saveFocusCategories(uniqueCategories);
+    suppressCategoryReload.current = true;
+
     const payload = uniqueCategories.map((category, index) => ({
       id: category.id,
       user_id: currentUser.id,
@@ -865,17 +886,25 @@ export function TaskApp() {
       sort_order: index,
     }));
 
-    let { data: savedCategories, error } = await client
-      .from("adhdice_focus_categories")
-      .upsert(payload, { onConflict: "id" })
-      .select("*");
+    let savedCategories, error;
+    try {
+      ({ data: savedCategories, error } = await client
+        .from("adhdice_focus_categories")
+        .upsert(payload, { onConflict: "id" })
+        .select("*"));
+    } finally {
+      suppressCategoryReload.current = false;
+    }
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
       return false;
     }
 
-    const nextCategories = mergeStoredFocusCategories((savedCategories ?? []).sort((a, b) => a.sort_order - b.sort_order).map(mapFocusCategoryRow));
+    // Reconcile with the DB-assigned fields (sort_order, created_at, etc.)
+    const nextCategories = (savedCategories ?? [])
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map(mapFocusCategoryRow);
 
     setFocusCategories(nextCategories);
     saveFocusCategories(nextCategories);
@@ -1453,22 +1482,20 @@ function BrandMark({
 }: {
   profile: UserProfile;
 }) {
-  const logoSrc = profile.logoSrc || "/logo.png";
+  const [errored, setErrored] = useState(false);
+  const logoSrc = (!errored && profile.logoSrc) || "/logo.png";
 
-  if (logoSrc) {
-    return (
-      <Image
-        alt="ADHDice logo"
-        className="h-20 w-[17rem] object-contain object-left"
-        height={80}
-        src={logoSrc}
-        unoptimized={logoSrc.startsWith("data:")}
-        width={272}
-      />
-    );
-  }
-
-  return null;
+  return (
+    <Image
+      alt="ADHDice logo"
+      className="h-20 w-auto object-contain object-left"
+      height={80}
+      onError={() => setErrored(true)}
+      src={logoSrc}
+      unoptimized={logoSrc.startsWith("data:")}
+      width={272}
+    />
+  );
 }
 
 function AccountModal({
@@ -1758,7 +1785,7 @@ function HomeUrgentPreview({
   tasks: Task[];
 }) {
   return (
-    <section className={`w-fit min-w-[440px] rounded-[2rem] border p-4 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+    <section className={`w-full sm:w-fit sm:min-w-[440px] rounded-[2rem] border p-4 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
       <div className="flex items-center justify-between gap-6">
         <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
           Urgent Snapshot
@@ -1793,7 +1820,7 @@ function HomeLowEnergyPreview({
   tasks: Task[];
 }) {
   return (
-    <section className={`w-fit min-w-[440px] rounded-[2rem] border p-4 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+    <section className={`w-full sm:w-fit sm:min-w-[440px] rounded-[2rem] border p-4 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
       <div className="flex items-center justify-between gap-6">
         <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
           Low Energy Wins
@@ -1953,7 +1980,7 @@ function TaskHero({
   todayCount: number;
 }) {
   return (
-    <section className="pt-8 flex flex-col items-center text-center">
+    <section className="pt-8 w-full flex flex-col items-center text-center">
       <div className="flex flex-col items-center gap-4">
         <div className="flex flex-wrap items-center justify-center gap-3">
           <h1 className={`text-[clamp(2rem,4vw,3rem)] font-black tracking-tight ${lightMode ? "text-[#17203a]" : "text-white"}`}>
@@ -1978,7 +2005,7 @@ function TaskHero({
         Refocus
       </button>
 
-      <div className="mt-4 flex flex-col justify-center gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="mt-4 w-full flex flex-col justify-center gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -1998,7 +2025,7 @@ function TaskHero({
             />
           </div>
         </div>
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap justify-center gap-3">
           <HeroMetaCard lightMode={lightMode} label="Today" value={todayCount} />
           <HeroMetaCard lightMode={lightMode} label="Urgent" value={overdueCount} />
         </div>
@@ -2191,9 +2218,9 @@ function UrgentTasksPanel({
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="flex items-center gap-3">
-                  <span className={`h-4 w-4 rounded-full ${index < 2 ? "bg-[#f05566]" : "bg-[#12b886]"}`} />
-                  <h3 className={`truncate text-[1.55rem] font-semibold ${lightMode ? "text-[#202844]" : "text-white"}`}>
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className={`h-4 w-4 shrink-0 rounded-full ${index < 2 ? "bg-[#f05566]" : "bg-[#12b886]"}`} />
+                  <h3 className={`min-w-0 truncate text-[1.55rem] font-semibold ${lightMode ? "text-[#202844]" : "text-white"}`}>
                     {task.title}
                   </h3>
                 </div>
@@ -2208,7 +2235,7 @@ function UrgentTasksPanel({
                 </div>
               </div>
               <button
-                className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+                className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
                 onClick={() => onToggle(task)}
                 type="button"
               >
@@ -2731,8 +2758,8 @@ function BottomDock({
       ? "fixed left-4 top-4 bottom-4 z-10 flex items-center"
       : "fixed right-4 top-4 bottom-4 z-10 flex items-center";
   const dockShapeClass = dockPlacement === "bottom"
-    ? "mx-auto flex w-full max-w-[58rem] items-center justify-between gap-1 rounded-[2rem] px-3 py-2 overflow-x-auto sm:overflow-x-visible [&::-webkit-scrollbar]:hidden touch-pan-x"
-    : "flex max-h-full w-[5.5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
+    ? "mx-auto flex w-full max-w-[58rem] items-center justify-between gap-1 rounded-[2rem] px-3 py-1 overflow-x-auto sm:overflow-x-visible [&::-webkit-scrollbar]:hidden touch-pan-x"
+    : "flex max-h-full w-[5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
   const collapsingStyle = isDockCollapsing
     ? dockPlacement === "bottom"
       ? { maxWidth: "4rem", width: "4rem", height: "4rem", borderRadius: "9999px", padding: "0" }
@@ -2747,7 +2774,7 @@ function BottomDock({
       >
         {dockItems.map((item) => (
           <button
-            className={`flex ${isVertical ? "w-full" : "min-w-[3.8rem] shrink-0"} flex-col items-center gap-1 rounded-[1.2rem] px-2 py-1.5 text-[10px] font-semibold transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
+            className={`flex ${isVertical ? "w-full" : "min-w-[3rem] shrink-0"} flex-col items-center justify-center rounded-[1.2rem] px-2 py-1.5 transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
               activePage === item
                 ? lightMode
                   ? "text-[#6f57f6]"
@@ -2760,8 +2787,7 @@ function BottomDock({
             onClick={() => onNavigate(item)}
             type="button"
           >
-            <CategoryIcon name={dockIcons[item]} className="h-6 w-6" />
-            <span>{item}</span>
+            <CategoryIcon name={dockIcons[item]} className="h-7 w-7" />
           </button>
         ))}
         <button
@@ -2854,6 +2880,7 @@ function readStoredProfile() {
 
   try {
     const parsed = JSON.parse(saved) as UserProfile;
+    parsed.logoSrc = normalizeLogoSrc(parsed.logoSrc);
     const nextProfile = {
       ...DEFAULT_PROFILE,
       ...parsed,
@@ -3114,6 +3141,12 @@ function getDefaultFocusCategories(userId: string) {
   ];
 }
 
+function normalizeLogoSrc(src: string | null | undefined): string | null {
+  if (!src || src.startsWith("data:")) return src ?? null;
+  // Strip any baked-in basePath prefix (e.g. /ADHDice2/logo.png → /logo.png)
+  return src.replace(/^\/[^/]+(?=\/logo\.png$)/, "");
+}
+
 function buildProfileSnapshot(
   profileRow: {
     display_name: string | null;
@@ -3132,7 +3165,7 @@ function buildProfileSnapshot(
     created: Boolean(profileRow),
     displayName: profileRow?.display_name || fallbackName,
     email: user.email || DEFAULT_PROFILE.email,
-    logoSrc: profileRow?.logo_src || DEFAULT_PROFILE.logoSrc,
+    logoSrc: normalizeLogoSrc(profileRow?.logo_src) || DEFAULT_PROFILE.logoSrc,
   };
 }
 
