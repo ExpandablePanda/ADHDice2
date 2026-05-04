@@ -3,7 +3,9 @@
 import Image from "next/image";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
+  AlertCircle,
   ArrowUp,
+  BarChart2,
   BookOpen,
   Box,
   Brain,
@@ -16,12 +18,14 @@ import {
   Clock,
   Code2,
   Coffee,
+  Diamond,
   Dice5,
   Dices,
   FlaskConical,
   DollarSign,
   Dumbbell,
   FileText,
+  Footprints,
   Gamepad2,
   GripVertical,
   Headphones,
@@ -50,22 +54,38 @@ import {
   UserRound,
   Utensils,
   Wifi,
+  X,
   Zap,
 } from "lucide-react";
 import dynamicIconImports from "lucide-react/dynamicIconImports";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { FocusPage } from "./focus-page";
+const GamesPage = lazy(() => import("./games-page").then((m) => ({ default: m.GamesPage })));
+const Dice3DCanvas = lazy(() => import("./dice-3d").then((m) => ({ default: m.Dice3DCanvas })));
 import { ModalShell } from "./modal-shell";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import type {
   FocusCategory as DbFocusCategory,
+  Note,
+  PrizeCell,
+  RollHistoryEntry,
   Task,
   TaskEnergy,
   TaskFocusDay as DbTaskFocusDay,
   TaskGridLayout as DbTaskGridLayout,
   TaskInsert,
   TaskPriority,
+  TaskRepeatFrequency,
+  TaskStatus,
+  TaskSubtask as DbTaskSubtask,
+  TaskSubtaskInsert,
+  TaskSubtaskStatus,
   TaskUpdate,
+  TaskHistory as DbTaskHistory,
+  TaskHistoryInsert,
+  VaultPrize,
+  VaultPrizeInsert,
+  VaultPrizeTier,
 } from "@/lib/database.types";
 
 type Message = {
@@ -75,6 +95,7 @@ type Message = {
 
 type AuthMode = "sign-in" | "sign-up";
 type TaskDraft = Omit<TaskInsert, "user_id">;
+type TaskEditorMode = "create" | "edit";
 type ThemeMode = "light" | "dark";
 type FilterChipTone = "purple" | "orange" | "red" | "neutral";
 type TaskViewMode = "list" | "cards" | "matrix" | "grid";
@@ -98,12 +119,49 @@ type TaskGridItem = {
   x: number;
   y: number;
 };
+type ListCardId = "composer" | "import" | "focus-today" | "due-today" | "stats" | "urgent";
+type ListCardLayout = { id: ListCardId; colSpan: number; minHeight: number };
 type TaskUiState = {
   matchAny: boolean;
   quickFilters: TaskQuickFilter[];
   search: string;
   view: TaskViewMode;
   energyFilters: TaskEnergy[];
+};
+type TaskEditorDraft = {
+  title: string;
+  notes: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  energy: TaskEnergy;
+  isUrgent: boolean;
+  isImportant: boolean;
+  focusToday: boolean;
+  dueOn: string;
+  dueTime: string;
+  estimatedMinutes: string;
+  tags: string[];
+  externalLinkLabel: string;
+  externalLinkUrl: string;
+  oneStepAtATime: boolean;
+  repeatFrequency: TaskRepeatFrequency;
+  repeatInterval: string;
+  repeatDaysOfWeek: number[];
+  repeatDayOfMonth: string;
+  subtasksAutoReset: boolean;
+  subtasks: TaskSubtaskDraft[];
+};
+type TaskSubtaskDraft = {
+  id: string;
+  title: string;
+  status: TaskSubtaskStatus;
+  children: TaskSubtaskDraft[];
+};
+type TaskHistoryStats = {
+  bestStreak: number;
+  currentStreak: number;
+  doneRate: number;
+  loggedDays: number;
 };
 type AppPage =
   | "Home"
@@ -300,6 +358,19 @@ let cachedProfileSnapshot: UserProfile = DEFAULT_PROFILE;
 
 const priorityOptions: TaskPriority[] = ["normal", "high", "low"];
 const energyOptions: TaskEnergy[] = ["medium", "low", "high"];
+const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "upcoming", "not_due", "archived"];
+const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "weekly", "monthly", "custom"];
+const repeatWeekdayOptions = [
+  { label: "Sun", value: 0 },
+  { label: "Mon", value: 1 },
+  { label: "Tue", value: 2 },
+  { label: "Wed", value: 3 },
+  { label: "Thu", value: 4 },
+  { label: "Fri", value: 5 },
+  { label: "Sat", value: 6 },
+] as const;
+const OPEN_TASK_STATUSES: TaskStatus[] = ["pending", "in_progress", "upcoming", "not_due"];
+const FINISHED_TASK_STATUSES: TaskStatus[] = ["done", "did_my_best"];
 const dockItems: AppPage[] = ["Home", "Tasks", "Focus", "Roll", "Games", "Stats", "Notes", "Settings", "Test"];
 const dockIcons: Record<AppPage, string> = {
   Home: "Home",
@@ -313,10 +384,22 @@ const dockIcons: Record<AppPage, string> = {
   Test: "FlaskConical",
 };
 const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
+const LIST_CARD_STORAGE_KEY = "adhdice-list-card-layout";
+const DAY_RESET_STORAGE_KEY = "adhdice-day-reset";
+const LIST_ROW_HEIGHT = 120;
+const LIST_DEFAULT_CARD_LAYOUTS: ListCardLayout[] = [
+  { id: "composer", colSpan: 2, minHeight: LIST_ROW_HEIGHT * 2 },
+  { id: "import", colSpan: 2, minHeight: LIST_ROW_HEIGHT * 2 },
+  { id: "focus-today", colSpan: 2, minHeight: LIST_ROW_HEIGHT * 3 },
+  { id: "due-today", colSpan: 1, minHeight: LIST_ROW_HEIGHT * 3 },
+  { id: "stats", colSpan: 1, minHeight: LIST_ROW_HEIGHT * 3 },
+  { id: "urgent", colSpan: 4, minHeight: LIST_ROW_HEIGHT * 2 },
+];
 const TASK_GRID_MAX_COLUMNS = 4;
 const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
 const TASK_GRID_ROW_HEIGHT = 42;
+const TASK_GRID_MAX_DISPLAY_ROWS = 24;
 const TASK_GRID_WIDGET_LABELS: Record<TaskGridWidgetType, string> = {
   urgent: "Urgent Tasks",
   focus_today: "Focus Today",
@@ -352,8 +435,15 @@ export function TaskApp() {
   const [focusHistory, setFocusHistory] = useState<HistoricalFocusSession[]>([]);
   const [taskUiState, setTaskUiState] = useState<TaskUiState>(DEFAULT_TASK_UI_STATE);
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
+  const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
+  const [taskSubtasks, setTaskSubtasks] = useState<DbTaskSubtask[]>([]);
   const [taskGridLayout, setTaskGridLayout] = useState<TaskGridItem[]>(TASK_GRID_STARTER_LAYOUT);
+  const [economy, setEconomy] = useState({ level: 1, xp: 0, points: 0, tokens: 0 });
   const [isGridEditMode, setIsGridEditMode] = useState(false);
+  const [isListLayoutEditMode, setIsListLayoutEditMode] = useState(false);
+  const [listCardLayouts, setListCardLayouts] = useState<ListCardLayout[]>(LIST_DEFAULT_CARD_LAYOUTS);
+  const [activeListCardId, setActiveListCardId] = useState<ListCardId | null>(null);
+  const [draggedListCardId, setDraggedListCardId] = useState<ListCardId | null>(null);
   const [selectedGridWidgetId, setSelectedGridWidgetId] = useState<string | null>(null);
   const [draggedGridWidgetId, setDraggedGridWidgetId] = useState<string | null>(null);
   const [showFocusPlanner, setShowFocusPlanner] = useState(false);
@@ -365,7 +455,25 @@ export function TaskApp() {
   const profile = useProfileStore();
   const suppressCategoryReload = useRef(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [isTaskEditorOpen, setIsTaskEditorOpen] = useState(false);
+  const [taskEditorMode, setTaskEditorMode] = useState<TaskEditorMode>("create");
+  const [taskEditorTaskId, setTaskEditorTaskId] = useState<string | null>(null);
+  const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
   const gridColumns = useResponsiveTaskGridColumns();
+  const [dayStartTime, setDayStartTime] = useState<string>(() => {
+    if (typeof window === "undefined") return "06:00";
+    // Restore accent color on first render
+    const savedAccent = window.localStorage.getItem("adhdice-accent-color");
+    if (savedAccent) {
+      document.documentElement.style.setProperty("--accent", savedAccent);
+    }
+    return window.localStorage.getItem("adhdice-day-start-time") ?? "06:00";
+  });
+  const lastResetDateRef = useRef<string>(
+    typeof window !== "undefined"
+      ? (window.localStorage.getItem(DAY_RESET_STORAGE_KEY) ?? "")
+      : "",
+  );
 
   useEffect(() => {
     if (!supabase) {
@@ -391,6 +499,8 @@ export function TaskApp() {
         setActiveSessions({});
         setFocusHistory([]);
         setFocusedTaskIdsByDate({});
+        setTaskHistory([]);
+        setTaskSubtasks([]);
         setTaskGridLayout(TASK_GRID_STARTER_LAYOUT);
         setIsGridEditMode(false);
         setSelectedGridWidgetId(null);
@@ -418,7 +528,7 @@ export function TaskApp() {
         setIsWorkspaceLoading(true);
       }
 
-      const [taskResult, profileResult, categoryResult, activeResult, historyResult, focusDayResult, gridLayoutResult] = await Promise.all([
+      const [taskResult, taskSubtasksResult, taskHistoryResult, profileResult, categoryResult, activeResult, historyResult, focusDayResult, gridLayoutResult] = await Promise.all([
         client
           .from("adhdice_clean_tasks")
           .select("*")
@@ -426,6 +536,18 @@ export function TaskApp() {
           .neq("status", "archived")
           .order("status", { ascending: true })
           .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: false }),
+        client
+          .from("adhdice_task_subtasks")
+          .select("*")
+          .eq("user_id", userId)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true }),
+        client
+          .from("adhdice_task_history")
+          .select("*")
+          .eq("user_id", userId)
+          .order("entry_date", { ascending: false })
           .order("created_at", { ascending: false }),
         client
           .from("adhdice_user_profiles")
@@ -467,6 +589,8 @@ export function TaskApp() {
 
       const errors = [
         taskResult.error,
+        taskSubtasksResult.error,
+        taskHistoryResult.error,
         profileResult.error,
         categoryResult.error,
         activeResult.error,
@@ -486,6 +610,8 @@ export function TaskApp() {
       let nextFocusHistory = mergeStoredFocusHistory((historyResult.data ?? []).map(mapFocusSessionRow));
       let nextFocusedTaskIdsByDate = mapTaskFocusDayRows(focusDayResult.data ?? [], taskResult.data ?? []);
       const nextTaskGridLayout = resolveTaskGridLayout(gridLayoutResult.data);
+      const nextTaskHistory = (taskHistoryResult.data ?? []).map(mapTaskHistoryRow);
+      const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
 
       if (
         nextCategories.length === 0 &&
@@ -552,10 +678,20 @@ export function TaskApp() {
       setActiveSessions(nextActiveSessions);
       setFocusHistory(nextFocusHistory);
       setFocusedTaskIdsByDate(nextFocusedTaskIdsByDate);
+      setTaskHistory(nextTaskHistory);
+      setTaskSubtasks(nextTaskSubtasks);
       setTaskGridLayout(nextTaskGridLayout);
       saveFocusCategories(nextCategories);
       saveFocusHistory(nextFocusHistory);
       saveProfile(buildProfileSnapshot(profileResult.data, currentUser));
+      if (profileResult.data) {
+        setEconomy({
+          level: profileResult.data.level ?? 1,
+          xp: profileResult.data.xp ?? 0,
+          points: profileResult.data.points ?? 0,
+          tokens: profileResult.data.tokens ?? 0,
+        });
+      }
       setIsWorkspaceLoading(false);
     }
 
@@ -569,6 +705,30 @@ export function TaskApp() {
           event: "*",
           schema: "public",
           table: "adhdice_clean_tasks",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void loadWorkspaceData({ silent: true });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "adhdice_task_history",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void loadWorkspaceData({ silent: true });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "adhdice_task_subtasks",
           filter: `user_id=eq.${userId}`,
         },
         () => {
@@ -650,15 +810,22 @@ export function TaskApp() {
     if (!userId) {
       setTaskUiState(DEFAULT_TASK_UI_STATE);
       setFocusedTaskIdsByDate({});
+      setTaskHistory([]);
+      setTaskSubtasks([]);
       setTaskGridLayout(TASK_GRID_STARTER_LAYOUT);
       setIsGridEditMode(false);
       setSelectedGridWidgetId(null);
       return;
     }
 
+    const storedTaskUiState = parseStoredJson<TaskUiState>(
+      getUserScopedStorageKey(TASK_UI_STORAGE_KEY, userId),
+      DEFAULT_TASK_UI_STATE,
+    );
+
     setTaskUiState({
       ...DEFAULT_TASK_UI_STATE,
-      ...parseStoredJson<TaskUiState>(getUserScopedStorageKey(TASK_UI_STORAGE_KEY, userId), DEFAULT_TASK_UI_STATE),
+      ...migrateLegacyTaskUiState(storedTaskUiState),
     });
     setFocusedTaskIdsByDate(
       parseStoredJson<Record<string, string[]>>(getUserScopedStorageKey(TASK_FOCUS_STORAGE_KEY, userId), {}),
@@ -667,6 +834,9 @@ export function TaskApp() {
       normalizeTaskGridLayout(
         parseStoredJson<TaskGridItem[]>(getUserScopedStorageKey(TASK_GRID_STORAGE_KEY, userId), TASK_GRID_STARTER_LAYOUT),
       ),
+    );
+    setListCardLayouts(
+      parseStoredJson<ListCardLayout[]>(getUserScopedStorageKey(LIST_CARD_STORAGE_KEY, userId), LIST_DEFAULT_CARD_LAYOUTS),
     );
   }, [session?.user?.id]);
 
@@ -707,6 +877,17 @@ export function TaskApp() {
   }, [session?.user?.id, taskGridLayout]);
 
   useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
+      getUserScopedStorageKey(LIST_CARD_STORAGE_KEY, userId),
+      JSON.stringify(listCardLayouts),
+    );
+  }, [listCardLayouts, session?.user?.id]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -725,6 +906,105 @@ export function TaskApp() {
       setSelectedGridWidgetId(null);
     }
   }, [selectedGridWidgetId, taskGridLayout]);
+
+  useEffect(() => {
+    if (taskEditorTaskId && !tasks.some((task) => task.id === taskEditorTaskId)) {
+      setTaskEditorTaskId(null);
+      setIsTaskEditorOpen(false);
+    }
+  }, [taskEditorTaskId, tasks]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("adhdice-day-start-time", dayStartTime);
+    }
+  }, [dayStartTime]);
+
+  useEffect(() => {
+    if (!supabase || !session?.user) return;
+    const userId = session.user.id;
+
+    async function refetchActiveSessions() {
+      const { data, error } = await supabase!
+        .from("adhdice_focus_active_sessions")
+        .select("*")
+        .eq("user_id", userId);
+      if (!error && data) {
+        setActiveSessions(mapActiveSessions(data));
+      }
+    }
+
+    const channel = typeof BroadcastChannel !== "undefined"
+      ? new BroadcastChannel("adhdice_focus_sync")
+      : null;
+
+    if (channel) {
+      channel.onmessage = () => { void refetchActiveSessions(); };
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refetchActiveSessions();
+      }
+    };
+
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        void refetchActiveSessions();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handlePageShow);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
+      channel?.close();
+    };
+  }, [session?.user?.id, supabase]);
+
+  useEffect(() => {
+    if (!supabase || !session?.user) return;
+    const userId = session.user.id;
+
+    async function runDayReset() {
+      const now = new Date();
+      const [startHour, startMinute] = dayStartTime.split(":").map(Number);
+      const dayStart = new Date(now);
+      dayStart.setHours(startHour, startMinute, 0, 0);
+      // Logical "today" starts at dayStartTime; if before that, it's still yesterday's day
+      const effectiveDate = now >= dayStart ? formatDateKey(now) : formatDateKey(new Date(now.getTime() - 86400000));
+
+      if (lastResetDateRef.current === effectiveDate) return;
+      lastResetDateRef.current = effectiveDate;
+      window.localStorage.setItem(DAY_RESET_STORAGE_KEY, effectiveDate);
+
+      const { data, error } = await supabase!
+        .from("adhdice_clean_tasks")
+        .update({ status: "pending" })
+        .eq("user_id", userId)
+        .eq("status", "upcoming")
+        .lte("due_on", effectiveDate)
+        .select("*");
+
+      if (!error && data && data.length > 0) {
+        setTasks((current) =>
+          sortTasksForUi(current.map((t) => {
+            const updated = data.find((d) => d.id === t.id);
+            return updated ?? t;
+          })),
+        );
+      }
+    }
+
+    void runDayReset();
+    const interval = setInterval(() => { void runDayReset(); }, 60_000);
+    return () => clearInterval(interval);
+  }, [session?.user?.id, dayStartTime, supabase]);
+
+  const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(taskSubtasks), [taskSubtasks]);
+  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory), [taskHistory]);
 
   const lightMode = theme === "light";
 
@@ -775,18 +1055,26 @@ export function TaskApp() {
   const todayKey = getTodayKey();
   const focusedTaskIds = focusedTaskIdsByDate[todayKey] ?? [];
 
-  const activeTasks = tasks.filter((task) => task.status === "active");
-  const doneTasks = tasks.filter((task) => task.status === "done");
+  const activeTasks = tasks.filter(isTaskOpen);
+  const doneTasks = tasks.filter(isTaskFinished);
   const overdueTasks = activeTasks.filter((task) => isOverdue(task.due_on));
   const todayTasks = activeTasks.filter((task) => isDueToday(task.due_on));
-  const highPriorityTasks = activeTasks.filter((task) => task.priority === "high");
+  const highPriorityTasks = activeTasks.filter(isTaskUrgent);
   const lowEnergyTasks = activeTasks.filter((task) => task.energy === "low").slice(0, 4);
   const focusedTasks = activeTasks.filter((task) => focusedTaskIds.includes(task.id));
   const urgentTasks = [...overdueTasks, ...highPriorityTasks.filter((task) => !isOverdue(task.due_on))]
     .slice(0, 6);
   const searchQuery = taskUiState.search.trim().toLowerCase();
   const filteredTasks = tasks.filter((task) => {
-    const matchesSearch = searchQuery.length === 0 || task.title.toLowerCase().includes(searchQuery);
+    const subtaskTitles = (taskSubtasksByTaskId[task.id] ?? []).map((subtask) => subtask.title);
+    const haystacks = [
+      task.title,
+      task.notes ?? "",
+      task.external_link_label ?? "",
+      ...subtaskTitles,
+      ...(task.tags ?? []),
+    ].map((value) => value.toLowerCase());
+    const matchesSearch = searchQuery.length === 0 || haystacks.some((value) => value.includes(searchQuery));
     if (!matchesSearch) {
       return false;
     }
@@ -800,12 +1088,11 @@ export function TaskApp() {
     const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
     return matchesQuickFilters && matchesEnergy;
   });
-  const filteredActiveTasks = filteredTasks.filter((task) => task.status === "active");
-  const filteredDoneTasks = filteredTasks.filter((task) => task.status === "done");
-  const filteredUrgentTasks = filteredActiveTasks.filter((task) => isOverdue(task.due_on) || task.priority === "high");
+  const filteredActiveTasks = filteredTasks.filter(isTaskOpen);
+  const filteredDoneTasks = filteredTasks.filter(isTaskFinished);
+  const filteredUrgentTasks = filteredActiveTasks.filter(isTaskUrgent);
   const filteredFocusTasks = filteredActiveTasks.filter((task) => focusedTaskIds.includes(task.id));
   const filteredLowEnergyTasks = filteredActiveTasks.filter((task) => task.energy === "low").slice(0, 4);
-  const filteredHighPriorityTasks = filteredActiveTasks.filter((task) => task.priority === "high");
   const filteredTodayTasks = filteredActiveTasks.filter((task) => isDueToday(task.due_on));
   const hasFocusedToday = focusedTaskIds.length > 0;
   const momentumPercent = activeTasks.length === 0
@@ -820,9 +1107,29 @@ export function TaskApp() {
   }, momentumView);
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const missingGridWidgetTypes = getMissingTaskGridWidgetTypes(taskGridLayout);
+  const selectedTaskForEditor = taskEditorTaskId
+    ? tasks.find((task) => task.id === taskEditorTaskId) ?? null
+    : null;
 
-  async function saveFocusSelection(nextTaskIds: string[]) {
-    const normalizedTaskIds = normalizeTaskFocusIds(nextTaskIds, tasks);
+  function openNewTaskEditor() {
+    setTaskEditorMode("create");
+    setTaskEditorTaskId(null);
+    setIsTaskEditorOpen(true);
+  }
+
+  function openEditTaskEditor(task: Task) {
+    setTaskEditorMode("edit");
+    setTaskEditorTaskId(task.id);
+    setIsTaskEditorOpen(true);
+  }
+
+  function closeTaskEditor() {
+    setIsTaskEditorOpen(false);
+    setTaskEditorTaskId(null);
+  }
+
+  async function saveFocusSelection(nextTaskIds: string[], validTaskIds: Set<string> | Task[] = tasks) {
+    const normalizedTaskIds = normalizeTaskFocusIds(nextTaskIds, validTaskIds);
 
     setFocusedTaskIdsByDate((prev) => updateFocusedTaskIdsByDate(prev, todayKey, normalizedTaskIds));
 
@@ -918,6 +1225,12 @@ export function TaskApp() {
     await updateGridLayout((current) => [...current, nextWidget]);
   }
 
+  async function handleResetGridLayout() {
+    setSelectedGridWidgetId(null);
+    setDraggedGridWidgetId(null);
+    await saveTaskGridLayout(TASK_GRID_STARTER_LAYOUT);
+  }
+
   function openFocusPlanner() {
     setFocusPlannerStep(0);
     setFocusDraftIds(focusedTaskIds);
@@ -932,17 +1245,164 @@ export function TaskApp() {
   }
 
   async function addTask(task: TaskDraft) {
-    const { error } = await client.from("adhdice_clean_tasks").insert({
+    const payload = {
       ...task,
       user_id: currentUser.id,
       sort_order: Date.now(),
-    });
+    };
+    const { data, error } = await client
+      .from("adhdice_clean_tasks")
+      .insert(payload)
+      .select("*")
+      .single();
 
-    setMessage(
-      error
-        ? { tone: "warn", text: error.message }
-        : { tone: "good", text: "Task captured." },
-    );
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return;
+    }
+
+    if (data) {
+      setTasks((current) => sortTasksForUi([...current, data]));
+    }
+
+    setMessage({ tone: "good", text: "Task captured." });
+  }
+
+  async function replaceTaskSubtasks(taskId: string, subtasks: TaskSubtaskDraft[]) {
+    const { error: deleteError } = await client
+      .from("adhdice_task_subtasks")
+      .delete()
+      .eq("task_id", taskId)
+      .eq("user_id", currentUser.id);
+
+    if (deleteError) {
+      setMessage({ tone: "warn", text: deleteError.message });
+      return false;
+    }
+
+    const counter = { n: 0 };
+    function flattenRecursive(items: TaskSubtaskDraft[], parentId: string | null): TaskSubtaskInsert[] {
+      const result: TaskSubtaskInsert[] = [];
+      for (const item of items) {
+        const trimmed = item.title.trim();
+        if (!trimmed) continue;
+        const id = isUuid(item.id) ? item.id : crypto.randomUUID();
+        result.push({ id, task_id: taskId, user_id: currentUser.id, title: trimmed, status: item.status, sort_order: counter.n++, parent_subtask_id: parentId });
+        result.push(...flattenRecursive(item.children, id));
+      }
+      return result;
+    }
+    const cleanedSubtasks = flattenRecursive(subtasks, null);
+
+    if (cleanedSubtasks.length === 0) {
+      setTaskSubtasks((current) => current.filter((subtask) => subtask.task_id !== taskId));
+      return true;
+    }
+
+    const { data, error } = await client
+      .from("adhdice_task_subtasks")
+      .insert(cleanedSubtasks)
+      .select("*");
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    const mappedSubtasks = (data ?? []).map(mapTaskSubtaskRow);
+    setTaskSubtasks((current) => [
+      ...current.filter((subtask) => subtask.task_id !== taskId),
+      ...mappedSubtasks,
+    ]);
+    return true;
+  }
+
+  async function saveTaskEditor(values: TaskDraft, options?: { taskId?: string | null; focusToday?: boolean; subtasks?: TaskSubtaskDraft[] }) {
+    const focusToday = options?.focusToday ?? false;
+    const taskId = options?.taskId ?? null;
+    const subtasks = options?.subtasks ?? [];
+    const isEditing = Boolean(taskId);
+
+    if (isEditing && taskId) {
+      const { id: _id, ...updateValues } = values;
+      const { data, error } = await client
+        .from("adhdice_clean_tasks")
+        .update(updateValues)
+        .eq("id", taskId)
+        .select("*")
+        .single();
+
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+
+      if (data) {
+        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? data : task)));
+      }
+
+      const historySaved = await syncTaskHistoryEntry(taskId, data.status);
+      if (!historySaved) {
+        return false;
+      }
+
+      const subtasksSaved = await replaceTaskSubtasks(taskId, subtasks);
+      if (!subtasksSaved) {
+        return false;
+      }
+
+      const nextFocusIds = focusToday
+        ? Array.from(new Set([...focusedTaskIds, taskId]))
+        : focusedTaskIds.filter((id) => id !== taskId);
+      await saveFocusSelection(nextFocusIds);
+      setMessage({ tone: "good", text: "Task updated." });
+      return true;
+    }
+
+    const payload = {
+      ...values,
+      user_id: currentUser.id,
+      sort_order: Date.now(),
+    };
+    const { data, error } = await client
+      .from("adhdice_clean_tasks")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if (data) {
+      setTasks((current) => sortTasksForUi([...current, data]));
+    }
+
+    if (!data?.id) {
+      setMessage({ tone: "warn", text: "Task saved, but the new task id was missing." });
+      return false;
+    }
+
+    const historySaved = await syncTaskHistoryEntry(data.id, data.status);
+    if (!historySaved) {
+      return false;
+    }
+
+    const subtasksSaved = await replaceTaskSubtasks(data.id, subtasks);
+    if (!subtasksSaved) {
+      return false;
+    }
+
+    if (focusToday) {
+      await saveFocusSelection(
+        Array.from(new Set([...focusedTaskIds, data.id])),
+        new Set([...tasks.map((currentTask) => currentTask.id), data.id]),
+      );
+    }
+
+    setMessage({ tone: "good", text: "Task saved." });
+    return true;
   }
 
   async function importTasks(lines: string[]) {
@@ -956,23 +1416,221 @@ export function TaskApp() {
       sort_order: Date.now() + index,
     }));
 
-    const { error } = await client.from("adhdice_clean_tasks").insert(payload);
-
-    setMessage(
-      error
-        ? { tone: "warn", text: error.message }
-        : { tone: "good", text: `${lines.length} task${lines.length === 1 ? "" : "s"} imported.` },
-    );
-  }
-
-  async function updateTask(taskId: string, values: TaskUpdate) {
-    const { error } = await client
+    const { data, error } = await client
       .from("adhdice_clean_tasks")
-      .update(values)
-      .eq("id", taskId);
+      .insert(payload)
+      .select("*");
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
+      return;
+    }
+
+    if (data) {
+      setTasks((current) => sortTasksForUi([...current, ...data]));
+    }
+
+    setMessage({ tone: "good", text: `${lines.length} task${lines.length === 1 ? "" : "s"} imported.` });
+  }
+
+  async function resetTaskSubtasksToPending(taskId: string) {
+    const { data, error } = await client
+      .from("adhdice_task_subtasks")
+      .update({ status: "pending" })
+      .eq("task_id", taskId)
+      .eq("user_id", currentUser.id)
+      .select("*");
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    const mappedSubtasks = (data ?? []).map(mapTaskSubtaskRow);
+    setTaskSubtasks((current) => [
+      ...current.filter((subtask) => subtask.task_id !== taskId),
+      ...mappedSubtasks,
+    ]);
+    return true;
+  }
+
+  async function syncTaskHistoryEntry(taskId: string, status: TaskStatus, entryDate = todayKey) {
+    const shouldKeepEntry = isTaskHistoryStatus(status);
+
+    if (!shouldKeepEntry) {
+      const { error } = await client
+        .from("adhdice_task_history")
+        .delete()
+        .eq("task_id", taskId)
+        .eq("user_id", currentUser.id)
+        .eq("entry_date", entryDate);
+
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+
+      setTaskHistory((current) => current.filter((entry) =>
+        !(entry.task_id === taskId && entry.entry_date === entryDate),
+      ));
+      return true;
+    }
+
+    const payload: TaskHistoryInsert = {
+      entry_date: entryDate,
+      status,
+      task_id: taskId,
+      user_id: currentUser.id,
+      was_completed: isTaskCompletedForHistory(status),
+    };
+    const { data, error } = await client
+      .from("adhdice_task_history")
+      .upsert(payload, { onConflict: "user_id,task_id,entry_date" })
+      .select("*")
+      .single();
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if (data) {
+      const mappedEntry = mapTaskHistoryRow(data);
+      setTaskHistory((current) => [
+        mappedEntry,
+        ...current.filter((entry) =>
+          !(entry.task_id === mappedEntry.task_id && entry.entry_date === mappedEntry.entry_date),
+        ),
+      ]);
+    }
+
+    return true;
+  }
+
+  async function appendEconomyEvent(opts: {
+    source: "task" | "focus" | "roll";
+    refId: string;
+    points: number;
+    xp: number;
+    reason: string;
+    taskId?: string;
+    eventType?: "completed" | "missed" | "streak_bonus";
+  }) {
+    // Fetch current balance, award points + xp atomically via profile upsert
+    const { data: profile } = await client
+      .from("adhdice_user_profiles")
+      .select("points, xp, level, tokens")
+      .eq("user_id", currentUser.id)
+      .single();
+
+    const currentPoints = profile?.points ?? 0;
+    const currentXp = profile?.xp ?? 0;
+    const currentLevel = profile?.level ?? 1;
+    const newPoints = currentPoints + opts.points;
+    const newXp = currentXp + opts.xp;
+    // Level threshold: 100 * 1.5^(level-1), simplified to level * 100 for now
+    const xpThreshold = currentLevel * 100;
+    const newLevel = newXp >= xpThreshold ? currentLevel + 1 : currentLevel;
+
+    await client.from("adhdice_user_profiles").upsert({
+      user_id: currentUser.id,
+      points: newPoints,
+      xp: newXp,
+      level: newLevel,
+    });
+
+    setEconomy({ level: newLevel, xp: newXp, points: newPoints, tokens: profile?.tokens ?? 0 });
+
+    await client.from("adhdice_point_ledger").insert({
+      user_id: currentUser.id,
+      delta: opts.points,
+      reason: opts.reason,
+      balance_after: newPoints,
+      source: opts.source,
+      ref_id: opts.refId,
+    });
+
+    if (opts.source === "task" && opts.taskId && opts.eventType) {
+      await client.from("adhdice_task_events").insert({
+        user_id: currentUser.id,
+        task_id: opts.taskId,
+        event_type: opts.eventType,
+        awarded_points: opts.points,
+        awarded_xp: opts.xp,
+      });
+    }
+  }
+
+  async function updateTask(taskId: string, values: TaskUpdate) {
+    const { data, error } = await client
+      .from("adhdice_clean_tasks")
+      .update(values)
+      .eq("id", taskId)
+      .select("*")
+      .single();
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return;
+    }
+
+    if (data) {
+      setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? data : task)));
+      await syncTaskHistoryEntry(taskId, data.status);
+      if (data.status === "done") {
+        void appendEconomyEvent({
+          source: "task",
+          refId: taskId,
+          taskId,
+          eventType: "completed",
+          points: 10,
+          xp: 15,
+          reason: `Completed task: ${data.title}`,
+        });
+
+        if (data.repeat_frequency !== "none") {
+          const nextDue = calcNextDueDate(data);
+          if (nextDue) {
+            const { data: recurring, error: recurErr } = await client
+              .from("adhdice_clean_tasks")
+              .update({ status: "upcoming", due_on: nextDue, completed_at: null })
+              .eq("id", taskId)
+              .select("*")
+              .single();
+            if (!recurErr && recurring) {
+              setTasks((current) => sortTasksForUi(current.map((t) => t.id === taskId ? recurring : t)));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  async function deleteTasks(taskIds: string[]) {
+    const { error } = await client
+      .from("adhdice_clean_tasks")
+      .delete()
+      .in("id", taskIds)
+      .eq("user_id", currentUser.id);
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return;
+    }
+
+    setTasks((current) => current.filter((task) => !taskIds.includes(task.id)));
+    setMessage({ tone: "good", text: `Deleted ${taskIds.length} task${taskIds.length === 1 ? "" : "s"}.` });
+  }
+
+  async function handleToggleTaskFromList(task: Task) {
+    const reopening = isTaskFinished(task);
+    await updateTask(task.id, {
+      completed_at: reopening ? null : new Date().toISOString(),
+      status: reopening ? "pending" : "done",
+    });
+
+    if (reopening && task.subtasks_auto_reset) {
+      await resetTaskSubtasksToPending(task.id);
     }
   }
 
@@ -1018,6 +1676,8 @@ export function TaskApp() {
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
+    } else if (typeof BroadcastChannel !== "undefined") {
+      new BroadcastChannel("adhdice_focus_sync").postMessage("toggle");
     }
   }
 
@@ -1165,6 +1825,21 @@ export function TaskApp() {
       return next;
     });
     setMessage({ tone: "good", text: "Focus session saved." });
+
+    const focusMinutes = Math.floor(totalSeconds / 60);
+    if (focusMinutes >= 1 && inserted) {
+      void appendEconomyEvent({
+        source: "focus",
+        refId: inserted.id,
+        points: focusMinutes,
+        xp: Math.floor(focusMinutes * 1.5),
+        reason: `Focus session: ${focusMinutes}m`,
+      });
+    }
+
+    if (typeof BroadcastChannel !== "undefined") {
+      new BroadcastChannel("adhdice_focus_sync").postMessage("finish");
+    }
   }
 
   async function handleAdjustTimer(categoryId: string, deltaSeconds: number) {
@@ -1205,6 +1880,9 @@ export function TaskApp() {
     }
 
     setMessage({ tone: "good", text: "Timer adjusted." });
+    if (typeof BroadcastChannel !== "undefined") {
+      new BroadcastChannel("adhdice_focus_sync").postMessage("adjust");
+    }
   }
 
   async function handleResetTimer(categoryId: string) {
@@ -1458,6 +2136,7 @@ export function TaskApp() {
         ) : null}
         <TopHeader
           doneCount={doneTasks.length}
+          economy={economy}
           lightMode={lightMode}
           onOpenAccount={() => setIsAccountOpen(true)}
           profile={profile}
@@ -1514,6 +2193,37 @@ export function TaskApp() {
                 tasks={activeTasks}
               />
             ) : null}
+            {isTaskEditorOpen ? (
+              <TaskEditorModal
+                allTags={[...new Set(tasks.flatMap((t) => t.tags ?? []))].sort()}
+                focusedToday={focusedTaskIds}
+                lightMode={lightMode}
+                mode={taskEditorMode}
+                onClose={closeTaskEditor}
+                onOpenHistory={selectedTaskForEditor ? () => setTaskHistoryModalTaskId(selectedTaskForEditor.id) : undefined}
+                onSave={async (draft) => {
+                  const success = await saveTaskEditor(draft.values, {
+                    focusToday: draft.focusToday,
+                    subtasks: draft.subtasks,
+                    taskId: selectedTaskForEditor?.id ?? null,
+                  });
+
+                  if (success) {
+                    closeTaskEditor();
+                  }
+                }}
+                subtasks={selectedTaskForEditor ? taskSubtasksByTaskId[selectedTaskForEditor.id] ?? [] : []}
+                task={selectedTaskForEditor}
+              />
+            ) : null}
+            {taskHistoryModalTaskId ? (
+              <TaskHistoryModal
+                lightMode={lightMode}
+                onClose={() => setTaskHistoryModalTaskId(null)}
+                taskHistory={taskHistory.filter((h) => h.task_id === taskHistoryModalTaskId)}
+                taskTitle={tasks.find((t) => t.id === taskHistoryModalTaskId)?.title ?? ""}
+              />
+            ) : null}
             {isMomentumListOpen ? (
               <MomentumTaskModal
                 doneTasks={momentumMetric.doneTasks}
@@ -1537,7 +2247,7 @@ export function TaskApp() {
             <div className="mt-6">
               <ControlBar
                 lightMode={lightMode}
-                onOpenComposer={() => scrollToTaskElement("task-composer-card")}
+                onOpenComposer={openNewTaskEditor}
                 onOpenImport={() => scrollToTaskElement("task-import-panel")}
                 onSearchChange={(search) => setTaskUiState((prev) => ({ ...prev, search }))}
                 onViewChange={(view) => setTaskUiState((prev) => ({ ...prev, view }))}
@@ -1600,11 +2310,17 @@ export function TaskApp() {
                 onReorderWidget={(targetWidgetId) => {
                   void handleDropGridWidget(targetWidgetId);
                 }}
+                onResetLayout={() => {
+                  void handleResetGridLayout();
+                }}
                 onResizeWidget={(widgetId, nextWidth, nextHeight) => {
                   void handleResizeGridWidget(widgetId, nextWidth, nextHeight);
                 }}
+                onEditTask={openEditTaskEditor}
                 onSelectWidget={setSelectedGridWidgetId}
                 onSetDraggedWidget={setDraggedGridWidgetId}
+                subtasksByTaskId={taskSubtasksByTaskId}
+                taskHistoryStats={taskHistoryStats}
                 onToggleEditMode={() => {
                   setIsGridEditMode((prev) => !prev);
                   setSelectedGridWidgetId(null);
@@ -1628,7 +2344,9 @@ export function TaskApp() {
               />
             ) : taskUiState.view === "matrix" ? (
               <TaskMatrixView
+                onEditTask={openEditTaskEditor}
                 lightMode={lightMode}
+                subtasksByTaskId={taskSubtasksByTaskId}
                 onToggle={(task) =>
                   updateTask(task.id, {
                     status: "done",
@@ -1641,6 +2359,8 @@ export function TaskApp() {
               <TaskCardGallery
                 focusedTaskIds={focusedTaskIds}
                 lightMode={lightMode}
+                onEditTask={openEditTaskEditor}
+                subtasksByTaskId={taskSubtasksByTaskId}
                 onToggle={(task) =>
                   updateTask(task.id, {
                     status: "done",
@@ -1651,75 +2371,136 @@ export function TaskApp() {
               />
             ) : (
               <>
-                <div className="mt-7 grid gap-5 xl:grid-cols-[1.45fr_1.1fr_0.9fr]">
-                  <UrgentTasksPanel
-                    focusedTaskIds={focusedTaskIds}
-                    lightMode={lightMode}
-                    tasks={filteredUrgentTasks}
-                    onToggle={(task) =>
-                      updateTask(task.id, {
-                        status: "done",
-                        completed_at: new Date().toISOString(),
-                      })
-                    }
-                  />
-                  <div className="grid gap-5">
-                    <div id="task-composer-card">
-                      <TaskComposerCard lightMode={lightMode} onAdd={addTask} />
+                <TaskListView
+                  focusedTaskIds={focusedTaskIds}
+                  lightMode={lightMode}
+                  onDelete={(taskIds) => { void deleteTasks(taskIds); }}
+                  onEditTask={openEditTaskEditor}
+                  onSetStatus={(task, status) => { void updateTask(task.id, { status }); }}
+                  subtasksByTaskId={taskSubtasksByTaskId}
+                  onToggle={(task) => {
+                    void handleToggleTaskFromList(task);
+                  }}
+                  tasks={filteredTasks}
+                />
+                <div className="mt-6">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-2">
+                      {isListLayoutEditMode ? (
+                        <>
+                          <span className={`rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#f3efff] text-[#6f57f6]" : "bg-[#221a42] text-[#cabfff]"}`}>
+                            {listCardLayouts.length} cards
+                          </span>
+                        </>
+                      ) : null}
                     </div>
-                    <TaskLane
-                      count={filteredFocusTasks.length}
-                      defaultExpanded
-                      lightMode={lightMode}
-                      title="Focus Today"
-                      tasks={filteredFocusTasks}
-                      tone="purple"
-                    />
+                    <div className="flex gap-2">
+                      {isListLayoutEditMode ? (
+                        <button
+                          className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_4px_12px_rgba(81,61,168,0.08)]" : "bg-white/8 text-white/75"}`}
+                          onClick={() => { setListCardLayouts(LIST_DEFAULT_CARD_LAYOUTS); setActiveListCardId(null); }}
+                          type="button"
+                        >
+                          Reset Layout
+                        </button>
+                      ) : null}
+                      <button
+                        className={`rounded-full px-4 py-2 text-sm font-semibold ${isListLayoutEditMode
+                          ? lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"
+                          : lightMode ? "bg-[#f3efff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                        onClick={() => { setIsListLayoutEditMode((p) => !p); setActiveListCardId(null); }}
+                        type="button"
+                      >
+                        {isListLayoutEditMode ? "Done Editing" : "Edit Layout"}
+                      </button>
+                    </div>
                   </div>
-                  <div id="task-import-panel">
-                    <SupportPanel
-                      doneCount={filteredDoneTasks.length}
-                      lightMode={lightMode}
-                      lowEnergyTasks={filteredLowEnergyTasks}
-                      message={message}
-                      onImport={importTasks}
-                    />
-                  </div>
-                </div>
 
-                <div className="mt-5 grid gap-5 xl:grid-cols-[1.2fr_1.2fr_0.8fr]">
-                  <TaskLane
-                    count={filteredTodayTasks.length}
-                    lightMode={lightMode}
-                    title="Due Today"
-                    tasks={filteredTodayTasks}
-                    tone="purple"
-                  />
-                  <TaskLane
-                    count={filteredHighPriorityTasks.length}
-                    lightMode={lightMode}
-                    title="Active Queue"
-                    tasks={filteredActiveTasks.slice(0, 8)}
-                    tone="soft"
-                  />
-                  <FocusStatsCard
-                    activeCount={filteredActiveTasks.length}
-                    doneCount={filteredDoneTasks.length}
-                    lightMode={lightMode}
-                    overdueCount={filteredUrgentTasks.length}
-                  />
-                </div>
-                {filteredDoneTasks.length > 0 ? (
-                  <div className="mt-5">
-                    <TaskLane
-                      count={filteredDoneTasks.length}
-                      lightMode={lightMode}
-                      title="Completed"
-                      tasks={filteredDoneTasks}
-                      tone="soft"
-                    />
+                  {isListLayoutEditMode ? (
+                    <div className={`mt-3 rounded-[1.25rem] border border-dashed px-4 py-4 text-sm ${lightMode ? "border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0]" : "border-white/10 bg-white/[0.03] text-white/55"}`}>
+                      {activeListCardId
+                        ? `${LIST_CARD_LABELS[activeListCardId]} is selected. Resize controls appear on the card below.`
+                        : "Tap any card below to select it, then resize or reorder it."}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 grid grid-cols-4 gap-5">
+                    {listCardLayouts.map((cardLayout) => {
+                      const isActive = activeListCardId === cardLayout.id;
+                      const isDragging = draggedListCardId === cardLayout.id;
+                      if (cardLayout.id === "urgent" && filteredUrgentTasks.length === 0 && !isListLayoutEditMode) {
+                        return null;
+                      }
+                      return (
+                        <div
+                          className={`relative min-w-0 ${isListLayoutEditMode ? "cursor-grab" : ""} ${isDragging ? "opacity-60" : ""}`}
+                          draggable={isListLayoutEditMode}
+                          key={cardLayout.id}
+                          onClick={() => { if (isListLayoutEditMode && !isActive) setActiveListCardId(cardLayout.id); }}
+                          onDragEnd={() => setDraggedListCardId(null)}
+                          onDragOver={(e) => { if (isListLayoutEditMode) e.preventDefault(); }}
+                          onDragStart={() => setDraggedListCardId(cardLayout.id)}
+                          onDrop={(e) => {
+                            if (!isListLayoutEditMode || !draggedListCardId || draggedListCardId === cardLayout.id) return;
+                            e.preventDefault();
+                            setListCardLayouts((prev) => {
+                              const next = [...prev];
+                              const fromIdx = next.findIndex((c) => c.id === draggedListCardId);
+                              const toIdx = next.findIndex((c) => c.id === cardLayout.id);
+                              if (fromIdx === -1 || toIdx === -1) return prev;
+                              const [removed] = next.splice(fromIdx, 1);
+                              next.splice(toIdx, 0, removed);
+                              return next;
+                            });
+                            setDraggedListCardId(null);
+                          }}
+                          style={{ gridColumn: `span ${Math.min(cardLayout.colSpan, LIST_MAX_COLUMNS)}`, minHeight: cardLayout.minHeight }}
+                        >
+                          {isListLayoutEditMode ? (
+                            <div className={`pointer-events-none absolute inset-0 z-10 rounded-[2rem] border-2 ${isActive
+                              ? lightMode ? "border-[#6f57f6] shadow-[0_0_0_4px_rgba(111,87,246,0.16)]" : "border-[#cabfff] shadow-[0_0_0_4px_rgba(202,191,255,0.12)]"
+                              : lightMode ? "border-[#dcd2ff]" : "border-white/15"}`} />
+                          ) : null}
+                          {isListLayoutEditMode ? (
+                            <div className={`absolute left-4 top-4 z-20 rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-white text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.12)]" : "bg-[#171328] text-[#cabfff]"}`}>
+                              <GripVertical className="mr-1 inline h-3.5 w-3.5" />
+                              {LIST_CARD_LABELS[cardLayout.id]}
+                            </div>
+                          ) : null}
+                          <div className={`h-full min-h-0 overflow-hidden ${isListLayoutEditMode ? "pointer-events-none" : ""}`}>
+                            <div className={`h-full min-h-0 overflow-y-auto ${isListLayoutEditMode && isActive ? "pb-64" : ""}`}>
+                              {cardLayout.id === "composer" ? (
+                                <div className="h-full" id="task-composer-card">
+                                  <TaskComposerCard lightMode={lightMode} onAdd={addTask} />
+                                </div>
+                              ) : cardLayout.id === "import" ? (
+                                <div className="h-full" id="task-import-panel">
+                                  <ImportWidgetCard lightMode={lightMode} message={message} onImport={importTasks} />
+                                </div>
+                              ) : cardLayout.id === "focus-today" ? (
+                                <TaskLane count={filteredFocusTasks.length} defaultExpanded lightMode={lightMode} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} title="Focus Today" tasks={filteredFocusTasks} tone="purple" />
+                              ) : cardLayout.id === "due-today" ? (
+                                <TaskLane count={filteredTodayTasks.length} lightMode={lightMode} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} title="Due Today" tasks={filteredTodayTasks} tone="purple" />
+                              ) : cardLayout.id === "stats" ? (
+                                <FocusStatsCard activeCount={filteredActiveTasks.length} doneCount={filteredDoneTasks.length} lightMode={lightMode} overdueCount={filteredUrgentTasks.length} taskHistoryStats={taskHistoryStats} />
+                              ) : cardLayout.id === "urgent" ? (
+                                <UrgentTasksPanel focusedTaskIds={focusedTaskIds} lightMode={lightMode} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} tasks={filteredUrgentTasks} onToggle={(task) => updateTask(task.id, { status: "done", completed_at: new Date().toISOString() })} />
+                              ) : null}
+                            </div>
+                          </div>
+                          {isListLayoutEditMode && isActive ? (
+                            <ListCardResizeOverlay
+                              layout={cardLayout}
+                              lightMode={lightMode}
+                              onClose={() => setActiveListCardId(null)}
+                              onResize={(colSpan, minHeight) => setListCardLayouts((prev) => prev.map((c) => c.id === cardLayout.id ? { ...c, colSpan, minHeight } : c))}
+                            />
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
-                ) : null}
+                </div>
               </>
             )}
           </>
@@ -1745,6 +2526,57 @@ export function TaskApp() {
             onDeleteCategory={handleDeleteFocusCategory}
             onUpdateCategories={handleSaveCategories}
           />
+        ) : activePage === "Roll" ? (
+          <RollPage
+            client={client}
+            currentUser={currentUser}
+            lightMode={lightMode}
+            onSpendPoints={(delta, reason) =>
+              void appendEconomyEvent({
+                source: "roll",
+                refId: currentUser.id,
+                points: delta,
+                xp: 0,
+                reason,
+              })
+            }
+          />
+        ) : activePage === "Stats" ? (
+          <StatsPage
+            economy={economy}
+            focusHistory={focusHistory}
+            lightMode={lightMode}
+            taskHistory={taskHistory}
+            taskHistoryStats={taskHistoryStats}
+            tasks={tasks}
+          />
+        ) : activePage === "Notes" ? (
+          <NotesPage
+            client={client}
+            currentUser={currentUser}
+            lightMode={lightMode}
+            tasks={tasks}
+          />
+        ) : activePage === "Settings" ? (
+          <SettingsPage
+            dayStartTime={dayStartTime}
+            lightMode={lightMode}
+            onDayStartTimeChange={setDayStartTime}
+            onThemeChange={setTheme}
+            tasks={tasks}
+            theme={theme}
+            userId={currentUser.id}
+          />
+        ) : activePage === "Games" ? (
+          <Suspense fallback={<div className="flex h-48 items-center justify-center opacity-40">Loading…</div>}>
+            <GamesPage
+              lightMode={lightMode}
+              taskHistory={taskHistory}
+              onAwardXP={(xp, reason) =>
+                void appendEconomyEvent({ source: "roll", refId: currentUser.id, points: 0, xp, reason })
+              }
+            />
+          </Suspense>
         ) : (
           <PagePlaceholder
             count={activeTasks.length}
@@ -1763,11 +2595,12 @@ export function TaskApp() {
       {showBackToTop ? (
         <button
           aria-label="Back to top"
-          className={`fixed bottom-28 right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full shadow-[0_18px_40px_rgba(81,61,168,0.24)] transition hover:-translate-y-0.5 sm:bottom-8 sm:right-8 ${
+          className={`fixed right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full shadow-[0_18px_40px_rgba(81,61,168,0.24)] transition hover:-translate-y-0.5 sm:right-8 ${
             lightMode
               ? "bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] text-white"
               : "bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] text-[#171127]"
           }`}
+          style={{ bottom: "calc(7rem + env(safe-area-inset-bottom))" }}
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
           type="button"
         >
@@ -1790,7 +2623,7 @@ function ConfigSplash({ lightMode }: { lightMode: boolean }) {
             Add your Supabase keys
           </h1>
           <p className={`mt-3 text-base ${lightMode ? "text-[#707a95]" : "text-white/55"}`}>
-            Create `.env.local` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
+            Create `.env.2.0.2` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
           </p>
         </div>
       </section>
@@ -1968,6 +2801,7 @@ function StatusBanner({
 
 function TopHeader({
   doneCount,
+  economy,
   lightMode,
   onOpenAccount,
   profile,
@@ -1975,6 +2809,7 @@ function TopHeader({
   onThemeChange,
 }: {
   doneCount: number;
+  economy: { level: number; xp: number; points: number; tokens: number };
   lightMode: boolean;
   onOpenAccount: () => void;
   profile: UserProfile;
@@ -2022,7 +2857,7 @@ function TopHeader({
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${lightMode ? "bg-[#f1ecff] text-[#7f6af7]" : "bg-white/10 text-[#c5b8ff]"}`}>
-            v.6.5.5
+            v.2.0.2
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>
@@ -2031,9 +2866,13 @@ function TopHeader({
       {/* Row 2 (mobile): stats. On desktop these join row 1 on the right. */}
       <div className="flex flex-wrap items-center gap-3">
         <ThemeToggle lightMode={lightMode} theme={theme} onThemeChange={onThemeChange} />
-        <ProgressStat lightMode={lightMode} label="Lvl 7" value="919 / 1135 XP" />
-        <MiniStat lightMode={lightMode} label="Focus Gems" value="6436" />
-        <MiniStat lightMode={lightMode} label="Streak" value={String(doneCount + 50)} />
+        <ProgressStat
+          lightMode={lightMode}
+          label={`Lvl ${economy.level}`}
+          value={`${economy.xp} / ${economy.level * 100} XP`}
+        />
+        <MiniStat lightMode={lightMode} label="Points" value={String(economy.points)} />
+        <MiniStat lightMode={lightMode} label="Tokens" value={String(economy.tokens)} />
         <div className="hidden lg:block">{accountButton}</div>
       </div>
     </header>
@@ -2078,7 +2917,7 @@ function AccountModal({
   const [isSaving, setIsSaving] = useState(false);
 
   return (
-    <ModalShell className={`w-full max-w-[34rem] max-h-[82vh] overflow-y-auto rounded-[2rem] border p-6 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)]" : "border-white/10 bg-[#171328]"}`}>
+    <ModalShell className={`w-full max-w-[34rem] max-h-[82vh] overflow-y-auto rounded-[2rem] border p-6 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)]" : "border-white/10 bg-[#171328]"}`} label="Account" onClose={onClose}>
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/35"}`}>
@@ -2407,6 +3246,1207 @@ function HomeLowEnergyPreview({
     </section>
   );
 }
+
+// ─── Page shells ────────────────────────────────────────────────────────────
+
+function PageShellHeader({ title, subtitle, lightMode }: { title: string; subtitle: string; lightMode: boolean }) {
+  return (
+    <div className="pt-8 pb-6">
+      <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+        {subtitle}
+      </p>
+      <h1 className={`mt-1 text-3xl font-black tracking-tight ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+        {title}
+      </h1>
+    </div>
+  );
+}
+
+type RollDifficulty = "easy" | "medium" | "hard";
+type RollPhase = "idle" | "rolling" | "settling";
+
+const DIFFICULTY_CONFIG: Record<RollDifficulty, { label: string; cost: number; numD20: number; layout: "d20" | "d20-d6" | "d20-d20-d6"; description: string }> = {
+  easy: { label: "Easy", cost: 50, numD20: 1, layout: "d20", description: "1d20 · 50 pts" },
+  medium: { label: "Medium", cost: 100, numD20: 2, layout: "d20-d6", description: "Best of 2d20 · 100 pts" },
+  hard: { label: "Hard", cost: 150, numD20: 3, layout: "d20-d20-d6", description: "Best of 3d20 · 150 pts" },
+};
+
+const VAULT_TIER_CONFIG: Record<VaultPrizeTier, { label: string; defaultCost: number; emoji: string }> = {
+  small: { label: "Small", defaultCost: 10, emoji: "🎁" },
+  big: { label: "Big", defaultCost: 25, emoji: "🏆" },
+  master: { label: "Master", defaultCost: 50, emoji: "👑" },
+};
+
+function RollPage({
+  client,
+  currentUser,
+  lightMode,
+  onSpendPoints,
+}: {
+  client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
+  currentUser: User;
+  lightMode: boolean;
+  onSpendPoints: (delta: number, reason: string) => void;
+}) {
+  const [points, setPoints] = useState<number | null>(null);
+  const [tokens, setTokens] = useState<number | null>(null);
+  const [cells, setCells] = useState<PrizeCell[]>([]);
+  const [history, setHistory] = useState<RollHistoryEntry[]>([]);
+  const [difficulty, setDifficulty] = useState<RollDifficulty>("easy");
+  const [phase, setPhase] = useState<RollPhase>("idle");
+  const [lastRoll, setLastRoll] = useState<number | null>(null);
+  const [editingCell, setEditingCell] = useState<number | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  // Vault
+  const [showVault, setShowVault] = useState(false);
+  const [vaultPrizes, setVaultPrizes] = useState<VaultPrize[]>([]);
+  // Prize manager
+  const [showPrizeManager, setShowPrizeManager] = useState(false);
+  const [pmTier, setPmTier] = useState<VaultPrizeTier>("small");
+  const [pmEditId, setPmEditId] = useState<string | null>(null);
+  const [pmName, setPmName] = useState("");
+  const [pmCost, setPmCost] = useState("");
+  const [pmBulk, setPmBulk] = useState("");
+
+  const pendingResult = useRef<number | null>(null);
+  const pendingCost = useRef<number>(0);
+
+  useEffect(() => {
+    void (async () => {
+      const [profileRes, cellsRes, historyRes, vaultRes] = await Promise.all([
+        client.from("adhdice_user_profiles").select("points, tokens").eq("user_id", currentUser.id).single(),
+        client.from("adhdice_prize_board").select("*").eq("user_id", currentUser.id).order("cell_number"),
+        client.from("adhdice_roll_history").select("*").eq("user_id", currentUser.id).order("rolled_at", { ascending: false }).limit(10),
+        client.from("adhdice_vault_prizes").select("*").eq("user_id", currentUser.id).order("created_at"),
+      ]);
+      if (profileRes.data) { setPoints(profileRes.data.points); setTokens(profileRes.data.tokens ?? 0); }
+      if (cellsRes.data) setCells(cellsRes.data);
+      if (historyRes.data) setHistory(historyRes.data);
+      if (vaultRes.data) setVaultPrizes(vaultRes.data as VaultPrize[]);
+    })();
+  }, [client, currentUser.id]);
+
+  const cellMap = useMemo(() => {
+    const map: Record<number, PrizeCell> = {};
+    for (const c of cells) map[c.cell_number] = c;
+    return map;
+  }, [cells]);
+
+  const cfg = DIFFICULTY_CONFIG[difficulty];
+  const canRoll = points !== null && points >= cfg.cost && phase === "idle";
+
+  function handleRoll() {
+    if (!canRoll || points === null) return;
+    const cost = cfg.cost;
+    const rolls = Array.from({ length: cfg.numD20 }, () => Math.floor(Math.random() * 20) + 1);
+    const result = Math.max(...rolls);
+    pendingResult.current = result;
+    pendingCost.current = cost;
+
+    new Audio("/dice-roll.wav").play().catch(() => {});
+    setPhase("rolling");
+    setLastRoll(null);
+
+    // Persist immediately during animation
+    const newBalance = points - cost;
+    const prizeLabel = cellMap[result]?.label || null;
+    void Promise.all([
+      client.from("adhdice_roll_history").insert({ user_id: currentUser.id, roll_result: result, points_spent: cost, prize_label: prizeLabel }),
+      client.from("adhdice_user_profiles").update({ points: newBalance }).eq("user_id", currentUser.id),
+      client.from("adhdice_point_ledger").insert({ user_id: currentUser.id, delta: -cost, reason: "Dice roll", balance_after: newBalance, source: "roll" }),
+    ]);
+    setPoints(newBalance);
+    onSpendPoints(-cost, "Dice roll");
+
+    // Transition to settling after spin duration
+    setTimeout(() => setPhase("settling"), 1100);
+  }
+
+  function handleDiceSettled() {
+    const result = pendingResult.current;
+    if (result === null) return;
+    new Audio("/calm-alarm.wav").play().catch(() => {});
+    setLastRoll(result);
+    setPhase("idle");
+    pendingResult.current = null;
+    void client.from("adhdice_roll_history").select("*").eq("user_id", currentUser.id).order("rolled_at", { ascending: false }).limit(10)
+      .then(({ data }) => { if (data) setHistory(data); });
+  }
+
+  async function handleSaveCell(cellNumber: number) {
+    const existing = cellMap[cellNumber];
+    if (existing) {
+      await client.from("adhdice_prize_board").update({ label: editLabel }).eq("id", existing.id);
+      setCells((prev) => prev.map((c) => c.cell_number === cellNumber ? { ...c, label: editLabel } : c));
+    } else {
+      const { data } = await client.from("adhdice_prize_board").insert({ user_id: currentUser.id, cell_number: cellNumber, label: editLabel }).select("*").single();
+      if (data) setCells((prev) => [...prev, data]);
+    }
+    setEditingCell(null);
+    setEditLabel("");
+  }
+
+  async function handleClaimPrize(prize: VaultPrize) {
+    if (tokens === null || tokens < prize.token_cost || prize.is_claimed) return;
+    const newTokens = tokens - prize.token_cost;
+    await Promise.all([
+      client.from("adhdice_vault_prizes").update({ is_claimed: true, claimed_at: new Date().toISOString() }).eq("id", prize.id),
+      client.from("adhdice_user_profiles").update({ tokens: newTokens }).eq("user_id", currentUser.id),
+      client.from("adhdice_point_ledger").insert({ user_id: currentUser.id, delta: -prize.token_cost, reason: `Claimed: ${prize.name}`, balance_after: newTokens, source: "roll" }),
+    ]);
+    setTokens(newTokens);
+    setVaultPrizes((prev) => prev.map((p) => p.id === prize.id ? { ...p, is_claimed: true } : p));
+  }
+
+  async function handleAddVaultPrize() {
+    if (!pmName.trim()) return;
+    const cost = parseInt(pmCost) || VAULT_TIER_CONFIG[pmTier].defaultCost;
+    const ins: VaultPrizeInsert = { user_id: currentUser.id, name: pmName.trim(), tier: pmTier, token_cost: cost };
+    const { data } = await client.from("adhdice_vault_prizes").insert(ins).select("*").single();
+    if (data) setVaultPrizes((prev) => [...prev, data as VaultPrize]);
+    setPmName("");
+    setPmCost("");
+  }
+
+  async function handleUpdateVaultPrize(id: string) {
+    if (!pmName.trim()) return;
+    const cost = parseInt(pmCost) || VAULT_TIER_CONFIG[pmTier].defaultCost;
+    await client.from("adhdice_vault_prizes").update({ name: pmName.trim(), tier: pmTier, token_cost: cost }).eq("id", id);
+    setVaultPrizes((prev) => prev.map((p) => p.id === id ? { ...p, name: pmName.trim(), tier: pmTier, token_cost: cost } : p));
+    setPmEditId(null);
+    setPmName("");
+    setPmCost("");
+  }
+
+  async function handleDeleteVaultPrize(id: string) {
+    await client.from("adhdice_vault_prizes").delete().eq("id", id);
+    setVaultPrizes((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  async function handleBulkPaste() {
+    const names = pmBulk.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (!names.length) return;
+    const defaultCost = VAULT_TIER_CONFIG[pmTier].defaultCost;
+    const inserts: VaultPrizeInsert[] = names.map((name) => ({ user_id: currentUser.id, name, tier: pmTier, token_cost: defaultCost }));
+    const { data } = await client.from("adhdice_vault_prizes").insert(inserts).select("*");
+    if (data) setVaultPrizes((prev) => [...prev, ...(data as VaultPrize[])]);
+    setPmBulk("");
+  }
+
+  const lm = lightMode;
+  const cardBg = lm ? "bg-[#f7f5ff]" : "bg-white/5";
+  const labelColor = lm ? "text-[#8e88a9]" : "text-white/40";
+  const headingColor = lm ? "text-[#17203a]" : "text-white";
+  const accentBg = lm ? "bg-[#6f57f6]" : "bg-[#9b87ff]";
+  const accentText = lm ? "text-white" : "text-[#171127]";
+  const dimText = lm ? "text-[#27304c]" : "text-white/70";
+
+  return (
+    <section className="px-4 pb-32">
+      <PageShellHeader title="Roll" subtitle="Prize Board" lightMode={lightMode} />
+
+      {/* Balance row */}
+      <div className={`mb-4 flex items-center justify-between rounded-2xl px-5 py-3 ${cardBg}`}>
+        <div className="flex gap-6">
+          <div>
+            <p className={`text-[10px] font-semibold uppercase tracking-widest ${labelColor}`}>Points</p>
+            <p className={`text-2xl font-black tabular-nums ${headingColor}`}>{points ?? "—"}</p>
+          </div>
+          <div>
+            <p className={`text-[10px] font-semibold uppercase tracking-widest ${labelColor}`}>Tokens</p>
+            <p className={`text-2xl font-black tabular-nums ${headingColor}`}>{tokens ?? "—"}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowVault(true)}
+          className={`rounded-xl px-4 py-2 text-sm font-bold transition active:scale-95 ${lm ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+        >
+          Vault
+        </button>
+      </div>
+
+      {/* Difficulty selector */}
+      <div className={`mb-4 flex rounded-2xl p-1 gap-1 ${cardBg}`}>
+        {(["easy", "medium", "hard"] as RollDifficulty[]).map((d) => (
+          <button
+            key={d}
+            type="button"
+            disabled={phase !== "idle"}
+            onClick={() => setDifficulty(d)}
+            className={`flex-1 rounded-xl py-2 text-xs font-bold transition ${
+              difficulty === d
+                ? `${accentBg} ${accentText} shadow-sm`
+                : `${labelColor} hover:opacity-80`
+            }`}
+          >
+            {DIFFICULTY_CONFIG[d].label}
+          </button>
+        ))}
+      </div>
+      <p className={`mb-3 text-center text-[11px] ${labelColor}`}>{cfg.description}</p>
+
+      {/* 3D Dice Canvas */}
+      <div className="mb-4">
+        <Suspense fallback={<div className={`w-full rounded-2xl ${cardBg}`} style={{ height: 180 }} />}>
+          <Dice3DCanvas
+            phase={phase}
+            layout={cfg.layout}
+            onSettled={handleDiceSettled}
+            lightMode={lightMode}
+          />
+        </Suspense>
+      </div>
+
+      {/* Roll button */}
+      <button
+        disabled={!canRoll}
+        onClick={handleRoll}
+        type="button"
+        className={`mb-4 w-full rounded-2xl py-4 text-base font-black tracking-wide transition active:scale-[0.98] disabled:opacity-40 ${
+          lm
+            ? "bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] text-white shadow-[0_12px_28px_rgba(111,87,246,0.3)]"
+            : "bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] text-[#171127]"
+        }`}
+      >
+        {phase === "idle" ? `Roll — ${cfg.cost} pts` : phase === "rolling" ? "Rolling…" : "Settling…"}
+      </button>
+
+      {/* Last roll reveal */}
+      {lastRoll !== null && phase === "idle" && (
+        <div className={`mb-4 rounded-2xl px-5 py-4 text-center ${lm ? "bg-[#ede8ff]" : "bg-[#22193f]"}`}>
+          <p className={`text-[11px] font-semibold uppercase tracking-widest mb-1 ${labelColor}`}>Result</p>
+          <p className={`text-5xl font-black tabular-nums ${lm ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>{lastRoll}</p>
+          {cellMap[lastRoll]?.label ? (
+            <p className={`mt-1 text-sm font-semibold ${dimText}`}>{cellMap[lastRoll].label}</p>
+          ) : (
+            <p className={`mt-1 text-xs ${labelColor}`}>No prize set for this roll</p>
+          )}
+        </div>
+      )}
+
+      {/* 20-cell prize grid */}
+      <div className="flex items-center justify-between mb-2">
+        <p className={`text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>Prize Board</p>
+        <button
+          type="button"
+          onClick={() => setShowPrizeManager(true)}
+          className={`text-xs font-semibold ${lm ? "text-[#6f57f6]" : "text-[#cabfff]"}`}
+        >
+          Manage Prizes
+        </button>
+      </div>
+      <div className="grid grid-cols-4 gap-2 mb-6">
+        {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => {
+          const cell = cellMap[n];
+          const isLit = lastRoll === n;
+          const editing = editingCell === n;
+          return (
+            <div
+              key={n}
+              className={`relative rounded-xl p-2 transition ${
+                isLit
+                  ? lm
+                    ? "bg-[#6f57f6] text-white shadow-[0_0_20px_rgba(111,87,246,0.4)]"
+                    : "bg-[#9b87ff] text-[#171127] shadow-[0_0_20px_rgba(155,135,255,0.4)]"
+                  : cardBg
+              }`}
+            >
+              <p className={`text-[10px] font-bold tabular-nums ${isLit ? "opacity-80" : labelColor}`}>{n}</p>
+              {editing ? (
+                <div className="mt-1 flex flex-col gap-1">
+                  <input
+                    autoFocus
+                    className={`w-full rounded-lg px-2 py-1 text-xs outline-none ${lm ? "bg-white text-[#1e2540]" : "bg-white/10 text-white"}`}
+                    maxLength={40}
+                    onChange={(e) => setEditLabel(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void handleSaveCell(n);
+                      if (e.key === "Escape") { setEditingCell(null); setEditLabel(""); }
+                    }}
+                    placeholder="Prize…"
+                    value={editLabel}
+                  />
+                  <button className={`rounded-lg py-1 text-[10px] font-bold ${accentBg} ${accentText}`} onClick={() => { void handleSaveCell(n); }} type="button">Save</button>
+                </div>
+              ) : (
+                <button aria-label={cell?.label ? `Edit cell ${n}: ${cell.label}` : `Set prize for cell ${n}`} className="mt-0.5 w-full text-left" onClick={() => { setEditingCell(n); setEditLabel(cell?.label ?? ""); }} type="button">
+                  <p className={`truncate text-[11px] leading-tight ${isLit ? "" : dimText}`}>
+                    {cell?.label || <span className="opacity-30">+</span>}
+                  </p>
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Recent rolls */}
+      {history.length > 0 && (
+        <div className="mb-4">
+          <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>Recent Rolls</p>
+          <div className={`divide-y rounded-2xl overflow-hidden ${lm ? "bg-[#f7f5ff] divide-[#e5e0f5]" : "bg-white/5 divide-white/8"}`}>
+            {history.map((h) => (
+              <div key={h.id} className="flex items-center justify-between px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-black ${lm ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}>{h.roll_result}</span>
+                  <span className={`text-sm ${dimText}`}>{h.prize_label || "No prize"}</span>
+                </div>
+                <span className={`text-xs ${labelColor}`}>-{h.points_spent}pts</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Vault Modal */}
+      {showVault && (
+        <ModalShell className={`w-full max-w-md max-h-[82vh] overflow-y-auto rounded-[2rem] border ${lm ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)]" : "border-white/10 bg-[#171328]"}`} label="Vault" onClose={() => setShowVault(false)}>
+          <div className="px-5 pb-6">
+            <div className="flex items-center justify-between py-4 mb-2">
+              <div>
+                <h2 className={`text-lg font-black ${headingColor}`}>Vault</h2>
+                <p className={`text-xs ${labelColor}`}>{tokens ?? 0} tokens available</p>
+              </div>
+              <button aria-label="Close vault" type="button" onClick={() => setShowVault(false)} className={`rounded-full p-2 ${lm ? "bg-[#f0ecff]" : "bg-white/10"}`}>
+                <X className={`h-4 w-4 ${labelColor}`} />
+              </button>
+            </div>
+            {vaultPrizes.length === 0 ? (
+              <p className={`py-8 text-center text-sm ${labelColor}`}>No prizes yet. Add them in Manage Prizes.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {(["small", "big", "master"] as VaultPrizeTier[]).map((tier) => {
+                  const tierPrizes = vaultPrizes.filter((p) => p.tier === tier);
+                  if (!tierPrizes.length) return null;
+                  const { label, emoji } = VAULT_TIER_CONFIG[tier];
+                  return (
+                    <div key={tier}>
+                      <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>{emoji} {label}</p>
+                      <div className="flex flex-col gap-2">
+                        {tierPrizes.map((prize) => {
+                          const progress = Math.min((tokens ?? 0) / prize.token_cost, 1);
+                          const canClaim = (tokens ?? 0) >= prize.token_cost && !prize.is_claimed;
+                          return (
+                            <div key={prize.id} className={`rounded-2xl px-4 py-3 ${cardBg} ${prize.is_claimed ? "opacity-50" : ""}`}>
+                              <div className="flex items-center justify-between mb-2">
+                                <p className={`font-semibold text-sm ${headingColor}`}>{prize.name}</p>
+                                <button
+                                  type="button"
+                                  disabled={!canClaim}
+                                  onClick={() => { void handleClaimPrize(prize); }}
+                                  className={`rounded-xl px-3 py-1 text-xs font-bold transition active:scale-95 disabled:opacity-40 ${accentBg} ${accentText}`}
+                                >
+                                  {prize.is_claimed ? "Claimed" : `Claim · ${prize.token_cost}t`}
+                                </button>
+                              </div>
+                              <div className={`h-1.5 rounded-full overflow-hidden ${lm ? "bg-[#e5e0f5]" : "bg-white/10"}`}>
+                                <div
+                                  className={`h-full rounded-full transition-all ${lm ? "bg-[#6f57f6]" : "bg-[#9b87ff]"}`}
+                                  style={{ width: `${progress * 100}%` }}
+                                />
+                              </div>
+                              <p className={`mt-1 text-[10px] ${labelColor}`}>{Math.min(tokens ?? 0, prize.token_cost)} / {prize.token_cost} tokens</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </ModalShell>
+      )}
+
+      {/* Prize Manager Modal */}
+      {showPrizeManager && (
+        <ModalShell className={`w-full max-w-md max-h-[90vh] overflow-y-auto rounded-[2rem] border ${lm ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)]" : "border-white/10 bg-[#171328]"}`} label="Manage Prizes" onClose={() => setShowPrizeManager(false)}>
+          <div className="px-5 pb-6">
+            <div className="flex items-center justify-between py-4 mb-3">
+              <h2 className={`text-lg font-black ${headingColor}`}>Manage Prizes</h2>
+              <button aria-label="Close prize manager" type="button" onClick={() => setShowPrizeManager(false)} className={`rounded-full p-2 ${lm ? "bg-[#f0ecff]" : "bg-white/10"}`}>
+                <X className={`h-4 w-4 ${labelColor}`} />
+              </button>
+            </div>
+
+            {/* Tier tabs */}
+            <div className={`flex rounded-xl p-1 gap-1 mb-4 ${lm ? "bg-[#f0ecff]" : "bg-white/5"}`}>
+              {(["small", "big", "master"] as VaultPrizeTier[]).map((t) => (
+                <button key={t} type="button" onClick={() => setPmTier(t)}
+                  className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${pmTier === t ? `${accentBg} ${accentText}` : labelColor}`}>
+                  {VAULT_TIER_CONFIG[t].emoji} {VAULT_TIER_CONFIG[t].label}
+                </button>
+              ))}
+            </div>
+
+            {/* Add / edit form */}
+            <div className={`mb-4 rounded-2xl p-4 ${cardBg}`}>
+              <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>
+                {pmEditId ? "Edit Prize" : "Add Prize"}
+              </p>
+              <div className="flex gap-2 mb-2">
+                <input
+                  className={`flex-1 rounded-xl px-3 py-2 text-sm outline-none ${lm ? "bg-white text-[#1e2540]" : "bg-white/10 text-white"}`}
+                  placeholder="Prize name…"
+                  value={pmName}
+                  onChange={(e) => setPmName(e.target.value)}
+                  maxLength={60}
+                />
+                <input
+                  className={`w-20 rounded-xl px-3 py-2 text-sm outline-none ${lm ? "bg-white text-[#1e2540]" : "bg-white/10 text-white"}`}
+                  placeholder="Tokens"
+                  value={pmCost}
+                  onChange={(e) => setPmCost(e.target.value)}
+                  type="number"
+                  min="1"
+                />
+              </div>
+              {pmEditId ? (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { void handleUpdateVaultPrize(pmEditId); }}
+                    className={`flex-1 rounded-xl py-2 text-sm font-bold ${accentBg} ${accentText}`}>Save</button>
+                  <button type="button" onClick={() => { setPmEditId(null); setPmName(""); setPmCost(""); }}
+                    className={`rounded-xl px-4 py-2 text-sm font-bold ${lm ? "bg-[#e5e0f5] text-[#8e88a9]" : "bg-white/10 text-white/50"}`}>Cancel</button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => { void handleAddVaultPrize(); }}
+                  className={`w-full rounded-xl py-2 text-sm font-bold ${accentBg} ${accentText}`}>
+                  Add to {VAULT_TIER_CONFIG[pmTier].label}
+                </button>
+              )}
+            </div>
+
+            {/* Bulk paste */}
+            <div className={`mb-4 rounded-2xl p-4 ${cardBg}`}>
+              <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>Bulk Paste</p>
+              <textarea
+                className={`w-full rounded-xl px-3 py-2 text-sm outline-none resize-none ${lm ? "bg-white text-[#1e2540]" : "bg-white/10 text-white"}`}
+                placeholder={"One prize per line…\nExtra nap\nFavorite snack"}
+                rows={4}
+                value={pmBulk}
+                onChange={(e) => setPmBulk(e.target.value)}
+              />
+              <button type="button" onClick={() => { void handleBulkPaste(); }}
+                className={`mt-2 w-full rounded-xl py-2 text-sm font-bold ${accentBg} ${accentText}`}>
+                Add All to {VAULT_TIER_CONFIG[pmTier].label}
+              </button>
+            </div>
+
+            {/* Prize list for current tier */}
+            <div>
+              <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>
+                {VAULT_TIER_CONFIG[pmTier].emoji} {VAULT_TIER_CONFIG[pmTier].label} Prizes
+              </p>
+              {vaultPrizes.filter((p) => p.tier === pmTier).length === 0 ? (
+                <p className={`py-4 text-center text-sm ${labelColor}`}>None yet</p>
+              ) : (
+                <div className={`divide-y rounded-2xl overflow-hidden ${lm ? "bg-[#f7f5ff] divide-[#e5e0f5]" : "bg-white/5 divide-white/8"}`}>
+                  {vaultPrizes.filter((p) => p.tier === pmTier).map((prize) => (
+                    <div key={prize.id} className="flex items-center justify-between px-4 py-3">
+                      <div>
+                        <p className={`text-sm font-semibold ${headingColor} ${prize.is_claimed ? "line-through opacity-50" : ""}`}>{prize.name}</p>
+                        <p className={`text-xs ${labelColor}`}>{prize.token_cost} tokens</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => { setPmEditId(prize.id); setPmName(prize.name); setPmCost(String(prize.token_cost)); setPmTier(prize.tier); }}
+                          className={`text-xs font-semibold ${lm ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>Edit</button>
+                        <button type="button" onClick={() => { void handleDeleteVaultPrize(prize.id); }}
+                          className={`text-xs font-semibold ${lm ? "text-red-500" : "text-red-400"}`}>Del</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </ModalShell>
+      )}
+    </section>
+  );
+}
+
+function StatsPage({
+  economy,
+  focusHistory,
+  lightMode,
+  taskHistory,
+  taskHistoryStats,
+  tasks,
+}: {
+  economy: { level: number; xp: number; points: number; tokens: number };
+  focusHistory: HistoricalFocusSession[];
+  lightMode: boolean;
+  taskHistory: DbTaskHistory[];
+  taskHistoryStats: TaskHistoryStats;
+  tasks: Task[];
+}) {
+  const today = todayISO();
+
+  // Tasks completed today
+  const todayDone = taskHistory.filter((h) => h.entry_date === today && h.was_completed).length;
+
+  // Tasks completed this week (last 7 days)
+  const weekDates = Array.from({ length: 7 }, (_, i) => shiftDateKey(today, -i));
+  const weekDone = taskHistory.filter((h) => weekDates.includes(h.entry_date) && h.was_completed).length;
+
+  // Focus minutes today
+  const todayFocusSeconds = focusHistory
+    .filter((s) => s.date === today)
+    .reduce((sum, s) => sum + s.durationSeconds, 0);
+  const todayFocusMinutes = Math.floor(todayFocusSeconds / 60);
+
+  // 7-day productivity bar chart data: tasks done per day
+  const { chartDays, maxScore } = useMemo(() => {
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const date = shiftDateKey(today, -(6 - i));
+      const done = taskHistory.filter((h) => h.entry_date === date && h.was_completed).length;
+      const focusSecs = focusHistory.filter((s) => s.date === date).reduce((sum, s) => sum + s.durationSeconds, 0);
+      const score = done * 10 + Math.floor(focusSecs / 60);
+      return { date, done, score };
+    });
+    return { chartDays: days, maxScore: Math.max(...days.map((d) => d.score), 1) };
+  }, [taskHistory, focusHistory, today]);
+
+  // Energy distribution from active tasks
+  const { energyCounts, totalEnergy } = useMemo(() => {
+    const counts = { low: 0, medium: 0, high: 0 };
+    for (const t of tasks) {
+      if (t.status !== "archived" && t.status !== "done") counts[t.energy]++;
+    }
+    return { energyCounts: counts, totalEnergy: counts.low + counts.medium + counts.high || 1 };
+  }, [tasks]);
+
+  const statCard = (label: string, value: string, detail: string) => (
+    <div className={`flex-1 rounded-2xl px-4 py-4 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
+      <p className={`text-[10px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>{label}</p>
+      <p className={`mt-1 text-3xl font-black tabular-nums ${lightMode ? "text-[#17203a]" : "text-white"}`}>{value}</p>
+      <p className={`mt-0.5 text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>{detail}</p>
+    </div>
+  );
+
+  return (
+    <section className="px-4 pb-32">
+      <PageShellHeader title="Stats" subtitle="Insights" lightMode={lightMode} />
+
+      {/* Hero metrics */}
+      <div className="mb-4 flex gap-3">
+        {statCard("Today", String(todayDone), "tasks done")}
+        {statCard("This Week", String(weekDone), "tasks done")}
+      </div>
+      <div className="mb-6 flex gap-3">
+        {statCard("Streak", String(taskHistoryStats.currentStreak), taskHistoryStats.currentStreak === 1 ? "day" : "days")}
+        {statCard("Focus Today", `${todayFocusMinutes}m`, "minutes logged")}
+      </div>
+
+      {/* Economy snapshot */}
+      <div className={`mb-6 rounded-2xl px-5 py-4 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
+        <p className={`mb-3 text-[11px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+          Economy
+        </p>
+        <div className="flex items-center gap-4">
+          <div>
+            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Level</p>
+            <p className={`text-2xl font-black ${lightMode ? "text-[#17203a]" : "text-white"}`}>{economy.level}</p>
+          </div>
+          <div className="flex-1">
+            <div className="flex justify-between mb-1">
+              <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>XP</p>
+              <p className={`text-xs tabular-nums ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>{economy.xp} / {economy.level * 100}</p>
+            </div>
+            <div className={`h-2 rounded-full overflow-hidden ${lightMode ? "bg-[#e5e0f5]" : "bg-white/10"}`}>
+              <div
+                className="h-full rounded-full bg-[linear-gradient(90deg,#7c63f7,#9b87ff)]"
+                style={{ width: `${Math.min(100, Math.round((economy.xp / (economy.level * 100)) * 100))}%` }}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 flex gap-4">
+          <div>
+            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Points</p>
+            <p className={`font-bold tabular-nums ${lightMode ? "text-[#27304c]" : "text-white"}`}>{economy.points}</p>
+          </div>
+          <div>
+            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Tokens</p>
+            <p className={`font-bold tabular-nums ${lightMode ? "text-[#27304c]" : "text-white"}`}>{economy.tokens}</p>
+          </div>
+          <div>
+            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Best Streak</p>
+            <p className={`font-bold tabular-nums ${lightMode ? "text-[#27304c]" : "text-white"}`}>{taskHistoryStats.bestStreak}d</p>
+          </div>
+          <div>
+            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Done Rate</p>
+            <p className={`font-bold tabular-nums ${lightMode ? "text-[#27304c]" : "text-white"}`}>{taskHistoryStats.doneRate}%</p>
+          </div>
+        </div>
+      </div>
+
+      {/* 7-day productivity chart */}
+      <div className={`mb-6 rounded-2xl px-5 py-4 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
+        <p className={`mb-4 text-[11px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+          7-Day Productivity
+        </p>
+        <div className="flex items-end gap-1.5 h-28">
+          {chartDays.map((day) => (
+            <div key={day.date} className="flex flex-1 flex-col items-center gap-1">
+              <div className="flex w-full flex-1 items-end">
+                <div
+                  className={`w-full rounded-t-lg transition-all ${day.date === today ? "bg-[linear-gradient(180deg,#7c63f7,#9b87ff)]" : lightMode ? "bg-[#cdc6f7]" : "bg-white/20"}`}
+                  style={{ height: `${Math.max(4, Math.round((day.score / maxScore) * 100))}%` }}
+                />
+              </div>
+              <p className={`text-[9px] tabular-nums ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+                {day.date.slice(5).replace("-", "/")}
+              </p>
+            </div>
+          ))}
+        </div>
+        <p className={`mt-2 text-[10px] ${lightMode ? "text-[#8e88a9]" : "text-white/30"}`}>
+          Score = tasks × 10 + focus minutes
+        </p>
+      </div>
+
+      {/* Energy distribution */}
+      <div className={`rounded-2xl px-5 py-4 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
+        <p className={`mb-3 text-[11px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+          Active Task Energy
+        </p>
+        {(["high", "medium", "low"] as TaskEnergy[]).map((level) => {
+          const pct = Math.round((energyCounts[level] / totalEnergy) * 100);
+          return (
+            <div key={level} className="mb-2">
+              <div className="flex justify-between mb-1">
+                <p className={`text-xs capitalize ${lightMode ? "text-[#27304c]" : "text-white/80"}`}>{level}</p>
+                <p className={`text-xs tabular-nums ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>{energyCounts[level]}</p>
+              </div>
+              <div className={`h-1.5 rounded-full overflow-hidden ${lightMode ? "bg-[#e5e0f5]" : "bg-white/10"}`}>
+                <div
+                  className={`h-full rounded-full ${level === "high" ? "bg-[#f05566]" : level === "medium" ? "bg-[#f0a030]" : "bg-[#30c060]"}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function NotesPage({
+  client,
+  currentUser,
+  lightMode,
+  tasks,
+}: {
+  client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
+  currentUser: User;
+  lightMode: boolean;
+  tasks: Task[];
+}) {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [search, setSearch] = useState("");
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Note | null>(null);
+  const [isNew, setIsNew] = useState(false);
+  const [quickCapture, setQuickCapture] = useState("");
+
+  useEffect(() => {
+    void client
+      .from("adhdice_notes")
+      .select("*")
+      .eq("user_id", currentUser.id)
+      .order("updated_at", { ascending: false })
+      .then(({ data }) => { if (data) setNotes(data); });
+  }, [client, currentUser.id]);
+
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const n of notes) for (const t of n.tags) set.add(t);
+    return [...set].sort();
+  }, [notes]);
+
+  const filtered = useMemo(() => notes.filter((n) => {
+    const matchSearch = !search || n.title.toLowerCase().includes(search.toLowerCase()) || n.body.toLowerCase().includes(search.toLowerCase());
+    const matchTag = !activeTag || n.tags.includes(activeTag);
+    return matchSearch && matchTag;
+  }), [notes, search, activeTag]);
+
+  async function handleQuickCapture() {
+    if (!quickCapture.trim()) return;
+    const { data } = await client.from("adhdice_notes").insert({
+      user_id: currentUser.id,
+      title: quickCapture.trim(),
+      body: "",
+    }).select("*").single();
+    if (data) setNotes((prev) => [data, ...prev]);
+    setQuickCapture("");
+  }
+
+  async function handleSaveNote(note: Note) {
+    if (isNew) {
+      const { data } = await client.from("adhdice_notes").insert({
+        user_id: currentUser.id,
+        title: note.title,
+        body: note.body,
+        tags: note.tags,
+        linked_task_ids: note.linked_task_ids,
+      }).select("*").single();
+      if (data) setNotes((prev) => [data, ...prev]);
+    } else {
+      await client.from("adhdice_notes").update({
+        title: note.title,
+        body: note.body,
+        tags: note.tags,
+        linked_task_ids: note.linked_task_ids,
+      }).eq("id", note.id);
+      setNotes((prev) => prev.map((n) => n.id === note.id ? { ...n, ...note, updated_at: new Date().toISOString() } : n));
+    }
+    setEditing(null);
+    setIsNew(false);
+  }
+
+  async function handleDeleteNote(id: string) {
+    await client.from("adhdice_notes").delete().eq("id", id);
+    setNotes((prev) => prev.filter((n) => n.id !== id));
+    setEditing(null);
+  }
+
+  function openNew() {
+    setEditing({ id: "", user_id: currentUser.id, title: "", body: "", tags: [], linked_task_ids: [], created_at: "", updated_at: "" });
+    setIsNew(true);
+  }
+
+  if (editing) {
+    return (
+      <NoteEditor
+        isNew={isNew}
+        lightMode={lightMode}
+        note={editing}
+        onClose={() => { setEditing(null); setIsNew(false); }}
+        onDelete={handleDeleteNote}
+        onSave={handleSaveNote}
+        tasks={tasks}
+      />
+    );
+  }
+
+  return (
+    <section className="px-4 pb-32">
+      <div className="flex items-center justify-between">
+        <PageShellHeader title="Notes" subtitle="Knowledge Base" lightMode={lightMode} />
+        <button
+          className={`mb-2 flex h-10 w-10 items-center justify-center rounded-full font-bold text-xl ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#9b87ff] text-[#171127]"}`}
+          onClick={openNew}
+          type="button"
+        >
+          +
+        </button>
+      </div>
+
+      {/* Quick capture */}
+      <div className={`mb-4 flex gap-2 rounded-2xl px-4 py-3 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
+        <input
+          className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${lightMode ? "text-[#27304c] placeholder:text-[#9b9fba]" : "text-white placeholder:text-white/35"}`}
+          onKeyDown={(e) => { if (e.key === "Enter") void handleQuickCapture(); }}
+          onChange={(e) => setQuickCapture(e.target.value)}
+          placeholder="Quick capture — press Enter to save…"
+          value={quickCapture}
+        />
+        {quickCapture && (
+          <button
+            className={`text-xs font-semibold ${lightMode ? "text-[#6f57f6]" : "text-[#cabfff]"}`}
+            onClick={() => { void handleQuickCapture(); }}
+            type="button"
+          >
+            Save
+          </button>
+        )}
+      </div>
+
+      {/* Search */}
+      <div className={`mb-3 flex gap-2 rounded-2xl px-4 py-2.5 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
+        <input
+          className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${lightMode ? "text-[#27304c] placeholder:text-[#9b9fba]" : "text-white placeholder:text-white/35"}`}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search notes…"
+          value={search}
+        />
+      </div>
+
+      {/* Tag filter chips */}
+      {allTags.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {allTags.map((tag) => (
+            <button
+              key={tag}
+              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+              type="button"
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                activeTag === tag
+                  ? lightMode ? "bg-[#6f57f6] text-white" : "bg-[#9b87ff] text-[#171127]"
+                  : lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"
+              }`}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 2-col notes grid */}
+      {filtered.length === 0 ? (
+        <p className={`mt-8 text-center text-sm ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+          {notes.length === 0 ? "No notes yet. Use quick capture above." : "No notes match your filter."}
+        </p>
+      ) : (
+        <div className="columns-2 gap-3">
+          {filtered.map((note) => (
+            <button
+              key={note.id}
+              className={`mb-3 w-full break-inside-avoid rounded-2xl px-4 py-3 text-left transition hover:opacity-80 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}
+              onClick={() => { setEditing(note); setIsNew(false); }}
+              type="button"
+            >
+              {note.title && (
+                <p className={`mb-1 text-sm font-semibold leading-snug ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+                  {note.title}
+                </p>
+              )}
+              {note.body && (
+                <p className={`text-xs leading-relaxed line-clamp-4 ${lightMode ? "text-[#707a95]" : "text-white/55"}`}>
+                  {note.body}
+                </p>
+              )}
+              {note.tags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {note.tags.map((t) => (
+                    <span key={t} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"}`}>
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function NoteEditor({
+  isNew,
+  lightMode,
+  note,
+  onClose,
+  onDelete,
+  onSave,
+  tasks,
+}: {
+  isNew: boolean;
+  lightMode: boolean;
+  note: Note;
+  onClose: () => void;
+  onDelete: (id: string) => Promise<void>;
+  onSave: (note: Note) => Promise<void>;
+  tasks: Task[];
+}) {
+  const [draft, setDraft] = useState<Note>(note);
+  const [tagInput, setTagInput] = useState("");
+
+  function addTag() {
+    const t = tagInput.trim().toLowerCase();
+    if (t && !draft.tags.includes(t)) setDraft((d) => ({ ...d, tags: [...d.tags, t] }));
+    setTagInput("");
+  }
+
+  return (
+    <section className="px-4 pb-32">
+      <div className="flex items-center gap-3 pt-4 pb-4">
+        <button onClick={onClose} type="button" className={`text-sm font-semibold ${lightMode ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>
+          ← Back
+        </button>
+        <div className="flex-1" />
+        {!isNew && (
+          <button
+            onClick={() => { void onDelete(draft.id); }}
+            type="button"
+            className={`text-xs font-semibold ${lightMode ? "text-[#f05566]" : "text-[#ff8090]"}`}
+          >
+            Delete
+          </button>
+        )}
+        <button
+          onClick={() => { void onSave(draft); }}
+          type="button"
+          className={`rounded-full px-4 py-2 text-sm font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#9b87ff] text-[#171127]"}`}
+        >
+          Save
+        </button>
+      </div>
+
+      <input
+        autoFocus
+        className={`mb-3 w-full border-b-2 bg-transparent pb-2 text-2xl font-bold outline-none ${lightMode ? "border-[#6f57f6] text-[#1e2540] placeholder:text-[#bbb8d0]" : "border-[#cabfff]/50 text-white placeholder:text-white/25"}`}
+        onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+        placeholder="Title"
+        value={draft.title}
+      />
+
+      <textarea
+        className={`mb-4 min-h-40 w-full resize-y rounded-2xl px-4 py-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/5 text-white placeholder:text-white/30"}`}
+        onChange={(e) => setDraft((d) => ({ ...d, body: e.target.value }))}
+        placeholder="Write something…"
+        value={draft.body}
+      />
+
+      {/* Tags */}
+      <div className="mb-4">
+        <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Tags</p>
+        <div className="flex flex-wrap gap-2 mb-2">
+          {draft.tags.map((t) => (
+            <button
+              key={t}
+              onClick={() => setDraft((d) => ({ ...d, tags: d.tags.filter((x) => x !== t) }))}
+              type="button"
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"}`}
+            >
+              {t} ×
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input
+            className={`flex-1 rounded-xl px-3 py-2 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1e2540]" : "bg-white/5 text-white"}`}
+            onKeyDown={(e) => { if (e.key === "Enter") addTag(); }}
+            onChange={(e) => setTagInput(e.target.value)}
+            placeholder="Add tag…"
+            value={tagInput}
+          />
+          <button
+            className={`rounded-xl px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"}`}
+            onClick={addTag}
+            type="button"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+const ACCENT_PRESETS = ["#6f57f6", "#e05597", "#e05050", "#e08830", "#22b87a", "#2196c8", "#7b4fe0", "#5070e0"];
+
+function SettingsPage({
+  dayStartTime,
+  lightMode,
+  onDayStartTimeChange,
+  onThemeChange,
+  tasks,
+  theme,
+  userId,
+}: {
+  dayStartTime: string;
+  lightMode: boolean;
+  onDayStartTimeChange: (t: string) => void;
+  onThemeChange: (t: ThemeMode) => void;
+  tasks: Task[];
+  theme: ThemeMode;
+  userId: string;
+}) {
+  const [accentColor, setAccentColor] = useState<string>(() => {
+    if (typeof window === "undefined") return ACCENT_PRESETS[0];
+    return window.localStorage.getItem("adhdice-accent-color") ?? ACCENT_PRESETS[0];
+  });
+  const [importText, setImportText] = useState("");
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+
+  function applyAccent(color: string) {
+    setAccentColor(color);
+    window.localStorage.setItem("adhdice-accent-color", color);
+    document.documentElement.style.setProperty("--accent", color);
+    // Derive a darkened strong and a lightened soft
+    document.documentElement.style.setProperty("--accent-strong", color);
+  }
+
+  function handleExportJSON() {
+    const exportable = tasks.map(({ user_id: _uid, ...rest }) => rest);
+    const blob = new Blob([JSON.stringify(exportable, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `adhdice-tasks-${getTodayKey()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImportJSON() {
+    setImportStatus(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(importText.trim());
+    } catch {
+      setImportStatus("Invalid JSON.");
+      return;
+    }
+    if (!Array.isArray(parsed)) {
+      setImportStatus("Expected a JSON array.");
+      return;
+    }
+    const rows = (parsed as Task[]).filter((r) => typeof r.title === "string" && r.title.trim());
+    if (rows.length === 0) {
+      setImportStatus("No valid tasks found.");
+      return;
+    }
+    const supabase = createBrowserSupabaseClient();
+    if (!supabase) {
+      setImportStatus("Not connected.");
+      return;
+    }
+    const payload = rows.map((r) => ({
+      id: r.id ?? undefined,
+      user_id: userId,
+      title: r.title,
+      notes: r.notes ?? null,
+      status: (r.status ?? "pending") as TaskStatus,
+      priority: (r.priority ?? "normal") as TaskPriority,
+      energy: (r.energy ?? "medium") as TaskEnergy,
+      is_urgent: r.is_urgent ?? false,
+      is_important: r.is_important ?? false,
+      due_on: r.due_on ?? null,
+      due_time: r.due_time ?? null,
+      estimated_minutes: r.estimated_minutes ?? null,
+      tags: r.tags ?? [],
+      external_link_label: r.external_link_label ?? null,
+      external_link_url: r.external_link_url ?? null,
+      one_step_at_a_time: r.one_step_at_a_time ?? false,
+      subtasks_auto_reset: r.subtasks_auto_reset ?? false,
+      repeat_frequency: (r.repeat_frequency ?? "none") as TaskRepeatFrequency,
+      repeat_interval: r.repeat_interval ?? 1,
+      repeat_days_of_week: r.repeat_days_of_week ?? [],
+      repeat_day_of_month: r.repeat_day_of_month ?? null,
+    }));
+    const { error } = await supabase
+      .from("adhdice_clean_tasks")
+      .upsert(payload, { onConflict: "id" });
+    if (error) {
+      setImportStatus(`Error: ${error.message}`);
+    } else {
+      setImportStatus(`Imported ${payload.length} task${payload.length === 1 ? "" : "s"}.`);
+      setImportText("");
+    }
+  }
+
+  const row = `flex items-center justify-between px-5 py-4`;
+  const label = `text-sm font-medium ${lightMode ? "text-[#27304c]" : "text-white"}`;
+  const sectionClass = `rounded-2xl divide-y ${lightMode ? "bg-[#f7f5ff] divide-[#e5e0f5]" : "bg-white/5 divide-white/10"}`;
+  const sectionTitle = `mt-8 mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`;
+
+  return (
+    <section className="px-4 pb-32 max-w-lg mx-auto">
+      <PageShellHeader title="Settings" subtitle="Configuration" lightMode={lightMode} />
+
+      {/* Appearance */}
+      <p className={sectionTitle}>Appearance</p>
+      <div className={sectionClass}>
+        <div className={row}>
+          <span className={label}>Theme</span>
+          <ThemeToggle lightMode={lightMode} theme={theme} onThemeChange={onThemeChange} />
+        </div>
+        <div className="px-5 py-4">
+          <p className={label}>Highlight color</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {ACCENT_PRESETS.map((color) => (
+              <button
+                aria-label={`Set accent to ${color}`}
+                className={`h-8 w-8 rounded-full border-2 transition ${accentColor === color ? "scale-110 border-white shadow-md" : "border-transparent opacity-80"}`}
+                key={color}
+                onClick={() => applyAccent(color)}
+                style={{ backgroundColor: color }}
+                type="button"
+              />
+            ))}
+            <input
+              aria-label="Custom accent color"
+              className="h-8 w-8 cursor-pointer rounded-full border-0 p-0"
+              onChange={(e) => applyAccent(e.target.value)}
+              title="Custom color"
+              type="color"
+              value={accentColor}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Daily schedule */}
+      <p className={sectionTitle}>Schedule</p>
+      <div className={sectionClass}>
+        <div className={`${row} gap-4`}>
+          <div>
+            <p className={label}>Day start time</p>
+            <p className={`mt-0.5 text-xs ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>When "tomorrow" becomes "today" for task resets</p>
+          </div>
+          <input
+            className={`rounded-lg border px-3 py-2 text-sm font-mono ${lightMode ? "border-[#e5e0f5] bg-white text-[#27304c]" : "border-white/15 bg-white/8 text-white"}`}
+            onChange={(e) => onDayStartTimeChange(e.target.value)}
+            type="time"
+            value={dayStartTime}
+          />
+        </div>
+      </div>
+
+      {/* Data management */}
+      <p className={sectionTitle}>Data</p>
+      <div className={sectionClass}>
+        <div className={`${row} gap-4`}>
+          <div>
+            <p className={label}>Export tasks</p>
+            <p className={`mt-0.5 text-xs ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Download all tasks as JSON</p>
+          </div>
+          <button
+            className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${lightMode ? "bg-[#f1ecff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"}`}
+            onClick={handleExportJSON}
+            type="button"
+          >
+            Export
+          </button>
+        </div>
+        <div className="px-5 py-4">
+          <p className={label}>Import tasks (JSON)</p>
+          <p className={`mt-0.5 mb-3 text-xs ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Paste an exported JSON array — existing IDs will be upserted</p>
+          <textarea
+            className={`w-full rounded-xl border px-3 py-2 font-mono text-xs ${lightMode ? "border-[#e5e0f5] bg-white text-[#27304c] placeholder:text-[#c0b8d8]" : "border-white/15 bg-white/5 text-white placeholder:text-white/25"}`}
+            onChange={(e) => setImportText(e.target.value)}
+            placeholder='[{"title": "My task", ...}]'
+            rows={4}
+            value={importText}
+          />
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              className={`rounded-full px-4 py-2 text-sm font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+              disabled={!importText.trim()}
+              onClick={() => { void handleImportJSON(); }}
+              type="button"
+            >
+              Import
+            </button>
+            {importStatus ? (
+              <span className={`text-xs ${importStatus.startsWith("Error") ? (lightMode ? "text-[#d64b5f]" : "text-[#ff9eaf]") : (lightMode ? "text-[#12a876]" : "text-[#7de4b8]")}`}>
+                {importStatus}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Page placeholder (Games, Test, unknown) ─────────────────────────────────
 
 function PagePlaceholder({
   count,
@@ -2907,14 +4947,18 @@ function TaskGridView({
   message,
   missingWidgetTypes,
   onAddTask,
+  onEditTask,
   onAddWidget,
   onImportTasks,
   onMoveWidget,
   onRemoveWidget,
   onReorderWidget,
+  onResetLayout,
   onResizeWidget,
   onSelectWidget,
   onSetDraggedWidget,
+  subtasksByTaskId,
+  taskHistoryStats,
   onToggleEditMode,
   onToggleTask,
   overdueCount,
@@ -2932,14 +4976,18 @@ function TaskGridView({
   message: Message | null;
   missingWidgetTypes: TaskGridWidgetType[];
   onAddTask: (task: TaskDraft) => Promise<void>;
+  onEditTask: (task: Task) => void;
   onAddWidget: (widgetType: TaskGridWidgetType) => void;
   onImportTasks: (lines: string[]) => Promise<void>;
   onMoveWidget: (widgetId: string, direction: "up" | "down") => void;
   onRemoveWidget: (widgetId: string) => void;
   onReorderWidget: (targetWidgetId: string) => void;
+  onResetLayout: () => void;
   onResizeWidget: (widgetId: string, nextWidth: number, nextHeight: number) => void;
   onSelectWidget: (widgetId: string | null) => void;
   onSetDraggedWidget: (widgetId: string | null) => void;
+  subtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  taskHistoryStats: TaskHistoryStats;
   onToggleEditMode: () => void;
   onToggleTask: (task: Task) => void;
   overdueCount: number;
@@ -2956,6 +5004,7 @@ function TaskGridView({
   const heightPresets = getTaskGridHeightPresets();
   const presentWidgetTypes = new Set(gridLayout.map((item) => item.type));
   const allWidgetTypes = Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[];
+  const hiddenWidgetCount = allWidgetTypes.length - presentWidgetTypes.size;
 
   return (
     <section className="mt-7 space-y-4">
@@ -2969,23 +5018,45 @@ function TaskGridView({
               A modular tasks layout that keeps mobile in sync with desktop.
             </p>
           </div>
-          <button
-            className={`rounded-full px-5 py-3 text-sm font-semibold ${isEditMode
-              ? lightMode
-                ? "bg-[#6f57f6] text-white"
-                : "bg-[#cabfff] text-[#1a1431]"
-              : lightMode
-                ? "bg-[#f3efff] text-[#6f57f6]"
-                : "bg-[#22193f] text-[#cabfff]"}`}
-            onClick={onToggleEditMode}
-            type="button"
-          >
-            {isEditMode ? "Done Editing" : "Edit Layout"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {isEditMode ? (
+              <button
+                className={`rounded-full px-4 py-3 text-sm font-semibold ${lightMode ? "bg-[#fff4f6] text-[#d94e67]" : "bg-[#432330] text-[#ffb2bf]"}`}
+                onClick={onResetLayout}
+                type="button"
+              >
+                Reset Layout
+              </button>
+            ) : null}
+            <button
+              className={`rounded-full px-5 py-3 text-sm font-semibold ${isEditMode
+                ? lightMode
+                  ? "bg-[#6f57f6] text-white"
+                  : "bg-[#cabfff] text-[#1a1431]"
+                : lightMode
+                  ? "bg-[#f3efff] text-[#6f57f6]"
+                  : "bg-[#22193f] text-[#cabfff]"}`}
+              onClick={onToggleEditMode}
+              type="button"
+            >
+              {isEditMode ? "Done Editing" : "Edit Layout"}
+            </button>
+          </div>
         </div>
 
         {isEditMode ? (
           <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <span className={`rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#eef2ff] text-[#5363d3]" : "bg-[#1b2340] text-[#a9b6ff]"}`}>
+                {currentColumns} active column{currentColumns === 1 ? "" : "s"}
+              </span>
+              <span className={`rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#f3efff] text-[#6f57f6]" : "bg-[#221a42] text-[#cabfff]"}`}>
+                {gridLayout.length} widget{gridLayout.length === 1 ? "" : "s"} on grid
+              </span>
+              <span className={`rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#f7f7fb] text-[#68738c]" : "bg-white/8 text-white/65"}`}>
+                {hiddenWidgetCount} hidden
+              </span>
+            </div>
             <div className={`rounded-[1.25rem] px-4 py-3 text-sm ${lightMode ? "bg-[#faf7ff] text-[#6b738f]" : "bg-white/[0.04] text-white/65"}`}>
               Tap a widget to select it. Each widget also shows a visible delete button while editing. Drag to reorder on desktop, or use move controls anywhere. On mobile, width presets map to the current column count automatically.
             </div>
@@ -3038,74 +5109,8 @@ function TaskGridView({
             </div>
 
             {selectedWidget ? (
-              <div className={`rounded-[1.3rem] border p-4 ${lightMode ? "border-[#e7ddff] bg-[#fcfbff]" : "border-white/10 bg-white/[0.04]"}`}>
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>Selected Widget</p>
-                    <p className={`mt-1 text-lg font-bold ${lightMode ? "text-[#27304c]" : "text-white"}`}>{TASK_GRID_WIDGET_LABELS[selectedWidget.type]}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
-                      onClick={() => onMoveWidget(selectedWidget.id, "up")}
-                      type="button"
-                    >
-                      Move Up
-                    </button>
-                    <button
-                      className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
-                      onClick={() => onMoveWidget(selectedWidget.id, "down")}
-                      type="button"
-                    >
-                      Move Down
-                    </button>
-                    <button
-                      className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[#fff1f3] text-[#f05566]" : "bg-[#44232f] text-[#ff9eaf]"}`}
-                      onClick={() => onRemoveWidget(selectedWidget.id)}
-                      type="button"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-col gap-3">
-                  <div className="flex flex-wrap gap-2">
-                    {widthPresets.map((preset) => (
-                      <button
-                        className={`rounded-full px-4 py-2 text-sm font-semibold ${Math.min(selectedWidget.w, currentColumns) === preset.width
-                          ? lightMode
-                            ? "bg-[#6f57f6] text-white"
-                            : "bg-[#cabfff] text-[#1a1431]"
-                          : lightMode
-                            ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]"
-                            : "bg-white/8 text-white/75"}`}
-                        key={preset.label}
-                        onClick={() => onResizeWidget(selectedWidget.id, preset.width, selectedWidget.h)}
-                        type="button"
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {heightPresets.map((preset) => (
-                      <button
-                        className={`rounded-full px-4 py-2 text-sm font-semibold ${selectedWidget.h === preset.height
-                          ? lightMode
-                            ? "bg-[#6f57f6] text-white"
-                            : "bg-[#cabfff] text-[#1a1431]"
-                          : lightMode
-                            ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]"
-                            : "bg-white/8 text-white/75"}`}
-                        key={preset.label}
-                        onClick={() => onResizeWidget(selectedWidget.id, selectedWidget.w, preset.height)}
-                        type="button"
-                      >
-                        {preset.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+              <div className={`rounded-[1.25rem] border border-dashed px-4 py-4 text-sm ${lightMode ? "border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0]" : "border-white/10 bg-white/[0.03] text-white/55"}`}>
+                {TASK_GRID_WIDGET_LABELS[selectedWidget.type]} is selected. Its resize and row controls now appear directly on top of that card.
               </div>
             ) : (
               <div className={`rounded-[1.25rem] border border-dashed px-4 py-4 text-sm ${lightMode ? "border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0]" : "border-white/10 bg-white/[0.03] text-white/55"}`}>
@@ -3126,7 +5131,7 @@ function TaskGridView({
       <div
         className="grid gap-4 md:gap-5"
         style={{
-          gridAutoRows: `minmax(${TASK_GRID_ROW_HEIGHT}px, auto)`,
+          gridAutoRows: `${TASK_GRID_ROW_HEIGHT}px`,
           gridTemplateColumns: `repeat(${currentColumns}, minmax(0, 1fr))`,
         }}
       >
@@ -3141,15 +5146,22 @@ function TaskGridView({
             onDrop={() => onReorderWidget(item.id)}
             onDragStart={() => onSetDraggedWidget(item.id)}
             onDragEnd={() => onSetDraggedWidget(null)}
+            onDeselect={() => onSelectWidget(null)}
             onRemove={() => onRemoveWidget(item.id)}
+            onResize={onResizeWidget}
+            onMove={onMoveWidget}
             onSelect={() => onSelectWidget(item.id)}
             selected={selectedWidget?.id === item.id}
+            widthPresets={widthPresets}
+            heightPresets={heightPresets}
           >
             {item.type === "urgent" ? (
               <UrgentTasksPanel
                 focusedTaskIds={focusedTaskIds}
                 lightMode={lightMode}
+                onEditTask={onEditTask}
                 onToggle={onToggleTask}
+                subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.urgent}
               />
             ) : item.type === "focus_today" ? (
@@ -3157,6 +5169,8 @@ function TaskGridView({
                 count={tasksByWidget.focusToday.length}
                 defaultExpanded
                 lightMode={lightMode}
+                onEditTask={onEditTask}
+                subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.focusToday}
                 title="Focus Today"
                 tone="purple"
@@ -3165,6 +5179,8 @@ function TaskGridView({
               <TaskLane
                 count={tasksByWidget.dueToday.length}
                 lightMode={lightMode}
+                onEditTask={onEditTask}
+                subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.dueToday}
                 title="Due Today"
                 tone="purple"
@@ -3173,6 +5189,8 @@ function TaskGridView({
               <TaskLane
                 count={tasksByWidget.activeQueue.length}
                 lightMode={lightMode}
+                onEditTask={onEditTask}
+                subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.activeQueue}
                 title="Active Queue"
                 tone="soft"
@@ -3181,6 +5199,8 @@ function TaskGridView({
               <TaskLane
                 count={tasksByWidget.completed.length}
                 lightMode={lightMode}
+                onEditTask={onEditTask}
+                subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.completed}
                 title="Completed"
                 tone="soft"
@@ -3199,6 +5219,7 @@ function TaskGridView({
                 doneCount={doneCount}
                 lightMode={lightMode}
                 overdueCount={overdueCount}
+                taskHistoryStats={taskHistoryStats}
               />
             )}
           </TaskGridWidgetShell>
@@ -3212,28 +5233,38 @@ function TaskGridWidgetShell({
   children,
   currentColumns,
   draggedWidgetId,
+  heightPresets,
   isEditMode,
   item,
   lightMode,
   onDragEnd,
   onDragStart,
+  onDeselect,
+  onMove,
   onDrop,
   onRemove,
+  onResize,
   onSelect,
   selected,
+  widthPresets,
 }: {
   children: React.ReactNode;
   currentColumns: number;
   draggedWidgetId: string | null;
+  heightPresets: Array<{ label: string; span: number }>;
   isEditMode: boolean;
   item: TaskGridItem;
   lightMode: boolean;
   onDragEnd: () => void;
   onDragStart: () => void;
+  onDeselect: () => void;
+  onMove: (widgetId: string, direction: "up" | "down") => void;
   onDrop: () => void;
   onRemove: () => void;
+  onResize: (widgetId: string, nextWidth: number, nextHeight: number) => Promise<void> | void;
   onSelect: () => void;
   selected: boolean;
+  widthPresets: Array<{ label: string; width: number }>;
 }) {
   const widthSpan = Math.max(1, Math.min(item.w, currentColumns));
 
@@ -3242,7 +5273,7 @@ function TaskGridWidgetShell({
       className={`relative min-w-0 ${isEditMode ? "cursor-grab" : ""} ${draggedWidgetId === item.id ? "opacity-60" : ""}`}
       draggable={isEditMode}
       onClick={() => {
-        if (isEditMode) {
+        if (isEditMode && !selected) {
           onSelect();
         }
       }}
@@ -3296,7 +5327,204 @@ function TaskGridWidgetShell({
           <Trash2 className="h-4 w-4" />
         </button>
       ) : null}
-      <div className={`h-full min-h-0 ${isEditMode ? "pointer-events-none" : ""}`}>{children}</div>
+      {isEditMode && selected ? (
+        <TaskGridSelectedOverlay
+          currentColumns={currentColumns}
+          heightPresets={heightPresets}
+          item={item}
+          lightMode={lightMode}
+          onClose={onDeselect}
+          onMove={onMove}
+          onRemove={onRemove}
+          onResize={onResize}
+          widthPresets={widthPresets}
+        />
+      ) : null}
+      <div className={`h-full min-h-0 overflow-hidden ${isEditMode ? "pointer-events-none" : ""}`}>
+        <div className={`h-full min-h-0 overflow-y-auto ${isEditMode && selected ? "pb-56" : ""}`}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TaskGridSelectedOverlay({
+  currentColumns,
+  heightPresets,
+  item,
+  lightMode,
+  onClose,
+  onMove,
+  onRemove,
+  onResize,
+  widthPresets,
+}: {
+  currentColumns: number;
+  heightPresets: Array<{ label: string; span: number }>;
+  item: TaskGridItem;
+  lightMode: boolean;
+  onClose: () => void;
+  onMove: (widgetId: string, direction: "up" | "down") => void;
+  onRemove: () => void;
+  onResize: (widgetId: string, nextWidth: number, nextHeight: number) => Promise<void> | void;
+  widthPresets: Array<{ label: string; width: number }>;
+}) {
+  const [customRowsInput, setCustomRowsInput] = useState(String(getDisplayRowsFromSpan(item.h)));
+
+  useEffect(() => {
+    setCustomRowsInput(String(getDisplayRowsFromSpan(item.h)));
+  }, [item.h, item.id]);
+
+  const parsedCustomRows = Number.parseInt(customRowsInput, 10);
+  const clampedCustomRows = Number.isFinite(parsedCustomRows)
+    ? Math.max(1, Math.min(TASK_GRID_MAX_DISPLAY_ROWS, parsedCustomRows))
+    : null;
+
+  function stopOverlayEvent(event: React.SyntheticEvent) {
+    event.stopPropagation();
+  }
+
+  async function applyCustomRows() {
+    if (clampedCustomRows === null) {
+      return;
+    }
+
+    await onResize(item.id, item.w, getSpanFromDisplayRows(clampedCustomRows));
+    onClose();
+  }
+
+  return (
+    <div
+      className={`absolute inset-x-3 bottom-3 z-30 rounded-[1.35rem] border p-3 ${lightMode ? "border-[#ddd4ff] bg-white/95 shadow-[0_18px_36px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]/95"}`}
+      draggable={false}
+      onClick={stopOverlayEvent}
+      onDragStart={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onMouseDown={stopOverlayEvent}
+      onPointerDown={stopOverlayEvent}
+      onTouchStart={stopOverlayEvent}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className={`text-xs font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>
+          {TASK_GRID_WIDGET_LABELS[item.type]}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+            draggable={false}
+            onClick={() => onMove(item.id, "up")}
+            type="button"
+          >
+            Up
+          </button>
+          <button
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+            draggable={false}
+            onClick={() => onMove(item.id, "down")}
+            type="button"
+          >
+            Down
+          </button>
+          <button
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${lightMode ? "bg-[#fff1f3] text-[#f05566]" : "bg-[#44232f] text-[#ff9eaf]"}`}
+            draggable={false}
+            onClick={onRemove}
+            type="button"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 space-y-3">
+        <div>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Width</p>
+          <div className="flex flex-wrap gap-2">
+            {widthPresets.map((preset) => (
+              <button
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${Math.min(item.w, currentColumns) === preset.width
+                  ? lightMode
+                    ? "bg-[#6f57f6] text-white"
+                    : "bg-[#cabfff] text-[#1a1431]"
+                  : lightMode
+                    ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]"
+                    : "bg-white/8 text-white/75"}`}
+                draggable={false}
+                key={preset.label}
+                onClick={() => onResize(item.id, preset.width, item.h)}
+                type="button"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Rows</p>
+          <div className="flex flex-wrap gap-2">
+            {heightPresets.map((preset) => (
+              <button
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${item.h === preset.span
+                  ? lightMode
+                    ? "bg-[#6f57f6] text-white"
+                    : "bg-[#cabfff] text-[#1a1431]"
+                  : lightMode
+                    ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]"
+                    : "bg-white/8 text-white/75"}`}
+                draggable={false}
+                key={preset.label}
+                onClick={() => onResize(item.id, item.w, preset.span)}
+                type="button"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            void applyCustomRows();
+          }}
+        >
+          <label className="min-w-0 flex-1">
+            <span className={`mb-2 block text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Custom Rows</span>
+            <input
+              className={`h-11 w-full rounded-[0.9rem] px-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+              draggable={false}
+              inputMode="numeric"
+              max={String(TASK_GRID_MAX_DISPLAY_ROWS)}
+              min="1"
+              onChange={(event) => setCustomRowsInput(event.target.value)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter" && clampedCustomRows !== null) {
+                  event.preventDefault();
+                  void applyCustomRows();
+                }
+              }}
+              type="number"
+              value={customRowsInput}
+            />
+          </label>
+          <button
+            className={`h-11 rounded-[0.9rem] px-4 text-sm font-semibold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+            disabled={clampedCustomRows === null}
+            draggable={false}
+            onClick={(event) => {
+              event.stopPropagation();
+              void applyCustomRows();
+            }}
+            type="submit"
+          >
+            Apply
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -3304,12 +5532,16 @@ function TaskGridWidgetShell({
 function UrgentTasksPanel({
   focusedTaskIds,
   lightMode,
+  onEditTask,
   tasks,
+  subtasksByTaskId,
   onToggle,
 }: {
   focusedTaskIds: string[];
   lightMode: boolean;
+  onEditTask: (task: Task) => void;
   tasks: Task[];
+  subtasksByTaskId: Record<string, DbTaskSubtask[]>;
   onToggle: (task: Task) => void;
 }) {
   const DEFAULT_VISIBLE_COUNT = 4;
@@ -3344,9 +5576,13 @@ function UrgentTasksPanel({
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-3">
                   <span className={`h-4 w-4 shrink-0 rounded-full ${index < 2 ? "bg-[#f05566]" : "bg-[#12b886]"}`} />
-                  <h3 className={`min-w-0 truncate text-[1.55rem] font-semibold ${lightMode ? "text-[#202844]" : "text-white"}`}>
+                  <button
+                    className={`min-w-0 truncate text-left text-[1.55rem] font-semibold ${lightMode ? "text-[#202844]" : "text-white"}`}
+                    onClick={() => onEditTask(task)}
+                    type="button"
+                  >
                     {task.title}
-                  </h3>
+                  </button>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {focusedTaskIds.includes(task.id) ? <TaskMetaChip lightMode={lightMode} tone="purple">Focus Today</TaskMetaChip> : null}
@@ -3354,14 +5590,24 @@ function UrgentTasksPanel({
                   <TaskMetaChip lightMode={lightMode} tone="green">{task.energy}</TaskMetaChip>
                   <TaskMetaChip lightMode={lightMode} tone="neutral">{formatDueLabel(task.due_on)}</TaskMetaChip>
                 </div>
+                <TaskSupplementalMeta lightMode={lightMode} nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
-              <button
-                className={`w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto sm:shrink-0 ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
-                onClick={() => onToggle(task)}
-                type="button"
-              >
-                Done
-              </button>
+              <div className="flex w-full gap-2 sm:w-auto sm:shrink-0">
+                <button
+                  className={`w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                  onClick={() => onEditTask(task)}
+                  type="button"
+                >
+                  Edit
+                </button>
+                <button
+                  className={`w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+                  onClick={() => onToggle(task)}
+                  type="button"
+                >
+                  Done
+                </button>
+              </div>
             </div>
 
             <ul className="mt-5 space-y-2">
@@ -3420,6 +5666,56 @@ function TaskMetaChip({
     <span className={`rounded-xl px-3 py-1.5 text-sm font-semibold ${className}`}>
       {children}
     </span>
+  );
+}
+
+function TaskSupplementalMeta({
+  lightMode,
+  nextSubtask,
+  task,
+}: {
+  lightMode: boolean;
+  nextSubtask: DbTaskSubtask | null;
+  task: Task;
+}) {
+  const repeatSummary = formatRepeatSummary(task);
+  const visibleTags = task.tags.slice(0, 3);
+
+  if (
+    visibleTags.length === 0 &&
+    !repeatSummary &&
+    !task.external_link_url &&
+    !task.estimated_minutes &&
+    !nextSubtask
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {task.one_step_at_a_time && nextSubtask ? (
+        <TaskMetaChip lightMode={lightMode} tone="purple">Next: {nextSubtask.title}</TaskMetaChip>
+      ) : null}
+      {visibleTags.map((tag) => (
+        <TaskMetaChip key={tag} lightMode={lightMode} tone="neutral">#{tag}</TaskMetaChip>
+      ))}
+      {task.estimated_minutes ? (
+        <TaskMetaChip lightMode={lightMode} tone="neutral">{task.estimated_minutes} min</TaskMetaChip>
+      ) : null}
+      {repeatSummary ? (
+        <TaskMetaChip lightMode={lightMode} tone="blue">{repeatSummary}</TaskMetaChip>
+      ) : null}
+      {task.external_link_url ? (
+        <a
+          className={`rounded-xl px-3 py-1.5 text-sm font-semibold ${lightMode ? "bg-[#edf6ff] text-[#3f8bdc]" : "bg-[#162434] text-[#8bc4ff]"}`}
+          href={task.external_link_url}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {task.external_link_label || "Open link"}
+        </a>
+      ) : null}
+    </div>
   );
 }
 
@@ -3646,6 +5942,8 @@ function TaskLane({
   count,
   defaultExpanded = false,
   lightMode,
+  onEditTask,
+  subtasksByTaskId,
   title,
   tasks,
   tone,
@@ -3653,6 +5951,8 @@ function TaskLane({
   count: number;
   defaultExpanded?: boolean;
   lightMode: boolean;
+  onEditTask: (task: Task) => void;
+  subtasksByTaskId: Record<string, DbTaskSubtask[]>;
   title: string;
   tasks: Task[];
   tone: "purple" | "soft";
@@ -3694,16 +5994,32 @@ function TaskLane({
           <div className={`w-full overflow-hidden rounded-[1.25rem] border px-4 py-3 ${lightMode ? "border-[#efeaf9] bg-[#fdfcff]" : "border-white/10 bg-white/[0.04]"}`} key={task.id}>
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
-                <p className={`truncate text-lg font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}>{task.title}</p>
+                <button
+                  className={`truncate text-left text-lg font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}
+                  onClick={() => onEditTask(task)}
+                  type="button"
+                >
+                  {task.title}
+                </button>
                 <p className={`mt-1 text-sm ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>
-                  {formatDueLabel(task.due_on)} / {task.energy} energy / {task.priority} priority
+                  {formatTaskMetaLine(task)}
                 </p>
+                <TaskSupplementalMeta lightMode={lightMode} nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
-              <span className={`self-start rounded-full px-3 py-1 text-xs font-semibold sm:shrink-0 ${index % 2 === 0
-                ? lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"
-                : lightMode ? "bg-[#eef9f4] text-[#12a876]" : "bg-[#17362d] text-[#7de4b8]"}`}>
-                {index % 2 === 0 ? "Visible" : "Queued"}
-              </span>
+              <div className="flex items-center gap-2 sm:shrink-0">
+                <span className={`self-start rounded-full px-3 py-1 text-xs font-semibold ${index % 2 === 0
+                  ? lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"
+                  : lightMode ? "bg-[#eef9f4] text-[#12a876]" : "bg-[#17362d] text-[#7de4b8]"}`}>
+                  {index % 2 === 0 ? "Visible" : "Queued"}
+                </span>
+                <button
+                  className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                  onClick={() => onEditTask(task)}
+                  type="button"
+                >
+                  Edit
+                </button>
+              </div>
             </div>
           </div>
         ))}
@@ -3726,16 +6042,21 @@ function FocusStatsCard({
   doneCount,
   lightMode,
   overdueCount,
+  taskHistoryStats,
 }: {
   activeCount: number;
   doneCount: number;
   lightMode: boolean;
   overdueCount: number;
+  taskHistoryStats: TaskHistoryStats;
 }) {
   const stats = [
-    { label: "Active", value: activeCount },
-    { label: "Completed", value: doneCount },
-    { label: "Overdue", value: overdueCount },
+    { label: "Active", meter: Math.min(100, 28 + activeCount * 4), value: String(activeCount) },
+    { label: "Completed", meter: Math.min(100, 28 + doneCount * 4), value: String(doneCount) },
+    { label: "Overdue", meter: Math.min(100, 28 + overdueCount * 4), value: String(overdueCount) },
+    { label: "Current Streak", meter: Math.min(100, 28 + taskHistoryStats.currentStreak * 6), value: String(taskHistoryStats.currentStreak) },
+    { label: "Best Streak", meter: Math.min(100, 28 + taskHistoryStats.bestStreak * 6), value: String(taskHistoryStats.bestStreak) },
+    { label: "Done Rate", meter: taskHistoryStats.doneRate, value: `${taskHistoryStats.doneRate}%` },
   ];
 
   return (
@@ -3743,7 +6064,7 @@ function FocusStatsCard({
       <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
         Focus Stats
       </h2>
-      <div className="mt-4 w-full space-y-3">
+      <div className="mt-4 grid w-full gap-3 sm:grid-cols-2">
         {stats.map((stat, index) => (
           <div className={`rounded-[1.25rem] p-4 flex flex-col items-center ${lightMode ? "bg-[#f8f5ff]" : "bg-white/8"}`} key={stat.label}>
             <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/35"}`}>{stat.label}</p>
@@ -3752,13 +6073,528 @@ function FocusStatsCard({
               <div className={`h-full rounded-full ${index === 2
                 ? lightMode ? "bg-[#f05566]" : "bg-[#ff9eaf]"
                 : lightMode ? "bg-[#6f57f6]" : "bg-[#cabfff]"}`}
-                style={{ width: `${Math.min(100, 28 + stat.value * 4)}%` }}
+                style={{ width: `${stat.meter}%` }}
               />
             </div>
           </div>
         ))}
       </div>
     </section>
+  );
+}
+
+function newSubtaskDraft(): TaskSubtaskDraft {
+  return { id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title: "", status: "pending", children: [] };
+}
+
+function updateSubtaskTree(items: TaskSubtaskDraft[], id: string, updater: (s: TaskSubtaskDraft) => TaskSubtaskDraft): TaskSubtaskDraft[] {
+  return items.map((s) => s.id === id ? updater(s) : { ...s, children: updateSubtaskTree(s.children, id, updater) });
+}
+
+function removeSubtaskFromTree(items: TaskSubtaskDraft[], id: string): TaskSubtaskDraft[] {
+  return items.filter((s) => s.id !== id).map((s) => ({ ...s, children: removeSubtaskFromTree(s.children, id) }));
+}
+
+function addChildToSubtask(items: TaskSubtaskDraft[], parentId: string): TaskSubtaskDraft[] {
+  return items.map((s) => s.id === parentId ? { ...s, children: [...s.children, newSubtaskDraft()] } : { ...s, children: addChildToSubtask(s.children, parentId) });
+}
+
+function SubtaskRow({ depth, lightMode, onAddChild, onRemove, onUpdate, subtask }: {
+  depth: number;
+  lightMode: boolean;
+  onAddChild: (parentId: string) => void;
+  onRemove: (id: string) => void;
+  onUpdate: (id: string, updater: (s: TaskSubtaskDraft) => TaskSubtaskDraft) => void;
+  subtask: TaskSubtaskDraft;
+}) {
+  const indent = depth * 20;
+  return (
+    <div style={{ marginLeft: indent }}>
+      <div className={`flex items-center gap-2 rounded-[1rem] border px-3 py-2.5 ${lightMode ? "border-[#ece8f8] bg-white" : "border-white/10 bg-white/[0.04]"}`}>
+        <input
+          checked={subtask.status === "done"}
+          className="h-4 w-4 shrink-0 accent-[#6f57f6]"
+          onChange={(e) => onUpdate(subtask.id, (s) => ({ ...s, status: e.target.checked ? "done" : "pending" }))}
+          type="checkbox"
+        />
+        <input
+          className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${subtask.status === "done" ? "line-through opacity-50" : ""} ${lightMode ? "text-[#1f2642]" : "text-white"}`}
+          onChange={(e) => onUpdate(subtask.id, (s) => ({ ...s, title: e.target.value }))}
+          placeholder="Step…"
+          value={subtask.title}
+        />
+        <button
+          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          onClick={() => onAddChild(subtask.id)}
+          title="Add sub-step"
+          type="button"
+        >+</button>
+        <button
+          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${lightMode ? "bg-[#fff1f3] text-[#f05566]" : "bg-[#44232f] text-[#ff9eaf]"}`}
+          onClick={() => onRemove(subtask.id)}
+          type="button"
+        >✕</button>
+      </div>
+      {subtask.children.length > 0 ? (
+        <div className="mt-1.5 space-y-1.5">
+          {subtask.children.map((child) => (
+            <SubtaskRow depth={depth + 1} key={child.id} lightMode={lightMode} onAddChild={onAddChild} onRemove={onRemove} onUpdate={onUpdate} subtask={child} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TagChipInput({ allTags, lightMode, onChange, values }: {
+  allTags: string[];
+  lightMode: boolean;
+  onChange: (tags: string[]) => void;
+  values: string[];
+}) {
+  const [input, setInput] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
+  const filtered = allTags.filter((t) => !values.includes(t) && t.toLowerCase().includes(input.toLowerCase()));
+
+  function addTag(tag: string) {
+    const trimmed = tag.trim().toLowerCase();
+    if (trimmed && !values.includes(trimmed)) {
+      onChange([...values, trimmed]);
+    }
+    setInput("");
+    setShowDropdown(false);
+  }
+
+  return (
+    <div className="relative grid gap-2">
+      <div className="flex flex-wrap gap-1.5">
+        {values.map((tag) => (
+          <span className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`} key={tag}>
+            {tag}
+            <button className="opacity-60 hover:opacity-100" onClick={() => onChange(values.filter((v) => v !== tag))} type="button">✕</button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          className={`min-w-0 flex-1 rounded-[0.75rem] px-3 py-2 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+          onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
+          onChange={(e) => { setInput(e.target.value); setShowDropdown(true); }}
+          onFocus={() => setShowDropdown(true)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTag(input); } }}
+          placeholder="Add tag…"
+          value={input}
+        />
+        <button
+          className={`shrink-0 rounded-[0.75rem] px-3 py-2 text-sm font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          onClick={() => addTag(input)}
+          type="button"
+        >Add</button>
+      </div>
+      {showDropdown && filtered.length > 0 ? (
+        <div className={`absolute left-0 right-0 top-full z-20 mt-1 max-h-36 overflow-y-auto rounded-[1rem] border shadow-lg ${lightMode ? "border-[#ece8f8] bg-white" : "border-white/10 bg-[#1a1230]"}`}>
+          {filtered.map((tag) => (
+            <button
+              className={`w-full px-4 py-2 text-left text-sm ${lightMode ? "text-[#1f2642] hover:bg-[#f7f5ff]" : "text-white hover:bg-white/8"}`}
+              key={tag}
+              onMouseDown={() => addTag(tag)}
+              type="button"
+            >{tag}</button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TaskEditorModal({
+  allTags,
+  focusedToday,
+  lightMode,
+  mode,
+  onClose,
+  onOpenHistory,
+  onSave,
+  subtasks,
+  task,
+}: {
+  allTags: string[];
+  focusedToday: string[];
+  lightMode: boolean;
+  mode: TaskEditorMode;
+  onClose: () => void;
+  onOpenHistory?: () => void;
+  onSave: (draft: { values: TaskDraft; focusToday: boolean; subtasks: TaskSubtaskDraft[] }) => Promise<void>;
+  subtasks: DbTaskSubtask[];
+  task: Task | null;
+}) {
+  const [draft, setDraft] = useState<TaskEditorDraft>(() => createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks));
+  const [subtaskMultiAdd, setSubtaskMultiAdd] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const isEditing = mode === "edit" && task !== null;
+
+  useEffect(() => {
+    setDraft(createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks));
+    setSubtaskMultiAdd("");
+  }, [task, mode, focusedToday, subtasks]);
+
+  const trimmedTitle = draft.title.trim();
+  const normalizedUrl = draft.externalLinkUrl.trim();
+  const hasUrlError = normalizedUrl.length > 0 && !isProbablyValidUrl(normalizedUrl);
+
+  const estimatedTimePresets = [
+    { label: "5m", minutes: "5" },
+    { label: "10m", minutes: "10" },
+    { label: "15m", minutes: "15" },
+    { label: "30m", minutes: "30" },
+    { label: "45m", minutes: "45" },
+    { label: "1h", minutes: "60" },
+  ];
+
+  const visibleStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "missed", "did_my_best", "upcoming", "not_due"];
+
+  return (
+    <ModalShell className={`w-full max-w-[42rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`} label="Task editor" onClose={onClose}>
+      {/* Header */}
+      <div className={`sticky top-0 z-10 flex items-center gap-3 px-5 py-4 ${lightMode ? "bg-white border-b border-[#ece8f8]" : "bg-[#171328] border-b border-white/10"}`}>
+        <button aria-label="Close" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${lightMode ? "bg-[#f3f0ff] text-[#6f57f6]" : "bg-white/8 text-white"}`} onClick={onClose} type="button">
+          <X className="h-4 w-4" />
+        </button>
+        <span className={`flex-1 text-base font-bold ${lightMode ? "text-[#1e2540]" : "text-white"}`}>{isEditing ? "Edit Task" : "New Task"}</span>
+        <button
+          className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${draft.oneStepAtATime
+            ? lightMode ? "border-[#6f57f6] bg-[#f2edff] text-[#6f57f6]" : "border-[#cabfff] bg-[#22193f] text-[#cabfff]"
+            : lightMode ? "border-[#e5e0f5] text-[#b0aac8]" : "border-white/15 text-white/35"}`}
+          onClick={() => setDraft((c) => ({ ...c, oneStepAtATime: !c.oneStepAtATime }))}
+          type="button"
+        >
+          <Footprints className="mr-1 inline h-3 w-3" />
+          ONE STEP AT A TIME
+        </button>
+        {isEditing && onOpenHistory ? (
+          <button
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${lightMode ? "bg-[#f3f0ff] text-[#6f57f6]" : "bg-white/8 text-white/70"}`}
+            onClick={onOpenHistory}
+            title="Task history"
+            type="button"
+          >
+            <BarChart2 className="h-4 w-4" />
+          </button>
+        ) : null}
+        {isEditing ? (
+          <button
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#fff1f3] text-[#f05566]"
+            onClick={() => onSave({ focusToday: draft.focusToday, subtasks: [], values: { title: draft.title, notes: null, status: "archived" as TaskStatus, priority: draft.priority, energy: draft.energy, is_urgent: false, is_important: false, due_on: null, due_time: null, estimated_minutes: null, tags: [], external_link_label: null, external_link_url: null, one_step_at_a_time: false, subtasks_auto_reset: false, repeat_frequency: "none", repeat_interval: 1, repeat_days_of_week: [], repeat_day_of_month: null, completed_at: null } })}
+            type="button"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+
+      <form
+        className="space-y-6 px-5 pb-6 pt-5"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!trimmedTitle || hasUrlError) return;
+          setIsSaving(true);
+          await onSave({
+            focusToday: draft.focusToday,
+            subtasks: draft.subtasks,
+            values: {
+              title: trimmedTitle,
+              notes: emptyToNull(draft.notes),
+              status: draft.status,
+              priority: draft.priority,
+              energy: draft.energy,
+              is_urgent: draft.isUrgent,
+              is_important: draft.isImportant,
+              due_on: emptyToNull(draft.dueOn),
+              due_time: emptyToNull(draft.dueTime),
+              estimated_minutes: parsePositiveInteger(draft.estimatedMinutes),
+              tags: draft.tags,
+              external_link_label: emptyToNull(draft.externalLinkLabel),
+              external_link_url: emptyToNull(normalizedUrl),
+              one_step_at_a_time: draft.oneStepAtATime,
+              subtasks_auto_reset: draft.subtasksAutoReset,
+              repeat_frequency: draft.repeatFrequency,
+              repeat_interval: Math.max(1, parsePositiveInteger(draft.repeatInterval) ?? 1),
+              repeat_days_of_week: draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom"
+                ? [...draft.repeatDaysOfWeek].sort((a, b) => a - b)
+                : [],
+              repeat_day_of_month: draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom"
+                ? parseDayOfMonth(draft.repeatDayOfMonth)
+                : null,
+              completed_at: isTaskFinishedStatusValue(draft.status)
+                ? task?.completed_at ?? new Date().toISOString()
+                : null,
+            },
+          });
+          setIsSaving(false);
+        }}
+      >
+        {/* Title */}
+        <input
+          className={`w-full border-b-2 bg-transparent pb-2 text-2xl font-bold outline-none ${lightMode ? "border-[#6f57f6] text-[#1e2540] placeholder:text-[#bbb8d0]" : "border-[#cabfff]/50 text-white placeholder:text-white/25"}`}
+          onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))}
+          placeholder="Task title"
+          value={draft.title}
+        />
+
+        {/* STATUS */}
+        <div>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Status</p>
+          <div className="flex flex-wrap gap-2">
+            {visibleStatusOptions.map((s) => (
+              <button
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${draft.status === s
+                  ? "border-transparent bg-[#f05566] text-white"
+                  : lightMode ? "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff]" : "border-white/15 text-white/70 hover:border-white/30"}`}
+                key={s}
+                onClick={() => setDraft((c) => ({ ...c, status: s }))}
+                type="button"
+              >
+                {formatOptionLabel(s)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Urgent / Important / Focus Today */}
+        <div className="space-y-2">
+          {([
+            { key: "isUrgent", label: "Urgent", desc: "Needs attention now", Icon: AlertCircle, color: "text-[#f05566]", bg: lightMode ? "bg-[#fff1f3]" : "bg-[#44232f]" },
+            { key: "isImportant", label: "Important", desc: "High value goal", Icon: Diamond, color: "text-[#6f57f6]", bg: lightMode ? "bg-[#f2edff]" : "bg-[#22193f]" },
+            { key: "focusToday", label: "Focus Today", desc: "Add to daily priority list", Icon: Star, color: "text-[#8d87a7]", bg: lightMode ? "bg-[#f7f5ff]" : "bg-white/8" },
+          ] as const).map(({ key, label, desc, Icon, color, bg }) => {
+            const checked = draft[key] as boolean;
+            return (
+              <div className={`flex items-center gap-3 rounded-[1.1rem] px-4 py-3 ${lightMode ? "bg-[#faf8ff]" : "bg-white/[0.03]"}`} key={key}>
+                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${bg}`}>
+                  <Icon className={`h-4 w-4 ${color}`} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-sm font-semibold ${lightMode ? "text-[#1e2540]" : "text-white"}`}>{label}</p>
+                  <p className={`text-xs ${lightMode ? "text-[#8d97b0]" : "text-white/45"}`}>{desc}</p>
+                </div>
+                <button
+                  className={`rounded-full px-4 py-1.5 text-sm font-bold transition-colors ${checked
+                    ? "bg-[#f05566] text-white"
+                    : lightMode ? "border border-[#e5e0f5] text-[#8d97b0]" : "border border-white/15 text-white/50"}`}
+                  onClick={() => setDraft((c) => ({ ...c, [key]: !checked }))}
+                  type="button"
+                >
+                  {checked ? "YES" : "No"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* REPEAT FREQUENCY */}
+        <div>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Repeat Frequency</p>
+          <div className="flex flex-wrap gap-2">
+            {(["none", "daily", "weekly", "monthly", "custom"] as const).map((freq) => (
+              <button
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${draft.repeatFrequency === freq
+                  ? lightMode ? "border-transparent bg-[#6f57f6] text-white" : "border-transparent bg-[#cabfff] text-[#1a1431]"
+                  : lightMode ? "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff]" : "border-white/15 text-white/70 hover:border-white/30"}`}
+                key={freq}
+                onClick={() => setDraft((c) => ({ ...c, repeatFrequency: freq }))}
+                type="button"
+              >
+                {freq === "none" ? "None" : freq === "daily" ? "Daily" : freq === "weekly" ? "Weekly" : freq === "monthly" ? "Monthly" : "Days After"}
+              </button>
+            ))}
+          </div>
+          {draft.repeatFrequency !== "none" && draft.repeatFrequency !== "daily" ? (
+            <div className="mt-3">
+              <LabeledInput label="Interval" lightMode={lightMode} onChange={(v) => setDraft((c) => ({ ...c, repeatInterval: v }))} placeholder="1" type="number" value={draft.repeatInterval} />
+            </div>
+          ) : null}
+          {draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom" ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {repeatWeekdayOptions.map((option) => {
+                const selected = draft.repeatDaysOfWeek.includes(option.value);
+                return (
+                  <Pill key={option.value} lightMode={lightMode} onClick={() => setDraft((c) => ({ ...c, repeatDaysOfWeek: selected ? c.repeatDaysOfWeek.filter((v) => v !== option.value) : [...c.repeatDaysOfWeek, option.value] }))} selected={selected}>
+                    {option.label}
+                  </Pill>
+                );
+              })}
+            </div>
+          ) : null}
+          {draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom" ? (
+            <div className="mt-3">
+              <LabeledInput label="Day of month" lightMode={lightMode} onChange={(v) => setDraft((c) => ({ ...c, repeatDayOfMonth: v }))} placeholder="15" type="number" value={draft.repeatDayOfMonth} />
+            </div>
+          ) : null}
+        </div>
+
+        {/* ENERGY LEVEL */}
+        <div>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Energy Level</p>
+          <div className="flex flex-wrap gap-2">
+            {(["low", "medium", "high"] as const).map((e) => {
+              const active = draft.energy === e;
+              const colors = e === "low"
+                ? active ? "bg-[#12b76a] text-white border-transparent" : lightMode ? "border-[#e5e0f5] text-[#5a607a]" : "border-white/15 text-white/70"
+                : e === "medium"
+                  ? active ? "bg-[#6f57f6] text-white border-transparent" : lightMode ? "border-[#e5e0f5] text-[#5a607a]" : "border-white/15 text-white/70"
+                  : active ? "bg-[#f79009] text-white border-transparent" : lightMode ? "border-[#e5e0f5] text-[#5a607a]" : "border-white/15 text-white/70";
+              return (
+                <button className={`rounded-full border px-5 py-2 text-sm font-semibold capitalize transition-colors ${colors}`} key={e} onClick={() => setDraft((c) => ({ ...c, energy: e }))} type="button">
+                  {e}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ESTIMATED TIME */}
+        <div>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Estimated Time</p>
+          <div className="flex flex-wrap gap-2">
+            {estimatedTimePresets.map((preset) => (
+              <button
+                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${draft.estimatedMinutes === preset.minutes
+                  ? lightMode ? "border-transparent bg-[#6f57f6] text-white" : "border-transparent bg-[#cabfff] text-[#1a1431]"
+                  : lightMode ? "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff]" : "border-white/15 text-white/70 hover:border-white/30"}`}
+                key={preset.label}
+                onClick={() => setDraft((c) => ({ ...c, estimatedMinutes: c.estimatedMinutes === preset.minutes ? "" : preset.minutes }))}
+                type="button"
+              >
+                {preset.label}
+              </button>
+            ))}
+            <div className="flex items-center gap-1">
+              <input
+                className={`h-9 w-20 rounded-full border px-3 text-sm outline-none ${lightMode ? "border-[#e5e0f5] bg-white text-[#1e2540] placeholder:text-[#b0aac8]" : "border-white/15 bg-white/8 text-white placeholder:text-white/30"}`}
+                min="1"
+                onChange={(e) => setDraft((c) => ({ ...c, estimatedMinutes: e.target.value }))}
+                placeholder="min"
+                type="number"
+                value={estimatedTimePresets.some((p) => p.minutes === draft.estimatedMinutes) ? "" : draft.estimatedMinutes}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* SUBTASKS */}
+        <section className={`rounded-[1.25rem] border p-4 ${lightMode ? "border-[#ece8f8] bg-[#fcfbff]" : "border-white/10 bg-white/[0.03]"}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>Subtasks</p>
+            <ToggleField checked={draft.subtasksAutoReset} label="Auto Reset" lightMode={lightMode} onChange={(checked) => setDraft((c) => ({ ...c, subtasksAutoReset: checked }))} />
+          </div>
+          <div className="mt-3 space-y-2">
+            {draft.subtasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="No subtasks yet." /> : null}
+            {draft.subtasks.map((subtask) => (
+              <SubtaskRow
+                depth={0}
+                key={subtask.id}
+                lightMode={lightMode}
+                onAddChild={(parentId) => setDraft((c) => ({ ...c, subtasks: addChildToSubtask(c.subtasks, parentId) }))}
+                onRemove={(id) => setDraft((c) => ({ ...c, subtasks: removeSubtaskFromTree(c.subtasks, id) }))}
+                onUpdate={(id, updater) => setDraft((c) => ({ ...c, subtasks: updateSubtaskTree(c.subtasks, id, updater) }))}
+                subtask={subtask}
+              />
+            ))}
+          </div>
+          <div className="mt-3 grid gap-2">
+            <textarea
+              className={`min-h-20 rounded-[1rem] px-4 py-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+              onChange={(e) => setSubtaskMultiAdd(e.target.value)}
+              placeholder={"One step\nAnother step\nFinal step"}
+              value={subtaskMultiAdd}
+            />
+            <button
+              className={`self-end rounded-[1rem] px-4 py-2.5 text-sm font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+              onClick={() => {
+                const next = buildDraftSubtasksFromLines(subtaskMultiAdd);
+                if (!next.length) return;
+                setDraft((c) => ({ ...c, subtasks: [...c.subtasks, ...next] }));
+                setSubtaskMultiAdd("");
+              }}
+              type="button"
+            >
+              Add Lines
+            </button>
+          </div>
+        </section>
+
+        {/* Due date / time / notes / tags / link */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-2">
+            <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Due date</span>
+            <div className="relative">
+              <input
+                className={`w-full rounded-[1rem] px-4 py-3 text-sm outline-none ${draft.dueOn ? (lightMode ? "text-[#1f2642]" : "text-white") : (lightMode ? "text-[#9b9fba]" : "text-white/30")} ${lightMode ? "bg-[#f7f5ff]" : "bg-white/8"}`}
+                onChange={(e) => setDraft((c) => ({ ...c, dueOn: e.target.value }))}
+                type="date"
+                value={draft.dueOn}
+              />
+              {draft.dueOn ? (
+                <button
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-xs ${lightMode ? "text-[#9b9fba] hover:text-[#f05566]" : "text-white/30 hover:text-[#ff9eaf]"}`}
+                  onClick={() => setDraft((c) => ({ ...c, dueOn: "" }))}
+                  type="button"
+                >✕</button>
+              ) : null}
+            </div>
+          </label>
+          <label className="grid gap-2">
+            <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Due time</span>
+            <div className="relative">
+              <input
+                className={`w-full rounded-[1rem] px-4 py-3 text-sm outline-none ${draft.dueTime ? (lightMode ? "text-[#1f2642]" : "text-white") : (lightMode ? "text-[#9b9fba]" : "text-white/30")} ${lightMode ? "bg-[#f7f5ff]" : "bg-white/8"}`}
+                onChange={(e) => setDraft((c) => ({ ...c, dueTime: e.target.value }))}
+                type="time"
+                value={draft.dueTime}
+              />
+              {draft.dueTime ? (
+                <button
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-xs ${lightMode ? "text-[#9b9fba] hover:text-[#f05566]" : "text-white/30 hover:text-[#ff9eaf]"}`}
+                  onClick={() => setDraft((c) => ({ ...c, dueTime: "" }))}
+                  type="button"
+                >✕</button>
+              ) : null}
+            </div>
+          </label>
+        </div>
+
+        <label className="grid gap-2">
+          <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Notes</span>
+          <textarea
+            className={`min-h-24 rounded-[1rem] px-4 py-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+            onChange={(e) => setDraft((c) => ({ ...c, notes: e.target.value }))}
+            placeholder="Keep this grounded in the next real step."
+            value={draft.notes}
+          />
+        </label>
+
+        <label className="grid gap-2">
+          <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Tags</span>
+          <TagChipInput allTags={allTags} lightMode={lightMode} onChange={(tags) => setDraft((c) => ({ ...c, tags }))} values={draft.tags} />
+        </label>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <LabeledInput label="External link label" lightMode={lightMode} onChange={(v) => setDraft((c) => ({ ...c, externalLinkLabel: v }))} placeholder="Reference" value={draft.externalLinkLabel} />
+        </div>
+        <div>
+          <LabeledInput label="External link URL" lightMode={lightMode} onChange={(v) => setDraft((c) => ({ ...c, externalLinkUrl: v }))} placeholder="https://..." value={draft.externalLinkUrl} />
+          {hasUrlError ? <p className="mt-1 text-sm text-[#d94e67]">Use a full URL like `https://example.com`.</p> : null}
+        </div>
+
+        {/* Save */}
+        <button
+          className={`w-full rounded-[1.25rem] py-4 text-base font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"} disabled:opacity-50`}
+          disabled={!trimmedTitle || hasUrlError || isSaving}
+          type="submit"
+        >
+          {isSaving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
+        </button>
+      </form>
+    </ModalShell>
   );
 }
 
@@ -3776,15 +6612,341 @@ function EmptyTaskState({
   );
 }
 
-function TaskCardGallery({
+const LIST_MAX_COLUMNS = 4;
+const LIST_WIDTH_PRESETS = [
+  { label: "1 Col", colSpan: 1 },
+  { label: "2 Cols", colSpan: 2 },
+  { label: "3 Cols", colSpan: 3 },
+  { label: "4 Cols", colSpan: 4 },
+];
+const LIST_HEIGHT_PRESETS = [
+  { label: "2 Rows", minHeight: LIST_ROW_HEIGHT * 2 },
+  { label: "4 Rows", minHeight: LIST_ROW_HEIGHT * 4 },
+  { label: "6 Rows", minHeight: LIST_ROW_HEIGHT * 6 },
+  { label: "8 Rows", minHeight: LIST_ROW_HEIGHT * 8 },
+  { label: "10 Rows", minHeight: LIST_ROW_HEIGHT * 10 },
+];
+
+const LIST_CARD_LABELS: Record<ListCardId, string> = {
+  composer: "Quick Capture",
+  import: "Import",
+  "focus-today": "Focus Today",
+  "due-today": "Due Today",
+  stats: "Focus Stats",
+  urgent: "Urgent Tasks",
+};
+
+function ListCardResizeOverlay({
+  layout,
+  lightMode,
+  onClose,
+  onResize,
+}: {
+  layout: ListCardLayout;
+  lightMode: boolean;
+  onClose: () => void;
+  onResize: (colSpan: number, minHeight: number) => void;
+}) {
+  const currentRows = Math.round(layout.minHeight / LIST_ROW_HEIGHT);
+  const [customRowsInput, setCustomRowsInput] = useState(String(currentRows));
+
+  useEffect(() => {
+    setCustomRowsInput(String(Math.round(layout.minHeight / LIST_ROW_HEIGHT)));
+  }, [layout.minHeight, layout.id]);
+
+  const parsedCustomRows = Number.parseInt(customRowsInput, 10);
+  const clampedCustomRows = Number.isFinite(parsedCustomRows) ? Math.max(1, Math.min(20, parsedCustomRows)) : null;
+
+  function stopEvent(e: React.SyntheticEvent) { e.stopPropagation(); }
+
+  function applyCustomRows() {
+    if (clampedCustomRows === null) return;
+    onResize(layout.colSpan, clampedCustomRows * LIST_ROW_HEIGHT);
+    onClose();
+  }
+
+  return (
+    <div
+      className={`absolute inset-x-3 bottom-3 z-20 rounded-[1.35rem] border p-3 ${lightMode ? "border-[#ddd4ff] bg-white/95 shadow-[0_18px_36px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]/95"}`}
+      onClick={stopEvent}
+      onMouseDown={stopEvent}
+      onPointerDown={stopEvent}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className={`text-xs font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>
+          {LIST_CARD_LABELS[layout.id]}
+        </p>
+        <button
+          className={`rounded-full px-3 py-1.5 text-xs font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+          onClick={onClose}
+          type="button"
+        >
+          Close
+        </button>
+      </div>
+      <div className="mt-3 space-y-3">
+        <div>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Width</p>
+          <div className="flex flex-wrap gap-2">
+            {LIST_WIDTH_PRESETS.map((preset) => (
+              <button
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${layout.colSpan === preset.colSpan
+                  ? lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"
+                  : lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+                key={preset.label}
+                onClick={() => onResize(preset.colSpan, layout.minHeight)}
+                type="button"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Rows</p>
+          <div className="flex flex-wrap gap-2">
+            {LIST_HEIGHT_PRESETS.map((preset) => (
+              <button
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${layout.minHeight === preset.minHeight
+                  ? lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"
+                  : lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+                key={preset.label}
+                onClick={() => onResize(layout.colSpan, preset.minHeight)}
+                type="button"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); applyCustomRows(); }}
+        >
+          <label className="min-w-0 flex-1">
+            <span className={`mb-2 block text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Custom Rows</span>
+            <input
+              className={`h-11 w-full rounded-[0.9rem] px-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+              inputMode="numeric"
+              max="20"
+              min="1"
+              onChange={(e) => setCustomRowsInput(e.target.value)}
+              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && clampedCustomRows !== null) { e.preventDefault(); applyCustomRows(); } }}
+              type="number"
+              value={customRowsInput}
+            />
+          </label>
+          <button
+            className={`h-11 rounded-[0.9rem] px-4 text-sm font-semibold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+            disabled={clampedCustomRows === null}
+            type="submit"
+          >
+            Apply
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function TaskListView({
   focusedTaskIds,
   lightMode,
+  onDelete,
+  onEditTask,
+  onSetStatus,
   onToggle,
+  subtasksByTaskId,
   tasks,
 }: {
   focusedTaskIds: string[];
   lightMode: boolean;
+  onDelete: (taskIds: string[]) => void;
+  onEditTask: (task: Task) => void;
+  onSetStatus: (task: Task, status: TaskStatus) => void;
   onToggle: (task: Task) => void;
+  subtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  tasks: Task[];
+}) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [openStatusTaskId, setOpenStatusTaskId] = useState<string | null>(null);
+  const LOAD_MORE_SIZE = 200;
+  const [visibleCount, setVisibleCount] = useState(LOAD_MORE_SIZE);
+
+  const allSelected = tasks.length > 0 && tasks.every((t) => selectedIds.has(t.id));
+  const someSelected = selectedIds.size > 0;
+
+  const STATUS_OPTIONS: TaskStatus[] = ["pending", "in_progress", "done", "missed", "did_my_best", "upcoming", "not_due"];
+  const STATUS_COLORS: Record<TaskStatus, string> = {
+    pending:      "bg-orange-500 text-white",
+    in_progress:  "bg-yellow-400 text-black",
+    done:         "bg-green-500 text-white",
+    missed:       "bg-red-500 text-white",
+    did_my_best:  "bg-blue-800 text-white",
+    upcoming:     "bg-gray-400 text-white",
+    not_due:      "bg-sky-300 text-black",
+    archived:     "bg-gray-600 text-white",
+  };
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(tasks.map((t) => t.id)));
+    }
+  }
+
+  function toggleSelectOne(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function handleDeleteSelected() {
+    onDelete([...selectedIds]);
+    setSelectedIds(new Set());
+  }
+
+  return (
+    <section className="mt-7">
+      {someSelected ? (
+        <div className={`mb-3 flex items-center justify-between rounded-2xl px-4 py-2.5 ${lightMode ? "bg-[#f2edff]" : "bg-[#22193f]"}`}>
+          <span className={`text-sm font-semibold ${lightMode ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>
+            {selectedIds.size} selected
+          </span>
+          <button
+            className="rounded-full bg-red-500 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-600"
+            onClick={handleDeleteSelected}
+            type="button"
+          >
+            Delete selected
+          </button>
+        </div>
+      ) : null}
+      <div className={`overflow-hidden rounded-[1.8rem] border ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+        <div className={`grid grid-cols-[auto_minmax(0,1.8fr)_minmax(0,1.2fr)_auto] gap-3 border-b px-5 py-4 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "border-[#ece8f8] text-[#8d87a7]" : "border-white/10 text-white/35"}`}>
+          <input
+            aria-label="Select all tasks"
+            checked={allSelected}
+            className="mt-0.5 cursor-pointer accent-[#6f57f6]"
+            onChange={toggleSelectAll}
+            type="checkbox"
+          />
+          <span>Task</span>
+          <span>Meta</span>
+          <span>Actions</span>
+        </div>
+        <div>
+          {tasks.length === 0 ? (
+            <div className="p-4">
+              <EmptyTaskState lightMode={lightMode} text="No tasks match the current filters." />
+            </div>
+          ) : null}
+          {tasks.slice(0, visibleCount).map((task) => (
+            <div
+              className={`grid grid-cols-1 gap-3 border-b px-5 py-4 last:border-b-0 md:grid-cols-[auto_minmax(0,1.8fr)_minmax(0,1.2fr)_auto] md:items-center ${lightMode ? "border-[#f0ebfb]" : "border-white/10"}`}
+              key={task.id}
+            >
+              <input
+                aria-label={`Select ${task.title}`}
+                checked={selectedIds.has(task.id)}
+                className="mt-1 cursor-pointer accent-[#6f57f6] md:mt-0"
+                onChange={() => toggleSelectOne(task.id)}
+                type="checkbox"
+              />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className={`min-w-0 truncate text-left text-lg font-semibold ${lightMode ? "text-[#24304b]" : "text-white"}`}
+                    onClick={() => onEditTask(task)}
+                    type="button"
+                  >
+                    {task.title}
+                  </button>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_COLORS[task.status]}`}>
+                    {formatOptionLabel(task.status)}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {focusedTaskIds.includes(task.id) ? <TaskMetaChip lightMode={lightMode} tone="purple">Focus Today</TaskMetaChip> : null}
+                  {task.is_urgent ? <TaskMetaChip lightMode={lightMode} tone="blue">Urgent</TaskMetaChip> : null}
+                  {task.is_important ? <TaskMetaChip lightMode={lightMode} tone="purple">Important</TaskMetaChip> : null}
+                  {task.one_step_at_a_time ? <TaskMetaChip lightMode={lightMode} tone="neutral">One Step</TaskMetaChip> : null}
+                </div>
+                <TaskSupplementalMeta lightMode={lightMode} nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
+              </div>
+              <div className={`text-sm ${lightMode ? "text-[#6f7892]" : "text-white/60"}`}>
+                {formatTaskMetaLine(task)}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                <button
+                  className={`rounded-full px-3 py-2 text-sm font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                  onClick={() => onEditTask(task)}
+                  type="button"
+                >
+                  Edit
+                </button>
+                <div className="relative">
+                  <button
+                    className={`rounded-full px-3 py-2 text-sm font-semibold ${STATUS_COLORS[task.status]}`}
+                    onClick={() => setOpenStatusTaskId(openStatusTaskId === task.id ? null : task.id)}
+                    type="button"
+                  >
+                    {formatOptionLabel(task.status)} ▾
+                  </button>
+                  {openStatusTaskId === task.id ? (
+                    <div className={`absolute right-0 top-full z-20 mt-1 min-w-[150px] overflow-hidden rounded-[1rem] border shadow-lg ${lightMode ? "border-[#ece8f8] bg-white" : "border-white/10 bg-[#1a1230]"}`}>
+                      {STATUS_OPTIONS.map((s) => (
+                        <button
+                          className={`flex w-full items-center gap-2 px-4 py-2 text-left text-sm font-medium ${lightMode ? "hover:bg-[#f7f5ff]" : "hover:bg-white/8"}`}
+                          key={s}
+                          onClick={() => { onSetStatus(task, s); setOpenStatusTaskId(null); }}
+                          type="button"
+                        >
+                          <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${STATUS_COLORS[s].split(" ")[0]}`} />
+                          <span className={lightMode ? "text-[#1f2642]" : "text-white"}>{formatOptionLabel(s)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {tasks.length > visibleCount ? (
+        <button
+          className={`mt-4 w-full rounded-2xl py-3 text-sm font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          onClick={() => setVisibleCount((c) => c + LOAD_MORE_SIZE)}
+          type="button"
+        >
+          Show {Math.min(LOAD_MORE_SIZE, tasks.length - visibleCount)} more ({tasks.length - visibleCount} remaining)
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
+function TaskCardGallery({
+  focusedTaskIds,
+  lightMode,
+  onEditTask,
+  onToggle,
+  subtasksByTaskId,
+  tasks,
+}: {
+  focusedTaskIds: string[];
+  lightMode: boolean;
+  onEditTask: (task: Task) => void;
+  onToggle: (task: Task) => void;
+  subtasksByTaskId: Record<string, DbTaskSubtask[]>;
   tasks: Task[];
 }) {
   return (
@@ -3798,9 +6960,15 @@ function TaskCardGallery({
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className={`text-xl font-bold ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{task.title}</h3>
+                <button
+                  className={`text-left text-xl font-bold ${lightMode ? "text-[#1f2746]" : "text-white"}`}
+                  onClick={() => onEditTask(task)}
+                  type="button"
+                >
+                  {task.title}
+                </button>
                 <p className={`mt-2 text-sm ${lightMode ? "text-[#77829f]" : "text-white/55"}`}>
-                  {formatDueLabel(task.due_on)} · {task.energy} energy
+                  {formatTaskMetaLine(task)}
                 </p>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#f2edff] text-[#725af6]" : "bg-[#22193f] text-[#cabfff]"}`}>
@@ -3812,14 +6980,26 @@ function TaskCardGallery({
               <TaskMetaChip lightMode={lightMode} tone={task.energy === "high" ? "blue" : task.energy === "medium" ? "neutral" : "green"}>
                 {task.energy}
               </TaskMetaChip>
+              {task.is_urgent ? <TaskMetaChip lightMode={lightMode} tone="blue">Urgent</TaskMetaChip> : null}
+              {task.is_important ? <TaskMetaChip lightMode={lightMode} tone="purple">Important</TaskMetaChip> : null}
             </div>
-            <button
-              className={`mt-5 w-full rounded-[1rem] px-4 py-3 text-sm font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
-              onClick={() => onToggle(task)}
-              type="button"
-            >
-              {task.status === "done" ? "Completed" : "Mark Done"}
-            </button>
+            <TaskSupplementalMeta lightMode={lightMode} nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <button
+                className={`rounded-[1rem] px-4 py-3 text-sm font-bold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                onClick={() => onEditTask(task)}
+                type="button"
+              >
+                Edit
+              </button>
+              <button
+                className={`rounded-[1rem] px-4 py-3 text-sm font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+                onClick={() => onToggle(task)}
+                type="button"
+              >
+                {isTaskFinished(task) ? "Completed" : "Mark Done"}
+              </button>
+            </div>
           </article>
         ))}
       </div>
@@ -3829,33 +7009,37 @@ function TaskCardGallery({
 
 function TaskMatrixView({
   lightMode,
+  onEditTask,
   onToggle,
+  subtasksByTaskId,
   tasks,
 }: {
   lightMode: boolean;
+  onEditTask: (task: Task) => void;
   onToggle: (task: Task) => void;
+  subtasksByTaskId: Record<string, DbTaskSubtask[]>;
   tasks: Task[];
 }) {
   const cells = [
     {
       key: "urgent-high",
       title: "Urgent + Higher Energy",
-      tasks: tasks.filter((task) => (isOverdue(task.due_on) || task.priority === "high") && task.energy !== "low"),
+      tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy !== "low"),
     },
     {
       key: "urgent-low",
       title: "Urgent + Low Energy",
-      tasks: tasks.filter((task) => (isOverdue(task.due_on) || task.priority === "high") && task.energy === "low"),
+      tasks: tasks.filter((task) => isTaskUrgent(task) && task.energy === "low"),
     },
     {
       key: "later-high",
       title: "Later + Higher Energy",
-      tasks: tasks.filter((task) => !(isOverdue(task.due_on) || task.priority === "high") && task.energy !== "low"),
+      tasks: tasks.filter((task) => !isTaskUrgent(task) && task.energy !== "low"),
     },
     {
       key: "later-low",
       title: "Later + Low Energy",
-      tasks: tasks.filter((task) => !(isOverdue(task.due_on) || task.priority === "high") && task.energy === "low"),
+      tasks: tasks.filter((task) => !isTaskUrgent(task) && task.energy === "low"),
     },
   ];
 
@@ -3872,20 +7056,42 @@ function TaskMatrixView({
           <div className="mt-4 space-y-3">
             {cell.tasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="No tasks in this bucket." /> : null}
             {cell.tasks.map((task) => (
-              <button
-                className={`flex w-full items-center justify-between rounded-[1.2rem] border px-4 py-3 text-left ${lightMode ? "border-[#efeaf9] bg-[#fdfcff]" : "border-white/10 bg-white/[0.04]"}`}
+              <div
+                className={`flex w-full items-center justify-between gap-3 rounded-[1.2rem] border px-4 py-3 ${lightMode ? "border-[#efeaf9] bg-[#fdfcff]" : "border-white/10 bg-white/[0.04]"}`}
                 key={task.id}
-                onClick={() => onToggle(task)}
-                type="button"
               >
                 <div className="min-w-0">
-                  <p className={`truncate text-base font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}>{task.title}</p>
-                  <p className={`mt-1 text-xs ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>{formatDueLabel(task.due_on)} · {task.energy}</p>
+                  <button
+                    className={`truncate text-left text-base font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}
+                    onClick={() => onEditTask(task)}
+                    type="button"
+                  >
+                    {task.title}
+                  </button>
+                  <p className={`mt-1 text-xs ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>{formatTaskMetaLine(task)}</p>
+                  {task.one_step_at_a_time && getNextPendingSubtask(task.id, subtasksByTaskId) ? (
+                    <p className={`mt-1 text-xs font-semibold ${lightMode ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>
+                      Next: {getNextPendingSubtask(task.id, subtasksByTaskId)?.title}
+                    </p>
+                  ) : null}
                 </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}>
-                  Done
-                </span>
-              </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                    onClick={() => onEditTask(task)}
+                    type="button"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                    onClick={() => onToggle(task)}
+                    type="button"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
         </div>
@@ -3922,18 +7128,18 @@ function FocusPlannerModal({
   const filtered = tasks.filter((task) => {
     const matchesSearch = search.trim().length === 0 || task.title.toLowerCase().includes(search.trim().toLowerCase());
     const matchesStep = step === 0
-      ? isDueToday(task.due_on) || task.priority === "high"
+      ? isDueToday(task.due_on) || isTaskUrgent(task)
       : step === 1
-        ? isOverdue(task.due_on) || task.energy === "high"
+        ? isTaskUrgent(task) || task.energy === "high"
         : true;
     return matchesSearch && matchesStep;
   });
 
   return (
-    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`}>
+    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`} label="New task wizard" onClose={onClose}>
       <div className="flex items-center justify-between gap-3">
         <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7b63f7]" : "text-[#c9bbff]"}`}>Step {step + 1} of 3</p>
-        <button className={`text-2xl ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
+        <button aria-label="Close" className={`text-2xl ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
       </div>
       <h2 className={`mt-4 text-3xl font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{prompts[step]}</h2>
       <label className={`mt-5 flex items-center gap-3 rounded-[1.3rem] px-4 py-3 ${lightMode ? "bg-[#faf8ff]" : "bg-white/8"}`}>
@@ -3963,7 +7169,7 @@ function FocusPlannerModal({
               />
               <div className="min-w-0 flex-1">
                 <p className={`truncate text-lg font-semibold ${lightMode ? "text-[#24304b]" : "text-white"}`}>{task.title}</p>
-                <p className={`mt-1 text-sm ${lightMode ? "text-[#7b84a0]" : "text-white/55"}`}>{formatDueLabel(task.due_on)} · {task.energy} energy · {task.priority} priority</p>
+                <p className={`mt-1 text-sm ${lightMode ? "text-[#7b84a0]" : "text-white/55"}`}>{formatTaskMetaLine(task)}</p>
               </div>
             </label>
           );
@@ -4000,10 +7206,10 @@ function MomentumTaskModal({
   title: string;
 }) {
   return (
-    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`}>
+    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`} label={title} onClose={onClose}>
       <div className="flex items-center justify-between gap-3">
         <h2 className={`text-2xl font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{title}</h2>
-        <button className={`text-2xl ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
+        <button aria-label="Close" className={`text-2xl ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
       </div>
       <div className="mt-5 grid gap-5 md:grid-cols-2">
         <section>
@@ -4028,6 +7234,84 @@ function MomentumTaskModal({
             ))}
           </div>
         </section>
+      </div>
+    </ModalShell>
+  );
+}
+
+function TaskHistoryModal({
+  lightMode,
+  onClose,
+  taskHistory,
+  taskTitle,
+}: {
+  lightMode: boolean;
+  onClose: () => void;
+  taskHistory: DbTaskHistory[];
+  taskTitle: string;
+}) {
+  // Build a 12-week grid (84 days), most recent day last
+  const today = getTodayKey();
+  const totalDays = 84;
+  const days = Array.from({ length: totalDays }, (_, i) => shiftDateKey(today, i - (totalDays - 1)));
+  const historyByDate = new Map(taskHistory.map((h) => [h.entry_date, h]));
+
+  // Group into weeks (columns of 7)
+  const weeks: string[][] = [];
+  for (let w = 0; w < 12; w++) {
+    weeks.push(days.slice(w * 7, w * 7 + 7));
+  }
+
+  const completedCount = taskHistory.filter((h) => h.was_completed).length;
+
+  function cellColor(dateKey: string) {
+    if (dateKey > today) return lightMode ? "bg-transparent" : "bg-transparent";
+    const entry = historyByDate.get(dateKey);
+    if (!entry) return lightMode ? "bg-[#ece8f8]" : "bg-white/8";
+    if (entry.was_completed) return lightMode ? "bg-[#6f57f6]" : "bg-[#8b70ff]";
+    return lightMode ? "bg-[#fbd0d5]" : "bg-[#5a2030]";
+  }
+
+  return (
+    <ModalShell className={`w-full max-w-lg rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`} label="Task history" onClose={onClose}>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className={`text-lg font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>History</h2>
+          <p className={`mt-0.5 text-sm ${lightMode ? "text-[#7d88a1]" : "text-white/50"}`}>{taskTitle}</p>
+        </div>
+        <button className={`text-2xl leading-none ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
+      </div>
+
+      {/* 12-week heatmap */}
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {weeks.map((week, wi) => (
+          <div className="flex flex-col gap-1" key={wi}>
+            {week.map((dateKey) => (
+              <div
+                className={`h-5 w-5 rounded-sm ${cellColor(dateKey)}`}
+                key={dateKey}
+                title={dateKey}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {/* Legend + summary */}
+      <div className="mt-4 flex items-center justify-between text-xs">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1">
+            <span className={`inline-block h-3 w-3 rounded-sm ${lightMode ? "bg-[#6f57f6]" : "bg-[#8b70ff]"}`} />
+            <span className={lightMode ? "text-[#7d88a1]" : "text-white/50"}>Done</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <span className={`inline-block h-3 w-3 rounded-sm ${lightMode ? "bg-[#fbd0d5]" : "bg-[#5a2030]"}`} />
+            <span className={lightMode ? "text-[#7d88a1]" : "text-white/50"}>Missed</span>
+          </span>
+        </div>
+        <span className={lightMode ? "text-[#7d88a1]" : "text-white/50"}>
+          {completedCount} completed in last 12 weeks
+        </span>
       </div>
     </ModalShell>
   );
@@ -4246,10 +7530,13 @@ function BottomDock({
 
   const isVertical = dockPlacement !== "bottom";
   const dockPositionClass = dockPlacement === "bottom"
-    ? "fixed inset-x-0 bottom-5 z-10 px-4"
+    ? "fixed inset-x-0 z-10 px-4"
     : dockPlacement === "left"
       ? "fixed left-4 top-4 bottom-4 z-10 flex items-center"
       : "fixed right-4 top-4 bottom-4 z-10 flex items-center";
+  const dockPositionStyle = dockPlacement === "bottom"
+    ? { bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }
+    : undefined;
   const dockShapeClass = dockPlacement === "bottom"
     ? "mx-auto flex w-full max-w-[58rem] items-center justify-between gap-1 rounded-[2rem] px-3 py-1 overflow-x-auto sm:overflow-x-visible [&::-webkit-scrollbar]:hidden touch-pan-x"
     : "flex max-h-full w-[5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
@@ -4260,14 +7547,14 @@ function BottomDock({
     : undefined;
 
   return (
-    <div className={`${dockPositionClass} select-none`} style={{ userSelect: "none", WebkitUserSelect: "none" }}>
+    <div className={`${dockPositionClass} select-none`} style={{ userSelect: "none", WebkitUserSelect: "none", ...dockPositionStyle }}>
       <div
         className={`relative ${isDockCollapsing ? "overflow-hidden" : "overflow-visible"} border shadow-[0_25px_45px_rgba(60,44,140,0.18)] transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${dockShapeClass} ${lightMode ? "border-[#ece8f8] bg-white/92 backdrop-blur" : "border-white/10 bg-[#171328]/92 backdrop-blur"}`}
         style={collapsingStyle}
       >
         {dockItems.map((item) => (
           <button
-            className={`flex ${isVertical ? "w-full" : "min-w-[3rem] shrink-0"} flex-col items-center justify-center rounded-[1.2rem] px-2 py-1.5 transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
+            className={`flex ${isVertical ? "w-full" : "min-w-[3rem] shrink-0"} flex-col items-center justify-center rounded-[1.2rem] px-2 py-2.5 transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
               activePage === item
                 ? lightMode
                   ? "text-[#6f57f6]"
@@ -4443,6 +7730,59 @@ function profilesEqual(a: UserProfile, b: UserProfile) {
   );
 }
 
+function LabeledInput({
+  label,
+  lightMode,
+  onChange,
+  placeholder,
+  type = "text",
+  value,
+}: {
+  label: string;
+  lightMode: boolean;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  type?: "date" | "email" | "number" | "text" | "time";
+  value: string;
+}) {
+  return (
+    <label className="grid gap-2">
+      <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>{label}</span>
+      <input
+        className={`h-12 rounded-[1rem] px-4 text-base outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        type={type}
+        value={value}
+      />
+    </label>
+  );
+}
+
+function ToggleField({
+  checked,
+  label,
+  lightMode,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  lightMode: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`flex items-center justify-between gap-3 rounded-[1rem] px-4 py-3 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/8"}`}>
+      <span className={`text-sm font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}>{label}</span>
+      <input
+        checked={checked}
+        className="h-5 w-5 rounded"
+        onChange={(event) => onChange(event.target.checked)}
+        type="checkbox"
+      />
+    </label>
+  );
+}
+
 function Select<T extends string>({
   lightMode,
   label,
@@ -4466,7 +7806,7 @@ function Select<T extends string>({
       >
         {options.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {formatOptionLabel(option)}
           </option>
         ))}
       </select>
@@ -4871,6 +8211,17 @@ function parseStoredJson<T>(key: string, fallback: T): T {
   }
 }
 
+function migrateLegacyTaskUiState(state: TaskUiState): TaskUiState {
+  if (state.view === "list") {
+    return {
+      ...state,
+      view: "grid",
+    };
+  }
+
+  return state;
+}
+
 function parseTaskGridLayoutJson(layoutJson: string | null | undefined) {
   if (!layoutJson) {
     return TASK_GRID_STARTER_LAYOUT;
@@ -4927,15 +8278,15 @@ function getTodayKey() {
 function matchesTaskQuickFilter(task: Task, filter: TaskQuickFilter, focusedTaskIds: string[]) {
   switch (filter) {
     case "active":
-      return task.status === "active";
+      return isTaskOpen(task);
     case "done":
-      return task.status === "done";
+      return isTaskFinished(task);
     case "urgent":
-      return task.status === "active" && (isOverdue(task.due_on) || task.priority === "high");
+      return isTaskUrgent(task);
     case "today":
-      return task.status === "active" && isDueToday(task.due_on);
+      return isTaskOpen(task) && isDueToday(task.due_on);
     case "focused":
-      return task.status === "active" && focusedTaskIds.includes(task.id);
+      return isTaskOpen(task) && focusedTaskIds.includes(task.id);
     default:
       return true;
   }
@@ -4988,8 +8339,8 @@ function getMomentumMetric(
 
   if (view === "focus") {
     const focusedAllTasks = data.tasks.filter((task) => data.focusedTaskIds.includes(task.id));
-    const doneTasks = focusedAllTasks.filter((task) => task.status === "done");
-    const remainingTasks = focusedAllTasks.filter((task) => task.status !== "done");
+    const doneTasks = focusedAllTasks.filter(isTaskFinished);
+    const remainingTasks = focusedAllTasks.filter((task) => !isTaskFinished(task));
     const totalCount = focusedAllTasks.length;
     const percent = totalCount === 0 ? 0 : Math.round((doneTasks.length / totalCount) * 100);
     return {
@@ -5002,7 +8353,7 @@ function getMomentumMetric(
     };
   }
 
-  const doneTasks = data.doneTasks.filter((task) => isOverdue(task.due_on) || task.priority === "high");
+  const doneTasks = data.doneTasks.filter(isTaskUrgent);
   const remainingTasks = data.urgentTasks;
   const totalCount = doneTasks.length + remainingTasks.length;
   const percent = totalCount === 0 ? 0 : Math.round((doneTasks.length / totalCount) * 100);
@@ -5025,7 +8376,7 @@ function normalizeTaskGridLayout(layout: TaskGridItem[]) {
     .filter((item) => isTaskGridWidgetType(item.type))
     .map((item) => ({
       ...item,
-      h: Math.max(4, Math.min(12, Math.round(item.h))),
+      h: Math.max(4, Math.min(TASK_GRID_MAX_DISPLAY_ROWS * 2, Math.round(item.h))),
       w: Math.max(1, Math.min(TASK_GRID_MAX_COLUMNS, Math.round(item.w))),
     }));
 
@@ -5115,17 +8466,28 @@ function getMissingTaskGridWidgetTypes(layout: TaskGridItem[]) {
 function getTaskGridWidthPresets(currentColumns: number) {
   return [
     { label: "1 Col", width: 1 },
-    ...(currentColumns >= 2 ? [{ label: currentColumns >= 4 ? "2 Cols" : "Full Width", width: 2 }] : []),
-    ...(currentColumns >= 4 ? [{ label: "Full Width", width: 4 }] : []),
+    ...(currentColumns >= 2 ? [{ label: "2 Cols", width: 2 }] : []),
+    ...(currentColumns >= 3 ? [{ label: "3 Cols", width: 3 }] : []),
+    ...(currentColumns >= 4 ? [{ label: "4 Cols", width: 4 }] : []),
   ];
 }
 
 function getTaskGridHeightPresets() {
   return [
-    { height: 4, label: "Short" },
-    { height: 6, label: "Medium" },
-    { height: 9, label: "Tall" },
+    { label: "2 Rows", span: 4 },
+    { label: "4 Rows", span: 8 },
+    { label: "6 Rows", span: 12 },
+    { label: "8 Rows", span: 16 },
+    { label: "10 Rows", span: 20 },
   ];
+}
+
+function getDisplayRowsFromSpan(span: number) {
+  return Math.max(1, Math.round(span / 2));
+}
+
+function getSpanFromDisplayRows(rows: number) {
+  return Math.max(2, Math.min(TASK_GRID_MAX_DISPLAY_ROWS * 2, rows * 2));
 }
 
 function isTaskGridWidgetType(value: string): value is TaskGridWidgetType {
@@ -5180,6 +8542,62 @@ function normalizeTaskFocusIds(
 
 function isValidDateKey(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function calcNextDueDate(task: Task): string | null {
+  if (task.repeat_frequency === "none") return null;
+  const base = task.due_on ? new Date(`${task.due_on}T12:00:00`) : new Date();
+  const interval = Math.max(1, task.repeat_interval ?? 1);
+
+  if (task.repeat_frequency === "daily") {
+    base.setDate(base.getDate() + interval);
+    return formatDateKey(base);
+  }
+
+  if (task.repeat_frequency === "weekly") {
+    const days = task.repeat_days_of_week ?? [];
+    if (days.length === 0) {
+      base.setDate(base.getDate() + 7 * interval);
+      return formatDateKey(base);
+    }
+    // Find next occurrence from days list
+    const sortedDays = [...days].sort((a, b) => a - b);
+    const baseDow = base.getDay();
+    const nextDow = sortedDays.find((d) => d > baseDow) ?? sortedDays[0];
+    const daysUntil = nextDow > baseDow
+      ? nextDow - baseDow
+      : 7 * interval - (baseDow - nextDow);
+    base.setDate(base.getDate() + daysUntil);
+    return formatDateKey(base);
+  }
+
+  if (task.repeat_frequency === "monthly") {
+    const targetDay = task.repeat_day_of_month ?? base.getDate();
+    base.setMonth(base.getMonth() + interval);
+    const maxDay = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+    base.setDate(Math.min(targetDay, maxDay));
+    return formatDateKey(base);
+  }
+
+  // custom: treat as daily with interval
+  base.setDate(base.getDate() + interval);
+  return formatDateKey(base);
+}
+
+function formatDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function shiftDateKey(dateKey: string, days: number) {
+  const date = new Date(`${dateKey}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function useResponsiveTaskGridColumns() {
@@ -5251,6 +8669,30 @@ function isDueToday(date: string | null) {
   return date === todayISO();
 }
 
+function isTaskOpenStatus(status: TaskStatus) {
+  return OPEN_TASK_STATUSES.includes(status);
+}
+
+function isTaskFinishedStatusValue(status: TaskStatus) {
+  return FINISHED_TASK_STATUSES.includes(status);
+}
+
+function isTaskOpen(task: Task) {
+  return isTaskOpenStatus(task.status);
+}
+
+function isTaskFinished(task: Task) {
+  return isTaskFinishedStatusValue(task.status);
+}
+
+function isTaskUrgent(task: Task) {
+  return isTaskOpen(task) && (task.is_urgent || isOverdue(task.due_on) || task.priority === "high");
+}
+
+function isTaskImportant(task: Task) {
+  return isTaskOpen(task) && (task.is_important || task.priority === "high");
+}
+
 function isOverdue(date: string | null) {
   const difference = daysUntil(date);
   return difference !== null && difference < 0;
@@ -5263,4 +8705,252 @@ function formatDueLabel(date: string | null) {
   if (difference === 1) return "Tomorrow";
   if (difference < 0) return `${Math.abs(difference)}d overdue`;
   return `${difference}d`;
+}
+
+function formatDueTimeLabel(time: string | null) {
+  if (!time) {
+    return null;
+  }
+
+  const [hours, minutes] = time.split(":");
+  const parsedHours = Number.parseInt(hours ?? "", 10);
+  const parsedMinutes = Number.parseInt(minutes ?? "", 10);
+  if (!Number.isFinite(parsedHours) || !Number.isFinite(parsedMinutes)) {
+    return time;
+  }
+
+  const normalizedHours = parsedHours % 24;
+  const suffix = normalizedHours >= 12 ? "PM" : "AM";
+  const displayHours = normalizedHours % 12 === 0 ? 12 : normalizedHours % 12;
+  return `${displayHours}:${String(parsedMinutes).padStart(2, "0")} ${suffix}`;
+}
+
+function formatTaskMetaLine(task: Task) {
+  const parts = [formatDueLabel(task.due_on)];
+  const dueTime = formatDueTimeLabel(task.due_time);
+  if (dueTime) {
+    parts.push(dueTime);
+  }
+  parts.push(`${task.energy} energy`);
+  parts.push(task.is_important ? "important" : `${task.priority} priority`);
+  if (task.estimated_minutes) {
+    parts.push(`${task.estimated_minutes} min`);
+  }
+  return parts.join(" · ");
+}
+
+function formatRepeatSummary(task: Task) {
+  if (task.repeat_frequency === "none") {
+    return null;
+  }
+
+  if (task.repeat_frequency === "daily") {
+    return task.repeat_interval > 1 ? `Every ${task.repeat_interval} days` : "Daily";
+  }
+
+  if (task.repeat_frequency === "weekly") {
+    const weekdayLabels = task.repeat_days_of_week
+      .map((day) => repeatWeekdayOptions.find((option) => option.value === day)?.label)
+      .filter((value): value is NonNullable<typeof value> => Boolean(value));
+    const weekdaySummary = weekdayLabels.length > 0 ? ` (${weekdayLabels.join(", ")})` : "";
+    return task.repeat_interval > 1
+      ? `Every ${task.repeat_interval} weeks${weekdaySummary}`
+      : `Weekly${weekdaySummary}`;
+  }
+
+  if (task.repeat_frequency === "monthly") {
+    const daySummary = task.repeat_day_of_month ? ` on ${task.repeat_day_of_month}` : "";
+    return task.repeat_interval > 1
+      ? `Every ${task.repeat_interval} months${daySummary}`
+      : `Monthly${daySummary}`;
+  }
+
+  return "Custom repeat";
+}
+
+function createTaskEditorDraft(task: Task | null, focusToday: boolean, subtasks: DbTaskSubtask[]): TaskEditorDraft {
+  return {
+    title: task?.title ?? "",
+    notes: task?.notes ?? "",
+    status: task?.status ?? "pending",
+    priority: task?.priority ?? "normal",
+    energy: task?.energy ?? "medium",
+    isUrgent: task?.is_urgent ?? false,
+    isImportant: task?.is_important ?? false,
+    focusToday,
+    dueOn: task?.due_on ?? "",
+    dueTime: task?.due_time ?? "",
+    estimatedMinutes: task?.estimated_minutes ? String(task.estimated_minutes) : "",
+    tags: task?.tags ?? [],
+    externalLinkLabel: task?.external_link_label ?? "",
+    externalLinkUrl: task?.external_link_url ?? "",
+    oneStepAtATime: task?.one_step_at_a_time ?? false,
+    subtasksAutoReset: task?.subtasks_auto_reset ?? false,
+    repeatFrequency: task?.repeat_frequency ?? "none",
+    repeatInterval: String(task?.repeat_interval ?? 1),
+    repeatDaysOfWeek: task?.repeat_days_of_week ?? [],
+    repeatDayOfMonth: task?.repeat_day_of_month ? String(task.repeat_day_of_month) : "",
+    subtasks: (function buildTree(parentId: string | null): TaskSubtaskDraft[] {
+      return subtasks
+        .filter((s) => (s.parent_subtask_id ?? null) === parentId)
+        .map((s) => ({ id: s.id, status: s.status, title: s.title, children: buildTree(s.id) }));
+    })(null),
+  };
+}
+
+function emptyToNull(value: string) {
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+function parsePositiveInteger(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseDayOfMonth(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 1 && parsed <= 31 ? parsed : null;
+}
+
+function parseTagList(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function isProbablyValidUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function buildDraftSubtasksFromLines(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.trim().replace(/^[-*]\s+/, ""))
+    .filter(Boolean)
+    .map((title, index) => ({
+      id: `draft-subtask-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+      status: "pending" as const,
+      title,
+      children: [],
+    }));
+}
+
+function moveDraftSubtask(subtasks: TaskSubtaskDraft[], subtaskId: string, direction: "up" | "down") {
+  const index = subtasks.findIndex((subtask) => subtask.id === subtaskId);
+  if (index === -1) {
+    return subtasks;
+  }
+
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= subtasks.length) {
+    return subtasks;
+  }
+
+  const next = [...subtasks];
+  const [item] = next.splice(index, 1);
+  next.splice(targetIndex, 0, item);
+  return next;
+}
+
+function groupTaskSubtasksByTaskId(subtasks: DbTaskSubtask[]) {
+  return subtasks.reduce<Record<string, DbTaskSubtask[]>>((accumulator, subtask) => {
+    if (!accumulator[subtask.task_id]) {
+      accumulator[subtask.task_id] = [];
+    }
+    accumulator[subtask.task_id].push(subtask);
+    return accumulator;
+  }, {});
+}
+
+function mapTaskSubtaskRow(row: DbTaskSubtask) {
+  return row;
+}
+
+function getNextPendingSubtask(taskId: string, subtasksByTaskId: Record<string, DbTaskSubtask[]>) {
+  return (subtasksByTaskId[taskId] ?? []).find((subtask) => subtask.status !== "done") ?? null;
+}
+
+function mapTaskHistoryRow(row: DbTaskHistory) {
+  return row;
+}
+
+function isTaskCompletedForHistory(status: TaskStatus) {
+  return status === "done" || status === "did_my_best";
+}
+
+function isTaskHistoryStatus(status: TaskStatus) {
+  return status === "done" || status === "did_my_best" || status === "missed";
+}
+
+function computeTaskHistoryStats(history: DbTaskHistory[]): TaskHistoryStats {
+  const byDate = history.reduce<Map<string, { completed: boolean }>>((accumulator, entry) => {
+    const existing = accumulator.get(entry.entry_date);
+    accumulator.set(entry.entry_date, {
+      completed: (existing?.completed ?? false) || entry.was_completed,
+    });
+    return accumulator;
+  }, new Map());
+
+  const loggedDates = [...byDate.keys()].sort();
+  const completedDates = loggedDates.filter((date) => byDate.get(date)?.completed);
+  const loggedDays = loggedDates.length;
+  const doneRate = loggedDays === 0 ? 0 : Math.round((completedDates.length / loggedDays) * 100);
+
+  let currentStreak = 0;
+  let cursor = todayISO();
+  while (completedDates.includes(cursor)) {
+    currentStreak += 1;
+    cursor = shiftDateKey(cursor, -1);
+  }
+
+  let bestStreak = 0;
+  let runningStreak = 0;
+  let previousDate: string | null = null;
+  for (const date of completedDates) {
+    if (!previousDate) {
+      runningStreak = 1;
+    } else {
+      runningStreak = shiftDateKey(previousDate, 1) === date ? runningStreak + 1 : 1;
+    }
+    bestStreak = Math.max(bestStreak, runningStreak);
+    previousDate = date;
+  }
+
+  return {
+    bestStreak,
+    currentStreak,
+    doneRate,
+    loggedDays,
+  };
+}
+
+function formatOptionLabel(value: string) {
+  return value.replaceAll("_", " ");
+}
+
+function sortTasksForUi(nextTasks: Task[]) {
+  return [...nextTasks].sort((left, right) => {
+    const leftBucket = isTaskOpen(left) ? 0 : isTaskFinished(left) ? 1 : 2;
+    const rightBucket = isTaskOpen(right) ? 0 : isTaskFinished(right) ? 1 : 2;
+    if (leftBucket !== rightBucket) {
+      return leftBucket - rightBucket;
+    }
+
+    if (left.sort_order !== right.sort_order) {
+      return left.sort_order - right.sort_order;
+    }
+
+    return right.created_at.localeCompare(left.created_at);
+  });
 }
