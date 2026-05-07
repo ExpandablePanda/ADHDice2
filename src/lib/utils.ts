@@ -20,5 +20,13 @@ export function formatDuration(seconds: number): string {
 }
 
 export function playSound(src: string): void {
-  new Audio(src).play().catch(() => {});
+  new Audio(withBasePath(src)).play().catch(() => {});
+}
+
+export function withBasePath(path: string): string {
+  if (!path) return path;
+  if (path.startsWith("http") || path.startsWith("data:")) return path;
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+  if (path.startsWith(basePath)) return path;
+  return `${basePath}${path.startsWith("/") ? "" : "/"}${path}`;
 }

@@ -80,7 +80,7 @@ import {
   type FocusType,
   type HistoricalFocusSession,
 } from "@/lib/types";
-import { formatLocalDate, todayISO } from "@/lib/utils";
+import { formatLocalDate, todayISO, withBasePath } from "@/lib/utils";
 import { runStorageMigrations } from "@/lib/storage-migrations";
 import type {
   FocusCategory as DbFocusCategory,
@@ -2086,7 +2086,7 @@ function ConfigSplash() {
             Add your Supabase keys
           </h1>
           <p className={`mt-3 text-base text-[#707a95] dark:text-white/55`}>
-            Create `.env.2.0.2` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
+            Create `.env.2.0.3` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
           </p>
         </div>
       </section>
@@ -2312,7 +2312,7 @@ function TopHeader({
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-            v.2.0.2
+            v.2.0.3
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>
@@ -2353,7 +2353,7 @@ function BrandMark({
       className="h-20 w-auto object-contain object-left"
       height={80}
       onError={() => setErrored(true)}
-      src={logoSrc}
+      src={withBasePath(logoSrc)}
       unoptimized={logoSrc.startsWith("data:")}
       width={272}
     />

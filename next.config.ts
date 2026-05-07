@@ -10,6 +10,9 @@ const nextConfig: any = {
     ignoreBuildErrors: true,
   },
   allowedDevOrigins: ["127.0.0.1", "192.168.4.109"],
+  env: {
+    NEXT_PUBLIC_BASE_PATH: process.env.NODE_ENV === 'production' ? '/ADHDice2' : '',
+  },
 };
 
 export default nextConfig;

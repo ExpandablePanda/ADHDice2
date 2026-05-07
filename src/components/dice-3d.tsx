@@ -4,6 +4,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { withBasePath } from "@/lib/utils";
 
 export type DicePhase = "idle" | "rolling" | "settling";
 export type DiceLayout = "d20" | "d20-d6" | "d20-d20-d6";
@@ -108,7 +109,7 @@ export function Dice3DCanvas({
 
         {layout === "d20" && (
           <DiceModel
-            path="/d20.glb"
+            path={withBasePath("/d20.glb")}
             scale={2.0}
             phase={phase}
             offset={[0, 0, 0]}
@@ -121,7 +122,7 @@ export function Dice3DCanvas({
         {layout === "d20-d6" && (
           <>
             <DiceModel
-              path="/d20.glb"
+              path={withBasePath("/d20.glb")}
               scale={1.7}
               phase={phase}
               offset={[-1.4, 0, 0]}
@@ -130,7 +131,7 @@ export function Dice3DCanvas({
               onSettled={onSettled}
             />
             <DiceModel
-              path="/d6.glb"
+              path={withBasePath("/d6.glb")}
               scale={1.3}
               phase={phase}
               offset={[1.5, 0, 0]}
@@ -144,7 +145,7 @@ export function Dice3DCanvas({
         {layout === "d20-d20-d6" && (
           <>
             <DiceModel
-              path="/d20.glb"
+              path={withBasePath("/d20.glb")}
               scale={1.5}
               phase={phase}
               offset={[-2.2, 0.3, 0]}
@@ -153,7 +154,7 @@ export function Dice3DCanvas({
               onSettled={onSettled}
             />
             <DiceModel
-              path="/d20.glb"
+              path={withBasePath("/d20.glb")}
               scale={1.5}
               phase={phase}
               offset={[0, -0.3, -0.5]}
@@ -162,7 +163,7 @@ export function Dice3DCanvas({
               onSettled={() => {}}
             />
             <DiceModel
-              path="/d6.glb"
+              path={withBasePath("/d6.glb")}
               scale={1.2}
               phase={phase}
               offset={[2.0, 0.2, 0]}
@@ -177,5 +178,5 @@ export function Dice3DCanvas({
   );
 }
 
-useGLTF.preload("/d20.glb");
-useGLTF.preload("/d6.glb");
+useGLTF.preload(withBasePath("/d20.glb"));
+useGLTF.preload(withBasePath("/d6.glb"));
