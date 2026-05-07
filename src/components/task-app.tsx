@@ -63,7 +63,25 @@ import { FocusPage } from "./focus-page";
 const GamesPage = lazy(() => import("./games-page").then((m) => ({ default: m.GamesPage })));
 const Dice3DCanvas = lazy(() => import("./dice-3d").then((m) => ({ default: m.Dice3DCanvas })));
 import { ModalShell } from "./modal-shell";
+import { ErrorBoundary } from "./error-boundary";
+import { useEconomy } from "@/hooks/useEconomy";
+import { useFocus, mapFocusCategoryRow, mapActiveSessions, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
+import {
+  DEFAULT_FOCUS_CATEGORY_TITLES,
+  DEFAULT_FOCUS_TITLES,
+  DEFAULT_FOCUS_TYPES,
+  DEFAULT_PRIMARY_SUBTYPES,
+  DEFAULT_SECONDARY_SUBTYPES,
+  type ActiveFocusSession,
+  type FocusCategory,
+  type FocusLabelOptions,
+  type FocusSubtype,
+  type FocusType,
+  type HistoricalFocusSession,
+} from "@/lib/types";
+import { formatLocalDate, todayISO } from "@/lib/utils";
+import { runStorageMigrations } from "@/lib/storage-migrations";
 import type {
   FocusCategory as DbFocusCategory,
   Note,
@@ -174,54 +192,21 @@ type AppPage =
   | "Settings"
   | "Test";
 
-export type FocusType = string;
-export type FocusSubtype = string;
-
-export const DEFAULT_FOCUS_TYPES = ["Work", "Personal", "Entertainment", "Sleep"];
-export const DEFAULT_PRIMARY_SUBTYPES: string[] = [];
-export const DEFAULT_SECONDARY_SUBTYPES: string[] = [];
-export const DEFAULT_FOCUS_TITLES = ["Deep Work", "Admin", "Exercise", "Reading"];
-export const DEFAULT_FOCUS_CATEGORY_TITLES = ["Coding", "Lamprey Systems", "Sleep"];
-
-export type FocusCategory = {
-  id: string;
-  title: string;
-  focusType: FocusType;
-  focusSubtype?: FocusSubtype | null;
-  focusSubtype2?: FocusSubtype | null;
-  color: string;
-  icon: string; // SVG path or icon name
-  dailyGoalSeconds?: number | null;
-  weeklyGoalSeconds?: number | null;
-};
-
-export type ActiveFocusSession = {
-  categoryId: string;
-  startTime: number | null; // null if paused
-  accumulatedSeconds: number;
-  isRunning: boolean;
-};
-
-export type HistoricalFocusSession = {
-  id: string;
-  categoryId: string | null;
-  title: string;
-  date: string; // YYYY-MM-DD
-  durationSeconds: number;
-  focusType: FocusType;
-  focusSubtype?: FocusSubtype | null;
-  focusSubtype2?: FocusSubtype | null;
-  notes?: string;
-  createdAt?: string;
-};
-
-export type FocusLabelOptions = {
-  titles: string[];
-  types: string[];
-  primarySubtypes: string[];
-  secondarySubtypes: string[];
-  allSubtypes: string[];
-};
+export type {
+  ActiveFocusSession,
+  FocusCategory,
+  FocusLabelOptions,
+  FocusSubtype,
+  FocusType,
+  HistoricalFocusSession,
+} from "@/lib/types";
+export {
+  DEFAULT_FOCUS_CATEGORY_TITLES,
+  DEFAULT_FOCUS_TITLES,
+  DEFAULT_FOCUS_TYPES,
+  DEFAULT_PRIMARY_SUBTYPES,
+  DEFAULT_SECONDARY_SUBTYPES,
+} from "@/lib/types";
 
 type UserProfile = {
   avatarSrc: string;
@@ -422,6 +407,7 @@ const TASK_GRID_STARTER_LAYOUT: TaskGridItem[] = normalizeTaskGridLayout([
 ]);
 
 export function TaskApp() {
+  runStorageMigrations();
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(supabase !== null);
@@ -429,16 +415,23 @@ export function TaskApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [message, setMessage] = useState<Message | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("light");
+  const [lowStim, setLowStim] = useState(false);
   const [activePage, setActivePage] = useState<AppPage>("Home");
-  const [focusCategories, setFocusCategories] = useState<FocusCategory[]>([]);
-  const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
-  const [focusHistory, setFocusHistory] = useState<HistoricalFocusSession[]>([]);
+  const { economy, setEconomy, appendEconomyEvent } = useEconomy(supabase, session?.user?.id ?? null);
+  const {
+    focusCategories, setFocusCategories,
+    activeSessions, setActiveSessions,
+    focusHistory, setFocusHistory,
+    suppressCategoryReload,
+    handleToggleTimer, handleFinishTimer, handleAdjustTimer, handleResetTimer,
+    handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory,
+    handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
+  } = useFocus(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent);
   const [taskUiState, setTaskUiState] = useState<TaskUiState>(DEFAULT_TASK_UI_STATE);
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
   const [taskSubtasks, setTaskSubtasks] = useState<DbTaskSubtask[]>([]);
   const [taskGridLayout, setTaskGridLayout] = useState<TaskGridItem[]>(TASK_GRID_STARTER_LAYOUT);
-  const [economy, setEconomy] = useState({ level: 1, xp: 0, points: 0, tokens: 0 });
   const [isGridEditMode, setIsGridEditMode] = useState(false);
   const [isListLayoutEditMode, setIsListLayoutEditMode] = useState(false);
   const [listCardLayouts, setListCardLayouts] = useState<ListCardLayout[]>(LIST_DEFAULT_CARD_LAYOUTS);
@@ -453,7 +446,6 @@ export function TaskApp() {
   const [isMomentumListOpen, setIsMomentumListOpen] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const profile = useProfileStore();
-  const suppressCategoryReload = useRef(false);
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [isTaskEditorOpen, setIsTaskEditorOpen] = useState(false);
   const [taskEditorMode, setTaskEditorMode] = useState<TaskEditorMode>("create");
@@ -1006,20 +998,18 @@ export function TaskApp() {
   const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(taskSubtasks), [taskSubtasks]);
   const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory), [taskHistory]);
 
-  const lightMode = theme === "light";
 
   if (!supabase) {
-    return <ConfigSplash lightMode={lightMode} />;
+    return <ConfigSplash />;
   }
 
   if (loading) {
-    return <LoadingSplash lightMode={lightMode} status="Opening ADHDice..." />;
+    return <LoadingSplash status="Opening ADHDice..." />;
   }
 
   if (!session?.user) {
     return (
       <AuthSplash
-        lightMode={lightMode}
         message={message}
         onAuthenticate={async ({ email, mode, password }) => {
           const response = mode === "sign-up"
@@ -1507,60 +1497,6 @@ export function TaskApp() {
     return true;
   }
 
-  async function appendEconomyEvent(opts: {
-    source: "task" | "focus" | "roll";
-    refId: string;
-    points: number;
-    xp: number;
-    reason: string;
-    taskId?: string;
-    eventType?: "completed" | "missed" | "streak_bonus";
-  }) {
-    // Fetch current balance, award points + xp atomically via profile upsert
-    const { data: profile } = await client
-      .from("adhdice_user_profiles")
-      .select("points, xp, level, tokens")
-      .eq("user_id", currentUser.id)
-      .single();
-
-    const currentPoints = profile?.points ?? 0;
-    const currentXp = profile?.xp ?? 0;
-    const currentLevel = profile?.level ?? 1;
-    const newPoints = currentPoints + opts.points;
-    const newXp = currentXp + opts.xp;
-    // Level threshold: 100 * 1.5^(level-1), simplified to level * 100 for now
-    const xpThreshold = currentLevel * 100;
-    const newLevel = newXp >= xpThreshold ? currentLevel + 1 : currentLevel;
-
-    await client.from("adhdice_user_profiles").upsert({
-      user_id: currentUser.id,
-      points: newPoints,
-      xp: newXp,
-      level: newLevel,
-    });
-
-    setEconomy({ level: newLevel, xp: newXp, points: newPoints, tokens: profile?.tokens ?? 0 });
-
-    await client.from("adhdice_point_ledger").insert({
-      user_id: currentUser.id,
-      delta: opts.points,
-      reason: opts.reason,
-      balance_after: newPoints,
-      source: opts.source,
-      ref_id: opts.refId,
-    });
-
-    if (opts.source === "task" && opts.taskId && opts.eventType) {
-      await client.from("adhdice_task_events").insert({
-        user_id: currentUser.id,
-        task_id: opts.taskId,
-        event_type: opts.eventType,
-        awarded_points: opts.points,
-        awarded_xp: opts.xp,
-      });
-    }
-  }
-
   async function updateTask(taskId: string, values: TaskUpdate) {
     const { data, error } = await client
       .from("adhdice_clean_tasks")
@@ -1634,461 +1570,6 @@ export function TaskApp() {
     }
   }
 
-  async function handleToggleTimer(categoryId: string) {
-    const current = activeSessions[categoryId] ?? {
-      categoryId,
-      startTime: null,
-      accumulatedSeconds: 0,
-      isRunning: false,
-    };
-    const now = Date.now();
-    const nextSession = current.isRunning
-      ? {
-          ...current,
-          isRunning: false,
-          startTime: null,
-          accumulatedSeconds: current.accumulatedSeconds +
-            (current.startTime ? Math.floor((now - current.startTime) / 1000) : 0),
-        }
-      : {
-          ...current,
-          isRunning: true,
-          startTime: now,
-        };
-
-    setActiveSessions((prev) => ({
-      ...prev,
-      [categoryId]: nextSession,
-    }));
-
-    const { error } = await client
-      .from("adhdice_focus_active_sessions")
-      .upsert(
-        {
-          user_id: currentUser.id,
-          category_id: categoryId,
-          start_time: nextSession.startTime ? new Date(nextSession.startTime).toISOString() : null,
-          accumulated_seconds: nextSession.accumulatedSeconds,
-          is_running: nextSession.isRunning,
-        },
-        { onConflict: "user_id,category_id" },
-      );
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-    } else if (typeof BroadcastChannel !== "undefined") {
-      new BroadcastChannel("adhdice_focus_sync").postMessage("toggle");
-    }
-  }
-
-  async function handleManualFocusEntry(data: {
-    categoryId: string | null;
-    title: string;
-    focusType: FocusType;
-    focusSubtype?: FocusSubtype | null;
-    focusSubtype2?: FocusSubtype | null;
-    durationSeconds: number;
-    date: string;
-    notes: string;
-  }) {
-    const payload = {
-      user_id: currentUser.id,
-      category_id: data.categoryId,
-      title_snapshot: sanitizeFocusLabel(data.title, "Untitled Session"),
-      focus_type_snapshot: sanitizeFocusLabel(data.focusType, "Work"),
-      focus_subtype_snapshot: sanitizeOptionalFocusLabel(data.focusSubtype),
-      focus_subtype_2_snapshot: sanitizeOptionalFocusLabel(data.focusSubtype2),
-      session_date: data.date,
-      duration_seconds: data.durationSeconds,
-      notes: data.notes || null,
-      source: "manual" as const,
-    };
-
-    let { data: inserted, error } = await client
-      .from("adhdice_focus_sessions")
-      .insert(payload)
-      .select("*")
-      .single();
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return false;
-    }
-
-    if (!inserted) {
-      setMessage({ tone: "warn", text: "Focus entry saved, but the response was empty." });
-      return false;
-    }
-
-    const nextEntry = mergeStoredFocusHistory([
-      {
-        ...mapFocusSessionRow(inserted),
-        title: data.title,
-        focusType: data.focusType,
-        focusSubtype: data.focusSubtype,
-        focusSubtype2: data.focusSubtype2,
-      },
-    ])[0];
-    setFocusHistory((prev) => {
-      const nextHistory = [nextEntry, ...prev];
-      saveFocusHistory(nextHistory);
-      return nextHistory;
-    });
-    setMessage({ tone: "good", text: "Focus entry saved." });
-    return true;
-  }
-
-  async function handleFinishTimer(
-    categoryId: string,
-    data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string },
-  ) {
-    const activeSession = activeSessions[categoryId];
-    if (!activeSession) {
-      return;
-    }
-
-    const category = focusCategories.find((entry) => entry.id === categoryId);
-    if (!category) {
-      return;
-    }
-
-    const now = Date.now();
-    const elapsed = activeSession.isRunning && activeSession.startTime
-      ? Math.floor((now - activeSession.startTime) / 1000)
-      : 0;
-    const totalSeconds = activeSession.accumulatedSeconds + elapsed;
-
-    if (totalSeconds < 1) {
-      return;
-    }
-
-    const completedAt = new Date(now).toISOString();
-    const payload = {
-      user_id: currentUser.id,
-      category_id: categoryId,
-      title_snapshot: sanitizeFocusLabel(data?.title ?? category.title, "Untitled Session"),
-      focus_type_snapshot: sanitizeFocusLabel(data?.focusType ?? category.focusType, "Work"),
-      focus_subtype_snapshot: sanitizeOptionalFocusLabel(data?.focusSubtype ?? category.focusSubtype),
-      focus_subtype_2_snapshot: sanitizeOptionalFocusLabel(data?.focusSubtype2 ?? category.focusSubtype2),
-      session_date: todayISO(),
-      duration_seconds: totalSeconds,
-      notes: data?.notes || null,
-      started_at: activeSession.startTime ? new Date(activeSession.startTime).toISOString() : null,
-      ended_at: completedAt,
-      source: "timer" as const,
-    };
-
-    let { data: inserted, error } = await client
-      .from("adhdice_focus_sessions")
-      .insert(payload)
-      .select("*")
-      .single();
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return;
-    }
-
-    if (!inserted) {
-      setMessage({ tone: "warn", text: "Focus session saved, but the response was empty." });
-      return;
-    }
-
-    const { error: deleteError } = await client
-      .from("adhdice_focus_active_sessions")
-      .delete()
-      .eq("user_id", currentUser.id)
-      .eq("category_id", categoryId);
-
-    if (deleteError) {
-      setMessage({ tone: "warn", text: deleteError.message });
-      return;
-    }
-
-    const nextEntry = mergeStoredFocusHistory([
-      {
-        ...mapFocusSessionRow(inserted),
-        title: data?.title ?? category.title,
-        focusType: data?.focusType ?? category.focusType,
-        focusSubtype: data?.focusSubtype ?? category.focusSubtype,
-        focusSubtype2: data?.focusSubtype2 ?? category.focusSubtype2,
-      },
-    ])[0];
-    setFocusHistory((prev) => {
-      const nextHistory = [nextEntry, ...prev];
-      saveFocusHistory(nextHistory);
-      return nextHistory;
-    });
-    setActiveSessions((prev) => {
-      const next = { ...prev };
-      delete next[categoryId];
-      return next;
-    });
-    setMessage({ tone: "good", text: "Focus session saved." });
-
-    const focusMinutes = Math.floor(totalSeconds / 60);
-    if (focusMinutes >= 1 && inserted) {
-      void appendEconomyEvent({
-        source: "focus",
-        refId: inserted.id,
-        points: focusMinutes,
-        xp: Math.floor(focusMinutes * 1.5),
-        reason: `Focus session: ${focusMinutes}m`,
-      });
-    }
-
-    if (typeof BroadcastChannel !== "undefined") {
-      new BroadcastChannel("adhdice_focus_sync").postMessage("finish");
-    }
-  }
-
-  async function handleAdjustTimer(categoryId: string, deltaSeconds: number) {
-    const current = activeSessions[categoryId] ?? {
-      categoryId,
-      startTime: null,
-      accumulatedSeconds: 0,
-      isRunning: false,
-    };
-
-    const nextAccumulated = Math.max(0, current.accumulatedSeconds + deltaSeconds);
-    const nextSession: ActiveFocusSession = {
-      ...current,
-      accumulatedSeconds: nextAccumulated,
-    };
-
-    setActiveSessions((prev) => ({
-      ...prev,
-      [categoryId]: nextSession,
-    }));
-
-    const { error } = await client
-      .from("adhdice_focus_active_sessions")
-      .upsert(
-        {
-          user_id: currentUser.id,
-          category_id: categoryId,
-          start_time: nextSession.startTime ? new Date(nextSession.startTime).toISOString() : null,
-          accumulated_seconds: nextSession.accumulatedSeconds,
-          is_running: nextSession.isRunning,
-        },
-        { onConflict: "user_id,category_id" },
-      );
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return;
-    }
-
-    setMessage({ tone: "good", text: "Timer adjusted." });
-    if (typeof BroadcastChannel !== "undefined") {
-      new BroadcastChannel("adhdice_focus_sync").postMessage("adjust");
-    }
-  }
-
-  async function handleResetTimer(categoryId: string) {
-    const { error } = await client
-      .from("adhdice_focus_active_sessions")
-      .delete()
-      .eq("user_id", currentUser.id)
-      .eq("category_id", categoryId);
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return;
-    }
-
-    setActiveSessions((prev) => {
-      const next = { ...prev };
-      delete next[categoryId];
-      return next;
-    });
-    setMessage({ tone: "good", text: "Timer reset." });
-  }
-
-  async function handleSaveCategories(categories: FocusCategory[]) {
-    const uniqueCategories = dedupeCategoriesByName(categories).map((category) => ({
-      ...category,
-      id: isUuid(category.id) ? category.id : crypto.randomUUID(),
-    }));
-
-    if (uniqueCategories.length === 0) {
-      setFocusCategories([]);
-      saveFocusCategories([]);
-      setMessage({ tone: "good", text: "Focus categories updated." });
-      return true;
-    }
-
-    // Apply optimistically and suppress the realtime-triggered reload so it
-    // can't race and overwrite with stale values while the upsert is in flight.
-    setFocusCategories(uniqueCategories);
-    saveFocusCategories(uniqueCategories);
-    suppressCategoryReload.current = true;
-
-    const payload = uniqueCategories.map((category, index) => ({
-      id: category.id,
-      user_id: currentUser.id,
-      title: sanitizeFocusLabel(category.title, "Untitled Category"),
-      focus_type: sanitizeFocusLabel(category.focusType, "Work"),
-      focus_subtype: sanitizeOptionalFocusLabel(category.focusSubtype),
-      focus_subtype_2: sanitizeOptionalFocusLabel(category.focusSubtype2),
-      color: category.color,
-      icon: category.icon,
-      daily_goal_seconds: category.dailyGoalSeconds ?? null,
-      weekly_goal_seconds: category.weeklyGoalSeconds ?? null,
-      sort_order: index,
-    }));
-
-    let savedCategories, error;
-    try {
-      ({ data: savedCategories, error } = await client
-        .from("adhdice_focus_categories")
-        .upsert(payload, { onConflict: "id" })
-        .select("*"));
-    } finally {
-      suppressCategoryReload.current = false;
-    }
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return false;
-    }
-
-    // Reconcile with the DB-assigned fields (sort_order, created_at, etc.)
-    const nextCategories = (savedCategories ?? [])
-      .sort((a, b) => a.sort_order - b.sort_order)
-      .map(mapFocusCategoryRow);
-
-    setFocusCategories(nextCategories);
-    saveFocusCategories(nextCategories);
-    setMessage({ tone: "good", text: "Focus categories updated." });
-    return true;
-  }
-
-  async function handleDeleteFocusCategory(category: FocusCategory) {
-    const confirmed = window.confirm(
-      `Delete "${category.title}"? Saved focus history will stay in place as one-off historical records, but active timers for this category will be cleared. This cannot be undone.`,
-    );
-
-    if (!confirmed) {
-      return false;
-    }
-
-    const { error } = await client
-      .from("adhdice_focus_categories")
-      .delete()
-      .eq("id", category.id)
-      .eq("user_id", currentUser.id);
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return false;
-    }
-
-    setFocusCategories((prev) => {
-      const nextCategories = prev.filter((entry) => entry.id !== category.id);
-      saveFocusCategories(nextCategories);
-      return nextCategories;
-    });
-    setFocusHistory((prev) => {
-      const nextHistory = prev.map((entry) => (
-        entry.categoryId === category.id
-          ? { ...entry, categoryId: null }
-          : entry
-      ));
-      saveFocusHistory(nextHistory);
-      return nextHistory;
-    });
-    setActiveSessions((prev) => {
-      const next = { ...prev };
-      delete next[category.id];
-      return next;
-    });
-    setMessage({ tone: "good", text: "Focus category deleted." });
-    return true;
-  }
-
-  async function handleUpdateFocusHistoryEntry(
-    entryId: string,
-    data: {
-      categoryId: string | null;
-      title: string;
-      focusType: FocusType;
-      focusSubtype?: FocusSubtype | null;
-      focusSubtype2?: FocusSubtype | null;
-      durationSeconds: number;
-      date: string;
-      notes: string;
-    },
-  ) {
-    const payload = {
-      category_id: data.categoryId,
-      title_snapshot: sanitizeFocusLabel(data.title, "Untitled Session"),
-      focus_type_snapshot: sanitizeFocusLabel(data.focusType, "Work"),
-      focus_subtype_snapshot: sanitizeOptionalFocusLabel(data.focusSubtype),
-      focus_subtype_2_snapshot: sanitizeOptionalFocusLabel(data.focusSubtype2),
-      session_date: data.date,
-      duration_seconds: data.durationSeconds,
-      notes: data.notes || null,
-    };
-
-    let { data: updated, error } = await client
-      .from("adhdice_focus_sessions")
-      .update(payload)
-      .eq("id", entryId)
-      .eq("user_id", currentUser.id)
-      .select("*")
-      .single();
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return;
-    }
-
-    if (!updated) {
-      setMessage({ tone: "warn", text: "Focus entry updated, but the response was empty." });
-      return;
-    }
-
-    const nextEntry = mergeStoredFocusHistory([
-      {
-        ...mapFocusSessionRow(updated),
-        title: data.title,
-        focusType: data.focusType,
-        focusSubtype: data.focusSubtype,
-        focusSubtype2: data.focusSubtype2,
-      },
-    ])[0];
-    setFocusHistory((prev) => {
-      const nextHistory = prev.map((entry) => (entry.id === entryId ? nextEntry : entry));
-      saveFocusHistory(nextHistory);
-      return nextHistory;
-    });
-    setMessage({ tone: "good", text: "Focus entry updated." });
-  }
-
-  async function handleDeleteFocusHistoryEntry(entryId: string) {
-    if (!window.confirm("Delete this focus entry? This cannot be undone.")) {
-      return;
-    }
-
-    const { error } = await client
-      .from("adhdice_focus_sessions")
-      .delete()
-      .eq("id", entryId)
-      .eq("user_id", currentUser.id);
-
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return;
-    }
-
-    setFocusHistory((prev) => {
-      const nextHistory = prev.filter((entry) => entry.id !== entryId);
-      saveFocusHistory(nextHistory);
-      return nextHistory;
-    });
-    setMessage({ tone: "good", text: "Focus entry deleted." });
-  }
 
   async function handleSaveProfile(profileDraft: UserProfile) {
     const nextProfile = {
@@ -2118,16 +1599,13 @@ export function TaskApp() {
 
   return (
     <main
-      className={`min-h-screen px-3 py-4 transition-colors sm:px-5 lg:px-8 xl:px-10 ${
-        lightMode
-          ? "bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033]"
-          : "bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] text-white"
-      }`}
+      data-theme={theme}
+      data-lowstim={lowStim ? "" : undefined}
+      className="min-h-screen px-3 py-4 transition-colors sm:px-5 lg:px-8 xl:px-10 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
     >
       <section className="mx-auto w-full max-w-[110rem] pb-28">
         {isAccountOpen ? (
           <AccountModal
-            lightMode={lightMode}
             onClose={() => setIsAccountOpen(false)}
             onSave={handleSaveProfile}
             onSignOut={() => void client.auth.signOut()}
@@ -2137,22 +1615,24 @@ export function TaskApp() {
         <TopHeader
           doneCount={doneTasks.length}
           economy={economy}
-          lightMode={lightMode}
           onOpenAccount={() => setIsAccountOpen(true)}
           profile={profile}
           theme={theme}
           onThemeChange={setTheme}
+          lowStim={lowStim}
+          onLowStimChange={setLowStim}
+          currentStreak={taskHistoryStats.currentStreak}
         />
 
         {isWorkspaceLoading ? (
-          <div className={`mt-5 rounded-[1.5rem] border px-5 py-4 text-sm font-semibold ${lightMode ? "border-[#ece8f8] bg-white text-[#5f6983]" : "border-white/10 bg-white/6 text-white/70"}`}>
+          <div className={`mt-5 rounded-[1.5rem] border px-5 py-4 text-sm font-semibold border-[#ece8f8] bg-white text-[#5f6983] dark:border-white/10 dark:bg-white/6 dark:text-white/70`}>
             Syncing your workspace...
           </div>
         ) : null}
 
         {message ? (
           <div className="mt-5">
-            <StatusBanner lightMode={lightMode} message={message} />
+            <StatusBanner message={message} />
           </div>
         ) : null}
 
@@ -2160,7 +1640,6 @@ export function TaskApp() {
           <HomePage
             activeCount={activeTasks.length}
             doneCount={doneTasks.length}
-            lightMode={lightMode}
             lowEnergyTasks={lowEnergyTasks}
             momentumPercent={momentumPercent}
             overdueCount={overdueTasks.length}
@@ -2173,7 +1652,6 @@ export function TaskApp() {
             {showFocusPlanner ? (
               <FocusPlannerModal
                 draftIds={focusDraftIds}
-                lightMode={lightMode}
                 onClose={() => setShowFocusPlanner(false)}
                 onFinish={() => {
                   void saveFocusSelection(focusDraftIds);
@@ -2197,7 +1675,6 @@ export function TaskApp() {
               <TaskEditorModal
                 allTags={[...new Set(tasks.flatMap((t) => t.tags ?? []))].sort()}
                 focusedToday={focusedTaskIds}
-                lightMode={lightMode}
                 mode={taskEditorMode}
                 onClose={closeTaskEditor}
                 onOpenHistory={selectedTaskForEditor ? () => setTaskHistoryModalTaskId(selectedTaskForEditor.id) : undefined}
@@ -2218,7 +1695,6 @@ export function TaskApp() {
             ) : null}
             {taskHistoryModalTaskId ? (
               <TaskHistoryModal
-                lightMode={lightMode}
                 onClose={() => setTaskHistoryModalTaskId(null)}
                 taskHistory={taskHistory.filter((h) => h.task_id === taskHistoryModalTaskId)}
                 taskTitle={tasks.find((t) => t.id === taskHistoryModalTaskId)?.title ?? ""}
@@ -2227,7 +1703,6 @@ export function TaskApp() {
             {isMomentumListOpen ? (
               <MomentumTaskModal
                 doneTasks={momentumMetric.doneTasks}
-                lightMode={lightMode}
                 onClose={() => setIsMomentumListOpen(false)}
                 remainingTasks={momentumMetric.remainingTasks}
                 title={momentumMetric.label}
@@ -2236,7 +1711,6 @@ export function TaskApp() {
             <TaskHero
               actionLabel={hasFocusedToday ? "Refocus" : "Focus"}
               activeCount={activeTasks.length}
-              lightMode={lightMode}
               metric={momentumMetric}
               onCycleMomentum={() => setMomentumView(getNextMomentumView(momentumView))}
               onOpenFocusPlanner={openFocusPlanner}
@@ -2246,7 +1720,6 @@ export function TaskApp() {
 
             <div className="mt-6">
               <ControlBar
-                lightMode={lightMode}
                 onOpenComposer={openNewTaskEditor}
                 onOpenImport={() => scrollToTaskElement("task-import-panel")}
                 onSearchChange={(search) => setTaskUiState((prev) => ({ ...prev, search }))}
@@ -2258,7 +1731,6 @@ export function TaskApp() {
                 activeCount={activeTasks.length}
                 doneCount={doneTasks.length}
                 focusedCount={focusedTasks.length}
-                lightMode={lightMode}
                 matchAny={taskUiState.matchAny}
                 onToggleEnergy={(energy) =>
                   setTaskUiState((prev) => ({
@@ -2293,7 +1765,6 @@ export function TaskApp() {
                 focusedTaskIds={focusedTaskIds}
                 gridLayout={taskGridLayout}
                 isEditMode={isGridEditMode}
-                lightMode={lightMode}
                 message={message}
                 missingWidgetTypes={missingGridWidgetTypes}
                 onAddTask={addTask}
@@ -2345,7 +1816,6 @@ export function TaskApp() {
             ) : taskUiState.view === "matrix" ? (
               <TaskMatrixView
                 onEditTask={openEditTaskEditor}
-                lightMode={lightMode}
                 subtasksByTaskId={taskSubtasksByTaskId}
                 onToggle={(task) =>
                   updateTask(task.id, {
@@ -2358,7 +1828,6 @@ export function TaskApp() {
             ) : taskUiState.view === "cards" ? (
               <TaskCardGallery
                 focusedTaskIds={focusedTaskIds}
-                lightMode={lightMode}
                 onEditTask={openEditTaskEditor}
                 subtasksByTaskId={taskSubtasksByTaskId}
                 onToggle={(task) =>
@@ -2373,7 +1842,6 @@ export function TaskApp() {
               <>
                 <TaskListView
                   focusedTaskIds={focusedTaskIds}
-                  lightMode={lightMode}
                   onDelete={(taskIds) => { void deleteTasks(taskIds); }}
                   onEditTask={openEditTaskEditor}
                   onSetStatus={(task, status) => { void updateTask(task.id, { status }); }}
@@ -2388,7 +1856,7 @@ export function TaskApp() {
                     <div className="flex flex-wrap gap-2">
                       {isListLayoutEditMode ? (
                         <>
-                          <span className={`rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#f3efff] text-[#6f57f6]" : "bg-[#221a42] text-[#cabfff]"}`}>
+                          <span className={`rounded-full px-3 py-2 text-xs font-semibold bg-[#f3efff] text-[#6f57f6] dark:bg-[#221a42] dark:text-[#cabfff]`}>
                             {listCardLayouts.length} cards
                           </span>
                         </>
@@ -2397,7 +1865,7 @@ export function TaskApp() {
                     <div className="flex gap-2">
                       {isListLayoutEditMode ? (
                         <button
-                          className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_4px_12px_rgba(81,61,168,0.08)]" : "bg-white/8 text-white/75"}`}
+                          className={`rounded-full px-4 py-2 text-sm font-semibold bg-white text-[#5c647d] shadow-[0_4px_12px_rgba(81,61,168,0.08)] dark:bg-white/8 dark:text-white/75`}
                           onClick={() => { setListCardLayouts(LIST_DEFAULT_CARD_LAYOUTS); setActiveListCardId(null); }}
                           type="button"
                         >
@@ -2406,8 +1874,8 @@ export function TaskApp() {
                       ) : null}
                       <button
                         className={`rounded-full px-4 py-2 text-sm font-semibold ${isListLayoutEditMode
-                          ? lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"
-                          : lightMode ? "bg-[#f3efff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                          ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                          : "bg-[#f3efff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"}`}
                         onClick={() => { setIsListLayoutEditMode((p) => !p); setActiveListCardId(null); }}
                         type="button"
                       >
@@ -2417,7 +1885,7 @@ export function TaskApp() {
                   </div>
 
                   {isListLayoutEditMode ? (
-                    <div className={`mt-3 rounded-[1.25rem] border border-dashed px-4 py-4 text-sm ${lightMode ? "border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0]" : "border-white/10 bg-white/[0.03] text-white/55"}`}>
+                    <div className={`mt-3 rounded-[1.25rem] border border-dashed px-4 py-4 text-sm border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55`}>
                       {activeListCardId
                         ? `${LIST_CARD_LABELS[activeListCardId]} is selected. Resize controls appear on the card below.`
                         : "Tap any card below to select it, then resize or reorder it."}
@@ -2458,11 +1926,11 @@ export function TaskApp() {
                         >
                           {isListLayoutEditMode ? (
                             <div className={`pointer-events-none absolute inset-0 z-10 rounded-[2rem] border-2 ${isActive
-                              ? lightMode ? "border-[#6f57f6] shadow-[0_0_0_4px_rgba(111,87,246,0.16)]" : "border-[#cabfff] shadow-[0_0_0_4px_rgba(202,191,255,0.12)]"
-                              : lightMode ? "border-[#dcd2ff]" : "border-white/15"}`} />
+                              ? "border-[#6f57f6] shadow-[0_0_0_4px_rgba(111,87,246,0.16)] dark:border-[#cabfff] dark:shadow-[0_0_0_4px_rgba(202,191,255,0.12)]"
+                              : "border-[#dcd2ff] dark:border-white/15"}`} />
                           ) : null}
                           {isListLayoutEditMode ? (
-                            <div className={`absolute left-4 top-4 z-20 rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-white text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.12)]" : "bg-[#171328] text-[#cabfff]"}`}>
+                            <div className={`absolute left-4 top-4 z-20 rounded-full px-3 py-1 text-xs font-semibold bg-white text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.12)] dark:bg-[#171328] dark:text-[#cabfff]`}>
                               <GripVertical className="mr-1 inline h-3.5 w-3.5" />
                               {LIST_CARD_LABELS[cardLayout.id]}
                             </div>
@@ -2471,27 +1939,26 @@ export function TaskApp() {
                             <div className={`h-full min-h-0 overflow-y-auto ${isListLayoutEditMode && isActive ? "pb-64" : ""}`}>
                               {cardLayout.id === "composer" ? (
                                 <div className="h-full" id="task-composer-card">
-                                  <TaskComposerCard lightMode={lightMode} onAdd={addTask} />
+                                  <TaskComposerCard onAdd={addTask} />
                                 </div>
                               ) : cardLayout.id === "import" ? (
                                 <div className="h-full" id="task-import-panel">
-                                  <ImportWidgetCard lightMode={lightMode} message={message} onImport={importTasks} />
+                                  <ImportWidgetCard message={message} onImport={importTasks} />
                                 </div>
                               ) : cardLayout.id === "focus-today" ? (
-                                <TaskLane count={filteredFocusTasks.length} defaultExpanded lightMode={lightMode} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} title="Focus Today" tasks={filteredFocusTasks} tone="purple" />
+                                <TaskLane count={filteredFocusTasks.length} defaultExpanded onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} title="Focus Today" tasks={filteredFocusTasks} tone="purple" />
                               ) : cardLayout.id === "due-today" ? (
-                                <TaskLane count={filteredTodayTasks.length} lightMode={lightMode} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} title="Due Today" tasks={filteredTodayTasks} tone="purple" />
+                                <TaskLane count={filteredTodayTasks.length} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} title="Due Today" tasks={filteredTodayTasks} tone="purple" />
                               ) : cardLayout.id === "stats" ? (
-                                <FocusStatsCard activeCount={filteredActiveTasks.length} doneCount={filteredDoneTasks.length} lightMode={lightMode} overdueCount={filteredUrgentTasks.length} taskHistoryStats={taskHistoryStats} />
+                                <FocusStatsCard activeCount={filteredActiveTasks.length} doneCount={filteredDoneTasks.length} overdueCount={filteredUrgentTasks.length} taskHistoryStats={taskHistoryStats} />
                               ) : cardLayout.id === "urgent" ? (
-                                <UrgentTasksPanel focusedTaskIds={focusedTaskIds} lightMode={lightMode} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} tasks={filteredUrgentTasks} onToggle={(task) => updateTask(task.id, { status: "done", completed_at: new Date().toISOString() })} />
+                                <UrgentTasksPanel focusedTaskIds={focusedTaskIds} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} tasks={filteredUrgentTasks} onToggle={(task) => updateTask(task.id, { status: "done", completed_at: new Date().toISOString() })} />
                               ) : null}
                             </div>
                           </div>
                           {isListLayoutEditMode && isActive ? (
                             <ListCardResizeOverlay
                               layout={cardLayout}
-                              lightMode={lightMode}
                               onClose={() => setActiveListCardId(null)}
                               onResize={(colSpan, minHeight) => setListCardLayouts((prev) => prev.map((c) => c.id === cardLayout.id ? { ...c, colSpan, minHeight } : c))}
                             />
@@ -2509,7 +1976,6 @@ export function TaskApp() {
             activeSessions={activeSessions}
             categories={focusCategories}
             history={focusHistory}
-            lightMode={lightMode}
             onAdjustTimer={(categoryId, deltaSeconds) => {
               void handleAdjustTimer(categoryId, deltaSeconds);
             }}
@@ -2530,7 +1996,8 @@ export function TaskApp() {
           <RollPage
             client={client}
             currentUser={currentUser}
-            lightMode={lightMode}
+            tasks={activeTasks}
+            theme={theme}
             onSpendPoints={(delta, reason) =>
               void appendEconomyEvent({
                 source: "roll",
@@ -2545,7 +2012,6 @@ export function TaskApp() {
           <StatsPage
             economy={economy}
             focusHistory={focusHistory}
-            lightMode={lightMode}
             taskHistory={taskHistory}
             taskHistoryStats={taskHistoryStats}
             tasks={tasks}
@@ -2554,33 +2020,33 @@ export function TaskApp() {
           <NotesPage
             client={client}
             currentUser={currentUser}
-            lightMode={lightMode}
             tasks={tasks}
           />
         ) : activePage === "Settings" ? (
           <SettingsPage
             dayStartTime={dayStartTime}
-            lightMode={lightMode}
             onDayStartTimeChange={setDayStartTime}
             onThemeChange={setTheme}
             tasks={tasks}
             theme={theme}
             userId={currentUser.id}
+            lowStim={lowStim}
+            onLowStimChange={setLowStim}
           />
         ) : activePage === "Games" ? (
-          <Suspense fallback={<div className="flex h-48 items-center justify-center opacity-40">Loading…</div>}>
-            <GamesPage
-              lightMode={lightMode}
-              taskHistory={taskHistory}
-              onAwardXP={(xp, reason) =>
-                void appendEconomyEvent({ source: "roll", refId: currentUser.id, points: 0, xp, reason })
-              }
-            />
-          </Suspense>
+          <ErrorBoundary fallback={<div className="flex h-48 items-center justify-center opacity-40">Games failed to load.</div>}>
+            <Suspense fallback={<div className="flex h-48 items-center justify-center opacity-40">Loading…</div>}>
+              <GamesPage
+                taskHistory={taskHistory}
+                onAwardXP={(xp, reason) =>
+                  void appendEconomyEvent({ source: "roll", refId: currentUser.id, points: 0, xp, reason })
+                }
+              />
+            </Suspense>
+          </ErrorBoundary>
         ) : (
           <PagePlaceholder
             count={activeTasks.length}
-            lightMode={lightMode}
             page={activePage}
             setActivePage={setActivePage}
           />
@@ -2589,16 +2055,13 @@ export function TaskApp() {
 
       <BottomDock
         activePage={activePage}
-        lightMode={lightMode}
         onNavigate={setActivePage}
       />
       {showBackToTop ? (
         <button
           aria-label="Back to top"
           className={`fixed right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full shadow-[0_18px_40px_rgba(81,61,168,0.24)] transition hover:-translate-y-0.5 sm:right-8 ${
-            lightMode
-              ? "bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] text-white"
-              : "bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] text-[#171127]"
+            "bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] text-white dark:bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] dark:text-[#171127]"
           }`}
           style={{ bottom: "calc(7rem + env(safe-area-inset-bottom))" }}
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
@@ -2611,18 +2074,18 @@ export function TaskApp() {
   );
 }
 
-function ConfigSplash({ lightMode }: { lightMode: boolean }) {
+function ConfigSplash() {
   return (
-    <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 ${lightMode ? "bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033]" : "bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] text-white"}`}>
+    <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
       <section className="mx-auto flex min-h-[80vh] max-w-3xl items-center justify-center">
-        <div className={`w-full rounded-[2rem] border p-8 text-center ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_24px_70px_rgba(81,61,168,0.1)]" : "border-white/10 bg-white/6"}`}>
-          <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+        <div className={`w-full rounded-[2rem] border p-8 text-center border-[#ece8f8] bg-white shadow-[0_24px_70px_rgba(81,61,168,0.1)] dark:border-white/10 dark:bg-white/6`}>
+          <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/40`}>
             Setup Needed
           </p>
-          <h1 className={`mt-3 text-4xl font-black ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+          <h1 className={`mt-3 text-4xl font-black text-[#17203a] dark:text-white`}>
             Add your Supabase keys
           </h1>
-          <p className={`mt-3 text-base ${lightMode ? "text-[#707a95]" : "text-white/55"}`}>
+          <p className={`mt-3 text-base text-[#707a95] dark:text-white/55`}>
             Create `.env.2.0.2` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
           </p>
         </div>
@@ -2632,18 +2095,16 @@ function ConfigSplash({ lightMode }: { lightMode: boolean }) {
 }
 
 function LoadingSplash({
-  lightMode,
   status,
 }: {
-  lightMode: boolean;
   status: string;
 }) {
   return (
-    <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 ${lightMode ? "bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033]" : "bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] text-white"}`}>
+    <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
       <section className="mx-auto flex min-h-[80vh] max-w-3xl items-center justify-center">
-        <div className={`w-full rounded-[2rem] border p-8 text-center ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_24px_70px_rgba(81,61,168,0.1)]" : "border-white/10 bg-white/6"}`}>
-          <div className={`mx-auto h-14 w-14 animate-pulse rounded-full ${lightMode ? "bg-[#ede8ff]" : "bg-[#22193f]"}`} />
-          <h1 className={`mt-5 text-3xl font-black ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+        <div className={`w-full rounded-[2rem] border p-8 text-center border-[#ece8f8] bg-white shadow-[0_24px_70px_rgba(81,61,168,0.1)] dark:border-white/10 dark:bg-white/6`}>
+          <div className={`mx-auto h-14 w-14 animate-pulse rounded-full bg-[#ede8ff] dark:bg-[#22193f]`} />
+          <h1 className={`mt-5 text-3xl font-black text-[#17203a] dark:text-white`}>
             {status}
           </h1>
         </div>
@@ -2653,11 +2114,9 @@ function LoadingSplash({
 }
 
 function AuthSplash({
-  lightMode,
   message,
   onAuthenticate,
 }: {
-  lightMode: boolean;
   message: Message | null;
   onAuthenticate: (credentials: {
     email: string;
@@ -2671,21 +2130,21 @@ function AuthSplash({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   return (
-    <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 ${lightMode ? "bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033]" : "bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] text-white"}`}>
+    <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
       <section className="mx-auto grid min-h-[80vh] max-w-5xl items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="text-center lg:text-left">
-          <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+          <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/40`}>
             ADHDice Cloud
           </p>
-          <h1 className={`mt-3 text-[clamp(2.8rem,6vw,5rem)] font-black leading-none ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+          <h1 className={`mt-3 text-[clamp(2.8rem,6vw,5rem)] font-black leading-none text-[#17203a] dark:text-white`}>
             Sync tasks, focus history, and your account.
           </h1>
-          <p className={`mt-4 text-lg ${lightMode ? "text-[#707a95]" : "text-white/55"}`}>
+          <p className={`mt-4 text-lg text-[#707a95] dark:text-white/55`}>
             Create an account with an email and password to save your task list, focus categories, active timers, and imported history to Supabase.
           </p>
         </div>
 
-        <div className={`rounded-[2rem] border p-6 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_24px_70px_rgba(81,61,168,0.1)]" : "border-white/10 bg-white/6"}`}>
+        <div className={`rounded-[2rem] border p-6 border-[#ece8f8] bg-white shadow-[0_24px_70px_rgba(81,61,168,0.1)] dark:border-white/10 dark:bg-white/6`}>
           <form
             className="space-y-4"
             onSubmit={async (event) => {
@@ -2696,19 +2155,19 @@ function AuthSplash({
             }}
           >
             <div>
-              <h2 className={`text-2xl font-black ${lightMode ? "text-[#202844]" : "text-white"}`}>
+              <h2 className={`text-2xl font-black text-[#202844] dark:text-white`}>
                 {mode === "sign-up" ? "Create your account" : "Sign in"}
               </h2>
-              <p className={`mt-2 text-sm ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>
+              <p className={`mt-2 text-sm text-[#7d88a1] dark:text-white/55`}>
                 Use the same email and password on Mac, iPhone, and anywhere else you log in.
               </p>
             </div>
 
-            <div className={`grid grid-cols-2 gap-2 rounded-[1rem] p-1 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/8"}`}>
+            <div className={`grid grid-cols-2 gap-2 rounded-[1rem] p-1 bg-[#f7f5ff] dark:bg-white/8`}>
               <button
                 className={`rounded-[0.85rem] px-4 py-3 text-sm font-semibold ${mode === "sign-up"
-                  ? lightMode ? "bg-white text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"
-                  : lightMode ? "text-[#7d88a1]" : "text-white/55"}`}
+                  ? "bg-white text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  : "text-[#7d88a1] dark:text-white/55"}`}
                 onClick={() => setMode("sign-up")}
                 type="button"
               >
@@ -2716,8 +2175,8 @@ function AuthSplash({
               </button>
               <button
                 className={`rounded-[0.85rem] px-4 py-3 text-sm font-semibold ${mode === "sign-in"
-                  ? lightMode ? "bg-white text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"
-                  : lightMode ? "text-[#7d88a1]" : "text-white/55"}`}
+                  ? "bg-white text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  : "text-[#7d88a1] dark:text-white/55"}`}
                 onClick={() => setMode("sign-in")}
                 type="button"
               >
@@ -2726,9 +2185,9 @@ function AuthSplash({
             </div>
 
             <label className="grid gap-2">
-              <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Email</span>
+              <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Email</span>
               <input
-                className={`h-14 rounded-[1rem] px-4 text-base outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+                className={`h-14 rounded-[1rem] px-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
                 inputMode="email"
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@example.com"
@@ -2739,9 +2198,9 @@ function AuthSplash({
             </label>
 
             <label className="grid gap-2">
-              <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Password</span>
+              <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Password</span>
               <input
-                className={`h-14 rounded-[1rem] px-4 text-base outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+                className={`h-14 rounded-[1rem] px-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
                 minLength={8}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="At least 8 characters"
@@ -2752,7 +2211,7 @@ function AuthSplash({
             </label>
 
             <button
-              className={`w-full rounded-[1rem] px-5 py-4 text-base font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+              className={`w-full rounded-[1rem] px-5 py-4 text-base font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
               disabled={isSubmitting}
               type="submit"
             >
@@ -2764,7 +2223,7 @@ function AuthSplash({
 
           {message ? (
             <div className="mt-4">
-              <StatusBanner lightMode={lightMode} message={message} />
+              <StatusBanner message={message} />
             </div>
           ) : null}
         </div>
@@ -2774,23 +2233,15 @@ function AuthSplash({
 }
 
 function StatusBanner({
-  lightMode,
   message,
 }: {
-  lightMode: boolean;
   message: Message;
 }) {
   const className = message.tone === "warn"
-    ? lightMode
-      ? "border-[#ffd5dc] bg-[#fff2f4] text-[#9f364d]"
-      : "border-[#4d2130] bg-[#2a1620] text-[#ffb1c0]"
+    ? "border-[#ffd5dc] bg-[#fff2f4] text-[#9f364d] dark:border-[#4d2130] dark:bg-[#2a1620] dark:text-[#ffb1c0]"
     : message.tone === "good"
-      ? lightMode
-        ? "border-[#d7f5e9] bg-[#effcf6] text-[#0d8b60]"
-        : "border-[#1f4d3d] bg-[#11271f] text-[#8ce8c0]"
-      : lightMode
-        ? "border-[#ece8f8] bg-white text-[#5f6983]"
-        : "border-white/10 bg-white/6 text-white/70";
+      ? "border-[#d7f5e9] bg-[#effcf6] text-[#0d8b60] dark:border-[#1f4d3d] dark:bg-[#11271f] dark:text-[#8ce8c0]"
+      : "border-[#ece8f8] bg-white text-[#5f6983] dark:border-white/10 dark:bg-white/6 dark:text-white/70";
 
   return (
     <div className={`rounded-[1.25rem] border px-4 py-3 text-sm font-medium ${className}`}>
@@ -2802,31 +2253,35 @@ function StatusBanner({
 function TopHeader({
   doneCount,
   economy,
-  lightMode,
   onOpenAccount,
   profile,
   theme,
   onThemeChange,
+  lowStim,
+  onLowStimChange,
+  currentStreak,
 }: {
   doneCount: number;
   economy: { level: number; xp: number; points: number; tokens: number };
-  lightMode: boolean;
   onOpenAccount: () => void;
   profile: UserProfile;
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
+  lowStim: boolean;
+  onLowStimChange: (v: boolean) => void;
+  currentStreak: number;
 }) {
   const accountButton = (
     <button
-      className={`flex items-center gap-3 rounded-full px-2 py-2 ${lightMode ? "bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)]" : "bg-white/10"}`}
+      className={`flex items-center gap-3 rounded-full px-2 py-2 bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)] dark:bg-white/10`}
       onClick={onOpenAccount}
       type="button"
     >
       <div className="text-right">
-        <p className={`text-sm font-semibold ${lightMode ? "text-[#202743]" : "text-white"}`}>
+        <p className={`text-sm font-semibold text-[#202743] dark:text-white`}>
           {profile.displayName}
         </p>
-        <p className={`text-xs ${lightMode ? "text-[#8a84a3]" : "text-white/45"}`}>
+        <p className={`text-xs text-[#8a84a3] dark:text-white/45`}>
           {profile.created ? "Account" : "Create account"}
         </p>
       </div>
@@ -2849,14 +2304,14 @@ function TopHeader({
   return (
     <header
       className={`flex flex-col gap-3 border-b pb-5 lg:flex-row lg:items-center lg:justify-between ${
-        lightMode ? "border-[#ece8f8]" : "border-white/10"
+        "border-[#ece8f8] dark:border-white/10"
       }`}
     >
       {/* Row 1 (mobile): logo + account side by side */}
       <div className="flex items-center justify-between gap-4 lg:justify-start">
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
-          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${lightMode ? "bg-[#f1ecff] text-[#7f6af7]" : "bg-white/10 text-[#c5b8ff]"}`}>
+          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
             v.2.0.2
           </span>
         </div>
@@ -2865,14 +2320,19 @@ function TopHeader({
 
       {/* Row 2 (mobile): stats. On desktop these join row 1 on the right. */}
       <div className="flex flex-wrap items-center gap-3">
-        <ThemeToggle lightMode={lightMode} theme={theme} onThemeChange={onThemeChange} />
+        <ThemeToggle theme={theme} onThemeChange={onThemeChange} lowStim={lowStim} onLowStimChange={onLowStimChange} />
         <ProgressStat
-          lightMode={lightMode}
           label={`Lvl ${economy.level}`}
           value={`${economy.xp} / ${economy.level * 100} XP`}
+          percent={(economy.xp / (economy.level * 100)) * 100}
         />
-        <MiniStat lightMode={lightMode} label="Points" value={String(economy.points)} />
-        <MiniStat lightMode={lightMode} label="Tokens" value={String(economy.tokens)} />
+        <MiniStat label="Points" value={String(economy.points)} />
+        <MiniStat label="Tokens" value={String(economy.tokens)} />
+        {currentStreak > 0 && (
+          <div className={`flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-semibold bg-[#fff3e0] text-[#d97706] dark:bg-[#3d2a00] dark:text-[#fbbf24]`}>
+            🔥 {currentStreak}d
+          </div>
+        )}
         <div className="hidden lg:block">{accountButton}</div>
       </div>
     </header>
@@ -2901,13 +2361,11 @@ function BrandMark({
 }
 
 function AccountModal({
-  lightMode,
   onClose,
   onSave,
   onSignOut,
   profile,
 }: {
-  lightMode: boolean;
   onClose: () => void;
   onSave: (profile: UserProfile) => Promise<void>;
   onSignOut: () => void;
@@ -2917,18 +2375,18 @@ function AccountModal({
   const [isSaving, setIsSaving] = useState(false);
 
   return (
-    <ModalShell className={`w-full max-w-[34rem] max-h-[82vh] overflow-y-auto rounded-[2rem] border p-6 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)]" : "border-white/10 bg-[#171328]"}`} label="Account" onClose={onClose}>
+    <ModalShell className={`w-full max-w-[34rem] max-h-[82vh] overflow-y-auto rounded-[2rem] border p-6 border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#171328]`} label="Account" onClose={onClose}>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/35"}`}>
+            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35`}>
               Account
             </p>
-            <h2 className={`mt-2 text-3xl font-black ${lightMode ? "text-[#202844]" : "text-white"}`}>
+            <h2 className={`mt-2 text-3xl font-black text-[#202844] dark:text-white`}>
               {draft.created ? "Edit profile" : "Create your account"}
             </h2>
           </div>
           <button
-            className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[#f1ecff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+            className={`rounded-full px-4 py-2 text-sm font-semibold bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
             onClick={onClose}
             type="button"
           >
@@ -2938,18 +2396,18 @@ function AccountModal({
 
         <div className="mt-6 grid gap-4">
           <label className="grid gap-2">
-            <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Display name</span>
+            <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Display name</span>
             <input
-              className={`h-12 rounded-[1rem] px-4 text-base outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+              className={`h-12 rounded-[1rem] px-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
               onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))}
               value={draft.displayName}
             />
           </label>
 
           <label className="grid gap-2">
-            <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Email</span>
+            <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Email</span>
             <input
-              className={`h-12 rounded-[1rem] px-4 text-base outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+              className={`h-12 rounded-[1rem] px-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
               onChange={(event) => setDraft((current) => ({ ...current, email: event.target.value }))}
               type="email"
               value={draft.email}
@@ -2959,14 +2417,12 @@ function AccountModal({
           <UploadField
             helper="Upload a profile photo."
             label="Profile photo"
-            lightMode={lightMode}
             onFile={(value) => setDraft((current) => ({ ...current, avatarSrc: value }))}
           />
 
           <UploadField
             helper="Upload your transparent logo file to replace the text wordmark."
             label="Transparent logo"
-            lightMode={lightMode}
             onFile={(value) => setDraft((current) => ({ ...current, logoSrc: value }))}
           />
 
@@ -2981,12 +2437,12 @@ function AccountModal({
                 width={48}
               />
               <div>
-                <p className={`text-sm font-semibold ${lightMode ? "text-[#202844]" : "text-white"}`}>{draft.displayName}</p>
-                <p className={`text-xs ${lightMode ? "text-[#8a84a3]" : "text-white/45"}`}>{draft.email}</p>
+                <p className={`text-sm font-semibold text-[#202844] dark:text-white`}>{draft.displayName}</p>
+                <p className={`text-xs text-[#8a84a3] dark:text-white/45`}>{draft.email}</p>
               </div>
             </div>
             <button
-              className={`rounded-[1rem] px-5 py-3 text-base font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+              className={`rounded-[1rem] px-5 py-3 text-base font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
               disabled={isSaving}
               onClick={async () => {
                 setIsSaving(true);
@@ -3002,7 +2458,7 @@ function AccountModal({
             </button>
           </div>
           <button
-            className={`mt-2 w-full rounded-[1rem] px-5 py-3 text-sm font-semibold ${lightMode ? "bg-[#fff1f2] text-[#d64b5f]" : "bg-[#351924] text-[#ff9fbc]"}`}
+            className={`mt-2 w-full rounded-[1rem] px-5 py-3 text-sm font-semibold bg-[#fff1f2] text-[#d64b5f] dark:bg-[#351924] dark:text-[#ff9fbc]`}
             onClick={onSignOut}
             type="button"
           >
@@ -3016,19 +2472,17 @@ function AccountModal({
 function UploadField({
   helper,
   label,
-  lightMode,
   onFile,
 }: {
   helper: string;
   label: string;
-  lightMode: boolean;
   onFile: (value: string) => void;
 }) {
   return (
     <label className="grid gap-2">
-      <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>{label}</span>
+      <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>{label}</span>
       <input
-        className={`rounded-[1rem] px-4 py-3 text-sm outline-none file:mr-3 file:rounded-full file:border-0 file:px-4 file:py-2 file:font-semibold ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] file:bg-[#ede8ff] file:text-[#6f57f6]" : "bg-white/8 text-white file:bg-[#22193f] file:text-[#cabfff]"}`}
+        className={`rounded-[1rem] px-4 py-3 text-sm outline-none file:mr-3 file:rounded-full file:border-0 file:px-4 file:py-2 file:font-semibold bg-[#f7f5ff] text-[#1f2642] file:bg-[#ede8ff] file:text-[#6f57f6] dark:bg-white/8 dark:text-white dark:file:bg-[#22193f] dark:file:text-[#cabfff]`}
         onChange={async (event) => {
           const file = event.target.files?.[0];
           if (!file) return;
@@ -3037,7 +2491,7 @@ function UploadField({
         }}
         type="file"
       />
-      <span className={`text-xs ${lightMode ? "text-[#8a84a3]" : "text-white/45"}`}>{helper}</span>
+      <span className={`text-xs text-[#8a84a3] dark:text-white/45`}>{helper}</span>
     </label>
   );
 }
@@ -3045,7 +2499,6 @@ function UploadField({
 function HomePage({
   activeCount,
   doneCount,
-  lightMode,
   lowEnergyTasks,
   momentumPercent,
   overdueCount,
@@ -3055,7 +2508,6 @@ function HomePage({
 }: {
   activeCount: number;
   doneCount: number;
-  lightMode: boolean;
   lowEnergyTasks: Task[];
   momentumPercent: number;
   overdueCount: number;
@@ -3066,17 +2518,17 @@ function HomePage({
   return (
     <>
       <section className="pt-8 flex flex-col items-center text-center">
-        <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+        <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/40`}>
           Home Dashboard
         </p>
-        <h1 className={`mt-2 text-[clamp(2.4rem,5vw,4rem)] font-black tracking-tight ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+        <h1 className={`mt-2 text-[clamp(2.4rem,5vw,4rem)] font-black tracking-tight text-[#17203a] dark:text-white`}>
           Your focus overview
         </h1>
-        <p className={`mt-1 max-w-3xl text-base ${lightMode ? "text-[#707a95]" : "text-white/55"}`}>
+        <p className={`mt-1 max-w-3xl text-base text-[#707a95] dark:text-white/55`}>
           Start here for momentum, urgent tasks, low-energy wins, and quick jumps into the rest of ADHDice.
         </p>
         <button
-          className={`mt-6 rounded-[1.25rem] px-5 py-3 text-lg font-bold transition hover:-translate-y-0.5 ${lightMode ? "bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)]" : "bg-[#cabfff] text-[#1a1431]"}`}
+          className={`mt-6 rounded-[1.25rem] px-5 py-3 text-lg font-bold transition hover:-translate-y-0.5 bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] dark:bg-[#cabfff] dark:text-[#1a1431]`}
           onClick={() => setActivePage("Tasks")}
           type="button"
         >
@@ -3085,10 +2537,10 @@ function HomePage({
       </section>
 
       <div className="mt-7 flex flex-wrap justify-center gap-5">
-        <OverviewStatCard lightMode={lightMode} label="Urgent Momentum" value={`${momentumPercent}%`} detail={`${overdueCount} overdue`} />
-        <OverviewStatCard lightMode={lightMode} label="Today Queue" value={String(todayCount)} detail="ready to work" />
-        <OverviewStatCard lightMode={lightMode} label="Active Tasks" value={String(activeCount)} detail="current load" />
-        <OverviewStatCard lightMode={lightMode} label="Completed" value={String(doneCount)} detail="closed loops" />
+        <OverviewStatCard label="Urgent Momentum" value={`${momentumPercent}%`} detail={`${overdueCount} overdue`} />
+        <OverviewStatCard label="Today Queue" value={String(todayCount)} detail="ready to work" />
+        <OverviewStatCard label="Active Tasks" value={String(activeCount)} detail="current load" />
+        <OverviewStatCard label="Completed" value={String(doneCount)} detail="closed loops" />
       </div>
 
       <div className="mt-5 flex flex-wrap justify-center gap-5">
@@ -3096,7 +2548,6 @@ function HomePage({
           className=""
           cta="Go to Tasks"
           description="Refocus, urgent momentum, filters, and your active queue."
-          lightMode={lightMode}
           onClick={() => setActivePage("Tasks")}
           title="Task Command"
         />
@@ -3104,7 +2555,6 @@ function HomePage({
           className=""
           cta="Open Focus"
           description="Timer sessions, low-friction entry points, and calm starting rituals."
-          lightMode={lightMode}
           onClick={() => setActivePage("Focus")}
           title="Focus Mode"
         />
@@ -3112,15 +2562,14 @@ function HomePage({
           className=""
           cta="View Stats"
           description="Patterns, streaks, and reward loops without overwhelming density."
-          lightMode={lightMode}
           onClick={() => setActivePage("Stats")}
           title="Progress"
         />
       </div>
 
       <div className="mt-5 flex flex-wrap justify-center items-start gap-5">
-        <HomeUrgentPreview lightMode={lightMode} tasks={urgentTasks.slice(0, 3)} onClick={() => setActivePage("Tasks")} />
-        <HomeLowEnergyPreview lightMode={lightMode} tasks={lowEnergyTasks} onClick={() => setActivePage("Tasks")} />
+        <HomeUrgentPreview tasks={urgentTasks.slice(0, 3)} onClick={() => setActivePage("Tasks")} />
+        <HomeLowEnergyPreview tasks={lowEnergyTasks} onClick={() => setActivePage("Tasks")} />
       </div>
     </>
   );
@@ -3129,19 +2578,17 @@ function HomePage({
 function OverviewStatCard({
   detail,
   label,
-  lightMode,
   value,
 }: {
   detail: string;
   label: string;
-  lightMode: boolean;
   value: string;
 }) {
   return (
-    <section className={`flex h-[139px] w-[180px] flex-col items-center justify-center rounded-[1.8rem] border px-5 py-4 text-center transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
-      <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/35"}`}>{label}</p>
-      <p className={`mt-1 text-4xl font-black leading-none ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{value}</p>
-      <p className={`mt-1 text-sm leading-tight ${lightMode ? "text-[#7f88a1]" : "text-white/55"}`}>{detail}</p>
+    <section className={`flex h-[139px] w-[180px] flex-col items-center justify-center rounded-[1.8rem] border px-5 py-4 text-center transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
+      <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35`}>{label}</p>
+      <p className={`mt-1 text-4xl font-black leading-none text-[#1f2746] dark:text-white`}>{value}</p>
+      <p className={`mt-1 text-sm leading-tight text-[#7f88a1] dark:text-white/55`}>{detail}</p>
     </section>
   );
 }
@@ -3150,27 +2597,25 @@ function DashboardJumpCard({
   className = "",
   cta,
   description,
-  lightMode,
   onClick,
   title,
 }: {
   className?: string;
   cta: string;
   description: string;
-  lightMode: boolean;
   onClick: () => void;
   title: string;
 }) {
   return (
     <button
-      className={`self-start w-fit rounded-[2rem] border px-5 py-3 flex flex-col items-center text-center transition hover:-translate-y-0.5 ${className} ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}
+      className={`self-start w-fit rounded-[2rem] border px-5 py-3 flex flex-col items-center text-center transition hover:-translate-y-0.5 ${className} border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}
       onClick={onClick}
       type="button"
     >
-      <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/35"}`}>Overview</p>
-      <h2 className={`mt-1.5 text-2xl font-black ${lightMode ? "text-[#26304c]" : "text-white"}`}>{title}</h2>
-      <p className={`mt-1.5 max-w-[260px] text-sm leading-6 ${lightMode ? "text-[#7a839e]" : "text-white/55"}`}>{description}</p>
-      <span className={`mt-3 inline-flex rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[#f1ecff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}>
+      <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35`}>Overview</p>
+      <h2 className={`mt-1.5 text-2xl font-black text-[#26304c] dark:text-white`}>{title}</h2>
+      <p className={`mt-1.5 max-w-[260px] text-sm leading-6 text-[#7a839e] dark:text-white/55`}>{description}</p>
+      <span className={`mt-3 inline-flex rounded-full px-4 py-2 text-sm font-semibold bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}>
         {cta}
       </span>
     </button>
@@ -3178,22 +2623,20 @@ function DashboardJumpCard({
 }
 
 function HomeUrgentPreview({
-  lightMode,
   onClick,
   tasks,
 }: {
-  lightMode: boolean;
   onClick: () => void;
   tasks: Task[];
 }) {
   return (
-    <section className={`w-full sm:w-fit sm:min-w-[440px] rounded-[2rem] border p-4 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+    <section className={`w-full sm:w-fit sm:min-w-[440px] rounded-[2rem] border p-4 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
       <div className="flex items-center justify-between gap-6">
-        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
           Urgent Snapshot
         </h2>
         <button
-          className={`min-w-[110px] rounded-full px-4 py-2 text-sm font-semibold transition ${lightMode ? "bg-[#f1ecff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          className={`min-w-[110px] rounded-full px-4 py-2 text-sm font-semibold transition bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
           onClick={onClick}
           type="button"
         >
@@ -3202,9 +2645,9 @@ function HomeUrgentPreview({
       </div>
       <div className="mt-4 space-y-3">
         {tasks.map((task) => (
-          <div className={`max-w-[32rem] rounded-[1.2rem] border px-4 py-3 ${lightMode ? "border-[#eee9fb] bg-[#fcfbff]" : "border-white/10 bg-white/[0.04]"}`} key={task.id}>
-            <p className={`text-lg font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}>{task.title}</p>
-            <p className={`mt-1 text-sm ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>{formatDueLabel(task.due_on)} / {task.priority} priority</p>
+          <div className={`max-w-[32rem] rounded-[1.2rem] border px-4 py-3 border-[#eee9fb] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.04]`} key={task.id}>
+            <p className={`text-lg font-semibold text-[#27304c] dark:text-white`}>{task.title}</p>
+            <p className={`mt-1 text-sm text-[#7d88a1] dark:text-white/55`}>{formatDueLabel(task.due_on)} / {task.priority} priority</p>
           </div>
         ))}
       </div>
@@ -3213,22 +2656,20 @@ function HomeUrgentPreview({
 }
 
 function HomeLowEnergyPreview({
-  lightMode,
   onClick,
   tasks,
 }: {
-  lightMode: boolean;
   onClick: () => void;
   tasks: Task[];
 }) {
   return (
-    <section className={`w-full sm:w-fit sm:min-w-[440px] rounded-[2rem] border p-4 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+    <section className={`w-full sm:w-fit sm:min-w-[440px] rounded-[2rem] border p-4 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
       <div className="flex items-center justify-between gap-6">
-        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
           Low Energy Wins
         </h2>
         <button
-          className={`min-w-[110px] rounded-full px-4 py-2 text-sm font-semibold transition ${lightMode ? "bg-[#f1ecff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          className={`min-w-[110px] rounded-full px-4 py-2 text-sm font-semibold transition bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
           onClick={onClick}
           type="button"
         >
@@ -3237,9 +2678,9 @@ function HomeLowEnergyPreview({
       </div>
       <div className="mt-4 space-y-3">
         {tasks.map((task) => (
-          <div className={`max-w-[32rem] rounded-[1.2rem] border px-4 py-3 ${lightMode ? "border-[#eee9fb] bg-[#fcfbff]" : "border-white/10 bg-white/[0.04]"}`} key={task.id}>
-            <p className={`text-base font-semibold ${lightMode ? "text-[#26304c]" : "text-white"}`}>{task.title}</p>
-            <p className={`mt-1 text-sm ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>{formatDueLabel(task.due_on)} / low effort</p>
+          <div className={`max-w-[32rem] rounded-[1.2rem] border px-4 py-3 border-[#eee9fb] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.04]`} key={task.id}>
+            <p className={`text-base font-semibold text-[#26304c] dark:text-white`}>{task.title}</p>
+            <p className={`mt-1 text-sm text-[#7d88a1] dark:text-white/55`}>{formatDueLabel(task.due_on)} / low effort</p>
           </div>
         ))}
       </div>
@@ -3249,13 +2690,13 @@ function HomeLowEnergyPreview({
 
 // ─── Page shells ────────────────────────────────────────────────────────────
 
-function PageShellHeader({ title, subtitle, lightMode }: { title: string; subtitle: string; lightMode: boolean }) {
+function PageShellHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="pt-8 pb-6">
-      <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+      <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/40`}>
         {subtitle}
       </p>
-      <h1 className={`mt-1 text-3xl font-black tracking-tight ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+      <h1 className={`mt-1 text-3xl font-black tracking-tight text-[#17203a] dark:text-white`}>
         {title}
       </h1>
     </div>
@@ -3280,12 +2721,14 @@ const VAULT_TIER_CONFIG: Record<VaultPrizeTier, { label: string; defaultCost: nu
 function RollPage({
   client,
   currentUser,
-  lightMode,
+  tasks,
+  theme,
   onSpendPoints,
 }: {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   currentUser: User;
-  lightMode: boolean;
+  tasks: Task[];
+  theme: ThemeMode;
   onSpendPoints: (delta: number, reason: string) => void;
 }) {
   const [points, setPoints] = useState<number | null>(null);
@@ -3433,41 +2876,33 @@ function RollPage({
     setPmBulk("");
   }
 
-  const lm = lightMode;
-  const cardBg = lm ? "bg-[#f7f5ff]" : "bg-white/5";
-  const labelColor = lm ? "text-[#8e88a9]" : "text-white/40";
-  const headingColor = lm ? "text-[#17203a]" : "text-white";
-  const accentBg = lm ? "bg-[#6f57f6]" : "bg-[#9b87ff]";
-  const accentText = lm ? "text-white" : "text-[#171127]";
-  const dimText = lm ? "text-[#27304c]" : "text-white/70";
-
   return (
     <section className="px-4 pb-32">
-      <PageShellHeader title="Roll" subtitle="Prize Board" lightMode={lightMode} />
+      <PageShellHeader title="Roll" subtitle="Prize Board" />
 
       {/* Balance row */}
-      <div className={`mb-4 flex items-center justify-between rounded-2xl px-5 py-3 ${cardBg}`}>
+      <div className={`mb-4 flex items-center justify-between rounded-2xl px-5 py-3 bg-[#f7f5ff] dark:bg-white/5`}>
         <div className="flex gap-6">
           <div>
-            <p className={`text-[10px] font-semibold uppercase tracking-widest ${labelColor}`}>Points</p>
-            <p className={`text-2xl font-black tabular-nums ${headingColor}`}>{points ?? "—"}</p>
+            <p className={`text-[10px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Points</p>
+            <p className={`text-2xl font-black tabular-nums text-[#17203a] dark:text-white`}>{points ?? "—"}</p>
           </div>
           <div>
-            <p className={`text-[10px] font-semibold uppercase tracking-widest ${labelColor}`}>Tokens</p>
-            <p className={`text-2xl font-black tabular-nums ${headingColor}`}>{tokens ?? "—"}</p>
+            <p className={`text-[10px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Tokens</p>
+            <p className={`text-2xl font-black tabular-nums text-[#17203a] dark:text-white`}>{tokens ?? "—"}</p>
           </div>
         </div>
         <button
           type="button"
           onClick={() => setShowVault(true)}
-          className={`rounded-xl px-4 py-2 text-sm font-bold transition active:scale-95 ${lm ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          className={`rounded-xl px-4 py-2 text-sm font-bold transition active:scale-95 bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
         >
           Vault
         </button>
       </div>
 
       {/* Difficulty selector */}
-      <div className={`mb-4 flex rounded-2xl p-1 gap-1 ${cardBg}`}>
+      <div className={`mb-4 flex rounded-2xl p-1 gap-1 bg-[#f7f5ff] dark:bg-white/5`}>
         {(["easy", "medium", "hard"] as RollDifficulty[]).map((d) => (
           <button
             key={d}
@@ -3476,26 +2911,28 @@ function RollPage({
             onClick={() => setDifficulty(d)}
             className={`flex-1 rounded-xl py-2 text-xs font-bold transition ${
               difficulty === d
-                ? `${accentBg} ${accentText} shadow-sm`
-                : `${labelColor} hover:opacity-80`
+                ? `bg-[#6f57f6] dark:bg-[#9b87ff] text-white dark:text-[#171127] shadow-sm`
+                : `text-[#8e88a9] dark:text-white/40 hover:opacity-80`
             }`}
           >
             {DIFFICULTY_CONFIG[d].label}
           </button>
         ))}
       </div>
-      <p className={`mb-3 text-center text-[11px] ${labelColor}`}>{cfg.description}</p>
+      <p className={`mb-3 text-center text-[11px] text-[#8e88a9] dark:text-white/40`}>{cfg.description}</p>
 
       {/* 3D Dice Canvas */}
       <div className="mb-4">
-        <Suspense fallback={<div className={`w-full rounded-2xl ${cardBg}`} style={{ height: 180 }} />}>
-          <Dice3DCanvas
-            phase={phase}
-            layout={cfg.layout}
-            onSettled={handleDiceSettled}
-            lightMode={lightMode}
-          />
-        </Suspense>
+        <ErrorBoundary fallback={<div className={`w-full rounded-2xl bg-[#f7f5ff] dark:bg-white/5`} style={{ height: 180 }} />}>
+          <Suspense fallback={<div className={`w-full rounded-2xl bg-[#f7f5ff] dark:bg-white/5`} style={{ height: 180 }} />}>
+            <Dice3DCanvas
+              phase={phase}
+              layout={cfg.layout}
+              onSettled={handleDiceSettled}
+              dark={theme === "dark"}
+            />
+          </Suspense>
+        </ErrorBoundary>
       </div>
 
       {/* Roll button */}
@@ -3503,35 +2940,37 @@ function RollPage({
         disabled={!canRoll}
         onClick={handleRoll}
         type="button"
-        className={`mb-4 w-full rounded-2xl py-4 text-base font-black tracking-wide transition active:scale-[0.98] disabled:opacity-40 ${
-          lm
-            ? "bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] text-white shadow-[0_12px_28px_rgba(111,87,246,0.3)]"
-            : "bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] text-[#171127]"
-        }`}
+        className="mb-4 w-full rounded-2xl py-4 text-base font-black tracking-wide transition active:scale-[0.98] disabled:opacity-40 bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] text-white shadow-[0_12px_28px_rgba(111,87,246,0.3)] dark:bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] dark:text-[#171127]"
       >
         {phase === "idle" ? `Roll — ${cfg.cost} pts` : phase === "rolling" ? "Rolling…" : "Settling…"}
       </button>
 
       {/* Last roll reveal */}
       {lastRoll !== null && phase === "idle" && (
-        <div className={`mb-4 rounded-2xl px-5 py-4 text-center ${lm ? "bg-[#ede8ff]" : "bg-[#22193f]"}`}>
-          <p className={`text-[11px] font-semibold uppercase tracking-widest mb-1 ${labelColor}`}>Result</p>
-          <p className={`text-5xl font-black tabular-nums ${lm ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>{lastRoll}</p>
+        <div className={`mb-4 rounded-2xl px-5 py-4 text-center bg-[#ede8ff] dark:bg-[#22193f]`}>
+          <p className={`text-[11px] font-semibold uppercase tracking-widest mb-1 text-[#8e88a9] dark:text-white/40`}>Result</p>
+          <p className={`text-5xl font-black tabular-nums text-[#6f57f6] dark:text-[#cabfff]`}>{lastRoll}</p>
           {cellMap[lastRoll]?.label ? (
-            <p className={`mt-1 text-sm font-semibold ${dimText}`}>{cellMap[lastRoll].label}</p>
+            <p className={`mt-1 text-sm font-semibold text-[#27304c] dark:text-white/70`}>{cellMap[lastRoll].label}</p>
           ) : (
-            <p className={`mt-1 text-xs ${labelColor}`}>No prize set for this roll</p>
+            <p className={`mt-1 text-xs text-[#8e88a9] dark:text-white/40`}>No prize set for this roll</p>
+          )}
+          {tasks.length > 0 && (
+            <div className={`mt-3 rounded-xl px-4 py-2 text-left bg-white/60 dark:bg-white/10`}>
+              <p className={`text-[10px] font-semibold uppercase tracking-widest mb-0.5 text-[#8e88a9] dark:text-white/40`}>Suggested Task</p>
+              <p className={`text-sm font-semibold text-[#27304c] dark:text-white/70`}>{tasks[(lastRoll - 1) % tasks.length].title}</p>
+            </div>
           )}
         </div>
       )}
 
       {/* 20-cell prize grid */}
       <div className="flex items-center justify-between mb-2">
-        <p className={`text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>Prize Board</p>
+        <p className={`text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Prize Board</p>
         <button
           type="button"
           onClick={() => setShowPrizeManager(true)}
-          className={`text-xs font-semibold ${lm ? "text-[#6f57f6]" : "text-[#cabfff]"}`}
+          className={`text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]`}
         >
           Manage Prizes
         </button>
@@ -3546,18 +2985,16 @@ function RollPage({
               key={n}
               className={`relative rounded-xl p-2 transition ${
                 isLit
-                  ? lm
-                    ? "bg-[#6f57f6] text-white shadow-[0_0_20px_rgba(111,87,246,0.4)]"
-                    : "bg-[#9b87ff] text-[#171127] shadow-[0_0_20px_rgba(155,135,255,0.4)]"
-                  : cardBg
+                  ? "bg-[#6f57f6] text-white shadow-[0_0_20px_rgba(111,87,246,0.4)] dark:bg-[#9b87ff] dark:text-[#171127] dark:shadow-[0_0_20px_rgba(155,135,255,0.4)]"
+                  : "bg-[#f7f5ff] dark:bg-white/5"
               }`}
             >
-              <p className={`text-[10px] font-bold tabular-nums ${isLit ? "opacity-80" : labelColor}`}>{n}</p>
+              <p className={`text-[10px] font-bold tabular-nums ${isLit ? "opacity-80" : "text-[#8e88a9] dark:text-white/40"}`}>{n}</p>
               {editing ? (
                 <div className="mt-1 flex flex-col gap-1">
                   <input
                     autoFocus
-                    className={`w-full rounded-lg px-2 py-1 text-xs outline-none ${lm ? "bg-white text-[#1e2540]" : "bg-white/10 text-white"}`}
+                    className={`w-full rounded-lg px-2 py-1 text-xs outline-none bg-white text-[#1e2540] dark:bg-white/10 dark:text-white`}
                     maxLength={40}
                     onChange={(e) => setEditLabel(e.target.value)}
                     onKeyDown={(e) => {
@@ -3567,11 +3004,11 @@ function RollPage({
                     placeholder="Prize…"
                     value={editLabel}
                   />
-                  <button className={`rounded-lg py-1 text-[10px] font-bold ${accentBg} ${accentText}`} onClick={() => { void handleSaveCell(n); }} type="button">Save</button>
+                  <button className={`rounded-lg py-1 text-[10px] font-bold bg-[#6f57f6] dark:bg-[#9b87ff] text-white dark:text-[#171127]`} onClick={() => { void handleSaveCell(n); }} type="button">Save</button>
                 </div>
               ) : (
                 <button aria-label={cell?.label ? `Edit cell ${n}: ${cell.label}` : `Set prize for cell ${n}`} className="mt-0.5 w-full text-left" onClick={() => { setEditingCell(n); setEditLabel(cell?.label ?? ""); }} type="button">
-                  <p className={`truncate text-[11px] leading-tight ${isLit ? "" : dimText}`}>
+                  <p className={`truncate text-[11px] leading-tight ${isLit ? "" : "text-[#27304c] dark:text-white/70"}`}>
                     {cell?.label || <span className="opacity-30">+</span>}
                   </p>
                 </button>
@@ -3584,15 +3021,15 @@ function RollPage({
       {/* Recent rolls */}
       {history.length > 0 && (
         <div className="mb-4">
-          <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>Recent Rolls</p>
-          <div className={`divide-y rounded-2xl overflow-hidden ${lm ? "bg-[#f7f5ff] divide-[#e5e0f5]" : "bg-white/5 divide-white/8"}`}>
+          <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Recent Rolls</p>
+          <div className={`divide-y rounded-2xl overflow-hidden bg-[#f7f5ff] divide-[#e5e0f5] dark:bg-white/5 dark:divide-white/8`}>
             {history.map((h) => (
               <div key={h.id} className="flex items-center justify-between px-4 py-3">
                 <div className="flex items-center gap-3">
-                  <span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-black ${lm ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}>{h.roll_result}</span>
-                  <span className={`text-sm ${dimText}`}>{h.prize_label || "No prize"}</span>
+                  <span className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-black bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}>{h.roll_result}</span>
+                  <span className={`text-sm text-[#27304c] dark:text-white/70`}>{h.prize_label || "No prize"}</span>
                 </div>
-                <span className={`text-xs ${labelColor}`}>-{h.points_spent}pts</span>
+                <span className={`text-xs text-[#8e88a9] dark:text-white/40`}>-{h.points_spent}pts</span>
               </div>
             ))}
           </div>
@@ -3601,19 +3038,19 @@ function RollPage({
 
       {/* Vault Modal */}
       {showVault && (
-        <ModalShell className={`w-full max-w-md max-h-[82vh] overflow-y-auto rounded-[2rem] border ${lm ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)]" : "border-white/10 bg-[#171328]"}`} label="Vault" onClose={() => setShowVault(false)}>
+        <ModalShell className={`w-full max-w-md max-h-[82vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#171328]`} label="Vault" onClose={() => setShowVault(false)}>
           <div className="px-5 pb-6">
             <div className="flex items-center justify-between py-4 mb-2">
               <div>
-                <h2 className={`text-lg font-black ${headingColor}`}>Vault</h2>
-                <p className={`text-xs ${labelColor}`}>{tokens ?? 0} tokens available</p>
+                <h2 className={`text-lg font-black text-[#17203a] dark:text-white`}>Vault</h2>
+                <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>{tokens ?? 0} tokens available</p>
               </div>
-              <button aria-label="Close vault" type="button" onClick={() => setShowVault(false)} className={`rounded-full p-2 ${lm ? "bg-[#f0ecff]" : "bg-white/10"}`}>
-                <X className={`h-4 w-4 ${labelColor}`} />
+              <button aria-label="Close vault" type="button" onClick={() => setShowVault(false)} className={`rounded-full p-2 bg-[#f0ecff] dark:bg-white/10`}>
+                <X className={`h-4 w-4 text-[#8e88a9] dark:text-white/40`} />
               </button>
             </div>
             {vaultPrizes.length === 0 ? (
-              <p className={`py-8 text-center text-sm ${labelColor}`}>No prizes yet. Add them in Manage Prizes.</p>
+              <p className={`py-8 text-center text-sm text-[#8e88a9] dark:text-white/40`}>No prizes yet. Add them in Manage Prizes.</p>
             ) : (
               <div className="flex flex-col gap-3">
                 {(["small", "big", "master"] as VaultPrizeTier[]).map((tier) => {
@@ -3622,31 +3059,31 @@ function RollPage({
                   const { label, emoji } = VAULT_TIER_CONFIG[tier];
                   return (
                     <div key={tier}>
-                      <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>{emoji} {label}</p>
+                      <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>{emoji} {label}</p>
                       <div className="flex flex-col gap-2">
                         {tierPrizes.map((prize) => {
                           const progress = Math.min((tokens ?? 0) / prize.token_cost, 1);
                           const canClaim = (tokens ?? 0) >= prize.token_cost && !prize.is_claimed;
                           return (
-                            <div key={prize.id} className={`rounded-2xl px-4 py-3 ${cardBg} ${prize.is_claimed ? "opacity-50" : ""}`}>
+                            <div key={prize.id} className={`rounded-2xl px-4 py-3 bg-[#f7f5ff] dark:bg-white/5 ${prize.is_claimed ? "opacity-50" : ""}`}>
                               <div className="flex items-center justify-between mb-2">
-                                <p className={`font-semibold text-sm ${headingColor}`}>{prize.name}</p>
+                                <p className={`font-semibold text-sm text-[#17203a] dark:text-white`}>{prize.name}</p>
                                 <button
                                   type="button"
                                   disabled={!canClaim}
                                   onClick={() => { void handleClaimPrize(prize); }}
-                                  className={`rounded-xl px-3 py-1 text-xs font-bold transition active:scale-95 disabled:opacity-40 ${accentBg} ${accentText}`}
+                                  className={`rounded-xl px-3 py-1 text-xs font-bold transition active:scale-95 disabled:opacity-40 bg-[#6f57f6] dark:bg-[#9b87ff] text-white dark:text-[#171127]`}
                                 >
                                   {prize.is_claimed ? "Claimed" : `Claim · ${prize.token_cost}t`}
                                 </button>
                               </div>
-                              <div className={`h-1.5 rounded-full overflow-hidden ${lm ? "bg-[#e5e0f5]" : "bg-white/10"}`}>
+                              <div className={`h-1.5 rounded-full overflow-hidden bg-[#e5e0f5] dark:bg-white/10`}>
                                 <div
-                                  className={`h-full rounded-full transition-all ${lm ? "bg-[#6f57f6]" : "bg-[#9b87ff]"}`}
+                                  className={`h-full rounded-full transition-all bg-[#6f57f6] dark:bg-[#9b87ff]`}
                                   style={{ width: `${progress * 100}%` }}
                                 />
                               </div>
-                              <p className={`mt-1 text-[10px] ${labelColor}`}>{Math.min(tokens ?? 0, prize.token_cost)} / {prize.token_cost} tokens</p>
+                              <p className={`mt-1 text-[10px] text-[#8e88a9] dark:text-white/40`}>{Math.min(tokens ?? 0, prize.token_cost)} / {prize.token_cost} tokens</p>
                             </div>
                           );
                         })}
@@ -3662,40 +3099,40 @@ function RollPage({
 
       {/* Prize Manager Modal */}
       {showPrizeManager && (
-        <ModalShell className={`w-full max-w-md max-h-[90vh] overflow-y-auto rounded-[2rem] border ${lm ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)]" : "border-white/10 bg-[#171328]"}`} label="Manage Prizes" onClose={() => setShowPrizeManager(false)}>
+        <ModalShell className={`w-full max-w-md max-h-[90vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#171328]`} label="Manage Prizes" onClose={() => setShowPrizeManager(false)}>
           <div className="px-5 pb-6">
             <div className="flex items-center justify-between py-4 mb-3">
-              <h2 className={`text-lg font-black ${headingColor}`}>Manage Prizes</h2>
-              <button aria-label="Close prize manager" type="button" onClick={() => setShowPrizeManager(false)} className={`rounded-full p-2 ${lm ? "bg-[#f0ecff]" : "bg-white/10"}`}>
-                <X className={`h-4 w-4 ${labelColor}`} />
+              <h2 className={`text-lg font-black text-[#17203a] dark:text-white`}>Manage Prizes</h2>
+              <button aria-label="Close prize manager" type="button" onClick={() => setShowPrizeManager(false)} className={`rounded-full p-2 bg-[#f0ecff] dark:bg-white/10`}>
+                <X className={`h-4 w-4 text-[#8e88a9] dark:text-white/40`} />
               </button>
             </div>
 
             {/* Tier tabs */}
-            <div className={`flex rounded-xl p-1 gap-1 mb-4 ${lm ? "bg-[#f0ecff]" : "bg-white/5"}`}>
+            <div className={`flex rounded-xl p-1 gap-1 mb-4 bg-[#f0ecff] dark:bg-white/5`}>
               {(["small", "big", "master"] as VaultPrizeTier[]).map((t) => (
                 <button key={t} type="button" onClick={() => setPmTier(t)}
-                  className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${pmTier === t ? `${accentBg} ${accentText}` : labelColor}`}>
+                  className={`flex-1 rounded-lg py-2 text-xs font-bold transition ${pmTier === t ? `bg-[#6f57f6] dark:bg-[#9b87ff] text-white dark:text-[#171127]` : "text-[#8e88a9] dark:text-white/40"}`}>
                   {VAULT_TIER_CONFIG[t].emoji} {VAULT_TIER_CONFIG[t].label}
                 </button>
               ))}
             </div>
 
             {/* Add / edit form */}
-            <div className={`mb-4 rounded-2xl p-4 ${cardBg}`}>
-              <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>
+            <div className={`mb-4 rounded-2xl p-4 bg-[#f7f5ff] dark:bg-white/5`}>
+              <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>
                 {pmEditId ? "Edit Prize" : "Add Prize"}
               </p>
               <div className="flex gap-2 mb-2">
                 <input
-                  className={`flex-1 rounded-xl px-3 py-2 text-sm outline-none ${lm ? "bg-white text-[#1e2540]" : "bg-white/10 text-white"}`}
+                  className={`flex-1 rounded-xl px-3 py-2 text-sm outline-none bg-white text-[#1e2540] dark:bg-white/10 dark:text-white`}
                   placeholder="Prize name…"
                   value={pmName}
                   onChange={(e) => setPmName(e.target.value)}
                   maxLength={60}
                 />
                 <input
-                  className={`w-20 rounded-xl px-3 py-2 text-sm outline-none ${lm ? "bg-white text-[#1e2540]" : "bg-white/10 text-white"}`}
+                  className={`w-20 rounded-xl px-3 py-2 text-sm outline-none bg-white text-[#1e2540] dark:bg-white/10 dark:text-white`}
                   placeholder="Tokens"
                   value={pmCost}
                   onChange={(e) => setPmCost(e.target.value)}
@@ -3706,54 +3143,54 @@ function RollPage({
               {pmEditId ? (
                 <div className="flex gap-2">
                   <button type="button" onClick={() => { void handleUpdateVaultPrize(pmEditId); }}
-                    className={`flex-1 rounded-xl py-2 text-sm font-bold ${accentBg} ${accentText}`}>Save</button>
+                    className={`flex-1 rounded-xl py-2 text-sm font-bold bg-[#6f57f6] dark:bg-[#9b87ff] text-white dark:text-[#171127]`}>Save</button>
                   <button type="button" onClick={() => { setPmEditId(null); setPmName(""); setPmCost(""); }}
-                    className={`rounded-xl px-4 py-2 text-sm font-bold ${lm ? "bg-[#e5e0f5] text-[#8e88a9]" : "bg-white/10 text-white/50"}`}>Cancel</button>
+                    className={`rounded-xl px-4 py-2 text-sm font-bold bg-[#e5e0f5] text-[#8e88a9] dark:bg-white/10 dark:text-white/50`}>Cancel</button>
                 </div>
               ) : (
                 <button type="button" onClick={() => { void handleAddVaultPrize(); }}
-                  className={`w-full rounded-xl py-2 text-sm font-bold ${accentBg} ${accentText}`}>
+                  className={`w-full rounded-xl py-2 text-sm font-bold bg-[#6f57f6] dark:bg-[#9b87ff] text-white dark:text-[#171127]`}>
                   Add to {VAULT_TIER_CONFIG[pmTier].label}
                 </button>
               )}
             </div>
 
             {/* Bulk paste */}
-            <div className={`mb-4 rounded-2xl p-4 ${cardBg}`}>
-              <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>Bulk Paste</p>
+            <div className={`mb-4 rounded-2xl p-4 bg-[#f7f5ff] dark:bg-white/5`}>
+              <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Bulk Paste</p>
               <textarea
-                className={`w-full rounded-xl px-3 py-2 text-sm outline-none resize-none ${lm ? "bg-white text-[#1e2540]" : "bg-white/10 text-white"}`}
+                className={`w-full rounded-xl px-3 py-2 text-sm outline-none resize-none bg-white text-[#1e2540] dark:bg-white/10 dark:text-white`}
                 placeholder={"One prize per line…\nExtra nap\nFavorite snack"}
                 rows={4}
                 value={pmBulk}
                 onChange={(e) => setPmBulk(e.target.value)}
               />
               <button type="button" onClick={() => { void handleBulkPaste(); }}
-                className={`mt-2 w-full rounded-xl py-2 text-sm font-bold ${accentBg} ${accentText}`}>
+                className={`mt-2 w-full rounded-xl py-2 text-sm font-bold bg-[#6f57f6] dark:bg-[#9b87ff] text-white dark:text-[#171127]`}>
                 Add All to {VAULT_TIER_CONFIG[pmTier].label}
               </button>
             </div>
 
             {/* Prize list for current tier */}
             <div>
-              <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>
+              <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>
                 {VAULT_TIER_CONFIG[pmTier].emoji} {VAULT_TIER_CONFIG[pmTier].label} Prizes
               </p>
               {vaultPrizes.filter((p) => p.tier === pmTier).length === 0 ? (
-                <p className={`py-4 text-center text-sm ${labelColor}`}>None yet</p>
+                <p className={`py-4 text-center text-sm text-[#8e88a9] dark:text-white/40`}>None yet</p>
               ) : (
-                <div className={`divide-y rounded-2xl overflow-hidden ${lm ? "bg-[#f7f5ff] divide-[#e5e0f5]" : "bg-white/5 divide-white/8"}`}>
+                <div className={`divide-y rounded-2xl overflow-hidden bg-[#f7f5ff] divide-[#e5e0f5] dark:bg-white/5 dark:divide-white/8`}>
                   {vaultPrizes.filter((p) => p.tier === pmTier).map((prize) => (
                     <div key={prize.id} className="flex items-center justify-between px-4 py-3">
                       <div>
-                        <p className={`text-sm font-semibold ${headingColor} ${prize.is_claimed ? "line-through opacity-50" : ""}`}>{prize.name}</p>
-                        <p className={`text-xs ${labelColor}`}>{prize.token_cost} tokens</p>
+                        <p className={`text-sm font-semibold text-[#17203a] dark:text-white ${prize.is_claimed ? "line-through opacity-50" : ""}`}>{prize.name}</p>
+                        <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>{prize.token_cost} tokens</p>
                       </div>
                       <div className="flex gap-2">
                         <button type="button" onClick={() => { setPmEditId(prize.id); setPmName(prize.name); setPmCost(String(prize.token_cost)); setPmTier(prize.tier); }}
-                          className={`text-xs font-semibold ${lm ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>Edit</button>
+                          className={`text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]`}>Edit</button>
                         <button type="button" onClick={() => { void handleDeleteVaultPrize(prize.id); }}
-                          className={`text-xs font-semibold ${lm ? "text-red-500" : "text-red-400"}`}>Del</button>
+                          className={`text-xs font-semibold text-red-500 dark:text-red-400`}>Del</button>
                       </div>
                     </div>
                   ))}
@@ -3770,14 +3207,12 @@ function RollPage({
 function StatsPage({
   economy,
   focusHistory,
-  lightMode,
   taskHistory,
   taskHistoryStats,
   tasks,
 }: {
   economy: { level: number; xp: number; points: number; tokens: number };
   focusHistory: HistoricalFocusSession[];
-  lightMode: boolean;
   taskHistory: DbTaskHistory[];
   taskHistoryStats: TaskHistoryStats;
   tasks: Task[];
@@ -3819,16 +3254,16 @@ function StatsPage({
   }, [tasks]);
 
   const statCard = (label: string, value: string, detail: string) => (
-    <div className={`flex-1 rounded-2xl px-4 py-4 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
-      <p className={`text-[10px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>{label}</p>
-      <p className={`mt-1 text-3xl font-black tabular-nums ${lightMode ? "text-[#17203a]" : "text-white"}`}>{value}</p>
-      <p className={`mt-0.5 text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>{detail}</p>
+    <div className={`flex-1 rounded-2xl px-4 py-4 bg-[#f7f5ff] dark:bg-white/5`}>
+      <p className={`text-[10px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>{label}</p>
+      <p className={`mt-1 text-3xl font-black tabular-nums text-[#17203a] dark:text-white`}>{value}</p>
+      <p className={`mt-0.5 text-xs text-[#8e88a9] dark:text-white/40`}>{detail}</p>
     </div>
   );
 
   return (
     <section className="px-4 pb-32">
-      <PageShellHeader title="Stats" subtitle="Insights" lightMode={lightMode} />
+      <PageShellHeader title="Stats" subtitle="Insights" />
 
       {/* Hero metrics */}
       <div className="mb-4 flex gap-3">
@@ -3841,21 +3276,21 @@ function StatsPage({
       </div>
 
       {/* Economy snapshot */}
-      <div className={`mb-6 rounded-2xl px-5 py-4 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
-        <p className={`mb-3 text-[11px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+      <div className={`mb-6 rounded-2xl px-5 py-4 bg-[#f7f5ff] dark:bg-white/5`}>
+        <p className={`mb-3 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>
           Economy
         </p>
         <div className="flex items-center gap-4">
           <div>
-            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Level</p>
-            <p className={`text-2xl font-black ${lightMode ? "text-[#17203a]" : "text-white"}`}>{economy.level}</p>
+            <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>Level</p>
+            <p className={`text-2xl font-black text-[#17203a] dark:text-white`}>{economy.level}</p>
           </div>
           <div className="flex-1">
             <div className="flex justify-between mb-1">
-              <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>XP</p>
-              <p className={`text-xs tabular-nums ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>{economy.xp} / {economy.level * 100}</p>
+              <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>XP</p>
+              <p className={`text-xs tabular-nums text-[#8e88a9] dark:text-white/40`}>{economy.xp} / {economy.level * 100}</p>
             </div>
-            <div className={`h-2 rounded-full overflow-hidden ${lightMode ? "bg-[#e5e0f5]" : "bg-white/10"}`}>
+            <div className={`h-2 rounded-full overflow-hidden bg-[#e5e0f5] dark:bg-white/10`}>
               <div
                 className="h-full rounded-full bg-[linear-gradient(90deg,#7c63f7,#9b87ff)]"
                 style={{ width: `${Math.min(100, Math.round((economy.xp / (economy.level * 100)) * 100))}%` }}
@@ -3865,27 +3300,27 @@ function StatsPage({
         </div>
         <div className="mt-3 flex gap-4">
           <div>
-            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Points</p>
-            <p className={`font-bold tabular-nums ${lightMode ? "text-[#27304c]" : "text-white"}`}>{economy.points}</p>
+            <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>Points</p>
+            <p className={`font-bold tabular-nums text-[#27304c] dark:text-white`}>{economy.points}</p>
           </div>
           <div>
-            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Tokens</p>
-            <p className={`font-bold tabular-nums ${lightMode ? "text-[#27304c]" : "text-white"}`}>{economy.tokens}</p>
+            <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>Tokens</p>
+            <p className={`font-bold tabular-nums text-[#27304c] dark:text-white`}>{economy.tokens}</p>
           </div>
           <div>
-            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Best Streak</p>
-            <p className={`font-bold tabular-nums ${lightMode ? "text-[#27304c]" : "text-white"}`}>{taskHistoryStats.bestStreak}d</p>
+            <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>Best Streak</p>
+            <p className={`font-bold tabular-nums text-[#27304c] dark:text-white`}>{taskHistoryStats.bestStreak}d</p>
           </div>
           <div>
-            <p className={`text-xs ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Done Rate</p>
-            <p className={`font-bold tabular-nums ${lightMode ? "text-[#27304c]" : "text-white"}`}>{taskHistoryStats.doneRate}%</p>
+            <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>Done Rate</p>
+            <p className={`font-bold tabular-nums text-[#27304c] dark:text-white`}>{taskHistoryStats.doneRate}%</p>
           </div>
         </div>
       </div>
 
       {/* 7-day productivity chart */}
-      <div className={`mb-6 rounded-2xl px-5 py-4 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
-        <p className={`mb-4 text-[11px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+      <div className={`mb-6 rounded-2xl px-5 py-4 bg-[#f7f5ff] dark:bg-white/5`}>
+        <p className={`mb-4 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>
           7-Day Productivity
         </p>
         <div className="flex items-end gap-1.5 h-28">
@@ -3893,24 +3328,24 @@ function StatsPage({
             <div key={day.date} className="flex flex-1 flex-col items-center gap-1">
               <div className="flex w-full flex-1 items-end">
                 <div
-                  className={`w-full rounded-t-lg transition-all ${day.date === today ? "bg-[linear-gradient(180deg,#7c63f7,#9b87ff)]" : lightMode ? "bg-[#cdc6f7]" : "bg-white/20"}`}
+                  className={`w-full rounded-t-lg transition-all ${day.date === today ? "bg-[linear-gradient(180deg,#7c63f7,#9b87ff)]" : "bg-[#cdc6f7] dark:bg-white/20"}`}
                   style={{ height: `${Math.max(4, Math.round((day.score / maxScore) * 100))}%` }}
                 />
               </div>
-              <p className={`text-[9px] tabular-nums ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+              <p className={`text-[9px] tabular-nums text-[#8e88a9] dark:text-white/40`}>
                 {day.date.slice(5).replace("-", "/")}
               </p>
             </div>
           ))}
         </div>
-        <p className={`mt-2 text-[10px] ${lightMode ? "text-[#8e88a9]" : "text-white/30"}`}>
+        <p className={`mt-2 text-[10px] text-[#8e88a9] dark:text-white/30`}>
           Score = tasks × 10 + focus minutes
         </p>
       </div>
 
       {/* Energy distribution */}
-      <div className={`rounded-2xl px-5 py-4 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
-        <p className={`mb-3 text-[11px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+      <div className={`rounded-2xl px-5 py-4 bg-[#f7f5ff] dark:bg-white/5`}>
+        <p className={`mb-3 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>
           Active Task Energy
         </p>
         {(["high", "medium", "low"] as TaskEnergy[]).map((level) => {
@@ -3918,10 +3353,10 @@ function StatsPage({
           return (
             <div key={level} className="mb-2">
               <div className="flex justify-between mb-1">
-                <p className={`text-xs capitalize ${lightMode ? "text-[#27304c]" : "text-white/80"}`}>{level}</p>
-                <p className={`text-xs tabular-nums ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>{energyCounts[level]}</p>
+                <p className={`text-xs capitalize text-[#27304c] dark:text-white/80`}>{level}</p>
+                <p className={`text-xs tabular-nums text-[#8e88a9] dark:text-white/40`}>{energyCounts[level]}</p>
               </div>
-              <div className={`h-1.5 rounded-full overflow-hidden ${lightMode ? "bg-[#e5e0f5]" : "bg-white/10"}`}>
+              <div className={`h-1.5 rounded-full overflow-hidden bg-[#e5e0f5] dark:bg-white/10`}>
                 <div
                   className={`h-full rounded-full ${level === "high" ? "bg-[#f05566]" : level === "medium" ? "bg-[#f0a030]" : "bg-[#30c060]"}`}
                   style={{ width: `${pct}%` }}
@@ -3938,12 +3373,10 @@ function StatsPage({
 function NotesPage({
   client,
   currentUser,
-  lightMode,
   tasks,
 }: {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   currentUser: User;
-  lightMode: boolean;
   tasks: Task[];
 }) {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -4023,7 +3456,6 @@ function NotesPage({
     return (
       <NoteEditor
         isNew={isNew}
-        lightMode={lightMode}
         note={editing}
         onClose={() => { setEditing(null); setIsNew(false); }}
         onDelete={handleDeleteNote}
@@ -4036,9 +3468,9 @@ function NotesPage({
   return (
     <section className="px-4 pb-32">
       <div className="flex items-center justify-between">
-        <PageShellHeader title="Notes" subtitle="Knowledge Base" lightMode={lightMode} />
+        <PageShellHeader title="Notes" subtitle="Knowledge Base" />
         <button
-          className={`mb-2 flex h-10 w-10 items-center justify-center rounded-full font-bold text-xl ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#9b87ff] text-[#171127]"}`}
+          className={`mb-2 flex h-10 w-10 items-center justify-center rounded-full font-bold text-xl bg-[#6f57f6] text-white dark:bg-[#9b87ff] dark:text-[#171127]`}
           onClick={openNew}
           type="button"
         >
@@ -4047,9 +3479,9 @@ function NotesPage({
       </div>
 
       {/* Quick capture */}
-      <div className={`mb-4 flex gap-2 rounded-2xl px-4 py-3 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
+      <div className={`mb-4 flex gap-2 rounded-2xl px-4 py-3 bg-[#f7f5ff] dark:bg-white/5`}>
         <input
-          className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${lightMode ? "text-[#27304c] placeholder:text-[#9b9fba]" : "text-white placeholder:text-white/35"}`}
+          className={`min-w-0 flex-1 bg-transparent text-sm outline-none text-[#27304c] placeholder:text-[#9b9fba] dark:text-white dark:placeholder:text-white/35`}
           onKeyDown={(e) => { if (e.key === "Enter") void handleQuickCapture(); }}
           onChange={(e) => setQuickCapture(e.target.value)}
           placeholder="Quick capture — press Enter to save…"
@@ -4057,7 +3489,7 @@ function NotesPage({
         />
         {quickCapture && (
           <button
-            className={`text-xs font-semibold ${lightMode ? "text-[#6f57f6]" : "text-[#cabfff]"}`}
+            className={`text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]`}
             onClick={() => { void handleQuickCapture(); }}
             type="button"
           >
@@ -4067,9 +3499,9 @@ function NotesPage({
       </div>
 
       {/* Search */}
-      <div className={`mb-3 flex gap-2 rounded-2xl px-4 py-2.5 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}>
+      <div className={`mb-3 flex gap-2 rounded-2xl px-4 py-2.5 bg-[#f7f5ff] dark:bg-white/5`}>
         <input
-          className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${lightMode ? "text-[#27304c] placeholder:text-[#9b9fba]" : "text-white placeholder:text-white/35"}`}
+          className={`min-w-0 flex-1 bg-transparent text-sm outline-none text-[#27304c] placeholder:text-[#9b9fba] dark:text-white dark:placeholder:text-white/35`}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search notes…"
           value={search}
@@ -4086,8 +3518,8 @@ function NotesPage({
               type="button"
               className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
                 activeTag === tag
-                  ? lightMode ? "bg-[#6f57f6] text-white" : "bg-[#9b87ff] text-[#171127]"
-                  : lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"
+                  ? "bg-[#6f57f6] text-white dark:bg-[#9b87ff] dark:text-[#171127]"
+                  : "bg-[#ede8ff] text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]"
               }`}
             >
               {tag}
@@ -4098,7 +3530,7 @@ function NotesPage({
 
       {/* 2-col notes grid */}
       {filtered.length === 0 ? (
-        <p className={`mt-8 text-center text-sm ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+        <p className={`mt-8 text-center text-sm text-[#8e88a9] dark:text-white/40`}>
           {notes.length === 0 ? "No notes yet. Use quick capture above." : "No notes match your filter."}
         </p>
       ) : (
@@ -4106,24 +3538,24 @@ function NotesPage({
           {filtered.map((note) => (
             <button
               key={note.id}
-              className={`mb-3 w-full break-inside-avoid rounded-2xl px-4 py-3 text-left transition hover:opacity-80 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/5"}`}
+              className={`mb-3 w-full break-inside-avoid rounded-2xl px-4 py-3 text-left transition hover:opacity-80 bg-[#f7f5ff] dark:bg-white/5`}
               onClick={() => { setEditing(note); setIsNew(false); }}
               type="button"
             >
               {note.title && (
-                <p className={`mb-1 text-sm font-semibold leading-snug ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+                <p className={`mb-1 text-sm font-semibold leading-snug text-[#17203a] dark:text-white`}>
                   {note.title}
                 </p>
               )}
               {note.body && (
-                <p className={`text-xs leading-relaxed line-clamp-4 ${lightMode ? "text-[#707a95]" : "text-white/55"}`}>
+                <p className={`text-xs leading-relaxed line-clamp-4 text-[#707a95] dark:text-white/55`}>
                   {note.body}
                 </p>
               )}
               {note.tags.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {note.tags.map((t) => (
-                    <span key={t} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"}`}>
+                    <span key={t} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]`}>
                       {t}
                     </span>
                   ))}
@@ -4139,7 +3571,6 @@ function NotesPage({
 
 function NoteEditor({
   isNew,
-  lightMode,
   note,
   onClose,
   onDelete,
@@ -4147,7 +3578,6 @@ function NoteEditor({
   tasks,
 }: {
   isNew: boolean;
-  lightMode: boolean;
   note: Note;
   onClose: () => void;
   onDelete: (id: string) => Promise<void>;
@@ -4166,7 +3596,7 @@ function NoteEditor({
   return (
     <section className="px-4 pb-32">
       <div className="flex items-center gap-3 pt-4 pb-4">
-        <button onClick={onClose} type="button" className={`text-sm font-semibold ${lightMode ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>
+        <button onClick={onClose} type="button" className={`text-sm font-semibold text-[#6f57f6] dark:text-[#cabfff]`}>
           ← Back
         </button>
         <div className="flex-1" />
@@ -4174,7 +3604,7 @@ function NoteEditor({
           <button
             onClick={() => { void onDelete(draft.id); }}
             type="button"
-            className={`text-xs font-semibold ${lightMode ? "text-[#f05566]" : "text-[#ff8090]"}`}
+            className={`text-xs font-semibold text-[#f05566] dark:text-[#ff8090]`}
           >
             Delete
           </button>
@@ -4182,7 +3612,7 @@ function NoteEditor({
         <button
           onClick={() => { void onSave(draft); }}
           type="button"
-          className={`rounded-full px-4 py-2 text-sm font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#9b87ff] text-[#171127]"}`}
+          className={`rounded-full px-4 py-2 text-sm font-bold bg-[#6f57f6] text-white dark:bg-[#9b87ff] dark:text-[#171127]`}
         >
           Save
         </button>
@@ -4190,14 +3620,14 @@ function NoteEditor({
 
       <input
         autoFocus
-        className={`mb-3 w-full border-b-2 bg-transparent pb-2 text-2xl font-bold outline-none ${lightMode ? "border-[#6f57f6] text-[#1e2540] placeholder:text-[#bbb8d0]" : "border-[#cabfff]/50 text-white placeholder:text-white/25"}`}
+        className={`mb-3 w-full border-b-2 bg-transparent pb-2 text-2xl font-bold outline-none border-[#6f57f6] text-[#1e2540] placeholder:text-[#bbb8d0] dark:border-[#cabfff]/50 dark:text-white dark:placeholder:text-white/25`}
         onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
         placeholder="Title"
         value={draft.title}
       />
 
       <textarea
-        className={`mb-4 min-h-40 w-full resize-y rounded-2xl px-4 py-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/5 text-white placeholder:text-white/30"}`}
+        className={`mb-4 min-h-40 w-full resize-y rounded-2xl px-4 py-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/5 dark:text-white dark:placeholder:text-white/30`}
         onChange={(e) => setDraft((d) => ({ ...d, body: e.target.value }))}
         placeholder="Write something…"
         value={draft.body}
@@ -4205,14 +3635,14 @@ function NoteEditor({
 
       {/* Tags */}
       <div className="mb-4">
-        <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>Tags</p>
+        <p className={`mb-2 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Tags</p>
         <div className="flex flex-wrap gap-2 mb-2">
           {draft.tags.map((t) => (
             <button
               key={t}
               onClick={() => setDraft((d) => ({ ...d, tags: d.tags.filter((x) => x !== t) }))}
               type="button"
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"}`}
+              className={`rounded-full px-3 py-1 text-xs font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]`}
             >
               {t} ×
             </button>
@@ -4220,14 +3650,14 @@ function NoteEditor({
         </div>
         <div className="flex gap-2">
           <input
-            className={`flex-1 rounded-xl px-3 py-2 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1e2540]" : "bg-white/5 text-white"}`}
+            className={`flex-1 rounded-xl px-3 py-2 text-sm outline-none bg-[#f7f5ff] text-[#1e2540] dark:bg-white/5 dark:text-white`}
             onKeyDown={(e) => { if (e.key === "Enter") addTag(); }}
             onChange={(e) => setTagInput(e.target.value)}
             placeholder="Add tag…"
             value={tagInput}
           />
           <button
-            className={`rounded-xl px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"}`}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]`}
             onClick={addTag}
             type="button"
           >
@@ -4243,20 +3673,22 @@ const ACCENT_PRESETS = ["#6f57f6", "#e05597", "#e05050", "#e08830", "#22b87a", "
 
 function SettingsPage({
   dayStartTime,
-  lightMode,
   onDayStartTimeChange,
   onThemeChange,
   tasks,
   theme,
   userId,
+  lowStim,
+  onLowStimChange,
 }: {
   dayStartTime: string;
-  lightMode: boolean;
   onDayStartTimeChange: (t: string) => void;
   onThemeChange: (t: ThemeMode) => void;
   tasks: Task[];
   theme: ThemeMode;
   userId: string;
+  lowStim: boolean;
+  onLowStimChange: (v: boolean) => void;
 }) {
   const [accentColor, setAccentColor] = useState<string>(() => {
     if (typeof window === "undefined") return ACCENT_PRESETS[0];
@@ -4342,20 +3774,20 @@ function SettingsPage({
   }
 
   const row = `flex items-center justify-between px-5 py-4`;
-  const label = `text-sm font-medium ${lightMode ? "text-[#27304c]" : "text-white"}`;
-  const sectionClass = `rounded-2xl divide-y ${lightMode ? "bg-[#f7f5ff] divide-[#e5e0f5]" : "bg-white/5 divide-white/10"}`;
-  const sectionTitle = `mt-8 mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`;
+  const label = `text-sm font-medium text-[#27304c] dark:text-white`;
+  const sectionClass = `rounded-2xl divide-y bg-[#f7f5ff] divide-[#e5e0f5] dark:bg-white/5 dark:divide-white/10`;
+  const sectionTitle = `mt-8 mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40`;
 
   return (
     <section className="px-4 pb-32 max-w-lg mx-auto">
-      <PageShellHeader title="Settings" subtitle="Configuration" lightMode={lightMode} />
+      <PageShellHeader title="Settings" subtitle="Configuration" />
 
       {/* Appearance */}
       <p className={sectionTitle}>Appearance</p>
       <div className={sectionClass}>
         <div className={row}>
           <span className={label}>Theme</span>
-          <ThemeToggle lightMode={lightMode} theme={theme} onThemeChange={onThemeChange} />
+          <ThemeToggle theme={theme} onThemeChange={onThemeChange} lowStim={lowStim} onLowStimChange={onLowStimChange} />
         </div>
         <div className="px-5 py-4">
           <p className={label}>Highlight color</p>
@@ -4388,10 +3820,10 @@ function SettingsPage({
         <div className={`${row} gap-4`}>
           <div>
             <p className={label}>Day start time</p>
-            <p className={`mt-0.5 text-xs ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>When "tomorrow" becomes "today" for task resets</p>
+            <p className={`mt-0.5 text-xs text-[#8d87a7] dark:text-white/40`}>When "tomorrow" becomes "today" for task resets</p>
           </div>
           <input
-            className={`rounded-lg border px-3 py-2 text-sm font-mono ${lightMode ? "border-[#e5e0f5] bg-white text-[#27304c]" : "border-white/15 bg-white/8 text-white"}`}
+            className={`rounded-lg border px-3 py-2 text-sm font-mono border-[#e5e0f5] bg-white text-[#27304c] dark:border-white/15 dark:bg-white/8 dark:text-white`}
             onChange={(e) => onDayStartTimeChange(e.target.value)}
             type="time"
             value={dayStartTime}
@@ -4405,10 +3837,10 @@ function SettingsPage({
         <div className={`${row} gap-4`}>
           <div>
             <p className={label}>Export tasks</p>
-            <p className={`mt-0.5 text-xs ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Download all tasks as JSON</p>
+            <p className={`mt-0.5 text-xs text-[#8d87a7] dark:text-white/40`}>Download all tasks as JSON</p>
           </div>
           <button
-            className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${lightMode ? "bg-[#f1ecff] text-[#6f57f6]" : "bg-white/10 text-[#cabfff]"}`}
+            className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold bg-[#f1ecff] text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]`}
             onClick={handleExportJSON}
             type="button"
           >
@@ -4417,9 +3849,9 @@ function SettingsPage({
         </div>
         <div className="px-5 py-4">
           <p className={label}>Import tasks (JSON)</p>
-          <p className={`mt-0.5 mb-3 text-xs ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Paste an exported JSON array — existing IDs will be upserted</p>
+          <p className={`mt-0.5 mb-3 text-xs text-[#8d87a7] dark:text-white/40`}>Paste an exported JSON array — existing IDs will be upserted</p>
           <textarea
-            className={`w-full rounded-xl border px-3 py-2 font-mono text-xs ${lightMode ? "border-[#e5e0f5] bg-white text-[#27304c] placeholder:text-[#c0b8d8]" : "border-white/15 bg-white/5 text-white placeholder:text-white/25"}`}
+            className={`w-full rounded-xl border px-3 py-2 font-mono text-xs border-[#e5e0f5] bg-white text-[#27304c] placeholder:text-[#c0b8d8] dark:border-white/15 dark:bg-white/5 dark:text-white dark:placeholder:text-white/25`}
             onChange={(e) => setImportText(e.target.value)}
             placeholder='[{"title": "My task", ...}]'
             rows={4}
@@ -4427,7 +3859,7 @@ function SettingsPage({
           />
           <div className="mt-2 flex items-center gap-3">
             <button
-              className={`rounded-full px-4 py-2 text-sm font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+              className={`rounded-full px-4 py-2 text-sm font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
               disabled={!importText.trim()}
               onClick={() => { void handleImportJSON(); }}
               type="button"
@@ -4435,7 +3867,7 @@ function SettingsPage({
               Import
             </button>
             {importStatus ? (
-              <span className={`text-xs ${importStatus.startsWith("Error") ? (lightMode ? "text-[#d64b5f]" : "text-[#ff9eaf]") : (lightMode ? "text-[#12a876]" : "text-[#7de4b8]")}`}>
+              <span className={`text-xs ${importStatus.startsWith("Error") ? "text-[#d64b5f] dark:text-[#ff9eaf]" : "text-[#12a876] dark:text-[#7de4b8]"}`}>
                 {importStatus}
               </span>
             ) : null}
@@ -4450,36 +3882,34 @@ function SettingsPage({
 
 function PagePlaceholder({
   count,
-  lightMode,
   page,
   setActivePage,
 }: {
   count: number;
-  lightMode: boolean;
   page: AppPage;
   setActivePage: (page: AppPage) => void;
 }) {
   return (
     <section className="pt-8 flex flex-col items-center text-center">
-      <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${lightMode ? "text-[#8e88a9]" : "text-white/40"}`}>
+      <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/40`}>
         {page}
       </p>
-      <h1 className={`mt-2 text-[clamp(2.2rem,5vw,3.6rem)] font-black tracking-tight ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+      <h1 className={`mt-2 text-[clamp(2.2rem,5vw,3.6rem)] font-black tracking-tight text-[#17203a] dark:text-white`}>
         {page} Page
       </h1>
-      <p className={`mt-1 max-w-lg text-base leading-relaxed ${lightMode ? "text-[#707a95]" : "text-white/55"}`}>
+      <p className={`mt-1 max-w-lg text-base leading-relaxed text-[#707a95] dark:text-white/55`}>
         This section is currently being refined to match the new high-fidelity ADHDice design system. Your focus overview and task cockpit are live!
       </p>
       <div className="mt-12 flex flex-wrap justify-center gap-6">
         <button
-          className={`rounded-full px-8 py-4 text-lg font-bold transition hover:-translate-y-0.5 ${lightMode ? "bg-[#6f57f6] text-white shadow-[0_12px_28px_rgba(111,87,246,0.2)]" : "bg-[#cabfff] text-[#1a1431]"}`}
+          className={`rounded-full px-8 py-4 text-lg font-bold transition hover:-translate-y-0.5 bg-[#6f57f6] text-white shadow-[0_12px_28px_rgba(111,87,246,0.2)] dark:bg-[#cabfff] dark:text-[#1a1431]`}
           onClick={() => setActivePage("Home")}
           type="button"
         >
           Back to Home
         </button>
         <button
-          className={`rounded-full px-8 py-4 text-lg font-bold transition hover:-translate-y-0.5 ${lightMode ? "bg-[#f1ecff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          className={`rounded-full px-8 py-4 text-lg font-bold transition hover:-translate-y-0.5 bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
           onClick={() => setActivePage("Tasks")}
           type="button"
         >
@@ -4487,80 +3917,99 @@ function PagePlaceholder({
         </button>
       </div>
       <div className="mt-12 flex flex-wrap justify-center gap-6">
-        <OverviewStatCard detail="available in queue" label="Active Tasks" lightMode={lightMode} value={String(count)} />
-        <OverviewStatCard detail="next page candidate" label="Current Section" lightMode={lightMode} value={page} />
-        <OverviewStatCard detail="stays in bottom dock" label="Navigation" lightMode={lightMode} value="Persistent" />
+        <OverviewStatCard detail="available in queue" label="Active Tasks" value={String(count)} />
+        <OverviewStatCard detail="next page candidate" label="Current Section" value={page} />
+        <OverviewStatCard detail="stays in bottom dock" label="Navigation" value="Persistent" />
       </div>
     </section>
   );
 }
 
 function ThemeToggle({
-  lightMode,
   theme,
   onThemeChange,
+  lowStim,
+  onLowStimChange,
 }: {
-  lightMode: boolean;
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
+  lowStim: boolean;
+  onLowStimChange: (v: boolean) => void;
 }) {
   return (
-    <div className={`inline-flex rounded-full p-1 ${lightMode ? "bg-[#f1ecff]" : "bg-white/10"}`}>
-      {(["light", "dark"] as ThemeMode[]).map((mode) => (
-        <button
-          aria-label={`Switch to ${mode} mode`}
-          className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
-            theme === mode
-              ? lightMode
-                ? "bg-white text-[#221d4e] shadow-sm"
-                : "bg-[#c8baff] text-[#181127]"
-              : lightMode
-                ? "text-[#746d92]"
-                : "text-white/55"
-          }`}
-          key={mode}
-          onClick={() => onThemeChange(mode)}
-          type="button"
-        >
-          {mode === "light" ? (
-            <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="2" />
-              <path
-                d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77"
-                stroke="currentColor"
-                strokeLinecap="round"
-                strokeWidth="2"
-              />
-            </svg>
-          ) : (
-            <svg aria-hidden="true" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M20.742 13.045A8.088 8.088 0 0 1 10.955 3.258a.75.75 0 0 0-.822-1.078A9.589 9.589 0 1 0 21.82 13.867a.75.75 0 0 0-1.078-.822Z" />
-            </svg>
-          )}
-        </button>
-      ))}
+    <div className="flex items-center gap-2">
+      <div className={`inline-flex rounded-full p-1 bg-[#f1ecff] dark:bg-white/10`}>
+        {(["light", "dark"] as ThemeMode[]).map((mode) => (
+          <button
+            aria-label={`Switch to ${mode} mode`}
+            className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
+              theme === mode
+                ? "bg-white text-[#221d4e] shadow-sm dark:bg-[#c8baff] dark:text-[#181127]"
+                : "text-[#746d92] dark:text-white/55"
+            }`}
+            key={mode}
+            onClick={() => onThemeChange(mode)}
+            type="button"
+          >
+            {mode === "light" ? (
+              <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="2" />
+                <path
+                  d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeWidth="2"
+                />
+              </svg>
+            ) : (
+              <svg aria-hidden="true" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M20.742 13.045A8.088 8.088 0 0 1 10.955 3.258a.75.75 0 0 0-.822-1.078A9.589 9.589 0 1 0 21.82 13.867a.75.75 0 0 0-1.078-.822Z" />
+              </svg>
+            )}
+          </button>
+        ))}
+      </div>
+      <button
+        aria-label={lowStim ? "Disable low stimulation mode" : "Enable low stimulation mode"}
+        aria-pressed={lowStim}
+        className={`flex h-10 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition ${
+          lowStim
+            ? "bg-[#f1ecff] text-[#6f57f6] dark:bg-[#cabfff]/20 dark:text-[#cabfff]"
+            : "text-[#8d87a7] hover:bg-[#f1ecff] dark:text-white/40 dark:hover:bg-white/10"
+        }`}
+        onClick={() => onLowStimChange(!lowStim)}
+        type="button"
+      >
+        <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364-.707.707M6.343 17.657l-.707.707m12.728 0-.707-.707M6.343 6.343l-.707-.707" />
+        </svg>
+        Calm
+      </button>
     </div>
   );
 }
 
 function ProgressStat({
-  lightMode,
   label,
   value,
+  percent,
 }: {
-  lightMode: boolean;
   label: string;
   value: string;
+  percent: number;
 }) {
   return (
-    <div className={`flex items-center gap-3 rounded-full px-3 py-2 ${lightMode ? "bg-[#f6f2ff]" : "bg-white/10"}`}>
-      <span className={`rounded-full px-3 py-1 text-sm font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#c8baff] text-[#191229]"}`}>
+    <div className={`flex items-center gap-3 rounded-full px-3 py-2 bg-[#f6f2ff] dark:bg-white/10`}>
+      <span className={`rounded-full px-3 py-1 text-sm font-bold bg-[#6f57f6] text-white dark:bg-[#c8baff] dark:text-[#191229]`}>
         {label}
       </span>
       <div>
-        <p className={`text-sm font-semibold ${lightMode ? "text-[#26304c]" : "text-white"}`}>{value}</p>
-        <div className={`mt-1 h-2 w-24 overflow-hidden rounded-full ${lightMode ? "bg-[#dfdaf3]" : "bg-white/10"}`}>
-          <div className={`h-full w-[82%] rounded-full ${lightMode ? "bg-[#6f57f6]" : "bg-[#c8baff]"}`} />
+        <p className={`text-sm font-semibold text-[#26304c] dark:text-white`}>{value}</p>
+        <div className={`mt-1 h-2 w-24 overflow-hidden rounded-full bg-[#dfdaf3] dark:bg-white/10`}>
+          <div
+            className={`h-full rounded-full transition-all duration-700 bg-[#6f57f6] dark:bg-[#c8baff]`}
+            style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+          />
         </div>
       </div>
     </div>
@@ -4568,18 +4017,16 @@ function ProgressStat({
 }
 
 function MiniStat({
-  lightMode,
   label,
   value,
 }: {
-  lightMode: boolean;
   label: string;
   value: string;
 }) {
   return (
-    <div className={`rounded-full px-4 py-2 ${lightMode ? "bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)]" : "bg-white/10"}`}>
-      <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8a84a3]" : "text-white/40"}`}>{label}</p>
-      <p className={`mt-1 text-lg font-bold ${lightMode ? "text-[#202743]" : "text-white"}`}>{value}</p>
+    <div className={`rounded-full px-4 py-2 bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)] dark:bg-white/10`}>
+      <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8a84a3] dark:text-white/40`}>{label}</p>
+      <p className={`mt-1 text-lg font-bold text-[#202743] dark:text-white`}>{value}</p>
     </div>
   );
 }
@@ -4587,7 +4034,6 @@ function MiniStat({
 function TaskHero({
   actionLabel,
   activeCount,
-  lightMode,
   metric,
   onCycleMomentum,
   onOpenFocusPlanner,
@@ -4596,7 +4042,6 @@ function TaskHero({
 }: {
   actionLabel: string;
   activeCount: number;
-  lightMode: boolean;
   metric: {
     doneTasks: Task[];
     label: string;
@@ -4642,22 +4087,20 @@ function TaskHero({
     <section className="pt-8 w-full flex flex-col items-center text-center">
       <div className="flex flex-col items-center gap-4">
         <div className="flex flex-wrap items-center justify-center gap-3">
-          <h1 className={`text-[clamp(2rem,4vw,3rem)] font-black tracking-tight ${lightMode ? "text-[#17203a]" : "text-white"}`}>
+          <h1 className={`text-[clamp(2rem,4vw,3rem)] font-black tracking-tight text-[#17203a] dark:text-white`}>
             Tasks
           </h1>
-          <StatusBadge lightMode={lightMode} tone="success">Synced</StatusBadge>
+          <StatusBadge tone="success">Synced</StatusBadge>
         </div>
-        <p className={`mt-1 max-w-2xl text-sm ${lightMode ? "text-[#727a95]" : "text-white/55"}`}>
+        <p className={`mt-1 max-w-2xl text-sm text-[#727a95] dark:text-white/55`}>
           A cleaner task cockpit built for focus recovery, energy-aware planning, and visible momentum.
         </p>
       </div>
-      <StatusBadge lightMode={lightMode} tone="warn">Overstimulated</StatusBadge>
+      <StatusBadge tone="warn">Overstimulated</StatusBadge>
 
       <button
         className={`mt-6 flex w-full max-w-md items-center justify-center rounded-[1.75rem] px-6 py-5 text-lg font-bold shadow-[0_18px_45px_rgba(116,92,255,0.22)] transition hover:-translate-y-0.5 ${
-          lightMode
-            ? "bg-[linear-gradient(90deg,#8f6df8_0%,#7359f5_100%)] text-white"
-            : "bg-[linear-gradient(90deg,#b39dff_0%,#7d68f8_100%)] text-[#171127]"
+          "bg-[linear-gradient(90deg,#8f6df8_0%,#7359f5_100%)] text-white dark:bg-[linear-gradient(90deg,#b39dff_0%,#7d68f8_100%)] dark:text-[#171127]"
         }`}
         onClick={onOpenFocusPlanner}
         type="button"
@@ -4669,17 +4112,17 @@ function TaskHero({
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <p className={`text-xl font-bold ${lightMode ? "text-[#1e2642]" : "text-white"}`}>{metric.label}</p>
-              <span className={`rounded-full px-2 py-1 text-xs font-semibold ${lightMode ? "bg-[#ffe3ea] text-[#f05566]" : "bg-[#472436] text-[#ff9aac]"}`}>
+              <p className={`text-xl font-bold text-[#1e2642] dark:text-white`}>{metric.label}</p>
+              <span className={`rounded-full px-2 py-1 text-xs font-semibold bg-[#ffe3ea] text-[#f05566] dark:bg-[#472436] dark:text-[#ff9aac]`}>
                 {metric.percent}%
               </span>
             </div>
-            <p className={`text-right text-sm font-bold sm:text-lg ${lightMode ? "text-[#58637f]" : "text-white/65"}`}>
+            <p className={`text-right text-sm font-bold sm:text-lg text-[#58637f] dark:text-white/65`}>
               {metric.summary}
             </p>
           </div>
           <button
-            className={`block h-4 w-full overflow-hidden rounded-full ${lightMode ? "bg-[#eceffa]" : "bg-white/8"}`}
+            className={`block h-4 w-full overflow-hidden rounded-full bg-[#eceffa] dark:bg-white/8`}
             onPointerCancel={clearLongPress}
             onPointerDown={handleMomentumPressStart}
             onPointerLeave={clearLongPress}
@@ -4687,19 +4130,19 @@ function TaskHero({
             type="button"
           >
             <div
-              className={`h-full rounded-full ${lightMode ? "bg-[linear-gradient(90deg,#c5b4ff_0%,#7f6af7_100%)]" : "bg-[linear-gradient(90deg,#cabfff_0%,#8e79ff_100%)]"}`}
+              className={`h-full rounded-full bg-[linear-gradient(90deg,#c5b4ff_0%,#7f6af7_100%)] dark:bg-[linear-gradient(90deg,#cabfff_0%,#8e79ff_100%)]`}
               style={{ width: `${Math.max(metric.percent, 10)}%` }}
             />
           </button>
         </div>
         <div className="flex flex-wrap justify-center gap-3">
-          <HeroMetaCard lightMode={lightMode} label="Today" value={todayCount} />
-          <HeroMetaCard lightMode={lightMode} label="In Play" value={activeCount} />
-          <HeroMetaCard lightMode={lightMode} label="Tracked" value={metric.totalCount} />
+          <HeroMetaCard label="Today" value={todayCount} />
+          <HeroMetaCard label="In Play" value={activeCount} />
+          <HeroMetaCard label="Tracked" value={metric.totalCount} />
         </div>
       </div>
 
-      <p className={`mt-4 text-center text-[11px] font-semibold uppercase tracking-[0.28em] ${lightMode ? "text-[#a2a7b8]" : "text-white/35"}`}>
+      <p className={`mt-4 text-center text-[11px] font-semibold uppercase tracking-[0.28em] text-[#a2a7b8] dark:text-white/35`}>
         Tap to switch / Long press to see list
       </p>
     </section>
@@ -4708,20 +4151,14 @@ function TaskHero({
 
 function StatusBadge({
   children,
-  lightMode,
   tone,
 }: {
   children: React.ReactNode;
-  lightMode: boolean;
   tone: "success" | "warn";
 }) {
   const className = tone === "success"
-    ? lightMode
-      ? "bg-[#e7faf4] text-[#0e9b74]"
-      : "bg-[#103c33] text-[#6ef0c4]"
-    : lightMode
-      ? "bg-[#fff1f3] text-[#f05566]"
-      : "bg-[#44232f] text-[#ff9eaf]";
+    ? "bg-[#e7faf4] text-[#0e9b74] dark:bg-[#103c33] dark:text-[#6ef0c4]"
+    : "bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]";
 
   return (
     <span className={`rounded-full px-4 py-2 text-sm font-bold ${className}`}>
@@ -4731,24 +4168,21 @@ function StatusBadge({
 }
 
 function HeroMetaCard({
-  lightMode,
   label,
   value,
 }: {
-  lightMode: boolean;
   label: string;
   value: number;
 }) {
   return (
-    <div className={`rounded-[1.2rem] px-4 py-3 transition hover:-translate-y-0.5 ${lightMode ? "bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)]" : "bg-white/8"}`}>
-      <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8a84a3]" : "text-white/35"}`}>{label}</p>
-      <p className={`mt-1 text-2xl font-bold ${lightMode ? "text-[#1f2846]" : "text-white"}`}>{value}</p>
+    <div className={`rounded-[1.2rem] px-4 py-3 transition hover:-translate-y-0.5 bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)] dark:bg-white/8`}>
+      <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8a84a3] dark:text-white/35`}>{label}</p>
+      <p className={`mt-1 text-2xl font-bold text-[#1f2846] dark:text-white`}>{value}</p>
     </div>
   );
 }
 
 function ControlBar({
-  lightMode,
   onOpenComposer,
   onOpenImport,
   onSearchChange,
@@ -4756,7 +4190,6 @@ function ControlBar({
   search,
   view,
 }: {
-  lightMode: boolean;
   onOpenComposer: () => void;
   onOpenImport: () => void;
   onSearchChange: (search: string) => void;
@@ -4766,19 +4199,19 @@ function ControlBar({
 }) {
   return (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-      <label className={`flex min-w-0 flex-1 items-center gap-3 rounded-[1.4rem] px-4 py-3 ${lightMode ? "bg-white shadow-[0_10px_28px_rgba(81,61,168,0.08)]" : "bg-white/8"}`}>
-        <Search className={`h-5 w-5 shrink-0 ${lightMode ? "text-[#6f57f6]" : "text-[#c9bbff]"}`} />
+      <label className={`flex min-w-0 flex-1 items-center gap-3 rounded-[1.4rem] px-4 py-3 bg-white shadow-[0_10px_28px_rgba(81,61,168,0.08)] dark:bg-white/8`}>
+        <Search className={`h-5 w-5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]`} />
         <input
-          className={`min-w-0 flex-1 bg-transparent text-base outline-none ${lightMode ? "text-[#27304c] placeholder:text-[#97a0b9]" : "text-white placeholder:text-white/35"}`}
+          className={`min-w-0 flex-1 bg-transparent text-base outline-none text-[#27304c] placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35`}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder="Search tasks..."
           value={search}
         />
       </label>
-      <label className={`flex items-center gap-3 rounded-[1.4rem] px-4 py-3 ${lightMode ? "bg-white shadow-[0_10px_28px_rgba(81,61,168,0.08)]" : "bg-white/8"}`}>
-        <span className={`text-sm font-semibold ${lightMode ? "text-[#6b738f]" : "text-white/60"}`}>View</span>
+      <label className={`flex items-center gap-3 rounded-[1.4rem] px-4 py-3 bg-white shadow-[0_10px_28px_rgba(81,61,168,0.08)] dark:bg-white/8`}>
+        <span className={`text-sm font-semibold text-[#6b738f] dark:text-white/60`}>View</span>
         <select
-          className={`bg-transparent text-base font-semibold outline-none ${lightMode ? "text-[#27304c]" : "text-white"}`}
+          className={`bg-transparent text-base font-semibold outline-none text-[#27304c] dark:text-white`}
           onChange={(event) => onViewChange(event.target.value as TaskViewMode)}
           value={view}
         >
@@ -4789,7 +4222,7 @@ function ControlBar({
         </select>
       </label>
       <button
-        className={`rounded-full px-5 py-3 text-base font-semibold ${lightMode ? "bg-white text-[#27304c] shadow-[0_10px_28px_rgba(81,61,168,0.08)]" : "bg-white/8 text-white"}`}
+        className={`rounded-full px-5 py-3 text-base font-semibold bg-white text-[#27304c] shadow-[0_10px_28px_rgba(81,61,168,0.08)] dark:bg-white/8 dark:text-white`}
         onClick={onOpenImport}
         type="button"
       >
@@ -4797,9 +4230,7 @@ function ControlBar({
       </button>
       <button
         className={`rounded-full px-6 py-3 text-base font-semibold ${
-          lightMode
-            ? "bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)]"
-            : "bg-[#c9bbff] text-[#1a1431]"
+          "bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] dark:bg-[#c9bbff] dark:text-[#1a1431]"
         }`}
         onClick={onOpenComposer}
         type="button"
@@ -4814,7 +4245,6 @@ function FilterRows({
   activeCount,
   doneCount,
   focusedCount,
-  lightMode,
   matchAny,
   onToggleEnergy,
   onToggleMatchMode,
@@ -4827,7 +4257,6 @@ function FilterRows({
   activeCount: number;
   doneCount: number;
   focusedCount: number;
-  lightMode: boolean;
   matchAny: boolean;
   onToggleEnergy: (energy: TaskEnergy) => void;
   onToggleMatchMode: () => void;
@@ -4840,18 +4269,17 @@ function FilterRows({
   return (
     <div className="mt-5 space-y-3">
       <div className="flex flex-wrap gap-3">
-        <FilterChip active={selectedQuickFilters.includes("active")} count={activeCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("active")} tone="purple">Active</FilterChip>
-        <FilterChip active={selectedQuickFilters.includes("today")} count={todayCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("today")} tone="orange">Due Today</FilterChip>
-        <FilterChip active={selectedQuickFilters.includes("urgent")} count={overdueCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("urgent")} tone="red">Urgent</FilterChip>
-        <FilterChip active={selectedQuickFilters.includes("focused")} count={focusedCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("focused")} tone="purple">Focused</FilterChip>
-        <FilterChip active={selectedQuickFilters.includes("done")} count={doneCount} lightMode={lightMode} onClick={() => onToggleQuickFilter("done")} tone="neutral">Done</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("active")} count={activeCount} onClick={() => onToggleQuickFilter("active")} tone="purple">Active</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("today")} count={todayCount} onClick={() => onToggleQuickFilter("today")} tone="orange">Due Today</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("urgent")} count={overdueCount} onClick={() => onToggleQuickFilter("urgent")} tone="red">Urgent</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("focused")} count={focusedCount} onClick={() => onToggleQuickFilter("focused")} tone="purple">Focused</FilterChip>
+        <FilterChip active={selectedQuickFilters.includes("done")} count={doneCount} onClick={() => onToggleQuickFilter("done")} tone="neutral">Done</FilterChip>
       </div>
       <div className="flex flex-wrap gap-3">
-        <Pill lightMode={lightMode} onClick={onToggleMatchMode} selected>{matchAny ? "OR" : "AND"}</Pill>
+        <Pill onClick={onToggleMatchMode} selected>{matchAny ? "OR" : "AND"}</Pill>
         {energyOptions.map((energy) => (
           <Pill
             key={energy}
-            lightMode={lightMode}
             onClick={() => onToggleEnergy(energy)}
             selected={selectedEnergies.includes(energy)}
           >
@@ -4867,32 +4295,22 @@ function FilterChip({
   active,
   children,
   count,
-  lightMode,
   onClick,
   tone,
 }: {
   active?: boolean;
   children: React.ReactNode;
   count: number;
-  lightMode: boolean;
   onClick?: () => void;
   tone: FilterChipTone;
 }) {
   const className = tone === "purple"
-    ? lightMode
-      ? "border-[#d7cbff] bg-[#f7f2ff] text-[#6f57f6]"
-      : "border-[#5b4bad] bg-[#1c1734] text-[#c9bbff]"
+    ? "border-[#d7cbff] bg-[#f7f2ff] text-[#6f57f6] dark:border-[#5b4bad] dark:bg-[#1c1734] dark:text-[#c9bbff]"
     : tone === "orange"
-      ? lightMode
-        ? "border-[#ffd7bf] bg-[#fff6ef] text-[#f39a4d]"
-        : "border-[#8c5631] bg-[#2f2016] text-[#ffc393]"
+      ? "border-[#ffd7bf] bg-[#fff6ef] text-[#f39a4d] dark:border-[#8c5631] dark:bg-[#2f2016] dark:text-[#ffc393]"
       : tone === "red"
-        ? lightMode
-          ? "border-[#ffc6d1] bg-[#fff4f6] text-[#f05566]"
-          : "border-[#7b3646] bg-[#2e161f] text-[#ff9eaf]"
-        : lightMode
-          ? "border-[#e1e4ee] bg-white text-[#4b556e]"
-          : "border-white/10 bg-white/6 text-white/75";
+        ? "border-[#ffc6d1] bg-[#fff4f6] text-[#f05566] dark:border-[#7b3646] dark:bg-[#2e161f] dark:text-[#ff9eaf]"
+        : "border-[#e1e4ee] bg-white text-[#4b556e] dark:border-white/10 dark:bg-white/6 dark:text-white/75";
 
   return (
     <button
@@ -4907,12 +4325,10 @@ function FilterChip({
 
 function Pill({
   children,
-  lightMode,
   onClick,
   selected,
 }: {
   children: React.ReactNode;
-  lightMode: boolean;
   onClick?: () => void;
   selected?: boolean;
 }) {
@@ -4920,12 +4336,8 @@ function Pill({
     <button
       className={`rounded-full px-4 py-2 text-base font-semibold ${
         selected
-          ? lightMode
-            ? "bg-[#f4efff] text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.08)]"
-            : "bg-[#221a42] text-[#cabfff]"
-          : lightMode
-            ? "bg-white text-[#5c647d] shadow-[0_10px_24px_rgba(81,61,168,0.05)]"
-            : "bg-white/8 text-white/70"
+          ? "bg-[#f4efff] text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.08)] dark:bg-[#221a42] dark:text-[#cabfff]"
+          : "bg-white text-[#5c647d] shadow-[0_10px_24px_rgba(81,61,168,0.05)] dark:bg-white/8 dark:text-white/70"
       }`}
       onClick={onClick}
       type="button"
@@ -4943,7 +4355,6 @@ function TaskGridView({
   focusedTaskIds,
   gridLayout,
   isEditMode,
-  lightMode,
   message,
   missingWidgetTypes,
   onAddTask,
@@ -4972,7 +4383,6 @@ function TaskGridView({
   focusedTaskIds: string[];
   gridLayout: TaskGridItem[];
   isEditMode: boolean;
-  lightMode: boolean;
   message: Message | null;
   missingWidgetTypes: TaskGridWidgetType[];
   onAddTask: (task: TaskDraft) => Promise<void>;
@@ -5008,20 +4418,20 @@ function TaskGridView({
 
   return (
     <section className="mt-7 space-y-4">
-      <div className={`rounded-[1.7rem] border p-4 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_16px_40px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+      <div className={`rounded-[1.7rem] border p-4 border-[#ece8f8] bg-white shadow-[0_16px_40px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className={`text-xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+            <h2 className={`text-xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
               Grid View
             </h2>
-            <p className={`mt-1 text-sm ${lightMode ? "text-[#78829c]" : "text-white/55"}`}>
+            <p className={`mt-1 text-sm text-[#78829c] dark:text-white/55`}>
               A modular tasks layout that keeps mobile in sync with desktop.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             {isEditMode ? (
               <button
-                className={`rounded-full px-4 py-3 text-sm font-semibold ${lightMode ? "bg-[#fff4f6] text-[#d94e67]" : "bg-[#432330] text-[#ffb2bf]"}`}
+                className={`rounded-full px-4 py-3 text-sm font-semibold bg-[#fff4f6] text-[#d94e67] dark:bg-[#432330] dark:text-[#ffb2bf]`}
                 onClick={onResetLayout}
                 type="button"
               >
@@ -5030,12 +4440,8 @@ function TaskGridView({
             ) : null}
             <button
               className={`rounded-full px-5 py-3 text-sm font-semibold ${isEditMode
-                ? lightMode
-                  ? "bg-[#6f57f6] text-white"
-                  : "bg-[#cabfff] text-[#1a1431]"
-                : lightMode
-                  ? "bg-[#f3efff] text-[#6f57f6]"
-                  : "bg-[#22193f] text-[#cabfff]"}`}
+                ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                : "bg-[#f3efff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"}`}
               onClick={onToggleEditMode}
               type="button"
             >
@@ -5047,23 +4453,23 @@ function TaskGridView({
         {isEditMode ? (
           <div className="mt-4 space-y-3">
             <div className="flex flex-wrap gap-2">
-              <span className={`rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#eef2ff] text-[#5363d3]" : "bg-[#1b2340] text-[#a9b6ff]"}`}>
+              <span className={`rounded-full px-3 py-2 text-xs font-semibold bg-[#eef2ff] text-[#5363d3] dark:bg-[#1b2340] dark:text-[#a9b6ff]`}>
                 {currentColumns} active column{currentColumns === 1 ? "" : "s"}
               </span>
-              <span className={`rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#f3efff] text-[#6f57f6]" : "bg-[#221a42] text-[#cabfff]"}`}>
+              <span className={`rounded-full px-3 py-2 text-xs font-semibold bg-[#f3efff] text-[#6f57f6] dark:bg-[#221a42] dark:text-[#cabfff]`}>
                 {gridLayout.length} widget{gridLayout.length === 1 ? "" : "s"} on grid
               </span>
-              <span className={`rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#f7f7fb] text-[#68738c]" : "bg-white/8 text-white/65"}`}>
+              <span className={`rounded-full px-3 py-2 text-xs font-semibold bg-[#f7f7fb] text-[#68738c] dark:bg-white/8 dark:text-white/65`}>
                 {hiddenWidgetCount} hidden
               </span>
             </div>
-            <div className={`rounded-[1.25rem] px-4 py-3 text-sm ${lightMode ? "bg-[#faf7ff] text-[#6b738f]" : "bg-white/[0.04] text-white/65"}`}>
+            <div className={`rounded-[1.25rem] px-4 py-3 text-sm bg-[#faf7ff] text-[#6b738f] dark:bg-white/[0.04] dark:text-white/65`}>
               Tap a widget to select it. Each widget also shows a visible delete button while editing. Drag to reorder on desktop, or use move controls anywhere. On mobile, width presets map to the current column count automatically.
             </div>
 
-            <div className={`rounded-[1.25rem] border p-4 ${lightMode ? "border-[#e9e1ff] bg-[#fcfbff]" : "border-white/10 bg-white/[0.04]"}`}>
-              <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>Add Widgets</p>
-              <p className={`mt-1 text-sm ${lightMode ? "text-[#6b738f]" : "text-white/60"}`}>
+            <div className={`rounded-[1.25rem] border p-4 border-[#e9e1ff] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.04]`}>
+              <p className={`text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>Add Widgets</p>
+              <p className={`mt-1 text-sm text-[#6b738f] dark:text-white/60`}>
                 Turn sections on and off here. This list always shows every widget, whether it is currently on the grid or not.
               </p>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -5073,20 +4479,20 @@ function TaskGridView({
 
                   return (
                     <div
-                      className={`flex items-center justify-between gap-3 rounded-[1rem] px-3 py-3 ${lightMode ? "bg-white shadow-[0_8px_20px_rgba(81,61,168,0.05)]" : "bg-white/[0.04]"}`}
+                      className={`flex items-center justify-between gap-3 rounded-[1rem] px-3 py-3 bg-white shadow-[0_8px_20px_rgba(81,61,168,0.05)] dark:bg-white/[0.04]`}
                       key={widgetType}
                     >
                       <div className="min-w-0">
-                        <p className={`truncate text-sm font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}>
+                        <p className={`truncate text-sm font-semibold text-[#27304c] dark:text-white`}>
                           {TASK_GRID_WIDGET_LABELS[widgetType]}
                         </p>
-                        <p className={`mt-0.5 text-xs ${lightMode ? "text-[#8a93aa]" : "text-white/45"}`}>
+                        <p className={`mt-0.5 text-xs text-[#8a93aa] dark:text-white/45`}>
                           {isPresent ? "On grid" : "Hidden"}
                         </p>
                       </div>
                       {isPresent && existingWidget ? (
                         <button
-                          className={`shrink-0 rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#fff1f3] text-[#f05566]" : "bg-[#44232f] text-[#ff9eaf]"}`}
+                          className={`shrink-0 rounded-full px-3 py-2 text-xs font-semibold bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]`}
                           onClick={() => onRemoveWidget(existingWidget.id)}
                           type="button"
                         >
@@ -5094,7 +4500,7 @@ function TaskGridView({
                         </button>
                       ) : (
                         <button
-                          className={`shrink-0 rounded-full px-3 py-2 text-xs font-semibold ${lightMode ? "bg-[#edf2ff] text-[#4a5fd3]" : "bg-[#182138] text-[#a7b8ff]"}`}
+                          className={`shrink-0 rounded-full px-3 py-2 text-xs font-semibold bg-[#edf2ff] text-[#4a5fd3] dark:bg-[#182138] dark:text-[#a7b8ff]`}
                           onClick={() => onAddWidget(widgetType)}
                           type="button"
                         >
@@ -5109,11 +4515,11 @@ function TaskGridView({
             </div>
 
             {selectedWidget ? (
-              <div className={`rounded-[1.25rem] border border-dashed px-4 py-4 text-sm ${lightMode ? "border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0]" : "border-white/10 bg-white/[0.03] text-white/55"}`}>
+              <div className={`rounded-[1.25rem] border border-dashed px-4 py-4 text-sm border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55`}>
                 {TASK_GRID_WIDGET_LABELS[selectedWidget.type]} is selected. Its resize and row controls now appear directly on top of that card.
               </div>
             ) : (
-              <div className={`rounded-[1.25rem] border border-dashed px-4 py-4 text-sm ${lightMode ? "border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0]" : "border-white/10 bg-white/[0.03] text-white/55"}`}>
+              <div className={`rounded-[1.25rem] border border-dashed px-4 py-4 text-sm border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55`}>
                 Tap any widget card below to resize it, move it, or remove it.
               </div>
             )}
@@ -5122,7 +4528,7 @@ function TaskGridView({
       </div>
 
       {gridLayout.length === 0 ? (
-        <div className={`rounded-[1.8rem] border border-dashed p-8 text-center ${lightMode ? "border-[#dcd2ff] bg-[#faf8ff] text-[#6b738f]" : "border-white/10 bg-white/[0.03] text-white/65"}`}>
+        <div className={`rounded-[1.8rem] border border-dashed p-8 text-center border-[#dcd2ff] bg-[#faf8ff] text-[#6b738f] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/65`}>
           <p className="text-lg font-bold">Your grid is empty.</p>
           <p className="mt-2 text-sm">Turn on edit mode and add widgets back in any order you want.</p>
         </div>
@@ -5142,7 +4548,6 @@ function TaskGridView({
             isEditMode={isEditMode}
             item={item}
             key={item.id}
-            lightMode={lightMode}
             onDrop={() => onReorderWidget(item.id)}
             onDragStart={() => onSetDraggedWidget(item.id)}
             onDragEnd={() => onSetDraggedWidget(null)}
@@ -5158,7 +4563,6 @@ function TaskGridView({
             {item.type === "urgent" ? (
               <UrgentTasksPanel
                 focusedTaskIds={focusedTaskIds}
-                lightMode={lightMode}
                 onEditTask={onEditTask}
                 onToggle={onToggleTask}
                 subtasksByTaskId={subtasksByTaskId}
@@ -5168,7 +4572,6 @@ function TaskGridView({
               <TaskLane
                 count={tasksByWidget.focusToday.length}
                 defaultExpanded
-                lightMode={lightMode}
                 onEditTask={onEditTask}
                 subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.focusToday}
@@ -5178,7 +4581,6 @@ function TaskGridView({
             ) : item.type === "due_today" ? (
               <TaskLane
                 count={tasksByWidget.dueToday.length}
-                lightMode={lightMode}
                 onEditTask={onEditTask}
                 subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.dueToday}
@@ -5188,7 +4590,6 @@ function TaskGridView({
             ) : item.type === "active_queue" ? (
               <TaskLane
                 count={tasksByWidget.activeQueue.length}
-                lightMode={lightMode}
                 onEditTask={onEditTask}
                 subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.activeQueue}
@@ -5198,7 +4599,6 @@ function TaskGridView({
             ) : item.type === "completed" ? (
               <TaskLane
                 count={tasksByWidget.completed.length}
-                lightMode={lightMode}
                 onEditTask={onEditTask}
                 subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.completed}
@@ -5207,17 +4607,16 @@ function TaskGridView({
               />
             ) : item.type === "quick_capture" ? (
               <div id="task-composer-card">
-                <TaskComposerCard lightMode={lightMode} onAdd={onAddTask} />
+                <TaskComposerCard onAdd={onAddTask} />
               </div>
             ) : item.type === "import" ? (
               <div id="task-import-panel">
-                <ImportWidgetCard lightMode={lightMode} message={message} onImport={onImportTasks} />
+                <ImportWidgetCard message={message} onImport={onImportTasks} />
               </div>
             ) : (
               <FocusStatsCard
                 activeCount={activeCount}
                 doneCount={doneCount}
-                lightMode={lightMode}
                 overdueCount={overdueCount}
                 taskHistoryStats={taskHistoryStats}
               />
@@ -5236,7 +4635,6 @@ function TaskGridWidgetShell({
   heightPresets,
   isEditMode,
   item,
-  lightMode,
   onDragEnd,
   onDragStart,
   onDeselect,
@@ -5254,7 +4652,6 @@ function TaskGridWidgetShell({
   heightPresets: Array<{ label: string; span: number }>;
   isEditMode: boolean;
   item: TaskGridItem;
-  lightMode: boolean;
   onDragEnd: () => void;
   onDragStart: () => void;
   onDeselect: () => void;
@@ -5301,15 +4698,11 @@ function TaskGridWidgetShell({
     >
       {isEditMode ? (
         <div className={`pointer-events-none absolute inset-0 z-10 rounded-[2rem] border-2 ${selected
-          ? lightMode
-            ? "border-[#6f57f6] shadow-[0_0_0_4px_rgba(111,87,246,0.16)]"
-            : "border-[#cabfff] shadow-[0_0_0_4px_rgba(202,191,255,0.12)]"
-          : lightMode
-            ? "border-[#dcd2ff]"
-            : "border-white/15"}`} />
+          ? "border-[#6f57f6] shadow-[0_0_0_4px_rgba(111,87,246,0.16)] dark:border-[#cabfff] dark:shadow-[0_0_0_4px_rgba(202,191,255,0.12)]"
+          : "border-[#dcd2ff] dark:border-white/15"}`} />
       ) : null}
       {isEditMode ? (
-        <div className={`absolute left-4 top-4 z-20 rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-white text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.12)]" : "bg-[#171328] text-[#cabfff]"}`}>
+        <div className={`absolute left-4 top-4 z-20 rounded-full px-3 py-1 text-xs font-semibold bg-white text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.12)] dark:bg-[#171328] dark:text-[#cabfff]`}>
           <GripVertical className="mr-1 inline h-3.5 w-3.5" />
           {TASK_GRID_WIDGET_LABELS[item.type]}
         </div>
@@ -5317,7 +4710,7 @@ function TaskGridWidgetShell({
       {isEditMode ? (
         <button
           aria-label={`Remove ${TASK_GRID_WIDGET_LABELS[item.type]}`}
-          className={`absolute right-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-full ${lightMode ? "bg-[#fff1f3] text-[#f05566] shadow-[0_10px_24px_rgba(240,85,102,0.12)]" : "bg-[#44232f] text-[#ff9eaf]"}`}
+          className={`absolute right-4 top-4 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-[#fff1f3] text-[#f05566] shadow-[0_10px_24px_rgba(240,85,102,0.12)] dark:bg-[#44232f] dark:text-[#ff9eaf]`}
           onClick={(event) => {
             event.stopPropagation();
             onRemove();
@@ -5332,7 +4725,6 @@ function TaskGridWidgetShell({
           currentColumns={currentColumns}
           heightPresets={heightPresets}
           item={item}
-          lightMode={lightMode}
           onClose={onDeselect}
           onMove={onMove}
           onRemove={onRemove}
@@ -5353,7 +4745,6 @@ function TaskGridSelectedOverlay({
   currentColumns,
   heightPresets,
   item,
-  lightMode,
   onClose,
   onMove,
   onRemove,
@@ -5363,7 +4754,6 @@ function TaskGridSelectedOverlay({
   currentColumns: number;
   heightPresets: Array<{ label: string; span: number }>;
   item: TaskGridItem;
-  lightMode: boolean;
   onClose: () => void;
   onMove: (widgetId: string, direction: "up" | "down") => void;
   onRemove: () => void;
@@ -5396,7 +4786,7 @@ function TaskGridSelectedOverlay({
 
   return (
     <div
-      className={`absolute inset-x-3 bottom-3 z-30 rounded-[1.35rem] border p-3 ${lightMode ? "border-[#ddd4ff] bg-white/95 shadow-[0_18px_36px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]/95"}`}
+      className={`absolute inset-x-3 bottom-3 z-30 rounded-[1.35rem] border p-3 border-[#ddd4ff] bg-white/95 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]/95`}
       draggable={false}
       onClick={stopOverlayEvent}
       onDragStart={(event) => {
@@ -5408,12 +4798,12 @@ function TaskGridSelectedOverlay({
       onTouchStart={stopOverlayEvent}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className={`text-xs font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>
+        <p className={`text-xs font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>
           {TASK_GRID_WIDGET_LABELS[item.type]}
         </p>
         <div className="flex flex-wrap gap-2">
           <button
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75`}
             draggable={false}
             onClick={() => onMove(item.id, "up")}
             type="button"
@@ -5421,7 +4811,7 @@ function TaskGridSelectedOverlay({
             Up
           </button>
           <button
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75`}
             draggable={false}
             onClick={() => onMove(item.id, "down")}
             type="button"
@@ -5429,7 +4819,7 @@ function TaskGridSelectedOverlay({
             Down
           </button>
           <button
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${lightMode ? "bg-[#fff1f3] text-[#f05566]" : "bg-[#44232f] text-[#ff9eaf]"}`}
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]`}
             draggable={false}
             onClick={onRemove}
             type="button"
@@ -5440,17 +4830,13 @@ function TaskGridSelectedOverlay({
       </div>
       <div className="mt-3 space-y-3">
         <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Width</p>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40`}>Width</p>
           <div className="flex flex-wrap gap-2">
             {widthPresets.map((preset) => (
               <button
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold ${Math.min(item.w, currentColumns) === preset.width
-                  ? lightMode
-                    ? "bg-[#6f57f6] text-white"
-                    : "bg-[#cabfff] text-[#1a1431]"
-                  : lightMode
-                    ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]"
-                    : "bg-white/8 text-white/75"}`}
+                  ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                  : "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75"}`}
                 draggable={false}
                 key={preset.label}
                 onClick={() => onResize(item.id, preset.width, item.h)}
@@ -5462,17 +4848,13 @@ function TaskGridSelectedOverlay({
           </div>
         </div>
         <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Rows</p>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40`}>Rows</p>
           <div className="flex flex-wrap gap-2">
             {heightPresets.map((preset) => (
               <button
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold ${item.h === preset.span
-                  ? lightMode
-                    ? "bg-[#6f57f6] text-white"
-                    : "bg-[#cabfff] text-[#1a1431]"
-                  : lightMode
-                    ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]"
-                    : "bg-white/8 text-white/75"}`}
+                  ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                  : "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75"}`}
                 draggable={false}
                 key={preset.label}
                 onClick={() => onResize(item.id, item.w, preset.span)}
@@ -5492,9 +4874,9 @@ function TaskGridSelectedOverlay({
           }}
         >
           <label className="min-w-0 flex-1">
-            <span className={`mb-2 block text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Custom Rows</span>
+            <span className={`mb-2 block text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40`}>Custom Rows</span>
             <input
-              className={`h-11 w-full rounded-[0.9rem] px-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+              className={`h-11 w-full rounded-[0.9rem] px-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
               draggable={false}
               inputMode="numeric"
               max={String(TASK_GRID_MAX_DISPLAY_ROWS)}
@@ -5512,7 +4894,7 @@ function TaskGridSelectedOverlay({
             />
           </label>
           <button
-            className={`h-11 rounded-[0.9rem] px-4 text-sm font-semibold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+            className={`h-11 rounded-[0.9rem] px-4 text-sm font-semibold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
             disabled={clampedCustomRows === null}
             draggable={false}
             onClick={(event) => {
@@ -5531,14 +4913,12 @@ function TaskGridSelectedOverlay({
 
 function UrgentTasksPanel({
   focusedTaskIds,
-  lightMode,
   onEditTask,
   tasks,
   subtasksByTaskId,
   onToggle,
 }: {
   focusedTaskIds: string[];
-  lightMode: boolean;
   onEditTask: (task: Task) => void;
   tasks: Task[];
   subtasksByTaskId: Record<string, DbTaskSubtask[]>;
@@ -5550,26 +4930,26 @@ function UrgentTasksPanel({
   const hiddenCount = Math.max(0, tasks.length - visibleTasks.length);
 
   return (
-    <section className={`w-full overflow-hidden rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+    <section className={`w-full overflow-hidden rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
       <div className="flex min-w-0 items-center justify-between gap-3 border-b pb-4">
         <div className="flex items-center gap-3">
-          <span className={`h-3 w-3 rounded-full ${lightMode ? "bg-[#f05566]" : "bg-[#ff9eaf]"}`} />
-          <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+          <span className={`h-3 w-3 rounded-full bg-[#f05566] dark:bg-[#ff9eaf]`} />
+          <h2 className={`text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
             Urgent Tasks
           </h2>
         </div>
-        <span className={`text-2xl font-bold ${lightMode ? "text-[#939ab0]" : "text-white/45"}`}>
+        <span className={`text-2xl font-bold text-[#939ab0] dark:text-white/45`}>
           {tasks.length}
         </span>
       </div>
 
       <div className="mt-5 space-y-5">
         {tasks.length === 0 ? (
-          <EmptyTaskState lightMode={lightMode} text="No urgent tasks match the current filters." />
+          <EmptyTaskState text="No urgent tasks match the current filters." />
         ) : null}
         {visibleTasks.map((task, index) => (
           <article
-            className={`w-full overflow-hidden rounded-[1.4rem] border p-4 transition ${lightMode ? "border-[#ede8fb] bg-[#fcfbff]" : "border-white/10 bg-white/[0.04]"}`}
+            className={`w-full overflow-hidden rounded-[1.4rem] border p-4 transition border-[#ede8fb] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.04]`}
             key={task.id}
           >
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -5577,7 +4957,7 @@ function UrgentTasksPanel({
                 <div className="flex min-w-0 items-center gap-3">
                   <span className={`h-4 w-4 shrink-0 rounded-full ${index < 2 ? "bg-[#f05566]" : "bg-[#12b886]"}`} />
                   <button
-                    className={`min-w-0 truncate text-left text-[1.55rem] font-semibold ${lightMode ? "text-[#202844]" : "text-white"}`}
+                    className={`min-w-0 truncate text-left text-[1.55rem] font-semibold text-[#202844] dark:text-white`}
                     onClick={() => onEditTask(task)}
                     type="button"
                   >
@@ -5585,23 +4965,23 @@ function UrgentTasksPanel({
                   </button>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {focusedTaskIds.includes(task.id) ? <TaskMetaChip lightMode={lightMode} tone="purple">Focus Today</TaskMetaChip> : null}
-                  <TaskMetaChip lightMode={lightMode} tone="neutral">{task.priority} priority</TaskMetaChip>
-                  <TaskMetaChip lightMode={lightMode} tone="green">{task.energy}</TaskMetaChip>
-                  <TaskMetaChip lightMode={lightMode} tone="neutral">{formatDueLabel(task.due_on)}</TaskMetaChip>
+                  {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus Today</TaskMetaChip> : null}
+                  <TaskMetaChip tone="neutral">{task.priority} priority</TaskMetaChip>
+                  <TaskMetaChip tone="green">{task.energy}</TaskMetaChip>
+                  <TaskMetaChip tone="neutral">{formatDueLabel(task.due_on)}</TaskMetaChip>
                 </div>
-                <TaskSupplementalMeta lightMode={lightMode} nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
+                <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
               <div className="flex w-full gap-2 sm:w-auto sm:shrink-0">
                 <button
-                  className={`w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                  className={`w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
                   onClick={() => onEditTask(task)}
                   type="button"
                 >
                   Edit
                 </button>
                 <button
-                  className={`w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+                  className={`w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
                   onClick={() => onToggle(task)}
                   type="button"
                 >
@@ -5614,7 +4994,7 @@ function UrgentTasksPanel({
               {taskChecklist(task.title).map((item, itemIndex) => (
                 <li className="flex items-center gap-3" key={`${task.id}-${itemIndex}`}>
                   <span className={`h-3 w-3 rounded-full ${item.done ? "bg-[#18c58f]" : "bg-[#f05566]"}`} />
-                  <span className={`${item.done ? "line-through opacity-50" : ""} ${lightMode ? "text-[#525d78]" : "text-white/72"}`}>
+                  <span className={`${item.done ? "line-through opacity-50" : ""} text-[#525d78] dark:text-white/72`}>
                     {item.label}
                   </span>
                 </li>
@@ -5624,7 +5004,7 @@ function UrgentTasksPanel({
         ))}
         {tasks.length > DEFAULT_VISIBLE_COUNT ? (
           <button
-            className={`flex w-full items-center justify-center gap-2 rounded-[1.1rem] border px-4 py-3 text-sm font-semibold ${lightMode ? "border-[#e6defb] bg-[#faf7ff] text-[#6f57f6]" : "border-white/10 bg-white/[0.04] text-[#cabfff]"}`}
+            className={`flex w-full items-center justify-center gap-2 rounded-[1.1rem] border px-4 py-3 text-sm font-semibold border-[#e6defb] bg-[#faf7ff] text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.04] dark:text-[#cabfff]`}
             onClick={() => setIsExpanded((prev) => !prev)}
             type="button"
           >
@@ -5639,28 +5019,18 @@ function UrgentTasksPanel({
 
 function TaskMetaChip({
   children,
-  lightMode,
   tone,
 }: {
   children: React.ReactNode;
-  lightMode: boolean;
   tone: "blue" | "purple" | "green" | "neutral";
 }) {
   const className = tone === "blue"
-    ? lightMode
-      ? "bg-[#edf6ff] text-[#3f8bdc]"
-      : "bg-[#162434] text-[#8bc4ff]"
+    ? "bg-[#edf6ff] text-[#3f8bdc] dark:bg-[#162434] dark:text-[#8bc4ff]"
     : tone === "purple"
-      ? lightMode
-        ? "bg-[#f2edff] text-[#7a63f7]"
-        : "bg-[#22193f] text-[#c7b9ff]"
+      ? "bg-[#f2edff] text-[#7a63f7] dark:bg-[#22193f] dark:text-[#c7b9ff]"
       : tone === "green"
-        ? lightMode
-          ? "bg-[#e8fbf2] text-[#0fa774]"
-          : "bg-[#14362c] text-[#7de4b8]"
-        : lightMode
-          ? "bg-[#f4f5f8] text-[#68738c]"
-          : "bg-white/8 text-white/60";
+        ? "bg-[#e8fbf2] text-[#0fa774] dark:bg-[#14362c] dark:text-[#7de4b8]"
+        : "bg-[#f4f5f8] text-[#68738c] dark:bg-white/8 dark:text-white/60";
 
   return (
     <span className={`rounded-xl px-3 py-1.5 text-sm font-semibold ${className}`}>
@@ -5670,11 +5040,9 @@ function TaskMetaChip({
 }
 
 function TaskSupplementalMeta({
-  lightMode,
   nextSubtask,
   task,
 }: {
-  lightMode: boolean;
   nextSubtask: DbTaskSubtask | null;
   task: Task;
 }) {
@@ -5694,20 +5062,20 @@ function TaskSupplementalMeta({
   return (
     <div className="mt-3 flex flex-wrap gap-2">
       {task.one_step_at_a_time && nextSubtask ? (
-        <TaskMetaChip lightMode={lightMode} tone="purple">Next: {nextSubtask.title}</TaskMetaChip>
+        <TaskMetaChip tone="purple">Next: {nextSubtask.title}</TaskMetaChip>
       ) : null}
       {visibleTags.map((tag) => (
-        <TaskMetaChip key={tag} lightMode={lightMode} tone="neutral">#{tag}</TaskMetaChip>
+        <TaskMetaChip key={tag} tone="neutral">#{tag}</TaskMetaChip>
       ))}
       {task.estimated_minutes ? (
-        <TaskMetaChip lightMode={lightMode} tone="neutral">{task.estimated_minutes} min</TaskMetaChip>
+        <TaskMetaChip tone="neutral">{task.estimated_minutes} min</TaskMetaChip>
       ) : null}
       {repeatSummary ? (
-        <TaskMetaChip lightMode={lightMode} tone="blue">{repeatSummary}</TaskMetaChip>
+        <TaskMetaChip tone="blue">{repeatSummary}</TaskMetaChip>
       ) : null}
       {task.external_link_url ? (
         <a
-          className={`rounded-xl px-3 py-1.5 text-sm font-semibold ${lightMode ? "bg-[#edf6ff] text-[#3f8bdc]" : "bg-[#162434] text-[#8bc4ff]"}`}
+          className={`rounded-xl px-3 py-1.5 text-sm font-semibold bg-[#edf6ff] text-[#3f8bdc] dark:bg-[#162434] dark:text-[#8bc4ff]`}
           href={task.external_link_url}
           rel="noreferrer"
           target="_blank"
@@ -5720,10 +5088,8 @@ function TaskSupplementalMeta({
 }
 
 function TaskComposerCard({
-  lightMode,
   onAdd,
 }: {
-  lightMode: boolean;
   onAdd: (task: TaskDraft) => Promise<void>;
 }) {
   const [title, setTitle] = useState("");
@@ -5733,12 +5099,12 @@ function TaskComposerCard({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   return (
-    <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+    <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
       <div className="mb-4">
-        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
           Quick Capture
         </h2>
-        <p className={`mt-2 text-sm ${lightMode ? "text-[#78829c]" : "text-white/55"}`}>
+        <p className={`mt-2 text-sm text-[#78829c] dark:text-white/55`}>
           Keep the task cards focused. Capture one next action, assign energy, and move on.
         </p>
       </div>
@@ -5765,27 +5131,27 @@ function TaskComposerCard({
         <label className="block">
           <span className="sr-only">Task title</span>
           <input
-            className={`h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+            className={`h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Drink water, clear email, write first paragraph..."
             value={title}
           />
         </label>
         <div className="grid gap-3 md:grid-cols-2">
-          <Select lightMode={lightMode} label="Priority" onChange={setPriority} options={priorityOptions} value={priority} />
-          <Select lightMode={lightMode} label="Energy" onChange={setEnergy} options={energyOptions} value={energy} />
+          <Select label="Priority" onChange={setPriority} options={priorityOptions} value={priority} />
+          <Select label="Energy" onChange={setEnergy} options={energyOptions} value={energy} />
         </div>
         <label className="block">
           <span className="sr-only">Due date</span>
           <input
-            className={`h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+            className={`h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
             onChange={(event) => setDueOn(event.target.value)}
             type="date"
             value={dueOn}
           />
         </label>
         <button
-          className={`w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold ${lightMode ? "bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)]" : "bg-[#cabfff] text-[#1a1431]"}`}
+          className={`w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] dark:bg-[#cabfff] dark:text-[#1a1431]`}
           disabled={isSubmitting}
           type="submit"
         >
@@ -5798,13 +5164,11 @@ function TaskComposerCard({
 
 function SupportPanel({
   doneCount,
-  lightMode,
   lowEnergyTasks,
   message,
   onImport,
 }: {
   doneCount: number;
-  lightMode: boolean;
   lowEnergyTasks: Task[];
   message: Message | null;
   onImport: (lines: string[]) => Promise<void>;
@@ -5818,28 +5182,28 @@ function SupportPanel({
 
   return (
     <div className="grid gap-5">
-      <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
-        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+      <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
+        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
           Low Energy Wins
         </h2>
         <div className="mt-4 space-y-3">
           {lowEnergyTasks.length === 0 ? (
-            <EmptyTaskState lightMode={lightMode} text="No low-energy tasks match the current filters." />
+            <EmptyTaskState text="No low-energy tasks match the current filters." />
           ) : null}
           {lowEnergyTasks.map((task) => (
-            <div className={`rounded-[1.25rem] px-4 py-3 ${lightMode ? "bg-[#f8f5ff]" : "bg-white/8"}`} key={task.id}>
-              <p className={`text-base font-semibold ${lightMode ? "text-[#26304c]" : "text-white"}`}>{task.title}</p>
-              <p className={`mt-1 text-sm ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>{formatDueLabel(task.due_on)} / low effort</p>
+            <div className={`rounded-[1.25rem] px-4 py-3 bg-[#f8f5ff] dark:bg-white/8`} key={task.id}>
+              <p className={`text-base font-semibold text-[#26304c] dark:text-white`}>{task.title}</p>
+              <p className={`mt-1 text-sm text-[#7d88a1] dark:text-white/55`}>{formatDueLabel(task.due_on)} / low effort</p>
             </div>
           ))}
         </div>
       </section>
 
-      <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
-        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+      <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
+        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
           Import List
         </h2>
-        <p className={`mt-2 text-sm ${lightMode ? "text-[#78829c]" : "text-white/55"}`}>
+        <p className={`mt-2 text-sm text-[#78829c] dark:text-white/55`}>
           Paste a rough list and turn it into calm, structured tasks.
         </p>
 
@@ -5854,13 +5218,13 @@ function SupportPanel({
           }}
         >
           <textarea
-            className={`min-h-36 w-full resize-y rounded-[1.25rem] px-4 py-4 text-base outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+            className={`min-h-36 w-full resize-y rounded-[1.25rem] px-4 py-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
             onChange={(event) => setText(event.target.value)}
             placeholder={"Call dentist\nDrink water\nChoose dinner"}
             value={text}
           />
           <button
-            className={`w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+            className={`w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
             disabled={lines.length === 0 || isSubmitting}
             type="submit"
           >
@@ -5868,25 +5232,23 @@ function SupportPanel({
           </button>
         </form>
 
-        <p className={`mt-3 text-sm ${lightMode ? "text-[#8c94ac]" : "text-white/45"}`}>
+        <p className={`mt-3 text-sm text-[#8c94ac] dark:text-white/45`}>
           {message?.text}
         </p>
       </section>
 
-      <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
-        <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/35"}`}>Completed</p>
-        <p className={`mt-2 text-4xl font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{doneCount}</p>
+      <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
+        <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35`}>Completed</p>
+        <p className={`mt-2 text-4xl font-black text-[#1f2746] dark:text-white`}>{doneCount}</p>
       </section>
     </div>
   );
 }
 
 function ImportWidgetCard({
-  lightMode,
   message,
   onImport,
 }: {
-  lightMode: boolean;
   message: Message | null;
   onImport: (lines: string[]) => Promise<void>;
 }) {
@@ -5898,11 +5260,11 @@ function ImportWidgetCard({
     .filter(Boolean);
 
   return (
-    <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
-      <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+    <section className={`rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
+      <h2 className={`text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
         Import List
       </h2>
-      <p className={`mt-2 text-sm ${lightMode ? "text-[#78829c]" : "text-white/55"}`}>
+      <p className={`mt-2 text-sm text-[#78829c] dark:text-white/55`}>
         Paste a rough list and turn it into calm, structured tasks.
       </p>
 
@@ -5917,13 +5279,13 @@ function ImportWidgetCard({
         }}
       >
         <textarea
-          className={`min-h-40 w-full resize-y rounded-[1.25rem] px-4 py-4 text-base outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+          className={`min-h-40 w-full resize-y rounded-[1.25rem] px-4 py-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
           onChange={(event) => setText(event.target.value)}
           placeholder={"Call dentist\nDrink water\nChoose dinner"}
           value={text}
         />
         <button
-          className={`w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          className={`w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
           disabled={lines.length === 0 || isSubmitting}
           type="submit"
         >
@@ -5931,7 +5293,7 @@ function ImportWidgetCard({
         </button>
       </form>
 
-      <p className={`mt-3 text-sm ${lightMode ? "text-[#8c94ac]" : "text-white/45"}`}>
+      <p className={`mt-3 text-sm text-[#8c94ac] dark:text-white/45`}>
         {message?.text}
       </p>
     </section>
@@ -5941,7 +5303,6 @@ function ImportWidgetCard({
 function TaskLane({
   count,
   defaultExpanded = false,
-  lightMode,
   onEditTask,
   subtasksByTaskId,
   title,
@@ -5950,7 +5311,6 @@ function TaskLane({
 }: {
   count: number;
   defaultExpanded?: boolean;
-  lightMode: boolean;
   onEditTask: (task: Task) => void;
   subtasksByTaskId: Record<string, DbTaskSubtask[]>;
   title: string;
@@ -5963,21 +5323,21 @@ function TaskLane({
   const hiddenCount = Math.max(0, tasks.length - visibleTasks.length);
 
   return (
-    <section className={`w-full overflow-hidden rounded-[2rem] border p-5 transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
+    <section className={`w-full overflow-hidden rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
       <div className="flex min-w-0 items-center justify-between gap-3">
-        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+        <h2 className={`text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
           {title}
         </h2>
         <div className="flex items-center gap-2">
           <span className={`shrink-0 rounded-full px-3 py-1 text-sm font-bold ${tone === "purple"
-            ? lightMode ? "bg-[#f2edff] text-[#725af6]" : "bg-[#22193f] text-[#cabfff]"
-            : lightMode ? "bg-[#f6f7fb] text-[#6a738d]" : "bg-white/8 text-white/65"}`}>
+            ? "bg-[#f2edff] text-[#725af6] dark:bg-[#22193f] dark:text-[#cabfff]"
+            : "bg-[#f6f7fb] text-[#6a738d] dark:bg-white/8 dark:text-white/65"}`}>
             {count}
           </span>
           {tasks.length > DEFAULT_VISIBLE_COUNT ? (
             <button
               aria-label={isExpanded ? `Collapse ${title}` : `Expand ${title}`}
-              className={`flex h-9 w-9 items-center justify-center rounded-full ${lightMode ? "bg-[#f6f2ff] text-[#6f57f6]" : "bg-white/8 text-[#cabfff]"}`}
+              className={`flex h-9 w-9 items-center justify-center rounded-full bg-[#f6f2ff] text-[#6f57f6] dark:bg-white/8 dark:text-[#cabfff]`}
               onClick={() => setIsExpanded((prev) => !prev)}
               type="button"
             >
@@ -5988,32 +5348,32 @@ function TaskLane({
       </div>
       <div className="mt-4 space-y-3">
         {tasks.length === 0 ? (
-          <EmptyTaskState lightMode={lightMode} text={`No tasks in ${title.toLowerCase()} right now.`} />
+          <EmptyTaskState text={`No tasks in ${title.toLowerCase()} right now.`} />
         ) : null}
         {visibleTasks.map((task, index) => (
-          <div className={`w-full overflow-hidden rounded-[1.25rem] border px-4 py-3 ${lightMode ? "border-[#efeaf9] bg-[#fdfcff]" : "border-white/10 bg-white/[0.04]"}`} key={task.id}>
+          <div className={`w-full overflow-hidden rounded-[1.25rem] border px-4 py-3 border-[#efeaf9] bg-[#fdfcff] dark:border-white/10 dark:bg-white/[0.04]`} key={task.id}>
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
                 <button
-                  className={`truncate text-left text-lg font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}
+                  className={`truncate text-left text-lg font-semibold text-[#27304c] dark:text-white`}
                   onClick={() => onEditTask(task)}
                   type="button"
                 >
                   {task.title}
                 </button>
-                <p className={`mt-1 text-sm ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>
+                <p className={`mt-1 text-sm text-[#7d88a1] dark:text-white/55`}>
                   {formatTaskMetaLine(task)}
                 </p>
-                <TaskSupplementalMeta lightMode={lightMode} nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
+                <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
               <div className="flex items-center gap-2 sm:shrink-0">
                 <span className={`self-start rounded-full px-3 py-1 text-xs font-semibold ${index % 2 === 0
-                  ? lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"
-                  : lightMode ? "bg-[#eef9f4] text-[#12a876]" : "bg-[#17362d] text-[#7de4b8]"}`}>
+                  ? "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  : "bg-[#eef9f4] text-[#12a876] dark:bg-[#17362d] dark:text-[#7de4b8]"}`}>
                   {index % 2 === 0 ? "Visible" : "Queued"}
                 </span>
                 <button
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
                   onClick={() => onEditTask(task)}
                   type="button"
                 >
@@ -6025,7 +5385,7 @@ function TaskLane({
         ))}
         {tasks.length > DEFAULT_VISIBLE_COUNT ? (
           <button
-            className={`w-full rounded-[1rem] border px-4 py-3 text-sm font-semibold ${lightMode ? "border-[#e6defb] bg-[#faf7ff] text-[#6f57f6]" : "border-white/10 bg-white/[0.04] text-[#cabfff]"}`}
+            className={`w-full rounded-[1rem] border px-4 py-3 text-sm font-semibold border-[#e6defb] bg-[#faf7ff] text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.04] dark:text-[#cabfff]`}
             onClick={() => setIsExpanded((prev) => !prev)}
             type="button"
           >
@@ -6040,13 +5400,11 @@ function TaskLane({
 function FocusStatsCard({
   activeCount,
   doneCount,
-  lightMode,
   overdueCount,
   taskHistoryStats,
 }: {
   activeCount: number;
   doneCount: number;
-  lightMode: boolean;
   overdueCount: number;
   taskHistoryStats: TaskHistoryStats;
 }) {
@@ -6060,19 +5418,19 @@ function FocusStatsCard({
   ];
 
   return (
-    <section className={`w-full overflow-hidden rounded-[2rem] border p-5 flex flex-col items-center text-center transition hover:-translate-y-0.5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
-      <h2 className={`text-2xl font-black uppercase tracking-[0.08em] ${lightMode ? "text-[#28304a]" : "text-white"}`}>
+    <section className={`w-full overflow-hidden rounded-[2rem] border p-5 flex flex-col items-center text-center transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
+      <h2 className={`text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white`}>
         Focus Stats
       </h2>
       <div className="mt-4 grid w-full gap-3 sm:grid-cols-2">
         {stats.map((stat, index) => (
-          <div className={`rounded-[1.25rem] p-4 flex flex-col items-center ${lightMode ? "bg-[#f8f5ff]" : "bg-white/8"}`} key={stat.label}>
-            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/35"}`}>{stat.label}</p>
-            <p className={`mt-2 text-3xl font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{stat.value}</p>
-            <div className={`mt-2 h-1.5 w-full max-w-[120px] overflow-hidden rounded-full ${lightMode ? "bg-[#ded7f7]" : "bg-white/10"}`}>
+          <div className={`rounded-[1.25rem] p-4 flex flex-col items-center bg-[#f8f5ff] dark:bg-white/8`} key={stat.label}>
+            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35`}>{stat.label}</p>
+            <p className={`mt-2 text-3xl font-black text-[#1f2746] dark:text-white`}>{stat.value}</p>
+            <div className={`mt-2 h-1.5 w-full max-w-[120px] overflow-hidden rounded-full bg-[#ded7f7] dark:bg-white/10`}>
               <div className={`h-full rounded-full ${index === 2
-                ? lightMode ? "bg-[#f05566]" : "bg-[#ff9eaf]"
-                : lightMode ? "bg-[#6f57f6]" : "bg-[#cabfff]"}`}
+                ? "bg-[#f05566] dark:bg-[#ff9eaf]"
+                : "bg-[#6f57f6] dark:bg-[#cabfff]"}`}
                 style={{ width: `${stat.meter}%` }}
               />
             </div>
@@ -6099,9 +5457,8 @@ function addChildToSubtask(items: TaskSubtaskDraft[], parentId: string): TaskSub
   return items.map((s) => s.id === parentId ? { ...s, children: [...s.children, newSubtaskDraft()] } : { ...s, children: addChildToSubtask(s.children, parentId) });
 }
 
-function SubtaskRow({ depth, lightMode, onAddChild, onRemove, onUpdate, subtask }: {
+function SubtaskRow({ depth, onAddChild, onRemove, onUpdate, subtask }: {
   depth: number;
-  lightMode: boolean;
   onAddChild: (parentId: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, updater: (s: TaskSubtaskDraft) => TaskSubtaskDraft) => void;
@@ -6110,7 +5467,7 @@ function SubtaskRow({ depth, lightMode, onAddChild, onRemove, onUpdate, subtask 
   const indent = depth * 20;
   return (
     <div style={{ marginLeft: indent }}>
-      <div className={`flex items-center gap-2 rounded-[1rem] border px-3 py-2.5 ${lightMode ? "border-[#ece8f8] bg-white" : "border-white/10 bg-white/[0.04]"}`}>
+      <div className={`flex items-center gap-2 rounded-[1rem] border px-3 py-2.5 border-[#ece8f8] bg-white dark:border-white/10 dark:bg-white/[0.04]`}>
         <input
           checked={subtask.status === "done"}
           className="h-4 w-4 shrink-0 accent-[#6f57f6]"
@@ -6118,19 +5475,19 @@ function SubtaskRow({ depth, lightMode, onAddChild, onRemove, onUpdate, subtask 
           type="checkbox"
         />
         <input
-          className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${subtask.status === "done" ? "line-through opacity-50" : ""} ${lightMode ? "text-[#1f2642]" : "text-white"}`}
+          className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${subtask.status === "done" ? "line-through opacity-50" : ""} text-[#1f2642] dark:text-white`}
           onChange={(e) => onUpdate(subtask.id, (s) => ({ ...s, title: e.target.value }))}
           placeholder="Step…"
           value={subtask.title}
         />
         <button
-          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
           onClick={() => onAddChild(subtask.id)}
           title="Add sub-step"
           type="button"
         >+</button>
         <button
-          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${lightMode ? "bg-[#fff1f3] text-[#f05566]" : "bg-[#44232f] text-[#ff9eaf]"}`}
+          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]`}
           onClick={() => onRemove(subtask.id)}
           type="button"
         >✕</button>
@@ -6138,7 +5495,7 @@ function SubtaskRow({ depth, lightMode, onAddChild, onRemove, onUpdate, subtask 
       {subtask.children.length > 0 ? (
         <div className="mt-1.5 space-y-1.5">
           {subtask.children.map((child) => (
-            <SubtaskRow depth={depth + 1} key={child.id} lightMode={lightMode} onAddChild={onAddChild} onRemove={onRemove} onUpdate={onUpdate} subtask={child} />
+            <SubtaskRow depth={depth + 1} key={child.id} onAddChild={onAddChild} onRemove={onRemove} onUpdate={onUpdate} subtask={child} />
           ))}
         </div>
       ) : null}
@@ -6146,9 +5503,8 @@ function SubtaskRow({ depth, lightMode, onAddChild, onRemove, onUpdate, subtask 
   );
 }
 
-function TagChipInput({ allTags, lightMode, onChange, values }: {
+function TagChipInput({ allTags, onChange, values }: {
   allTags: string[];
-  lightMode: boolean;
   onChange: (tags: string[]) => void;
   values: string[];
 }) {
@@ -6169,7 +5525,7 @@ function TagChipInput({ allTags, lightMode, onChange, values }: {
     <div className="relative grid gap-2">
       <div className="flex flex-wrap gap-1.5">
         {values.map((tag) => (
-          <span className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`} key={tag}>
+          <span className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`} key={tag}>
             {tag}
             <button className="opacity-60 hover:opacity-100" onClick={() => onChange(values.filter((v) => v !== tag))} type="button">✕</button>
           </span>
@@ -6177,7 +5533,7 @@ function TagChipInput({ allTags, lightMode, onChange, values }: {
       </div>
       <div className="flex gap-2">
         <input
-          className={`min-w-0 flex-1 rounded-[0.75rem] px-3 py-2 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+          className={`min-w-0 flex-1 rounded-[0.75rem] px-3 py-2 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
           onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
           onChange={(e) => { setInput(e.target.value); setShowDropdown(true); }}
           onFocus={() => setShowDropdown(true)}
@@ -6186,16 +5542,16 @@ function TagChipInput({ allTags, lightMode, onChange, values }: {
           value={input}
         />
         <button
-          className={`shrink-0 rounded-[0.75rem] px-3 py-2 text-sm font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          className={`shrink-0 rounded-[0.75rem] px-3 py-2 text-sm font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
           onClick={() => addTag(input)}
           type="button"
         >Add</button>
       </div>
       {showDropdown && filtered.length > 0 ? (
-        <div className={`absolute left-0 right-0 top-full z-20 mt-1 max-h-36 overflow-y-auto rounded-[1rem] border shadow-lg ${lightMode ? "border-[#ece8f8] bg-white" : "border-white/10 bg-[#1a1230]"}`}>
+        <div className={`absolute left-0 right-0 top-full z-20 mt-1 max-h-36 overflow-y-auto rounded-[1rem] border shadow-lg border-[#ece8f8] bg-white dark:border-white/10 dark:bg-[#1a1230]`}>
           {filtered.map((tag) => (
             <button
-              className={`w-full px-4 py-2 text-left text-sm ${lightMode ? "text-[#1f2642] hover:bg-[#f7f5ff]" : "text-white hover:bg-white/8"}`}
+              className={`w-full px-4 py-2 text-left text-sm text-[#1f2642] hover:bg-[#f7f5ff] dark:text-white dark:hover:bg-white/8`}
               key={tag}
               onMouseDown={() => addTag(tag)}
               type="button"
@@ -6210,7 +5566,6 @@ function TagChipInput({ allTags, lightMode, onChange, values }: {
 function TaskEditorModal({
   allTags,
   focusedToday,
-  lightMode,
   mode,
   onClose,
   onOpenHistory,
@@ -6220,7 +5575,6 @@ function TaskEditorModal({
 }: {
   allTags: string[];
   focusedToday: string[];
-  lightMode: boolean;
   mode: TaskEditorMode;
   onClose: () => void;
   onOpenHistory?: () => void;
@@ -6254,17 +5608,17 @@ function TaskEditorModal({
   const visibleStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "missed", "did_my_best", "upcoming", "not_due"];
 
   return (
-    <ModalShell className={`w-full max-w-[42rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`} label="Task editor" onClose={onClose}>
+    <ModalShell className={`w-full max-w-[42rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="Task editor" onClose={onClose}>
       {/* Header */}
-      <div className={`sticky top-0 z-10 flex items-center gap-3 px-5 py-4 ${lightMode ? "bg-white border-b border-[#ece8f8]" : "bg-[#171328] border-b border-white/10"}`}>
-        <button aria-label="Close" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${lightMode ? "bg-[#f3f0ff] text-[#6f57f6]" : "bg-white/8 text-white"}`} onClick={onClose} type="button">
+      <div className={`sticky top-0 z-10 flex items-center gap-3 px-5 py-4 bg-white border-b border-[#ece8f8] dark:bg-[#171328] dark:border-b dark:border-white/10`}>
+        <button aria-label="Close" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white`} onClick={onClose} type="button">
           <X className="h-4 w-4" />
         </button>
-        <span className={`flex-1 text-base font-bold ${lightMode ? "text-[#1e2540]" : "text-white"}`}>{isEditing ? "Edit Task" : "New Task"}</span>
+        <span className={`flex-1 text-base font-bold text-[#1e2540] dark:text-white`}>{isEditing ? "Edit Task" : "New Task"}</span>
         <button
           className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${draft.oneStepAtATime
-            ? lightMode ? "border-[#6f57f6] bg-[#f2edff] text-[#6f57f6]" : "border-[#cabfff] bg-[#22193f] text-[#cabfff]"
-            : lightMode ? "border-[#e5e0f5] text-[#b0aac8]" : "border-white/15 text-white/35"}`}
+            ? "border-[#6f57f6] bg-[#f2edff] text-[#6f57f6] dark:border-[#cabfff] dark:bg-[#22193f] dark:text-[#cabfff]"
+            : "border-[#e5e0f5] text-[#b0aac8] dark:border-white/15 dark:text-white/35"}`}
           onClick={() => setDraft((c) => ({ ...c, oneStepAtATime: !c.oneStepAtATime }))}
           type="button"
         >
@@ -6273,7 +5627,7 @@ function TaskEditorModal({
         </button>
         {isEditing && onOpenHistory ? (
           <button
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${lightMode ? "bg-[#f3f0ff] text-[#6f57f6]" : "bg-white/8 text-white/70"}`}
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white/70`}
             onClick={onOpenHistory}
             title="Task history"
             type="button"
@@ -6335,7 +5689,7 @@ function TaskEditorModal({
       >
         {/* Title */}
         <input
-          className={`w-full border-b-2 bg-transparent pb-2 text-2xl font-bold outline-none ${lightMode ? "border-[#6f57f6] text-[#1e2540] placeholder:text-[#bbb8d0]" : "border-[#cabfff]/50 text-white placeholder:text-white/25"}`}
+          className={`w-full border-b-2 bg-transparent pb-2 text-2xl font-bold outline-none border-[#6f57f6] text-[#1e2540] placeholder:text-[#bbb8d0] dark:border-[#cabfff]/50 dark:text-white dark:placeholder:text-white/25`}
           onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))}
           placeholder="Task title"
           value={draft.title}
@@ -6343,13 +5697,13 @@ function TaskEditorModal({
 
         {/* STATUS */}
         <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Status</p>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40`}>Status</p>
           <div className="flex flex-wrap gap-2">
             {visibleStatusOptions.map((s) => (
               <button
                 className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${draft.status === s
                   ? "border-transparent bg-[#f05566] text-white"
-                  : lightMode ? "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff]" : "border-white/15 text-white/70 hover:border-white/30"}`}
+                  : "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"}`}
                 key={s}
                 onClick={() => setDraft((c) => ({ ...c, status: s }))}
                 type="button"
@@ -6363,24 +5717,24 @@ function TaskEditorModal({
         {/* Urgent / Important / Focus Today */}
         <div className="space-y-2">
           {([
-            { key: "isUrgent", label: "Urgent", desc: "Needs attention now", Icon: AlertCircle, color: "text-[#f05566]", bg: lightMode ? "bg-[#fff1f3]" : "bg-[#44232f]" },
-            { key: "isImportant", label: "Important", desc: "High value goal", Icon: Diamond, color: "text-[#6f57f6]", bg: lightMode ? "bg-[#f2edff]" : "bg-[#22193f]" },
-            { key: "focusToday", label: "Focus Today", desc: "Add to daily priority list", Icon: Star, color: "text-[#8d87a7]", bg: lightMode ? "bg-[#f7f5ff]" : "bg-white/8" },
+            { key: "isUrgent", label: "Urgent", desc: "Needs attention now", Icon: AlertCircle, color: "text-[#f05566]", bg: "bg-[#fff1f3] dark:bg-[#44232f]" },
+            { key: "isImportant", label: "Important", desc: "High value goal", Icon: Diamond, color: "text-[#6f57f6]", bg: "bg-[#f2edff] dark:bg-[#22193f]" },
+            { key: "focusToday", label: "Focus Today", desc: "Add to daily priority list", Icon: Star, color: "text-[#8d87a7]", bg: "bg-[#f7f5ff] dark:bg-white/8" },
           ] as const).map(({ key, label, desc, Icon, color, bg }) => {
             const checked = draft[key] as boolean;
             return (
-              <div className={`flex items-center gap-3 rounded-[1.1rem] px-4 py-3 ${lightMode ? "bg-[#faf8ff]" : "bg-white/[0.03]"}`} key={key}>
+              <div className={`flex items-center gap-3 rounded-[1.1rem] px-4 py-3 bg-[#faf8ff] dark:bg-white/[0.03]`} key={key}>
                 <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${bg}`}>
                   <Icon className={`h-4 w-4 ${color}`} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-semibold ${lightMode ? "text-[#1e2540]" : "text-white"}`}>{label}</p>
-                  <p className={`text-xs ${lightMode ? "text-[#8d97b0]" : "text-white/45"}`}>{desc}</p>
+                  <p className={`text-sm font-semibold text-[#1e2540] dark:text-white`}>{label}</p>
+                  <p className={`text-xs text-[#8d97b0] dark:text-white/45`}>{desc}</p>
                 </div>
                 <button
                   className={`rounded-full px-4 py-1.5 text-sm font-bold transition-colors ${checked
                     ? "bg-[#f05566] text-white"
-                    : lightMode ? "border border-[#e5e0f5] text-[#8d97b0]" : "border border-white/15 text-white/50"}`}
+                    : "border border-[#e5e0f5] text-[#8d97b0] dark:border dark:border-white/15 dark:text-white/50"}`}
                   onClick={() => setDraft((c) => ({ ...c, [key]: !checked }))}
                   type="button"
                 >
@@ -6393,13 +5747,13 @@ function TaskEditorModal({
 
         {/* REPEAT FREQUENCY */}
         <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Repeat Frequency</p>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40`}>Repeat Frequency</p>
           <div className="flex flex-wrap gap-2">
             {(["none", "daily", "weekly", "monthly", "custom"] as const).map((freq) => (
               <button
                 className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${draft.repeatFrequency === freq
-                  ? lightMode ? "border-transparent bg-[#6f57f6] text-white" : "border-transparent bg-[#cabfff] text-[#1a1431]"
-                  : lightMode ? "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff]" : "border-white/15 text-white/70 hover:border-white/30"}`}
+                  ? "border-transparent bg-[#6f57f6] text-white dark:border-transparent dark:bg-[#cabfff] dark:text-[#1a1431]"
+                  : "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"}`}
                 key={freq}
                 onClick={() => setDraft((c) => ({ ...c, repeatFrequency: freq }))}
                 type="button"
@@ -6410,7 +5764,7 @@ function TaskEditorModal({
           </div>
           {draft.repeatFrequency !== "none" && draft.repeatFrequency !== "daily" ? (
             <div className="mt-3">
-              <LabeledInput label="Interval" lightMode={lightMode} onChange={(v) => setDraft((c) => ({ ...c, repeatInterval: v }))} placeholder="1" type="number" value={draft.repeatInterval} />
+              <LabeledInput label="Interval" onChange={(v) => setDraft((c) => ({ ...c, repeatInterval: v }))} placeholder="1" type="number" value={draft.repeatInterval} />
             </div>
           ) : null}
           {draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom" ? (
@@ -6418,7 +5772,7 @@ function TaskEditorModal({
               {repeatWeekdayOptions.map((option) => {
                 const selected = draft.repeatDaysOfWeek.includes(option.value);
                 return (
-                  <Pill key={option.value} lightMode={lightMode} onClick={() => setDraft((c) => ({ ...c, repeatDaysOfWeek: selected ? c.repeatDaysOfWeek.filter((v) => v !== option.value) : [...c.repeatDaysOfWeek, option.value] }))} selected={selected}>
+                  <Pill key={option.value} onClick={() => setDraft((c) => ({ ...c, repeatDaysOfWeek: selected ? c.repeatDaysOfWeek.filter((v) => v !== option.value) : [...c.repeatDaysOfWeek, option.value] }))} selected={selected}>
                     {option.label}
                   </Pill>
                 );
@@ -6427,22 +5781,22 @@ function TaskEditorModal({
           ) : null}
           {draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom" ? (
             <div className="mt-3">
-              <LabeledInput label="Day of month" lightMode={lightMode} onChange={(v) => setDraft((c) => ({ ...c, repeatDayOfMonth: v }))} placeholder="15" type="number" value={draft.repeatDayOfMonth} />
+              <LabeledInput label="Day of month" onChange={(v) => setDraft((c) => ({ ...c, repeatDayOfMonth: v }))} placeholder="15" type="number" value={draft.repeatDayOfMonth} />
             </div>
           ) : null}
         </div>
 
         {/* ENERGY LEVEL */}
         <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Energy Level</p>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40`}>Energy Level</p>
           <div className="flex flex-wrap gap-2">
             {(["low", "medium", "high"] as const).map((e) => {
               const active = draft.energy === e;
               const colors = e === "low"
-                ? active ? "bg-[#12b76a] text-white border-transparent" : lightMode ? "border-[#e5e0f5] text-[#5a607a]" : "border-white/15 text-white/70"
+                ? active ? "bg-[#12b76a] text-white border-transparent" : "border-[#e5e0f5] text-[#5a607a] dark:border-white/15 dark:text-white/70"
                 : e === "medium"
-                  ? active ? "bg-[#6f57f6] text-white border-transparent" : lightMode ? "border-[#e5e0f5] text-[#5a607a]" : "border-white/15 text-white/70"
-                  : active ? "bg-[#f79009] text-white border-transparent" : lightMode ? "border-[#e5e0f5] text-[#5a607a]" : "border-white/15 text-white/70";
+                  ? active ? "bg-[#6f57f6] text-white border-transparent" : "border-[#e5e0f5] text-[#5a607a] dark:border-white/15 dark:text-white/70"
+                  : active ? "bg-[#f79009] text-white border-transparent" : "border-[#e5e0f5] text-[#5a607a] dark:border-white/15 dark:text-white/70";
               return (
                 <button className={`rounded-full border px-5 py-2 text-sm font-semibold capitalize transition-colors ${colors}`} key={e} onClick={() => setDraft((c) => ({ ...c, energy: e }))} type="button">
                   {e}
@@ -6454,13 +5808,13 @@ function TaskEditorModal({
 
         {/* ESTIMATED TIME */}
         <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8d87a7]" : "text-white/40"}`}>Estimated Time</p>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40`}>Estimated Time</p>
           <div className="flex flex-wrap gap-2">
             {estimatedTimePresets.map((preset) => (
               <button
                 className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${draft.estimatedMinutes === preset.minutes
-                  ? lightMode ? "border-transparent bg-[#6f57f6] text-white" : "border-transparent bg-[#cabfff] text-[#1a1431]"
-                  : lightMode ? "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff]" : "border-white/15 text-white/70 hover:border-white/30"}`}
+                  ? "border-transparent bg-[#6f57f6] text-white dark:border-transparent dark:bg-[#cabfff] dark:text-[#1a1431]"
+                  : "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"}`}
                 key={preset.label}
                 onClick={() => setDraft((c) => ({ ...c, estimatedMinutes: c.estimatedMinutes === preset.minutes ? "" : preset.minutes }))}
                 type="button"
@@ -6470,7 +5824,7 @@ function TaskEditorModal({
             ))}
             <div className="flex items-center gap-1">
               <input
-                className={`h-9 w-20 rounded-full border px-3 text-sm outline-none ${lightMode ? "border-[#e5e0f5] bg-white text-[#1e2540] placeholder:text-[#b0aac8]" : "border-white/15 bg-white/8 text-white placeholder:text-white/30"}`}
+                className={`h-9 w-20 rounded-full border px-3 text-sm outline-none border-[#e5e0f5] bg-white text-[#1e2540] placeholder:text-[#b0aac8] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
                 min="1"
                 onChange={(e) => setDraft((c) => ({ ...c, estimatedMinutes: e.target.value }))}
                 placeholder="min"
@@ -6482,18 +5836,17 @@ function TaskEditorModal({
         </div>
 
         {/* SUBTASKS */}
-        <section className={`rounded-[1.25rem] border p-4 ${lightMode ? "border-[#ece8f8] bg-[#fcfbff]" : "border-white/10 bg-white/[0.03]"}`}>
+        <section className={`rounded-[1.25rem] border p-4 border-[#ece8f8] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.03]`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>Subtasks</p>
-            <ToggleField checked={draft.subtasksAutoReset} label="Auto Reset" lightMode={lightMode} onChange={(checked) => setDraft((c) => ({ ...c, subtasksAutoReset: checked }))} />
+            <p className={`text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>Subtasks</p>
+            <ToggleField checked={draft.subtasksAutoReset} label="Auto Reset" onChange={(checked) => setDraft((c) => ({ ...c, subtasksAutoReset: checked }))} />
           </div>
           <div className="mt-3 space-y-2">
-            {draft.subtasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="No subtasks yet." /> : null}
+            {draft.subtasks.length === 0 ? <EmptyTaskState text="No subtasks yet." /> : null}
             {draft.subtasks.map((subtask) => (
               <SubtaskRow
                 depth={0}
                 key={subtask.id}
-                lightMode={lightMode}
                 onAddChild={(parentId) => setDraft((c) => ({ ...c, subtasks: addChildToSubtask(c.subtasks, parentId) }))}
                 onRemove={(id) => setDraft((c) => ({ ...c, subtasks: removeSubtaskFromTree(c.subtasks, id) }))}
                 onUpdate={(id, updater) => setDraft((c) => ({ ...c, subtasks: updateSubtaskTree(c.subtasks, id, updater) }))}
@@ -6503,13 +5856,13 @@ function TaskEditorModal({
           </div>
           <div className="mt-3 grid gap-2">
             <textarea
-              className={`min-h-20 rounded-[1rem] px-4 py-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+              className={`min-h-20 rounded-[1rem] px-4 py-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
               onChange={(e) => setSubtaskMultiAdd(e.target.value)}
               placeholder={"One step\nAnother step\nFinal step"}
               value={subtaskMultiAdd}
             />
             <button
-              className={`self-end rounded-[1rem] px-4 py-2.5 text-sm font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+              className={`self-end rounded-[1rem] px-4 py-2.5 text-sm font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
               onClick={() => {
                 const next = buildDraftSubtasksFromLines(subtaskMultiAdd);
                 if (!next.length) return;
@@ -6526,17 +5879,17 @@ function TaskEditorModal({
         {/* Due date / time / notes / tags / link */}
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2">
-            <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Due date</span>
+            <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Due date</span>
             <div className="relative">
               <input
-                className={`w-full rounded-[1rem] px-4 py-3 text-sm outline-none ${draft.dueOn ? (lightMode ? "text-[#1f2642]" : "text-white") : (lightMode ? "text-[#9b9fba]" : "text-white/30")} ${lightMode ? "bg-[#f7f5ff]" : "bg-white/8"}`}
+                className={`w-full rounded-[1rem] px-4 py-3 text-sm outline-none ${draft.dueOn ? "text-[#1f2642] dark:text-white" : "text-[#9b9fba] dark:text-white/30"} bg-[#f7f5ff] dark:bg-white/8`}
                 onChange={(e) => setDraft((c) => ({ ...c, dueOn: e.target.value }))}
                 type="date"
                 value={draft.dueOn}
               />
               {draft.dueOn ? (
                 <button
-                  className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-xs ${lightMode ? "text-[#9b9fba] hover:text-[#f05566]" : "text-white/30 hover:text-[#ff9eaf]"}`}
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-xs text-[#9b9fba] hover:text-[#f05566] dark:text-white/30 dark:hover:text-[#ff9eaf]`}
                   onClick={() => setDraft((c) => ({ ...c, dueOn: "" }))}
                   type="button"
                 >✕</button>
@@ -6544,17 +5897,17 @@ function TaskEditorModal({
             </div>
           </label>
           <label className="grid gap-2">
-            <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Due time</span>
+            <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Due time</span>
             <div className="relative">
               <input
-                className={`w-full rounded-[1rem] px-4 py-3 text-sm outline-none ${draft.dueTime ? (lightMode ? "text-[#1f2642]" : "text-white") : (lightMode ? "text-[#9b9fba]" : "text-white/30")} ${lightMode ? "bg-[#f7f5ff]" : "bg-white/8"}`}
+                className={`w-full rounded-[1rem] px-4 py-3 text-sm outline-none ${draft.dueTime ? "text-[#1f2642] dark:text-white" : "text-[#9b9fba] dark:text-white/30"} bg-[#f7f5ff] dark:bg-white/8`}
                 onChange={(e) => setDraft((c) => ({ ...c, dueTime: e.target.value }))}
                 type="time"
                 value={draft.dueTime}
               />
               {draft.dueTime ? (
                 <button
-                  className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-xs ${lightMode ? "text-[#9b9fba] hover:text-[#f05566]" : "text-white/30 hover:text-[#ff9eaf]"}`}
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-xs text-[#9b9fba] hover:text-[#f05566] dark:text-white/30 dark:hover:text-[#ff9eaf]`}
                   onClick={() => setDraft((c) => ({ ...c, dueTime: "" }))}
                   type="button"
                 >✕</button>
@@ -6564,9 +5917,9 @@ function TaskEditorModal({
         </div>
 
         <label className="grid gap-2">
-          <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Notes</span>
+          <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Notes</span>
           <textarea
-            className={`min-h-24 rounded-[1rem] px-4 py-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba]" : "bg-white/8 text-white placeholder:text-white/30"}`}
+            className={`min-h-24 rounded-[1rem] px-4 py-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
             onChange={(e) => setDraft((c) => ({ ...c, notes: e.target.value }))}
             placeholder="Keep this grounded in the next real step."
             value={draft.notes}
@@ -6574,20 +5927,20 @@ function TaskEditorModal({
         </label>
 
         <label className="grid gap-2">
-          <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>Tags</span>
-          <TagChipInput allTags={allTags} lightMode={lightMode} onChange={(tags) => setDraft((c) => ({ ...c, tags }))} values={draft.tags} />
+          <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Tags</span>
+          <TagChipInput allTags={allTags} onChange={(tags) => setDraft((c) => ({ ...c, tags }))} values={draft.tags} />
         </label>
         <div className="grid gap-4 sm:grid-cols-2">
-          <LabeledInput label="External link label" lightMode={lightMode} onChange={(v) => setDraft((c) => ({ ...c, externalLinkLabel: v }))} placeholder="Reference" value={draft.externalLinkLabel} />
+          <LabeledInput label="External link label" onChange={(v) => setDraft((c) => ({ ...c, externalLinkLabel: v }))} placeholder="Reference" value={draft.externalLinkLabel} />
         </div>
         <div>
-          <LabeledInput label="External link URL" lightMode={lightMode} onChange={(v) => setDraft((c) => ({ ...c, externalLinkUrl: v }))} placeholder="https://..." value={draft.externalLinkUrl} />
+          <LabeledInput label="External link URL" onChange={(v) => setDraft((c) => ({ ...c, externalLinkUrl: v }))} placeholder="https://..." value={draft.externalLinkUrl} />
           {hasUrlError ? <p className="mt-1 text-sm text-[#d94e67]">Use a full URL like `https://example.com`.</p> : null}
         </div>
 
         {/* Save */}
         <button
-          className={`w-full rounded-[1.25rem] py-4 text-base font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"} disabled:opacity-50`}
+          className={`w-full rounded-[1.25rem] py-4 text-base font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431] disabled:opacity-50`}
           disabled={!trimmedTitle || hasUrlError || isSaving}
           type="submit"
         >
@@ -6599,14 +5952,12 @@ function TaskEditorModal({
 }
 
 function EmptyTaskState({
-  lightMode,
   text,
 }: {
-  lightMode: boolean;
   text: string;
 }) {
   return (
-    <div className={`rounded-[1.25rem] border border-dashed px-4 py-5 text-sm ${lightMode ? "border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0]" : "border-white/10 bg-white/[0.03] text-white/55"}`}>
+    <div className={`rounded-[1.25rem] border border-dashed px-4 py-5 text-sm border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55`}>
       {text}
     </div>
   );
@@ -6638,12 +5989,10 @@ const LIST_CARD_LABELS: Record<ListCardId, string> = {
 
 function ListCardResizeOverlay({
   layout,
-  lightMode,
   onClose,
   onResize,
 }: {
   layout: ListCardLayout;
-  lightMode: boolean;
   onClose: () => void;
   onResize: (colSpan: number, minHeight: number) => void;
 }) {
@@ -6667,17 +6016,17 @@ function ListCardResizeOverlay({
 
   return (
     <div
-      className={`absolute inset-x-3 bottom-3 z-20 rounded-[1.35rem] border p-3 ${lightMode ? "border-[#ddd4ff] bg-white/95 shadow-[0_18px_36px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]/95"}`}
+      className={`absolute inset-x-3 bottom-3 z-20 rounded-[1.35rem] border p-3 border-[#ddd4ff] bg-white/95 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]/95`}
       onClick={stopEvent}
       onMouseDown={stopEvent}
       onPointerDown={stopEvent}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className={`text-xs font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7a63f7]" : "text-[#c9bbff]"}`}>
+        <p className={`text-xs font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>
           {LIST_CARD_LABELS[layout.id]}
         </p>
         <button
-          className={`rounded-full px-3 py-1.5 text-xs font-semibold ${lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+          className={`rounded-full px-3 py-1.5 text-xs font-semibold bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75`}
           onClick={onClose}
           type="button"
         >
@@ -6686,13 +6035,13 @@ function ListCardResizeOverlay({
       </div>
       <div className="mt-3 space-y-3">
         <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Width</p>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40`}>Width</p>
           <div className="flex flex-wrap gap-2">
             {LIST_WIDTH_PRESETS.map((preset) => (
               <button
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold ${layout.colSpan === preset.colSpan
-                  ? lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"
-                  : lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+                  ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                  : "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75"}`}
                 key={preset.label}
                 onClick={() => onResize(preset.colSpan, layout.minHeight)}
                 type="button"
@@ -6703,13 +6052,13 @@ function ListCardResizeOverlay({
           </div>
         </div>
         <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Rows</p>
+          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40`}>Rows</p>
           <div className="flex flex-wrap gap-2">
             {LIST_HEIGHT_PRESETS.map((preset) => (
               <button
                 className={`rounded-full px-3 py-1.5 text-xs font-semibold ${layout.minHeight === preset.minHeight
-                  ? lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"
-                  : lightMode ? "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)]" : "bg-white/8 text-white/75"}`}
+                  ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                  : "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75"}`}
                 key={preset.label}
                 onClick={() => onResize(layout.colSpan, preset.minHeight)}
                 type="button"
@@ -6724,9 +6073,9 @@ function ListCardResizeOverlay({
           onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); applyCustomRows(); }}
         >
           <label className="min-w-0 flex-1">
-            <span className={`mb-2 block text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#8b84a6]" : "text-white/40"}`}>Custom Rows</span>
+            <span className={`mb-2 block text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40`}>Custom Rows</span>
             <input
-              className={`h-11 w-full rounded-[0.9rem] px-3 text-sm outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+              className={`h-11 w-full rounded-[0.9rem] px-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
               inputMode="numeric"
               max="20"
               min="1"
@@ -6737,7 +6086,7 @@ function ListCardResizeOverlay({
             />
           </label>
           <button
-            className={`h-11 rounded-[0.9rem] px-4 text-sm font-semibold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+            className={`h-11 rounded-[0.9rem] px-4 text-sm font-semibold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
             disabled={clampedCustomRows === null}
             type="submit"
           >
@@ -6751,7 +6100,6 @@ function ListCardResizeOverlay({
 
 function TaskListView({
   focusedTaskIds,
-  lightMode,
   onDelete,
   onEditTask,
   onSetStatus,
@@ -6760,7 +6108,6 @@ function TaskListView({
   tasks,
 }: {
   focusedTaskIds: string[];
-  lightMode: boolean;
   onDelete: (taskIds: string[]) => void;
   onEditTask: (task: Task) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
@@ -6816,8 +6163,8 @@ function TaskListView({
   return (
     <section className="mt-7">
       {someSelected ? (
-        <div className={`mb-3 flex items-center justify-between rounded-2xl px-4 py-2.5 ${lightMode ? "bg-[#f2edff]" : "bg-[#22193f]"}`}>
-          <span className={`text-sm font-semibold ${lightMode ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>
+        <div className={`mb-3 flex items-center justify-between rounded-2xl px-4 py-2.5 bg-[#f2edff] dark:bg-[#22193f]`}>
+          <span className={`text-sm font-semibold text-[#6f57f6] dark:text-[#cabfff]`}>
             {selectedIds.size} selected
           </span>
           <button
@@ -6829,8 +6176,8 @@ function TaskListView({
           </button>
         </div>
       ) : null}
-      <div className={`overflow-hidden rounded-[1.8rem] border ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}>
-        <div className={`grid grid-cols-[auto_minmax(0,1.8fr)_minmax(0,1.2fr)_auto] gap-3 border-b px-5 py-4 text-[11px] font-black uppercase tracking-[0.18em] ${lightMode ? "border-[#ece8f8] text-[#8d87a7]" : "border-white/10 text-white/35"}`}>
+      <div className={`overflow-hidden rounded-[1.8rem] border border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
+        <div className={`grid grid-cols-[auto_minmax(0,1.8fr)_minmax(0,1.2fr)_auto] gap-3 border-b px-5 py-4 text-[11px] font-black uppercase tracking-[0.18em] border-[#ece8f8] text-[#8d87a7] dark:border-white/10 dark:text-white/35`}>
           <input
             aria-label="Select all tasks"
             checked={allSelected}
@@ -6845,12 +6192,12 @@ function TaskListView({
         <div>
           {tasks.length === 0 ? (
             <div className="p-4">
-              <EmptyTaskState lightMode={lightMode} text="No tasks match the current filters." />
+              <EmptyTaskState text="No tasks match the current filters." />
             </div>
           ) : null}
           {tasks.slice(0, visibleCount).map((task) => (
             <div
-              className={`grid grid-cols-1 gap-3 border-b px-5 py-4 last:border-b-0 md:grid-cols-[auto_minmax(0,1.8fr)_minmax(0,1.2fr)_auto] md:items-center ${lightMode ? "border-[#f0ebfb]" : "border-white/10"}`}
+              className={`grid grid-cols-1 gap-3 border-b px-5 py-4 last:border-b-0 md:grid-cols-[auto_minmax(0,1.8fr)_minmax(0,1.2fr)_auto] md:items-center border-[#f0ebfb] dark:border-white/10`}
               key={task.id}
             >
               <input
@@ -6863,7 +6210,7 @@ function TaskListView({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    className={`min-w-0 truncate text-left text-lg font-semibold ${lightMode ? "text-[#24304b]" : "text-white"}`}
+                    className={`min-w-0 truncate text-left text-lg font-semibold text-[#24304b] dark:text-white`}
                     onClick={() => onEditTask(task)}
                     type="button"
                   >
@@ -6874,19 +6221,19 @@ function TaskListView({
                   </span>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {focusedTaskIds.includes(task.id) ? <TaskMetaChip lightMode={lightMode} tone="purple">Focus Today</TaskMetaChip> : null}
-                  {task.is_urgent ? <TaskMetaChip lightMode={lightMode} tone="blue">Urgent</TaskMetaChip> : null}
-                  {task.is_important ? <TaskMetaChip lightMode={lightMode} tone="purple">Important</TaskMetaChip> : null}
-                  {task.one_step_at_a_time ? <TaskMetaChip lightMode={lightMode} tone="neutral">One Step</TaskMetaChip> : null}
+                  {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus Today</TaskMetaChip> : null}
+                  {task.is_urgent ? <TaskMetaChip tone="blue">Urgent</TaskMetaChip> : null}
+                  {task.is_important ? <TaskMetaChip tone="purple">Important</TaskMetaChip> : null}
+                  {task.one_step_at_a_time ? <TaskMetaChip tone="neutral">One Step</TaskMetaChip> : null}
                 </div>
-                <TaskSupplementalMeta lightMode={lightMode} nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
+                <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
-              <div className={`text-sm ${lightMode ? "text-[#6f7892]" : "text-white/60"}`}>
+              <div className={`text-sm text-[#6f7892] dark:text-white/60`}>
                 {formatTaskMetaLine(task)}
               </div>
               <div className="flex flex-wrap items-center gap-2 md:justify-end">
                 <button
-                  className={`rounded-full px-3 py-2 text-sm font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                  className={`rounded-full px-3 py-2 text-sm font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
                   onClick={() => onEditTask(task)}
                   type="button"
                 >
@@ -6901,16 +6248,16 @@ function TaskListView({
                     {formatOptionLabel(task.status)} ▾
                   </button>
                   {openStatusTaskId === task.id ? (
-                    <div className={`absolute right-0 top-full z-20 mt-1 min-w-[150px] overflow-hidden rounded-[1rem] border shadow-lg ${lightMode ? "border-[#ece8f8] bg-white" : "border-white/10 bg-[#1a1230]"}`}>
+                    <div className={`absolute right-0 top-full z-20 mt-1 min-w-[150px] overflow-hidden rounded-[1rem] border shadow-lg border-[#ece8f8] bg-white dark:border-white/10 dark:bg-[#1a1230]`}>
                       {STATUS_OPTIONS.map((s) => (
                         <button
-                          className={`flex w-full items-center gap-2 px-4 py-2 text-left text-sm font-medium ${lightMode ? "hover:bg-[#f7f5ff]" : "hover:bg-white/8"}`}
+                          className={`flex w-full items-center gap-2 px-4 py-2 text-left text-sm font-medium hover:bg-[#f7f5ff] dark:hover:bg-white/8`}
                           key={s}
                           onClick={() => { onSetStatus(task, s); setOpenStatusTaskId(null); }}
                           type="button"
                         >
                           <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${STATUS_COLORS[s].split(" ")[0]}`} />
-                          <span className={lightMode ? "text-[#1f2642]" : "text-white"}>{formatOptionLabel(s)}</span>
+                          <span className="text-[#1f2642] dark:text-white">{formatOptionLabel(s)}</span>
                         </button>
                       ))}
                     </div>
@@ -6923,7 +6270,7 @@ function TaskListView({
       </div>
       {tasks.length > visibleCount ? (
         <button
-          className={`mt-4 w-full rounded-2xl py-3 text-sm font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+          className={`mt-4 w-full rounded-2xl py-3 text-sm font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
           onClick={() => setVisibleCount((c) => c + LOAD_MORE_SIZE)}
           type="button"
         >
@@ -6936,14 +6283,12 @@ function TaskListView({
 
 function TaskCardGallery({
   focusedTaskIds,
-  lightMode,
   onEditTask,
   onToggle,
   subtasksByTaskId,
   tasks,
 }: {
   focusedTaskIds: string[];
-  lightMode: boolean;
   onEditTask: (task: Task) => void;
   onToggle: (task: Task) => void;
   subtasksByTaskId: Record<string, DbTaskSubtask[]>;
@@ -6952,48 +6297,48 @@ function TaskCardGallery({
   return (
     <section className="mt-7">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {tasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="No tasks match the current filters." /> : null}
+        {tasks.length === 0 ? <EmptyTaskState text="No tasks match the current filters." /> : null}
         {tasks.map((task) => (
           <article
-            className={`w-full overflow-hidden rounded-[1.7rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`}
+            className={`w-full overflow-hidden rounded-[1.7rem] border p-5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}
             key={task.id}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <button
-                  className={`text-left text-xl font-bold ${lightMode ? "text-[#1f2746]" : "text-white"}`}
+                  className={`text-left text-xl font-bold text-[#1f2746] dark:text-white`}
                   onClick={() => onEditTask(task)}
                   type="button"
                 >
                   {task.title}
                 </button>
-                <p className={`mt-2 text-sm ${lightMode ? "text-[#77829f]" : "text-white/55"}`}>
+                <p className={`mt-2 text-sm text-[#77829f] dark:text-white/55`}>
                   {formatTaskMetaLine(task)}
                 </p>
               </div>
-              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#f2edff] text-[#725af6]" : "bg-[#22193f] text-[#cabfff]"}`}>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold bg-[#f2edff] text-[#725af6] dark:bg-[#22193f] dark:text-[#cabfff]`}>
                 {task.priority}
               </span>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              {focusedTaskIds.includes(task.id) ? <TaskMetaChip lightMode={lightMode} tone="purple">Focus Today</TaskMetaChip> : null}
-              <TaskMetaChip lightMode={lightMode} tone={task.energy === "high" ? "blue" : task.energy === "medium" ? "neutral" : "green"}>
+              {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus Today</TaskMetaChip> : null}
+              <TaskMetaChip tone={task.energy === "high" ? "blue" : task.energy === "medium" ? "neutral" : "green"}>
                 {task.energy}
               </TaskMetaChip>
-              {task.is_urgent ? <TaskMetaChip lightMode={lightMode} tone="blue">Urgent</TaskMetaChip> : null}
-              {task.is_important ? <TaskMetaChip lightMode={lightMode} tone="purple">Important</TaskMetaChip> : null}
+              {task.is_urgent ? <TaskMetaChip tone="blue">Urgent</TaskMetaChip> : null}
+              {task.is_important ? <TaskMetaChip tone="purple">Important</TaskMetaChip> : null}
             </div>
-            <TaskSupplementalMeta lightMode={lightMode} nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
+            <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
             <div className="mt-5 grid gap-2 sm:grid-cols-2">
               <button
-                className={`rounded-[1rem] px-4 py-3 text-sm font-bold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                className={`rounded-[1rem] px-4 py-3 text-sm font-bold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
                 onClick={() => onEditTask(task)}
                 type="button"
               >
                 Edit
               </button>
               <button
-                className={`rounded-[1rem] px-4 py-3 text-sm font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+                className={`rounded-[1rem] px-4 py-3 text-sm font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
                 onClick={() => onToggle(task)}
                 type="button"
               >
@@ -7008,13 +6353,11 @@ function TaskCardGallery({
 }
 
 function TaskMatrixView({
-  lightMode,
   onEditTask,
   onToggle,
   subtasksByTaskId,
   tasks,
 }: {
-  lightMode: boolean;
   onEditTask: (task: Task) => void;
   onToggle: (task: Task) => void;
   subtasksByTaskId: Record<string, DbTaskSubtask[]>;
@@ -7046,45 +6389,45 @@ function TaskMatrixView({
   return (
     <section className="mt-7 grid gap-4 lg:grid-cols-2">
       {cells.map((cell) => (
-        <div className={`rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)]" : "border-white/10 bg-white/6"}`} key={cell.key}>
+        <div className={`rounded-[2rem] border p-5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`} key={cell.key}>
           <div className="flex items-center justify-between gap-3">
-            <h2 className={`text-xl font-black ${lightMode ? "text-[#28304a]" : "text-white"}`}>{cell.title}</h2>
-            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#f2edff] text-[#725af6]" : "bg-[#22193f] text-[#cabfff]"}`}>
+            <h2 className={`text-xl font-black text-[#28304a] dark:text-white`}>{cell.title}</h2>
+            <span className={`rounded-full px-3 py-1 text-xs font-semibold bg-[#f2edff] text-[#725af6] dark:bg-[#22193f] dark:text-[#cabfff]`}>
               {cell.tasks.length}
             </span>
           </div>
           <div className="mt-4 space-y-3">
-            {cell.tasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="No tasks in this bucket." /> : null}
+            {cell.tasks.length === 0 ? <EmptyTaskState text="No tasks in this bucket." /> : null}
             {cell.tasks.map((task) => (
               <div
-                className={`flex w-full items-center justify-between gap-3 rounded-[1.2rem] border px-4 py-3 ${lightMode ? "border-[#efeaf9] bg-[#fdfcff]" : "border-white/10 bg-white/[0.04]"}`}
+                className={`flex w-full items-center justify-between gap-3 rounded-[1.2rem] border px-4 py-3 border-[#efeaf9] bg-[#fdfcff] dark:border-white/10 dark:bg-white/[0.04]`}
                 key={task.id}
               >
                 <div className="min-w-0">
                   <button
-                    className={`truncate text-left text-base font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}
+                    className={`truncate text-left text-base font-semibold text-[#27304c] dark:text-white`}
                     onClick={() => onEditTask(task)}
                     type="button"
                   >
                     {task.title}
                   </button>
-                  <p className={`mt-1 text-xs ${lightMode ? "text-[#7d88a1]" : "text-white/55"}`}>{formatTaskMetaLine(task)}</p>
+                  <p className={`mt-1 text-xs text-[#7d88a1] dark:text-white/55`}>{formatTaskMetaLine(task)}</p>
                   {task.one_step_at_a_time && getNextPendingSubtask(task.id, subtasksByTaskId) ? (
-                    <p className={`mt-1 text-xs font-semibold ${lightMode ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>
+                    <p className={`mt-1 text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]`}>
                       Next: {getNextPendingSubtask(task.id, subtasksByTaskId)?.title}
                     </p>
                   ) : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <button
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#f2edff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
                     onClick={() => onEditTask(task)}
                     type="button"
                   >
                     Edit
                   </button>
                   <button
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${lightMode ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"}`}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
                     onClick={() => onToggle(task)}
                     type="button"
                   >
@@ -7102,7 +6445,6 @@ function TaskMatrixView({
 
 function FocusPlannerModal({
   draftIds,
-  lightMode,
   onClose,
   onFinish,
   onSetDraftIds,
@@ -7111,7 +6453,6 @@ function FocusPlannerModal({
   tasks,
 }: {
   draftIds: string[];
-  lightMode: boolean;
   onClose: () => void;
   onFinish: () => void;
   onSetDraftIds: (ids: string[]) => void;
@@ -7136,31 +6477,31 @@ function FocusPlannerModal({
   });
 
   return (
-    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`} label="New task wizard" onClose={onClose}>
+    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="New task wizard" onClose={onClose}>
       <div className="flex items-center justify-between gap-3">
-        <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#7b63f7]" : "text-[#c9bbff]"}`}>Step {step + 1} of 3</p>
-        <button aria-label="Close" className={`text-2xl ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
+        <p className={`text-sm font-black uppercase tracking-[0.18em] text-[#7b63f7] dark:text-[#c9bbff]`}>Step {step + 1} of 3</p>
+        <button aria-label="Close" className={`text-2xl text-[#8e97af] dark:text-white/55`} onClick={onClose} type="button">×</button>
       </div>
-      <h2 className={`mt-4 text-3xl font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{prompts[step]}</h2>
-      <label className={`mt-5 flex items-center gap-3 rounded-[1.3rem] px-4 py-3 ${lightMode ? "bg-[#faf8ff]" : "bg-white/8"}`}>
-        <Search className={`h-5 w-5 ${lightMode ? "text-[#7b63f7]" : "text-[#c9bbff]"}`} />
+      <h2 className={`mt-4 text-3xl font-black text-[#1f2746] dark:text-white`}>{prompts[step]}</h2>
+      <label className={`mt-5 flex items-center gap-3 rounded-[1.3rem] px-4 py-3 bg-[#faf8ff] dark:bg-white/8`}>
+        <Search className={`h-5 w-5 text-[#7b63f7] dark:text-[#c9bbff]`} />
         <input
-          className={`w-full bg-transparent outline-none ${lightMode ? "text-[#24304b] placeholder:text-[#9aa2bb]" : "text-white placeholder:text-white/35"}`}
+          className={`w-full bg-transparent outline-none text-[#24304b] placeholder:text-[#9aa2bb] dark:text-white dark:placeholder:text-white/35`}
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search tasks..."
           value={search}
         />
       </label>
-      <div className={`mt-4 max-h-[24rem] overflow-y-auto rounded-[1.5rem] border ${lightMode ? "border-[#ece8f8] bg-[#fcfbff]" : "border-white/10 bg-white/[0.03]"}`}>
+      <div className={`mt-4 max-h-[24rem] overflow-y-auto rounded-[1.5rem] border border-[#ece8f8] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.03]`}>
         {filtered.length === 0 ? (
           <div className="p-4">
-            <EmptyTaskState lightMode={lightMode} text="No tasks match this step yet." />
+            <EmptyTaskState text="No tasks match this step yet." />
           </div>
         ) : null}
         {filtered.map((task) => {
           const checked = draftIds.includes(task.id);
           return (
-            <label className={`flex cursor-pointer items-center gap-3 border-b px-4 py-4 last:border-b-0 ${lightMode ? "border-[#ece8f8]" : "border-white/10"}`} key={task.id}>
+            <label className={`flex cursor-pointer items-center gap-3 border-b px-4 py-4 last:border-b-0 border-[#ece8f8] dark:border-white/10`} key={task.id}>
               <input
                 checked={checked}
                 className="h-5 w-5 rounded"
@@ -7168,15 +6509,15 @@ function FocusPlannerModal({
                 type="checkbox"
               />
               <div className="min-w-0 flex-1">
-                <p className={`truncate text-lg font-semibold ${lightMode ? "text-[#24304b]" : "text-white"}`}>{task.title}</p>
-                <p className={`mt-1 text-sm ${lightMode ? "text-[#7b84a0]" : "text-white/55"}`}>{formatTaskMetaLine(task)}</p>
+                <p className={`truncate text-lg font-semibold text-[#24304b] dark:text-white`}>{task.title}</p>
+                <p className={`mt-1 text-sm text-[#7b84a0] dark:text-white/55`}>{formatTaskMetaLine(task)}</p>
               </div>
             </label>
           );
         })}
       </div>
       <button
-        className={`mt-5 w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+        className={`mt-5 w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
         onClick={() => {
           if (step === 2) {
             onFinish();
@@ -7194,41 +6535,39 @@ function FocusPlannerModal({
 
 function MomentumTaskModal({
   doneTasks,
-  lightMode,
   onClose,
   remainingTasks,
   title,
 }: {
   doneTasks: Task[];
-  lightMode: boolean;
   onClose: () => void;
   remainingTasks: Task[];
   title: string;
 }) {
   return (
-    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`} label={title} onClose={onClose}>
+    <ModalShell className={`w-full max-w-[42rem] rounded-[2rem] border p-5 border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label={title} onClose={onClose}>
       <div className="flex items-center justify-between gap-3">
-        <h2 className={`text-2xl font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>{title}</h2>
-        <button aria-label="Close" className={`text-2xl ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
+        <h2 className={`text-2xl font-black text-[#1f2746] dark:text-white`}>{title}</h2>
+        <button aria-label="Close" className={`text-2xl text-[#8e97af] dark:text-white/55`} onClick={onClose} type="button">×</button>
       </div>
       <div className="mt-5 grid gap-5 md:grid-cols-2">
         <section>
-          <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#0e9b74]" : "text-[#6ef0c4]"}`}>Finished</p>
+          <p className={`text-sm font-black uppercase tracking-[0.18em] text-[#0e9b74] dark:text-[#6ef0c4]`}>Finished</p>
           <div className="mt-3 space-y-2">
-            {doneTasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="Nothing finished in this group yet." /> : null}
+            {doneTasks.length === 0 ? <EmptyTaskState text="Nothing finished in this group yet." /> : null}
             {doneTasks.map((task) => (
-              <div className={`rounded-[1rem] px-4 py-3 ${lightMode ? "bg-[#edf9f4] text-[#23423a]" : "bg-[#103c33] text-[#d7fff2]"}`} key={task.id}>
+              <div className={`rounded-[1rem] px-4 py-3 bg-[#edf9f4] text-[#23423a] dark:bg-[#103c33] dark:text-[#d7fff2]`} key={task.id}>
                 {task.title}
               </div>
             ))}
           </div>
         </section>
         <section>
-          <p className={`text-sm font-black uppercase tracking-[0.18em] ${lightMode ? "text-[#f05566]" : "text-[#ff9eaf]"}`}>Remaining</p>
+          <p className={`text-sm font-black uppercase tracking-[0.18em] text-[#f05566] dark:text-[#ff9eaf]`}>Remaining</p>
           <div className="mt-3 space-y-2">
-            {remainingTasks.length === 0 ? <EmptyTaskState lightMode={lightMode} text="Everything in this group is finished." /> : null}
+            {remainingTasks.length === 0 ? <EmptyTaskState text="Everything in this group is finished." /> : null}
             {remainingTasks.map((task) => (
-              <div className={`rounded-[1rem] px-4 py-3 ${lightMode ? "bg-[#fff4f6] text-[#7c3042]" : "bg-[#44232f] text-[#ffd5dc]"}`} key={task.id}>
+              <div className={`rounded-[1rem] px-4 py-3 bg-[#fff4f6] text-[#7c3042] dark:bg-[#44232f] dark:text-[#ffd5dc]`} key={task.id}>
                 {task.title}
               </div>
             ))}
@@ -7240,12 +6579,10 @@ function MomentumTaskModal({
 }
 
 function TaskHistoryModal({
-  lightMode,
   onClose,
   taskHistory,
   taskTitle,
 }: {
-  lightMode: boolean;
   onClose: () => void;
   taskHistory: DbTaskHistory[];
   taskTitle: string;
@@ -7265,21 +6602,21 @@ function TaskHistoryModal({
   const completedCount = taskHistory.filter((h) => h.was_completed).length;
 
   function cellColor(dateKey: string) {
-    if (dateKey > today) return lightMode ? "bg-transparent" : "bg-transparent";
+    if (dateKey > today) return "bg-transparent";
     const entry = historyByDate.get(dateKey);
-    if (!entry) return lightMode ? "bg-[#ece8f8]" : "bg-white/8";
-    if (entry.was_completed) return lightMode ? "bg-[#6f57f6]" : "bg-[#8b70ff]";
-    return lightMode ? "bg-[#fbd0d5]" : "bg-[#5a2030]";
+    if (!entry) return "bg-[#ece8f8] dark:bg-white/8";
+    if (entry.was_completed) return "bg-[#6f57f6] dark:bg-[#8b70ff]";
+    return "bg-[#fbd0d5] dark:bg-[#5a2030]";
   }
 
   return (
-    <ModalShell className={`w-full max-w-lg rounded-[2rem] border p-5 ${lightMode ? "border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)]" : "border-white/10 bg-[#171328]"}`} label="Task history" onClose={onClose}>
+    <ModalShell className={`w-full max-w-lg rounded-[2rem] border p-5 border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="Task history" onClose={onClose}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h2 className={`text-lg font-black ${lightMode ? "text-[#1f2746]" : "text-white"}`}>History</h2>
-          <p className={`mt-0.5 text-sm ${lightMode ? "text-[#7d88a1]" : "text-white/50"}`}>{taskTitle}</p>
+          <h2 className={`text-lg font-black text-[#1f2746] dark:text-white`}>History</h2>
+          <p className={`mt-0.5 text-sm text-[#7d88a1] dark:text-white/50`}>{taskTitle}</p>
         </div>
-        <button className={`text-2xl leading-none ${lightMode ? "text-[#8e97af]" : "text-white/55"}`} onClick={onClose} type="button">×</button>
+        <button className={`text-2xl leading-none text-[#8e97af] dark:text-white/55`} onClick={onClose} type="button">×</button>
       </div>
 
       {/* 12-week heatmap */}
@@ -7301,15 +6638,15 @@ function TaskHistoryModal({
       <div className="mt-4 flex items-center justify-between text-xs">
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1">
-            <span className={`inline-block h-3 w-3 rounded-sm ${lightMode ? "bg-[#6f57f6]" : "bg-[#8b70ff]"}`} />
-            <span className={lightMode ? "text-[#7d88a1]" : "text-white/50"}>Done</span>
+            <span className={`inline-block h-3 w-3 rounded-sm bg-[#6f57f6] dark:bg-[#8b70ff]`} />
+            <span className="text-[#7d88a1] dark:text-white/50">Done</span>
           </span>
           <span className="flex items-center gap-1">
-            <span className={`inline-block h-3 w-3 rounded-sm ${lightMode ? "bg-[#fbd0d5]" : "bg-[#5a2030]"}`} />
-            <span className={lightMode ? "text-[#7d88a1]" : "text-white/50"}>Missed</span>
+            <span className={`inline-block h-3 w-3 rounded-sm bg-[#fbd0d5] dark:bg-[#5a2030]`} />
+            <span className="text-[#7d88a1] dark:text-white/50">Missed</span>
           </span>
         </div>
-        <span className={lightMode ? "text-[#7d88a1]" : "text-white/50"}>
+        <span className="text-[#7d88a1] dark:text-white/50">
           {completedCount} completed in last 12 weeks
         </span>
       </div>
@@ -7319,11 +6656,9 @@ function TaskHistoryModal({
 
 function BottomDock({
   activePage,
-  lightMode,
   onNavigate,
 }: {
   activePage: AppPage;
-  lightMode: boolean;
   onNavigate: (page: AppPage) => void;
 }) {
   type DockPlacement = "bottom" | "left" | "right";
@@ -7517,7 +6852,7 @@ function BottomDock({
       >
         <button
           aria-label="Open navigation"
-          className={`flex h-16 w-16 items-center justify-center rounded-full border shadow-[0_16px_36px_rgba(60,44,140,0.22)] transition-all duration-300 ${isDragReady ? "scale-110 ring-4 ring-[#6f57f6]/40" : "hover:scale-105"} ${isBubbleWhooshing ? "duration-500 ease-out" : ""} ${lightMode ? "border-[#ece8f8] bg-white/95 text-[#6f57f6]" : "border-white/10 bg-[#171328]/95 text-[#cabfff]"}`}
+          className={`flex h-16 w-16 items-center justify-center rounded-full border shadow-[0_16px_36px_rgba(60,44,140,0.22)] transition-all duration-300 ${isDragReady ? "scale-110 ring-4 ring-[#6f57f6]/40" : "hover:scale-105"} ${isBubbleWhooshing ? "duration-500 ease-out" : ""} border-[#ece8f8] bg-white/95 text-[#6f57f6] dark:border-white/10 dark:bg-[#171328]/95 dark:text-[#cabfff]`}
           onPointerDown={startBubbleDrag}
           style={{ WebkitUserDrag: "none", touchAction: "none" } as React.CSSProperties}
           type="button"
@@ -7549,19 +6884,15 @@ function BottomDock({
   return (
     <div className={`${dockPositionClass} select-none`} style={{ userSelect: "none", WebkitUserSelect: "none", ...dockPositionStyle }}>
       <div
-        className={`relative ${isDockCollapsing ? "overflow-hidden" : "overflow-visible"} border shadow-[0_25px_45px_rgba(60,44,140,0.18)] transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${dockShapeClass} ${lightMode ? "border-[#ece8f8] bg-white/92 backdrop-blur" : "border-white/10 bg-[#171328]/92 backdrop-blur"}`}
+        className={`relative ${isDockCollapsing ? "overflow-hidden" : "overflow-visible"} border shadow-[0_25px_45px_rgba(60,44,140,0.18)] transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${dockShapeClass} border-[#ece8f8] bg-white/92 backdrop-blur dark:border-white/10 dark:bg-[#171328]/92 dark:backdrop-blur`}
         style={collapsingStyle}
       >
         {dockItems.map((item) => (
           <button
             className={`flex ${isVertical ? "w-full" : "min-w-[3rem] shrink-0"} flex-col items-center justify-center rounded-[1.2rem] px-2 py-2.5 transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
               activePage === item
-                ? lightMode
-                  ? "text-[#6f57f6]"
-                  : "text-[#cabfff]"
-                : lightMode
-                  ? "text-[#8d94ac]"
-                  : "text-white/50"
+                ? "text-[#6f57f6] dark:text-[#cabfff]"
+                : "text-[#8d94ac] dark:text-white/50"
             }`}
             key={item}
             onClick={() => onNavigate(item)}
@@ -7572,7 +6903,7 @@ function BottomDock({
         ))}
         <button
           aria-label="Collapse navigation"
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition duration-300 hover:scale-105 ${isVertical ? "" : "ml-1"} ${isDockCollapsing ? "scale-90 rounded-full" : ""} ${lightMode ? "bg-[#f1ecff] text-[#6f57f6]" : "bg-[#2a214f] text-[#cabfff]"}`}
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition duration-300 hover:scale-105 ${isVertical ? "" : "ml-1"} ${isDockCollapsing ? "scale-90 rounded-full" : ""} bg-[#f1ecff] text-[#6f57f6] dark:bg-[#2a214f] dark:text-[#cabfff]`}
           onClick={() => {
             if (!longPressTriggeredRef.current) {
               collapseDock();
@@ -7609,11 +6940,11 @@ function BottomDock({
         </button>
         {showPlacementMenu && placementMenuPos ? (
           <div
-            className={`fixed z-30 w-44 rounded-2xl border p-2 shadow-xl ${lightMode ? "border-[#ece8f8] bg-white text-[#1f2746]" : "border-white/10 bg-[#1b1730] text-white"}`}
+            className={`fixed z-30 w-44 rounded-2xl border p-2 shadow-xl border-[#ece8f8] bg-white text-[#1f2746] dark:border-white/10 dark:bg-[#1b1730] dark:text-white`}
             ref={placementMenuRef}
             style={{ left: placementMenuPos.left, top: placementMenuPos.top }}
           >
-            <p className={`px-2 pb-1 text-[10px] font-bold uppercase tracking-[0.16em] ${lightMode ? "text-[#8d87a7]" : "text-white/45"}`}>
+            <p className={`px-2 pb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/45`}>
               Dock Position
             </p>
             {([
@@ -7622,7 +6953,7 @@ function BottomDock({
               { id: "right", label: "Right Vertical" },
             ] as Array<{ id: DockPlacement; label: string }>).map((option) => (
               <button
-                className={`w-full rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${dockPlacement === option.id ? lightMode ? "bg-[#f1ecff] text-[#6f57f6]" : "bg-[#2a214f] text-[#cabfff]" : lightMode ? "hover:bg-[#f7f5ff]" : "hover:bg-white/10"}`}
+                className={`w-full rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${dockPlacement === option.id ? "bg-[#f1ecff] text-[#6f57f6] dark:bg-[#2a214f] dark:text-[#cabfff]" : "hover:bg-[#f7f5ff] dark:hover:bg-white/10"}`}
                 key={option.id}
                 onClick={() => {
                   setDockPlacement(option.id);
@@ -7710,16 +7041,6 @@ function saveProfile(profile: UserProfile) {
   window.dispatchEvent(new Event(PROFILE_STORAGE_KEY));
 }
 
-function saveFocusCategories(categories: FocusCategory[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(FOCUS_CATEGORIES_STORAGE_KEY, JSON.stringify(categories));
-}
-
-function saveFocusHistory(history: HistoricalFocusSession[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(FOCUS_HISTORY_STORAGE_KEY, JSON.stringify(history));
-}
-
 function profilesEqual(a: UserProfile, b: UserProfile) {
   return (
     a.avatarSrc === b.avatarSrc &&
@@ -7732,14 +7053,12 @@ function profilesEqual(a: UserProfile, b: UserProfile) {
 
 function LabeledInput({
   label,
-  lightMode,
   onChange,
   placeholder,
   type = "text",
   value,
 }: {
   label: string;
-  lightMode: boolean;
   onChange: (value: string) => void;
   placeholder?: string;
   type?: "date" | "email" | "number" | "text" | "time";
@@ -7747,9 +7066,9 @@ function LabeledInput({
 }) {
   return (
     <label className="grid gap-2">
-      <span className={`text-sm font-semibold ${lightMode ? "text-[#5f6983]" : "text-white/65"}`}>{label}</span>
+      <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>{label}</span>
       <input
-        className={`h-12 rounded-[1rem] px-4 text-base outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+        className={`h-12 rounded-[1rem] px-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         type={type}
@@ -7762,17 +7081,15 @@ function LabeledInput({
 function ToggleField({
   checked,
   label,
-  lightMode,
   onChange,
 }: {
   checked: boolean;
   label: string;
-  lightMode: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className={`flex items-center justify-between gap-3 rounded-[1rem] px-4 py-3 ${lightMode ? "bg-[#f7f5ff]" : "bg-white/8"}`}>
-      <span className={`text-sm font-semibold ${lightMode ? "text-[#27304c]" : "text-white"}`}>{label}</span>
+    <label className={`flex items-center justify-between gap-3 rounded-[1rem] px-4 py-3 bg-[#f7f5ff] dark:bg-white/8`}>
+      <span className={`text-sm font-semibold text-[#27304c] dark:text-white`}>{label}</span>
       <input
         checked={checked}
         className="h-5 w-5 rounded"
@@ -7784,13 +7101,11 @@ function ToggleField({
 }
 
 function Select<T extends string>({
-  lightMode,
   label,
   value,
   options,
   onChange,
 }: {
-  lightMode: boolean;
   label: string;
   value: T;
   options: T[];
@@ -7800,7 +7115,7 @@ function Select<T extends string>({
     <label>
       <span className="sr-only">{label}</span>
       <select
-        className={`h-14 w-full rounded-[1.25rem] px-4 text-lg capitalize outline-none ${lightMode ? "bg-[#f7f5ff] text-[#1f2642]" : "bg-white/8 text-white"}`}
+        className={`h-14 w-full rounded-[1.25rem] px-4 text-lg capitalize outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
         onChange={(event) => onChange(event.target.value as T)}
         value={value}
       >
@@ -7823,114 +7138,6 @@ function taskChecklist(title: string) {
     label,
     done: index < Math.max(0, Math.floor(base.length / 2) - 1),
   }));
-}
-
-function mapFocusCategoryRow(row: DbFocusCategory): FocusCategory {
-  return {
-    id: row.id,
-    title: row.title,
-    focusType: row.focus_type,
-    focusSubtype: row.focus_subtype,
-    focusSubtype2: row.focus_subtype_2,
-    color: row.color,
-    icon: row.icon,
-    dailyGoalSeconds: row.daily_goal_seconds,
-    weeklyGoalSeconds: row.weekly_goal_seconds,
-  };
-}
-
-function mapActiveSessions(
-  rows: Array<{
-    category_id: string;
-    start_time: string | null;
-    accumulated_seconds: number;
-    is_running: boolean;
-  }>,
-) {
-  return rows.reduce<Record<string, ActiveFocusSession>>((accumulator, row) => {
-    accumulator[row.category_id] = {
-      categoryId: row.category_id,
-      startTime: row.start_time ? Date.parse(row.start_time) : null,
-      accumulatedSeconds: row.accumulated_seconds,
-      isRunning: row.is_running,
-    };
-    return accumulator;
-  }, {});
-}
-
-function mapFocusSessionRow(row: {
-    id: string;
-    category_id: string | null;
-    title_snapshot: string;
-    focus_type_snapshot: FocusType;
-    focus_subtype_snapshot?: FocusSubtype | null;
-    focus_subtype_2_snapshot?: FocusSubtype | null;
-    session_date: string;
-    duration_seconds: number;
-    notes: string | null;
-    created_at?: string;
-}) {
-  return {
-    id: row.id,
-    categoryId: row.category_id,
-    title: row.title_snapshot,
-    date: row.session_date,
-    durationSeconds: row.duration_seconds,
-    focusType: row.focus_type_snapshot,
-    focusSubtype: row.focus_subtype_snapshot ?? undefined,
-    focusSubtype2: row.focus_subtype_2_snapshot ?? undefined,
-    notes: row.notes ?? undefined,
-    createdAt: row.created_at,
-  };
-}
-
-function mergeStoredFocusCategories(categories: FocusCategory[]) {
-  const storedCategories = parseStoredJson<FocusCategory[]>(FOCUS_CATEGORIES_STORAGE_KEY, []);
-  if (storedCategories.length === 0) {
-    return categories;
-  }
-
-  const storedById = new Map(storedCategories.map((category) => [category.id, category]));
-  const storedByTitle = new Map(storedCategories.map((category) => [normalizeCategoryTitle(category.title), category]));
-
-  return categories.map((category) => {
-    const storedCategory = storedById.get(category.id) ?? storedByTitle.get(normalizeCategoryTitle(category.title));
-    if (!storedCategory) {
-      return category;
-    }
-
-    return {
-      ...category,
-      title: preferStoredValue(storedCategory.title, category.title),
-      focusType: preferStoredValue(storedCategory.focusType, category.focusType),
-      focusSubtype: preferStoredOptionalValue(storedCategory.focusSubtype, category.focusSubtype),
-      focusSubtype2: preferStoredOptionalValue(storedCategory.focusSubtype2, category.focusSubtype2),
-    };
-  });
-}
-
-function mergeStoredFocusHistory(history: HistoricalFocusSession[]) {
-  const storedHistory = parseStoredJson<HistoricalFocusSession[]>(FOCUS_HISTORY_STORAGE_KEY, []);
-  if (storedHistory.length === 0) {
-    return history;
-  }
-
-  const storedById = new Map(storedHistory.map((entry) => [entry.id, entry]));
-
-  return history.map((entry) => {
-    const storedEntry = storedById.get(entry.id);
-    if (!storedEntry) {
-      return entry;
-    }
-
-    return {
-      ...entry,
-      title: preferStoredValue(storedEntry.title, entry.title),
-      focusType: preferStoredValue(storedEntry.focusType, entry.focusType),
-      focusSubtype: preferStoredOptionalValue(storedEntry.focusSubtype, entry.focusSubtype),
-      focusSubtype2: preferStoredOptionalValue(storedEntry.focusSubtype2, entry.focusSubtype2),
-    };
-  });
 }
 
 function getDefaultFocusCategories(userId: string) {
@@ -8645,17 +7852,6 @@ function sanitizeOptionalFocusLabel(value: string | null | undefined) {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function formatLocalDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function todayISO() {
-  return formatLocalDate(new Date());
 }
 
 function daysUntil(date: string | null) {

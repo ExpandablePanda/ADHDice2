@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { todayISO } from "@/lib/utils";
 import type {
   Task,
   TaskEnergy,
   TaskInsert,
   TaskPriority,
+  TaskStatus,
   TaskUpdate,
 } from "@/lib/database.types";
 
@@ -107,7 +109,7 @@ export function TaskApp() {
     text: "Demo mode: 60 premade tasks are loaded locally. Nothing is saved to Supabase.",
   });
 
-  const activeTasks = tasks.filter((task) => task.status === "active");
+  const activeTasks = tasks.filter((task) => task.status === "pending" || task.status === "in_progress");
   const doneTasks = tasks.filter((task) => task.status === "done");
   const todayTasks = activeTasks.filter((task) => isDueToday(task.due_on));
   const overdueTasks = activeTasks.filter((task) => isOverdue(task.due_on));
@@ -123,10 +125,23 @@ export function TaskApp() {
       user_id: "demo-user",
       title: task.title,
       notes: task.notes ?? null,
-      status: task.status ?? "active",
+      status: task.status ?? "pending",
       priority: task.priority ?? "normal",
       energy: task.energy ?? "medium",
+      is_urgent: false,
+      is_important: false,
       due_on: task.due_on ?? null,
+      due_time: null,
+      estimated_minutes: null,
+      tags: [],
+      external_link_label: null,
+      external_link_url: null,
+      one_step_at_a_time: false,
+      subtasks_auto_reset: false,
+      repeat_frequency: "none",
+      repeat_interval: 1,
+      repeat_days_of_week: [],
+      repeat_day_of_month: null,
       sort_order: Date.now(),
       completed_at: null,
       created_at: now,
@@ -140,15 +155,28 @@ export function TaskApp() {
     if (lines.length === 0) return;
 
     const now = new Date().toISOString();
-    const imported = lines.map((title, index) => ({
+    const imported: Task[] = lines.map((title, index) => ({
       id: `demo-import-${Date.now()}-${index}`,
       user_id: "demo-user",
       title,
       notes: "Imported from the planning assistant.",
-      status: "active" as const,
+      status: "pending" as const,
       priority: priorityOptions[index % priorityOptions.length],
       energy: energyOptions[index % energyOptions.length],
+      is_urgent: false,
+      is_important: false,
       due_on: addDaysISO(index % 8),
+      due_time: null,
+      estimated_minutes: null,
+      tags: [],
+      external_link_label: null,
+      external_link_url: null,
+      one_step_at_a_time: false,
+      subtasks_auto_reset: false,
+      repeat_frequency: "none",
+      repeat_interval: 1,
+      repeat_days_of_week: [],
+      repeat_day_of_month: null,
       sort_order: Date.now() + index,
       completed_at: null,
       created_at: now,
@@ -1071,7 +1099,7 @@ function createDemoTasks(): Task[] {
   ];
 
   return demoTaskTitles.map((title, index) => {
-    const status = index % 5 === 0 ? "done" : "active";
+    const status: TaskStatus = index % 5 === 0 ? "done" : "pending";
     const completedAt = status === "done" ? addDaysISO(-Math.max(0, index % 4)) : null;
     const createdAt = new Date(now.getTime() - index * 3_600_000).toISOString();
     const offset = dateOffsets[index % dateOffsets.length];
@@ -1084,17 +1112,26 @@ function createDemoTasks(): Task[] {
       status,
       priority: priorities[index % priorities.length],
       energy: energies[index % energies.length],
+      is_urgent: false,
+      is_important: false,
       due_on: typeof offset === "number" ? addDaysISO(offset) : null,
+      due_time: null,
+      estimated_minutes: null,
+      tags: [],
+      external_link_label: null,
+      external_link_url: null,
+      one_step_at_a_time: false,
+      subtasks_auto_reset: false,
+      repeat_frequency: "none" as const,
+      repeat_interval: 1,
+      repeat_days_of_week: [],
+      repeat_day_of_month: null,
       sort_order: index + 1,
       completed_at: completedAt,
       created_at: createdAt,
       updated_at: createdAt,
     };
   });
-}
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function addDaysISO(days: number) {

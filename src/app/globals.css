@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Enable dark: utility classes when an ancestor has data-theme="dark" */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
 :root {
   --background: #ffffff;
   --foreground: #182033;
@@ -47,6 +50,48 @@
   --shadow-card-hover: 0 24px 60px rgba(81, 61, 168, 0.1);
   --shadow-modal: 0 32px 64px rgba(81, 61, 168, 0.14);
   --quiet-blue: #7e86a0;
+}
+
+/* Dark theme — override every token so dark: utility classes can be eliminated over time */
+[data-theme="dark"] {
+  --background: #0d0c17;
+  --foreground: #ffffff;
+
+  --surface: #141124;
+  --surface-muted: rgba(255,255,255,0.05);
+  --surface-elevated: rgba(255,255,255,0.08);
+  --border-soft: rgba(255,255,255,0.10);
+
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255,255,255,0.70);
+  --text-muted: rgba(255,255,255,0.35);
+
+  --accent: #cabfff;
+  --accent-strong: #9b87ff;
+  --accent-soft: rgba(202,191,255,0.12);
+  --success: #7de4b8;
+  --success-soft: rgba(125,228,184,0.10);
+  --warning: #ffb06e;
+  --warning-soft: rgba(255,176,110,0.10);
+  --danger: #ff9fbc;
+  --danger-soft: rgba(255,159,188,0.10);
+
+  --shadow-card: 0 18px 50px rgba(0,0,0,0.30);
+  --shadow-card-hover: 0 24px 60px rgba(0,0,0,0.40);
+  --shadow-modal: 0 32px 64px rgba(0,0,0,0.50);
+}
+
+/* Low Stimulation mode — desaturate + silence animations, stacks on top of light or dark */
+[data-lowstim] {
+  filter: saturate(0.45) brightness(1.02);
+}
+
+[data-lowstim] *,
+[data-lowstim] *::before,
+[data-lowstim] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
 
 @theme inline {

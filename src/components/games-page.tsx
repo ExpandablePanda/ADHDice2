@@ -3,20 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import type { TaskHistory as DbTaskHistory } from "@/lib/database.types";
+import { todayISO, playSound } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type ActiveGame = null | "breather" | "match";
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function playSound(src: string) {
-  new Audio(src).play().catch(() => {});
-}
 
 // ─── Focus Breather (4-4-4 box breathing) ────────────────────────────────────
 
@@ -31,7 +22,7 @@ const BREATH_LABELS: Record<BreathPhase, string> = {
 const PHASE_ORDER: BreathPhase[] = ["inhale", "hold", "exhale"];
 const PHASE_DURATION = 4000; // ms per phase
 
-function FocusBreather({ lightMode, onClose }: { lightMode: boolean; onClose: () => void }) {
+function FocusBreather({ onClose }: { onClose: () => void }) {
   const [phase, setPhase] = useState<BreathPhase>("inhale");
   const [progress, setProgress] = useState(0); // 0–1 within phase
   const [cycleCount, setCycleCount] = useState(0);
@@ -67,18 +58,17 @@ function FocusBreather({ lightMode, onClose }: { lightMode: boolean; onClose: ()
     ? 1.0
     : 1.0 - progress * 0.4;
 
-  const lm = lightMode;
-  const ringColor = lm ? "#6f57f6" : "#9b87ff";
-  const bgColor = lm ? "#f0ecff" : "#130e24";
+  const ringColor = "#6f57f6";
+  const bgColor = "#f0ecff";
 
   return (
     <div className="flex flex-col items-center justify-center px-6 py-8" style={{ background: bgColor, minHeight: 340, borderRadius: "1.5rem" }}>
       <div className="flex items-center justify-between w-full mb-6">
-        <p className={`text-xs font-semibold uppercase tracking-widest ${lm ? "text-[#8e88a9]" : "text-white/40"}`}>
+        <p className={`text-xs font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>
           {cycleCount > 0 ? `${cycleCount} cycle${cycleCount > 1 ? "s" : ""}` : "Breathe"}
         </p>
-        <button aria-label="Close" type="button" onClick={onClose} className={`rounded-full p-3 ${lm ? "bg-white/60" : "bg-white/10"}`}>
-          <X className={`h-4 w-4 ${lm ? "text-[#8e88a9]" : "text-white/40"}`} />
+        <button aria-label="Close" type="button" onClick={onClose} className={`rounded-full p-3 bg-white/60 dark:bg-white/10`}>
+          <X className={`h-4 w-4 text-[#8e88a9] dark:text-white/40`} />
         </button>
       </div>
 
@@ -103,7 +93,7 @@ function FocusBreather({ lightMode, onClose }: { lightMode: boolean; onClose: ()
             background: `radial-gradient(circle, ${ringColor}55 0%, ${ringColor}22 100%)`,
           }}
         />
-        <p className={`relative text-lg font-bold z-10 ${lm ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>
+        <p className={`relative text-lg font-bold z-10 text-[#6f57f6] dark:text-[#cabfff]`}>
           {BREATH_LABELS[phase]}
         </p>
       </div>
@@ -119,7 +109,7 @@ function FocusBreather({ lightMode, onClose }: { lightMode: boolean; onClose: ()
         ))}
       </div>
 
-      <p className={`mt-4 text-xs ${lm ? "text-[#8e88a9]" : "text-white/40"}`}>
+      <p className={`mt-4 text-xs text-[#8e88a9] dark:text-white/40`}>
         4 seconds each phase · free · no credits
       </p>
     </div>
@@ -140,13 +130,11 @@ type MatchCard = {
 type MatchPhase = "idle" | "playing" | "won" | "no-credits";
 
 function DopamineMatch({
-  lightMode,
   playCredits,
   onClose,
   onWin,
   onSpendCredit,
 }: {
-  lightMode: boolean;
   playCredits: number;
   onClose: () => void;
   onWin: () => void;
@@ -216,31 +204,29 @@ function DopamineMatch({
     }
   }
 
-  const lm = lightMode;
-  const cardBg = lm ? "#f7f5ff" : "#1e1640";
-  const cardFace = lm ? "#6f57f6" : "#9b87ff";
+  const cardFace = "#6f57f6";
 
   if (matchPhase === "idle" || matchPhase === "no-credits") {
     return (
-      <div className={`flex flex-col items-center px-6 py-8 rounded-[1.5rem] ${lm ? "bg-[#f0ecff]" : "bg-[#130e24]"}`}>
+      <div className={`flex flex-col items-center px-6 py-8 rounded-[1.5rem] bg-[#f0ecff] dark:bg-[#130e24]`}>
         <div className="flex items-center justify-between w-full mb-4">
-          <p className={`text-xs font-semibold uppercase tracking-widest ${lm ? "text-[#8e88a9]" : "text-white/40"}`}>Dopamine Match</p>
-          <button aria-label="Close" type="button" onClick={onClose} className={`rounded-full p-3 ${lm ? "bg-white/60" : "bg-white/10"}`}>
-            <X className={`h-4 w-4 ${lm ? "text-[#8e88a9]" : "text-white/40"}`} />
+          <p className={`text-xs font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Dopamine Match</p>
+          <button aria-label="Close" type="button" onClick={onClose} className={`rounded-full p-3 bg-white/60 dark:bg-white/10`}>
+            <X className={`h-4 w-4 text-[#8e88a9] dark:text-white/40`} />
           </button>
         </div>
         <p className="text-4xl mb-3">🧠</p>
-        <p className={`text-sm mb-1 ${lm ? "text-[#27304c]" : "text-white/80"}`}>Match all 8 pairs to win</p>
-        <p className={`text-xs mb-6 ${lm ? "text-[#8e88a9]" : "text-white/40"}`}>Costs 1 play credit · Win = 5 XP</p>
+        <p className={`text-sm mb-1 text-[#27304c] dark:text-white/80`}>Match all 8 pairs to win</p>
+        <p className={`text-xs mb-6 text-[#8e88a9] dark:text-white/40`}>Costs 1 play credit · Win = 5 XP</p>
         {matchPhase === "no-credits" && (
-          <p className={`mb-4 text-xs font-semibold ${lm ? "text-red-500" : "text-red-400"}`}>No play credits — complete tasks to earn more</p>
+          <p className={`mb-4 text-xs font-semibold text-red-500 dark:text-red-400`}>No play credits — complete tasks to earn more</p>
         )}
-        <p className={`mb-6 text-sm font-bold ${lm ? "text-[#6f57f6]" : "text-[#cabfff]"}`}>{playCredits} credit{playCredits !== 1 ? "s" : ""} available</p>
+        <p className={`mb-6 text-sm font-bold text-[#6f57f6] dark:text-[#cabfff]`}>{playCredits} credit{playCredits !== 1 ? "s" : ""} available</p>
         <button
           type="button"
           disabled={playCredits < 1}
           onClick={startGame}
-          className={`w-full rounded-2xl py-3 text-sm font-black disabled:opacity-40 ${lm ? "bg-[#6f57f6] text-white" : "bg-[#9b87ff] text-[#171127]"}`}
+          className={`w-full rounded-2xl py-3 text-sm font-black disabled:opacity-40 bg-[#6f57f6] text-white dark:bg-[#9b87ff] dark:text-[#171127]`}
         >
           Play — 1 credit
         </button>
@@ -250,23 +236,23 @@ function DopamineMatch({
 
   if (matchPhase === "won") {
     return (
-      <div className={`flex flex-col items-center px-6 py-10 rounded-[1.5rem] ${lm ? "bg-[#f0ecff]" : "bg-[#130e24]"}`}>
+      <div className={`flex flex-col items-center px-6 py-10 rounded-[1.5rem] bg-[#f0ecff] dark:bg-[#130e24]`}>
         <p className="text-5xl mb-3">🎉</p>
-        <p className={`text-lg font-black mb-1 ${lm ? "text-[#17203a]" : "text-white"}`}>You matched them all!</p>
-        <p className={`text-sm mb-6 ${lm ? "text-[#8e88a9]" : "text-white/40"}`}>{moves} moves · +5 XP earned</p>
+        <p className={`text-lg font-black mb-1 text-[#17203a] dark:text-white`}>You matched them all!</p>
+        <p className={`text-sm mb-6 text-[#8e88a9] dark:text-white/40`}>{moves} moves · +5 XP earned</p>
         <div className="flex gap-3 w-full">
           <button
             type="button"
             onClick={startGame}
             disabled={playCredits < 1}
-            className={`flex-1 rounded-2xl py-3 text-sm font-black disabled:opacity-40 ${lm ? "bg-[#6f57f6] text-white" : "bg-[#9b87ff] text-[#171127]"}`}
+            className={`flex-1 rounded-2xl py-3 text-sm font-black disabled:opacity-40 bg-[#6f57f6] text-white dark:bg-[#9b87ff] dark:text-[#171127]`}
           >
             Play again
           </button>
           <button
             type="button"
             onClick={onClose}
-            className={`flex-1 rounded-2xl py-3 text-sm font-bold ${lm ? "bg-[#e5e0f5] text-[#6f57f6]" : "bg-white/10 text-white/70"}`}
+            className={`flex-1 rounded-2xl py-3 text-sm font-bold bg-[#e5e0f5] text-[#6f57f6] dark:bg-white/10 dark:text-white/70`}
           >
             Done
           </button>
@@ -276,12 +262,12 @@ function DopamineMatch({
   }
 
   return (
-    <div className={`px-4 py-5 rounded-[1.5rem] ${lm ? "bg-[#f0ecff]" : "bg-[#130e24]"}`}>
+    <div className={`px-4 py-5 rounded-[1.5rem] bg-[#f0ecff] dark:bg-[#130e24]`}>
       <div className="flex items-center justify-between mb-4">
-        <p className={`text-xs font-semibold ${lm ? "text-[#8e88a9]" : "text-white/40"}`}>{moves} moves</p>
-        <p className={`text-xs font-semibold uppercase tracking-widest ${lm ? "text-[#8e88a9]" : "text-white/40"}`}>Dopamine Match</p>
-        <button aria-label="Close" type="button" onClick={onClose} className={`rounded-full p-3 ${lm ? "bg-white/60" : "bg-white/10"}`}>
-          <X className={`h-4 w-4 ${lm ? "text-[#8e88a9]" : "text-white/40"}`} />
+        <p className={`text-xs font-semibold text-[#8e88a9] dark:text-white/40`}>{moves} moves</p>
+        <p className={`text-xs font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Dopamine Match</p>
+        <button aria-label="Close" type="button" onClick={onClose} className={`rounded-full p-3 bg-white/60 dark:bg-white/10`}>
+          <X className={`h-4 w-4 text-[#8e88a9] dark:text-white/40`} />
         </button>
       </div>
       <div className="grid grid-cols-4 gap-2">
@@ -293,9 +279,9 @@ function DopamineMatch({
             className={`flex h-16 items-center justify-center rounded-xl text-2xl transition-all active:scale-95 ${
               card.flipped || card.matched
                 ? card.matched
-                  ? lm ? "bg-[#ede8ff] shadow-[0_0_12px_rgba(111,87,246,0.2)]" : "bg-[#22193f]"
-                  : lm ? "bg-white shadow-sm" : "bg-white/15"
-                : lm ? "bg-[#d8d0f8]" : "bg-[#2a1f52]"
+                  ? "bg-[#ede8ff] shadow-[0_0_12px_rgba(111,87,246,0.2)] dark:bg-[#22193f]"
+                  : "bg-white shadow-sm dark:bg-white/15"
+                : "bg-[#d8d0f8] dark:bg-[#2a1f52]"
             }`}
             style={{ color: cardFace }}
           >
@@ -310,11 +296,9 @@ function DopamineMatch({
 // ─── Games Hub ────────────────────────────────────────────────────────────────
 
 export function GamesPage({
-  lightMode,
   taskHistory,
   onAwardXP,
 }: {
-  lightMode: boolean;
   taskHistory: DbTaskHistory[];
   onAwardXP: (xp: number, reason: string) => void;
 }) {
@@ -332,16 +316,10 @@ export function GamesPage({
     setPlayCredits(todayCredits);
   }, [todayCredits]);
 
-  const lm = lightMode;
-  const cardBg = lm ? "bg-[#f7f5ff]" : "bg-white/5";
-  const labelColor = lm ? "text-[#8e88a9]" : "text-white/40";
-  const headingColor = lm ? "text-[#17203a]" : "text-white";
-  const dimText = lm ? "text-[#27304c]" : "text-white/70";
-
   if (activeGame === "breather") {
     return (
       <section className="px-4 pb-32 pt-4">
-        <FocusBreather lightMode={lightMode} onClose={() => setActiveGame(null)} />
+        <FocusBreather onClose={() => setActiveGame(null)} />
       </section>
     );
   }
@@ -350,7 +328,6 @@ export function GamesPage({
     return (
       <section className="px-4 pb-32 pt-4">
         <DopamineMatch
-          lightMode={lightMode}
           playCredits={playCredits}
           onClose={() => setActiveGame(null)}
           onWin={() => onAwardXP(5, "Dopamine Match win")}
@@ -399,19 +376,19 @@ export function GamesPage({
     <section className="px-4 pb-32">
       {/* Header */}
       <div className="pt-6 pb-4">
-        <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${labelColor}`}>Games</p>
-        <h1 className={`mt-1 text-3xl font-black tracking-tight ${headingColor}`}>Recharge Hub</h1>
+        <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8e88a9] dark:text-white/40`}>Games</p>
+        <h1 className={`mt-1 text-3xl font-black tracking-tight text-[#17203a] dark:text-white`}>Recharge Hub</h1>
       </div>
 
       {/* Play credits */}
-      <div className={`mb-6 flex items-center gap-4 rounded-2xl px-5 py-4 ${cardBg}`}>
-        <div className={`flex h-12 w-12 items-center justify-center rounded-xl text-2xl ${lm ? "bg-[#ede8ff]" : "bg-[#22193f]"}`}>
+      <div className={`mb-6 flex items-center gap-4 rounded-2xl px-5 py-4 bg-[#f7f5ff] dark:bg-white/5`}>
+        <div className={`flex h-12 w-12 items-center justify-center rounded-xl text-2xl bg-[#ede8ff] dark:bg-[#22193f]`}>
           🎮
         </div>
         <div>
-          <p className={`text-[11px] font-semibold uppercase tracking-widest ${labelColor}`}>Play Credits</p>
-          <p className={`text-2xl font-black tabular-nums ${headingColor}`}>{playCredits}</p>
-          <p className={`text-xs ${labelColor}`}>1 credit per task completed today</p>
+          <p className={`text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Play Credits</p>
+          <p className={`text-2xl font-black tabular-nums text-[#17203a] dark:text-white`}>{playCredits}</p>
+          <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>1 credit per task completed today</p>
         </div>
       </div>
 
@@ -423,20 +400,20 @@ export function GamesPage({
             type="button"
             disabled={game.locked}
             onClick={() => { if (!game.locked && game.key) setActiveGame(game.key); }}
-            className={`flex items-center gap-4 rounded-2xl px-5 py-4 text-left transition active:scale-[0.98] disabled:opacity-50 ${cardBg} ${game.locked ? "cursor-default" : ""}`}
+            className={`flex items-center gap-4 rounded-2xl px-5 py-4 text-left transition active:scale-[0.98] disabled:opacity-50 bg-[#f7f5ff] dark:bg-white/5 ${game.locked ? "cursor-default" : ""}`}
           >
-            <div className={`flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl text-3xl ${lm ? "bg-[#ede8ff]" : "bg-[#22193f]"}`}>
+            <div className={`flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl text-3xl bg-[#ede8ff] dark:bg-[#22193f]`}>
               {game.emoji}
             </div>
             <div className="flex-1 min-w-0">
-              <p className={`font-bold text-sm ${headingColor}`}>{game.title}</p>
-              <p className={`text-xs mt-0.5 truncate ${dimText}`}>{game.description}</p>
+              <p className={`font-bold text-sm text-[#17203a] dark:text-white`}>{game.title}</p>
+              <p className={`text-xs mt-0.5 truncate text-[#27304c] dark:text-white/70`}>{game.description}</p>
             </div>
             <div className="flex-shrink-0">
               <span className={`rounded-lg px-2.5 py-1 text-[10px] font-bold ${
                 game.locked
-                  ? lm ? "bg-[#e5e0f5] text-[#8e88a9]" : "bg-white/5 text-white/30"
-                  : lm ? "bg-[#ede8ff] text-[#6f57f6]" : "bg-[#22193f] text-[#cabfff]"
+                  ? "bg-[#e5e0f5] text-[#8e88a9] dark:bg-white/5 dark:text-white/30"
+                  : "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
               }`}>
                 {game.cost}
               </span>

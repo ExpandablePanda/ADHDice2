@@ -88,15 +88,15 @@ export function Dice3DCanvas({
   phase,
   layout,
   onSettled,
-  lightMode,
+  dark,
 }: {
   phase: DicePhase;
   layout: DiceLayout;
   onSettled: () => void;
-  lightMode: boolean;
+  dark: boolean;
 }) {
-  const bg = lightMode ? "#f0ecff" : "#130e24";
-  const accentColor = lightMode ? "#9b87ff" : "#cabfff";
+  const bg = dark ? "#130e24" : "#f0ecff";
+  const accentColor = dark ? "#cabfff" : "#9b87ff";
 
   return (
     <div className="w-full rounded-2xl overflow-hidden" style={{ height: 180, background: bg }}>

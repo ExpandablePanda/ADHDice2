@@ -1,16 +1,16 @@
 import React, { useState } from "react";
-import { 
-  FocusCategory, 
-  ActiveFocusSession, 
-  HistoricalFocusSession,
-  FocusLabelOptions,
-  FocusType,
-  FocusSubtype,
+import {
+  type FocusCategory,
+  type ActiveFocusSession,
+  type HistoricalFocusSession,
+  type FocusLabelOptions,
+  type FocusType,
+  type FocusSubtype,
   DEFAULT_FOCUS_CATEGORY_TITLES,
   DEFAULT_FOCUS_TITLES,
   DEFAULT_PRIMARY_SUBTYPES,
-  DEFAULT_SECONDARY_SUBTYPES
-} from "./task-app";
+  DEFAULT_SECONDARY_SUBTYPES,
+} from "@/lib/types";
 import { FocusClockRow, FocusClockRowDesktop } from "./focus-clocks";
 import { CategoryManager } from "./category-manager";
 import { DailyHistoryGallery } from "./focus-history";
@@ -18,7 +18,6 @@ import { SessionFinishModal, ManualEntryModal } from "./focus-modals";
 import { ModalShell } from "./modal-shell";
 
 export function FocusPage({
-  lightMode,
   categories,
   activeSessions,
   history,
@@ -32,7 +31,6 @@ export function FocusPage({
   onUpdateCategories,
   onDeleteCategory,
 }: {
-  lightMode: boolean;
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
   history: HistoricalFocusSession[];
@@ -75,26 +73,26 @@ export function FocusPage({
   return (
     <>
       <section className="pt-8 flex flex-col items-center text-center">
-        <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${lightMode ? "text-[var(--text-muted)]" : "text-white/40"}`}>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
           Deep Work Hub
         </p>
-        <h1 className={`mt-2 text-[clamp(2.4rem,5vw,4rem)] font-black tracking-tight ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>
+        <h1 className="mt-2 text-[clamp(2.4rem,5vw,4rem)] font-black tracking-tight text-[var(--text-primary)]">
           Focus Session
         </h1>
-        <p className={`mt-1 max-w-3xl text-base ${lightMode ? "text-[var(--text-secondary)]" : "text-white/55"}`}>
+        <p className="mt-1 max-w-3xl text-base text-[var(--text-secondary)]">
           Choose a category and start your flow state. Your time is tracked persistently across all devices.
         </p>
 
         <div className="mt-4 sm:mt-8 flex justify-center gap-4">
           <button
-            className={`px-6 py-2 text-sm font-bold transition hover:-translate-y-0.5 ${lightMode ? "ui-pill-button-light" : "rounded-full bg-white/5 text-[#cabfff]"}`}
+            className="px-6 py-2 text-sm font-bold transition hover:-translate-y-0.5 ui-pill-button-light dark:rounded-full dark:bg-white/5 dark:text-[#cabfff]"
             onClick={() => setShowCategoryManager(true)}
             type="button"
           >
             Edit Categories
           </button>
           <button
-            className={`px-6 py-2 text-sm font-bold transition hover:-translate-y-0.5 ${lightMode ? "ui-pill-button-strong-light" : "rounded-full bg-[#cabfff] text-[#1a1431]"}`}
+            className="px-6 py-2 text-sm font-bold transition hover:-translate-y-0.5 ui-pill-button-strong-light dark:rounded-full dark:bg-[#cabfff] dark:text-[#1a1431]"
             onClick={() => setShowManualEntry(true)}
             type="button"
           >
@@ -107,7 +105,6 @@ export function FocusPage({
         <FocusClockRow
           activeSessions={activeSessions}
           categories={categories}
-          lightMode={lightMode}
           onAdjust={onAdjustTimer}
           onFinish={handleFinishClick}
           onReset={onResetTimer}
@@ -116,7 +113,6 @@ export function FocusPage({
         <FocusClockRowDesktop
           activeSessions={activeSessions}
           categories={categories}
-          lightMode={lightMode}
           onAdjust={onAdjustTimer}
           onFinish={handleFinishClick}
           onReset={onResetTimer}
@@ -128,7 +124,6 @@ export function FocusPage({
         <CategoryGoalsSection
           categories={categories}
           history={history}
-          lightMode={lightMode}
           onEdit={() => setShowGoalsEditor(true)}
         />
       </div>
@@ -138,7 +133,6 @@ export function FocusPage({
           categories={categories}
           history={history}
           labelOptions={labelOptions}
-          lightMode={lightMode}
           onDeleteEntry={onDeleteHistoryEntry}
           onUpdateEntry={onUpdateHistoryEntry}
         />
@@ -149,7 +143,6 @@ export function FocusPage({
           categories={categories}
           history={history}
           labelOptions={labelOptions}
-          lightMode={lightMode}
           onClose={() => setShowCategoryManager(false)}
           onDelete={onDeleteCategory}
           onUpdate={onUpdateCategories}
@@ -160,7 +153,6 @@ export function FocusPage({
         <ManualEntryModal
           categories={categories}
           labelOptions={labelOptions}
-          lightMode={lightMode}
           onClose={() => setShowManualEntry(false)}
           onSave={async (data) => {
             const saved = await onLogManual(data);
@@ -177,7 +169,6 @@ export function FocusPage({
           category={activeFinishingCategory}
           durationSeconds={finishingDurationSeconds}
           labelOptions={labelOptions}
-          lightMode={lightMode}
           onCancel={() => setFinishingCatId(null)}
           onConfirm={confirmFinish}
         />
@@ -186,7 +177,6 @@ export function FocusPage({
       {showGoalsEditor ? (
         <CategoryGoalsModal
           categories={categories}
-          lightMode={lightMode}
           onClose={() => setShowGoalsEditor(false)}
           onSave={async (nextCategories) => {
             const saved = await onUpdateCategories(nextCategories);
@@ -247,12 +237,10 @@ function buildFocusLabelOptions(
 function CategoryGoalsSection({
   categories,
   history,
-  lightMode,
   onEdit,
 }: {
   categories: FocusCategory[];
   history: HistoricalFocusSession[];
-  lightMode: boolean;
   onEdit: () => void;
 }) {
   const [sortMode, setSortMode] = useState<"alphabetical" | "daily" | "weekly">("alphabetical");
@@ -294,13 +282,13 @@ function CategoryGoalsSection({
   });
 
   return (
-    <section className={`w-full max-w-4xl rounded-[var(--radius-modal)] border p-8 ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card-hover)]" : "border-white/5 bg-white/[0.03] shadow-[0_24px_60px_rgba(0,0,0,0.25)]"}`}>
+    <section className="w-full max-w-4xl rounded-[var(--radius-modal)] border p-8 border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card-hover)] dark:border-white/5 dark:bg-white/[0.03] dark:shadow-[0_24px_60px_rgba(0,0,0,0.25)]">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${lightMode ? "text-[var(--text-muted)]" : "text-white/40"}`}>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
             Targets
           </p>
-          <h2 className={`mt-2 text-2xl font-black ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>
+          <h2 className="mt-2 text-2xl font-black text-[var(--text-primary)]">
             Category Goals
           </h2>
         </div>
@@ -308,7 +296,7 @@ function CategoryGoalsSection({
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Sort Goals</span>
             <select
-              className={`px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="px-4 py-3 ui-input-light"
               onChange={(event) => setSortMode(event.target.value as "alphabetical" | "daily" | "weekly")}
               value={sortMode}
             >
@@ -318,7 +306,7 @@ function CategoryGoalsSection({
             </select>
           </label>
           <button
-            className={`px-4 py-2 text-sm font-bold ${lightMode ? "ui-pill-button-light" : "rounded-full bg-white/10 text-[#cabfff]"}`}
+            className="px-4 py-2 text-sm font-bold ui-pill-button-light dark:rounded-full dark:bg-white/10 dark:text-[#cabfff]"
             onClick={onEdit}
             type="button"
           >
@@ -336,16 +324,16 @@ function CategoryGoalsSection({
           return (
           <div
             key={category.id}
-            className={`rounded-[var(--radius-card)] border p-4 transition hover:-translate-y-0.5 ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface)] hover:shadow-[var(--shadow-card)]" : "border-white/10 bg-white/[0.03] hover:shadow-[0_14px_28px_rgba(0,0,0,0.35)]"}`}
+            className="rounded-[var(--radius-card)] border p-4 transition hover:-translate-y-0.5 border-[var(--border-soft)] bg-[var(--surface)] hover:shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03] dark:hover:shadow-[0_14px_28px_rgba(0,0,0,0.35)]"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className={`font-black ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>{category.title}</p>
-                <p className={`mt-1 text-xs ${lightMode ? "text-[var(--text-secondary)]" : "text-white/45"}`}>
+                <p className="font-black text-[var(--text-primary)]">{category.title}</p>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">
                   {[category.focusType, category.focusSubtype, category.focusSubtype2].filter(Boolean).join(" / ")}
                 </p>
               </div>
-              <span className={`rounded-full px-3 py-1 text-xs font-bold ${lightMode ? "bg-[var(--surface-muted)] text-[var(--text-muted)]" : "bg-white/5 text-white/45"}`}>
+              <span className="rounded-full px-3 py-1 text-xs font-bold bg-[var(--surface-muted)] text-[var(--text-muted)]">
                 Target
               </span>
             </div>
@@ -355,13 +343,11 @@ function CategoryGoalsSection({
                 actualSeconds={dailyActual}
                 goalSeconds={dailyGoal}
                 label="Daily"
-                lightMode={lightMode}
               />
               <GoalVsActualBar
                 actualSeconds={weeklyActual}
                 goalSeconds={weeklyGoal}
                 label="Weekly"
-                lightMode={lightMode}
               />
             </div>
           </div>
@@ -376,38 +362,34 @@ function GoalVsActualBar({
   actualSeconds,
   goalSeconds,
   label,
-  lightMode,
 }: {
   actualSeconds: number;
   goalSeconds: number;
   label: "Daily" | "Weekly";
-  lightMode: boolean;
 }) {
   const scaleMax = Math.max(actualSeconds, goalSeconds, 60);
   const fillPercent = (actualSeconds / scaleMax) * 100;
   const markerPercent = (goalSeconds / scaleMax) * 100;
   const isAtGoal = goalSeconds > 0 && actualSeconds >= goalSeconds;
-  const barColor = isAtGoal
-    ? (lightMode ? "#12a876" : "#7de4b8")
-    : (lightMode ? "#ea580c" : "#f6b178");
+  const barColor = isAtGoal ? "var(--success)" : "var(--warning)";
 
   return (
-    <div className={`rounded-[var(--radius-card)] p-4 ${lightMode ? "bg-[var(--surface-muted)]" : "bg-white/[0.04]"}`}>
+    <div className="rounded-[var(--radius-card)] p-4 bg-[var(--surface-muted)]">
       <div className="mb-2 flex items-center justify-between">
-        <p className={`text-[11px] font-bold uppercase tracking-[0.18em] ${lightMode ? "text-[var(--text-muted)]" : "text-white/40"}`}>
+        <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--text-muted)]">
           {label}
         </p>
-        <p className={`text-xs font-semibold ${lightMode ? "text-[var(--text-secondary)]" : "text-white/60"}`}>
+        <p className="text-xs font-semibold text-[var(--text-secondary)]">
           {formatGoal(actualSeconds)} / {formatGoal(goalSeconds)}
         </p>
       </div>
-      <div className={`relative h-3 overflow-hidden rounded-full ${lightMode ? "bg-[var(--border-soft)]" : "bg-white/10"}`}>
+      <div className="relative h-3 overflow-hidden rounded-full bg-[var(--border-soft)]">
         <div
           className="absolute left-0 top-0 h-full rounded-full transition-all duration-700"
           style={{ backgroundColor: barColor, width: `${Math.min(100, fillPercent)}%` }}
         />
         <div
-          className={`absolute top-[-2px] h-4 w-[2px] ${lightMode ? "bg-[var(--text-primary)]" : "bg-white"}`}
+          className="absolute top-[-2px] h-4 w-[2px] bg-[var(--text-primary)]"
           style={{ left: `calc(${Math.min(100, markerPercent)}% - 1px)` }}
         />
       </div>
@@ -417,12 +399,10 @@ function GoalVsActualBar({
 
 function CategoryGoalsModal({
   categories,
-  lightMode,
   onClose,
   onSave,
 }: {
   categories: FocusCategory[];
-  lightMode: boolean;
   onClose: () => void;
   onSave: (categories: FocusCategory[]) => Promise<void>;
 }) {
@@ -512,14 +492,14 @@ function CategoryGoalsModal({
   });
 
   return (
-    <ModalShell className={`w-full max-w-4xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-elevated)]" : "border-white/10 bg-[#171329]"}`}>
+    <ModalShell className="w-full max-w-4xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[var(--text-muted)]" : "text-white/35"}`}>Category Goals</p>
-            <h3 className={`mt-2 text-2xl font-black ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>Master Goal Editor</h3>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Category Goals</p>
+            <h3 className="mt-2 text-2xl font-black text-[var(--text-primary)]">Master Goal Editor</h3>
           </div>
           <button
-            className={`rounded-full px-4 py-2 text-sm font-semibold ${lightMode ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "bg-white/10 text-[#cabfff]"}`}
+            className="rounded-full px-4 py-2 text-sm font-semibold bg-[var(--accent-soft)] text-[var(--accent)]"
             onClick={onClose}
             type="button"
           >
@@ -528,13 +508,13 @@ function CategoryGoalsModal({
         </div>
 
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <p className={`text-sm ${lightMode ? "text-[var(--text-secondary)]" : "text-white/55"}`}>
+          <p className="text-sm text-[var(--text-secondary)]">
             Set daily and weekly goals with hours and minutes. Editing one side auto-fills the other using a 7-day week.
           </p>
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Sort Goals</span>
             <select
-              className={`px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="px-4 py-3 ui-input-light"
               onChange={(event) => setSortMode(event.target.value as "alphabetical" | "daily" | "weekly")}
               value={sortMode}
             >
@@ -552,11 +532,11 @@ function CategoryGoalsModal({
               return (
                 <div
                   key={category.id}
-                  className={`grid gap-3 rounded-[var(--radius-card)] border p-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] md:items-center ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface)] shadow-[var(--shadow-card)]" : "border-white/10 bg-white/[0.03]"}`}
+                  className="grid gap-3 rounded-[var(--radius-card)] border p-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] md:items-center border-[var(--border-soft)] bg-[var(--surface)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03] dark:shadow-none"
                 >
                   <div className="min-w-0">
-                    <p className={`truncate font-black ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>{category.title}</p>
-                    <p className={`mt-1 truncate text-xs ${lightMode ? "text-[var(--text-secondary)]" : "text-white/45"}`}>
+                    <p className="truncate font-black text-[var(--text-primary)]">{category.title}</p>
+                    <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
                       {[category.focusType, category.focusSubtype, category.focusSubtype2].filter(Boolean).join(" / ")}
                     </p>
                   </div>
@@ -564,14 +544,14 @@ function CategoryGoalsModal({
                     <span className="text-xs font-bold uppercase tracking-wider opacity-40">Daily</span>
                     <div className="grid grid-cols-2 gap-2">
                       <input
-                        className={`px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                        className="px-4 py-3 ui-input-light"
                         inputMode="numeric"
                         onChange={(event) => updateDraft(category.id, "dailyHours", event.target.value)}
                         placeholder="0 hr"
                         value={draft?.dailyHours ?? ""}
                       />
                       <input
-                        className={`px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                        className="px-4 py-3 ui-input-light"
                         inputMode="numeric"
                         onChange={(event) => updateDraft(category.id, "dailyMinutes", event.target.value)}
                         placeholder="0 min"
@@ -583,14 +563,14 @@ function CategoryGoalsModal({
                     <span className="text-xs font-bold uppercase tracking-wider opacity-40">Weekly</span>
                     <div className="grid grid-cols-2 gap-2">
                       <input
-                        className={`px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                        className="px-4 py-3 ui-input-light"
                         inputMode="numeric"
                         onChange={(event) => updateDraft(category.id, "weeklyHours", event.target.value)}
                         placeholder="0 hr"
                         value={draft?.weeklyHours ?? ""}
                       />
                       <input
-                        className={`px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                        className="px-4 py-3 ui-input-light"
                         inputMode="numeric"
                         onChange={(event) => updateDraft(category.id, "weeklyMinutes", event.target.value)}
                         placeholder="0 min"
@@ -606,14 +586,14 @@ function CategoryGoalsModal({
 
         <div className="mt-8 flex justify-end gap-3">
           <button
-            className={`px-5 py-3 font-semibold ${lightMode ? "ui-pill-button-light" : "rounded-full bg-white/10 text-white"}`}
+            className="px-5 py-3 font-semibold ui-pill-button-light dark:rounded-full dark:bg-white/10 dark:text-white"
             onClick={onClose}
             type="button"
           >
             Cancel
           </button>
           <button
-            className={`${lightMode ? "ui-pill-button-strong-light" : "rounded-full bg-[#6f57f6] text-white"} px-6 py-3 font-bold`}
+            className="px-6 py-3 font-bold ui-pill-button-strong-light dark:rounded-full dark:bg-[#6f57f6] dark:text-white"
             disabled={isSaving}
             onClick={() => void submit()}
             type="button"

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { FocusCategory, FocusType, FocusSubtype, FocusLabelOptions, CategoryIcon } from "./task-app";
+import { type FocusCategory, type FocusType, type FocusSubtype, type FocusLabelOptions } from "@/lib/types";
+import { CategoryIcon } from "./task-app";
 import { ModalShell } from "./modal-shell";
 
 function todayLocalISO() {
@@ -14,14 +15,12 @@ export function SessionFinishModal({
   category,
   durationSeconds,
   labelOptions,
-  lightMode,
   onConfirm,
   onCancel,
 }: {
   category: FocusCategory;
   durationSeconds: number;
   labelOptions: FocusLabelOptions;
-  lightMode: boolean;
   onConfirm: (data: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string }) => void;
   onCancel: () => void;
 }) {
@@ -38,13 +37,13 @@ export function SessionFinishModal({
   };
 
   return (
-    <ModalShell className={`w-full max-w-lg max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-10 shadow-[var(--shadow-modal)] ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-elevated)]" : "border-white/10 bg-[#171329]"}`}>
+    <ModalShell className="w-full max-w-lg max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-10 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
         <div className="flex flex-col items-center text-center">
           <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-3xl" style={{ backgroundColor: category.color + "20", color: category.color }}>
             <CategoryIcon name={category.icon} className="h-10 w-10" />
           </div>
-          <h2 className={`text-3xl font-black ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>Session Complete</h2>
-          <p className={`mt-2 text-lg font-bold ${lightMode ? "text-[var(--accent)]" : "text-[#cabfff]"}`}>
+          <h2 className="text-3xl font-black text-[var(--text-primary)]">Session Complete</h2>
+          <p className="mt-2 text-lg font-bold text-[var(--accent)]">
             {category.title} • {formatTime(durationSeconds)}
           </p>
         </div>
@@ -53,7 +52,7 @@ export function SessionFinishModal({
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Session Title</span>
             <input
-              className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="px-4 py-2 ui-input-light"
               list="finish-focus-titles"
               onChange={(e) => setTitle(e.target.value)}
               type="text"
@@ -68,7 +67,7 @@ export function SessionFinishModal({
             <label className="flex flex-col gap-2">
               <span className="text-xs font-bold uppercase tracking-wider opacity-40">Focus Type</span>
               <input
-                className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                className="px-4 py-2 ui-input-light"
                 list="finish-focus-types"
                 onChange={(e) => setFocusType(e.target.value as FocusType)}
                 type="text"
@@ -81,7 +80,7 @@ export function SessionFinishModal({
             <label className="flex flex-col gap-2">
               <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype</span>
               <input
-                className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                className="px-4 py-2 ui-input-light"
                 list="finish-primary-subtypes"
                 onChange={(e) => setFocusSubtype(e.target.value as FocusSubtype)}
                 type="text"
@@ -96,7 +95,7 @@ export function SessionFinishModal({
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype 2</span>
             <input
-              className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="px-4 py-2 ui-input-light"
               list="finish-secondary-subtypes"
               onChange={(e) => setFocusSubtype2(e.target.value)}
               placeholder="Optional"
@@ -111,7 +110,7 @@ export function SessionFinishModal({
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Session Notes</span>
             <textarea
-              className={`min-h-[100px] resize-none px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="min-h-[100px] resize-none px-4 py-3 ui-input-light"
               onChange={(e) => setNotes(e.target.value)}
               placeholder="What did you accomplish?"
               value={notes}
@@ -121,14 +120,14 @@ export function SessionFinishModal({
 
         <div className="mt-10 flex gap-4">
           <button
-            className={`flex-1 py-4 font-bold transition hover:bg-white/5 ${lightMode ? "ui-pill-button-light" : "rounded-full text-white"}`}
+            className="flex-1 py-4 font-bold transition hover:bg-white/5 ui-pill-button-light dark:bg-transparent dark:text-white dark:rounded-full"
             onClick={onCancel}
             type="button"
           >
             Discard
           </button>
           <button
-            className={`flex-1 py-4 font-bold transition hover:scale-105 ${lightMode ? "ui-pill-button-strong-light" : "rounded-full bg-[#6f57f6] text-white shadow-xl shadow-[#6f57f6]/30"}`}
+            className="flex-1 py-4 font-bold transition hover:scale-105 ui-pill-button-strong-light dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
             onClick={() => onConfirm({ title, focusType, focusSubtype: focusSubtype.trim() || null, focusSubtype2: focusSubtype2.trim() || null, notes })}
             type="button"
           >
@@ -142,13 +141,11 @@ export function SessionFinishModal({
 export function ManualEntryModal({
   categories,
   labelOptions,
-  lightMode,
   onSave,
   onClose,
 }: {
   categories: FocusCategory[];
   labelOptions: FocusLabelOptions;
-  lightMode: boolean;
   onSave: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<boolean>;
   onClose: () => void;
 }) {
@@ -199,14 +196,14 @@ export function ManualEntryModal({
   };
 
   return (
-    <ModalShell className={`w-full max-w-2xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-elevated)]" : "border-white/10 bg-[#171329]"}`}>
-        <h2 className={`text-center text-3xl font-black ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>Manual Entry</h2>
+    <ModalShell className="w-full max-w-2xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
+        <h2 className="text-center text-3xl font-black text-[var(--text-primary)]">Manual Entry</h2>
 
         <div className="mt-10 space-y-6">
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Saved Category</span>
             <select
-              className={`px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="px-4 py-3 ui-input-light"
               onChange={(e) => handleCategoryChange(e.target.value)}
               value={catId}
             >
@@ -218,7 +215,7 @@ export function ManualEntryModal({
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Session Title</span>
             <input
-              className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="px-4 py-2 ui-input-light"
               list="manual-focus-titles"
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Deep Work"
@@ -233,22 +230,22 @@ export function ManualEntryModal({
           <div className="grid grid-cols-2 gap-4">
             <label className="flex flex-col gap-2">
               <span className="text-xs font-bold uppercase tracking-wider opacity-40">Hours</span>
-              <input className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`} min="0" onChange={(e) => setHours(e.target.value)} type="number" value={hours} />
+              <input className="px-4 py-2 ui-input-light" min="0" onChange={(e) => setHours(e.target.value)} type="number" value={hours} />
             </label>
             <label className="flex flex-col gap-2">
               <span className="text-xs font-bold uppercase tracking-wider opacity-40">Minutes</span>
-              <input className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`} max="59" min="0" onChange={(e) => setMinutes(e.target.value)} type="number" value={minutes} />
+              <input className="px-4 py-2 ui-input-light" max="59" min="0" onChange={(e) => setMinutes(e.target.value)} type="number" value={minutes} />
             </label>
           </div>
 
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Date</span>
-            <input className={`px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`} onChange={(e) => setDate(e.target.value)} type="date" value={date} />
+            <input className="px-4 py-3 ui-input-light" onChange={(e) => setDate(e.target.value)} type="date" value={date} />
           </label>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <input
-              className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="px-4 py-2 ui-input-light"
               list="manual-focus-types"
               onChange={(e) => setFocusType(e.target.value as FocusType)}
               placeholder="Work"
@@ -260,7 +257,7 @@ export function ManualEntryModal({
             </datalist>
 
             <input
-              className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="px-4 py-2 ui-input-light"
               list="manual-primary-subtypes"
               onChange={(e) => setFocusSubtype(e.target.value as FocusSubtype)}
               placeholder="Productive"
@@ -275,7 +272,7 @@ export function ManualEntryModal({
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype 2</span>
             <input
-              className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="px-4 py-2 ui-input-light"
               list="manual-secondary-subtypes"
               onChange={(e) => setFocusSubtype2(e.target.value)}
               placeholder="Optional"
@@ -290,7 +287,7 @@ export function ManualEntryModal({
           <label className="flex flex-col gap-2">
             <span className="text-xs font-bold uppercase tracking-wider opacity-40">Notes</span>
             <textarea
-              className={`min-h-[80px] resize-none px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+              className="min-h-[80px] resize-none px-4 py-3 ui-input-light"
               onChange={(e) => setNotes(e.target.value)}
               placeholder="What happened during this time?"
               value={notes}
@@ -300,14 +297,14 @@ export function ManualEntryModal({
 
         <div className="mt-10 flex gap-4">
           <button
-            className={`flex-1 py-4 font-bold transition hover:bg-white/5 ${lightMode ? "ui-pill-button-light" : "rounded-full text-white"}`}
+            className="flex-1 py-4 font-bold transition hover:bg-white/5 ui-pill-button-light dark:bg-transparent dark:text-white dark:rounded-full"
             onClick={onClose}
             type="button"
           >
             Cancel
           </button>
           <button
-            className={`flex-1 py-4 font-bold transition hover:scale-105 ${lightMode ? "ui-pill-button-strong-light" : "rounded-full bg-[#6f57f6] text-white shadow-xl shadow-[#6f57f6]/30"}`}
+            className="flex-1 py-4 font-bold transition hover:scale-105 ui-pill-button-strong-light dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
             disabled={isSaving || !title.trim() || !focusType.trim()}
             onClick={() => void submit()}
             type="button"

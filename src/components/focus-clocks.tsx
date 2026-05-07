@@ -1,21 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
-import { FocusCategory, ActiveFocusSession, CategoryIcon } from "./task-app";
-
-// Helper to format seconds into HH:MM:SS
-export function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) {
-    return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  }
-  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-}
+import { type FocusCategory, type ActiveFocusSession } from "@/lib/types";
+import { CategoryIcon } from "./task-app";
+import { formatDuration } from "@/lib/utils";
+export { formatDuration } from "@/lib/utils";
 
 export function FocusClock({
   category,
   activeSession,
-  lightMode,
   onToggle,
   onFinish,
   onAdjust,
@@ -23,7 +14,6 @@ export function FocusClock({
 }: {
   category: FocusCategory;
   activeSession?: ActiveFocusSession;
-  lightMode: boolean;
   onToggle: (catId: string) => void;
   onFinish: (catId: string) => void;
   onAdjust: (catId: string, deltaSeconds: number) => void;
@@ -84,7 +74,7 @@ export function FocusClock({
           viewBox="0 0 272 272"
         >
           <circle
-            className={lightMode ? "text-[#f0ecfc]" : "text-white/[0.03]"}
+            className="text-[#f0ecfc] dark:text-white/[0.03]"
             cx="136"
             cy="136"
             fill="transparent"
@@ -102,7 +92,7 @@ export function FocusClock({
             strokeDashoffset={circumference * (1 - progress)}
             strokeLinecap="round"
             strokeWidth="7"
-            style={{ 
+            style={{
               transition: isRunning ? "stroke-dashoffset 1s linear" : "stroke-dashoffset 0.4s ease-out",
               filter: isRunning ? `drop-shadow(0 0 8px ${category.color}80)` : "none"
             }}
@@ -111,7 +101,7 @@ export function FocusClock({
 
         {/* Inner Content Card (Glassmorphism) */}
         <button
-          className={`relative z-10 flex h-60 w-60 flex-col items-center justify-center rounded-full border px-5 text-center transition-all duration-500 ${lightMode ? "border-white/40 bg-white/45 shadow-[0_8px_32px_rgba(31,38,135,0.07)] backdrop-blur-[8px]" : "border-white/5 bg-white/[0.02] shadow-[0_24px_48px_rgba(0,0,0,0.2)] backdrop-blur-[12px]"} group-hover:shadow-[0_32px_64px_rgba(0,0,0,0.4)]`}
+          className="relative z-10 flex h-60 w-60 flex-col items-center justify-center rounded-full border px-5 text-center transition-all duration-500 border-white/40 bg-white/45 shadow-[0_8px_32px_rgba(31,38,135,0.07)] backdrop-blur-[8px] dark:border-white/5 dark:bg-white/[0.02] dark:shadow-[0_24px_48px_rgba(0,0,0,0.2)] dark:backdrop-blur-[12px] group-hover:shadow-[0_32px_64px_rgba(0,0,0,0.4)]"
           onClick={() => setShowAdjustMenu((prev) => !prev)}
           type="button"
         >
@@ -120,14 +110,14 @@ export function FocusClock({
               <div className="mb-3 transition-transform duration-500" style={{ color: category.color, transform: isRunning ? "scale(1.1)" : "scale(1)" }}>
                 <CategoryIcon name={category.icon} className="h-9 w-9" />
               </div>
-              <p className={`text-[2.6rem] font-black tabular-nums tracking-tight ${lightMode ? "text-[#1f2746]" : "text-white"}`}>
+              <p className="text-[2.6rem] font-black tabular-nums tracking-tight text-[#1f2746] dark:text-white">
                 {formatDuration(displaySeconds)}
               </p>
               <div className="mt-3 flex max-w-[11.5rem] flex-col items-center">
-                <p className={`line-clamp-2 text-[0.84rem] font-black uppercase leading-tight tracking-[0.16em] break-words ${lightMode ? "text-[#8d87a7]" : "text-white/35"}`}>
+                <p className="line-clamp-2 text-[0.84rem] font-black uppercase leading-tight tracking-[0.16em] break-words text-[#8d87a7] dark:text-white/35">
                   {category.title}
                 </p>
-                <div className={`mt-2 h-1.5 w-10 rounded-full transition-all duration-500 group-hover:w-14`} style={{ backgroundColor: category.color }} />
+                <div className="mt-2 h-1.5 w-10 rounded-full transition-all duration-500 group-hover:w-14" style={{ backgroundColor: category.color }} />
               </div>
             </>
           ) : null}
@@ -136,10 +126,10 @@ export function FocusClock({
         {showAdjustMenu ? (
           <div
             ref={adjustMenuRef}
-            className={`absolute inset-4 z-20 flex flex-col items-center justify-center gap-4 overflow-hidden rounded-full border ${lightMode ? "border-white/40 bg-white/92 shadow-[0_20px_40px_rgba(81,61,168,0.14)] backdrop-blur-[10px]" : "border-white/10 bg-[#171329]/95 shadow-[0_20px_40px_rgba(0,0,0,0.35)] backdrop-blur-[12px]"}`}
+            className="absolute inset-4 z-20 flex flex-col items-center justify-center gap-4 overflow-hidden rounded-full border border-white/40 bg-white/92 shadow-[0_20px_40px_rgba(81,61,168,0.14)] backdrop-blur-[10px] dark:border-white/10 dark:bg-[#171329]/95 dark:shadow-[0_20px_40px_rgba(0,0,0,0.35)] dark:backdrop-blur-[12px]"
           >
             <input
-              className={`w-20 rounded-2xl border-2 px-1 py-5 text-center font-black tabular-nums tracking-tight outline-none ${lightMode ? "border-[#ece8f8] bg-white text-[#1f2746]" : "border-white/10 bg-white/10 text-white"}`}
+              className="w-20 rounded-2xl border-2 px-1 py-5 text-center font-black tabular-nums tracking-tight outline-none border-[#ece8f8] bg-white text-[#1f2746] dark:border-white/10 dark:bg-white/10 dark:text-white"
               style={{ fontSize: "2.6rem", fontWeight: 900, letterSpacing: "-0.025em" }}
               min="1"
               onChange={(e) => setAdjustMinutes(e.target.value)}
@@ -148,7 +138,11 @@ export function FocusClock({
             />
             <div className="flex items-center gap-4 pt-2">
               <button
-                className={`flex h-14 w-14 items-center justify-center rounded-full transition ${adjustSign === -1 ? (lightMode ? "bg-[#fff3f5] text-[#d64b5f]" : "bg-[#311b23] text-[#ff9fbc]") : (lightMode ? "bg-[#eef9f4] text-[#12a876]" : "bg-[#19352e] text-[#7de4b8]")}`}
+                className={`flex h-14 w-14 items-center justify-center rounded-full transition ${
+                  adjustSign === -1
+                    ? "bg-[#fff3f5] text-[#d64b5f] dark:bg-[#311b23] dark:text-[#ff9fbc]"
+                    : "bg-[#eef9f4] text-[#12a876] dark:bg-[#19352e] dark:text-[#7de4b8]"
+                }`}
                 onClick={() => setAdjustSign((s) => s === 1 ? -1 : 1)}
                 type="button"
               >
@@ -163,7 +157,7 @@ export function FocusClock({
                 )}
               </button>
               <button
-                className={`flex h-14 w-14 items-center justify-center rounded-full transition ${lightMode ? "bg-[#6f57f6] text-white" : "bg-[#cabfff] text-[#1a1431]"}`}
+                className="flex h-14 w-14 items-center justify-center rounded-full transition bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
                 onClick={() => handleAdjustClick(adjustSign * (parseInt(adjustMinutes) || 1) * 60)}
                 type="button"
               >
@@ -178,7 +172,11 @@ export function FocusClock({
 
       <div className="flex gap-4">
         <button
-          className={`group flex h-14 w-14 items-center justify-center rounded-full border-2 transition-all duration-300 hover:scale-110 ${isRunning ? (lightMode ? "border-[#f05566]/20 bg-[#fff0f1] text-[#f05566] shadow-[0_8px_20px_rgba(240,85,102,0.15)]" : "border-[#ff9eaf]/20 bg-[#2d1a1c] text-[#ff9eaf] shadow-[0_8px_20px_rgba(255,158,175,0.1)]") : (lightMode ? "border-[#6f57f6]/10 bg-[#f1ecff] text-[#6f57f6] shadow-[0_8px_20px_rgba(111,87,246,0.1)]" : "border-white/10 bg-[#22193f] text-[#cabfff] shadow-[0_8px_20px_rgba(0,0,0,0.2)]")}`}
+          className={`group flex h-14 w-14 items-center justify-center rounded-full border-2 transition-all duration-300 hover:scale-110 ${
+            isRunning
+              ? "border-[#f05566]/20 bg-[#fff0f1] text-[#f05566] shadow-[0_8px_20px_rgba(240,85,102,0.15)] dark:border-[#ff9eaf]/20 dark:bg-[#2d1a1c] dark:text-[#ff9eaf] dark:shadow-[0_8px_20px_rgba(255,158,175,0.1)]"
+              : "border-[#6f57f6]/10 bg-[#f1ecff] text-[#6f57f6] shadow-[0_8px_20px_rgba(111,87,246,0.1)] dark:border-white/10 dark:bg-[#22193f] dark:text-[#cabfff] dark:shadow-[0_8px_20px_rgba(0,0,0,0.2)]"
+          }`}
           onClick={() => onToggle(category.id)}
           type="button"
         >
@@ -195,7 +193,7 @@ export function FocusClock({
         </button>
         {displaySeconds > 0 && (
           <button
-            className={`flex h-14 w-14 items-center justify-center rounded-full border transition-all duration-300 hover:scale-110 ${lightMode ? "border-[#ece8f8] bg-white text-[#6a738d] shadow-[0_8px_20px_rgba(0,0,0,0.05)]" : "border-white/10 bg-white/5 text-white shadow-[0_8px_20px_rgba(0,0,0,0.2)]"}`}
+            className="flex h-14 w-14 items-center justify-center rounded-full border transition-all duration-300 hover:scale-110 border-[#ece8f8] bg-white text-[#6a738d] shadow-[0_8px_20px_rgba(0,0,0,0.05)] dark:border-white/10 dark:bg-white/5 dark:text-white dark:shadow-[0_8px_20px_rgba(0,0,0,0.2)]"
             onClick={() => onFinish(category.id)}
             type="button"
           >
@@ -206,7 +204,7 @@ export function FocusClock({
         )}
         {displaySeconds > 0 && (
           <button
-            className={`flex h-14 w-14 items-center justify-center rounded-full border transition-all duration-300 hover:scale-110 ${lightMode ? "border-[#f8d9dc] bg-[#fff1f2] text-[#d64b5f] shadow-[0_8px_20px_rgba(214,75,95,0.12)]" : "border-[#5a2432] bg-[#2e1820] text-[#ff9fbc] shadow-[0_8px_20px_rgba(0,0,0,0.2)]"}`}
+            className="flex h-14 w-14 items-center justify-center rounded-full border transition-all duration-300 hover:scale-110 border-[#f8d9dc] bg-[#fff1f2] text-[#d64b5f] shadow-[0_8px_20px_rgba(214,75,95,0.12)] dark:border-[#5a2432] dark:bg-[#2e1820] dark:text-[#ff9fbc] dark:shadow-[0_8px_20px_rgba(0,0,0,0.2)]"
             onClick={() => onReset(category.id)}
             type="button"
           >
@@ -237,7 +235,6 @@ function getDisplaySeconds(activeSession: ActiveFocusSession | undefined, nowMs:
 export function FocusClockRow({
   categories,
   activeSessions,
-  lightMode,
   onToggle,
   onFinish,
   onAdjust,
@@ -245,7 +242,6 @@ export function FocusClockRow({
 }: {
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
-  lightMode: boolean;
   onToggle: (catId: string) => void;
   onFinish: (catId: string) => void;
   onAdjust: (catId: string, deltaSeconds: number) => void;
@@ -290,7 +286,6 @@ export function FocusClockRow({
             <FocusClock
               activeSession={activeSessions[cat.id]}
               category={cat}
-              lightMode={lightMode}
               onAdjust={onAdjust}
               onFinish={onFinish}
               onReset={onReset}
@@ -306,7 +301,6 @@ export function FocusClockRow({
 export function FocusClockRowDesktop({
   categories,
   activeSessions,
-  lightMode,
   onToggle,
   onFinish,
   onAdjust,
@@ -314,7 +308,6 @@ export function FocusClockRowDesktop({
 }: {
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
-  lightMode: boolean;
   onToggle: (catId: string) => void;
   onFinish: (catId: string) => void;
   onAdjust: (catId: string, deltaSeconds: number) => void;
@@ -337,7 +330,6 @@ export function FocusClockRowDesktop({
           key={cat.id}
           activeSession={activeSessions[cat.id]}
           category={cat}
-          lightMode={lightMode}
           onAdjust={onAdjust}
           onFinish={onFinish}
           onReset={onReset}

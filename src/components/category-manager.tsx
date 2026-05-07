@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
-import { FocusCategory, FocusType, FocusSubtype, FocusLabelOptions, CategoryIcon } from "./task-app";
+import { type FocusCategory, type FocusType, type FocusSubtype, type FocusLabelOptions } from "@/lib/types";
+import { CategoryIcon } from "./task-app";
 import { ModalShell } from "./modal-shell";
 
 const ACCENT_COLORS = [
@@ -286,7 +287,6 @@ export function CategoryManager({
   categories,
   history,
   labelOptions,
-  lightMode,
   onUpdate,
   onDelete,
   onClose,
@@ -294,7 +294,6 @@ export function CategoryManager({
   categories: FocusCategory[];
   history: { categoryId: string | null }[];
   labelOptions: FocusLabelOptions;
-  lightMode: boolean;
   onUpdate: (categories: FocusCategory[]) => Promise<boolean>;
   onDelete: (category: FocusCategory) => Promise<boolean>;
   onClose: () => void;
@@ -424,16 +423,16 @@ export function CategoryManager({
   };
 
   return (
-    <ModalShell className={`w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[var(--radius-modal)] border p-10 shadow-[var(--shadow-modal)] ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-elevated)]" : "border-white/10 bg-[#171329]"}`}>
+    <ModalShell className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[var(--radius-modal)] border p-10 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
         {!editingCat ? (
           <>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className={`text-3xl font-black ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>Master Categories</h2>
-                <p className={`mt-2 text-sm ${lightMode ? "text-[var(--text-secondary)]" : "text-white/55"}`}>Sort the list by category title or focus type.</p>
+                <h2 className="text-3xl font-black text-[var(--text-primary)]">Master Categories</h2>
+                <p className="mt-2 text-sm text-[var(--text-secondary)]">Sort the list by category title or focus type.</p>
               </div>
               <button
-                className={`rounded-full p-2 transition hover:bg-white/10 ${lightMode ? "text-[var(--text-muted)]" : "text-white/40"}`}
+                className="rounded-full p-2 transition hover:bg-white/10 text-[var(--text-muted)]"
                 onClick={onClose}
                 type="button"
               >
@@ -445,7 +444,7 @@ export function CategoryManager({
 
             <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <button
-                className={`flex items-center justify-center gap-2 rounded-[var(--radius-card)] border-2 border-dashed px-5 py-4 transition hover:bg-white/5 ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-muted)] text-[var(--accent)]" : "border-white/10 text-[#cabfff]"}`}
+                className="flex items-center justify-center gap-2 rounded-[var(--radius-card)] border-2 border-dashed px-5 py-4 transition hover:bg-white/5 border-[var(--border-soft)] bg-[var(--surface-muted)] text-[var(--accent)] dark:border-white/10 dark:bg-transparent"
                 onClick={() => openEditor({ id: Math.random().toString(), title: "New Category", focusType: "Work", focusSubtype: "Productive", focusSubtype2: null, color: "#6f57f6", icon: "Code", dailyGoalSeconds: null, weeklyGoalSeconds: null })}
                 type="button"
               >
@@ -455,7 +454,7 @@ export function CategoryManager({
               <label className="flex flex-col gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider opacity-40">Sort Categories</span>
                 <select
-                  className={`px-4 py-3 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                  className="px-4 py-3 ui-input-light"
                   onChange={(e) => setSortMode(e.target.value as SortMode)}
                   value={sortMode}
                 >
@@ -468,9 +467,7 @@ export function CategoryManager({
             <div className="mt-6 grid gap-4 md:grid-cols-2">
               {sortedCategories.map((cat) => (
                 <div key={cat.id}>
-                  <div
-                    className={`flex items-center gap-3 rounded-[var(--radius-card)] border p-4 transition hover:-translate-y-0.5 ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-muted)] shadow-[var(--shadow-card)]" : "border-white/5 bg-white/[0.03]"}`}
-                  >
+                  <div className="flex items-center gap-3 rounded-[var(--radius-card)] border p-4 transition hover:-translate-y-0.5 border-[var(--border-soft)] bg-[var(--surface-muted)] shadow-[var(--shadow-card)] dark:border-white/5 dark:bg-white/[0.03] dark:shadow-none">
                     <button
                       className="flex min-w-0 flex-1 items-center gap-4 text-left"
                       onClick={() => openEditor(cat)}
@@ -480,13 +477,13 @@ export function CategoryManager({
                         <CategoryIcon name={cat.icon} className="h-6 w-6" />
                       </div>
                       <div className="min-w-0">
-                        <p className={`truncate font-bold ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>{cat.title}</p>
-                        <p className={`truncate text-xs ${lightMode ? "text-[var(--text-secondary)]" : "text-white/50"}`}>{formatCategoryMeta(cat)}</p>
+                        <p className="truncate font-bold text-[var(--text-primary)]">{cat.title}</p>
+                        <p className="truncate text-xs text-[var(--text-secondary)]">{formatCategoryMeta(cat)}</p>
                       </div>
                     </button>
                     <button
                       aria-label={`Delete ${cat.title}`}
-                      className={`grid h-10 w-10 shrink-0 place-items-center transition hover:scale-105 disabled:opacity-50 ${lightMode ? "ui-pill-button-danger-light" : "rounded-full bg-[#351924] text-[#ff9fbc]"}`}
+                      className="grid h-10 w-10 shrink-0 place-items-center transition hover:scale-105 disabled:opacity-50 ui-pill-button-danger-light dark:rounded-full dark:bg-[#351924] dark:text-[#ff9fbc]"
                       disabled={deletingId === cat.id}
                       onClick={() => void deleteCategory(cat)}
                       type="button"
@@ -504,13 +501,13 @@ export function CategoryManager({
           <>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${lightMode ? "text-[var(--text-muted)]" : "text-white/35"}`}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
                   Focus Category
                 </p>
-                <h3 className={`mt-2 text-2xl font-black ${lightMode ? "text-[var(--text-primary)]" : "text-white"}`}>Edit {editingCat.title}</h3>
+                <h3 className="mt-2 text-2xl font-black text-[var(--text-primary)]">Edit {editingCat.title}</h3>
               </div>
               <button
-                className={`rounded-full p-2 transition hover:bg-white/10 ${lightMode ? "text-[var(--text-muted)]" : "text-white/40"}`}
+                className="rounded-full p-2 transition hover:bg-white/10 text-[var(--text-muted)]"
                 onClick={() => setEditingCat(null)}
                 type="button"
               >
@@ -524,7 +521,7 @@ export function CategoryManager({
               <label className="flex flex-col gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider opacity-40">Title</span>
                 <input
-                  className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                  className="px-4 py-2 ui-input-light"
                   onChange={(e) => setEditingCat({ ...editingCat, title: e.target.value })}
                   type="text"
                   value={editingCat.title}
@@ -534,7 +531,7 @@ export function CategoryManager({
               <label className="flex flex-col gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider opacity-40">Focus Type</span>
                 <input
-                  className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                  className="px-4 py-2 ui-input-light"
                   list="category-manager-focus-types"
                   onChange={(e) => setEditingCat({ ...editingCat, focusType: e.target.value as FocusType })}
                   placeholder="Work"
@@ -549,7 +546,7 @@ export function CategoryManager({
               <label className="flex flex-col gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype</span>
                 <input
-                  className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                  className="px-4 py-2 ui-input-light"
                   list="category-manager-primary-subtypes"
                   onChange={(e) => handlePrimarySubtypeChange(e.target.value as FocusSubtype)}
                   placeholder="Productive"
@@ -564,7 +561,7 @@ export function CategoryManager({
               <label className="flex flex-col gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype 2</span>
                 <input
-                  className={`px-4 py-2 ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                  className="px-4 py-2 ui-input-light"
                   list="category-manager-secondary-subtypes"
                   onChange={(e) => handleSecondarySubtypeChange(e.target.value)}
                   placeholder="Optional"
@@ -581,22 +578,24 @@ export function CategoryManager({
                   <span className="text-xs font-bold uppercase tracking-wider opacity-40">Icon</span>
                   <input
                     aria-label="Search icons"
-                    className={`w-full sm:w-[13rem] px-4 py-2 text-sm ${lightMode ? "ui-input-light" : "rounded-xl border border-white/10 bg-white/5 text-white"}`}
+                    className="w-full sm:w-[13rem] px-4 py-2 text-sm ui-input-light"
                     onChange={(e) => setIconSearch(e.target.value)}
                     placeholder="Search icons"
                     type="text"
                     value={iconSearch}
                   />
                 </div>
-                <div
-                  className={`max-h-[22rem] overflow-y-auto rounded-[var(--radius-card)] border p-3 ${lightMode ? "border-[var(--border-soft)] bg-[var(--surface-muted)]" : "border-white/10 bg-white/[0.04]"}`}
-                >
+                <div className="max-h-[22rem] overflow-y-auto rounded-[var(--radius-card)] border p-3 border-[var(--border-soft)] bg-[var(--surface-muted)] dark:border-white/10 dark:bg-white/[0.04]">
                   <div className="grid grid-cols-5 gap-3">
                   {filteredIcons.map((icon) => (
                     <button
                       aria-label={icon.label}
                       key={icon.name}
-                      className={`flex h-14 w-14 items-center justify-center rounded-full border transition ${editingCat.icon === icon.name ? lightMode ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-[0_10px_22px_rgba(111,87,246,0.16)]" : "border-white/25 bg-white/10 text-white" : lightMode ? "border-[var(--border-soft)] bg-[var(--surface-elevated)] text-[var(--text-secondary)] hover:border-[var(--accent-soft)] hover:-translate-y-0.5" : "border-white/10 bg-white/5 text-white/70 hover:border-white/20"}`}
+                      className={`flex h-14 w-14 items-center justify-center rounded-full border transition ${
+                        editingCat.icon === icon.name
+                          ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent-strong)] shadow-[0_10px_22px_rgba(111,87,246,0.16)] dark:border-white/25 dark:bg-white/10 dark:text-white"
+                          : "border-[var(--border-soft)] bg-[var(--surface-elevated)] text-[var(--text-secondary)] hover:border-[var(--accent-soft)] hover:-translate-y-0.5 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:border-white/20"
+                      }`}
                       onClick={() => setEditingCat({ ...editingCat, icon: icon.name })}
                       title={icon.label}
                       type="button"
@@ -611,7 +610,7 @@ export function CategoryManager({
                   </div>
                 </div>
                 {filteredIcons.length === 0 ? (
-                  <p className={`text-sm ${lightMode ? "text-[var(--text-secondary)]" : "text-white/55"}`}>
+                  <p className="text-sm text-[var(--text-secondary)]">
                     No icons matched that search.
                   </p>
                 ) : null}
@@ -624,7 +623,11 @@ export function CategoryManager({
                     <button
                       key={c}
                       aria-label={`Select ${c} accent color`}
-                      className={`h-10 w-10 rounded-2xl border-2 transition ${editingCat.color === c ? lightMode ? "border-[var(--text-primary)] scale-105" : "border-white scale-105" : lightMode ? "border-[var(--border-soft)]" : "border-transparent"}`}
+                      className={`h-10 w-10 rounded-2xl border-2 transition ${
+                        editingCat.color === c
+                          ? "border-[var(--text-primary)] scale-105"
+                          : "border-[var(--border-soft)] dark:border-transparent"
+                      }`}
                       onClick={() => setEditingCat({ ...editingCat, color: c })}
                       style={{ backgroundColor: c }}
                       type="button"
@@ -636,7 +639,7 @@ export function CategoryManager({
 
             <div className="mt-10 flex justify-end gap-3">
               <button
-                className={`mr-auto px-6 py-2 font-bold ${lightMode ? "ui-pill-button-danger-light" : "rounded-full bg-[#351924] text-[#ff9fbc]"}`}
+                className="mr-auto px-6 py-2 font-bold ui-pill-button-danger-light dark:rounded-full dark:bg-[#351924] dark:text-[#ff9fbc]"
                 disabled={deletingId === editingCat.id || isSaving}
                 onClick={() => void deleteCategory(editingCat)}
                 type="button"
@@ -644,14 +647,14 @@ export function CategoryManager({
                 {deletingId === editingCat.id ? "Deleting..." : "Delete"}
               </button>
               <button
-                className={`px-6 py-2 font-bold ${lightMode ? "ui-pill-button-light" : "rounded-full bg-white/5 text-white"}`}
+                className="px-6 py-2 font-bold ui-pill-button-light dark:rounded-full dark:bg-white/5 dark:text-white"
                 onClick={() => setEditingCat(null)}
                 type="button"
               >
                 Cancel
               </button>
               <button
-                className={`px-8 py-2 font-bold ${lightMode ? "ui-pill-button-strong-light" : "rounded-full bg-[#6f57f6] text-white shadow-lg shadow-[#6f57f6]/20"}`}
+                className="px-8 py-2 font-bold ui-pill-button-strong-light dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-lg dark:shadow-[#6f57f6]/20"
                 disabled={isSaving}
                 onClick={() => void saveCategory(editingCat)}
                 type="button"
