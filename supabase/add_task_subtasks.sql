@@ -6,7 +6,7 @@ begin
     where typnamespace = 'public'::regnamespace
       and typname = 'adhdice_clean_task_subtask_status'
   ) then
-    create type public.adhdice_clean_task_subtask_status as enum ('pending', 'done');
+    create type public.adhdice_clean_task_subtask_status as enum ('pending', 'in_progress', 'done', 'missed', 'did_my_best', 'upcoming', 'not_due');
   end if;
 end
 $$;

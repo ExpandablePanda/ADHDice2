@@ -4,6 +4,7 @@ import Image from "next/image";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
   AlertCircle,
+  ArrowRight,
   ArrowUp,
   BarChart2,
   BookOpen,
@@ -16,14 +17,15 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  CircleX,
   Code2,
   Coffee,
-  Diamond,
   Dice5,
   Dices,
   FlaskConical,
   DollarSign,
   Dumbbell,
+  Ellipsis,
   FileText,
   Footprints,
   Gamepad2,
@@ -58,10 +60,13 @@ import {
   Zap,
 } from "lucide-react";
 import dynamicIconImports from "lucide-react/dynamicIconImports";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { FocusPage } from "./focus-page";
+import { ManualEntryModal } from "./focus-modals";
 const GamesPage = lazy(() => import("./games-page").then((m) => ({ default: m.GamesPage })));
 const Dice3DCanvas = lazy(() => import("./dice-3d").then((m) => ({ default: m.Dice3DCanvas })));
+import type { AgentPlanMetaPill, AgentPlanStatus, AgentPlanSubtaskItem, AgentPlanTaskItem } from "@/components/ui/agent-plan";
+import TasksDenseList, { type DenseTaskListRow, type DenseTaskQuickAction } from "@/components/ui/tasks-dense-list";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
 import { useEconomy } from "@/hooks/useEconomy";
@@ -117,6 +122,9 @@ type TaskEditorMode = "create" | "edit";
 type ThemeMode = "light" | "dark";
 type FilterChipTone = "purple" | "orange" | "red" | "neutral";
 type TaskViewMode = "list" | "cards" | "matrix" | "grid";
+type TaskBucket = "inbox" | "today" | "focus" | "urgent" | "quick_wins" | "recurring" | "waiting" | "later" | "done" | "missed";
+type SavedTaskView = "all" | "today" | "focus" | "urgent" | "recurring" | "low_energy" | "inbox";
+type TaskRoutingBucket = "inbox" | "today" | "waiting" | "later";
 type MomentumView = "urgent" | "today" | "focus";
 type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
 type FocusPlannerStep = 0 | 1 | 2;
@@ -137,18 +145,20 @@ type TaskGridItem = {
   x: number;
   y: number;
 };
-type ListCardId = "composer" | "import" | "focus-today" | "due-today" | "stats" | "urgent";
-type ListCardLayout = { id: ListCardId; colSpan: number; minHeight: number };
 type TaskUiState = {
   matchAny: boolean;
   quickFilters: TaskQuickFilter[];
+  savedView: SavedTaskView;
   search: string;
+  selectedBucket: TaskBucket;
+  statusFilters: TaskStatus[];
   view: TaskViewMode;
   energyFilters: TaskEnergy[];
 };
 type TaskEditorDraft = {
   title: string;
   notes: string;
+  linkedNoteIds: string[];
   status: TaskStatus;
   priority: TaskPriority;
   energy: TaskEnergy;
@@ -175,6 +185,7 @@ type TaskSubtaskDraft = {
   status: TaskSubtaskStatus;
   children: TaskSubtaskDraft[];
 };
+type TaskEditorLinkedNote = Pick<Note, "body" | "id" | "linked_task_ids" | "title" | "updated_at">;
 type TaskHistoryStats = {
   bestStreak: number;
   currentStreak: number;
@@ -191,6 +202,11 @@ type AppPage =
   | "Notes"
   | "Settings"
   | "Test";
+type PersistedTaskEditorUiState = {
+  isOpen: boolean;
+  mode: TaskEditorMode;
+  taskId: string | null;
+};
 
 export type {
   ActiveFocusSession,
@@ -324,13 +340,53 @@ const FOCUS_CATEGORIES_STORAGE_KEY = "adhdice_focus_categories";
 const FOCUS_ACTIVE_STORAGE_KEY = "adhdice_active_sessions";
 const FOCUS_HISTORY_STORAGE_KEY = "adhdice_focus_history";
 const TASK_UI_STORAGE_KEY = "adhdice-task-ui";
+const ACTIVE_PAGE_STORAGE_KEY = "adhdice-active-page";
+const TASK_ROUTING_STORAGE_KEY = "adhdice-task-routing";
 const TASK_FOCUS_STORAGE_KEY = "adhdice-task-focus";
+const DAILY_PLANNING_COLLAPSED_STORAGE_KEY = "adhdice-daily-planning-collapsed";
+const TASK_FILTERS_OPEN_STORAGE_KEY = "adhdice-task-filters-open";
+const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
 const DEFAULT_TASK_UI_STATE: TaskUiState = {
   matchAny: true,
   quickFilters: [],
+  savedView: "all",
   search: "",
+  selectedBucket: "today",
+  statusFilters: [],
   view: "list",
   energyFilters: [],
+};
+const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
+  inbox: "Inbox",
+  today: "Today",
+  focus: "Focus",
+  urgent: "Urgent",
+  quick_wins: "Quick Wins",
+  recurring: "Recurring",
+  waiting: "Waiting",
+  later: "Later",
+  done: "Done",
+  missed: "Missed",
+};
+const TASK_BUCKET_DESCRIPTIONS: Record<TaskBucket, string> = {
+  inbox: "Fresh captures and uncategorized tasks.",
+  today: "Work realistically in play today.",
+  focus: "The short list chosen for today.",
+  urgent: "Time-sensitive or consequence-heavy work.",
+  quick_wins: "Low-energy tasks that restart momentum.",
+  recurring: "Routines and maintenance loops.",
+  waiting: "Blocked or dependent on someone else.",
+  later: "Valid tasks intentionally out of today.",
+  done: "Completed and closed loops.",
+  missed: "Tasks that slipped and need a new decision.",
+};
+const SAVED_VIEW_BUCKET_MAP: Record<Exclude<SavedTaskView, "all">, TaskBucket> = {
+  today: "today",
+  focus: "focus",
+  urgent: "urgent",
+  recurring: "recurring",
+  low_energy: "quick_wins",
+  inbox: "inbox",
 };
 const DEFAULT_PROFILE: UserProfile = {
   avatarSrc: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80",
@@ -342,8 +398,29 @@ const DEFAULT_PROFILE: UserProfile = {
 let cachedProfileSnapshot: UserProfile = DEFAULT_PROFILE;
 
 const priorityOptions: TaskPriority[] = ["normal", "high", "low"];
-const energyOptions: TaskEnergy[] = ["medium", "low", "high"];
+const quickCapturePriorityOptions = ["urgent", "important", "focus"] as const;
+const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
 const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "upcoming", "not_due", "archived"];
+const TASK_STATUS_COLORS: Record<TaskStatus, string> = {
+  pending: "bg-orange-500 text-white",
+  in_progress: "bg-yellow-400 text-black",
+  done: "bg-green-500 text-white",
+  missed: "bg-red-500 text-white",
+  did_my_best: "bg-yellow-300 text-black",
+  upcoming: "bg-gray-400 text-white",
+  not_due: "bg-sky-300 text-black",
+  archived: "bg-gray-600 text-white",
+};
+const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {
+  pending: "border border-[#f6be96] bg-white text-[#d96b1c]",
+  in_progress: "border border-[#a9c2ff] bg-white text-[#4473df]",
+  done: "border border-[#97dfc1] bg-white text-[#119a69]",
+  missed: "border border-[#f4afbc] bg-white text-[#d94e67]",
+  did_my_best: "border border-[#f2d36f] bg-white text-[#b28700]",
+  upcoming: "border border-[#cfd6e4] bg-white text-[#68738c]",
+  not_due: "border border-[#a9daf7] bg-white text-[#3388c9]",
+  archived: "border border-[#b7becd] bg-white text-[#5e687d]",
+};
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "weekly", "monthly", "custom"];
 const repeatWeekdayOptions = [
   { label: "Sun", value: 0 },
@@ -369,17 +446,7 @@ const dockIcons: Record<AppPage, string> = {
   Test: "FlaskConical",
 };
 const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
-const LIST_CARD_STORAGE_KEY = "adhdice-list-card-layout";
 const DAY_RESET_STORAGE_KEY = "adhdice-day-reset";
-const LIST_ROW_HEIGHT = 120;
-const LIST_DEFAULT_CARD_LAYOUTS: ListCardLayout[] = [
-  { id: "composer", colSpan: 2, minHeight: LIST_ROW_HEIGHT * 2 },
-  { id: "import", colSpan: 2, minHeight: LIST_ROW_HEIGHT * 2 },
-  { id: "focus-today", colSpan: 2, minHeight: LIST_ROW_HEIGHT * 3 },
-  { id: "due-today", colSpan: 1, minHeight: LIST_ROW_HEIGHT * 3 },
-  { id: "stats", colSpan: 1, minHeight: LIST_ROW_HEIGHT * 3 },
-  { id: "urgent", colSpan: 4, minHeight: LIST_ROW_HEIGHT * 2 },
-];
 const TASK_GRID_MAX_COLUMNS = 4;
 const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
@@ -387,7 +454,7 @@ const TASK_GRID_ROW_HEIGHT = 42;
 const TASK_GRID_MAX_DISPLAY_ROWS = 24;
 const TASK_GRID_WIDGET_LABELS: Record<TaskGridWidgetType, string> = {
   urgent: "Urgent Tasks",
-  focus_today: "Focus Today",
+  focus_today: "Focus",
   due_today: "Due Today",
   active_queue: "Active Queue",
   completed: "Completed",
@@ -405,6 +472,11 @@ const TASK_GRID_STARTER_LAYOUT: TaskGridItem[] = normalizeTaskGridLayout([
   { h: 8, id: "grid-import", type: "import", w: 2, x: 0, y: 0 },
   { h: 6, id: "grid-completed", type: "completed", w: 2, x: 0, y: 0 },
 ]);
+
+function isSupabaseSessionLockError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("Lock was stolen by another request");
+}
 
 export function TaskApp() {
   runStorageMigrations();
@@ -428,28 +500,29 @@ export function TaskApp() {
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
   } = useFocus(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent);
   const [taskUiState, setTaskUiState] = useState<TaskUiState>(DEFAULT_TASK_UI_STATE);
+  const [taskRouting, setTaskRouting] = useState<Record<string, TaskRoutingBucket>>({});
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
   const [taskSubtasks, setTaskSubtasks] = useState<DbTaskSubtask[]>([]);
+  const [selectedDenseTaskId, setSelectedDenseTaskId] = useState<string | null>(null);
   const [taskGridLayout, setTaskGridLayout] = useState<TaskGridItem[]>(TASK_GRID_STARTER_LAYOUT);
   const [isGridEditMode, setIsGridEditMode] = useState(false);
-  const [isListLayoutEditMode, setIsListLayoutEditMode] = useState(false);
-  const [listCardLayouts, setListCardLayouts] = useState<ListCardLayout[]>(LIST_DEFAULT_CARD_LAYOUTS);
-  const [activeListCardId, setActiveListCardId] = useState<ListCardId | null>(null);
-  const [draggedListCardId, setDraggedListCardId] = useState<ListCardId | null>(null);
   const [selectedGridWidgetId, setSelectedGridWidgetId] = useState<string | null>(null);
   const [draggedGridWidgetId, setDraggedGridWidgetId] = useState<string | null>(null);
   const [showFocusPlanner, setShowFocusPlanner] = useState(false);
   const [focusPlannerStep, setFocusPlannerStep] = useState<FocusPlannerStep>(0);
   const [focusDraftIds, setFocusDraftIds] = useState<string[]>([]);
+  const [isDailyPlanningCollapsed, setIsDailyPlanningCollapsed] = useState(false);
   const [momentumView, setMomentumView] = useState<MomentumView>("urgent");
   const [isMomentumListOpen, setIsMomentumListOpen] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const profile = useProfileStore();
   const [isAccountOpen, setIsAccountOpen] = useState(false);
+  const [isTaskFiltersOpen, setIsTaskFiltersOpen] = useState(false);
   const [isTaskEditorOpen, setIsTaskEditorOpen] = useState(false);
   const [taskEditorMode, setTaskEditorMode] = useState<TaskEditorMode>("create");
   const [taskEditorTaskId, setTaskEditorTaskId] = useState<string | null>(null);
+  const [pendingTaskEditorRestore, setPendingTaskEditorRestore] = useState<PersistedTaskEditorUiState | null>(null);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
   const gridColumns = useResponsiveTaskGridColumns();
   const [dayStartTime, setDayStartTime] = useState<string>(() => {
@@ -472,12 +545,44 @@ export function TaskApp() {
       return;
     }
 
+    let isMounted = true;
+    const loadingTimeoutId = window.setTimeout(() => {
+      if (!isMounted) {
+        return;
+      }
+      setLoading(false);
+    }, 3500);
+
+    function handleSessionLockRejection(event: PromiseRejectionEvent) {
+      if (!isSupabaseSessionLockError(event.reason)) {
+        return;
+      }
+
+      event.preventDefault();
+      setSession(null);
+      setLoading(false);
+    }
+
+    window.addEventListener("unhandledrejection", handleSessionLockRejection);
+
     supabase.auth.getSession()
       .then(({ data }) => {
+        if (!isMounted) {
+          return;
+        }
         setSession(data.session);
         setLoading(false);
       })
       .catch((error) => {
+        if (!isMounted) {
+          return;
+        }
+        if (isSupabaseSessionLockError(error)) {
+          setSession(null);
+          setLoading(false);
+          return;
+        }
+
         console.error("Failed to get session:", error);
         setLoading(false);
       });
@@ -489,21 +594,44 @@ export function TaskApp() {
         setTasks([]);
         setFocusCategories([]);
         setActiveSessions({});
-        setFocusHistory([]);
-        setFocusedTaskIdsByDate({});
-        setTaskHistory([]);
-        setTaskSubtasks([]);
+      setFocusHistory([]);
+      setFocusedTaskIdsByDate({});
+      setTaskRouting({});
+      setTaskHistory([]);
+      setTaskSubtasks([]);
         setTaskGridLayout(TASK_GRID_STARTER_LAYOUT);
         setIsGridEditMode(false);
         setSelectedGridWidgetId(null);
+        setIsTaskFiltersOpen(false);
+        setIsTaskEditorOpen(false);
+        setTaskEditorMode("create");
+        setTaskEditorTaskId(null);
+        setPendingTaskEditorRestore(null);
         saveProfile(DEFAULT_PROFILE);
       }
       setSession(nextSession);
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      window.clearTimeout(loadingTimeoutId);
+      window.removeEventListener("unhandledrejection", handleSessionLockRejection);
+      subscription.unsubscribe();
+    };
   }, [supabase]);
+
+  useEffect(() => {
+    if (!message || message.tone !== "good" || session?.user) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setMessage((current) => (current === message ? null : current));
+    }, 3000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [message, session?.user]);
 
   useEffect(() => {
     if (!supabase || !session?.user) {
@@ -800,13 +928,20 @@ export function TaskApp() {
   useEffect(() => {
     const userId = session?.user?.id;
     if (!userId) {
+      setActivePage("Home");
       setTaskUiState(DEFAULT_TASK_UI_STATE);
+      setTaskRouting({});
       setFocusedTaskIdsByDate({});
       setTaskHistory([]);
       setTaskSubtasks([]);
       setTaskGridLayout(TASK_GRID_STARTER_LAYOUT);
       setIsGridEditMode(false);
       setSelectedGridWidgetId(null);
+      setIsTaskFiltersOpen(false);
+      setIsTaskEditorOpen(false);
+      setTaskEditorMode("create");
+      setTaskEditorTaskId(null);
+      setPendingTaskEditorRestore(null);
       return;
     }
 
@@ -819,6 +954,31 @@ export function TaskApp() {
       ...DEFAULT_TASK_UI_STATE,
       ...migrateLegacyTaskUiState(storedTaskUiState),
     });
+    const storedActivePage = parseStoredJson<unknown>(
+      getUserScopedStorageKey(ACTIVE_PAGE_STORAGE_KEY, userId),
+      "Home",
+    );
+    setActivePage(isAppPage(storedActivePage) ? storedActivePage : "Home");
+    setIsTaskFiltersOpen(
+      parseStoredJson<boolean>(
+        getUserScopedStorageKey(TASK_FILTERS_OPEN_STORAGE_KEY, userId),
+        false,
+      ),
+    );
+    setPendingTaskEditorRestore(
+      normalizePersistedTaskEditorUiState(
+        parseStoredJson<unknown>(
+          getUserScopedStorageKey(TASK_EDITOR_UI_STORAGE_KEY, userId),
+          { isOpen: false, mode: "create", taskId: null },
+        ),
+      ),
+    );
+    setTaskRouting(
+      parseStoredJson<Record<string, TaskRoutingBucket>>(
+        getUserScopedStorageKey(TASK_ROUTING_STORAGE_KEY, userId),
+        {},
+      ),
+    );
     setFocusedTaskIdsByDate(
       parseStoredJson<Record<string, string[]>>(getUserScopedStorageKey(TASK_FOCUS_STORAGE_KEY, userId), {}),
     );
@@ -827,10 +987,50 @@ export function TaskApp() {
         parseStoredJson<TaskGridItem[]>(getUserScopedStorageKey(TASK_GRID_STORAGE_KEY, userId), TASK_GRID_STARTER_LAYOUT),
       ),
     );
-    setListCardLayouts(
-      parseStoredJson<ListCardLayout[]>(getUserScopedStorageKey(LIST_CARD_STORAGE_KEY, userId), LIST_DEFAULT_CARD_LAYOUTS),
+    setIsDailyPlanningCollapsed(
+      parseStoredJson<boolean>(getUserScopedStorageKey(DAILY_PLANNING_COLLAPSED_STORAGE_KEY, userId), false),
     );
   }, [session?.user?.id]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      getUserScopedStorageKey(ACTIVE_PAGE_STORAGE_KEY, userId),
+      JSON.stringify(activePage),
+    );
+  }, [activePage, session?.user?.id]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      getUserScopedStorageKey(TASK_FILTERS_OPEN_STORAGE_KEY, userId),
+      JSON.stringify(isTaskFiltersOpen),
+    );
+  }, [isTaskFiltersOpen, session?.user?.id]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      getUserScopedStorageKey(TASK_EDITOR_UI_STORAGE_KEY, userId),
+      JSON.stringify({
+        isOpen: isTaskEditorOpen,
+        mode: taskEditorMode,
+        taskId: taskEditorTaskId,
+      } satisfies PersistedTaskEditorUiState),
+    );
+  }, [isTaskEditorOpen, session?.user?.id, taskEditorMode, taskEditorTaskId]);
 
   useEffect(() => {
     const userId = session?.user?.id;
@@ -843,6 +1043,18 @@ export function TaskApp() {
       JSON.stringify(taskUiState),
     );
   }, [session?.user?.id, taskUiState]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      getUserScopedStorageKey(TASK_ROUTING_STORAGE_KEY, userId),
+      JSON.stringify(taskRouting),
+    );
+  }, [session?.user?.id, taskRouting]);
 
   useEffect(() => {
     const userId = session?.user?.id;
@@ -874,10 +1086,10 @@ export function TaskApp() {
       return;
     }
     window.localStorage.setItem(
-      getUserScopedStorageKey(LIST_CARD_STORAGE_KEY, userId),
-      JSON.stringify(listCardLayouts),
+      getUserScopedStorageKey(DAILY_PLANNING_COLLAPSED_STORAGE_KEY, userId),
+      JSON.stringify(isDailyPlanningCollapsed),
     );
-  }, [listCardLayouts, session?.user?.id]);
+  }, [isDailyPlanningCollapsed, session?.user?.id]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -894,17 +1106,88 @@ export function TaskApp() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || activePage !== "Tasks") {
+      return;
+    }
+
+    const isTextInput = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) {
+        return false;
+      }
+
+      return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isTextInput(event.target)) {
+        return;
+      }
+
+      if (event.key === "/") {
+        event.preventDefault();
+        document.getElementById("task-search-input")?.focus();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        openNewTaskEditor();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        openFocusPlanner();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activePage]);
+
+  useEffect(() => {
     if (selectedGridWidgetId && !taskGridLayout.some((item) => item.id === selectedGridWidgetId)) {
       setSelectedGridWidgetId(null);
     }
   }, [selectedGridWidgetId, taskGridLayout]);
 
   useEffect(() => {
-    if (taskEditorTaskId && !tasks.some((task) => task.id === taskEditorTaskId)) {
+    if (isWorkspaceLoading || !taskEditorTaskId || taskEditorMode !== "edit") {
+      return;
+    }
+
+    if (!tasks.some((task) => task.id === taskEditorTaskId)) {
       setTaskEditorTaskId(null);
       setIsTaskEditorOpen(false);
+      setTaskEditorMode("create");
     }
-  }, [taskEditorTaskId, tasks]);
+  }, [isWorkspaceLoading, taskEditorMode, taskEditorTaskId, tasks]);
+
+  useEffect(() => {
+    if (!pendingTaskEditorRestore || isWorkspaceLoading) {
+      return;
+    }
+
+    if (!pendingTaskEditorRestore.isOpen) {
+      setIsTaskEditorOpen(false);
+      setTaskEditorMode("create");
+      setTaskEditorTaskId(null);
+      setPendingTaskEditorRestore(null);
+      return;
+    }
+
+    if (pendingTaskEditorRestore.mode === "edit") {
+      if (!pendingTaskEditorRestore.taskId || !tasks.some((task) => task.id === pendingTaskEditorRestore.taskId)) {
+        setPendingTaskEditorRestore(null);
+        return;
+      }
+    }
+
+    setTaskEditorMode(pendingTaskEditorRestore.mode);
+    setTaskEditorTaskId(pendingTaskEditorRestore.taskId);
+    setIsTaskEditorOpen(true);
+    setPendingTaskEditorRestore(null);
+  }, [isWorkspaceLoading, pendingTaskEditorRestore, tasks]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -997,6 +1280,14 @@ export function TaskApp() {
 
   const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(taskSubtasks), [taskSubtasks]);
   const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory), [taskHistory]);
+  const todayKey = getTodayKey();
+  const focusedTaskIds = focusedTaskIdsByDate[todayKey] ?? [];
+  const focusedTaskIdSet = useMemo(() => new Set(focusedTaskIds), [focusedTaskIds]);
+  const deferredSearchQuery = useDeferredValue(taskUiState.search.trim().toLowerCase());
+  const bucketContext = useMemo(() => ({
+    focusedTaskIds: focusedTaskIdSet,
+    routing: taskRouting,
+  }), [focusedTaskIdSet, taskRouting]);
 
 
   if (!supabase) {
@@ -1042,19 +1333,28 @@ export function TaskApp() {
 
   const client = supabase;
   const currentUser = session.user;
-  const todayKey = getTodayKey();
-  const focusedTaskIds = focusedTaskIdsByDate[todayKey] ?? [];
 
   const activeTasks = tasks.filter(isTaskOpen);
   const doneTasks = tasks.filter(isTaskFinished);
   const overdueTasks = activeTasks.filter((task) => isOverdue(task.due_on));
   const todayTasks = activeTasks.filter((task) => isDueToday(task.due_on));
-  const highPriorityTasks = activeTasks.filter(isTaskUrgent);
+  const urgentFlaggedTasks = activeTasks.filter(isTaskUrgent);
   const lowEnergyTasks = activeTasks.filter((task) => task.energy === "low").slice(0, 4);
   const focusedTasks = activeTasks.filter((task) => focusedTaskIds.includes(task.id));
-  const urgentTasks = [...overdueTasks, ...highPriorityTasks.filter((task) => !isOverdue(task.due_on))]
-    .slice(0, 6);
-  const searchQuery = taskUiState.search.trim().toLowerCase();
+  const urgentTasks = urgentFlaggedTasks.slice(0, 6);
+  const taskStatusCounts = tasks.reduce<Record<TaskStatus, number>>((accumulator, task) => {
+    accumulator[task.status] += 1;
+    return accumulator;
+  }, {
+    pending: 0,
+    in_progress: 0,
+    done: 0,
+    missed: 0,
+    did_my_best: 0,
+    upcoming: 0,
+    not_due: 0,
+    archived: 0,
+  });
   const filteredTasks = tasks.filter((task) => {
     const subtaskTitles = (taskSubtasksByTaskId[task.id] ?? []).map((subtask) => subtask.title);
     const haystacks = [
@@ -1064,7 +1364,7 @@ export function TaskApp() {
       ...subtaskTitles,
       ...(task.tags ?? []),
     ].map((value) => value.toLowerCase());
-    const matchesSearch = searchQuery.length === 0 || haystacks.some((value) => value.includes(searchQuery));
+    const matchesSearch = deferredSearchQuery.length === 0 || haystacks.some((value) => value.includes(deferredSearchQuery));
     if (!matchesSearch) {
       return false;
     }
@@ -1075,15 +1375,44 @@ export function TaskApp() {
       : taskUiState.matchAny
         ? quickChecks.some(Boolean)
         : quickChecks.every(Boolean);
+    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(task.status);
     const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
-    return matchesQuickFilters && matchesEnergy;
+    return matchesQuickFilters && matchesStatus && matchesEnergy;
   });
-  const filteredActiveTasks = filteredTasks.filter(isTaskOpen);
-  const filteredDoneTasks = filteredTasks.filter(isTaskFinished);
+  const filteredTasksSorted = sortTasksForCockpit(filteredTasks, bucketContext);
+  const visibleBucketCounts = buildTaskBucketCounts(filteredTasksSorted, bucketContext);
+  const filteredTasksByBucket = taskUiState.selectedBucket === "done"
+    ? filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "done")
+    : filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === taskUiState.selectedBucket);
+  const filteredTasksByView = applySavedTaskView(filteredTasksByBucket, taskUiState.savedView, bucketContext);
+  const filteredActiveTasks = filteredTasksSorted.filter(isTaskOpen);
+  const filteredDoneTasks = filteredTasksSorted.filter(isTaskFinished);
+  const filteredOverdueTasks = filteredActiveTasks.filter((task) => isOverdue(task.due_on));
   const filteredUrgentTasks = filteredActiveTasks.filter(isTaskUrgent);
   const filteredFocusTasks = filteredActiveTasks.filter((task) => focusedTaskIds.includes(task.id));
   const filteredLowEnergyTasks = filteredActiveTasks.filter((task) => task.energy === "low").slice(0, 4);
   const filteredTodayTasks = filteredActiveTasks.filter((task) => isDueToday(task.due_on));
+  const selectedBucketTasks = filteredTasksByView;
+  const inboxTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "inbox");
+  const waitingTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "waiting");
+  const recurringTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "recurring");
+  const laterTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "later");
+  const missedTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "missed");
+  const quickWinTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "quick_wins");
+  const planningCandidates = sortTasksForCockpit([
+    ...inboxTasks,
+    ...laterTasks.filter((task) => !inboxTasks.some((inboxTask) => inboxTask.id === task.id)).slice(0, 8),
+    ...quickWinTasks.filter((task) => !inboxTasks.some((inboxTask) => inboxTask.id === task.id)).slice(0, 6),
+  ], bucketContext)
+    .filter((task, index, collection) => collection.findIndex((candidate) => candidate.id === task.id) === index)
+    .slice(0, 5);
+  const focusPlannerTasks = sortTasksForCockpit(
+    filteredTasksSorted.filter((task) => {
+      const bucket = getTaskBucket(task, bucketContext);
+      return isTaskOpen(task) && (bucket === "today" || bucket === "urgent" || bucket === "quick_wins" || bucket === "focus");
+    }),
+    bucketContext,
+  );
   const hasFocusedToday = focusedTaskIds.length > 0;
   const momentumPercent = activeTasks.length === 0
     ? 0
@@ -1100,6 +1429,42 @@ export function TaskApp() {
   const selectedTaskForEditor = taskEditorTaskId
     ? tasks.find((task) => task.id === taskEditorTaskId) ?? null
     : null;
+  const listViewBucketOptions = (Object.keys(TASK_BUCKET_LABELS) as TaskBucket[]).map((bucket) => ({
+    count: visibleBucketCounts[bucket],
+    label: TASK_BUCKET_LABELS[bucket],
+    value: bucket,
+  }));
+  const taskHistoryStatsByTaskId = taskHistory.reduce<Record<string, TaskHistoryStats>>((accumulator, entry) => {
+    const nextEntries = taskHistory.filter((historyEntry) => historyEntry.task_id === entry.task_id);
+    accumulator[entry.task_id] = computeTaskHistoryStats(nextEntries);
+    return accumulator;
+  }, {});
+  const denseListRows: DenseTaskListRow[] = selectedBucketTasks.map((task) => {
+    const bucket = getTaskBucket(task, bucketContext);
+    const historyStats = taskHistoryStatsByTaskId[task.id];
+    return {
+      bucketLabel: TASK_BUCKET_LABELS[bucket],
+      dueLabel: formatTaskDueLabel(task),
+      energyLabel: formatOptionLabel(task.energy),
+      focusLabel: focusedTaskIdSet.has(task.id) ? "Focused" : null,
+      id: task.id,
+      isDone: isTaskFinished(task),
+      isUrgent: task.is_urgent,
+      priorityLabel: task.is_important ? "Important" : formatOptionLabel(task.priority),
+      repeatLabel: formatRepeatSummary(task),
+      rolloverLabel: formatRolloverLabel(task),
+      signalLabel: historyStats?.currentStreak
+        ? `${historyStats.currentStreak}d streak`
+        : historyStats?.doneRate
+          ? `${historyStats.doneRate}% done`
+          : null,
+      status: task.status,
+      title: task.title,
+    };
+  });
+  const effectiveSelectedDenseTaskId = selectedDenseTaskId && selectedBucketTasks.some((task) => task.id === selectedDenseTaskId)
+    ? selectedDenseTaskId
+    : selectedBucketTasks[0]?.id ?? null;
 
   function openNewTaskEditor() {
     setTaskEditorMode("create");
@@ -1227,6 +1592,95 @@ export function TaskApp() {
     setShowFocusPlanner(true);
   }
 
+  function setSelectedBucket(bucket: TaskBucket) {
+    setTaskUiState((prev) => ({
+      ...prev,
+      savedView: "all",
+      selectedBucket: bucket,
+    }));
+  }
+
+  function routeTask(taskId: string, bucket: TaskRoutingBucket | null) {
+    setTaskRouting((current) => {
+      if (!bucket) {
+        const { [taskId]: _removed, ...rest } = current;
+        return rest;
+      }
+
+      return {
+        ...current,
+        [taskId]: bucket,
+      };
+    });
+  }
+
+  function selectTaskBucket(task: Task, bucket: TaskBucket) {
+    if (bucket === "done") {
+      void updateTask(task.id, {
+        completed_at: new Date().toISOString(),
+        status: "done",
+      });
+      return;
+    }
+
+    if (bucket === "missed") {
+      void updateTask(task.id, { status: "missed" });
+      return;
+    }
+
+    if (bucket === "focus") {
+      void saveFocusSelection(Array.from(new Set([...focusedTaskIds, task.id])));
+      routeTask(task.id, "today");
+      return;
+    }
+
+    if (bucket === "recurring") {
+      openEditTaskEditor(task);
+      setMessage({ tone: "neutral", text: "Choose a repeat pattern to turn this into a recurring loop." });
+      return;
+    }
+
+    const routeMap: Partial<Record<TaskBucket, TaskRoutingBucket>> = {
+      inbox: "inbox",
+      later: "later",
+      today: "today",
+      waiting: "waiting",
+    };
+    const nextRoute = routeMap[bucket];
+    if (nextRoute) {
+      routeTask(task.id, nextRoute);
+      return;
+    }
+
+    routeTask(task.id, null);
+  }
+
+  function planTasksForToday(taskIds: string[]) {
+    if (taskIds.length === 0) {
+      return;
+    }
+
+    setTaskRouting((current) => {
+      const next = { ...current };
+      for (const taskId of taskIds) {
+        next[taskId] = "today";
+      }
+      return next;
+    });
+    setTaskUiState((prev) => ({ ...prev, savedView: "today", selectedBucket: "today" }));
+    setMessage({ tone: "good", text: `${taskIds.length} task${taskIds.length === 1 ? "" : "s"} moved into Today.` });
+  }
+
+  function sendTaskToWaiting(taskId: string) {
+    routeTask(taskId, "waiting");
+    setMessage({ tone: "neutral", text: "Moved to Waiting so it stops crowding today." });
+  }
+
+  function deferTask(taskId: string) {
+    routeTask(taskId, "later");
+    setMessage({ tone: "neutral", text: "Deferred to Later." });
+  }
+
   function scrollToTaskElement(elementId: string) {
     if (typeof document === "undefined") {
       return;
@@ -1253,9 +1707,71 @@ export function TaskApp() {
 
     if (data) {
       setTasks((current) => sortTasksForUi([...current, data]));
+      if (!focusToday && shouldRouteTaskToInbox(data)) {
+        routeTask(data.id, "inbox");
+      }
     }
 
     setMessage({ tone: "good", text: "Task captured." });
+  }
+
+  function handleDenseListQuickAction(taskId: string, action: DenseTaskQuickAction) {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      return;
+    }
+
+    if (action === "today") {
+      planTasksForToday([taskId]);
+      return;
+    }
+
+    if (action === "focus") {
+      void saveFocusSelection(Array.from(new Set([...focusedTaskIds, taskId])));
+      routeTask(taskId, "today");
+      setMessage({ tone: "good", text: "Added to Focus and kept in Today." });
+      return;
+    }
+
+    if (action === "waiting") {
+      sendTaskToWaiting(taskId);
+      return;
+    }
+
+    if (action === "later") {
+      deferTask(taskId);
+      return;
+    }
+
+    if (action === "recurring") {
+      selectTaskBucket(task, "recurring");
+      return;
+    }
+
+    void updateTask(taskId, {
+      completed_at: new Date().toISOString(),
+      status: "done",
+    });
+  }
+
+  function toggleDenseListTaskCompletion(taskId: string) {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      return;
+    }
+
+    if (task.status === "done") {
+      void updateTask(taskId, {
+        completed_at: null,
+        status: "pending",
+      });
+      return;
+    }
+
+    void updateTask(taskId, {
+      completed_at: new Date().toISOString(),
+      status: "done",
+    });
   }
 
   async function replaceTaskSubtasks(taskId: string, subtasks: TaskSubtaskDraft[]) {
@@ -1271,18 +1787,26 @@ export function TaskApp() {
     }
 
     const counter = { n: 0 };
-    function flattenRecursive(items: TaskSubtaskDraft[], parentId: string | null): TaskSubtaskInsert[] {
+    function flattenRecursive(items: TaskSubtaskDraft[], parentId: string | null = null): TaskSubtaskInsert[] {
       const result: TaskSubtaskInsert[] = [];
       for (const item of items) {
         const trimmed = item.title.trim();
         if (!trimmed) continue;
         const id = isUuid(item.id) ? item.id : crypto.randomUUID();
-        result.push({ id, task_id: taskId, user_id: currentUser.id, title: trimmed, status: item.status, sort_order: counter.n++, parent_subtask_id: parentId });
+        result.push({
+          id,
+          parent_subtask_id: parentId,
+          sort_order: counter.n++,
+          status: item.status,
+          task_id: taskId,
+          title: trimmed,
+          user_id: currentUser.id,
+        });
         result.push(...flattenRecursive(item.children, id));
       }
       return result;
     }
-    const cleanedSubtasks = flattenRecursive(subtasks, null);
+    const cleanedSubtasks = flattenRecursive(subtasks);
 
     if (cleanedSubtasks.length === 0) {
       setTaskSubtasks((current) => current.filter((subtask) => subtask.task_id !== taskId));
@@ -1307,8 +1831,43 @@ export function TaskApp() {
     return true;
   }
 
-  async function saveTaskEditor(values: TaskDraft, options?: { taskId?: string | null; focusToday?: boolean; subtasks?: TaskSubtaskDraft[] }) {
+  async function syncTaskNoteLinks(taskId: string, linkedNoteIds: string[]) {
+    const { data, error } = await client
+      .from("adhdice_notes")
+      .select("id,linked_task_ids")
+      .eq("user_id", currentUser.id);
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    const targetIds = new Set(linkedNoteIds);
+    const affectedNotes = (data ?? []).filter((note) => note.linked_task_ids.includes(taskId) || targetIds.has(note.id));
+
+    for (const note of affectedNotes) {
+      const nextLinkedTaskIds = targetIds.has(note.id)
+        ? Array.from(new Set([...note.linked_task_ids, taskId]))
+        : note.linked_task_ids.filter((linkedTaskId) => linkedTaskId !== taskId);
+
+      const { error: updateError } = await client
+        .from("adhdice_notes")
+        .update({ linked_task_ids: nextLinkedTaskIds })
+        .eq("id", note.id)
+        .eq("user_id", currentUser.id);
+
+      if (updateError) {
+        setMessage({ tone: "warn", text: updateError.message });
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  async function saveTaskEditor(values: TaskDraft, options?: { taskId?: string | null; focusToday?: boolean; linkedNoteIds?: string[]; subtasks?: TaskSubtaskDraft[] }) {
     const focusToday = options?.focusToday ?? false;
+    const linkedNoteIds = options?.linkedNoteIds ?? [];
     const taskId = options?.taskId ?? null;
     const subtasks = options?.subtasks ?? [];
     const isEditing = Boolean(taskId);
@@ -1338,6 +1897,11 @@ export function TaskApp() {
 
       const subtasksSaved = await replaceTaskSubtasks(taskId, subtasks);
       if (!subtasksSaved) {
+        return false;
+      }
+
+      const linkedNotesSaved = await syncTaskNoteLinks(taskId, linkedNoteIds);
+      if (!linkedNotesSaved) {
         return false;
       }
 
@@ -1384,6 +1948,11 @@ export function TaskApp() {
       return false;
     }
 
+    const linkedNotesSaved = await syncTaskNoteLinks(data.id, linkedNoteIds);
+    if (!linkedNotesSaved) {
+      return false;
+    }
+
     if (focusToday) {
       await saveFocusSelection(
         Array.from(new Set([...focusedTaskIds, data.id])),
@@ -1418,6 +1987,15 @@ export function TaskApp() {
 
     if (data) {
       setTasks((current) => sortTasksForUi([...current, ...data]));
+      setTaskRouting((current) => {
+        const next = { ...current };
+        for (const task of data) {
+          if (shouldRouteTaskToInbox(task)) {
+            next[task.id] = "inbox";
+          }
+        }
+        return next;
+      });
     }
 
     setMessage({ tone: "good", text: `${lines.length} task${lines.length === 1 ? "" : "s"} imported.` });
@@ -1442,6 +2020,32 @@ export function TaskApp() {
       ...mappedSubtasks,
     ]);
     return true;
+  }
+
+  async function updateTaskSubtaskStatus(subtaskId: string, status: TaskSubtaskStatus) {
+    const { data, error } = await client
+      .from("adhdice_task_subtasks")
+      .update({ status })
+      .eq("id", subtaskId)
+      .eq("user_id", currentUser.id)
+      .select("*")
+      .single();
+
+    if (error) {
+      const isMissingSubtaskStatusEnumValue = error.message.includes("adhdice_clean_task_subtask_status")
+        && error.message.includes("invalid input value for enum");
+      setMessage({
+        tone: "warn",
+        text: isMissingSubtaskStatusEnumValue
+          ? "Your local database is missing the newer subtask statuses. Run the subtask status migration, then reload."
+          : error.message,
+      });
+      return;
+    }
+
+    if (!data) return;
+    const mappedSubtask = mapTaskSubtaskRow(data);
+    setTaskSubtasks((current) => current.map((subtask) => subtask.id === mappedSubtask.id ? mappedSubtask : subtask));
   }
 
   async function syncTaskHistoryEntry(taskId: string, status: TaskStatus, entryDate = todayKey) {
@@ -1512,6 +2116,9 @@ export function TaskApp() {
 
     if (data) {
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? data : task)));
+      if (data.status === "done" || data.status === "archived") {
+        routeTask(taskId, null);
+      }
       await syncTaskHistoryEntry(taskId, data.status);
       if (data.status === "done") {
         void appendEconomyEvent({
@@ -1555,6 +2162,13 @@ export function TaskApp() {
     }
 
     setTasks((current) => current.filter((task) => !taskIds.includes(task.id)));
+    setTaskRouting((current) => {
+      const next = { ...current };
+      for (const taskId of taskIds) {
+        delete next[taskId];
+      }
+      return next;
+    });
     setMessage({ tone: "good", text: `Deleted ${taskIds.length} task${taskIds.length === 1 ? "" : "s"}.` });
   }
 
@@ -1668,19 +2282,31 @@ export function TaskApp() {
                 onSetDraftIds={setFocusDraftIds}
                 onStepChange={setFocusPlannerStep}
                 step={focusPlannerStep}
-                tasks={activeTasks}
+                tasks={focusPlannerTasks.length > 0 ? focusPlannerTasks : activeTasks}
               />
             ) : null}
             {isTaskEditorOpen ? (
               <TaskEditorModal
                 allTags={[...new Set(tasks.flatMap((t) => t.tags ?? []))].sort()}
+                client={client}
+                currentUser={currentUser}
                 focusedToday={focusedTaskIds}
                 mode={taskEditorMode}
                 onClose={closeTaskEditor}
+                onLogActualTime={async ({ date, durationSeconds, notes, title }) =>
+                  handleManualFocusEntry({
+                    categoryId: null,
+                    date,
+                    durationSeconds,
+                    focusType: "Work",
+                    notes,
+                    title,
+                  })}
                 onOpenHistory={selectedTaskForEditor ? () => setTaskHistoryModalTaskId(selectedTaskForEditor.id) : undefined}
                 onSave={async (draft) => {
                   const success = await saveTaskEditor(draft.values, {
                     focusToday: draft.focusToday,
+                    linkedNoteIds: draft.linkedNoteIds,
                     subtasks: draft.subtasks,
                     taskId: selectedTaskForEditor?.id ?? null,
                   });
@@ -1708,267 +2334,253 @@ export function TaskApp() {
                 title={momentumMetric.label}
               />
             ) : null}
-            <TaskHero
+            <TaskOperationsHeader
               actionLabel={hasFocusedToday ? "Refocus" : "Focus"}
-              activeCount={activeTasks.length}
+              activeCount={filteredActiveTasks.length}
+              hideSearch={taskUiState.view === "list"}
               metric={momentumMetric}
               onCycleMomentum={() => setMomentumView(getNextMomentumView(momentumView))}
+              onOpenComposer={openNewTaskEditor}
               onOpenFocusPlanner={openFocusPlanner}
+              onOpenImport={() => scrollToTaskElement("task-import-panel")}
               onOpenMomentumDetails={() => setIsMomentumListOpen(true)}
-              todayCount={todayTasks.length}
+              onSearchChange={(search) => setTaskUiState((prev) => ({ ...prev, search }))}
+              onViewChange={(view) => setTaskUiState((prev) => ({ ...prev, view }))}
+              search={taskUiState.search}
+              todayCount={filteredTodayTasks.length}
+              view={taskUiState.view}
             />
 
-            <div className="mt-6">
-              <ControlBar
-                onOpenComposer={openNewTaskEditor}
-                onOpenImport={() => scrollToTaskElement("task-import-panel")}
-                onSearchChange={(search) => setTaskUiState((prev) => ({ ...prev, search }))}
-                onViewChange={(view) => setTaskUiState((prev) => ({ ...prev, view }))}
-                search={taskUiState.search}
-                view={taskUiState.view}
-              />
-              <FilterRows
-                activeCount={activeTasks.length}
-                doneCount={doneTasks.length}
-                focusedCount={focusedTasks.length}
-                matchAny={taskUiState.matchAny}
-                onToggleEnergy={(energy) =>
-                  setTaskUiState((prev) => ({
-                    ...prev,
-                    energyFilters: prev.energyFilters.includes(energy)
-                      ? prev.energyFilters.filter((value) => value !== energy)
-                      : [...prev.energyFilters, energy],
-                  }))
-                }
-                onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
-                onToggleQuickFilter={(filter) =>
-                  setTaskUiState((prev) => ({
-                    ...prev,
-                    quickFilters: prev.quickFilters.includes(filter)
-                      ? prev.quickFilters.filter((value) => value !== filter)
-                      : [...prev.quickFilters, filter],
-                  }))
-                }
-                overdueCount={overdueTasks.length}
-                selectedEnergies={taskUiState.energyFilters}
-                selectedQuickFilters={taskUiState.quickFilters}
-                todayCount={todayTasks.length}
-              />
-            </div>
-
-            {taskUiState.view === "grid" ? (
-              <TaskGridView
-                activeCount={filteredActiveTasks.length}
-                currentColumns={gridColumns}
-                doneCount={filteredDoneTasks.length}
-                draggedWidgetId={draggedGridWidgetId}
-                focusedTaskIds={focusedTaskIds}
-                gridLayout={taskGridLayout}
-                isEditMode={isGridEditMode}
-                message={message}
-                missingWidgetTypes={missingGridWidgetTypes}
-                onAddTask={addTask}
-                onAddWidget={(widgetType) => {
-                  void handleAddGridWidget(widgetType);
-                }}
-                onImportTasks={importTasks}
-                onMoveWidget={(widgetId, direction) => {
-                  void handleMoveGridWidget(widgetId, direction);
-                }}
-                onRemoveWidget={(widgetId) => {
-                  void handleRemoveGridWidget(widgetId);
-                }}
-                onReorderWidget={(targetWidgetId) => {
-                  void handleDropGridWidget(targetWidgetId);
-                }}
-                onResetLayout={() => {
-                  void handleResetGridLayout();
-                }}
-                onResizeWidget={(widgetId, nextWidth, nextHeight) => {
-                  void handleResizeGridWidget(widgetId, nextWidth, nextHeight);
-                }}
-                onEditTask={openEditTaskEditor}
-                onSelectWidget={setSelectedGridWidgetId}
-                onSetDraggedWidget={setDraggedGridWidgetId}
-                subtasksByTaskId={taskSubtasksByTaskId}
-                taskHistoryStats={taskHistoryStats}
-                onToggleEditMode={() => {
-                  setIsGridEditMode((prev) => !prev);
-                  setSelectedGridWidgetId(null);
-                  setDraggedGridWidgetId(null);
-                }}
-                onToggleTask={(task) =>
-                  updateTask(task.id, {
-                    status: "done",
-                    completed_at: new Date().toISOString(),
-                  })
-                }
-                overdueCount={filteredUrgentTasks.length}
-                selectedWidget={selectedGridWidget}
-                tasksByWidget={{
-                  activeQueue: filteredActiveTasks,
-                  completed: filteredDoneTasks,
-                  dueToday: filteredTodayTasks,
-                  focusToday: filteredFocusTasks,
-                  urgent: filteredUrgentTasks,
-                }}
-              />
-            ) : taskUiState.view === "matrix" ? (
-              <TaskMatrixView
-                onEditTask={openEditTaskEditor}
-                subtasksByTaskId={taskSubtasksByTaskId}
-                onToggle={(task) =>
-                  updateTask(task.id, {
-                    status: "done",
-                    completed_at: new Date().toISOString(),
-                  })
-                }
-                tasks={filteredActiveTasks}
-              />
-            ) : taskUiState.view === "cards" ? (
-              <TaskCardGallery
-                focusedTaskIds={focusedTaskIds}
-                onEditTask={openEditTaskEditor}
-                subtasksByTaskId={taskSubtasksByTaskId}
-                onToggle={(task) =>
-                  updateTask(task.id, {
-                    status: "done",
-                    completed_at: new Date().toISOString(),
-                  })
-                }
-                tasks={filteredTasks}
-              />
-            ) : (
-              <>
-                <TaskListView
-                  focusedTaskIds={focusedTaskIds}
-                  onDelete={(taskIds) => { void deleteTasks(taskIds); }}
-                  onEditTask={openEditTaskEditor}
-                  onSetStatus={(task, status) => { void updateTask(task.id, { status }); }}
-                  subtasksByTaskId={taskSubtasksByTaskId}
-                  onToggle={(task) => {
-                    void handleToggleTaskFromList(task);
-                  }}
-                  tasks={filteredTasks}
-                />
-                <div className="mt-6">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex flex-wrap gap-2">
-                      {isListLayoutEditMode ? (
-                        <>
-                          <span className={`rounded-full px-3 py-2 text-xs font-semibold bg-[#f3efff] text-[#6f57f6] dark:bg-[#221a42] dark:text-[#cabfff]`}>
-                            {listCardLayouts.length} cards
-                          </span>
-                        </>
-                      ) : null}
-                    </div>
-                    <div className="flex gap-2">
-                      {isListLayoutEditMode ? (
-                        <button
-                          className={`rounded-full px-4 py-2 text-sm font-semibold bg-white text-[#5c647d] shadow-[0_4px_12px_rgba(81,61,168,0.08)] dark:bg-white/8 dark:text-white/75`}
-                          onClick={() => { setListCardLayouts(LIST_DEFAULT_CARD_LAYOUTS); setActiveListCardId(null); }}
-                          type="button"
-                        >
-                          Reset Layout
-                        </button>
-                      ) : null}
-                      <button
-                        className={`rounded-full px-4 py-2 text-sm font-semibold ${isListLayoutEditMode
-                          ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                          : "bg-[#f3efff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"}`}
-                        onClick={() => { setIsListLayoutEditMode((p) => !p); setActiveListCardId(null); }}
-                        type="button"
-                      >
-                        {isListLayoutEditMode ? "Done Editing" : "Edit Layout"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {isListLayoutEditMode ? (
-                    <div className={`mt-3 rounded-[1.25rem] border border-dashed px-4 py-4 text-sm border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55`}>
-                      {activeListCardId
-                        ? `${LIST_CARD_LABELS[activeListCardId]} is selected. Resize controls appear on the card below.`
-                        : "Tap any card below to select it, then resize or reorder it."}
-                    </div>
-                  ) : null}
-
-                  <div className="mt-4 grid grid-cols-4 gap-5">
-                    {listCardLayouts.map((cardLayout) => {
-                      const isActive = activeListCardId === cardLayout.id;
-                      const isDragging = draggedListCardId === cardLayout.id;
-                      if (cardLayout.id === "urgent" && filteredUrgentTasks.length === 0 && !isListLayoutEditMode) {
-                        return null;
-                      }
-                      return (
-                        <div
-                          className={`relative min-w-0 ${isListLayoutEditMode ? "cursor-grab" : ""} ${isDragging ? "opacity-60" : ""}`}
-                          draggable={isListLayoutEditMode}
-                          key={cardLayout.id}
-                          onClick={() => { if (isListLayoutEditMode && !isActive) setActiveListCardId(cardLayout.id); }}
-                          onDragEnd={() => setDraggedListCardId(null)}
-                          onDragOver={(e) => { if (isListLayoutEditMode) e.preventDefault(); }}
-                          onDragStart={() => setDraggedListCardId(cardLayout.id)}
-                          onDrop={(e) => {
-                            if (!isListLayoutEditMode || !draggedListCardId || draggedListCardId === cardLayout.id) return;
-                            e.preventDefault();
-                            setListCardLayouts((prev) => {
-                              const next = [...prev];
-                              const fromIdx = next.findIndex((c) => c.id === draggedListCardId);
-                              const toIdx = next.findIndex((c) => c.id === cardLayout.id);
-                              if (fromIdx === -1 || toIdx === -1) return prev;
-                              const [removed] = next.splice(fromIdx, 1);
-                              next.splice(toIdx, 0, removed);
-                              return next;
-                            });
-                            setDraggedListCardId(null);
-                          }}
-                          style={{ gridColumn: `span ${Math.min(cardLayout.colSpan, LIST_MAX_COLUMNS)}`, minHeight: cardLayout.minHeight }}
-                        >
-                          {isListLayoutEditMode ? (
-                            <div className={`pointer-events-none absolute inset-0 z-10 rounded-[2rem] border-2 ${isActive
-                              ? "border-[#6f57f6] shadow-[0_0_0_4px_rgba(111,87,246,0.16)] dark:border-[#cabfff] dark:shadow-[0_0_0_4px_rgba(202,191,255,0.12)]"
-                              : "border-[#dcd2ff] dark:border-white/15"}`} />
-                          ) : null}
-                          {isListLayoutEditMode ? (
-                            <div className={`absolute left-4 top-4 z-20 rounded-full px-3 py-1 text-xs font-semibold bg-white text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.12)] dark:bg-[#171328] dark:text-[#cabfff]`}>
-                              <GripVertical className="mr-1 inline h-3.5 w-3.5" />
-                              {LIST_CARD_LABELS[cardLayout.id]}
-                            </div>
-                          ) : null}
-                          <div className={`h-full min-h-0 overflow-hidden ${isListLayoutEditMode ? "pointer-events-none" : ""}`}>
-                            <div className={`h-full min-h-0 overflow-y-auto ${isListLayoutEditMode && isActive ? "pb-64" : ""}`}>
-                              {cardLayout.id === "composer" ? (
-                                <div className="h-full" id="task-composer-card">
-                                  <TaskComposerCard onAdd={addTask} />
-                                </div>
-                              ) : cardLayout.id === "import" ? (
-                                <div className="h-full" id="task-import-panel">
-                                  <ImportWidgetCard message={message} onImport={importTasks} />
-                                </div>
-                              ) : cardLayout.id === "focus-today" ? (
-                                <TaskLane count={filteredFocusTasks.length} defaultExpanded onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} title="Focus Today" tasks={filteredFocusTasks} tone="purple" />
-                              ) : cardLayout.id === "due-today" ? (
-                                <TaskLane count={filteredTodayTasks.length} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} title="Due Today" tasks={filteredTodayTasks} tone="purple" />
-                              ) : cardLayout.id === "stats" ? (
-                                <FocusStatsCard activeCount={filteredActiveTasks.length} doneCount={filteredDoneTasks.length} overdueCount={filteredUrgentTasks.length} taskHistoryStats={taskHistoryStats} />
-                              ) : cardLayout.id === "urgent" ? (
-                                <UrgentTasksPanel focusedTaskIds={focusedTaskIds} onEditTask={openEditTaskEditor} subtasksByTaskId={taskSubtasksByTaskId} tasks={filteredUrgentTasks} onToggle={(task) => updateTask(task.id, { status: "done", completed_at: new Date().toISOString() })} />
-                              ) : null}
-                            </div>
-                          </div>
-                          {isListLayoutEditMode && isActive ? (
-                            <ListCardResizeOverlay
-                              layout={cardLayout}
-                              onClose={() => setActiveListCardId(null)}
-                              onResize={(colSpan, minHeight) => setListCardLayouts((prev) => prev.map((c) => c.id === cardLayout.id ? { ...c, colSpan, minHeight } : c))}
-                            />
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
+            {taskUiState.view === "list" ? (
+              <section className="mt-4 grid gap-4 xl:grid-cols-[15.5rem_minmax(0,1fr)]">
+                <div className="hidden xl:block">
+                  <TaskBucketRail
+                    counts={visibleBucketCounts}
+                    onSelectBucket={setSelectedBucket}
+                    selectedBucket={taskUiState.selectedBucket}
+                  />
                 </div>
-              </>
+                <div className="min-w-0">
+                  <div className="mb-4 overflow-x-auto px-1 pt-1 xl:hidden [&::-webkit-scrollbar]:hidden">
+                    <div className="flex min-w-max gap-2">
+                      {listViewBucketOptions
+                        .filter((bucket) => bucket.value !== "missed" || bucket.count > 0)
+                        .map((bucket) => {
+                          const active = bucket.value === taskUiState.selectedBucket;
+                          return (
+                            <button
+                              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                                active
+                                  ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                                  : "bg-white text-[#64708a] hover:bg-[#faf8ff] dark:bg-white/[0.06] dark:text-white/70 dark:hover:bg-white/[0.09]"
+                              }`}
+                              key={bucket.value}
+                              onClick={() => setSelectedBucket(bucket.value)}
+                              type="button"
+                            >
+                              {bucket.label}
+                              <span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${active ? "bg-white/20 text-white dark:bg-[#1a1431]/12 dark:text-[#1a1431]" : "bg-[#f3efff] text-[#6f57f6] dark:bg-white/8 dark:text-[#cabfff]"}`}>
+                                {bucket.count}
+                              </span>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start">
+                    <label className="flex min-w-0 flex-1 items-center gap-3 rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
+                      <Search className="h-4.5 w-4.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+                      <input
+                        className="min-w-0 flex-1 bg-transparent text-sm text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+                        id="task-search-input"
+                        onChange={(event) => setTaskUiState((prev) => ({ ...prev, search: event.target.value }))}
+                        placeholder="Search tasks or subtasks"
+                        value={taskUiState.search}
+                      />
+                    </label>
+                    <FilterRows
+                      compact
+                      hasActiveFilters={
+                        taskUiState.search.trim().length > 0 ||
+                        taskUiState.quickFilters.length > 0 ||
+                        taskUiState.statusFilters.length > 0 ||
+                        taskUiState.energyFilters.length > 0 ||
+                        taskUiState.matchAny !== DEFAULT_TASK_UI_STATE.matchAny ||
+                        taskUiState.savedView !== DEFAULT_TASK_UI_STATE.savedView
+                      }
+                      isOpen={isTaskFiltersOpen}
+                      matchAny={taskUiState.matchAny}
+                      onReset={() => setTaskUiState((prev) => ({ ...DEFAULT_TASK_UI_STATE, view: prev.view, selectedBucket: prev.selectedBucket }))}
+                      onToggleEnergy={(energy) =>
+                        setTaskUiState((prev) => ({
+                          ...prev,
+                          energyFilters: prev.energyFilters.includes(energy)
+                            ? prev.energyFilters.filter((value) => value !== energy)
+                            : [...prev.energyFilters, energy],
+                        }))
+                      }
+                      onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
+                      onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
+                      onToggleStatusFilter={(status) =>
+                        setTaskUiState((prev) => ({
+                          ...prev,
+                          statusFilters: prev.statusFilters.includes(status)
+                            ? prev.statusFilters.filter((value) => value !== status)
+                            : [...prev.statusFilters, status],
+                        }))
+                      }
+                      statusCounts={taskStatusCounts}
+                      selectedStatuses={taskUiState.statusFilters}
+                      selectedEnergies={taskUiState.energyFilters}
+                    />
+                  </div>
+
+                  <TasksDenseList
+                    onOpenTask={(taskId) => {
+                      const task = tasks.find((entry) => entry.id === taskId);
+                      if (task) {
+                        openEditTaskEditor(task);
+                      }
+                    }}
+                    onQuickAction={handleDenseListQuickAction}
+                    onSelectTask={setSelectedDenseTaskId}
+                    onToggleComplete={toggleDenseListTaskCompletion}
+                    rows={denseListRows}
+                    selectedTaskId={effectiveSelectedDenseTaskId}
+                  />
+                </div>
+              </section>
+            ) : (
+              <section className="mt-4 grid gap-4 xl:grid-cols-[15.5rem_minmax(0,1fr)]">
+                <TaskBucketRail
+                  counts={visibleBucketCounts}
+                  onSelectBucket={setSelectedBucket}
+                  selectedBucket={taskUiState.selectedBucket}
+                />
+                <div className="min-w-0">
+                  <FilterRows
+                    hasActiveFilters={
+                      taskUiState.search.trim().length > 0 ||
+                      taskUiState.quickFilters.length > 0 ||
+                      taskUiState.statusFilters.length > 0 ||
+                      taskUiState.energyFilters.length > 0 ||
+                      taskUiState.matchAny !== DEFAULT_TASK_UI_STATE.matchAny ||
+                      taskUiState.savedView !== DEFAULT_TASK_UI_STATE.savedView
+                    }
+                    isOpen={isTaskFiltersOpen}
+                    matchAny={taskUiState.matchAny}
+                    onReset={() => setTaskUiState((prev) => ({ ...DEFAULT_TASK_UI_STATE, view: prev.view, selectedBucket: prev.selectedBucket }))}
+                    onToggleEnergy={(energy) =>
+                      setTaskUiState((prev) => ({
+                        ...prev,
+                        energyFilters: prev.energyFilters.includes(energy)
+                          ? prev.energyFilters.filter((value) => value !== energy)
+                          : [...prev.energyFilters, energy],
+                      }))
+                    }
+                    onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
+                    onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
+                    onToggleStatusFilter={(status) =>
+                      setTaskUiState((prev) => ({
+                        ...prev,
+                        statusFilters: prev.statusFilters.includes(status)
+                          ? prev.statusFilters.filter((value) => value !== status)
+                          : [...prev.statusFilters, status],
+                      }))
+                    }
+                    statusCounts={taskStatusCounts}
+                    selectedStatuses={taskUiState.statusFilters}
+                    selectedEnergies={taskUiState.energyFilters}
+                  />
+                  <DailyPlanningPanel
+                    focusCount={filteredFocusTasks.length}
+                    inboxCount={inboxTasks.length}
+                    isCollapsed={isDailyPlanningCollapsed}
+                    missedCount={missedTasks.length}
+                    onOpenFocusPlanner={openFocusPlanner}
+                    onToggleCollapsed={() => setIsDailyPlanningCollapsed((current) => !current)}
+                    onSelectBucket={setSelectedBucket}
+                    planningCandidates={planningCandidates}
+                    recurringCount={recurringTasks.length}
+                    routeTaskToToday={(taskId) => planTasksForToday([taskId])}
+                    sendTaskToLater={deferTask}
+                    sendTaskToWaiting={sendTaskToWaiting}
+                    todayCount={visibleBucketCounts.today + visibleBucketCounts.focus + visibleBucketCounts.urgent}
+                    waitingCount={waitingTasks.length}
+                  />
+
+                  {taskUiState.view === "grid" ? (
+                    <TaskGridView
+                      activeCount={filteredActiveTasks.length}
+                      currentColumns={gridColumns}
+                      doneCount={filteredDoneTasks.length}
+                      draggedWidgetId={draggedGridWidgetId}
+                      focusedTaskIds={focusedTaskIds}
+                      gridLayout={taskGridLayout}
+                      isEditMode={isGridEditMode}
+                      message={message}
+                      missingWidgetTypes={missingGridWidgetTypes}
+                      onAddTask={({ focusToday, values }) => saveTaskEditor(values, { focusToday })}
+                      onAddWidget={(widgetType) => {
+                        void handleAddGridWidget(widgetType);
+                      }}
+                      onImportTasks={importTasks}
+                      onMoveWidget={(widgetId, direction) => {
+                        void handleMoveGridWidget(widgetId, direction);
+                      }}
+                      onRemoveWidget={(widgetId) => {
+                        void handleRemoveGridWidget(widgetId);
+                      }}
+                      onReorderWidget={(targetWidgetId) => {
+                        void handleDropGridWidget(targetWidgetId);
+                      }}
+                      onResetLayout={() => {
+                        void handleResetGridLayout();
+                      }}
+                      onResizeWidget={(widgetId, nextWidth, nextHeight) => {
+                        void handleResizeGridWidget(widgetId, nextWidth, nextHeight);
+                      }}
+                      onEditTask={openEditTaskEditor}
+                      onSelectWidget={setSelectedGridWidgetId}
+                      onSetStatus={(task, status) => { void updateTask(task.id, { status }); }}
+                      onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); }}
+                      onSetDraggedWidget={setDraggedGridWidgetId}
+                      overdueCount={filteredOverdueTasks.length}
+                      selectedWidget={selectedGridWidget}
+                      subtasksByTaskId={taskSubtasksByTaskId}
+                      taskHistoryStats={taskHistoryStats}
+                      tasksByWidget={{
+                        activeQueue: filteredActiveTasks,
+                        completed: filteredDoneTasks,
+                        dueToday: filteredTodayTasks,
+                        focusToday: filteredFocusTasks,
+                        urgent: filteredUrgentTasks,
+                      }}
+                      onToggleEditMode={() => {
+                        setIsGridEditMode((prev) => !prev);
+                        setSelectedGridWidgetId(null);
+                        setDraggedGridWidgetId(null);
+                      }}
+                    />
+                  ) : taskUiState.view === "matrix" ? (
+                    <TaskMatrixView
+                      onEditTask={openEditTaskEditor}
+                      onSetStatus={(task, status) => { void updateTask(task.id, { status }); }}
+                      subtasksByTaskId={taskSubtasksByTaskId}
+                      tasks={selectedBucketTasks.filter(isTaskOpen)}
+                    />
+                  ) : (
+                    <TaskCardGallery
+                      focusedTaskIds={focusedTaskIds}
+                      onEditTask={openEditTaskEditor}
+                      onSetStatus={(task, status) => { void updateTask(task.id, { status }); }}
+                      subtasksByTaskId={taskSubtasksByTaskId}
+                      tasks={selectedBucketTasks}
+                    />
+                  )}
+                </div>
+              </section>
             )}
           </>
         ) : activePage === "Focus" ? (
@@ -2086,7 +2698,7 @@ function ConfigSplash() {
             Add your Supabase keys
           </h1>
           <p className={`mt-3 text-base text-[#707a95] dark:text-white/55`}>
-            Create `.env.2.0.3` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
+            Create `.env.2.0.10` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
           </p>
         </div>
       </section>
@@ -2273,31 +2885,21 @@ function TopHeader({
 }) {
   const accountButton = (
     <button
-      className={`flex items-center gap-3 rounded-full px-2 py-2 bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)] dark:bg-white/10`}
+      className="relative rounded-full transition-transform hover:scale-[1.02]"
       onClick={onOpenAccount}
       type="button"
     >
-      <div className="text-right">
-        <p className={`text-sm font-semibold text-[#202743] dark:text-white`}>
-          {profile.displayName}
-        </p>
-        <p className={`text-xs text-[#8a84a3] dark:text-white/45`}>
-          {profile.created ? "Account" : "Create account"}
-        </p>
-      </div>
-      <div className="relative">
-        <Image
-          alt="Profile avatar"
-          className="h-14 w-14 rounded-full object-cover ring-4 ring-white/70"
-          height={56}
-          src={profile.avatarSrc}
-          unoptimized={profile.avatarSrc.startsWith("data:")}
-          width={56}
-        />
-        <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#f05566] text-[10px] font-semibold text-white">
-          2
-        </span>
-      </div>
+      <Image
+        alt="Profile avatar"
+        className="h-14 w-14 rounded-full object-cover ring-4 ring-white/70 shadow-[0_10px_30px_rgba(81,61,168,0.12)]"
+        height={56}
+        src={profile.avatarSrc}
+        unoptimized={profile.avatarSrc.startsWith("data:")}
+        width={56}
+      />
+      <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#f05566] text-[10px] font-semibold text-white">
+        2
+      </span>
     </button>
   );
 
@@ -2312,7 +2914,7 @@ function TopHeader({
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-            v.2.0.3
+            v.2.0.10
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>
@@ -3746,7 +4348,7 @@ function SettingsPage({
       notes: r.notes ?? null,
       status: (r.status ?? "pending") as TaskStatus,
       priority: (r.priority ?? "normal") as TaskPriority,
-      energy: (r.energy ?? "medium") as TaskEnergy,
+      energy: (r.energy ?? "none") as TaskEnergy,
       is_urgent: r.is_urgent ?? false,
       is_important: r.is_important ?? false,
       due_on: r.due_on ?? null,
@@ -4031,17 +4633,25 @@ function MiniStat({
   );
 }
 
-function TaskHero({
+function TaskOperationsHeader({
   actionLabel,
   activeCount,
+  hideSearch,
   metric,
   onCycleMomentum,
+  onOpenComposer,
   onOpenFocusPlanner,
+  onOpenImport,
   onOpenMomentumDetails,
+  onSearchChange,
+  onViewChange,
+  search,
   todayCount,
+  view,
 }: {
   actionLabel: string;
   activeCount: number;
+  hideSearch?: boolean;
   metric: {
     doneTasks: Task[];
     label: string;
@@ -4051,9 +4661,15 @@ function TaskHero({
     totalCount: number;
   };
   onCycleMomentum: () => void;
+  onOpenComposer: () => void;
   onOpenFocusPlanner: () => void;
+  onOpenImport: () => void;
   onOpenMomentumDetails: () => void;
+  onSearchChange: (search: string) => void;
+  onViewChange: (view: TaskViewMode) => void;
+  search: string;
   todayCount: number;
+  view: TaskViewMode;
 }) {
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
@@ -4084,67 +4700,104 @@ function TaskHero({
   };
 
   return (
-    <section className="pt-8 w-full flex flex-col items-center text-center">
-      <div className="flex flex-col items-center gap-4">
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          <h1 className={`text-[clamp(2rem,4vw,3rem)] font-black tracking-tight text-[#17203a] dark:text-white`}>
-            Tasks
-          </h1>
-          <StatusBadge tone="success">Synced</StatusBadge>
-        </div>
-        <p className={`mt-1 max-w-2xl text-sm text-[#727a95] dark:text-white/55`}>
-          A cleaner task cockpit built for focus recovery, energy-aware planning, and visible momentum.
-        </p>
-      </div>
-      <StatusBadge tone="warn">Overstimulated</StatusBadge>
-
-      <button
-        className={`mt-6 flex w-full max-w-md items-center justify-center rounded-[1.75rem] px-6 py-5 text-lg font-bold shadow-[0_18px_45px_rgba(116,92,255,0.22)] transition hover:-translate-y-0.5 ${
-          "bg-[linear-gradient(90deg,#8f6df8_0%,#7359f5_100%)] text-white dark:bg-[linear-gradient(90deg,#b39dff_0%,#7d68f8_100%)] dark:text-[#171127]"
-        }`}
-        onClick={onOpenFocusPlanner}
-        type="button"
-      >
-        {actionLabel}
-      </button>
-
-      <div className="mt-4 w-full flex flex-col justify-center gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <p className={`text-xl font-bold text-[#1e2642] dark:text-white`}>{metric.label}</p>
-              <span className={`rounded-full px-2 py-1 text-xs font-semibold bg-[#ffe3ea] text-[#f05566] dark:bg-[#472436] dark:text-[#ff9aac]`}>
-                {metric.percent}%
-              </span>
+    <section className="pt-5">
+      <div className="rounded-[1.6rem] border border-[#ece8f8] bg-white/92 p-4 shadow-[0_20px_50px_rgba(81,61,168,0.08)] dark:border-white/10 dark:bg-white/6">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/35">Task cockpit</p>
+              <div className="mt-1 flex flex-wrap items-center gap-3">
+                <h1 className="text-[1.9rem] font-black tracking-tight text-[#17203a] dark:text-white">Tasks</h1>
+                <StatusBadge tone="success">Synced</StatusBadge>
+              </div>
             </div>
-            <p className={`text-right text-sm font-bold sm:text-lg text-[#58637f] dark:text-white/65`}>
-              {metric.summary}
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className="rounded-full border border-[#e5defb] bg-white px-4 py-2 text-sm font-semibold text-[#5b6480] shadow-[0_8px_20px_rgba(81,61,168,0.05)] dark:border-white/10 dark:bg-white/8 dark:text-white/75"
+                onClick={onOpenImport}
+                type="button"
+              >
+                Import
+              </button>
+              <button
+                className="rounded-full bg-[#6f57f6] px-5 py-2.5 text-sm font-bold text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] dark:bg-[#c9bbff] dark:text-[#1a1431]"
+                onClick={onOpenComposer}
+                type="button"
+              >
+                New Task
+              </button>
+            </div>
           </div>
-          <button
-            className={`block h-4 w-full overflow-hidden rounded-full bg-[#eceffa] dark:bg-white/8`}
-            onPointerCancel={clearLongPress}
-            onPointerDown={handleMomentumPressStart}
-            onPointerLeave={clearLongPress}
-            onPointerUp={handleMomentumPressEnd}
-            type="button"
-          >
-            <div
-              className={`h-full rounded-full bg-[linear-gradient(90deg,#c5b4ff_0%,#7f6af7_100%)] dark:bg-[linear-gradient(90deg,#cabfff_0%,#8e79ff_100%)]`}
-              style={{ width: `${Math.max(metric.percent, 10)}%` }}
-            />
-          </button>
-        </div>
-        <div className="flex flex-wrap justify-center gap-3">
-          <HeroMetaCard label="Today" value={todayCount} />
-          <HeroMetaCard label="In Play" value={activeCount} />
-          <HeroMetaCard label="Tracked" value={metric.totalCount} />
+
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+            {!hideSearch ? (
+              <label className="flex min-w-0 flex-1 items-center gap-3 rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
+                <Search className="h-4.5 w-4.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+                <input
+                  className="min-w-0 flex-1 bg-transparent text-sm text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+                  id="task-search-input"
+                  onChange={(event) => onSearchChange(event.target.value)}
+                  placeholder="Search tasks or subtasks"
+                  value={search}
+                />
+              </label>
+            ) : null}
+            <label className="flex items-center gap-3 rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
+              <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">View</span>
+              <select
+                className="bg-transparent text-sm font-semibold text-[#27304c] outline-none dark:text-white"
+                onChange={(event) => onViewChange(event.target.value as TaskViewMode)}
+                value={view}
+              >
+                <option value="list">List</option>
+                <option value="cards">Cards</option>
+                <option value="matrix">Matrix</option>
+                <option value="grid">Grid</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="rounded-[1.35rem] border border-[#efe9ff] bg-[linear-gradient(135deg,#fcfbff_0%,#f6f3ff_100%)] p-4 dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(41,27,82,0.55)_0%,rgba(20,18,35,0.7)_100%)]">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className="rounded-[1rem] bg-[#6f57f6] px-4 py-2.5 text-sm font-bold text-white shadow-[0_12px_28px_rgba(111,87,246,0.22)] dark:bg-[#c9bbff] dark:text-[#1a1431]"
+                    onClick={onOpenFocusPlanner}
+                    type="button"
+                  >
+                    {actionLabel}
+                  </button>
+                  <span className="rounded-full bg-[#fff1f3] px-3 py-1.5 text-xs font-semibold text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]">
+                    {metric.label}
+                  </span>
+                  <span className="text-sm font-semibold text-[#5b6582] dark:text-white/60">
+                    {metric.summary}
+                  </span>
+                </div>
+                <button
+                  className="block h-3.5 w-full overflow-hidden rounded-full bg-[#e7e3f8] dark:bg-white/10"
+                  onPointerCancel={clearLongPress}
+                  onPointerDown={handleMomentumPressStart}
+                  onPointerLeave={clearLongPress}
+                  onPointerUp={handleMomentumPressEnd}
+                  type="button"
+                >
+                  <div
+                    className="h-full rounded-full bg-[linear-gradient(90deg,#c5b4ff_0%,#7f6af7_100%)] dark:bg-[linear-gradient(90deg,#cabfff_0%,#8e79ff_100%)]"
+                    style={{ width: `${Math.max(metric.percent, 8)}%` }}
+                  />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2 sm:min-w-[18rem]">
+                <HeroMetaCard label="Today" value={todayCount} />
+                <HeroMetaCard label="In Play" value={activeCount} />
+                <HeroMetaCard label="Tracked" value={metric.totalCount} />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-
-      <p className={`mt-4 text-center text-[11px] font-semibold uppercase tracking-[0.28em] text-[#a2a7b8] dark:text-white/35`}>
-        Tap to switch / Long press to see list
-      </p>
     </section>
   );
 }
@@ -4175,151 +4828,291 @@ function HeroMetaCard({
   value: number;
 }) {
   return (
-    <div className={`rounded-[1.2rem] px-4 py-3 transition hover:-translate-y-0.5 bg-white shadow-[0_10px_30px_rgba(81,61,168,0.08)] dark:bg-white/8`}>
+    <div className={`rounded-[1.15rem] border border-white/70 bg-white px-3 py-2.5 transition hover:-translate-y-0.5 dark:border-white/10 dark:bg-white/8`}>
       <p className={`text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8a84a3] dark:text-white/35`}>{label}</p>
-      <p className={`mt-1 text-2xl font-bold text-[#1f2846] dark:text-white`}>{value}</p>
+      <p className={`mt-1 text-xl font-bold text-[#1f2846] dark:text-white`}>{value}</p>
     </div>
   );
 }
 
-function ControlBar({
-  onOpenComposer,
-  onOpenImport,
-  onSearchChange,
-  onViewChange,
-  search,
-  view,
+function TaskBucketRail({
+  counts,
+  onSelectBucket,
+  selectedBucket,
 }: {
-  onOpenComposer: () => void;
-  onOpenImport: () => void;
-  onSearchChange: (search: string) => void;
-  onViewChange: (view: TaskViewMode) => void;
-  search: string;
-  view: TaskViewMode;
+  counts: Record<TaskBucket, number>;
+  onSelectBucket: (bucket: TaskBucket) => void;
+  selectedBucket: TaskBucket;
+}) {
+  const orderedBuckets = (Object.keys(TASK_BUCKET_LABELS) as TaskBucket[])
+    .filter((bucket) => bucket !== "missed" || counts.missed > 0);
+
+  return (
+    <>
+      <aside className="hidden h-fit rounded-[1.5rem] border border-[#ece8f8] bg-white/90 p-3 shadow-[0_16px_40px_rgba(81,61,168,0.06)] xl:block dark:border-white/10 dark:bg-white/6">
+        <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8e88a9] dark:text-white/35">Buckets</p>
+        <div className="space-y-1.5">
+          {orderedBuckets.map((bucket) => {
+            const active = bucket === selectedBucket;
+            return (
+              <button
+                aria-pressed={active}
+                className={`flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left transition ${
+                  active
+                    ? "bg-[#f3efff] text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.08)] dark:bg-[#261e49] dark:text-[#cabfff]"
+                    : "text-[#58637f] hover:bg-[#faf8ff] dark:text-white/65 dark:hover:bg-white/[0.04]"
+                }`}
+                key={bucket}
+                onClick={() => onSelectBucket(bucket)}
+                type="button"
+              >
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold">{TASK_BUCKET_LABELS[bucket]}</span>
+                  <span className="mt-0.5 block text-xs opacity-70">{TASK_BUCKET_DESCRIPTIONS[bucket]}</span>
+                </span>
+                <span className="ml-3 shrink-0 rounded-full bg-white px-2 py-1 text-xs font-bold text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]">
+                  {counts[bucket]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </aside>
+      <div className="flex gap-2 overflow-x-auto pb-1 xl:hidden [&::-webkit-scrollbar]:hidden">
+        {orderedBuckets.map((bucket) => (
+          <button
+            aria-pressed={bucket === selectedBucket}
+            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${
+              bucket === selectedBucket
+                ? "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]"
+                : "bg-white text-[#5f6983] dark:bg-white/8 dark:text-white/65"
+            }`}
+            key={bucket}
+            onClick={() => onSelectBucket(bucket)}
+            type="button"
+          >
+            {TASK_BUCKET_LABELS[bucket]} <span className="opacity-70">{counts[bucket]}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function DailyPlanningPanel({
+  focusCount,
+  inboxCount,
+  isCollapsed,
+  missedCount,
+  onOpenFocusPlanner,
+  onToggleCollapsed,
+  onSelectBucket,
+  planningCandidates,
+  recurringCount,
+  routeTaskToToday,
+  sendTaskToLater,
+  sendTaskToWaiting,
+  todayCount,
+  waitingCount,
+}: {
+  focusCount: number;
+  inboxCount: number;
+  isCollapsed: boolean;
+  missedCount: number;
+  onOpenFocusPlanner: () => void;
+  onToggleCollapsed: () => void;
+  onSelectBucket: (bucket: TaskBucket) => void;
+  planningCandidates: Task[];
+  recurringCount: number;
+  routeTaskToToday: (taskId: string) => void;
+  sendTaskToLater: (taskId: string) => void;
+  sendTaskToWaiting: (taskId: string) => void;
+  todayCount: number;
+  waitingCount: number;
 }) {
   return (
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-      <label className={`flex min-w-0 flex-1 items-center gap-3 rounded-[1.4rem] px-4 py-3 bg-white shadow-[0_10px_28px_rgba(81,61,168,0.08)] dark:bg-white/8`}>
-        <Search className={`h-5 w-5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]`} />
-        <input
-          className={`min-w-0 flex-1 bg-transparent text-base outline-none text-[#27304c] placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35`}
-          onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="Search tasks..."
-          value={search}
-        />
-      </label>
-      <label className={`flex items-center gap-3 rounded-[1.4rem] px-4 py-3 bg-white shadow-[0_10px_28px_rgba(81,61,168,0.08)] dark:bg-white/8`}>
-        <span className={`text-sm font-semibold text-[#6b738f] dark:text-white/60`}>View</span>
-        <select
-          className={`bg-transparent text-base font-semibold outline-none text-[#27304c] dark:text-white`}
-          onChange={(event) => onViewChange(event.target.value as TaskViewMode)}
-          value={view}
-        >
-          <option value="list">List</option>
-          <option value="cards">Cards</option>
-          <option value="matrix">Matrix</option>
-          <option value="grid">Grid</option>
-        </select>
-      </label>
-      <button
-        className={`rounded-full px-5 py-3 text-base font-semibold bg-white text-[#27304c] shadow-[0_10px_28px_rgba(81,61,168,0.08)] dark:bg-white/8 dark:text-white`}
-        onClick={onOpenImport}
-        type="button"
-      >
-        Import
-      </button>
-      <button
-        className={`rounded-full px-6 py-3 text-base font-semibold ${
-          "bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] dark:bg-[#c9bbff] dark:text-[#1a1431]"
-        }`}
-        onClick={onOpenComposer}
-        type="button"
-      >
-        + New
-      </button>
-    </div>
+    <section className="mb-4 rounded-[1.45rem] border border-[#ece8f8] bg-white/90 p-4 shadow-[0_16px_40px_rgba(81,61,168,0.06)] dark:border-white/10 dark:bg-white/6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8e88a9] dark:text-white/35">Daily planning</p>
+          <div className="mt-1 flex flex-wrap items-center gap-3">
+            <h2 className="text-xl font-bold text-[#1e2642] dark:text-white">Pick a realistic today list, then protect it.</h2>
+            <button
+              className="rounded-full border border-[#e5def9] px-3 py-1.5 text-xs font-semibold text-[#6f57f6] transition hover:bg-[#f6f1ff] dark:border-white/15 dark:text-[#cabfff] dark:hover:bg-white/8"
+              onClick={onToggleCollapsed}
+              type="button"
+            >
+              {isCollapsed ? "Show" : "Hide"}
+            </button>
+          </div>
+          <p className="mt-1 text-sm text-[#68738f] dark:text-white/55">
+            {todayCount} in Today, {focusCount} in Focus, {inboxCount} in Inbox, {waitingCount} waiting, {recurringCount} recurring.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="rounded-full bg-[#f3efff] px-4 py-2 text-sm font-semibold text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]"
+            onClick={onOpenFocusPlanner}
+            type="button"
+          >
+            Open Focus Planner
+          </button>
+          {missedCount > 0 ? (
+            <button
+              className="rounded-full bg-[#fff1f3] px-4 py-2 text-sm font-semibold text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+              onClick={() => onSelectBucket("missed")}
+              type="button"
+            >
+              Review Missed
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {!isCollapsed && planningCandidates.length > 0 ? (
+        <div className="mt-4 grid gap-2">
+          {planningCandidates.map((task) => (
+            <div
+              className="flex flex-col gap-3 rounded-[1rem] border border-[#f0ebfb] bg-[#fcfbff] px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-white/10 dark:bg-white/[0.04]"
+              key={task.id}
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-[#22304b] dark:text-white">{task.title}</p>
+                <p className="mt-1 text-xs text-[#7b86a1] dark:text-white/45">{describePlanningCandidate(task)}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="rounded-full bg-[#ede8ff] px-3 py-2 text-xs font-semibold text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]"
+                  onClick={() => routeTaskToToday(task.id)}
+                  type="button"
+                >
+                  Plan Today
+                </button>
+                <button
+                  className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-[#59627e] dark:bg-white/8 dark:text-white/65"
+                  onClick={() => sendTaskToWaiting(task.id)}
+                  type="button"
+                >
+                  Waiting
+                </button>
+                <button
+                  className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-[#59627e] dark:bg-white/8 dark:text-white/65"
+                  onClick={() => sendTaskToLater(task.id)}
+                  type="button"
+                >
+                  Later
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
 function FilterRows({
-  activeCount,
-  doneCount,
-  focusedCount,
+  compact = false,
+  hasActiveFilters,
+  isOpen,
   matchAny,
+  onReset,
   onToggleEnergy,
   onToggleMatchMode,
-  onToggleQuickFilter,
-  overdueCount,
+  onToggleOpen,
+  onToggleStatusFilter,
+  statusCounts,
+  selectedStatuses,
   selectedEnergies,
-  selectedQuickFilters,
-  todayCount,
 }: {
-  activeCount: number;
-  doneCount: number;
-  focusedCount: number;
+  compact?: boolean;
+  hasActiveFilters: boolean;
+  isOpen: boolean;
   matchAny: boolean;
+  onReset: () => void;
   onToggleEnergy: (energy: TaskEnergy) => void;
   onToggleMatchMode: () => void;
-  onToggleQuickFilter: (filter: TaskQuickFilter) => void;
-  overdueCount: number;
+  onToggleOpen: () => void;
+  onToggleStatusFilter: (status: TaskStatus) => void;
+  statusCounts: Record<TaskStatus, number>;
+  selectedStatuses: TaskStatus[];
   selectedEnergies: TaskEnergy[];
-  selectedQuickFilters: TaskQuickFilter[];
-  todayCount: number;
 }) {
+  const activeFilterCount = selectedStatuses.length + selectedEnergies.length;
+
   return (
-    <div className="mt-5 space-y-3">
-      <div className="flex flex-wrap gap-3">
-        <FilterChip active={selectedQuickFilters.includes("active")} count={activeCount} onClick={() => onToggleQuickFilter("active")} tone="purple">Active</FilterChip>
-        <FilterChip active={selectedQuickFilters.includes("today")} count={todayCount} onClick={() => onToggleQuickFilter("today")} tone="orange">Due Today</FilterChip>
-        <FilterChip active={selectedQuickFilters.includes("urgent")} count={overdueCount} onClick={() => onToggleQuickFilter("urgent")} tone="red">Urgent</FilterChip>
-        <FilterChip active={selectedQuickFilters.includes("focused")} count={focusedCount} onClick={() => onToggleQuickFilter("focused")} tone="purple">Focused</FilterChip>
-        <FilterChip active={selectedQuickFilters.includes("done")} count={doneCount} onClick={() => onToggleQuickFilter("done")} tone="neutral">Done</FilterChip>
-      </div>
-      <div className="flex flex-wrap gap-3">
-        <Pill onClick={onToggleMatchMode} selected>{matchAny ? "OR" : "AND"}</Pill>
-        {energyOptions.map((energy) => (
-          <Pill
-            key={energy}
-            onClick={() => onToggleEnergy(energy)}
-            selected={selectedEnergies.includes(energy)}
-          >
-            {energy}
-          </Pill>
-        ))}
-      </div>
+    <div className={`${compact ? "relative" : "mt-5"}`}>
+      <button
+        className="rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 text-sm font-semibold text-[#5c647d] shadow-[0_10px_24px_rgba(81,61,168,0.05)] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/75"
+        onClick={onToggleOpen}
+        type="button"
+      >
+        {isOpen ? "Hide Filters" : "Show Filters"}
+        {activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+      </button>
+      {isOpen ? (
+        <div
+          className={`${
+            compact
+              ? "absolute right-0 top-full z-30 mt-2 w-[min(44rem,calc(100vw-2rem))]"
+              : "mt-3"
+          } rounded-[1.2rem] border border-[#efe9ff] bg-white p-4 shadow-[0_18px_36px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#171328]`}
+        >
+          <div className="space-y-4">
+            <div>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Status</p>
+                {selectedStatuses.length > 0 ? (
+                  <span className="text-xs font-semibold text-[#7c86a2] dark:text-white/50">{selectedStatuses.length} active</span>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {taskStatusOptions.map((status) => (
+                  <button
+                    className={`rounded-full px-4 py-2 text-base font-semibold transition ${TASK_STATUS_CHIP_STYLES[status]} ${selectedStatuses.includes(status) ? "ring-2 ring-[#6f57f6]/35" : "opacity-85 hover:opacity-100"}`}
+                    key={status}
+                    onClick={() => onToggleStatusFilter(status)}
+                    type="button"
+                  >
+                    {renderTaskStatusChip(status, { count: statusCounts[status], size: "sm" })}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Energy</p>
+                {selectedEnergies.length > 0 ? (
+                  <span className="text-xs font-semibold text-[#7c86a2] dark:text-white/50">{selectedEnergies.length} active</span>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Pill onClick={onToggleMatchMode} selected>{matchAny ? "OR" : "AND"}</Pill>
+                {energyOptions.map((energy) => (
+                  <Pill
+                    key={energy}
+                    onClick={() => onToggleEnergy(energy)}
+                    selected={selectedEnergies.includes(energy)}
+                  >
+                    {formatOptionLabel(energy)}
+                  </Pill>
+                ))}
+              </div>
+            </div>
+            {hasActiveFilters ? (
+              <div className="flex justify-end">
+                <button
+                  className="rounded-full border border-[#e5e0f5] bg-white px-4 py-2 text-sm font-semibold text-[#5c647d] shadow-[0_10px_24px_rgba(81,61,168,0.05)] dark:border-white/15 dark:bg-white/8 dark:text-white/75"
+                  onClick={onReset}
+                  type="button"
+                >
+                  Reset Filters
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
-  );
-}
-
-function FilterChip({
-  active,
-  children,
-  count,
-  onClick,
-  tone,
-}: {
-  active?: boolean;
-  children: React.ReactNode;
-  count: number;
-  onClick?: () => void;
-  tone: FilterChipTone;
-}) {
-  const className = tone === "purple"
-    ? "border-[#d7cbff] bg-[#f7f2ff] text-[#6f57f6] dark:border-[#5b4bad] dark:bg-[#1c1734] dark:text-[#c9bbff]"
-    : tone === "orange"
-      ? "border-[#ffd7bf] bg-[#fff6ef] text-[#f39a4d] dark:border-[#8c5631] dark:bg-[#2f2016] dark:text-[#ffc393]"
-      : tone === "red"
-        ? "border-[#ffc6d1] bg-[#fff4f6] text-[#f05566] dark:border-[#7b3646] dark:bg-[#2e161f] dark:text-[#ff9eaf]"
-        : "border-[#e1e4ee] bg-white text-[#4b556e] dark:border-white/10 dark:bg-white/6 dark:text-white/75";
-
-  return (
-    <button
-      className={`rounded-full border px-4 py-2 text-base font-semibold transition ${active ? "ring-2 ring-[#6f57f6]/35" : ""} ${className}`}
-      onClick={onClick}
-      type="button"
-    >
-      {children} <span className="opacity-70">{count}</span>
-    </button>
   );
 }
 
@@ -4359,6 +5152,8 @@ function TaskGridView({
   missingWidgetTypes,
   onAddTask,
   onEditTask,
+  onSetStatus,
+  onSetSubtaskStatus,
   onAddWidget,
   onImportTasks,
   onMoveWidget,
@@ -4371,7 +5166,6 @@ function TaskGridView({
   subtasksByTaskId,
   taskHistoryStats,
   onToggleEditMode,
-  onToggleTask,
   overdueCount,
   selectedWidget,
   tasksByWidget,
@@ -4385,8 +5179,10 @@ function TaskGridView({
   isEditMode: boolean;
   message: Message | null;
   missingWidgetTypes: TaskGridWidgetType[];
-  onAddTask: (task: TaskDraft) => Promise<void>;
+  onAddTask: (draft: { focusToday: boolean; values: TaskDraft }) => Promise<void>;
   onEditTask: (task: Task) => void;
+  onSetStatus: (task: Task, status: TaskStatus) => void;
+  onSetSubtaskStatus: (subtaskId: string, status: TaskSubtaskStatus) => void;
   onAddWidget: (widgetType: TaskGridWidgetType) => void;
   onImportTasks: (lines: string[]) => Promise<void>;
   onMoveWidget: (widgetId: string, direction: "up" | "down") => void;
@@ -4399,7 +5195,6 @@ function TaskGridView({
   subtasksByTaskId: Record<string, DbTaskSubtask[]>;
   taskHistoryStats: TaskHistoryStats;
   onToggleEditMode: () => void;
-  onToggleTask: (task: Task) => void;
   overdueCount: number;
   selectedWidget: TaskGridItem | null;
   tasksByWidget: {
@@ -4564,7 +5359,8 @@ function TaskGridView({
               <UrgentTasksPanel
                 focusedTaskIds={focusedTaskIds}
                 onEditTask={onEditTask}
-                onToggle={onToggleTask}
+                onSetStatus={onSetStatus}
+                onSetSubtaskStatus={onSetSubtaskStatus}
                 subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.urgent}
               />
@@ -4575,7 +5371,7 @@ function TaskGridView({
                 onEditTask={onEditTask}
                 subtasksByTaskId={subtasksByTaskId}
                 tasks={tasksByWidget.focusToday}
-                title="Focus Today"
+                title="Focus"
                 tone="purple"
               />
             ) : item.type === "due_today" ? (
@@ -4914,15 +5710,17 @@ function TaskGridSelectedOverlay({
 function UrgentTasksPanel({
   focusedTaskIds,
   onEditTask,
+  onSetStatus,
+  onSetSubtaskStatus,
   tasks,
   subtasksByTaskId,
-  onToggle,
 }: {
   focusedTaskIds: string[];
   onEditTask: (task: Task) => void;
+  onSetStatus: (task: Task, status: TaskStatus) => void;
+  onSetSubtaskStatus: (subtaskId: string, status: TaskSubtaskStatus) => void;
   tasks: Task[];
   subtasksByTaskId: Record<string, DbTaskSubtask[]>;
-  onToggle: (task: Task) => void;
 }) {
   const DEFAULT_VISIBLE_COUNT = 4;
   const [isExpanded, setIsExpanded] = useState(false);
@@ -4965,10 +5763,29 @@ function UrgentTasksPanel({
                   </button>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus Today</TaskMetaChip> : null}
+                  {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus</TaskMetaChip> : null}
                   <TaskMetaChip tone="neutral">{task.priority} priority</TaskMetaChip>
                   <TaskMetaChip tone="green">{task.energy}</TaskMetaChip>
                   <TaskMetaChip tone="neutral">{formatDueLabel(task.due_on)}</TaskMetaChip>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {taskStatusOptions.filter((status) => status !== "archived").map((status) => {
+                    const isActive = task.status === status;
+                    return (
+                      <button
+                        aria-label={`Set status to ${formatOptionLabel(status)}`}
+                        className={`h-8 w-8 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`}
+                        key={status}
+                        onClick={() => onSetStatus(task, status)}
+                        title={formatOptionLabel(status)}
+                        type="button"
+                      >
+                        <span className="flex h-full w-full items-center justify-center">
+                          {renderTaskStatusCircle(status, "md")}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
                 <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
@@ -4980,25 +5797,28 @@ function UrgentTasksPanel({
                 >
                   Edit
                 </button>
-                <button
-                  className={`w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
-                  onClick={() => onToggle(task)}
-                  type="button"
-                >
-                  Done
-                </button>
               </div>
             </div>
 
             <ul className="mt-5 space-y-2">
-              {taskChecklist(task.title).map((item, itemIndex) => (
-                <li className="flex items-center gap-3" key={`${task.id}-${itemIndex}`}>
-                  <span className={`h-3 w-3 rounded-full ${item.done ? "bg-[#18c58f]" : "bg-[#f05566]"}`} />
-                  <span className={`${item.done ? "line-through opacity-50" : ""} text-[#525d78] dark:text-white/72`}>
-                    {item.label}
+              {(subtasksByTaskId[task.id] ?? []).map((subtask) => (
+                <li className="flex items-center gap-3" key={subtask.id}>
+                  <button
+                    aria-label={`Mark ${subtask.title} as ${isClosedSubtaskStatus(subtask.status) ? "pending" : "done"}`}
+                    className="transition"
+                    onClick={() => onSetSubtaskStatus(subtask.id, isClosedSubtaskStatus(subtask.status) ? "pending" : "done")}
+                    type="button"
+                  >
+                    {renderTaskStatusCircle(subtask.status, "sm")}
+                  </button>
+                  <span className={`${isClosedSubtaskStatus(subtask.status) ? "line-through opacity-50" : ""} text-[#525d78] dark:text-white/72`}>
+                    {subtask.title}
                   </span>
                 </li>
               ))}
+              {(subtasksByTaskId[task.id] ?? []).length === 0 ? (
+                <li className="text-sm text-[#8d97b0] dark:text-white/45">No subtasks yet.</li>
+              ) : null}
             </ul>
           </article>
         ))}
@@ -5022,7 +5842,7 @@ function TaskMetaChip({
   tone,
 }: {
   children: React.ReactNode;
-  tone: "blue" | "purple" | "green" | "neutral";
+  tone: "blue" | "purple" | "green" | "neutral" | "red" | "yellow";
 }) {
   const className = tone === "blue"
     ? "bg-[#edf6ff] text-[#3f8bdc] dark:bg-[#162434] dark:text-[#8bc4ff]"
@@ -5030,10 +5850,14 @@ function TaskMetaChip({
       ? "bg-[#f2edff] text-[#7a63f7] dark:bg-[#22193f] dark:text-[#c7b9ff]"
       : tone === "green"
         ? "bg-[#e8fbf2] text-[#0fa774] dark:bg-[#14362c] dark:text-[#7de4b8]"
+        : tone === "yellow"
+          ? "bg-[#fff5d9] text-[#b77900] dark:bg-[#44350d] dark:text-[#ffd56b]"
+        : tone === "red"
+          ? "bg-[#fff1f3] text-[#d94e67] dark:bg-[#44232f] dark:text-[#ff9eaf]"
         : "bg-[#f4f5f8] text-[#68738c] dark:bg-white/8 dark:text-white/60";
 
   return (
-    <span className={`rounded-xl px-3 py-1.5 text-sm font-semibold ${className}`}>
+    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-xl px-3 py-1.5 text-sm font-semibold ${className}`}>
       {children}
     </span>
   );
@@ -5075,7 +5899,7 @@ function TaskSupplementalMeta({
       ) : null}
       {task.external_link_url ? (
         <a
-          className={`rounded-xl px-3 py-1.5 text-sm font-semibold bg-[#edf6ff] text-[#3f8bdc] dark:bg-[#162434] dark:text-[#8bc4ff]`}
+          className={`inline-flex shrink-0 whitespace-nowrap rounded-xl px-3 py-1.5 text-sm font-semibold bg-[#edf6ff] text-[#3f8bdc] dark:bg-[#162434] dark:text-[#8bc4ff]`}
           href={task.external_link_url}
           rel="noreferrer"
           target="_blank"
@@ -5090,11 +5914,11 @@ function TaskSupplementalMeta({
 function TaskComposerCard({
   onAdd,
 }: {
-  onAdd: (task: TaskDraft) => Promise<void>;
+  onAdd: (draft: { focusToday: boolean; values: TaskDraft }) => Promise<void>;
 }) {
   const [title, setTitle] = useState("");
-  const [priority, setPriority] = useState<TaskPriority>("normal");
-  const [energy, setEnergy] = useState<TaskEnergy>("medium");
+  const [priorityFlag, setPriorityFlag] = useState<(typeof quickCapturePriorityOptions)[number]>("urgent");
+  const [energy, setEnergy] = useState<TaskEnergy>("none");
   const [dueOn, setDueOn] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -5118,18 +5942,23 @@ function TaskComposerCard({
 
           setIsSubmitting(true);
           await onAdd({
-            title: trimmedTitle,
-            priority,
-            energy,
-            due_on: dueOn || null,
+            focusToday: priorityFlag === "focus",
+            values: {
+              is_important: priorityFlag === "important",
+              is_urgent: priorityFlag === "urgent",
+              priority: "normal",
+              title: trimmedTitle,
+              energy,
+              due_on: dueOn || null,
+            },
           });
           setTitle("");
           setDueOn("");
           setIsSubmitting(false);
         }}
       >
-        <label className="block">
-          <span className="sr-only">Task title</span>
+        <label className="grid gap-2">
+          <span className="text-sm font-semibold text-[#5f6983] dark:text-white/65">Task title</span>
           <input
             className={`h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
             onChange={(event) => setTitle(event.target.value)}
@@ -5138,11 +5967,11 @@ function TaskComposerCard({
           />
         </label>
         <div className="grid gap-3 md:grid-cols-2">
-          <Select label="Priority" onChange={setPriority} options={priorityOptions} value={priority} />
-          <Select label="Energy" onChange={setEnergy} options={energyOptions} value={energy} />
+          <Select label="Priority" onChange={setPriorityFlag} options={[...quickCapturePriorityOptions]} showLabel value={priorityFlag} />
+          <Select label="Energy" onChange={setEnergy} options={energyOptions} showLabel value={energy} />
         </div>
-        <label className="block">
-          <span className="sr-only">Due date</span>
+        <label className="grid gap-2">
+          <span className="text-sm font-semibold text-[#5f6983] dark:text-white/65">Due date</span>
           <input
             className={`h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
             onChange={(event) => setDueOn(event.target.value)}
@@ -5454,7 +6283,17 @@ function removeSubtaskFromTree(items: TaskSubtaskDraft[], id: string): TaskSubta
 }
 
 function addChildToSubtask(items: TaskSubtaskDraft[], parentId: string): TaskSubtaskDraft[] {
-  return items.map((s) => s.id === parentId ? { ...s, children: [...s.children, newSubtaskDraft()] } : { ...s, children: addChildToSubtask(s.children, parentId) });
+  const index = items.findIndex((subtask) => subtask.id === parentId);
+  if (index !== -1) {
+    const next = [...items];
+    next[index] = {
+      ...next[index],
+      children: [...next[index].children, newSubtaskDraft()],
+    };
+    return next;
+  }
+
+  return items.map((subtask) => ({ ...subtask, children: addChildToSubtask(subtask.children, parentId) }));
 }
 
 function SubtaskRow({ depth, onAddChild, onRemove, onUpdate, subtask }: {
@@ -5464,26 +6303,69 @@ function SubtaskRow({ depth, onAddChild, onRemove, onUpdate, subtask }: {
   onUpdate: (id: string, updater: (s: TaskSubtaskDraft) => TaskSubtaskDraft) => void;
   subtask: TaskSubtaskDraft;
 }) {
+  const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
   const indent = depth * 20;
+  const subtaskStatusOptions: Array<{ label: string; status: TaskSubtaskStatus }> = [
+    { label: "Pending", status: "pending" },
+    { label: "In Progress", status: "in_progress" },
+    { label: "Done", status: "done" },
+    { label: "Missed", status: "missed" },
+    { label: "Did My Best", status: "did_my_best" },
+    { label: "Upcoming", status: "upcoming" },
+    { label: "Not Due", status: "not_due" },
+  ];
+
+  function renderSubtaskStatusIcon(status: TaskSubtaskStatus) {
+    return renderTaskStatusCircle(status, "sm");
+  }
+
   return (
     <div style={{ marginLeft: indent }}>
-      <div className={`flex items-center gap-2 rounded-[1rem] border px-3 py-2.5 border-[#ece8f8] bg-white dark:border-white/10 dark:bg-white/[0.04]`}>
+      <div className={`relative flex items-center gap-2 rounded-[1rem] border px-3 py-2.5 border-[#ece8f8] bg-white dark:border-white/10 dark:bg-white/[0.04]`}>
+        <div className="relative shrink-0">
+          <button
+            aria-label="Change subtask status"
+            className="transition"
+            onClick={() => setIsStatusMenuOpen((current) => !current)}
+            title="Change status"
+            type="button"
+          >
+            {renderSubtaskStatusIcon(subtask.status)}
+          </button>
+          {isStatusMenuOpen ? (
+            <div className="absolute left-0 top-full z-20 mt-2 min-w-[180px] overflow-hidden rounded-[0.9rem] border border-[#ece8f8] bg-white p-2 shadow-lg dark:border-white/10 dark:bg-[#1a1230]">
+              {subtaskStatusOptions.map((option) => (
+                <button
+                  className={`mb-1 flex w-full items-center gap-2 rounded-full px-3 py-2 text-left text-sm font-semibold transition last:mb-0 ${TASK_STATUS_CHIP_STYLES[option.status as TaskStatus]} hover:opacity-90`}
+                  key={option.status}
+                  onClick={() => {
+                    onUpdate(subtask.id, (current) => ({ ...current, status: option.status }));
+                    setIsStatusMenuOpen(false);
+                  }}
+                  type="button"
+                >
+                  {renderSubtaskStatusIcon(option.status)}
+                  <span>{option.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
         <input
-          checked={subtask.status === "done"}
-          className="h-4 w-4 shrink-0 accent-[#6f57f6]"
-          onChange={(e) => onUpdate(subtask.id, (s) => ({ ...s, status: e.target.checked ? "done" : "pending" }))}
-          type="checkbox"
-        />
-        <input
-          className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${subtask.status === "done" ? "line-through opacity-50" : ""} text-[#1f2642] dark:text-white`}
+          className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${isClosedSubtaskStatus(subtask.status) ? "line-through opacity-50" : ""} text-[#1f2642] dark:text-white`}
           onChange={(e) => onUpdate(subtask.id, (s) => ({ ...s, title: e.target.value }))}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+            }
+          }}
           placeholder="Step…"
           value={subtask.title}
         />
         <button
           className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
           onClick={() => onAddChild(subtask.id)}
-          title="Add sub-step"
+          title="Add child step"
           type="button"
         >+</button>
         <button
@@ -5510,6 +6392,7 @@ function TagChipInput({ allTags, onChange, values }: {
 }) {
   const [input, setInput] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showExistingTags, setShowExistingTags] = useState(false);
   const filtered = allTags.filter((t) => !values.includes(t) && t.toLowerCase().includes(input.toLowerCase()));
 
   function addTag(tag: string) {
@@ -5546,6 +6429,15 @@ function TagChipInput({ allTags, onChange, values }: {
           onClick={() => addTag(input)}
           type="button"
         >Add</button>
+        <button
+          className={`shrink-0 rounded-[0.75rem] px-3 py-2 text-sm font-semibold ${showExistingTags
+            ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+            : "bg-[#f6f1ff] text-[#6f57f6] dark:bg-white/8 dark:text-[#cabfff]"}`}
+          onClick={() => setShowExistingTags((current) => !current)}
+          type="button"
+        >
+          Existing
+        </button>
       </div>
       {showDropdown && filtered.length > 0 ? (
         <div className={`absolute left-0 right-0 top-full z-20 mt-1 max-h-36 overflow-y-auto rounded-[1rem] border shadow-lg border-[#ece8f8] bg-white dark:border-white/10 dark:bg-[#1a1230]`}>
@@ -5559,12 +6451,112 @@ function TagChipInput({ allTags, onChange, values }: {
           ))}
         </div>
       ) : null}
+      {showExistingTags ? (
+        <div className={`rounded-[1rem] border border-[#ece8f8] bg-[#fcfbff] p-3 dark:border-white/10 dark:bg-white/[0.03]`}>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Existing Tags</p>
+          <div className="flex flex-wrap gap-2">
+            {allTags.length === 0 ? (
+              <span className="text-sm text-[#8d97b0] dark:text-white/45">No saved tags yet.</span>
+            ) : (
+              allTags.map((tag) => {
+                const selected = values.includes(tag);
+                return (
+                  <button
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${selected
+                      ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                      : "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"}`}
+                    key={tag}
+                    onClick={() => selected ? onChange(values.filter((value) => value !== tag)) : addTag(tag)}
+                    type="button"
+                  >
+                    {tag}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function NoteLinkPicker({
+  allNotes,
+  selectedNoteIds,
+  onToggle,
+}: {
+  allNotes: TaskEditorLinkedNote[];
+  selectedNoteIds: string[];
+  onToggle: (noteId: string) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const linkedNotes = allNotes.filter((note) => selectedNoteIds.includes(note.id));
+
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap gap-2">
+        <button
+          className={`rounded-full px-3 py-1.5 text-sm font-semibold ${isOpen
+            ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+            : "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"}`}
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
+          Link Notes
+        </button>
+        {linkedNotes.map((note) => (
+          <button
+            className="rounded-full bg-[#f6f1ff] px-3 py-1.5 text-sm font-semibold text-[#6f57f6] dark:bg-white/8 dark:text-[#cabfff]"
+            key={note.id}
+            onClick={() => onToggle(note.id)}
+            type="button"
+          >
+            {note.title.trim() || "Untitled note"} ✕
+          </button>
+        ))}
+      </div>
+      {isOpen ? (
+        <div className="max-h-56 overflow-y-auto rounded-[1rem] border border-[#ece8f8] bg-[#fcfbff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Notes</p>
+          <div className="space-y-2">
+            {allNotes.length === 0 ? (
+              <span className="text-sm text-[#8d97b0] dark:text-white/45">No saved notes yet.</span>
+            ) : (
+              allNotes.map((note) => {
+                const selected = selectedNoteIds.includes(note.id);
+                const preview = note.body.trim().slice(0, 80);
+                return (
+                  <button
+                    className={`flex w-full items-start justify-between gap-3 rounded-[0.9rem] px-3 py-3 text-left transition ${selected
+                      ? "bg-[#ede8ff] text-[#1f2642] dark:bg-[#22193f] dark:text-white"
+                      : "bg-white text-[#1f2642] hover:bg-[#f7f5ff] dark:bg-white/[0.04] dark:text-white dark:hover:bg-white/8"}`}
+                    key={note.id}
+                    onClick={() => onToggle(note.id)}
+                    type="button"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{note.title.trim() || "Untitled note"}</p>
+                      {preview ? <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/50">{preview}</p> : null}
+                    </div>
+                    <span className={`mt-0.5 h-3 w-3 shrink-0 rounded-full ${selected ? "bg-[#6f57f6] dark:bg-[#cabfff]" : "bg-[#d8d0ee] dark:bg-white/20"}`} />
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function TaskEditorModal({
   allTags,
+  client,
+  currentUser,
+  focusCategories,
+  focusHistory,
   focusedToday,
   mode,
   onClose,
@@ -5574,27 +6566,94 @@ function TaskEditorModal({
   task,
 }: {
   allTags: string[];
+  client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
+  currentUser: User;
+  focusCategories: FocusCategory[];
+  focusHistory: HistoricalFocusSession[];
   focusedToday: string[];
   mode: TaskEditorMode;
   onClose: () => void;
   onOpenHistory?: () => void;
-  onSave: (draft: { values: TaskDraft; focusToday: boolean; subtasks: TaskSubtaskDraft[] }) => Promise<void>;
+  onSave: (draft: { values: TaskDraft; focusToday: boolean; linkedNoteIds: string[]; subtasks: TaskSubtaskDraft[] }) => Promise<void>;
   subtasks: DbTaskSubtask[];
   task: Task | null;
 }) {
   const [draft, setDraft] = useState<TaskEditorDraft>(() => createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks));
+  const [availableNotes, setAvailableNotes] = useState<TaskEditorLinkedNote[]>([]);
   const [subtaskMultiAdd, setSubtaskMultiAdd] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isEstimatedTimeMenuOpen, setIsEstimatedTimeMenuOpen] = useState(false);
+  const [showActualTimeModal, setShowActualTimeModal] = useState(false);
   const isEditing = mode === "edit" && task !== null;
+  const draftRef = useRef<TaskEditorDraft>(createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks));
 
   useEffect(() => {
     setDraft(createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks));
     setSubtaskMultiAdd("");
+    draftRef.current = createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks);
   }, [task, mode, focusedToday, subtasks]);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void client
+      .from("adhdice_notes")
+      .select("id,title,body,linked_task_ids,updated_at")
+      .eq("user_id", currentUser.id)
+      .order("updated_at", { ascending: false })
+      .then(({ data }) => {
+        if (cancelled || !data) {
+          return;
+        }
+
+        const notes = data as TaskEditorLinkedNote[];
+        setAvailableNotes(notes);
+        if (!task) {
+          return;
+        }
+
+        const linkedNoteIds = notes
+          .filter((note) => note.linked_task_ids.includes(task.id))
+          .map((note) => note.id);
+
+        setDraft((current) => ({ ...current, linkedNoteIds }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, currentUser.id, task]);
 
   const trimmedTitle = draft.title.trim();
   const normalizedUrl = draft.externalLinkUrl.trim();
   const hasUrlError = normalizedUrl.length > 0 && !isProbablyValidUrl(normalizedUrl);
+  const initialDraft = useMemo(
+    () => createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks),
+    [focusedToday, subtasks, task],
+  );
+  const linkedNoteIdsFromRecord = useMemo(
+    () => task
+      ? availableNotes.filter((note) => note.linked_task_ids.includes(task.id)).map((note) => note.id).sort()
+      : [],
+    [availableNotes, task],
+  );
+  const pendingSubtaskLines = useMemo(() => buildDraftSubtasksFromLines(subtaskMultiAdd), [subtaskMultiAdd]);
+  const combinedSubtasksForSave = useMemo(
+    () => mergeDraftSubtasksWithLines(draft.subtasks, subtaskMultiAdd),
+    [draft.subtasks, subtaskMultiAdd],
+  );
+  const focusLabelOptions = useMemo(
+    () => buildFocusLabelOptions(focusCategories, focusHistory),
+    [focusCategories, focusHistory],
+  );
+  const isDirty = serializeTaskEditorDraft(draft) !== serializeTaskEditorDraft({
+    ...initialDraft,
+    linkedNoteIds: linkedNoteIdsFromRecord,
+  }) || pendingSubtaskLines.length > 0;
 
   const estimatedTimePresets = [
     { label: "5m", minutes: "5" },
@@ -5604,8 +6663,34 @@ function TaskEditorModal({
     { label: "45m", minutes: "45" },
     { label: "1h", minutes: "60" },
   ];
+  const selectedEstimatedTimeLabel = estimatedTimePresets.find((preset) => preset.minutes === draft.estimatedMinutes)?.label
+    ?? formatEstimatedMinutesLabel(draft.estimatedMinutes);
+  const hasPresetEstimatedTime = estimatedTimePresets.some((preset) => preset.minutes === draft.estimatedMinutes);
+  const customEstimatedMinutes = hasPresetEstimatedTime
+    ? null
+    : parsePositiveInteger(draft.estimatedMinutes);
+  const customEstimatedHoursValue = customEstimatedMinutes === null ? "" : String(Math.floor(customEstimatedMinutes / 60));
+  const customEstimatedMinuteValue = customEstimatedMinutes === null ? "" : String(customEstimatedMinutes % 60);
+
+  function updateEstimatedTimeParts(hoursPart: string, minutesPart: string) {
+    const normalizedHours = hoursPart.replace(/[^\d]/g, "");
+    const normalizedMinutes = minutesPart.replace(/[^\d]/g, "");
+    const hours = normalizedHours ? Number.parseInt(normalizedHours, 10) : 0;
+    const minutes = normalizedMinutes ? Number.parseInt(normalizedMinutes, 10) : 0;
+    const safeHours = Number.isFinite(hours) ? Math.max(0, hours) : 0;
+    const safeMinutes = Number.isFinite(minutes) ? Math.min(59, Math.max(0, minutes)) : 0;
+    const totalMinutes = safeHours * 60 + safeMinutes;
+
+    setDraft((current) => ({
+      ...current,
+      estimatedMinutes: totalMinutes > 0 ? String(totalMinutes) : "",
+    }));
+  }
 
   const visibleStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "missed", "did_my_best", "upcoming", "not_due"];
+  const compactRepeatOptions = repeatFrequencyOptions;
+  const compactRepeatLabel = draft.repeatFrequency === "custom" ? "Custom cadence" : formatOptionLabel(draft.repeatFrequency);
+  const handleManualFocusEntryProxy = onLogActualTime;
 
   return (
     <ModalShell className={`w-full max-w-[42rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="Task editor" onClose={onClose}>
@@ -5614,7 +6699,7 @@ function TaskEditorModal({
         <button aria-label="Close" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white`} onClick={onClose} type="button">
           <X className="h-4 w-4" />
         </button>
-        <span className={`flex-1 text-base font-bold text-[#1e2540] dark:text-white`}>{isEditing ? "Edit Task" : "New Task"}</span>
+        <span className={`flex-1 text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>{isEditing ? "Edit Task" : "New Task"}</span>
         <button
           className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${draft.oneStepAtATime
             ? "border-[#6f57f6] bg-[#f2edff] text-[#6f57f6] dark:border-[#cabfff] dark:bg-[#22193f] dark:text-[#cabfff]"
@@ -5638,7 +6723,7 @@ function TaskEditorModal({
         {isEditing ? (
           <button
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#fff1f3] text-[#f05566]"
-            onClick={() => onSave({ focusToday: draft.focusToday, subtasks: [], values: { title: draft.title, notes: null, status: "archived" as TaskStatus, priority: draft.priority, energy: draft.energy, is_urgent: false, is_important: false, due_on: null, due_time: null, estimated_minutes: null, tags: [], external_link_label: null, external_link_url: null, one_step_at_a_time: false, subtasks_auto_reset: false, repeat_frequency: "none", repeat_interval: 1, repeat_days_of_week: [], repeat_day_of_month: null, completed_at: null } })}
+            onClick={() => onSave({ focusToday: draft.focusToday, linkedNoteIds: [], subtasks: [], values: { title: draft.title, notes: null, status: "archived" as TaskStatus, priority: draft.priority, energy: draft.energy, is_urgent: false, is_important: false, due_on: null, due_time: null, estimated_minutes: null, tags: [], external_link_label: null, external_link_url: null, one_step_at_a_time: false, subtasks_auto_reset: false, repeat_frequency: "none", repeat_interval: 1, repeat_days_of_week: [], repeat_day_of_month: null, completed_at: null } })}
             type="button"
           >
             <Trash2 className="h-4 w-4" />
@@ -5650,36 +6735,39 @@ function TaskEditorModal({
         className="space-y-6 px-5 pb-6 pt-5"
         onSubmit={async (event) => {
           event.preventDefault();
-          if (!trimmedTitle || hasUrlError) return;
+          const draftSnapshot = draftRef.current;
+          const trimmedSnapshotTitle = draftSnapshot.title.trim();
+          if (!trimmedSnapshotTitle || hasUrlError) return;
           setIsSaving(true);
           await onSave({
-            focusToday: draft.focusToday,
-            subtasks: draft.subtasks,
+            focusToday: draftSnapshot.focusToday,
+            linkedNoteIds: draftSnapshot.linkedNoteIds,
+            subtasks: mergeDraftSubtasksWithLines(draftSnapshot.subtasks, subtaskMultiAdd),
             values: {
-              title: trimmedTitle,
-              notes: emptyToNull(draft.notes),
-              status: draft.status,
-              priority: draft.priority,
-              energy: draft.energy,
-              is_urgent: draft.isUrgent,
-              is_important: draft.isImportant,
-              due_on: emptyToNull(draft.dueOn),
-              due_time: emptyToNull(draft.dueTime),
-              estimated_minutes: parsePositiveInteger(draft.estimatedMinutes),
-              tags: draft.tags,
-              external_link_label: emptyToNull(draft.externalLinkLabel),
+              title: trimmedSnapshotTitle,
+              notes: emptyToNull(draftSnapshot.notes),
+              status: draftSnapshot.status,
+              priority: draftSnapshot.priority,
+              energy: draftSnapshot.energy,
+              is_urgent: draftSnapshot.isUrgent,
+              is_important: draftSnapshot.isImportant,
+              due_on: emptyToNull(draftSnapshot.dueOn),
+              due_time: emptyToNull(draftSnapshot.dueTime),
+              estimated_minutes: parsePositiveInteger(draftSnapshot.estimatedMinutes),
+              tags: draftSnapshot.tags,
+              external_link_label: emptyToNull(draftSnapshot.externalLinkLabel),
               external_link_url: emptyToNull(normalizedUrl),
-              one_step_at_a_time: draft.oneStepAtATime,
-              subtasks_auto_reset: draft.subtasksAutoReset,
-              repeat_frequency: draft.repeatFrequency,
-              repeat_interval: Math.max(1, parsePositiveInteger(draft.repeatInterval) ?? 1),
-              repeat_days_of_week: draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom"
-                ? [...draft.repeatDaysOfWeek].sort((a, b) => a - b)
+              one_step_at_a_time: draftSnapshot.oneStepAtATime,
+              subtasks_auto_reset: draftSnapshot.subtasksAutoReset,
+              repeat_frequency: draftSnapshot.repeatFrequency,
+              repeat_interval: Math.max(1, parsePositiveInteger(draftSnapshot.repeatInterval) ?? 1),
+              repeat_days_of_week: draftSnapshot.repeatFrequency === "weekly" || draftSnapshot.repeatFrequency === "custom"
+                ? [...draftSnapshot.repeatDaysOfWeek].sort((a, b) => a - b)
                 : [],
-              repeat_day_of_month: draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom"
-                ? parseDayOfMonth(draft.repeatDayOfMonth)
+              repeat_day_of_month: draftSnapshot.repeatFrequency === "monthly" || draftSnapshot.repeatFrequency === "custom"
+                ? parseDayOfMonth(draftSnapshot.repeatDayOfMonth)
                 : null,
-              completed_at: isTaskFinishedStatusValue(draft.status)
+              completed_at: isTaskFinishedStatusValue(draftSnapshot.status)
                 ? task?.completed_at ?? new Date().toISOString()
                 : null,
             },
@@ -5688,40 +6776,152 @@ function TaskEditorModal({
         }}
       >
         {/* Title */}
-        <input
-          className={`w-full border-b-2 bg-transparent pb-2 text-2xl font-bold outline-none border-[#6f57f6] text-[#1e2540] placeholder:text-[#bbb8d0] dark:border-[#cabfff]/50 dark:text-white dark:placeholder:text-white/25`}
-          onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))}
-          placeholder="Task title"
-          value={draft.title}
-        />
+        <label className="block rounded-[1.35rem] border border-[#e5def8] bg-[#fbfaff] px-4 py-4 shadow-[0_14px_34px_rgba(81,61,168,0.07)] focus-within:border-[#9d8cff] focus-within:bg-white focus-within:shadow-[0_18px_44px_rgba(111,87,246,0.14)] dark:border-white/10 dark:bg-white/[0.04] dark:focus-within:border-[#cabfff]/50 dark:focus-within:bg-white/[0.07]">
+          <input
+            className="w-full bg-transparent text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] outline-none placeholder:text-[#b5a9ef] dark:text-[#c9bbff] dark:placeholder:text-white/25"
+            style={{ fontFamily: "\"Avenir Next\", Manrope, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif", fontWeight: 900 }}
+            onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))}
+            placeholder="Name the task"
+            value={draft.title}
+          />
+        </label>
 
-        {/* STATUS */}
-        <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40`}>Status</p>
-          <div className="flex flex-wrap gap-2">
-            {visibleStatusOptions.map((s) => (
-              <button
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${draft.status === s
-                  ? "border-transparent bg-[#f05566] text-white"
-                  : "border-[#e5e0f5] text-[#5a607a] hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"}`}
-                key={s}
-                onClick={() => setDraft((c) => ({ ...c, status: s }))}
-                type="button"
-              >
-                {formatOptionLabel(s)}
-              </button>
-            ))}
+        <EditorCollapsibleSection
+          defaultOpen
+          summary={`${formatOptionLabel(draft.status)} · ${formatOptionLabel(draft.energy)} energy${draft.repeatFrequency !== "none" ? ` · ${compactRepeatLabel}` : ""}`}
+          title="Metadata"
+        >
+          <div className="grid gap-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <CompactSelectField
+                label="Status"
+                onChange={(value) => setDraft((c) => ({ ...c, status: value }))}
+                optionButtonClassName={(status, selected) => `${TASK_STATUS_CHIP_STYLES[status as TaskStatus]} ${selected ? "ring-2 ring-[#6f57f6]/25" : "hover:opacity-90"}`}
+                options={visibleStatusOptions}
+                renderOption={(status) => renderTaskStatusChip(status as TaskStatus, { size: "sm" })}
+                renderValueNode={(status) => renderTaskStatusChip(status as TaskStatus, { size: "sm" })}
+                triggerClassName={(status) => `${TASK_STATUS_CHIP_STYLES[status as TaskStatus]} hover:opacity-95`}
+                value={draft.status}
+              />
+              <CompactSelectField label="Energy" onChange={(value) => setDraft((c) => ({ ...c, energy: value }))} options={energyOptions} value={draft.energy} />
+              <CompactSelectField label="Repeat" onChange={(value) => setDraft((c) => ({ ...c, repeatFrequency: value }))} options={compactRepeatOptions} renderValueLabel={(value) => value === "custom" ? "Custom cadence" : formatOptionLabel(value)} value={draft.repeatFrequency} />
+            </div>
+
+            <div className="grid gap-2">
+              <div className="grid gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Estimated Time</span>
+                  <div className="relative w-max">
+                    <button
+                      aria-expanded={isEstimatedTimeMenuOpen}
+                      className={`flex h-12 w-12 items-center justify-center rounded-full border text-[11px] font-bold shadow-[0_10px_24px_rgba(111,87,246,0.08)] transition ${draft.estimatedMinutes
+                        ? "border-transparent bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                        : "border-[#e5e0f5] bg-white text-[#66718e] hover:border-[#c4b8ff] dark:border-white/15 dark:bg-white/8 dark:text-white/70 dark:hover:border-white/30"}`}
+                      onClick={() => setIsEstimatedTimeMenuOpen((current) => !current)}
+                      type="button"
+                    >
+                      <span className="sr-only">Estimated time</span>
+                      {draft.estimatedMinutes ? (
+                        <span>{selectedEstimatedTimeLabel}</span>
+                      ) : (
+                        <Clock className="h-4 w-4" />
+                      )}
+                    </button>
+                    {isEstimatedTimeMenuOpen ? (
+                      <div className="absolute right-0 top-[calc(100%+0.5rem)] z-30 w-[min(21rem,calc(100vw-3rem))] rounded-[1.2rem] border border-[#ddd6fb] bg-white p-3 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+                        <div className="flex flex-wrap gap-2">
+                          {estimatedTimePresets.map((preset) => (
+                            <button
+                              className={`rounded-full border px-3 py-2 text-sm font-semibold transition-colors ${draft.estimatedMinutes === preset.minutes
+                                ? "border-transparent bg-[#6f57f6] text-white dark:border-transparent dark:bg-[#cabfff] dark:text-[#1a1431]"
+                                : "border-[#e5e0f5] bg-white text-[#5a607a] hover:border-[#c4b8ff] dark:border-white/15 dark:bg-white/8 dark:text-white/70 dark:hover:border-white/30"}`}
+                              key={preset.label}
+                              onClick={() => {
+                                setDraft((c) => ({ ...c, estimatedMinutes: c.estimatedMinutes === preset.minutes ? "" : preset.minutes }));
+                                setIsEstimatedTimeMenuOpen(false);
+                              }}
+                              type="button"
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="mt-3 flex gap-4">
+                          <label className="grid justify-items-center gap-2">
+                            <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Hours</span>
+                            <input
+                              className="h-16 w-16 rounded-full border border-[#e5e0f5] bg-[#fbfaff] px-0 text-center text-lg outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+                              inputMode="numeric"
+                              onChange={(e) => updateEstimatedTimeParts(e.target.value, customEstimatedMinuteValue)}
+                              placeholder="0"
+                              type="text"
+                              value={customEstimatedHoursValue}
+                            />
+                          </label>
+                          <label className="grid justify-items-center gap-2">
+                            <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Minutes</span>
+                            <input
+                              className="h-16 w-16 rounded-full border border-[#e5e0f5] bg-[#fbfaff] px-0 text-center text-lg outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+                              inputMode="numeric"
+                              onChange={(e) => updateEstimatedTimeParts(customEstimatedHoursValue, e.target.value)}
+                              placeholder="0"
+                              type="text"
+                              value={customEstimatedMinuteValue}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Actual Time</span>
+                  <button
+                    className="flex h-12 items-center justify-center rounded-full border border-[#e5e0f5] bg-white px-4 text-[11px] font-bold uppercase tracking-[0.18em] text-[#1f2846] shadow-[0_10px_24px_rgba(111,87,246,0.08)] transition hover:border-[#c4b8ff] dark:border-white/15 dark:bg-white/8 dark:text-white/80"
+                    onClick={() => setShowActualTimeModal(true)}
+                    type="button"
+                  >
+                    Add Manual Time
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {([
+                { key: "isUrgent", label: "Urgent", activeClass: "bg-[#f05566] text-white border-[#f05566]", idleClass: "border-[#ffd8de] text-[#c24d5d] dark:border-[#6d3240] dark:text-[#ffb0bc]" },
+                { key: "isImportant", label: "Important", activeClass: "bg-[#f4b400] text-white border-[#f4b400]", idleClass: "border-[#f4dba6] text-[#a87200] dark:border-[#6b5314] dark:text-[#ffd36c]" },
+                { key: "focusToday", label: "Focus Today", activeClass: "bg-[#6f57f6] text-white border-[#6f57f6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:border-[#cabfff]", idleClass: "border-[#d9d0ff] text-[#6f57f6] dark:border-[#4b3b8f] dark:text-[#cabfff]" },
+              ] as const).map(({ key, label, activeClass, idleClass }) => {
+                const checked = draft[key] as boolean;
+                return (
+                  <button
+                    className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${checked ? activeClass : idleClass}`}
+                    key={key}
+                    onClick={() => setDraft((c) => ({ ...c, [key]: !checked }))}
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        </EditorCollapsibleSection>
 
         {/* Urgent / Important / Focus Today */}
-        <div className="space-y-2">
+        <div className="hidden space-y-2">
           {([
             { key: "isUrgent", label: "Urgent", desc: "Needs attention now", Icon: AlertCircle, color: "text-[#f05566]", bg: "bg-[#fff1f3] dark:bg-[#44232f]" },
-            { key: "isImportant", label: "Important", desc: "High value goal", Icon: Diamond, color: "text-[#6f57f6]", bg: "bg-[#f2edff] dark:bg-[#22193f]" },
-            { key: "focusToday", label: "Focus Today", desc: "Add to daily priority list", Icon: Star, color: "text-[#8d87a7]", bg: "bg-[#f7f5ff] dark:bg-white/8" },
+            { key: "isImportant", label: "Important", desc: "High value goal", Icon: Star, color: "text-[#c98a00]", bg: "bg-[#fff5d9] dark:bg-[#44350d]" },
+            { key: "focusToday", label: "Focus", desc: "Add to daily priority list", Icon: Brain, color: "text-[#6f57f6]", bg: "bg-[#f2edff] dark:bg-[#22193f]" },
           ] as const).map(({ key, label, desc, Icon, color, bg }) => {
             const checked = draft[key] as boolean;
+            const activeClass = key === "isImportant"
+              ? "bg-[#f4b400] text-[#1f1800]"
+              : key === "focusToday"
+                ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                : "bg-[#f05566] text-white";
             return (
               <div className={`flex items-center gap-3 rounded-[1.1rem] px-4 py-3 bg-[#faf8ff] dark:bg-white/[0.03]`} key={key}>
                 <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${bg}`}>
@@ -5733,7 +6933,7 @@ function TaskEditorModal({
                 </div>
                 <button
                   className={`rounded-full px-4 py-1.5 text-sm font-bold transition-colors ${checked
-                    ? "bg-[#f05566] text-white"
+                    ? activeClass
                     : "border border-[#e5e0f5] text-[#8d97b0] dark:border dark:border-white/15 dark:text-white/50"}`}
                   onClick={() => setDraft((c) => ({ ...c, [key]: !checked }))}
                   type="button"
@@ -5746,7 +6946,7 @@ function TaskEditorModal({
         </div>
 
         {/* REPEAT FREQUENCY */}
-        <div>
+        <div className="hidden">
           <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40`}>Repeat Frequency</p>
           <div className="flex flex-wrap gap-2">
             {(["none", "daily", "weekly", "monthly", "custom"] as const).map((freq) => (
@@ -5787,19 +6987,21 @@ function TaskEditorModal({
         </div>
 
         {/* ENERGY LEVEL */}
-        <div>
+        <div className="hidden">
           <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40`}>Energy Level</p>
           <div className="flex flex-wrap gap-2">
-            {(["low", "medium", "high"] as const).map((e) => {
+            {(["none", "low", "medium", "high"] as const).map((e) => {
               const active = draft.energy === e;
-              const colors = e === "low"
+              const colors = e === "none"
+                ? active ? "bg-[#94a3b8] text-white border-transparent" : "border-[#e5e0f5] text-[#5a607a] dark:border-white/15 dark:text-white/70"
+                : e === "low"
                 ? active ? "bg-[#12b76a] text-white border-transparent" : "border-[#e5e0f5] text-[#5a607a] dark:border-white/15 dark:text-white/70"
                 : e === "medium"
                   ? active ? "bg-[#6f57f6] text-white border-transparent" : "border-[#e5e0f5] text-[#5a607a] dark:border-white/15 dark:text-white/70"
                   : active ? "bg-[#f79009] text-white border-transparent" : "border-[#e5e0f5] text-[#5a607a] dark:border-white/15 dark:text-white/70";
               return (
                 <button className={`rounded-full border px-5 py-2 text-sm font-semibold capitalize transition-colors ${colors}`} key={e} onClick={() => setDraft((c) => ({ ...c, energy: e }))} type="button">
-                  {e}
+                  {formatOptionLabel(e)}
                 </button>
               );
             })}
@@ -5807,7 +7009,7 @@ function TaskEditorModal({
         </div>
 
         {/* ESTIMATED TIME */}
-        <div>
+        <div className="hidden">
           <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40`}>Estimated Time</p>
           <div className="flex flex-wrap gap-2">
             {estimatedTimePresets.map((preset) => (
@@ -5835,14 +7037,91 @@ function TaskEditorModal({
           </div>
         </div>
 
-        {/* SUBTASKS */}
-        <section className={`rounded-[1.25rem] border p-4 border-[#ece8f8] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.03]`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className={`text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>Subtasks</p>
-            <ToggleField checked={draft.subtasksAutoReset} label="Auto Reset" onChange={(checked) => setDraft((c) => ({ ...c, subtasksAutoReset: checked }))} />
+        <EditorCollapsibleSection defaultOpen summary={draft.dueOn || draft.repeatFrequency !== "none" ? `${draft.dueOn ? `Due ${draft.dueOn}` : "No due date"}${draft.repeatFrequency !== "none" ? ` · ${compactRepeatLabel}` : ""}` : "No due date or repeat set yet."} title="Schedule">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <CompactDateTimeField clearLabel="Clear due date" label="Due date" onChange={(value) => setDraft((c) => ({ ...c, dueOn: value }))} onClear={() => setDraft((c) => ({ ...c, dueOn: "" }))} type="date" value={draft.dueOn} />
+            <CompactDateTimeField clearLabel="Clear due time" label="Due time" onChange={(value) => setDraft((c) => ({ ...c, dueTime: value }))} onClear={() => setDraft((c) => ({ ...c, dueTime: "" }))} type="time" value={draft.dueTime} />
           </div>
-          <div className="mt-3 space-y-2">
-            {draft.subtasks.length === 0 ? <EmptyTaskState text="No subtasks yet." /> : null}
+          {draft.repeatFrequency !== "none" ? (
+            <div className="grid gap-3 rounded-[1.15rem] border border-[#e7e0fb] bg-white/70 p-3 dark:border-white/10 dark:bg-black/10">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-[#392f66] dark:text-white">Repeat details</p>
+                <span className="rounded-full bg-[#f2edff] px-3 py-1 text-xs font-semibold text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]">
+                  {compactRepeatLabel}
+                </span>
+              </div>
+              {draft.repeatFrequency !== "daily" ? (
+                <div className="sm:max-w-[10rem]">
+                  <LabeledInput label="Interval" onChange={(v) => setDraft((c) => ({ ...c, repeatInterval: v }))} placeholder="1" type="number" value={draft.repeatInterval} />
+                </div>
+              ) : null}
+              {draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom" ? (
+                <div className="flex flex-wrap gap-2">
+                  {repeatWeekdayOptions.map((option) => {
+                    const selected = draft.repeatDaysOfWeek.includes(option.value);
+                    return (
+                      <Pill key={option.value} onClick={() => setDraft((c) => ({ ...c, repeatDaysOfWeek: selected ? c.repeatDaysOfWeek.filter((v) => v !== option.value) : [...c.repeatDaysOfWeek, option.value] }))} selected={selected}>
+                        {option.label}
+                      </Pill>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom" ? (
+                <div className="sm:max-w-[10rem]">
+                  <LabeledInput label="Day of month" onChange={(v) => setDraft((c) => ({ ...c, repeatDayOfMonth: v }))} placeholder="15" type="number" value={draft.repeatDayOfMonth} />
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-[#7d88a1] dark:text-white/50">Set repeat to daily, weekly, monthly, or custom if this task should come back automatically.</p>
+          )}
+        </EditorCollapsibleSection>
+
+        <EditorCollapsibleSection defaultOpen summary={`${draft.notes.trim() ? "Notes added" : "No notes yet."}${draft.linkedNoteIds.length ? ` · ${draft.linkedNoteIds.length} linked note${draft.linkedNoteIds.length === 1 ? "" : "s"}` : ""}`} title="Notes & Links">
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Notes</span>
+              <NoteLinkPicker
+                allNotes={availableNotes}
+                onToggle={(noteId) =>
+                  setDraft((current) => ({
+                    ...current,
+                    linkedNoteIds: current.linkedNoteIds.includes(noteId)
+                      ? current.linkedNoteIds.filter((id) => id !== noteId)
+                      : [...current.linkedNoteIds, noteId],
+                  }))}
+                selectedNoteIds={draft.linkedNoteIds}
+              />
+            </div>
+            <textarea
+              className={`min-h-24 rounded-[1rem] px-4 py-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
+              onChange={(e) => setDraft((c) => ({ ...c, notes: e.target.value }))}
+              placeholder="Create a new note or link an existing note."
+              value={draft.notes}
+            />
+          </div>
+          <label className="grid gap-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Tags</span>
+            <TagChipInput allTags={allTags} onChange={(tags) => setDraft((c) => ({ ...c, tags }))} values={draft.tags} />
+          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <LabeledInput label="External link label" onChange={(v) => setDraft((c) => ({ ...c, externalLinkLabel: v }))} placeholder="Reference" value={draft.externalLinkLabel} />
+          </div>
+          <div>
+            <LabeledInput label="External link URL" onChange={(v) => setDraft((c) => ({ ...c, externalLinkUrl: v }))} placeholder="https://..." value={draft.externalLinkUrl} />
+            {hasUrlError ? <p className="mt-1 text-sm text-[#d94e67]">Use a full URL like `https://example.com`.</p> : null}
+          </div>
+        </EditorCollapsibleSection>
+
+        <EditorCollapsibleSection
+          defaultOpen={combinedSubtasksForSave.length > 0}
+          headerAccessory={<ToggleField checked={draft.subtasksAutoReset} compact label="Auto Reset" onChange={(checked) => setDraft((c) => ({ ...c, subtasksAutoReset: checked }))} />}
+          summary={combinedSubtasksForSave.length === 0 ? "No steps yet." : `${combinedSubtasksForSave.length} top-level step${combinedSubtasksForSave.length === 1 ? "" : "s"}`}
+          title="Steps"
+        >
+          <div className="space-y-2">
+            {combinedSubtasksForSave.length === 0 ? <EmptyTaskState text="No steps yet." /> : null}
             {draft.subtasks.map((subtask) => (
               <SubtaskRow
                 depth={0}
@@ -5854,30 +7133,50 @@ function TaskEditorModal({
               />
             ))}
           </div>
-          <div className="mt-3 grid gap-2">
+          <div className="grid gap-2">
             <textarea
-              className={`min-h-20 rounded-[1rem] px-4 py-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
+              className={`min-h-28 rounded-[1rem] px-4 py-4 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
               onChange={(e) => setSubtaskMultiAdd(e.target.value)}
-              placeholder={"One step\nAnother step\nFinal step"}
+              placeholder={"Parent step\n  Child step\nAnother parent step"}
               value={subtaskMultiAdd}
             />
             <button
               className={`self-end rounded-[1rem] px-4 py-2.5 text-sm font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
               onClick={() => {
-                const next = buildDraftSubtasksFromLines(subtaskMultiAdd);
+                const next = pendingSubtaskLines;
                 if (!next.length) return;
-                setDraft((c) => ({ ...c, subtasks: [...c.subtasks, ...next] }));
+                const nextDraft = {
+                  ...draftRef.current,
+                  subtasks: [...draftRef.current.subtasks, ...next],
+                };
+                draftRef.current = nextDraft;
+                setDraft(nextDraft);
                 setSubtaskMultiAdd("");
               }}
               type="button"
             >
-              Add Lines
+              Add Steps
             </button>
           </div>
-        </section>
+        </EditorCollapsibleSection>
+
+        {showActualTimeModal ? (
+          <ManualEntryModal
+            categories={focusCategories}
+            labelOptions={focusLabelOptions}
+            onClose={() => setShowActualTimeModal(false)}
+            onSave={async (data) => {
+              const success = await handleManualFocusEntryProxy(data);
+              if (success) {
+                setShowActualTimeModal(false);
+              }
+              return success;
+            }}
+          />
+        ) : null}
 
         {/* Due date / time / notes / tags / link */}
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="hidden grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2">
             <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Due date</span>
             <div className="relative">
@@ -5916,36 +7215,52 @@ function TaskEditorModal({
           </label>
         </div>
 
-        <label className="grid gap-2">
-          <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Notes</span>
+        <div className="hidden grid gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Notes</span>
+            <NoteLinkPicker
+              allNotes={availableNotes}
+              onToggle={(noteId) =>
+                setDraft((current) => ({
+                  ...current,
+                  linkedNoteIds: current.linkedNoteIds.includes(noteId)
+                    ? current.linkedNoteIds.filter((id) => id !== noteId)
+                    : [...current.linkedNoteIds, noteId],
+                }))}
+              selectedNoteIds={draft.linkedNoteIds}
+            />
+          </div>
           <textarea
             className={`min-h-24 rounded-[1rem] px-4 py-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30`}
             onChange={(e) => setDraft((c) => ({ ...c, notes: e.target.value }))}
-            placeholder="Keep this grounded in the next real step."
+            placeholder="Create a new note or link an existing note."
             value={draft.notes}
           />
-        </label>
+        </div>
 
-        <label className="grid gap-2">
+        <label className="hidden grid gap-2">
           <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>Tags</span>
           <TagChipInput allTags={allTags} onChange={(tags) => setDraft((c) => ({ ...c, tags }))} values={draft.tags} />
         </label>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="hidden grid gap-4 sm:grid-cols-2">
           <LabeledInput label="External link label" onChange={(v) => setDraft((c) => ({ ...c, externalLinkLabel: v }))} placeholder="Reference" value={draft.externalLinkLabel} />
         </div>
-        <div>
+        <div className="hidden">
           <LabeledInput label="External link URL" onChange={(v) => setDraft((c) => ({ ...c, externalLinkUrl: v }))} placeholder="https://..." value={draft.externalLinkUrl} />
           {hasUrlError ? <p className="mt-1 text-sm text-[#d94e67]">Use a full URL like `https://example.com`.</p> : null}
         </div>
 
-        {/* Save */}
-        <button
-          className={`w-full rounded-[1.25rem] py-4 text-base font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431] disabled:opacity-50`}
-          disabled={!trimmedTitle || hasUrlError || isSaving}
-          type="submit"
-        >
-          {isSaving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
-        </button>
+        {isDirty ? (
+          <div className="sticky bottom-4 z-20 flex justify-end pt-2">
+            <button
+              className={`rounded-full px-6 py-3 text-base font-bold bg-[#6f57f6] text-white shadow-[0_18px_40px_rgba(111,87,246,0.28)] dark:bg-[#cabfff] dark:text-[#1a1431] disabled:opacity-50`}
+              disabled={!trimmedTitle || hasUrlError || isSaving}
+              type="submit"
+            >
+              {isSaving ? "Saving..." : isEditing ? "Save Changes" : "Create Task"}
+            </button>
+          </div>
+        ) : null}
       </form>
     </ModalShell>
   );
@@ -5963,334 +7278,16 @@ function EmptyTaskState({
   );
 }
 
-const LIST_MAX_COLUMNS = 4;
-const LIST_WIDTH_PRESETS = [
-  { label: "1 Col", colSpan: 1 },
-  { label: "2 Cols", colSpan: 2 },
-  { label: "3 Cols", colSpan: 3 },
-  { label: "4 Cols", colSpan: 4 },
-];
-const LIST_HEIGHT_PRESETS = [
-  { label: "2 Rows", minHeight: LIST_ROW_HEIGHT * 2 },
-  { label: "4 Rows", minHeight: LIST_ROW_HEIGHT * 4 },
-  { label: "6 Rows", minHeight: LIST_ROW_HEIGHT * 6 },
-  { label: "8 Rows", minHeight: LIST_ROW_HEIGHT * 8 },
-  { label: "10 Rows", minHeight: LIST_ROW_HEIGHT * 10 },
-];
-
-const LIST_CARD_LABELS: Record<ListCardId, string> = {
-  composer: "Quick Capture",
-  import: "Import",
-  "focus-today": "Focus Today",
-  "due-today": "Due Today",
-  stats: "Focus Stats",
-  urgent: "Urgent Tasks",
-};
-
-function ListCardResizeOverlay({
-  layout,
-  onClose,
-  onResize,
-}: {
-  layout: ListCardLayout;
-  onClose: () => void;
-  onResize: (colSpan: number, minHeight: number) => void;
-}) {
-  const currentRows = Math.round(layout.minHeight / LIST_ROW_HEIGHT);
-  const [customRowsInput, setCustomRowsInput] = useState(String(currentRows));
-
-  useEffect(() => {
-    setCustomRowsInput(String(Math.round(layout.minHeight / LIST_ROW_HEIGHT)));
-  }, [layout.minHeight, layout.id]);
-
-  const parsedCustomRows = Number.parseInt(customRowsInput, 10);
-  const clampedCustomRows = Number.isFinite(parsedCustomRows) ? Math.max(1, Math.min(20, parsedCustomRows)) : null;
-
-  function stopEvent(e: React.SyntheticEvent) { e.stopPropagation(); }
-
-  function applyCustomRows() {
-    if (clampedCustomRows === null) return;
-    onResize(layout.colSpan, clampedCustomRows * LIST_ROW_HEIGHT);
-    onClose();
-  }
-
-  return (
-    <div
-      className={`absolute inset-x-3 bottom-3 z-20 rounded-[1.35rem] border p-3 border-[#ddd4ff] bg-white/95 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]/95`}
-      onClick={stopEvent}
-      onMouseDown={stopEvent}
-      onPointerDown={stopEvent}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className={`text-xs font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>
-          {LIST_CARD_LABELS[layout.id]}
-        </p>
-        <button
-          className={`rounded-full px-3 py-1.5 text-xs font-semibold bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75`}
-          onClick={onClose}
-          type="button"
-        >
-          Close
-        </button>
-      </div>
-      <div className="mt-3 space-y-3">
-        <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40`}>Width</p>
-          <div className="flex flex-wrap gap-2">
-            {LIST_WIDTH_PRESETS.map((preset) => (
-              <button
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${layout.colSpan === preset.colSpan
-                  ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                  : "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75"}`}
-                key={preset.label}
-                onClick={() => onResize(preset.colSpan, layout.minHeight)}
-                type="button"
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <p className={`mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40`}>Rows</p>
-          <div className="flex flex-wrap gap-2">
-            {LIST_HEIGHT_PRESETS.map((preset) => (
-              <button
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${layout.minHeight === preset.minHeight
-                  ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                  : "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75"}`}
-                key={preset.label}
-                onClick={() => onResize(layout.colSpan, preset.minHeight)}
-                type="button"
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <form
-          className="flex flex-wrap items-end gap-2"
-          onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); applyCustomRows(); }}
-        >
-          <label className="min-w-0 flex-1">
-            <span className={`mb-2 block text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40`}>Custom Rows</span>
-            <input
-              className={`h-11 w-full rounded-[0.9rem] px-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
-              inputMode="numeric"
-              max="20"
-              min="1"
-              onChange={(e) => setCustomRowsInput(e.target.value)}
-              onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" && clampedCustomRows !== null) { e.preventDefault(); applyCustomRows(); } }}
-              type="number"
-              value={customRowsInput}
-            />
-          </label>
-          <button
-            className={`h-11 rounded-[0.9rem] px-4 text-sm font-semibold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
-            disabled={clampedCustomRows === null}
-            type="submit"
-          >
-            Apply
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function TaskListView({
-  focusedTaskIds,
-  onDelete,
-  onEditTask,
-  onSetStatus,
-  onToggle,
-  subtasksByTaskId,
-  tasks,
-}: {
-  focusedTaskIds: string[];
-  onDelete: (taskIds: string[]) => void;
-  onEditTask: (task: Task) => void;
-  onSetStatus: (task: Task, status: TaskStatus) => void;
-  onToggle: (task: Task) => void;
-  subtasksByTaskId: Record<string, DbTaskSubtask[]>;
-  tasks: Task[];
-}) {
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [openStatusTaskId, setOpenStatusTaskId] = useState<string | null>(null);
-  const LOAD_MORE_SIZE = 200;
-  const [visibleCount, setVisibleCount] = useState(LOAD_MORE_SIZE);
-
-  const allSelected = tasks.length > 0 && tasks.every((t) => selectedIds.has(t.id));
-  const someSelected = selectedIds.size > 0;
-
-  const STATUS_OPTIONS: TaskStatus[] = ["pending", "in_progress", "done", "missed", "did_my_best", "upcoming", "not_due"];
-  const STATUS_COLORS: Record<TaskStatus, string> = {
-    pending:      "bg-orange-500 text-white",
-    in_progress:  "bg-yellow-400 text-black",
-    done:         "bg-green-500 text-white",
-    missed:       "bg-red-500 text-white",
-    did_my_best:  "bg-blue-800 text-white",
-    upcoming:     "bg-gray-400 text-white",
-    not_due:      "bg-sky-300 text-black",
-    archived:     "bg-gray-600 text-white",
-  };
-
-  function toggleSelectAll() {
-    if (allSelected) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(tasks.map((t) => t.id)));
-    }
-  }
-
-  function toggleSelectOne(id: string) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }
-
-  function handleDeleteSelected() {
-    onDelete([...selectedIds]);
-    setSelectedIds(new Set());
-  }
-
-  return (
-    <section className="mt-7">
-      {someSelected ? (
-        <div className={`mb-3 flex items-center justify-between rounded-2xl px-4 py-2.5 bg-[#f2edff] dark:bg-[#22193f]`}>
-          <span className={`text-sm font-semibold text-[#6f57f6] dark:text-[#cabfff]`}>
-            {selectedIds.size} selected
-          </span>
-          <button
-            className="rounded-full bg-red-500 px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-600"
-            onClick={handleDeleteSelected}
-            type="button"
-          >
-            Delete selected
-          </button>
-        </div>
-      ) : null}
-      <div className={`overflow-hidden rounded-[1.8rem] border border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6`}>
-        <div className={`grid grid-cols-[auto_minmax(0,1.8fr)_minmax(0,1.2fr)_auto] gap-3 border-b px-5 py-4 text-[11px] font-black uppercase tracking-[0.18em] border-[#ece8f8] text-[#8d87a7] dark:border-white/10 dark:text-white/35`}>
-          <input
-            aria-label="Select all tasks"
-            checked={allSelected}
-            className="mt-0.5 cursor-pointer accent-[#6f57f6]"
-            onChange={toggleSelectAll}
-            type="checkbox"
-          />
-          <span>Task</span>
-          <span>Meta</span>
-          <span>Actions</span>
-        </div>
-        <div>
-          {tasks.length === 0 ? (
-            <div className="p-4">
-              <EmptyTaskState text="No tasks match the current filters." />
-            </div>
-          ) : null}
-          {tasks.slice(0, visibleCount).map((task) => (
-            <div
-              className={`grid grid-cols-1 gap-3 border-b px-5 py-4 last:border-b-0 md:grid-cols-[auto_minmax(0,1.8fr)_minmax(0,1.2fr)_auto] md:items-center border-[#f0ebfb] dark:border-white/10`}
-              key={task.id}
-            >
-              <input
-                aria-label={`Select ${task.title}`}
-                checked={selectedIds.has(task.id)}
-                className="mt-1 cursor-pointer accent-[#6f57f6] md:mt-0"
-                onChange={() => toggleSelectOne(task.id)}
-                type="checkbox"
-              />
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    className={`min-w-0 truncate text-left text-lg font-semibold text-[#24304b] dark:text-white`}
-                    onClick={() => onEditTask(task)}
-                    type="button"
-                  >
-                    {task.title}
-                  </button>
-                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${STATUS_COLORS[task.status]}`}>
-                    {formatOptionLabel(task.status)}
-                  </span>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus Today</TaskMetaChip> : null}
-                  {task.is_urgent ? <TaskMetaChip tone="blue">Urgent</TaskMetaChip> : null}
-                  {task.is_important ? <TaskMetaChip tone="purple">Important</TaskMetaChip> : null}
-                  {task.one_step_at_a_time ? <TaskMetaChip tone="neutral">One Step</TaskMetaChip> : null}
-                </div>
-                <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
-              </div>
-              <div className={`text-sm text-[#6f7892] dark:text-white/60`}>
-                {formatTaskMetaLine(task)}
-              </div>
-              <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                <button
-                  className={`rounded-full px-3 py-2 text-sm font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
-                  onClick={() => onEditTask(task)}
-                  type="button"
-                >
-                  Edit
-                </button>
-                <div className="relative">
-                  <button
-                    className={`rounded-full px-3 py-2 text-sm font-semibold ${STATUS_COLORS[task.status]}`}
-                    onClick={() => setOpenStatusTaskId(openStatusTaskId === task.id ? null : task.id)}
-                    type="button"
-                  >
-                    {formatOptionLabel(task.status)} ▾
-                  </button>
-                  {openStatusTaskId === task.id ? (
-                    <div className={`absolute right-0 top-full z-20 mt-1 min-w-[150px] overflow-hidden rounded-[1rem] border shadow-lg border-[#ece8f8] bg-white dark:border-white/10 dark:bg-[#1a1230]`}>
-                      {STATUS_OPTIONS.map((s) => (
-                        <button
-                          className={`flex w-full items-center gap-2 px-4 py-2 text-left text-sm font-medium hover:bg-[#f7f5ff] dark:hover:bg-white/8`}
-                          key={s}
-                          onClick={() => { onSetStatus(task, s); setOpenStatusTaskId(null); }}
-                          type="button"
-                        >
-                          <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${STATUS_COLORS[s].split(" ")[0]}`} />
-                          <span className="text-[#1f2642] dark:text-white">{formatOptionLabel(s)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-      {tasks.length > visibleCount ? (
-        <button
-          className={`mt-4 w-full rounded-2xl py-3 text-sm font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
-          onClick={() => setVisibleCount((c) => c + LOAD_MORE_SIZE)}
-          type="button"
-        >
-          Show {Math.min(LOAD_MORE_SIZE, tasks.length - visibleCount)} more ({tasks.length - visibleCount} remaining)
-        </button>
-      ) : null}
-    </section>
-  );
-}
-
 function TaskCardGallery({
   focusedTaskIds,
   onEditTask,
-  onToggle,
+  onSetStatus,
   subtasksByTaskId,
   tasks,
 }: {
   focusedTaskIds: string[];
   onEditTask: (task: Task) => void;
-  onToggle: (task: Task) => void;
+  onSetStatus: (task: Task, status: TaskStatus) => void;
   subtasksByTaskId: Record<string, DbTaskSubtask[]>;
   tasks: Task[];
 }) {
@@ -6321,28 +7318,40 @@ function TaskCardGallery({
               </span>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus Today</TaskMetaChip> : null}
+              {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus</TaskMetaChip> : null}
               <TaskMetaChip tone={task.energy === "high" ? "blue" : task.energy === "medium" ? "neutral" : "green"}>
                 {task.energy}
               </TaskMetaChip>
-              {task.is_urgent ? <TaskMetaChip tone="blue">Urgent</TaskMetaChip> : null}
-              {task.is_important ? <TaskMetaChip tone="purple">Important</TaskMetaChip> : null}
+              {task.is_urgent ? <TaskMetaChip tone="red">Urgent</TaskMetaChip> : null}
+              {task.is_important ? <TaskMetaChip tone="yellow">Important</TaskMetaChip> : null}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {taskStatusOptions.filter((status) => status !== "archived").map((status) => {
+                const isActive = task.status === status;
+                return (
+                  <button
+                    aria-label={`Set status to ${formatOptionLabel(status)}`}
+                    className={`h-7 w-7 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`}
+                    key={status}
+                    onClick={() => onSetStatus(task, status)}
+                    title={formatOptionLabel(status)}
+                    type="button"
+                  >
+                    <span className="flex h-full w-full items-center justify-center">
+                      {renderTaskStatusCircle(status, "sm")}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
             <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
-            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            <div className="mt-5">
               <button
                 className={`rounded-[1rem] px-4 py-3 text-sm font-bold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
                 onClick={() => onEditTask(task)}
                 type="button"
               >
                 Edit
-              </button>
-              <button
-                className={`rounded-[1rem] px-4 py-3 text-sm font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
-                onClick={() => onToggle(task)}
-                type="button"
-              >
-                {isTaskFinished(task) ? "Completed" : "Mark Done"}
               </button>
             </div>
           </article>
@@ -6354,12 +7363,12 @@ function TaskCardGallery({
 
 function TaskMatrixView({
   onEditTask,
-  onToggle,
+  onSetStatus,
   subtasksByTaskId,
   tasks,
 }: {
   onEditTask: (task: Task) => void;
-  onToggle: (task: Task) => void;
+  onSetStatus: (task: Task, status: TaskStatus) => void;
   subtasksByTaskId: Record<string, DbTaskSubtask[]>;
   tasks: Task[];
 }) {
@@ -6419,19 +7428,29 @@ function TaskMatrixView({
                   ) : null}
                 </div>
                 <div className="flex items-center gap-2">
+                  {taskStatusOptions.filter((status) => status !== "archived").map((status) => {
+                    const isActive = task.status === status;
+                    return (
+                      <button
+                        aria-label={`Set status to ${formatOptionLabel(status)}`}
+                        className={`h-6 w-6 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`}
+                        key={status}
+                        onClick={() => onSetStatus(task, status)}
+                        title={formatOptionLabel(status)}
+                        type="button"
+                      >
+                        <span className="flex h-full w-full items-center justify-center">
+                          {renderTaskStatusCircle(status, "sm")}
+                        </span>
+                      </button>
+                    );
+                  })}
                   <button
                     className={`rounded-full px-3 py-1 text-xs font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
                     onClick={() => onEditTask(task)}
                     type="button"
                   >
                     Edit
-                  </button>
-                  <button
-                    className={`rounded-full px-3 py-1 text-xs font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
-                    onClick={() => onToggle(task)}
-                    type="button"
-                  >
-                    Done
                   </button>
                 </div>
               </div>
@@ -7066,7 +8085,7 @@ function LabeledInput({
 }) {
   return (
     <label className="grid gap-2">
-      <span className={`text-sm font-semibold text-[#5f6983] dark:text-white/65`}>{label}</span>
+      <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span>
       <input
         className={`h-12 rounded-[1rem] px-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
         onChange={(event) => onChange(event.target.value)}
@@ -7080,15 +8099,17 @@ function LabeledInput({
 
 function ToggleField({
   checked,
+  compact = false,
   label,
   onChange,
 }: {
   checked: boolean;
+  compact?: boolean;
   label: string;
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className={`flex items-center justify-between gap-3 rounded-[1rem] px-4 py-3 bg-[#f7f5ff] dark:bg-white/8`}>
+    <label className={`flex items-center justify-between gap-3 rounded-[1rem] bg-[#f7f5ff] dark:bg-white/8 ${compact ? "px-3 py-2" : "px-4 py-3"}`}>
       <span className={`text-sm font-semibold text-[#27304c] dark:text-white`}>{label}</span>
       <input
         checked={checked}
@@ -7100,20 +8121,309 @@ function ToggleField({
   );
 }
 
+function CompactSelectField<T extends string>({
+  label,
+  onChange,
+  optionButtonClassName,
+  options,
+  renderOption,
+  triggerClassName,
+  renderValueLabel,
+  renderValueNode,
+  value,
+}: {
+  label: string;
+  onChange: (value: T) => void;
+  optionButtonClassName?: (value: T, selected: boolean) => string;
+  options: readonly T[];
+  renderOption?: (value: T, selected: boolean) => React.ReactNode;
+  triggerClassName?: (value: T) => string;
+  renderValueLabel?: (value: T) => string;
+  renderValueNode?: (value: T) => React.ReactNode;
+  value: T;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className="grid gap-2" ref={rootRef}>
+      <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span>
+      <div className="relative">
+        <button
+          aria-expanded={isOpen}
+          className={`flex h-11 w-full items-center justify-between rounded-full border border-[#ddd6fb] bg-white px-4 text-sm font-semibold text-[#1f2642] shadow-[0_10px_24px_rgba(111,87,246,0.08)] transition hover:border-[#c8bcff] dark:border-white/10 dark:bg-white/8 dark:text-white dark:hover:border-white/20 ${triggerClassName ? triggerClassName(value) : ""}`}
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
+          <span>{renderValueNode ?? renderValueLabel ? (renderValueNode ? renderValueNode(value) : renderValueLabel?.(value)) : formatOptionLabel(value)}</span>
+          <ChevronDown className={`h-4 w-4 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
+        </button>
+        {isOpen ? (
+          <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 min-w-full overflow-hidden rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+            <div className="grid gap-1">
+              {options.map((option) => {
+                const isSelected = option === value;
+                return (
+                  <button
+                    className={`flex w-full items-center justify-between rounded-[0.9rem] px-3 py-2 text-left text-sm font-semibold transition-colors ${optionButtonClassName
+                      ? optionButtonClassName(option, isSelected)
+                      : isSelected
+                        ? "bg-[#f2edff] text-[#6f57f6] dark:bg-[#312555] dark:text-[#cabfff]"
+                        : "text-[#3a4260] hover:bg-[#f7f4ff] dark:text-white/80 dark:hover:bg-white/8"}`}
+                    key={option}
+                    onClick={() => {
+                      onChange(option);
+                      setIsOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <span>{renderOption ? renderOption(option, isSelected) : renderValueLabel ? renderValueLabel(option) : formatOptionLabel(option)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function renderTaskStatusCircle(
+  status: TaskStatus | TaskSubtaskStatus,
+  size: "sm" | "md" = "md",
+) {
+  const sizeClasses = size === "sm" ? "h-5 w-5" : "h-6 w-6";
+  const iconSize = size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5";
+
+  if (status === "pending") {
+    return (
+      <span className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#d96b1c] text-[#d96b1c]`}>
+        <Ellipsis className={iconSize} />
+      </span>
+    );
+  }
+
+  if (status === "in_progress") {
+    return (
+      <span className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#4473df] text-[#4473df]`}>
+        <ArrowRight className={iconSize} />
+      </span>
+    );
+  }
+
+  if (status === "done") {
+    return (
+      <span className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#12a876] text-[#12a876]`}>
+        <span className={`${size === "sm" ? "text-[11px]" : "text-xs"} font-bold leading-none`}>✓</span>
+      </span>
+    );
+  }
+
+  if (status === "missed") {
+    return (
+      <span className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#d94e67] text-[#d94e67]`}>
+        <CircleX className={iconSize} />
+      </span>
+    );
+  }
+
+  if (status === "did_my_best") {
+    return (
+      <span className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#b28700] text-[#b28700]`}>
+        <Star className={iconSize} />
+      </span>
+    );
+  }
+
+  if (status === "upcoming") {
+    return (
+      <span className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#8d97b0] text-[#8d97b0]`}>
+        <Clock className={iconSize} />
+      </span>
+    );
+  }
+
+  if (status === "not_due") {
+    return (
+      <span className={`flex ${sizeClasses} items-center justify-center rounded-full border border-dashed border-[#57a9de] text-[#57a9de]`}>
+        <span className={`flex items-center gap-[2px] ${size === "sm" ? "scale-90" : ""}`} aria-hidden="true">
+          <span className={`block rounded-full bg-current ${size === "sm" ? "h-2.5 w-[2px]" : "h-3 w-[2px]"}`} />
+          <span className={`block rounded-full bg-current ${size === "sm" ? "h-2.5 w-[2px]" : "h-3 w-[2px]"}`} />
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <span className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#6b738f] text-[#6b738f]`}>
+      <BookOpen className={iconSize} />
+    </span>
+  );
+}
+
+function renderTaskStatusChip(
+  status: TaskStatus | TaskSubtaskStatus,
+  options: { count?: number; size?: "sm" | "md" } = {},
+) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      {renderTaskStatusCircle(status, options.size ?? "sm")}
+      <span>{formatOptionLabel(status)}</span>
+      {typeof options.count === "number" ? <span className="opacity-80">{options.count}</span> : null}
+    </span>
+  );
+}
+
+function renderTaskStatusIcon(status: TaskStatus) {
+  const iconClassName = "h-4 w-4";
+  switch (status) {
+    case "pending":
+      return <Ellipsis className={iconClassName} />;
+    case "in_progress":
+      return <ArrowRight className={iconClassName} />;
+    case "done":
+      return <span className="text-sm font-bold leading-none">✓</span>;
+    case "missed":
+      return <CircleX className={iconClassName} />;
+    case "did_my_best":
+      return <Star className={iconClassName} />;
+    case "upcoming":
+      return <Clock className={iconClassName} />;
+    case "not_due":
+      return (
+        <span className="flex items-center gap-[2px]" aria-hidden="true">
+          <span className="block h-3 w-[2px] rounded-full bg-current" />
+          <span className="block h-3 w-[2px] rounded-full bg-current" />
+        </span>
+      );
+    case "archived":
+      return <BookOpen className={iconClassName} />;
+    default:
+      return <Ellipsis className={iconClassName} />;
+  }
+}
+
+function CompactDateTimeField({
+  clearLabel,
+  label,
+  onChange,
+  onClear,
+  type,
+  value,
+}: {
+  clearLabel: string;
+  label: string;
+  onChange: (value: string) => void;
+  onClear: () => void;
+  type: "date" | "time";
+  value: string;
+}) {
+  return (
+    <label className="grid gap-2">
+      <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span>
+      <div className="relative">
+        <input
+          className={`h-11 w-full rounded-[1rem] border border-[#ece6fb] bg-white px-4 text-sm outline-none ${value ? "text-[#1f2642] dark:text-white" : "text-[#9b9fba] dark:text-white/30"} dark:border-white/10 dark:bg-white/8`}
+          onChange={(event) => onChange(event.target.value)}
+          type={type}
+          value={value}
+        />
+        {value ? (
+          <button
+            aria-label={clearLabel}
+            className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-xs text-[#9b9fba] hover:text-[#f05566] dark:text-white/30 dark:hover:text-[#ff9eaf]"
+            onClick={onClear}
+            type="button"
+          >
+            x
+          </button>
+        ) : null}
+      </div>
+    </label>
+  );
+}
+
+function EditorCollapsibleSection({
+  children,
+  defaultOpen = false,
+  headerAccessory,
+  summary,
+  title,
+}: {
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  headerAccessory?: React.ReactNode;
+  summary?: string;
+  title: string;
+}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  return (
+    <section className="rounded-[1.25rem] border border-[#ece8f8] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.03]">
+      <div className="flex items-start gap-3 px-4 py-4">
+        <button
+          aria-expanded={isOpen}
+          className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">{title}</p>
+            {summary ? <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{summary}</p> : null}
+          </div>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]">
+            {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </span>
+        </button>
+        {headerAccessory ? <div className="shrink-0">{headerAccessory}</div> : null}
+      </div>
+      {isOpen ? <div className="grid gap-4 px-4 pb-4">{children}</div> : null}
+    </section>
+  );
+}
+
 function Select<T extends string>({
   label,
   value,
   options,
   onChange,
+  showLabel = false,
 }: {
   label: string;
   value: T;
   options: T[];
   onChange: (value: T) => void;
+  showLabel?: boolean;
 }) {
   return (
-    <label>
-      <span className="sr-only">{label}</span>
+    <label className="grid gap-2">
+      <span className={showLabel ? "text-sm font-semibold text-[#5f6983] dark:text-white/65" : "sr-only"}>{label}</span>
       <select
         className={`h-14 w-full rounded-[1.25rem] px-4 text-lg capitalize outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
         onChange={(event) => onChange(event.target.value as T)}
@@ -7127,17 +8437,6 @@ function Select<T extends string>({
       </select>
     </label>
   );
-}
-
-function taskChecklist(title: string) {
-  const base = title.includes("Water")
-    ? ["1 Cup", "2 Cups", "3 Cups", "4 Cups", "5 Cups", "6 Cups", "7 Cups", "8 Cups", "9 Cups"]
-    : ["Open task", "Make first pass", "Ship one small step", "Close the loop"];
-
-  return base.map((label, index) => ({
-    label,
-    done: index < Math.max(0, Math.floor(base.length / 2) - 1),
-  }));
 }
 
 function getDefaultFocusCategories(userId: string) {
@@ -7419,14 +8718,19 @@ function parseStoredJson<T>(key: string, fallback: T): T {
 }
 
 function migrateLegacyTaskUiState(state: TaskUiState): TaskUiState {
-  if (state.view === "list") {
-    return {
-      ...state,
-      view: "grid",
-    };
-  }
+  const nextView = state.view === "list" || state.view === "cards" || state.view === "matrix" || state.view === "grid"
+    ? state.view
+    : DEFAULT_TASK_UI_STATE.view;
+  const nextBucket = isTaskBucket(state.selectedBucket) ? state.selectedBucket : DEFAULT_TASK_UI_STATE.selectedBucket;
+  const nextSavedView = isSavedTaskView(state.savedView) ? state.savedView : DEFAULT_TASK_UI_STATE.savedView;
 
-  return state;
+  return {
+    ...state,
+    savedView: nextSavedView,
+    selectedBucket: nextBucket,
+    view: nextView,
+    statusFilters: Array.isArray(state.statusFilters) ? state.statusFilters : [],
+  };
 }
 
 function parseTaskGridLayoutJson(layoutJson: string | null | undefined) {
@@ -7480,6 +8784,244 @@ function getTodayKey() {
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function isAppPage(value: unknown): value is AppPage {
+  return value === "Home"
+    || value === "Tasks"
+    || value === "Focus"
+    || value === "Roll"
+    || value === "Games"
+    || value === "Stats"
+    || value === "Notes"
+    || value === "Settings"
+    || value === "Test";
+}
+
+function isTaskEditorMode(value: unknown): value is TaskEditorMode {
+  return value === "create" || value === "edit";
+}
+
+function normalizePersistedTaskEditorUiState(value: unknown): PersistedTaskEditorUiState {
+  if (!value || typeof value !== "object") {
+    return { isOpen: false, mode: "create", taskId: null };
+  }
+
+  const candidate = value as Partial<PersistedTaskEditorUiState>;
+  return {
+    isOpen: candidate.isOpen === true,
+    mode: isTaskEditorMode(candidate.mode) ? candidate.mode : "create",
+    taskId: typeof candidate.taskId === "string" ? candidate.taskId : null,
+  };
+}
+
+type TaskBucketContext = {
+  focusedTaskIds: Set<string>;
+  routing: Record<string, TaskRoutingBucket>;
+};
+
+function isTaskBucket(value: unknown): value is TaskBucket {
+  return typeof value === "string" && value in TASK_BUCKET_LABELS;
+}
+
+function isSavedTaskView(value: unknown): value is SavedTaskView {
+  return value === "all" || value === "today" || value === "focus" || value === "urgent" || value === "recurring" || value === "low_energy" || value === "inbox";
+}
+
+function shouldRouteTaskToInbox(task: Task) {
+  return isTaskOpen(task)
+    && !task.due_on
+    && !task.is_urgent
+    && !task.is_important
+    && task.repeat_frequency === "none"
+    && task.status === "pending";
+}
+
+function isTaskQuickWin(task: Task) {
+  return isTaskOpen(task)
+    && task.energy === "low"
+    && (task.estimated_minutes === null || task.estimated_minutes <= 20);
+}
+
+function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucket {
+  if (isTaskFinished(task)) {
+    return "done";
+  }
+
+  const routedBucket = context.routing[task.id];
+  if (routedBucket === "inbox") {
+    return "inbox";
+  }
+  if (routedBucket === "waiting") {
+    return "waiting";
+  }
+  if (routedBucket === "later") {
+    return "later";
+  }
+  if (routedBucket === "today") {
+    return "today";
+  }
+
+  if (shouldRouteTaskToInbox(task)) {
+    return "inbox";
+  }
+
+  if (task.status === "missed" || (isTaskOpen(task) && isOverdue(task.due_on))) {
+    return "missed";
+  }
+
+  if (isTaskOpen(task) && context.focusedTaskIds.has(task.id)) {
+    return "focus";
+  }
+
+  if (isTaskUrgent(task)) {
+    return "urgent";
+  }
+
+  if (isTaskOpen(task) && (task.status === "in_progress" || isDueToday(task.due_on))) {
+    return "today";
+  }
+
+  if (isTaskQuickWin(task)) {
+    return "quick_wins";
+  }
+
+  if (isTaskOpen(task) && task.repeat_frequency !== "none") {
+    return "recurring";
+  }
+
+  if (isTaskOpen(task) && (task.status === "upcoming" || task.status === "not_due" || isLater(task.due_on))) {
+    return "later";
+  }
+
+  return "today";
+}
+
+function buildTaskBucketCounts(tasks: Task[], context: TaskBucketContext) {
+  return tasks.reduce<Record<TaskBucket, number>>((accumulator, task) => {
+    accumulator[getTaskBucket(task, context)] += 1;
+    return accumulator;
+  }, {
+    inbox: 0,
+    today: 0,
+    focus: 0,
+    urgent: 0,
+    quick_wins: 0,
+    recurring: 0,
+    waiting: 0,
+    later: 0,
+    done: 0,
+    missed: 0,
+  });
+}
+
+function applySavedTaskView(tasks: Task[], view: SavedTaskView, context: TaskBucketContext) {
+  if (view === "all") {
+    return tasks;
+  }
+
+  if (view === "low_energy") {
+    return tasks.filter((task) => isTaskOpen(task) && task.energy === "low");
+  }
+
+  const targetBucket = SAVED_VIEW_BUCKET_MAP[view];
+  return tasks.filter((task) => getTaskBucket(task, context) === targetBucket);
+}
+
+function sortTasksForCockpit(tasks: Task[], context: TaskBucketContext) {
+  return [...tasks].sort((left, right) => {
+    const leftScore = getTaskCockpitSortScore(left, context);
+    const rightScore = getTaskCockpitSortScore(right, context);
+
+    if (leftScore !== rightScore) {
+      return leftScore - rightScore;
+    }
+
+    const leftDue = left.due_on ?? "9999-12-31";
+    const rightDue = right.due_on ?? "9999-12-31";
+    if (leftDue !== rightDue) {
+      return leftDue.localeCompare(rightDue);
+    }
+
+    if (left.sort_order !== right.sort_order) {
+      return left.sort_order - right.sort_order;
+    }
+
+    return right.created_at.localeCompare(left.created_at);
+  });
+}
+
+function getTaskCockpitSortScore(task: Task, context: TaskBucketContext) {
+  const bucket = getTaskBucket(task, context);
+  const bucketBase: Record<TaskBucket, number> = {
+    missed: 0,
+    today: 10,
+    focus: 20,
+    urgent: 30,
+    quick_wins: 40,
+    recurring: 50,
+    waiting: 60,
+    later: 70,
+    inbox: 80,
+    done: 90,
+  };
+
+  let score = bucketBase[bucket];
+  if (isTaskOpen(task) && isOverdue(task.due_on)) score -= 6;
+  if (isDueToday(task.due_on)) score -= 4;
+  if (context.focusedTaskIds.has(task.id)) score -= 3;
+  if (isTaskUrgent(task)) score -= 2;
+  if (task.priority === "high") score -= 1;
+  if (isTaskQuickWin(task)) score -= 1;
+  return score;
+}
+
+function formatTaskDueLabel(task: Task) {
+  if (!task.due_on) {
+    return "No date";
+  }
+
+  if (isOverdue(task.due_on) && isTaskOpen(task)) {
+    return `Overdue ${task.due_on}`;
+  }
+
+  if (isDueToday(task.due_on)) {
+    return "Today";
+  }
+
+  if (daysUntil(task.due_on) === 1) {
+    return "Tomorrow";
+  }
+
+  return task.due_on;
+}
+
+function formatRolloverLabel(task: Task) {
+  if (task.status === "missed") {
+    return "Missed";
+  }
+
+  if (isTaskOpen(task) && isOverdue(task.due_on)) {
+    const days = Math.abs(daysUntil(task.due_on) ?? 0);
+    return days <= 1 ? "1 day" : `${days} days`;
+  }
+
+  if (task.repeat_frequency !== "none") {
+    return "Repeats";
+  }
+
+  return "Fresh";
+}
+
+function describePlanningCandidate(task: Task) {
+  const parts = [
+    formatTaskDueLabel(task),
+    formatOptionLabel(task.energy),
+    task.repeat_frequency !== "none" ? formatOptionLabel(task.repeat_frequency) : null,
+    task.is_urgent ? "Urgent" : null,
+  ].filter(Boolean);
+
+  return parts.join(" · ");
 }
 
 function matchesTaskQuickFilter(task: Task, filter: TaskQuickFilter, focusedTaskIds: string[]) {
@@ -7882,7 +9424,7 @@ function isTaskFinished(task: Task) {
 }
 
 function isTaskUrgent(task: Task) {
-  return isTaskOpen(task) && (task.is_urgent || isOverdue(task.due_on) || task.priority === "high");
+  return isTaskOpen(task) && task.is_urgent;
 }
 
 function isTaskImportant(task: Task) {
@@ -7892,6 +9434,11 @@ function isTaskImportant(task: Task) {
 function isOverdue(date: string | null) {
   const difference = daysUntil(date);
   return difference !== null && difference < 0;
+}
+
+function isLater(date: string | null) {
+  const difference = daysUntil(date);
+  return difference !== null && difference > 1;
 }
 
 function formatDueLabel(date: string | null) {
@@ -7919,6 +9466,23 @@ function formatDueTimeLabel(time: string | null) {
   const suffix = normalizedHours >= 12 ? "PM" : "AM";
   const displayHours = normalizedHours % 12 === 0 ? 12 : normalizedHours % 12;
   return `${displayHours}:${String(parsedMinutes).padStart(2, "0")} ${suffix}`;
+}
+
+function formatEstimatedMinutesLabel(value: string) {
+  const minutes = parsePositiveInteger(value);
+  if (!minutes) {
+    return "Time";
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours > 0 && remainingMinutes > 0) {
+    return `${hours}h ${remainingMinutes}m`;
+  }
+  if (hours > 0) {
+    return `${hours}h`;
+  }
+  return `${remainingMinutes}m`;
 }
 
 function formatTaskMetaLine(task: Task) {
@@ -7965,12 +9529,25 @@ function formatRepeatSummary(task: Task) {
 }
 
 function createTaskEditorDraft(task: Task | null, focusToday: boolean, subtasks: DbTaskSubtask[]): TaskEditorDraft {
+  function buildTree(parentId: string | null): TaskSubtaskDraft[] {
+    return subtasks
+      .filter((subtask) => (subtask.parent_subtask_id ?? null) === parentId)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((subtask) => ({
+        children: buildTree(subtask.id),
+        id: subtask.id,
+        status: subtask.status,
+        title: subtask.title,
+      }));
+  }
+
   return {
     title: task?.title ?? "",
     notes: task?.notes ?? "",
+    linkedNoteIds: [],
     status: task?.status ?? "pending",
     priority: task?.priority ?? "normal",
-    energy: task?.energy ?? "medium",
+    energy: task?.energy ?? "none",
     isUrgent: task?.is_urgent ?? false,
     isImportant: task?.is_important ?? false,
     focusToday,
@@ -7986,12 +9563,24 @@ function createTaskEditorDraft(task: Task | null, focusToday: boolean, subtasks:
     repeatInterval: String(task?.repeat_interval ?? 1),
     repeatDaysOfWeek: task?.repeat_days_of_week ?? [],
     repeatDayOfMonth: task?.repeat_day_of_month ? String(task.repeat_day_of_month) : "",
-    subtasks: (function buildTree(parentId: string | null): TaskSubtaskDraft[] {
-      return subtasks
-        .filter((s) => (s.parent_subtask_id ?? null) === parentId)
-        .map((s) => ({ id: s.id, status: s.status, title: s.title, children: buildTree(s.id) }));
-    })(null),
+    subtasks: buildTree(null),
   };
+}
+
+function serializeTaskEditorDraft(draft: TaskEditorDraft) {
+  return JSON.stringify({
+    ...draft,
+    linkedNoteIds: [...draft.linkedNoteIds].sort(),
+    subtasks: serializeTaskSubtaskDrafts(draft.subtasks),
+  });
+}
+
+function serializeTaskSubtaskDrafts(subtasks: TaskSubtaskDraft[]) {
+  return subtasks.map((subtask) => ({
+    children: serializeTaskSubtaskDrafts(subtask.children),
+    status: subtask.status,
+    title: subtask.title.trim(),
+  }));
 }
 
 function emptyToNull(value: string) {
@@ -8030,16 +9619,54 @@ function isProbablyValidUrl(value: string) {
 }
 
 function buildDraftSubtasksFromLines(value: string) {
-  return value
-    .split("\n")
-    .map((line) => line.trim().replace(/^[-*]\s+/, ""))
-    .filter(Boolean)
-    .map((title, index) => ({
-      id: `draft-subtask-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
-      status: "pending" as const,
-      title,
+  const roots: TaskSubtaskDraft[] = [];
+  const stack: TaskSubtaskDraft[] = [];
+
+  for (const line of value.split("\n")) {
+    const rawTitle = line.replace(/^(\s*)[-*]\s+/, "$1").replace(/\s+$/, "");
+    const trimmedTitle = rawTitle.trim();
+    if (!trimmedTitle) {
+      continue;
+    }
+
+    const leadingWhitespace = rawTitle.match(/^\s*/)?.[0] ?? "";
+    const depth = Math.floor(leadingWhitespace.replace(/\t/g, "  ").length / 2);
+    const nextDraft = {
       children: [],
-    }));
+      id: `draft-subtask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      status: "pending" as const,
+      title: trimmedTitle,
+    };
+
+    if (depth <= 0 || stack.length === 0) {
+      roots.push(nextDraft);
+      stack.length = 0;
+      stack.push(nextDraft);
+      continue;
+    }
+
+    while (stack.length > depth) {
+      stack.pop();
+    }
+
+    const parent = stack[stack.length - 1];
+    if (!parent) {
+      roots.push(nextDraft);
+      stack.length = 0;
+      stack.push(nextDraft);
+      continue;
+    }
+
+    parent.children.push(nextDraft);
+    stack.push(nextDraft);
+  }
+
+  return roots;
+}
+
+function mergeDraftSubtasksWithLines(subtasks: TaskSubtaskDraft[], value: string) {
+  const next = buildDraftSubtasksFromLines(value);
+  return next.length > 0 ? [...subtasks, ...next] : subtasks;
 }
 
 function moveDraftSubtask(subtasks: TaskSubtaskDraft[], subtaskId: string, direction: "up" | "down") {
@@ -8059,6 +9686,87 @@ function moveDraftSubtask(subtasks: TaskSubtaskDraft[], subtaskId: string, direc
   return next;
 }
 
+function isClosedSubtaskStatus(status: TaskSubtaskStatus) {
+  return status === "done" || status === "did_my_best";
+}
+
+function toAgentPlanStatus(status: TaskStatus | TaskSubtaskStatus): AgentPlanStatus {
+  if (status === "in_progress" || status === "done" || status === "missed" || status === "did_my_best" || status === "upcoming" || status === "not_due") {
+    return status;
+  }
+
+  return "pending";
+}
+
+function buildAgentPlanSubtaskItems(subtasks: DbTaskSubtask[], parentId: string | null = null): AgentPlanSubtaskItem[] {
+  return subtasks
+    .filter((subtask) => (subtask.parent_subtask_id ?? null) === parentId)
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((subtask) => ({
+      children: buildAgentPlanSubtaskItems(subtasks, subtask.id),
+      id: subtask.id,
+      status: toAgentPlanStatus(subtask.status),
+      title: subtask.title,
+    }));
+}
+
+function buildAgentPlanDescription(task: Task) {
+  const notePreview = task.notes?.trim();
+  if (notePreview) {
+    return notePreview;
+  }
+
+  const parts = [
+    formatTaskDueLabel(task),
+    task.estimated_minutes ? `${task.estimated_minutes} min` : null,
+  ].filter((value) => value && value !== "No date");
+
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function buildAgentPlanMetaPills(task: Task, subtasks: DbTaskSubtask[], focusedTaskIdSet: Set<string>): AgentPlanMetaPill[] {
+  const pills: AgentPlanMetaPill[] = [];
+
+  if (subtasks.length > 0) {
+    const completedCount = subtasks.filter((subtask) => isClosedSubtaskStatus(subtask.status)).length;
+    pills.push({
+      label: `${completedCount}/${subtasks.length} steps`,
+      tone: completedCount === subtasks.length ? "success" : "neutral",
+    });
+  }
+
+  if (focusedTaskIdSet.has(task.id)) {
+    pills.push({ label: "Focus", tone: "accent" });
+  }
+
+  if (task.repeat_frequency !== "none") {
+    pills.push({ label: "Repeats", tone: "warning" });
+  }
+
+  if (task.is_urgent) {
+    pills.push({ label: "Urgent", tone: "danger" });
+  }
+
+  return pills;
+}
+
+function buildAgentPlanTaskItem(
+  task: Task,
+  context: {
+    focusedTaskIdSet: Set<string>;
+    subtasks: DbTaskSubtask[];
+  },
+): AgentPlanTaskItem {
+  return {
+    description: buildAgentPlanDescription(task),
+    id: task.id,
+    metaPills: buildAgentPlanMetaPills(task, context.subtasks, context.focusedTaskIdSet),
+    status: toAgentPlanStatus(task.status),
+    subtasks: buildAgentPlanSubtaskItems(context.subtasks),
+    title: task.title,
+  };
+}
+
 function groupTaskSubtasksByTaskId(subtasks: DbTaskSubtask[]) {
   return subtasks.reduce<Record<string, DbTaskSubtask[]>>((accumulator, subtask) => {
     if (!accumulator[subtask.task_id]) {
@@ -8074,7 +9782,7 @@ function mapTaskSubtaskRow(row: DbTaskSubtask) {
 }
 
 function getNextPendingSubtask(taskId: string, subtasksByTaskId: Record<string, DbTaskSubtask[]>) {
-  return (subtasksByTaskId[taskId] ?? []).find((subtask) => subtask.status !== "done") ?? null;
+  return (subtasksByTaskId[taskId] ?? []).find((subtask) => !isClosedSubtaskStatus(subtask.status)) ?? null;
 }
 
 function mapTaskHistoryRow(row: DbTaskHistory) {
@@ -8132,7 +9840,10 @@ function computeTaskHistoryStats(history: DbTaskHistory[]): TaskHistoryStats {
 }
 
 function formatOptionLabel(value: string) {
-  return value.replaceAll("_", " ");
+  return value
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function sortTasksForUi(nextTasks: Task[]) {

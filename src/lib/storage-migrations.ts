@@ -14,7 +14,7 @@
 //   3. Bump CURRENT_VERSION to match.
 
 const VERSION_KEY = "adhdice-storage-version";
-const CURRENT_VERSION = 2;
+const CURRENT_VERSION = 3;
 
 type Migration = {
   version: number;
@@ -53,6 +53,27 @@ const MIGRATIONS: Migration[] = [
       // because the scoped versions (adhdice-task-ui:<userId>) are authoritative.
       localStorage.removeItem("adhdice-task-ui");
       localStorage.removeItem("adhdice-task-focus");
+    },
+  },
+  {
+    version: 3,
+    description: "Restore task view default to list in stored UI state",
+    run: () => {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key?.startsWith("adhdice-task-ui:")) continue;
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) continue;
+          const parsed = JSON.parse(raw) as { view?: string };
+          if (parsed.view === "grid") {
+            parsed.view = "list";
+            localStorage.setItem(key, JSON.stringify(parsed));
+          }
+        } catch {
+          // Corrupt entry — leave it alone; parseStoredJson will clear it on next read.
+        }
+      }
     },
   },
 ];

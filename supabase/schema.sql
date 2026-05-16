@@ -2,9 +2,9 @@ create extension if not exists pgcrypto;
 
 create type public.adhdice_clean_task_status as enum ('pending', 'in_progress', 'done', 'missed', 'did_my_best', 'upcoming', 'not_due', 'archived');
 create type public.adhdice_clean_task_priority as enum ('low', 'normal', 'high');
-create type public.adhdice_clean_task_energy as enum ('low', 'medium', 'high');
+create type public.adhdice_clean_task_energy as enum ('none', 'low', 'medium', 'high');
 create type public.adhdice_clean_task_repeat_frequency as enum ('none', 'daily', 'weekly', 'monthly', 'custom');
-create type public.adhdice_clean_task_subtask_status as enum ('pending', 'done');
+create type public.adhdice_clean_task_subtask_status as enum ('pending', 'in_progress', 'done', 'missed', 'did_my_best', 'upcoming', 'not_due');
 create type public.adhdice_clean_focus_source as enum ('timer', 'manual', 'import');
 
 create table public.adhdice_clean_tasks (
@@ -14,7 +14,7 @@ create table public.adhdice_clean_tasks (
   notes text,
   status public.adhdice_clean_task_status not null default 'pending',
   priority public.adhdice_clean_task_priority not null default 'normal',
-  energy public.adhdice_clean_task_energy not null default 'medium',
+  energy public.adhdice_clean_task_energy not null default 'none',
   is_urgent boolean not null default false,
   is_important boolean not null default false,
   due_on date,

@@ -31,3 +31,16 @@ Prioritize conserving usage and keeping context small.
 
 ## Execution
 - Do not run dev servers, builds, package installs, or full test suites unless asked.
+
+## Local Browser Access
+- Treat `localhost`, `127.0.0.1`, `::1`, LAN IPs like `192.168.x.x`, and VPN/private-network dev URLs as potentially unreachable from Browser Use navigation, even if the in-app browser UI can show them.
+- If the user already has the local app open in the in-app browser, attach to the current selected tab and continue from there.
+- Do not repeatedly retry local URL navigation after one failed agent-side attempt.
+- After one failed agent-side navigation attempt, ask the user to open the local URL manually in the in-app browser, then continue from the current tab without trying to re-navigate.
+- Prefer using the current in-app browser tab over opening a new tab for local development work.
+- Do not treat switching from `localhost` to a LAN or VPN IP as a reliable fix; try at most one alternate local-network URL before falling back to the user-opened tab workflow.
+- If the user needs in-app browser annotation or review and local URLs are still blocked, create a temporary public tunnel to the local dev server and use that URL in the in-app browser instead of continuing to retry local navigation.
+- Prefer an HTTPS tunnel URL when one is available.
+- Browser skill/docs may claim local URLs are supported, but if agent-side navigation fails on both `localhost` and LAN IPs, assume Browser Use runtime session policy or network isolation is the problem rather than the app itself.
+- Do not patch the bundled browser plugin cache under `.codex/plugins/cache/...` as a permanent fix; those files are runtime artifacts and may be overwritten.
+- When asking Codex to inspect the local app in the in-app browser, open the app yourself first if agent-side navigation fails, then ask Codex to continue from the current tab.

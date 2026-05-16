@@ -8,9 +8,16 @@ export type TaskStatus =
   | "not_due"
   | "archived";
 export type TaskPriority = "low" | "normal" | "high";
-export type TaskEnergy = "low" | "medium" | "high";
+export type TaskEnergy = "none" | "low" | "medium" | "high";
 export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom";
-export type TaskSubtaskStatus = "pending" | "done";
+export type TaskSubtaskStatus =
+  | "pending"
+  | "in_progress"
+  | "done"
+  | "missed"
+  | "did_my_best"
+  | "upcoming"
+  | "not_due";
 export type FocusType = string;
 export type FocusSubtype = string;
 export type TaskFocusDay = {
