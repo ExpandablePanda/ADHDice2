@@ -324,17 +324,25 @@ export function FocusClockRowDesktop({
   });
 
   return (
-    <div className="hidden sm:grid grid-cols-2 justify-items-center gap-8 lg:grid-cols-3 xl:grid-cols-4">
+    <div className="hidden sm:grid grid-cols-2 justify-items-center gap-3 md:grid-cols-3 lg:grid-cols-4 lg:gap-4 xl:grid-cols-5 xl:gap-3 2xl:gap-4">
       {sortedCategories.map((cat) => (
-        <FocusClock
+        <div
           key={cat.id}
-          activeSession={activeSessions[cat.id]}
-          category={cat}
-          onAdjust={onAdjust}
-          onFinish={onFinish}
-          onReset={onReset}
-          onToggle={onToggle}
-        />
+          className="[--clock-scale:0.7] md:[--clock-scale:0.74] lg:[--clock-scale:0.8] xl:[--clock-scale:0.84] 2xl:[--clock-scale:0.72] [height:calc(344px*var(--clock-scale))] [width:calc(272px*var(--clock-scale))]"
+          style={{
+            transform: "scale(var(--clock-scale))",
+            transformOrigin: "top center",
+          }}
+        >
+          <FocusClock
+            activeSession={activeSessions[cat.id]}
+            category={cat}
+            onAdjust={onAdjust}
+            onFinish={onFinish}
+            onReset={onReset}
+            onToggle={onToggle}
+          />
+        </div>
       ))}
     </div>
   );

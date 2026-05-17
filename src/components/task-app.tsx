@@ -65,8 +65,7 @@ import { FocusPage } from "./focus-page";
 import { ManualEntryModal } from "./focus-modals";
 const GamesPage = lazy(() => import("./games-page").then((m) => ({ default: m.GamesPage })));
 const Dice3DCanvas = lazy(() => import("./dice-3d").then((m) => ({ default: m.Dice3DCanvas })));
-import type { AgentPlanMetaPill, AgentPlanStatus, AgentPlanSubtaskItem, AgentPlanTaskItem } from "@/components/ui/agent-plan";
-import TasksDenseList, { type DenseTaskListRow, type DenseTaskQuickAction } from "@/components/ui/tasks-dense-list";
+import AgentPlan, { type AgentPlanMetaPill, type AgentPlanStatus, type AgentPlanSubtaskItem, type AgentPlanTaskItem } from "@/components/ui/agent-plan";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
 import { useEconomy } from "@/hooks/useEconomy";
@@ -184,6 +183,31 @@ type TaskSubtaskDraft = {
   title: string;
   status: TaskSubtaskStatus;
   children: TaskSubtaskDraft[];
+};
+type BatchFieldMode = "clear" | "set" | "unchanged";
+type BatchBooleanChoice = "false" | "true" | "unchanged";
+type BatchRouteChoice = TaskRoutingBucket | "clear" | "focus" | "unchanged";
+type BatchTagsMode = "clear" | "replace" | "unchanged";
+type BatchTaskEditDraft = {
+  dueOn: string;
+  dueOnMode: BatchFieldMode;
+  energy: TaskEnergy | "unchanged";
+  estimatedMinutes: string;
+  estimatedMinutesMode: BatchFieldMode;
+  focusToday: BatchBooleanChoice;
+  isImportant: BatchBooleanChoice;
+  isUrgent: BatchBooleanChoice;
+  oneStepAtATime: BatchBooleanChoice;
+  priority: TaskPriority | "unchanged";
+  repeatDayOfMonth: string;
+  repeatDaysOfWeek: number[];
+  repeatFrequency: TaskRepeatFrequency | "unchanged";
+  repeatInterval: string;
+  route: BatchRouteChoice;
+  status: TaskStatus | "unchanged";
+  subtasksAutoReset: BatchBooleanChoice;
+  tags: string[];
+  tagsMode: BatchTagsMode;
 };
 type TaskEditorLinkedNote = Pick<Note, "body" | "id" | "linked_task_ids" | "title" | "updated_at">;
 type TaskHistoryStats = {
@@ -478,6 +502,13 @@ function isSupabaseSessionLockError(error: unknown) {
   return message.includes("Lock was stolen by another request");
 }
 
+function isSupabaseLoadFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("Load failed")
+    || message.includes("Failed to fetch")
+    || message.includes("Network request failed");
+}
+
 export function TaskApp() {
   runStorageMigrations();
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -504,7 +535,7 @@ export function TaskApp() {
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
   const [taskSubtasks, setTaskSubtasks] = useState<DbTaskSubtask[]>([]);
-  const [selectedDenseTaskId, setSelectedDenseTaskId] = useState<string | null>(null);
+  const [supportsNestedSubtasks, setSupportsNestedSubtasks] = useState(true);
   const [taskGridLayout, setTaskGridLayout] = useState<TaskGridItem[]>(TASK_GRID_STARTER_LAYOUT);
   const [isGridEditMode, setIsGridEditMode] = useState(false);
   const [selectedGridWidgetId, setSelectedGridWidgetId] = useState<string | null>(null);
@@ -522,6 +553,10 @@ export function TaskApp() {
   const [isTaskEditorOpen, setIsTaskEditorOpen] = useState(false);
   const [taskEditorMode, setTaskEditorMode] = useState<TaskEditorMode>("create");
   const [taskEditorTaskId, setTaskEditorTaskId] = useState<string | null>(null);
+  const [selectedListTaskIds, setSelectedListTaskIds] = useState<string[]>([]);
+  const [lastSelectedListTaskId, setLastSelectedListTaskId] = useState<string | null>(null);
+  const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
+  const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
   const [pendingTaskEditorRestore, setPendingTaskEditorRestore] = useState<PersistedTaskEditorUiState | null>(null);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
   const gridColumns = useResponsiveTaskGridColumns();
@@ -583,6 +618,16 @@ export function TaskApp() {
           return;
         }
 
+        if (isSupabaseLoadFailure(error)) {
+          setSession(null);
+          setMessage({
+            tone: "warn",
+            text: "Could not reach Supabase right now. The app loaded in offline mode.",
+          });
+          setLoading(false);
+          return;
+        }
+
         console.error("Failed to get session:", error);
         setLoading(false);
       });
@@ -594,11 +639,11 @@ export function TaskApp() {
         setTasks([]);
         setFocusCategories([]);
         setActiveSessions({});
-      setFocusHistory([]);
-      setFocusedTaskIdsByDate({});
-      setTaskRouting({});
-      setTaskHistory([]);
-      setTaskSubtasks([]);
+        setFocusHistory([]);
+        setFocusedTaskIdsByDate({});
+        setTaskRouting({});
+        setTaskHistory([]);
+        setTaskSubtasks([]);
         setTaskGridLayout(TASK_GRID_STARTER_LAYOUT);
         setIsGridEditMode(false);
         setSelectedGridWidgetId(null);
@@ -1288,51 +1333,11 @@ export function TaskApp() {
     focusedTaskIds: focusedTaskIdSet,
     routing: taskRouting,
   }), [focusedTaskIdSet, taskRouting]);
+  const allTaskTags = useMemo(
+    () => [...new Set(tasks.flatMap((task) => task.tags ?? []))].sort(),
+    [tasks],
+  );
 
-
-  if (!supabase) {
-    return <ConfigSplash />;
-  }
-
-  if (loading) {
-    return <LoadingSplash status="Opening ADHDice..." />;
-  }
-
-  if (!session?.user) {
-    return (
-      <AuthSplash
-        message={message}
-        onAuthenticate={async ({ email, mode, password }) => {
-          const response = mode === "sign-up"
-            ? await supabase.auth.signUp({
-                email,
-                password,
-              })
-            : await supabase.auth.signInWithPassword({
-                email,
-                password,
-              });
-
-          const error = response.error;
-          const needsEmailConfirmation = mode === "sign-up" && !response.data.session;
-
-          setMessage(
-            error
-              ? { tone: "warn", text: error.message }
-              : needsEmailConfirmation
-                ? { tone: "good", text: "Account created. Check your email to confirm your address, then sign in." }
-                : {
-                    tone: "good",
-                    text: mode === "sign-up" ? "Account created and signed in." : "Signed in successfully.",
-                  },
-          );
-        }}
-      />
-    );
-  }
-
-  const client = supabase;
-  const currentUser = session.user;
 
   const activeTasks = tasks.filter(isTaskOpen);
   const doneTasks = tasks.filter(isTaskFinished);
@@ -1434,37 +1439,77 @@ export function TaskApp() {
     label: TASK_BUCKET_LABELS[bucket],
     value: bucket,
   }));
-  const taskHistoryStatsByTaskId = taskHistory.reduce<Record<string, TaskHistoryStats>>((accumulator, entry) => {
-    const nextEntries = taskHistory.filter((historyEntry) => historyEntry.task_id === entry.task_id);
-    accumulator[entry.task_id] = computeTaskHistoryStats(nextEntries);
-    return accumulator;
-  }, {});
-  const denseListRows: DenseTaskListRow[] = selectedBucketTasks.map((task) => {
-    const bucket = getTaskBucket(task, bucketContext);
-    const historyStats = taskHistoryStatsByTaskId[task.id];
-    return {
-      bucketLabel: TASK_BUCKET_LABELS[bucket],
-      dueLabel: formatTaskDueLabel(task),
-      energyLabel: formatOptionLabel(task.energy),
-      focusLabel: focusedTaskIdSet.has(task.id) ? "Focused" : null,
-      id: task.id,
-      isDone: isTaskFinished(task),
-      isUrgent: task.is_urgent,
-      priorityLabel: task.is_important ? "Important" : formatOptionLabel(task.priority),
-      repeatLabel: formatRepeatSummary(task),
-      rolloverLabel: formatRolloverLabel(task),
-      signalLabel: historyStats?.currentStreak
-        ? `${historyStats.currentStreak}d streak`
-        : historyStats?.doneRate
-          ? `${historyStats.doneRate}% done`
-          : null,
-      status: task.status,
-      title: task.title,
-    };
-  });
-  const effectiveSelectedDenseTaskId = selectedDenseTaskId && selectedBucketTasks.some((task) => task.id === selectedDenseTaskId)
-    ? selectedDenseTaskId
-    : selectedBucketTasks[0]?.id ?? null;
+  const listViewTasks: AgentPlanTaskItem[] = selectedBucketTasks.map((task) => buildAgentPlanTaskItem(task, {
+    bucketContext,
+    focusedTaskIdSet,
+    subtasks: taskSubtasksByTaskId[task.id] ?? [],
+  }));
+  const visibleListTaskIds = listViewTasks.map((task) => task.id);
+  const selectedListTasks = tasks.filter((task) => selectedListTaskIds.includes(task.id));
+
+  useEffect(() => {
+    setSelectedListTaskIds([]);
+    setLastSelectedListTaskId(null);
+  }, [
+    taskUiState.energyFilters,
+    taskUiState.matchAny,
+    taskUiState.quickFilters,
+    taskUiState.savedView,
+    taskUiState.search,
+    taskUiState.selectedBucket,
+    taskUiState.statusFilters,
+    taskUiState.view,
+  ]);
+
+  useEffect(() => {
+    const validTaskIds = new Set(tasks.map((task) => task.id));
+    setSelectedListTaskIds((current) => current.filter((taskId) => validTaskIds.has(taskId)));
+    setLastSelectedListTaskId((current) => (current && validTaskIds.has(current) ? current : null));
+  }, [tasks]);
+
+  if (!supabase) {
+    return <ConfigSplash />;
+  }
+
+  if (loading) {
+    return <LoadingSplash status="Opening ADHDice..." />;
+  }
+
+  if (!session?.user) {
+    return (
+      <AuthSplash
+        message={message}
+        onAuthenticate={async ({ email, mode, password }) => {
+          const response = mode === "sign-up"
+            ? await supabase.auth.signUp({
+                email,
+                password,
+              })
+            : await supabase.auth.signInWithPassword({
+                email,
+                password,
+              });
+
+          const error = response.error;
+          const needsEmailConfirmation = mode === "sign-up" && !response.data.session;
+
+          setMessage(
+            error
+              ? { tone: "warn", text: error.message }
+              : needsEmailConfirmation
+                ? { tone: "good", text: "Account created. Check your email to confirm your address, then sign in." }
+                : {
+                    tone: "good",
+                    text: mode === "sign-up" ? "Account created and signed in." : "Signed in successfully.",
+                  },
+          );
+        }}
+      />
+    );
+  }
+
+  const client = supabase;
+  const currentUser = session.user;
 
   function openNewTaskEditor() {
     setTaskEditorMode("create");
@@ -1481,6 +1526,37 @@ export function TaskApp() {
   function closeTaskEditor() {
     setIsTaskEditorOpen(false);
     setTaskEditorTaskId(null);
+  }
+
+  function clearListTaskSelection() {
+    setSelectedListTaskIds([]);
+    setLastSelectedListTaskId(null);
+  }
+
+  function selectAllVisibleListTasks() {
+    setSelectedListTaskIds(visibleListTaskIds);
+    setLastSelectedListTaskId(visibleListTaskIds.at(-1) ?? null);
+  }
+
+  function toggleListTaskSelection(taskId: string, options?: { additive?: boolean; range?: boolean }) {
+    setSelectedListTaskIds((current) => {
+      if (options?.range && lastSelectedListTaskId && visibleListTaskIds.includes(lastSelectedListTaskId)) {
+        const startIndex = visibleListTaskIds.indexOf(lastSelectedListTaskId);
+        const endIndex = visibleListTaskIds.indexOf(taskId);
+        if (startIndex !== -1 && endIndex !== -1) {
+          const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+          const rangeIds = visibleListTaskIds.slice(from, to + 1);
+          return Array.from(new Set([...current, ...rangeIds]));
+        }
+      }
+
+      if (current.includes(taskId)) {
+        return current.filter((currentTaskId) => currentTaskId !== taskId);
+      }
+
+      return [...current, taskId];
+    });
+    setLastSelectedListTaskId(taskId);
   }
 
   async function saveFocusSelection(nextTaskIds: string[], validTaskIds: Set<string> | Task[] = tasks) {
@@ -1707,71 +1783,12 @@ export function TaskApp() {
 
     if (data) {
       setTasks((current) => sortTasksForUi([...current, data]));
-      if (!focusToday && shouldRouteTaskToInbox(data)) {
+      if (shouldRouteTaskToInbox(data)) {
         routeTask(data.id, "inbox");
       }
     }
 
     setMessage({ tone: "good", text: "Task captured." });
-  }
-
-  function handleDenseListQuickAction(taskId: string, action: DenseTaskQuickAction) {
-    const task = tasks.find((entry) => entry.id === taskId);
-    if (!task) {
-      return;
-    }
-
-    if (action === "today") {
-      planTasksForToday([taskId]);
-      return;
-    }
-
-    if (action === "focus") {
-      void saveFocusSelection(Array.from(new Set([...focusedTaskIds, taskId])));
-      routeTask(taskId, "today");
-      setMessage({ tone: "good", text: "Added to Focus and kept in Today." });
-      return;
-    }
-
-    if (action === "waiting") {
-      sendTaskToWaiting(taskId);
-      return;
-    }
-
-    if (action === "later") {
-      deferTask(taskId);
-      return;
-    }
-
-    if (action === "recurring") {
-      selectTaskBucket(task, "recurring");
-      return;
-    }
-
-    void updateTask(taskId, {
-      completed_at: new Date().toISOString(),
-      status: "done",
-    });
-  }
-
-  function toggleDenseListTaskCompletion(taskId: string) {
-    const task = tasks.find((entry) => entry.id === taskId);
-    if (!task) {
-      return;
-    }
-
-    if (task.status === "done") {
-      void updateTask(taskId, {
-        completed_at: null,
-        status: "pending",
-      });
-      return;
-    }
-
-    void updateTask(taskId, {
-      completed_at: new Date().toISOString(),
-      status: "done",
-    });
   }
 
   async function replaceTaskSubtasks(taskId: string, subtasks: TaskSubtaskDraft[]) {
@@ -1783,7 +1800,7 @@ export function TaskApp() {
 
     if (deleteError) {
       setMessage({ tone: "warn", text: deleteError.message });
-      return false;
+      return { saved: false, usedNestedFallback: false };
     }
 
     const counter = { n: 0 };
@@ -1810,7 +1827,7 @@ export function TaskApp() {
 
     if (cleanedSubtasks.length === 0) {
       setTaskSubtasks((current) => current.filter((subtask) => subtask.task_id !== taskId));
-      return true;
+      return { saved: true, usedNestedFallback: false };
     }
 
     const { data, error } = await client
@@ -1818,17 +1835,39 @@ export function TaskApp() {
       .insert(cleanedSubtasks)
       .select("*");
 
-    if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return false;
+    if (error && isMissingParentSubtaskColumnError(error.message)) {
+      setSupportsNestedSubtasks(false);
+      const fallbackPayload = cleanedSubtasks.map(({ parent_subtask_id: _parentSubtaskId, ...subtask }) => subtask);
+      const { data: fallbackData, error: fallbackError } = await client
+        .from("adhdice_task_subtasks")
+        .insert(fallbackPayload)
+        .select("*");
+
+      if (fallbackError) {
+        setMessage({ tone: "warn", text: fallbackError.message });
+        return { saved: false, usedNestedFallback: false };
+      }
+
+      const mappedFallbackSubtasks = (fallbackData ?? []).map(mapTaskSubtaskRow);
+      setTaskSubtasks((current) => [
+        ...current.filter((subtask) => subtask.task_id !== taskId),
+        ...mappedFallbackSubtasks,
+      ]);
+      return { saved: true, usedNestedFallback: true };
     }
 
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return { saved: false, usedNestedFallback: false };
+    }
+
+    setSupportsNestedSubtasks(true);
     const mappedSubtasks = (data ?? []).map(mapTaskSubtaskRow);
     setTaskSubtasks((current) => [
       ...current.filter((subtask) => subtask.task_id !== taskId),
       ...mappedSubtasks,
     ]);
-    return true;
+    return { saved: true, usedNestedFallback: false };
   }
 
   async function syncTaskNoteLinks(taskId: string, linkedNoteIds: string[]) {
@@ -1865,6 +1904,72 @@ export function TaskApp() {
     return true;
   }
 
+  async function insertTaskRowWithLegacyEnergyFallback(payload: TaskInsert) {
+    const initialResult = await client
+      .from("adhdice_clean_tasks")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (
+      initialResult.error
+      && payload.energy === "none"
+      && isMissingTaskEnergyNoneEnumError(initialResult.error.message)
+    ) {
+      const retryResult = await client
+        .from("adhdice_clean_tasks")
+        .insert({ ...payload, energy: "low" })
+        .select("*")
+        .single();
+
+      return {
+        data: retryResult.data,
+        error: retryResult.error,
+        usedEnergyFallback: !retryResult.error,
+      };
+    }
+
+    return {
+      data: initialResult.data,
+      error: initialResult.error,
+      usedEnergyFallback: false,
+    };
+  }
+
+  async function updateTaskRowWithLegacyEnergyFallback(taskId: string, values: TaskUpdate) {
+    const initialResult = await client
+      .from("adhdice_clean_tasks")
+      .update(values)
+      .eq("id", taskId)
+      .select("*")
+      .single();
+
+    if (
+      initialResult.error
+      && values.energy === "none"
+      && isMissingTaskEnergyNoneEnumError(initialResult.error.message)
+    ) {
+      const retryResult = await client
+        .from("adhdice_clean_tasks")
+        .update({ ...values, energy: "low" })
+        .eq("id", taskId)
+        .select("*")
+        .single();
+
+      return {
+        data: retryResult.data,
+        error: retryResult.error,
+        usedEnergyFallback: !retryResult.error,
+      };
+    }
+
+    return {
+      data: initialResult.data,
+      error: initialResult.error,
+      usedEnergyFallback: false,
+    };
+  }
+
   async function saveTaskEditor(values: TaskDraft, options?: { taskId?: string | null; focusToday?: boolean; linkedNoteIds?: string[]; subtasks?: TaskSubtaskDraft[] }) {
     const focusToday = options?.focusToday ?? false;
     const linkedNoteIds = options?.linkedNoteIds ?? [];
@@ -1874,29 +1979,27 @@ export function TaskApp() {
 
     if (isEditing && taskId) {
       const { id: _id, ...updateValues } = values;
-      const { data, error } = await client
-        .from("adhdice_clean_tasks")
-        .update(updateValues)
-        .eq("id", taskId)
-        .select("*")
-        .single();
+      const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(taskId, updateValues);
 
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
 
-      if (data) {
-        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? data : task)));
+      if (!data) {
+        setMessage({ tone: "warn", text: "Task saved, but Supabase did not return the updated task row." });
+        return false;
       }
+
+      setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? data : task)));
 
       const historySaved = await syncTaskHistoryEntry(taskId, data.status);
       if (!historySaved) {
         return false;
       }
 
-      const subtasksSaved = await replaceTaskSubtasks(taskId, subtasks);
-      if (!subtasksSaved) {
+      const subtasksResult = await replaceTaskSubtasks(taskId, subtasks);
+      if (!subtasksResult.saved) {
         return false;
       }
 
@@ -1909,7 +2012,15 @@ export function TaskApp() {
         ? Array.from(new Set([...focusedTaskIds, taskId]))
         : focusedTaskIds.filter((id) => id !== taskId);
       await saveFocusSelection(nextFocusIds);
-      setMessage({ tone: "good", text: "Task updated." });
+      const usedAnyFallback = usedEnergyFallback || subtasksResult.usedNestedFallback;
+      setMessage({
+        tone: usedAnyFallback ? "warn" : "good",
+        text: subtasksResult.usedNestedFallback
+          ? "Your database is missing nested-subtask support, so subtasks were saved as a flat list. Run the subtask parent migration to enable nesting."
+          : usedEnergyFallback
+            ? "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run the energy migration to enable \"none\"."
+            : "Task updated.",
+      });
       return true;
     }
 
@@ -1918,11 +2029,7 @@ export function TaskApp() {
       user_id: currentUser.id,
       sort_order: Date.now(),
     };
-    const { data, error } = await client
-      .from("adhdice_clean_tasks")
-      .insert(payload)
-      .select("*")
-      .single();
+    const { data, error, usedEnergyFallback } = await insertTaskRowWithLegacyEnergyFallback(payload);
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
@@ -1943,8 +2050,8 @@ export function TaskApp() {
       return false;
     }
 
-    const subtasksSaved = await replaceTaskSubtasks(data.id, subtasks);
-    if (!subtasksSaved) {
+    const subtasksResult = await replaceTaskSubtasks(data.id, subtasks);
+    if (!subtasksResult.saved) {
       return false;
     }
 
@@ -1960,7 +2067,15 @@ export function TaskApp() {
       );
     }
 
-    setMessage({ tone: "good", text: "Task saved." });
+    const usedAnyFallback = usedEnergyFallback || subtasksResult.usedNestedFallback;
+    setMessage({
+      tone: usedAnyFallback ? "warn" : "good",
+      text: subtasksResult.usedNestedFallback
+        ? "Your database is missing nested-subtask support, so subtasks were saved as a flat list. Run the subtask parent migration to enable nesting."
+        : usedEnergyFallback
+          ? "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run the energy migration to enable \"none\"."
+          : "Task saved.",
+    });
     return true;
   }
 
@@ -2048,6 +2163,93 @@ export function TaskApp() {
     setTaskSubtasks((current) => current.map((subtask) => subtask.id === mappedSubtask.id ? mappedSubtask : subtask));
   }
 
+  async function renameTaskSubtask(subtaskId: string, title: string) {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      return false;
+    }
+
+    const { data, error } = await client
+      .from("adhdice_task_subtasks")
+      .update({ title: trimmedTitle })
+      .eq("id", subtaskId)
+      .eq("user_id", currentUser.id)
+      .select("*")
+      .single();
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if (!data) {
+      return false;
+    }
+
+    const mappedSubtask = mapTaskSubtaskRow(data);
+    setTaskSubtasks((current) => current.map((subtask) => subtask.id === mappedSubtask.id ? mappedSubtask : subtask));
+    return true;
+  }
+
+  async function addChildTaskSubtask(parentSubtaskId: string) {
+    const parentSubtask = taskSubtasks.find((subtask) => subtask.id === parentSubtaskId) ?? null;
+    if (!parentSubtask) {
+      setMessage({ tone: "warn", text: "Could not find that parent step." });
+      return null;
+    }
+
+    if (!supportsNestedSubtasks) {
+      setMessage({
+        tone: "warn",
+        text: "Your database is missing nested-subtask support. Run the subtask parent migration to add child steps.",
+      });
+      return null;
+    }
+
+    const nextSortOrder = taskSubtasks
+      .filter((subtask) => subtask.task_id === parentSubtask.task_id)
+      .reduce((max, subtask) => Math.max(max, subtask.sort_order), -1) + 1;
+
+    const payload: TaskSubtaskInsert = {
+      id: crypto.randomUUID(),
+      parent_subtask_id: parentSubtaskId,
+      sort_order: nextSortOrder,
+      status: "pending",
+      task_id: parentSubtask.task_id,
+      title: "New child step",
+      user_id: currentUser.id,
+    };
+
+    const { data, error } = await client
+      .from("adhdice_task_subtasks")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error && isMissingParentSubtaskColumnError(error.message)) {
+      setSupportsNestedSubtasks(false);
+      setMessage({
+        tone: "warn",
+        text: "Your database is missing nested-subtask support. Run the subtask parent migration to add child steps.",
+      });
+      return null;
+    }
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return null;
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    setSupportsNestedSubtasks(true);
+    const mappedSubtask = mapTaskSubtaskRow(data);
+    setTaskSubtasks((current) => [...current, mappedSubtask]);
+    return mappedSubtask.id;
+  }
+
   async function syncTaskHistoryEntry(taskId: string, status: TaskStatus, entryDate = todayKey) {
     const shouldKeepEntry = isTaskHistoryStatus(status);
 
@@ -2102,12 +2304,7 @@ export function TaskApp() {
   }
 
   async function updateTask(taskId: string, values: TaskUpdate) {
-    const { data, error } = await client
-      .from("adhdice_clean_tasks")
-      .update(values)
-      .eq("id", taskId)
-      .select("*")
-      .single();
+    const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(taskId, values);
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
@@ -2146,6 +2343,13 @@ export function TaskApp() {
           }
         }
       }
+
+      if (usedEnergyFallback) {
+        setMessage({
+          tone: "warn",
+          text: "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run the energy migration to enable \"none\".",
+        });
+      }
     }
   }
 
@@ -2158,7 +2362,7 @@ export function TaskApp() {
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
-      return;
+      return false;
     }
 
     setTasks((current) => current.filter((task) => !taskIds.includes(task.id)));
@@ -2170,6 +2374,218 @@ export function TaskApp() {
       return next;
     });
     setMessage({ tone: "good", text: `Deleted ${taskIds.length} task${taskIds.length === 1 ? "" : "s"}.` });
+    return true;
+  }
+
+  async function deleteSelectedListTasks() {
+    if (selectedListTaskIds.length === 0) {
+      return;
+    }
+
+    const deleted = await deleteTasks(selectedListTaskIds);
+    if (deleted) {
+      clearListTaskSelection();
+      setIsBatchDeleteModalOpen(false);
+    }
+  }
+
+  async function applyBatchTaskEdit(draft: BatchTaskEditDraft) {
+    if (selectedListTasks.length === 0) {
+      return;
+    }
+
+    let nextTasks = tasks;
+    let successfulCount = 0;
+    let fallbackCount = 0;
+    let firstErrorMessage: string | null = null;
+    const nextFocusedTaskIds = new Set(focusedTaskIds);
+
+    for (const task of selectedListTasks) {
+      const updateValues: TaskUpdate = {};
+
+      if (draft.status !== "unchanged") {
+        updateValues.status = draft.status;
+        updateValues.completed_at = isTaskFinishedStatusValue(draft.status)
+          ? task.completed_at ?? new Date().toISOString()
+          : null;
+      }
+
+      if (draft.priority !== "unchanged") {
+        updateValues.priority = draft.priority;
+      }
+
+      if (draft.energy !== "unchanged") {
+        updateValues.energy = draft.energy;
+      }
+
+      if (draft.dueOnMode === "set") {
+        updateValues.due_on = emptyToNull(draft.dueOn);
+      } else if (draft.dueOnMode === "clear") {
+        updateValues.due_on = null;
+      }
+
+      if (draft.estimatedMinutesMode === "set") {
+        updateValues.estimated_minutes = parsePositiveInteger(draft.estimatedMinutes);
+      } else if (draft.estimatedMinutesMode === "clear") {
+        updateValues.estimated_minutes = null;
+      }
+
+      if (draft.tagsMode === "replace") {
+        updateValues.tags = draft.tags;
+      } else if (draft.tagsMode === "clear") {
+        updateValues.tags = [];
+      }
+
+      if (draft.oneStepAtATime !== "unchanged") {
+        updateValues.one_step_at_a_time = draft.oneStepAtATime === "true";
+      }
+
+      if (draft.subtasksAutoReset !== "unchanged") {
+        updateValues.subtasks_auto_reset = draft.subtasksAutoReset === "true";
+      }
+
+      if (draft.isUrgent !== "unchanged") {
+        updateValues.is_urgent = draft.isUrgent === "true";
+      }
+
+      if (draft.isImportant !== "unchanged") {
+        updateValues.is_important = draft.isImportant === "true";
+      }
+
+      if (draft.repeatFrequency !== "unchanged") {
+        updateValues.repeat_frequency = draft.repeatFrequency;
+        updateValues.repeat_interval = draft.repeatFrequency === "none"
+          ? 1
+          : Math.max(1, parsePositiveInteger(draft.repeatInterval) ?? 1);
+        updateValues.repeat_days_of_week = draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom"
+          ? [...draft.repeatDaysOfWeek].sort((left, right) => left - right)
+          : [];
+        updateValues.repeat_day_of_month = draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom"
+          ? parseDayOfMonth(draft.repeatDayOfMonth)
+          : null;
+      }
+
+      if (Object.keys(updateValues).length === 0) {
+        successfulCount += 1;
+        if (draft.route === "clear") {
+          routeTask(task.id, null);
+        } else if (draft.route === "focus") {
+          routeTask(task.id, "today");
+        } else if (draft.route !== "unchanged") {
+          routeTask(task.id, draft.route);
+        }
+
+        if (draft.route === "focus") {
+          nextFocusedTaskIds.add(task.id);
+        } else if (draft.focusToday === "true") {
+          nextFocusedTaskIds.add(task.id);
+        } else if (draft.focusToday === "false") {
+          nextFocusedTaskIds.delete(task.id);
+        }
+        continue;
+      }
+
+      const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, updateValues);
+
+      if (error) {
+        firstErrorMessage ??= error.message;
+        continue;
+      }
+
+      if (!data) {
+        firstErrorMessage ??= `Task "${task.title}" updated, but no task row came back from Supabase.`;
+        continue;
+      }
+
+      nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? data : currentTask);
+      successfulCount += 1;
+      if (usedEnergyFallback) {
+        fallbackCount += 1;
+      }
+
+      if (data.status === "done" || data.status === "archived") {
+        routeTask(task.id, null);
+      }
+
+      await syncTaskHistoryEntry(task.id, data.status);
+      if (data.status === "done") {
+        void appendEconomyEvent({
+          source: "task",
+          refId: task.id,
+          taskId: task.id,
+          eventType: "completed",
+          points: 10,
+          xp: 15,
+          reason: `Completed task: ${data.title}`,
+        });
+
+        if (data.repeat_frequency !== "none") {
+          const nextDue = calcNextDueDate(data);
+          if (nextDue) {
+            const { data: recurring, error: recurErr } = await client
+              .from("adhdice_clean_tasks")
+              .update({ status: "upcoming", due_on: nextDue, completed_at: null })
+              .eq("id", task.id)
+              .select("*")
+              .single();
+            if (!recurErr && recurring) {
+              nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? recurring : currentTask);
+            }
+          }
+        }
+      }
+
+      if (draft.route !== "unchanged" && draft.status !== "done" && draft.status !== "archived") {
+        if (draft.route === "clear") {
+          routeTask(task.id, null);
+        } else if (draft.route === "focus") {
+          routeTask(task.id, "today");
+        } else {
+          routeTask(task.id, draft.route);
+        }
+      }
+
+      if (draft.route === "focus") {
+        nextFocusedTaskIds.add(task.id);
+      } else if (draft.focusToday === "true") {
+        nextFocusedTaskIds.add(task.id);
+      } else if (draft.focusToday === "false") {
+        nextFocusedTaskIds.delete(task.id);
+      }
+    }
+
+    if (successfulCount === 0) {
+      setMessage({ tone: "warn", text: firstErrorMessage ?? "No selected tasks were updated." });
+      return;
+    }
+
+    setTasks(sortTasksForUi(nextTasks));
+    if (draft.route === "focus" || draft.focusToday !== "unchanged") {
+      await saveFocusSelection([...nextFocusedTaskIds], new Set(nextTasks.map((task) => task.id)));
+    }
+
+    clearListTaskSelection();
+    setIsBatchEditModalOpen(false);
+
+    if (firstErrorMessage) {
+      setMessage({
+        tone: "warn",
+        text: fallbackCount > 0
+          ? `Updated ${successfulCount} task${successfulCount === 1 ? "" : "s"}, but some changes failed and ${fallbackCount} task${fallbackCount === 1 ? "" : "s"} used the legacy low-energy fallback. ${firstErrorMessage}`
+          : `Updated ${successfulCount} task${successfulCount === 1 ? "" : "s"}, but some changes failed. ${firstErrorMessage}`,
+      });
+      return;
+    }
+
+    if (fallbackCount > 0) {
+      setMessage({
+        tone: "warn",
+        text: `Updated ${successfulCount} task${successfulCount === 1 ? "" : "s"}. ${fallbackCount} task${fallbackCount === 1 ? "" : "s"} used low energy because your database is missing the newer "none" energy level.`,
+      });
+      return;
+    }
+
+    setMessage({ tone: "good", text: `Updated ${successfulCount} task${successfulCount === 1 ? "" : "s"}.` });
   }
 
   async function handleToggleTaskFromList(task: Task) {
@@ -2287,21 +2703,25 @@ export function TaskApp() {
             ) : null}
             {isTaskEditorOpen ? (
               <TaskEditorModal
-                allTags={[...new Set(tasks.flatMap((t) => t.tags ?? []))].sort()}
+                allTags={allTaskTags}
                 client={client}
                 currentUser={currentUser}
+                focusCategories={focusCategories}
+                focusHistory={focusHistory}
                 focusedToday={focusedTaskIds}
                 mode={taskEditorMode}
                 onClose={closeTaskEditor}
-                onLogActualTime={async ({ date, durationSeconds, notes, title }) =>
-                  handleManualFocusEntry({
+                onLogActualTime={async ({ date, durationSeconds, notes, title }) => {
+                  await handleManualFocusEntry({
                     categoryId: null,
                     date,
                     durationSeconds,
                     focusType: "Work",
                     notes,
                     title,
-                  })}
+                  });
+                  return true;
+                }}
                 onOpenHistory={selectedTaskForEditor ? () => setTaskHistoryModalTaskId(selectedTaskForEditor.id) : undefined}
                 onSave={async (draft) => {
                   const success = await saveTaskEditor(draft.values, {
@@ -2318,6 +2738,52 @@ export function TaskApp() {
                 subtasks={selectedTaskForEditor ? taskSubtasksByTaskId[selectedTaskForEditor.id] ?? [] : []}
                 task={selectedTaskForEditor}
               />
+            ) : null}
+            {isBatchEditModalOpen ? (
+              <TaskBatchEditModal
+                allTags={allTaskTags}
+                count={selectedListTaskIds.length}
+                onClose={() => setIsBatchEditModalOpen(false)}
+                onSave={applyBatchTaskEdit}
+              />
+            ) : null}
+            {isBatchDeleteModalOpen ? (
+              <ModalShell className="w-full max-w-lg rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Delete selected tasks" onClose={() => setIsBatchDeleteModalOpen(false)}>
+                <div className="space-y-5">
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Delete Selected</p>
+                    <h2 className="mt-2 text-2xl font-black text-[#1f2642] dark:text-white">Delete {selectedListTaskIds.length} task{selectedListTaskIds.length === 1 ? "" : "s"}?</h2>
+                    <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/55">This removes the selected tasks from your list. This action cannot be undone from the batch bar.</p>
+                  </div>
+                  <div className="rounded-[1.2rem] border border-[#ece8f8] bg-[#faf8ff] p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                    <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Preview</p>
+                    <ul className="mt-3 space-y-2 text-sm text-[#38415e] dark:text-white/75">
+                      {selectedListTasks.slice(0, 5).map((task) => (
+                        <li key={task.id}>{task.title}</li>
+                      ))}
+                      {selectedListTasks.length > 5 ? (
+                        <li className="text-[#7d88a1] dark:text-white/45">+{selectedListTasks.length - 5} more</li>
+                      ) : null}
+                    </ul>
+                  </div>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      className="rounded-full border border-[#ddd6fb] bg-white px-5 py-3 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                      onClick={() => setIsBatchDeleteModalOpen(false)}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="rounded-full bg-[#f05566] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#df4059]"
+                      onClick={() => { void deleteSelectedListTasks(); }}
+                      type="button"
+                    >
+                      Delete selected
+                    </button>
+                  </div>
+                </div>
+              </ModalShell>
             ) : null}
             {taskHistoryModalTaskId ? (
               <TaskHistoryModal
@@ -2352,104 +2818,77 @@ export function TaskApp() {
             />
 
             {taskUiState.view === "list" ? (
-              <section className="mt-4 grid gap-4 xl:grid-cols-[15.5rem_minmax(0,1fr)]">
-                <div className="hidden xl:block">
-                  <TaskBucketRail
-                    counts={visibleBucketCounts}
-                    onSelectBucket={setSelectedBucket}
-                    selectedBucket={taskUiState.selectedBucket}
-                  />
-                </div>
-                <div className="min-w-0">
-                  <div className="mb-4 overflow-x-auto px-1 pt-1 xl:hidden [&::-webkit-scrollbar]:hidden">
-                    <div className="flex min-w-max gap-2">
-                      {listViewBucketOptions
-                        .filter((bucket) => bucket.value !== "missed" || bucket.count > 0)
-                        .map((bucket) => {
-                          const active = bucket.value === taskUiState.selectedBucket;
-                          return (
-                            <button
-                              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-                                active
-                                  ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                                  : "bg-white text-[#64708a] hover:bg-[#faf8ff] dark:bg-white/[0.06] dark:text-white/70 dark:hover:bg-white/[0.09]"
-                              }`}
-                              key={bucket.value}
-                              onClick={() => setSelectedBucket(bucket.value)}
-                              type="button"
-                            >
-                              {bucket.label}
-                              <span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${active ? "bg-white/20 text-white dark:bg-[#1a1431]/12 dark:text-[#1a1431]" : "bg-[#f3efff] text-[#6f57f6] dark:bg-white/8 dark:text-[#cabfff]"}`}>
-                                {bucket.count}
-                              </span>
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-
-                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start">
-                    <label className="flex min-w-0 flex-1 items-center gap-3 rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
-                      <Search className="h-4.5 w-4.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
-                      <input
-                        className="min-w-0 flex-1 bg-transparent text-sm text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
-                        id="task-search-input"
-                        onChange={(event) => setTaskUiState((prev) => ({ ...prev, search: event.target.value }))}
-                        placeholder="Search tasks or subtasks"
-                        value={taskUiState.search}
-                      />
-                    </label>
-                    <FilterRows
-                      compact
-                      hasActiveFilters={
-                        taskUiState.search.trim().length > 0 ||
-                        taskUiState.quickFilters.length > 0 ||
-                        taskUiState.statusFilters.length > 0 ||
-                        taskUiState.energyFilters.length > 0 ||
-                        taskUiState.matchAny !== DEFAULT_TASK_UI_STATE.matchAny ||
-                        taskUiState.savedView !== DEFAULT_TASK_UI_STATE.savedView
-                      }
-                      isOpen={isTaskFiltersOpen}
-                      matchAny={taskUiState.matchAny}
-                      onReset={() => setTaskUiState((prev) => ({ ...DEFAULT_TASK_UI_STATE, view: prev.view, selectedBucket: prev.selectedBucket }))}
-                      onToggleEnergy={(energy) =>
-                        setTaskUiState((prev) => ({
-                          ...prev,
-                          energyFilters: prev.energyFilters.includes(energy)
-                            ? prev.energyFilters.filter((value) => value !== energy)
-                            : [...prev.energyFilters, energy],
-                        }))
-                      }
-                      onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
-                      onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
-                      onToggleStatusFilter={(status) =>
-                        setTaskUiState((prev) => ({
-                          ...prev,
-                          statusFilters: prev.statusFilters.includes(status)
-                            ? prev.statusFilters.filter((value) => value !== status)
-                            : [...prev.statusFilters, status],
-                        }))
-                      }
-                      statusCounts={taskStatusCounts}
-                      selectedStatuses={taskUiState.statusFilters}
-                      selectedEnergies={taskUiState.energyFilters}
+              <section className="mt-4">
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start">
+                  <label className="flex min-w-0 flex-1 items-center gap-3 rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
+                    <Search className="h-4.5 w-4.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+                    <input
+                      className="min-w-0 flex-1 bg-transparent text-sm text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+                      id="task-search-input"
+                      onChange={(event) => setTaskUiState((prev) => ({ ...prev, search: event.target.value }))}
+                      placeholder="Search tasks or subtasks"
+                      value={taskUiState.search}
                     />
-                  </div>
-
-                  <TasksDenseList
-                    onOpenTask={(taskId) => {
-                      const task = tasks.find((entry) => entry.id === taskId);
-                      if (task) {
-                        openEditTaskEditor(task);
-                      }
-                    }}
-                    onQuickAction={handleDenseListQuickAction}
-                    onSelectTask={setSelectedDenseTaskId}
-                    onToggleComplete={toggleDenseListTaskCompletion}
-                    rows={denseListRows}
-                    selectedTaskId={effectiveSelectedDenseTaskId}
+                  </label>
+                  <FilterRows
+                    compact
+                    hasActiveFilters={
+                      taskUiState.search.trim().length > 0 ||
+                      taskUiState.quickFilters.length > 0 ||
+                      taskUiState.statusFilters.length > 0 ||
+                      taskUiState.energyFilters.length > 0 ||
+                      taskUiState.matchAny !== DEFAULT_TASK_UI_STATE.matchAny ||
+                      taskUiState.savedView !== DEFAULT_TASK_UI_STATE.savedView
+                    }
+                    isOpen={isTaskFiltersOpen}
+                    matchAny={taskUiState.matchAny}
+                    onReset={() => setTaskUiState((prev) => ({ ...DEFAULT_TASK_UI_STATE, view: prev.view, selectedBucket: prev.selectedBucket }))}
+                    onToggleEnergy={(energy) =>
+                      setTaskUiState((prev) => ({
+                        ...prev,
+                        energyFilters: prev.energyFilters.includes(energy)
+                          ? prev.energyFilters.filter((value) => value !== energy)
+                          : [...prev.energyFilters, energy],
+                      }))
+                    }
+                    onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
+                    onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
+                    onToggleStatusFilter={(status) =>
+                      setTaskUiState((prev) => ({
+                        ...prev,
+                        statusFilters: prev.statusFilters.includes(status)
+                          ? prev.statusFilters.filter((value) => value !== status)
+                          : [...prev.statusFilters, status],
+                      }))
+                    }
+                    statusCounts={taskStatusCounts}
+                    selectedStatuses={taskUiState.statusFilters}
+                    selectedEnergies={taskUiState.energyFilters}
                   />
                 </div>
+                <AgentPlan
+                  buckets={listViewBucketOptions}
+                  onEditTask={(taskId) => {
+                    const task = tasks.find((entry) => entry.id === taskId);
+                    if (task) {
+                      openEditTaskEditor(task);
+                    }
+                  }}
+                  onAddChildSubtask={(parentSubtaskId) => addChildTaskSubtask(parentSubtaskId)}
+                  onClearTaskSelection={clearListTaskSelection}
+                  onDeleteSelectedTasks={() => setIsBatchDeleteModalOpen(true)}
+                  onRenameSubtask={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
+                  onRenameTask={(taskId, title) => { void updateTask(taskId, { title: title.trim() }); }}
+                  onOpenBatchEdit={() => setIsBatchEditModalOpen(true)}
+                  onSelectBucket={(bucket) => setSelectedBucket(bucket as TaskBucket)}
+                  onSelectAllVisible={selectAllVisibleListTasks}
+                  onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status as TaskSubtaskStatus); }}
+                  onSetTaskStatus={(taskId, status) => { void updateTask(taskId, { status }); }}
+                  onToggleTaskSelection={toggleListTaskSelection}
+                  selectedBucket={taskUiState.selectedBucket}
+                  selectedTaskIds={selectedListTaskIds}
+                  tasks={listViewTasks}
+                />
               </section>
             ) : (
               <section className="mt-4 grid gap-4 xl:grid-cols-[15.5rem_minmax(0,1fr)]">
@@ -2521,7 +2960,9 @@ export function TaskApp() {
                       isEditMode={isGridEditMode}
                       message={message}
                       missingWidgetTypes={missingGridWidgetTypes}
-                      onAddTask={({ focusToday, values }) => saveTaskEditor(values, { focusToday })}
+                      onAddTask={async ({ focusToday, values }) => {
+                        await saveTaskEditor(values, { focusToday });
+                      }}
                       onAddWidget={(widgetType) => {
                         void handleAddGridWidget(widgetType);
                       }}
@@ -2698,7 +3139,7 @@ function ConfigSplash() {
             Add your Supabase keys
           </h1>
           <p className={`mt-3 text-base text-[#707a95] dark:text-white/55`}>
-            Create `.env.2.0.10` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
+            Create `.env.2.0.43` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
           </p>
         </div>
       </section>
@@ -2914,7 +3355,7 @@ function TopHeader({
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-            v.2.0.10
+            v.2.0.43
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>
@@ -3848,7 +4289,7 @@ function StatsPage({
 
   // Energy distribution from active tasks
   const { energyCounts, totalEnergy } = useMemo(() => {
-    const counts = { low: 0, medium: 0, high: 0 };
+    const counts: Record<TaskEnergy, number> = { none: 0, low: 0, medium: 0, high: 0 };
     for (const t of tasks) {
       if (t.status !== "archived" && t.status !== "done") counts[t.energy]++;
     }
@@ -4367,7 +4808,22 @@ function SettingsPage({
     const { error } = await supabase
       .from("adhdice_clean_tasks")
       .upsert(payload, { onConflict: "id" });
-    if (error) {
+    if (error && isMissingTaskEnergyNoneEnumError(error.message)) {
+      const fallbackPayload = payload.map((task) => ({
+        ...task,
+        energy: task.energy === "none" ? "low" as TaskEnergy : task.energy,
+      }));
+      const { error: fallbackError } = await supabase
+        .from("adhdice_clean_tasks")
+        .upsert(fallbackPayload, { onConflict: "id" });
+
+      if (fallbackError) {
+        setImportStatus(`Error: ${fallbackError.message}`);
+      } else {
+        setImportStatus(`Imported ${fallbackPayload.length} task${fallbackPayload.length === 1 ? "" : "s"} with low energy fallback because your database is missing the \"none\" energy migration.`);
+        setImportText("");
+      }
+    } else if (error) {
       setImportStatus(`Error: ${error.message}`);
     } else {
       setImportStatus(`Imported ${payload.length} task${payload.length === 1 ? "" : "s"}.`);
@@ -6551,6 +7007,213 @@ function NoteLinkPicker({
   );
 }
 
+function TaskBatchEditModal({
+  allTags,
+  count,
+  onClose,
+  onSave,
+}: {
+  allTags: string[];
+  count: number;
+  onClose: () => void;
+  onSave: (draft: BatchTaskEditDraft) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<BatchTaskEditDraft>(() => createEmptyBatchTaskEditDraft());
+  const [isSaving, setIsSaving] = useState(false);
+  const isDirty = serializeBatchTaskEditDraft(draft) !== serializeBatchTaskEditDraft(createEmptyBatchTaskEditDraft());
+
+  const statusOptions = ["unchanged", "pending", "in_progress", "done", "missed", "did_my_best", "upcoming", "not_due"] as const;
+  const routeOptions = ["unchanged", "inbox", "today", "focus", "waiting", "later", "clear"] as const;
+  const priorityOptionsWithUnchanged = ["unchanged", ...priorityOptions] as const;
+  const energyOptionsWithUnchanged = ["unchanged", ...energyOptions] as const;
+  const repeatOptions = ["unchanged", ...repeatFrequencyOptions] as const;
+  const booleanOptions = ["unchanged", "true", "false"] as const;
+  const fieldModeOptions = ["unchanged", "set", "clear"] as const;
+  const tagsModeOptions = ["unchanged", "replace", "clear"] as const;
+
+  return (
+    <ModalShell className="w-full max-w-[42rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Batch edit tasks" onClose={onClose}>
+      <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-[#ece8f8] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#171328]">
+        <button aria-label="Close" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white" onClick={onClose} type="button">
+          <X className="h-4 w-4" />
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Batch Edit</p>
+          <p className="text-sm text-[#7d88a1] dark:text-white/50">Apply structured changes to {count} selected task{count === 1 ? "" : "s"}.</p>
+        </div>
+      </div>
+
+      <form
+        className="space-y-6 px-5 pb-6 pt-5"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setIsSaving(true);
+          await onSave(draft);
+          setIsSaving(false);
+        }}
+      >
+        <EditorCollapsibleSection defaultOpen summary="Status, routing, urgency, and focus." title="Core metadata">
+          <div className="grid gap-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <CompactSelectField
+                label="Status"
+                onChange={(value) => setDraft((current) => ({ ...current, status: value }))}
+                options={statusOptions}
+                renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : formatOptionLabel(value)}
+                value={draft.status}
+              />
+              <CompactSelectField
+                label="Bucket / Route"
+                onChange={(value) => setDraft((current) => ({ ...current, route: value }))}
+                options={routeOptions}
+                renderValueLabel={(value) => value === "unchanged"
+                  ? "Leave unchanged"
+                  : value === "clear"
+                    ? "Clear route"
+                    : value === "focus"
+                      ? "Focus Today"
+                      : formatOptionLabel(value)}
+                value={draft.route}
+              />
+              <CompactSelectField
+                label="Priority"
+                onChange={(value) => setDraft((current) => ({ ...current, priority: value }))}
+                options={priorityOptionsWithUnchanged}
+                renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : formatOptionLabel(value)}
+                value={draft.priority}
+              />
+              <CompactSelectField
+                label="Energy"
+                onChange={(value) => setDraft((current) => ({ ...current, energy: value }))}
+                options={energyOptionsWithUnchanged}
+                renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : formatOptionLabel(value)}
+                value={draft.energy}
+              />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {([
+                ["Focus Today", "focusToday"],
+                ["Urgent", "isUrgent"],
+                ["Important", "isImportant"],
+                ["One Step At A Time", "oneStepAtATime"],
+                ["Subtasks Auto Reset", "subtasksAutoReset"],
+              ] as const).map(([label, key]) => (
+                <CompactSelectField
+                  key={key}
+                  label={label}
+                  onChange={(value) => setDraft((current) => ({ ...current, [key]: value }))}
+                  options={booleanOptions}
+                  renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : value === "true" ? "Turn on" : "Turn off"}
+                  value={draft[key]}
+                />
+              ))}
+            </div>
+          </div>
+        </EditorCollapsibleSection>
+
+        <EditorCollapsibleSection defaultOpen summary="Due date, repeat cadence, and estimate." title="Schedule">
+          <div className="grid gap-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <CompactSelectField
+                label="Due date"
+                onChange={(value) => setDraft((current) => ({ ...current, dueOnMode: value }))}
+                options={fieldModeOptions}
+                renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : value === "set" ? "Set due date" : "Clear due date"}
+                value={draft.dueOnMode}
+              />
+              <CompactSelectField
+                label="Estimated time"
+                onChange={(value) => setDraft((current) => ({ ...current, estimatedMinutesMode: value }))}
+                options={fieldModeOptions}
+                renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : value === "set" ? "Set estimate" : "Clear estimate"}
+                value={draft.estimatedMinutesMode}
+              />
+            </div>
+            {draft.dueOnMode === "set" ? (
+              <CompactDateTimeField clearLabel="Clear due date" label="Due date value" onChange={(value) => setDraft((current) => ({ ...current, dueOn: value }))} onClear={() => setDraft((current) => ({ ...current, dueOn: "" }))} type="date" value={draft.dueOn} />
+            ) : null}
+            {draft.estimatedMinutesMode === "set" ? (
+              <div className="sm:max-w-[12rem]">
+                <LabeledInput label="Estimated minutes" onChange={(value) => setDraft((current) => ({ ...current, estimatedMinutes: value }))} placeholder="25" type="number" value={draft.estimatedMinutes} />
+              </div>
+            ) : null}
+            <CompactSelectField
+              label="Repeat"
+              onChange={(value) => setDraft((current) => ({ ...current, repeatFrequency: value }))}
+              options={repeatOptions}
+              renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : value === "custom" ? "Custom cadence" : formatOptionLabel(value)}
+              value={draft.repeatFrequency}
+            />
+            {draft.repeatFrequency !== "unchanged" && draft.repeatFrequency !== "none" && draft.repeatFrequency !== "daily" ? (
+              <div className="sm:max-w-[12rem]">
+                <LabeledInput label="Repeat interval" onChange={(value) => setDraft((current) => ({ ...current, repeatInterval: value }))} placeholder="1" type="number" value={draft.repeatInterval} />
+              </div>
+            ) : null}
+            {draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom" ? (
+              <div className="flex flex-wrap gap-2">
+                {repeatWeekdayOptions.map((option) => {
+                  const selected = draft.repeatDaysOfWeek.includes(option.value);
+                  return (
+                    <Pill
+                      key={option.value}
+                      onClick={() => setDraft((current) => ({
+                        ...current,
+                        repeatDaysOfWeek: selected
+                          ? current.repeatDaysOfWeek.filter((value) => value !== option.value)
+                          : [...current.repeatDaysOfWeek, option.value],
+                      }))}
+                      selected={selected}
+                    >
+                      {option.label}
+                    </Pill>
+                  );
+                })}
+              </div>
+            ) : null}
+            {draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom" ? (
+              <div className="sm:max-w-[12rem]">
+                <LabeledInput label="Day of month" onChange={(value) => setDraft((current) => ({ ...current, repeatDayOfMonth: value }))} placeholder="15" type="number" value={draft.repeatDayOfMonth} />
+              </div>
+            ) : null}
+          </div>
+        </EditorCollapsibleSection>
+
+        <EditorCollapsibleSection defaultOpen summary="Replace or clear tags across the selection." title="Tags">
+          <div className="grid gap-4">
+            <CompactSelectField
+              label="Tags"
+              onChange={(value) => setDraft((current) => ({ ...current, tagsMode: value }))}
+              options={tagsModeOptions}
+              renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : value === "replace" ? "Replace tags" : "Clear tags"}
+              value={draft.tagsMode}
+            />
+            {draft.tagsMode === "replace" ? (
+              <TagChipInput allTags={allTags} onChange={(tags) => setDraft((current) => ({ ...current, tags }))} values={draft.tags} />
+            ) : null}
+          </div>
+        </EditorCollapsibleSection>
+
+        <div className="sticky bottom-4 z-20 flex justify-end gap-3 pt-2">
+          <button
+            className="rounded-full border border-[#ddd6fb] bg-white px-5 py-3 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+            onClick={onClose}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded-full bg-[#6f57f6] px-6 py-3 text-base font-bold text-white shadow-[0_18px_40px_rgba(111,87,246,0.28)] disabled:opacity-50 dark:bg-[#cabfff] dark:text-[#1a1431]"
+            disabled={!isDirty || isSaving}
+            type="submit"
+          >
+            {isSaving ? "Applying..." : `Update ${count} task${count === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
 function TaskEditorModal({
   allTags,
   client,
@@ -6560,6 +7223,7 @@ function TaskEditorModal({
   focusedToday,
   mode,
   onClose,
+  onLogActualTime,
   onOpenHistory,
   onSave,
   subtasks,
@@ -6573,6 +7237,7 @@ function TaskEditorModal({
   focusedToday: string[];
   mode: TaskEditorMode;
   onClose: () => void;
+  onLogActualTime: (entry: { title: string; notes: string; date: string; durationSeconds: number }) => Promise<boolean>;
   onOpenHistory?: () => void;
   onSave: (draft: { values: TaskDraft; focusToday: boolean; linkedNoteIds: string[]; subtasks: TaskSubtaskDraft[] }) => Promise<void>;
   subtasks: DbTaskSubtask[];
@@ -6696,9 +7361,6 @@ function TaskEditorModal({
     <ModalShell className={`w-full max-w-[42rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="Task editor" onClose={onClose}>
       {/* Header */}
       <div className={`sticky top-0 z-10 flex items-center gap-3 px-5 py-4 bg-white border-b border-[#ece8f8] dark:bg-[#171328] dark:border-b dark:border-white/10`}>
-        <button aria-label="Close" className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white`} onClick={onClose} type="button">
-          <X className="h-4 w-4" />
-        </button>
         <span className={`flex-1 text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>{isEditing ? "Edit Task" : "New Task"}</span>
         <button
           className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${draft.oneStepAtATime
@@ -7892,7 +8554,7 @@ function BottomDock({
     ? { bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }
     : undefined;
   const dockShapeClass = dockPlacement === "bottom"
-    ? "mx-auto flex w-full max-w-[58rem] items-center justify-between gap-1 rounded-[2rem] px-3 py-1 overflow-x-auto sm:overflow-x-visible [&::-webkit-scrollbar]:hidden touch-pan-x"
+    ? "mx-auto flex w-fit max-w-full items-center gap-[3px] rounded-[1.75rem] px-[3px] py-1 overflow-x-auto sm:overflow-x-visible [&::-webkit-scrollbar]:hidden touch-pan-x"
     : "flex max-h-full w-[5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
   const collapsingStyle = isDockCollapsing
     ? dockPlacement === "bottom"
@@ -7908,7 +8570,7 @@ function BottomDock({
       >
         {dockItems.map((item) => (
           <button
-            className={`flex ${isVertical ? "w-full" : "min-w-[3rem] shrink-0"} flex-col items-center justify-center rounded-[1.2rem] px-2 py-2.5 transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
+            className={`flex ${isVertical ? "w-full" : "h-10 w-10 shrink-0"} flex-col items-center justify-center rounded-[1rem] px-1 py-2 transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${
               activePage === item
                 ? "text-[#6f57f6] dark:text-[#cabfff]"
                 : "text-[#8d94ac] dark:text-white/50"
@@ -7917,12 +8579,12 @@ function BottomDock({
             onClick={() => onNavigate(item)}
             type="button"
           >
-            <CategoryIcon name={dockIcons[item]} className="h-7 w-7" />
+            <CategoryIcon name={dockIcons[item]} className="h-6 w-6" />
           </button>
         ))}
         <button
           aria-label="Collapse navigation"
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition duration-300 hover:scale-105 ${isVertical ? "" : "ml-1"} ${isDockCollapsing ? "scale-90 rounded-full" : ""} bg-[#f1ecff] text-[#6f57f6] dark:bg-[#2a214f] dark:text-[#cabfff]`}
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition duration-300 hover:scale-105 ${isVertical ? "" : "ml-[3px]"} ${isDockCollapsing ? "scale-90 rounded-full" : ""} bg-[#f1ecff] text-[#6f57f6] dark:bg-[#2a214f] dark:text-[#cabfff]`}
           onClick={() => {
             if (!longPressTriggeredRef.current) {
               collapseDock();
@@ -9528,6 +10190,50 @@ function formatRepeatSummary(task: Task) {
   return "Custom repeat";
 }
 
+function buildFocusLabelOptions(
+  categories: FocusCategory[],
+  history: HistoricalFocusSession[],
+): FocusLabelOptions {
+  const titles = new Set(DEFAULT_FOCUS_TITLES);
+  const types = new Set<string>();
+  const primarySubtypes = new Set(DEFAULT_PRIMARY_SUBTYPES);
+  const secondarySubtypes = new Set(DEFAULT_SECONDARY_SUBTYPES);
+
+  for (const category of categories) {
+    if (DEFAULT_FOCUS_CATEGORY_TITLES.includes(category.title)) {
+      continue;
+    }
+
+    titles.add(category.title);
+    types.add(category.focusType);
+    if (category.focusSubtype) {
+      primarySubtypes.add(category.focusSubtype);
+    }
+    if (category.focusSubtype2) {
+      secondarySubtypes.add(category.focusSubtype2);
+    }
+  }
+
+  for (const entry of history) {
+    titles.add(entry.title);
+    types.add(entry.focusType);
+    if (entry.focusSubtype) {
+      primarySubtypes.add(entry.focusSubtype);
+    }
+    if (entry.focusSubtype2) {
+      secondarySubtypes.add(entry.focusSubtype2);
+    }
+  }
+
+  return {
+    titles: Array.from(titles).filter(Boolean).sort(),
+    types: Array.from(types).filter(Boolean).sort(),
+    primarySubtypes: Array.from(primarySubtypes).filter(Boolean).sort(),
+    secondarySubtypes: Array.from(secondarySubtypes).filter(Boolean).sort(),
+    allSubtypes: Array.from(new Set([...primarySubtypes, ...secondarySubtypes])).filter(Boolean).sort(),
+  };
+}
+
 function createTaskEditorDraft(task: Task | null, focusToday: boolean, subtasks: DbTaskSubtask[]): TaskEditorDraft {
   function buildTree(parentId: string | null): TaskSubtaskDraft[] {
     return subtasks
@@ -9567,6 +10273,30 @@ function createTaskEditorDraft(task: Task | null, focusToday: boolean, subtasks:
   };
 }
 
+function createEmptyBatchTaskEditDraft(): BatchTaskEditDraft {
+  return {
+    dueOn: "",
+    dueOnMode: "unchanged",
+    energy: "unchanged",
+    estimatedMinutes: "",
+    estimatedMinutesMode: "unchanged",
+    focusToday: "unchanged",
+    isImportant: "unchanged",
+    isUrgent: "unchanged",
+    oneStepAtATime: "unchanged",
+    priority: "unchanged",
+    repeatDayOfMonth: "",
+    repeatDaysOfWeek: [],
+    repeatFrequency: "unchanged",
+    repeatInterval: "1",
+    route: "unchanged",
+    status: "unchanged",
+    subtasksAutoReset: "unchanged",
+    tags: [],
+    tagsMode: "unchanged",
+  };
+}
+
 function serializeTaskEditorDraft(draft: TaskEditorDraft) {
   return JSON.stringify({
     ...draft,
@@ -9575,7 +10305,7 @@ function serializeTaskEditorDraft(draft: TaskEditorDraft) {
   });
 }
 
-function serializeTaskSubtaskDrafts(subtasks: TaskSubtaskDraft[]) {
+function serializeTaskSubtaskDrafts(subtasks: TaskSubtaskDraft[]): Array<{ children: ReturnType<typeof serializeTaskSubtaskDrafts>; status: TaskSubtaskStatus; title: string }> {
   return subtasks.map((subtask) => ({
     children: serializeTaskSubtaskDrafts(subtask.children),
     status: subtask.status,
@@ -9596,6 +10326,14 @@ function parsePositiveInteger(value: string) {
 function parseDayOfMonth(value: string) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed >= 1 && parsed <= 31 ? parsed : null;
+}
+
+function serializeBatchTaskEditDraft(draft: BatchTaskEditDraft) {
+  return JSON.stringify({
+    ...draft,
+    repeatDaysOfWeek: [...draft.repeatDaysOfWeek].sort((left, right) => left - right),
+    tags: [...draft.tags].sort(),
+  });
 }
 
 function parseTagList(value: string) {
@@ -9724,7 +10462,58 @@ function buildAgentPlanDescription(task: Task) {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
-function buildAgentPlanMetaPills(task: Task, subtasks: DbTaskSubtask[], focusedTaskIdSet: Set<string>): AgentPlanMetaPill[] {
+function buildAgentPlanMetadata(
+  task: Task,
+  context: {
+    bucketContext: TaskBucketContext;
+    focusedTaskIdSet: Set<string>;
+  },
+) {
+  const metadata: AgentPlanTaskItem["metadata"] = [
+    {
+      label: "Bucket",
+      value: TASK_BUCKET_LABELS[getTaskBucket(task, context.bucketContext)],
+    },
+    {
+      label: "Due",
+      value: formatTaskDueLabel(task),
+    },
+    {
+      label: "Priority",
+      value: formatOptionLabel(task.priority),
+    },
+    {
+      label: "Energy",
+      value: formatOptionLabel(task.energy),
+    },
+  ];
+
+  if (context.focusedTaskIdSet.has(task.id)) {
+    metadata.push({
+      label: "Focus",
+      value: "Today",
+    });
+  }
+
+  const repeatSummary = formatRepeatSummary(task);
+  if (repeatSummary) {
+    metadata.push({
+      label: "Repeat",
+      value: repeatSummary,
+    });
+  }
+
+  return metadata;
+}
+
+function buildAgentPlanMetaPills(
+  task: Task,
+  subtasks: DbTaskSubtask[],
+  context: {
+    bucketContext: TaskBucketContext;
+    focusedTaskIdSet: Set<string>;
+  },
+): AgentPlanMetaPill[] {
   const pills: AgentPlanMetaPill[] = [];
 
   if (subtasks.length > 0) {
@@ -9735,7 +10524,7 @@ function buildAgentPlanMetaPills(task: Task, subtasks: DbTaskSubtask[], focusedT
     });
   }
 
-  if (focusedTaskIdSet.has(task.id)) {
+  if (context.focusedTaskIdSet.has(task.id)) {
     pills.push({ label: "Focus", tone: "accent" });
   }
 
@@ -9743,8 +10532,10 @@ function buildAgentPlanMetaPills(task: Task, subtasks: DbTaskSubtask[], focusedT
     pills.push({ label: "Repeats", tone: "warning" });
   }
 
-  if (task.is_urgent) {
-    pills.push({ label: "Urgent", tone: "danger" });
+  if (task.status === "missed") {
+    pills.push({ label: "Missed", tone: "danger" });
+  } else if (isTaskOpen(task) && isOverdue(task.due_on)) {
+    pills.push({ label: "Overdue", tone: "danger" });
   }
 
   return pills;
@@ -9753,6 +10544,7 @@ function buildAgentPlanMetaPills(task: Task, subtasks: DbTaskSubtask[], focusedT
 function buildAgentPlanTaskItem(
   task: Task,
   context: {
+    bucketContext: TaskBucketContext;
     focusedTaskIdSet: Set<string>;
     subtasks: DbTaskSubtask[];
   },
@@ -9760,7 +10552,8 @@ function buildAgentPlanTaskItem(
   return {
     description: buildAgentPlanDescription(task),
     id: task.id,
-    metaPills: buildAgentPlanMetaPills(task, context.subtasks, context.focusedTaskIdSet),
+    metadata: buildAgentPlanMetadata(task, context),
+    metaPills: buildAgentPlanMetaPills(task, context.subtasks, context),
     status: toAgentPlanStatus(task.status),
     subtasks: buildAgentPlanSubtaskItems(context.subtasks),
     title: task.title,
@@ -9778,7 +10571,22 @@ function groupTaskSubtasksByTaskId(subtasks: DbTaskSubtask[]) {
 }
 
 function mapTaskSubtaskRow(row: DbTaskSubtask) {
-  return row;
+  return {
+    ...row,
+    parent_subtask_id: row.parent_subtask_id ?? null,
+  };
+}
+
+function isMissingParentSubtaskColumnError(message: string) {
+  return message.includes("parent_subtask_id")
+    && message.includes("adhdice_task_subtasks")
+    && message.includes("schema cache");
+}
+
+function isMissingTaskEnergyNoneEnumError(message: string) {
+  return message.includes("adhdice_clean_task_energy")
+    && message.includes("invalid input value for enum")
+    && message.includes("\"none\"");
 }
 
 function getNextPendingSubtask(taskId: string, subtasksByTaskId: Record<string, DbTaskSubtask[]>) {

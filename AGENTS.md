@@ -31,9 +31,11 @@ Prioritize conserving usage and keeping context small.
 
 ## Execution
 - Do not run dev servers, builds, package installs, or full test suites unless asked.
+- Do not open a local build or inspect the site in-browser unless the user explicitly asks for it. For this project, avoid using in-app browser/site inspection as a default verification step because it is token-heavy and the sandbox/browser path is unreliable.
 
 ## Local Browser Access
 - Treat `localhost`, `127.0.0.1`, `::1`, LAN IPs like `192.168.x.x`, and VPN/private-network dev URLs as potentially unreachable from Browser Use navigation, even if the in-app browser UI can show them.
+- For this project, if the user confirms the LAN URL is working in the in-app browser, prefer `http://192.168.4.109:3000` as the known-good local preview URL.
 - If the user already has the local app open in the in-app browser, attach to the current selected tab and continue from there.
 - Do not repeatedly retry local URL navigation after one failed agent-side attempt.
 - After one failed agent-side navigation attempt, ask the user to open the local URL manually in the in-app browser, then continue from the current tab without trying to re-navigate.

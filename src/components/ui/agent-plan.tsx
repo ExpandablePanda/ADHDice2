@@ -8,15 +8,17 @@ import {
 } from "framer-motion";
 import {
   ArrowRight,
+  CirclePlus,
   ChevronDown,
   ChevronRight,
   Circle,
   CircleX,
   Ellipsis,
   Clock,
+  PenLine,
   Star,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 export type AgentPlanStatus =
   | "pending"
@@ -44,6 +46,10 @@ export type AgentPlanSubtaskItem = {
 export type AgentPlanTaskItem = {
   description?: string | null;
   id: string;
+  metadata: Array<{
+    label: string;
+    value: string;
+  }>;
   metaPills: AgentPlanMetaPill[];
   status: AgentPlanStatus;
   subtasks: AgentPlanSubtaskItem[];
@@ -58,11 +64,20 @@ export type AgentPlanBucketOption = {
 
 type AgentPlanProps = {
   buckets: AgentPlanBucketOption[];
+  onAddChildSubtask: (parentSubtaskId: string) => Promise<string | null>;
+  onClearTaskSelection: () => void;
+  onDeleteSelectedTasks: () => void;
   onEditTask: (taskId: string) => void;
+  onOpenBatchEdit: () => void;
+  onRenameSubtask: (subtaskId: string, title: string) => void;
+  onRenameTask: (taskId: string, title: string) => void;
   onSelectBucket: (bucket: string) => void;
+  onSelectAllVisible: () => void;
   onSetSubtaskStatus: (subtaskId: string, status: AgentPlanStatus) => void;
   onSetTaskStatus: (taskId: string, status: AgentPlanStatus) => void;
+  onToggleTaskSelection: (taskId: string, options?: { additive?: boolean; range?: boolean }) => void;
   selectedBucket: string;
+  selectedTaskIds: string[];
   tasks: AgentPlanTaskItem[];
 };
 
@@ -113,6 +128,20 @@ const META_PILL_STYLES: Record<AgentPlanMetaTone, string> = {
   success: "bg-[#e8fbf2] text-[#119a69] dark:bg-[#16352c] dark:text-[#7de4b8]",
   warning: "bg-[#fff6df] text-[#b77900] dark:bg-[#44350d] dark:text-[#ffd56b]",
 };
+
+const SUBTASK_RAIL_WIDTH_CLASS = "grid-cols-[2.25rem_minmax(0,1fr)]";
+const SUBTASK_CHILD_LIST_PADDING_CLASS = "pl-[2.25rem]";
+const CONNECTOR_ICON_GAP = 22;
+
+type ConnectorLine = {
+  x: number;
+  y1: number;
+  y2: number;
+};
+
+function getMetadataValue(task: AgentPlanTaskItem, label: string) {
+  return task.metadata.find((item) => item.label === label)?.value ?? "—";
+}
 
 function isClosedStatus(status: AgentPlanStatus) {
   return status === "done" || status === "did_my_best";
@@ -190,57 +219,111 @@ function StatusChip({ status }: { status: AgentPlanStatus }) {
   );
 }
 
-function SubtaskBranch({
-  depth = 0,
-  onSetSubtaskStatus,
-  subtask,
-}: {
-  depth?: number;
+type SubtaskBranchProps = {
+  autofocusSubtaskId: string | null;
+  connectorsSettling: boolean;
+  onAddChildSubtask: (parentSubtaskId: string) => Promise<string | null>;
+  onAutofocusHandled: () => void;
+  onConnectorSettled: () => void;
+  onRenameSubtask: (subtaskId: string, title: string) => void;
   onSetSubtaskStatus: (subtaskId: string, status: AgentPlanStatus) => void;
+  registerAnchor: (subtaskId: string, element: HTMLDivElement | null) => void;
   subtask: AgentPlanSubtaskItem;
-}) {
+};
+
+function SubtaskBranch({
+  autofocusSubtaskId,
+  connectorsSettling,
+  onAddChildSubtask,
+  onAutofocusHandled,
+  onConnectorSettled,
+  onRenameSubtask,
+  onSetSubtaskStatus,
+  registerAnchor,
+  subtask,
+}: SubtaskBranchProps) {
   const [isOpen, setIsOpen] = useState(true);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(subtask.title);
   const hasChildren = subtask.children.length > 0;
+
+  useEffect(() => {
+    setTitleDraft(subtask.title);
+  }, [subtask.title]);
+
+  useEffect(() => {
+    if (autofocusSubtaskId !== subtask.id) {
+      return;
+    }
+    setTitleDraft(subtask.title);
+    setIsEditingTitle(true);
+    onAutofocusHandled();
+  }, [autofocusSubtaskId, onAutofocusHandled, subtask.id, subtask.title]);
+
+  function finishRename(shouldSave: boolean) {
+    if (!shouldSave) {
+      setTitleDraft(subtask.title);
+      setIsEditingTitle(false);
+      return;
+    }
+
+    const trimmedTitle = titleDraft.trim();
+    if (!trimmedTitle) {
+      setTitleDraft(subtask.title);
+      setIsEditingTitle(false);
+      return;
+    }
+
+    if (trimmedTitle !== subtask.title) {
+      onRenameSubtask(subtask.id, trimmedTitle);
+    }
+    setIsEditingTitle(false);
+  }
 
   return (
     <li className="relative">
-      <div className="flex items-start gap-2 py-1" style={{ marginLeft: `${depth * 1.4}rem` }}>
-        <div className="relative mt-0.5 shrink-0">
-          <button
-            className="shrink-0"
-            onClick={(event) => {
-              event.stopPropagation();
-              setMenuOpen((current) => !current);
-            }}
-            type="button"
-          >
-            <StatusIcon status={subtask.status} />
-          </button>
-          {menuOpen ? (
-            <div className="absolute left-full top-0 z-40 ml-3 min-w-[180px] rounded-[0.9rem] border border-[#ece8f8] bg-white p-2 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1a1230]">
-              {STATUS_OPTIONS.map((status) => (
-                <button
-                  className="flex w-full justify-start px-1 py-1 text-left"
-                  key={status}
-                  onClick={() => {
-                    onSetSubtaskStatus(subtask.id, status);
-                    setMenuOpen(false);
-                  }}
-                  type="button"
-                >
-                  <StatusChip status={status} />
-                </button>
-              ))}
-            </div>
-          ) : null}
+      <div className={`grid ${SUBTASK_RAIL_WIDTH_CLASS} items-start gap-2 py-1`}>
+        <div className="relative flex min-h-[2.4rem] justify-center">
+          <div className="relative pt-0.5" ref={(element) => registerAnchor(subtask.id, element)}>
+            <button
+              className="shrink-0"
+              onClick={(event) => {
+                event.stopPropagation();
+                setMenuOpen((current) => !current);
+              }}
+              type="button"
+            >
+              <StatusIcon status={subtask.status} />
+            </button>
+            {menuOpen ? (
+              <div className="absolute left-full top-0 z-40 ml-3 min-w-[180px] rounded-[0.9rem] border border-[#ece8f8] bg-white p-2 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1a1230]">
+                {STATUS_OPTIONS.map((status) => (
+                  <button
+                    className="flex w-full justify-start px-1 py-1 text-left"
+                    key={status}
+                    onClick={() => {
+                      onSetSubtaskStatus(subtask.id, status);
+                      setMenuOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <StatusChip status={status} />
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
-        <div className="relative min-w-0 flex-1">
+        <div className="relative min-w-0">
           <div className="flex min-w-0 items-start gap-2">
             {hasChildren ? (
               <button
                 className="mt-0.5 shrink-0 text-[#8d97b0] transition hover:text-[#6f57f6] dark:text-white/40 dark:hover:text-[#cabfff]"
-                onClick={() => setIsOpen((current) => !current)}
+                onClick={() => {
+                  markConnectorsSettling();
+                  setIsOpen((current) => !current);
+                }}
                 type="button"
               >
                 {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -248,9 +331,54 @@ function SubtaskBranch({
             ) : (
               <span className="mt-1 h-3.5 w-3.5 shrink-0" />
             )}
-            <span className={`text-sm ${isClosedStatus(subtask.status) ? "line-through opacity-50" : "text-[#38415e] dark:text-white/75"}`}>
-              {subtask.title}
-            </span>
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              {isEditingTitle ? (
+                <input
+                  autoFocus
+                  className={`min-w-0 w-full max-w-[28rem] rounded-md border border-[#ddd6f9] bg-white px-2 py-1 text-sm outline-none dark:border-white/10 dark:bg-white/[0.04] ${isClosedStatus(subtask.status) ? "line-through opacity-50" : "text-[#38415e] dark:text-white/75"}`}
+                  onBlur={() => finishRename(true)}
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      finishRename(true);
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      finishRename(false);
+                    }
+                  }}
+                  value={titleDraft}
+                />
+              ) : (
+                <button
+                  className={`min-w-0 max-w-[28rem] truncate text-left text-sm ${isClosedStatus(subtask.status) ? "line-through opacity-50" : "text-[#38415e] dark:text-white/75"}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setIsEditingTitle(true);
+                  }}
+                  type="button"
+                >
+                  {subtask.title}
+                </button>
+              )}
+              <button
+                aria-label="Add child step"
+                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#6f57f6] transition hover:bg-[#f1ecff] hover:text-[#5a45d1] dark:text-[#cabfff] dark:hover:bg-white/[0.08] dark:hover:text-white"
+                onClick={async (event) => {
+                  event.stopPropagation();
+                  const nextSubtaskId = await onAddChildSubtask(subtask.id);
+                  if (nextSubtaskId && !isOpen) {
+                    markConnectorsSettling();
+                    setIsOpen(true);
+                  }
+                }}
+                type="button"
+              >
+                <CirclePlus className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -258,22 +386,28 @@ function SubtaskBranch({
       {hasChildren ? (
         <AnimatePresence initial={false}>
           {isOpen ? (
-            <motion.ul
+            <motion.div
               animate={{ height: "auto", opacity: 1 }}
-              className="overflow-visible border-l-2 border-dashed border-[#ddd6f9] dark:border-white/10"
+              className="overflow-hidden"
               exit={{ height: 0, opacity: 0 }}
               initial={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
+              onAnimationComplete={onConnectorSettled}
             >
-              {subtask.children.map((child) => (
-                <SubtaskBranch
-                  depth={depth + 1}
-                  key={child.id}
+              <div className={SUBTASK_CHILD_LIST_PADDING_CLASS}>
+                <SubtaskList
+                  autofocusSubtaskId={autofocusSubtaskId}
+                  connectFromParent
+                  connectorsSettling={connectorsSettling}
+                  onAddChildSubtask={onAddChildSubtask}
+                  onAutofocusHandled={onAutofocusHandled}
+                  onConnectorSettled={onConnectorSettled}
+                  onRenameSubtask={onRenameSubtask}
                   onSetSubtaskStatus={onSetSubtaskStatus}
-                  subtask={child}
+                  subtasks={subtask.children}
                 />
-              ))}
-            </motion.ul>
+              </div>
+            </motion.div>
           ) : null}
         </AnimatePresence>
       ) : null}
@@ -281,19 +415,161 @@ function SubtaskBranch({
   );
 }
 
+function SubtaskList({
+  autofocusSubtaskId,
+  connectFromParent = false,
+  connectorsSettling = false,
+  onAddChildSubtask,
+  onAutofocusHandled,
+  onConnectorSettled,
+  onRenameSubtask,
+  onSetSubtaskStatus,
+  subtasks,
+}: {
+  autofocusSubtaskId: string | null;
+  connectFromParent?: boolean;
+  connectorsSettling?: boolean;
+  onAddChildSubtask: (parentSubtaskId: string) => Promise<string | null>;
+  onAutofocusHandled: () => void;
+  onConnectorSettled: () => void;
+  onRenameSubtask: (subtaskId: string, title: string) => void;
+  onSetSubtaskStatus: (subtaskId: string, status: AgentPlanStatus) => void;
+  subtasks: AgentPlanSubtaskItem[];
+}) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const anchorRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [connectors, setConnectors] = useState<ConnectorLine[]>([]);
+
+  useLayoutEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) {
+      return;
+    }
+
+    const measure = () => {
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const siblingConnectors = subtasks.flatMap((subtask, index) => {
+        const currentAnchor = anchorRefs.current[subtask.id];
+        const nextAnchor = anchorRefs.current[subtasks[index + 1]?.id ?? ""];
+        if (!currentAnchor || !nextAnchor) {
+          return [];
+        }
+
+        const currentRect = currentAnchor.getBoundingClientRect();
+        const nextRect = nextAnchor.getBoundingClientRect();
+        const x = currentRect.left + (currentRect.width / 2) - wrapperRect.left;
+        const y1 = currentRect.top + (currentRect.height / 2) - wrapperRect.top + CONNECTOR_ICON_GAP;
+        const y2 = nextRect.top + (nextRect.height / 2) - wrapperRect.top - CONNECTOR_ICON_GAP;
+        return [{ x, y1, y2 }];
+      });
+
+      const firstAnchor = subtasks.length > 0 ? anchorRefs.current[subtasks[0].id] : null;
+      const parentConnector = connectFromParent && firstAnchor
+        ? (() => {
+            const firstRect = firstAnchor.getBoundingClientRect();
+            const x = firstRect.left + (firstRect.width / 2) - wrapperRect.left;
+            const y2 = firstRect.top + (firstRect.height / 2) - wrapperRect.top - CONNECTOR_ICON_GAP;
+            return [{ x, y1: 0, y2 }];
+          })()
+        : [];
+
+      setConnectors([...parentConnector, ...siblingConnectors]);
+    };
+
+    measure();
+    const frame = window.requestAnimationFrame(measure);
+    const resizeObserver = new ResizeObserver(() => measure());
+    resizeObserver.observe(wrapper);
+    Object.values(anchorRefs.current).forEach((anchor) => {
+      if (anchor) {
+        resizeObserver.observe(anchor);
+      }
+    });
+    window.addEventListener("resize", measure);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [autofocusSubtaskId, connectFromParent, subtasks]);
+
+  return (
+    <div className="relative">
+      <svg
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-0 overflow-visible transition-opacity duration-100 ${connectorsSettling ? "opacity-0" : "opacity-100"}`}
+        height="100%"
+        preserveAspectRatio="none"
+        width="100%"
+      >
+        {connectors.map((connector) => (
+          <line
+            key={`${connector.x}-${connector.y1}-${connector.y2}`}
+            stroke="#ddd6f9"
+            strokeDasharray="8 8"
+            strokeWidth="2"
+            x1={connector.x}
+            x2={connector.x}
+            y1={connector.y1}
+            y2={connector.y2}
+          />
+        ))}
+      </svg>
+      <div ref={wrapperRef}>
+        <ul className="space-y-1">
+          {subtasks.map((subtask) => (
+            <SubtaskBranch
+              autofocusSubtaskId={autofocusSubtaskId}
+              connectorsSettling={connectorsSettling}
+              key={subtask.id}
+              onAddChildSubtask={onAddChildSubtask}
+              onAutofocusHandled={onAutofocusHandled}
+              onConnectorSettled={onConnectorSettled}
+              onRenameSubtask={onRenameSubtask}
+              onSetSubtaskStatus={onSetSubtaskStatus}
+              registerAnchor={(subtaskId, element) => {
+                anchorRefs.current[subtaskId] = element;
+              }}
+              subtask={subtask}
+            />
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export default function AgentPlan({
   buckets,
+  onAddChildSubtask,
+  onClearTaskSelection,
+  onDeleteSelectedTasks,
   onEditTask,
+  onOpenBatchEdit,
+  onRenameSubtask,
+  onRenameTask,
   onSelectBucket,
+  onSelectAllVisible,
   onSetSubtaskStatus,
   onSetTaskStatus,
+  onToggleTaskSelection,
   selectedBucket,
+  selectedTaskIds,
   tasks,
 }: AgentPlanProps) {
   const prefersReducedMotion = useReducedMotion();
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [expandedTaskIds, setExpandedTaskIds] = useState<string[]>([]);
+  const [autofocusSubtaskId, setAutofocusSubtaskId] = useState<string | null>(null);
+  const [connectorsSettling, setConnectorsSettling] = useState(false);
   const [openTaskIconMenuId, setOpenTaskIconMenuId] = useState<string | null>(null);
   const [openStatusTaskId, setOpenStatusTaskId] = useState<string | null>(null);
+  const taskRailRef = useRef<HTMLDivElement | null>(null);
+  const taskStatusAnchorRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [taskConnectors, setTaskConnectors] = useState<ConnectorLine[]>([]);
+  const [taskTitleDraft, setTaskTitleDraft] = useState("");
+  const selectedTaskIdSet = new Set(selectedTaskIds);
 
   useEffect(() => {
     setExpandedTaskIds((current) => current.filter((taskId) => tasks.some((task) => task.id === taskId)));
@@ -311,6 +587,109 @@ export default function AgentPlan({
     setOpenTaskIconMenuId(null);
     setOpenStatusTaskId(null);
   }, [selectedBucket, tasks]);
+
+  useEffect(() => {
+    if (!editingTaskId || tasks.some((task) => task.id === editingTaskId)) {
+      return;
+    }
+    setEditingTaskId(null);
+    setTaskTitleDraft("");
+  }, [editingTaskId, tasks]);
+
+  useLayoutEffect(() => {
+    const wrapper = taskRailRef.current;
+    if (!wrapper) {
+      return;
+    }
+
+    const measure = () => {
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const nextConnectors = tasks.flatMap((task, index) => {
+        const currentAnchor = taskStatusAnchorRefs.current[task.id];
+        const nextAnchor = taskStatusAnchorRefs.current[tasks[index + 1]?.id ?? ""];
+        if (!currentAnchor || !nextAnchor) {
+          return [];
+        }
+
+        const currentRect = currentAnchor.getBoundingClientRect();
+        const nextRect = nextAnchor.getBoundingClientRect();
+        const x = currentRect.left + (currentRect.width / 2) - wrapperRect.left;
+        const y1 = currentRect.top + (currentRect.height / 2) - wrapperRect.top + CONNECTOR_ICON_GAP;
+        const y2 = nextRect.top + (nextRect.height / 2) - wrapperRect.top - CONNECTOR_ICON_GAP;
+        return [{ x, y1, y2 }];
+      });
+
+      setTaskConnectors(nextConnectors);
+    };
+
+    measure();
+    const frame = window.requestAnimationFrame(measure);
+    const resizeObserver = new ResizeObserver(() => measure());
+    resizeObserver.observe(wrapper);
+    Object.values(taskStatusAnchorRefs.current).forEach((anchor) => {
+      if (anchor) {
+        resizeObserver.observe(anchor);
+      }
+    });
+    window.addEventListener("resize", measure);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [expandedTaskIds, tasks]);
+
+  function beginTaskRename(taskId: string, title: string) {
+    setEditingTaskId(taskId);
+    setTaskTitleDraft(title);
+  }
+
+  function finishTaskRename(task: AgentPlanTaskItem, shouldSave: boolean) {
+    if (!shouldSave) {
+      setEditingTaskId(null);
+      setTaskTitleDraft("");
+      return;
+    }
+
+    const trimmedTitle = taskTitleDraft.trim();
+    if (!trimmedTitle) {
+      setEditingTaskId(null);
+      setTaskTitleDraft(task.title);
+      return;
+    }
+
+    if (trimmedTitle !== task.title) {
+      onRenameTask(task.id, trimmedTitle);
+    }
+    setEditingTaskId(null);
+    setTaskTitleDraft("");
+  }
+
+  async function handleAutofocusSubtask(parentSubtaskId: string) {
+    const nextSubtaskId = await onAddChildSubtask(parentSubtaskId);
+    if (nextSubtaskId) {
+      setAutofocusSubtaskId(nextSubtaskId);
+    }
+    return nextSubtaskId;
+  }
+
+  function markConnectorsSettling() {
+    setConnectorsSettling(true);
+  }
+
+  function markConnectorsSettled() {
+    window.requestAnimationFrame(() => setConnectorsSettling(false));
+  }
+
+  function handleToggleTaskExpand(taskId: string) {
+    markConnectorsSettling();
+    setExpandedTaskIds((current) =>
+      current.includes(taskId)
+        ? current.filter((currentTaskId) => currentTaskId !== taskId)
+        : [...current, taskId],
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -353,88 +732,229 @@ export default function AgentPlan({
           </div>
         ) : (
           <LayoutGroup>
-            <ul className="space-y-1">
-              {tasks.map((task) => {
-                const expanded = expandedTaskIds.includes(task.id);
-                const isDone = isClosedStatus(task.status);
-
-                return (
-                  <motion.li
-                    animate={{ opacity: 1, y: 0 }}
-                    className="overflow-visible"
-                    initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 6 }}
-                    key={task.id}
-                    layout
-                    transition={{ duration: 0.18 }}
+            {selectedTaskIds.length > 0 ? (
+              <div className="sticky top-2 z-20 mb-4 flex flex-wrap items-center gap-3 rounded-[1.25rem] border border-[#ddd6fb] bg-[#faf8ff]/95 px-4 py-3 shadow-[0_16px_40px_rgba(81,61,168,0.10)] backdrop-blur dark:border-white/10 dark:bg-[#1f1836]/95">
+                <span className="rounded-full bg-[#ede8ff] px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-[#6f57f6] dark:bg-[#2a2148] dark:text-[#cabfff]">
+                  {selectedTaskIds.length} selected
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className="rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                    onClick={onSelectAllVisible}
+                    type="button"
                   >
-                    <motion.div
-                      className="group rounded-[1rem] px-3 py-2.5 transition hover:bg-[#f8f6ff] dark:hover:bg-white/[0.03]"
-                      layout
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="relative mt-0.5 shrink-0">
-                          <button
-                            className="shrink-0"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setOpenTaskIconMenuId((current) => (current === task.id ? null : task.id));
-                            }}
-                            type="button"
-                          >
-                            <StatusIcon status={task.status} />
-                          </button>
-                          {openTaskIconMenuId === task.id ? (
-                            <div className="absolute left-full top-0 z-40 ml-3 min-w-[190px] rounded-[0.9rem] border border-[#ece8f8] bg-white p-2 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1a1230]">
-                              {STATUS_OPTIONS.map((status) => (
-                                <button
-                                  className="flex w-full justify-start px-1 py-1 text-left"
-                                  key={status}
-                                  onClick={() => {
-                                    onSetTaskStatus(task.id, status);
-                                    setOpenTaskIconMenuId(null);
-                                  }}
-                                  type="button"
-                                >
-                                  <StatusChip status={status} />
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
+                    Select all visible
+                  </button>
+                  <button
+                    className="rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                    onClick={onClearTaskSelection}
+                    type="button"
+                  >
+                    Clear selection
+                  </button>
+                  <button
+                    className="rounded-full bg-[#6f57f6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                    onClick={onOpenBatchEdit}
+                    type="button"
+                  >
+                    Edit selected
+                  </button>
+                  <button
+                    className="rounded-full bg-[#fff1f3] px-3 py-1.5 text-sm font-semibold text-[#d94e67] transition hover:bg-[#ffe4e9] dark:bg-[#44232f] dark:text-[#ff9eaf] dark:hover:bg-[#56303c]"
+                    onClick={onDeleteSelectedTasks}
+                    type="button"
+                  >
+                    Delete selected
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <div className="overflow-x-auto">
+              <div className="relative min-w-[75rem]" ref={taskRailRef}>
+                <svg
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute inset-0 z-0 overflow-visible transition-opacity duration-100 ${connectorsSettling ? "opacity-0" : "opacity-100"}`}
+                  height="100%"
+                  preserveAspectRatio="none"
+                  width="100%"
+                >
+                  {taskConnectors.map((connector) => (
+                    <line
+                      key={`${connector.x}-${connector.y1}-${connector.y2}`}
+                      stroke="#ddd6f9"
+                      strokeDasharray="8 8"
+                      strokeWidth="2"
+                      x1={connector.x}
+                      x2={connector.x}
+                      y1={connector.y1}
+                      y2={connector.y2}
+                    />
+                  ))}
+                </svg>
+              <table className="relative z-10 w-full table-fixed border-separate border-spacing-y-1 text-left">
+                <colgroup>
+                  <col className="w-24" />
+                  <col className="w-[24rem]" />
+                  <col className="w-32" />
+                  <col className="w-36" />
+                  <col className="w-28" />
+                  <col className="w-28" />
+                  <col className="w-28" />
+                  <col className="w-36" />
+                  <col className="w-44" />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-[#f0ebfb] dark:border-white/10">
+                    <th className="border-b border-[#f0ebfb] px-3 pb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa3bb] dark:border-white/10 dark:text-white/30">
+                      Status
+                    </th>
+                    {["Task", "Bucket", "Due", "Priority", "Energy", "Focus", "Repeat", "Signal"].map((label) => (
+                      <th
+                        className="border-b border-[#f0ebfb] px-3 pb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa3bb] dark:border-white/10 dark:text-white/30"
+                        key={label}
+                      >
+                        {label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map((task) => {
+                    const expanded = expandedTaskIds.includes(task.id);
+                    const isEditingTaskTitle = editingTaskId === task.id;
+                    const isDone = isClosedStatus(task.status);
+                    const bucketValue = getMetadataValue(task, "Bucket");
+                    const dueValue = getMetadataValue(task, "Due");
+                    const priorityValue = getMetadataValue(task, "Priority");
+                    const energyValue = getMetadataValue(task, "Energy");
+                    const focusValue = getMetadataValue(task, "Focus");
+                    const repeatValue = getMetadataValue(task, "Repeat");
 
-                        <div
-                          className="min-w-0 flex-1"
-                          onClick={() =>
-                            setExpandedTaskIds((current) =>
-                              current.includes(task.id)
-                                ? current.filter((taskId) => taskId !== task.id)
-                                : [...current, task.id],
-                            )}
+                    return (
+                      <Fragment key={task.id}>
+                        <motion.tr
+                          animate={{ opacity: 1, y: 0 }}
+                          className={`group cursor-pointer rounded-[1rem] transition ${
+                            selectedTaskIdSet.has(task.id)
+                              ? "bg-[#f6f2ff] dark:bg-[#261f43]"
+                              : "hover:bg-[#fbf9ff] dark:hover:bg-white/[0.03]"
+                          }`}
+                          initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 6 }}
+                          onClick={(event) => {
+                            onToggleTaskSelection(task.id, {
+                              additive: event.metaKey || event.ctrlKey,
+                              range: event.shiftKey,
+                            });
+                          }}
                           onKeyDown={(event) => {
+                            if (event.target !== event.currentTarget) {
+                              return;
+                            }
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
-                              setExpandedTaskIds((current) =>
-                                current.includes(task.id)
-                                  ? current.filter((taskId) => taskId !== task.id)
-                                  : [...current, task.id],
-                              );
+                              onToggleTaskSelection(task.id, {
+                                additive: event.metaKey || event.ctrlKey,
+                                range: event.shiftKey,
+                              });
                             }
                           }}
                           role="button"
                           tabIndex={0}
+                          transition={{ duration: 0.18 }}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
+                          <td className="relative px-3 py-3 align-top">
+                            <div className="flex w-10 justify-center" ref={(element) => {
+                              taskStatusAnchorRefs.current[task.id] = element;
+                            }}>
+                              <button
+                                className="shrink-0"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setOpenTaskIconMenuId((current) => (current === task.id ? null : task.id));
+                                }}
+                                type="button"
+                              >
+                                <StatusIcon status={task.status} />
+                              </button>
+                            </div>
+                            {openTaskIconMenuId === task.id ? (
+                              <div className="absolute left-full top-2 z-40 ml-3 min-w-[190px] rounded-[0.9rem] border border-[#ece8f8] bg-white p-2 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1a1230]">
+                                {STATUS_OPTIONS.map((status) => (
+                                  <button
+                                    className="flex w-full justify-start px-1 py-1 text-left"
+                                    key={status}
+                                    onClick={() => {
+                                      onSetTaskStatus(task.id, status);
+                                      setOpenTaskIconMenuId(null);
+                                    }}
+                                    type="button"
+                                  >
+                                    <StatusChip status={status} />
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                          </td>
+
+                          <td className="min-w-0 px-3 py-3 align-top">
+                            <div className="min-w-0 rounded-[1rem] transition group-hover:bg-[#f8f6ff] group-focus-within:bg-[#f8f6ff] dark:group-hover:bg-white/[0.03] dark:group-focus-within:bg-white/[0.03]">
                               <div className="flex items-center gap-2">
+                                {(task.subtasks.length > 0 || task.description) ? (
+                                  <button
+                                    aria-label={expanded ? `Collapse ${task.title}` : `Expand ${task.title}`}
+                                    className="shrink-0 text-[#8d97b0] transition hover:text-[#6f57f6] dark:text-white/40 dark:hover:text-[#cabfff]"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleToggleTaskExpand(task.id);
+                                    }}
+                                    type="button"
+                                  >
+                                    {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                  </button>
+                                ) : (
+                                  <span className="h-4 w-4 shrink-0" />
+                                )}
+                                {isEditingTaskTitle ? (
+                                  <input
+                                    autoFocus
+                                    className={`min-w-0 flex-1 rounded-md border border-[#ddd6f9] bg-white px-2 py-1 text-[15px] font-semibold outline-none dark:border-white/10 dark:bg-white/[0.04] ${isDone ? "text-[#8d97b0] line-through dark:text-white/45" : "text-[#1f2642] dark:text-white"}`}
+                                    onBlur={() => finishTaskRename(task, true)}
+                                    onChange={(event) => setTaskTitleDraft(event.target.value)}
+                                    onClick={(event) => event.stopPropagation()}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        finishTaskRename(task, true);
+                                      }
+                                      if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        finishTaskRename(task, false);
+                                      }
+                                    }}
+                                    value={taskTitleDraft}
+                                  />
+                                ) : (
+                                  <button
+                                    className={`min-w-0 max-w-full truncate text-left text-[15px] font-semibold transition hover:text-[#6f57f6] dark:hover:text-[#cabfff] ${isDone ? "text-[#8d97b0] line-through dark:text-white/45" : "text-[#1f2642] dark:text-white"}`}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      beginTaskRename(task.id, task.title);
+                                    }}
+                                    type="button"
+                                  >
+                                    {task.title}
+                                  </button>
+                                )}
                                 <button
-                                  className={`min-w-0 truncate text-left text-[15px] font-semibold transition hover:text-[#6f57f6] dark:hover:text-[#cabfff] ${isDone ? "text-[#8d97b0] line-through dark:text-white/45" : "text-[#1f2642] dark:text-white"}`}
+                                  aria-label={`Edit ${task.title}`}
+                                  className="shrink-0 text-[#8d97b0] transition hover:text-[#6f57f6] dark:text-white/40 dark:hover:text-[#cabfff]"
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     onEditTask(task.id);
                                   }}
                                   type="button"
                                 >
-                                  {task.title}
+                                  <PenLine className="h-4 w-4" />
                                 </button>
                               </div>
                               {task.description ? (
@@ -443,89 +963,78 @@ export default function AgentPlan({
                                 </p>
                               ) : null}
                             </div>
+                          </td>
 
-                            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                              {task.metaPills.map((pill) => (
-                                <span
-                                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${META_PILL_STYLES[pill.tone ?? "neutral"]}`}
-                                  key={`${task.id}-${pill.label}`}
-                                >
-                                  {pill.label}
-                                </span>
-                              ))}
-                              <div className="relative">
-                                <button
-                                  className="p-0 text-left"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    setOpenStatusTaskId((current) => (current === task.id ? null : task.id));
-                                  }}
-                                  type="button"
-                                >
-                                  <StatusChip status={task.status} />
-                                </button>
-                                {openStatusTaskId === task.id ? (
-                                  <div className="absolute right-0 top-7 z-30 min-w-[190px] rounded-[0.9rem] border border-[#ece8f8] bg-white p-2 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1a1230]">
-                                    {STATUS_OPTIONS.map((status) => (
-                                      <button
-                                        className="flex w-full justify-start px-1 py-1 text-left"
-                                        key={status}
-                                        onClick={() => {
-                                          onSetTaskStatus(task.id, status);
-                                          setOpenStatusTaskId(null);
-                                        }}
-                                        type="button"
-                                      >
-                                        <StatusChip status={status} />
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
+                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{bucketValue}</td>
+                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{dueValue}</td>
+                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{priorityValue}</td>
+                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{energyValue}</td>
+                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{focusValue}</td>
+                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{repeatValue}</td>
+                          <td className="px-3 py-3 align-top">
+                            <div className="flex min-h-[1.75rem] min-w-0 flex-wrap gap-2">
+                              {task.metaPills.length > 0 ? (
+                                task.metaPills.map((pill) => (
+                                  <span
+                                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${META_PILL_STYLES[pill.tone ?? "neutral"]}`}
+                                    key={`${task.id}-${pill.label}`}
+                                  >
+                                    {pill.label}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-sm text-[#59627e] dark:text-white/65">—</span>
+                              )}
                             </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <AnimatePresence initial={false}>
-                        {expanded ? (
-                          <motion.div
-                            animate={{ height: "auto", opacity: 1 }}
-                            className="overflow-visible"
-                            exit={{ height: 0, opacity: 0 }}
-                            initial={{ height: 0, opacity: 0 }}
-                            layout
-                            transition={{ duration: 0.22 }}
-                          >
-                            {task.subtasks.length > 0 || task.description ? (
-                              <div className="mt-3">
-                                {task.subtasks.length > 0 ? (
-                                  <div className="relative ml-[0.6rem] border-l-2 border-dashed border-[#ddd6f9] pl-4 dark:border-white/10">
-                                    <ul className="space-y-1">
-                                      {task.subtasks.map((subtask) => (
-                                        <SubtaskBranch
-                                          key={subtask.id}
-                                          onSetSubtaskStatus={onSetSubtaskStatus}
-                                          subtask={subtask}
-                                        />
-                                      ))}
-                                    </ul>
-                                  </div>
-                                ) : (
-                                  <div className="rounded-[1rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-4 py-4 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/50">
-                                    No subtasks yet.
-                                  </div>
-                                )}
-                              </div>
-                            ) : null}
-                          </motion.div>
-                        ) : null}
-                      </AnimatePresence>
-                    </motion.div>
-                  </motion.li>
-                );
-              })}
-            </ul>
+                          </td>
+                        </motion.tr>
+                        <AnimatePresence initial={false}>
+                          {expanded && (task.subtasks.length > 0 || task.description) ? (
+                            <motion.tr
+                              animate={{ opacity: 1, height: "auto" }}
+                              exit={{ opacity: 0, height: 0 }}
+                              initial={{ opacity: 0, height: 0 }}
+                              onAnimationComplete={markConnectorsSettled}
+                              transition={{ duration: 0.22 }}
+                            >
+                              <td className="px-3 pt-0 pb-2" colSpan={9}>
+                                <div>
+                                  {task.description ? (
+                                    <div className="mb-3 rounded-[1rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-4 py-4 text-sm text-[#59627e] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/65">
+                                      {task.description}
+                                    </div>
+                                  ) : null}
+                                  {task.subtasks.length > 0 ? (
+                                    <div className={SUBTASK_CHILD_LIST_PADDING_CLASS}>
+                                      <SubtaskList
+                                        autofocusSubtaskId={autofocusSubtaskId}
+                                        connectFromParent
+                                        connectorsSettling={connectorsSettling}
+                                        onAddChildSubtask={handleAutofocusSubtask}
+                                        onAutofocusHandled={() => setAutofocusSubtaskId(null)}
+                                        onConnectorSettled={markConnectorsSettled}
+                                        onRenameSubtask={onRenameSubtask}
+                                        onSetSubtaskStatus={onSetSubtaskStatus}
+                                        subtasks={task.subtasks}
+                                      />
+                                    </div>
+                                  ) : !task.description ? (
+                                    <div className="rounded-[1rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-4 py-4 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/50">
+                                      No subtasks yet.
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </motion.tr>
+                          ) : null}
+                        </AnimatePresence>
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+              </div>
+            </div>
           </LayoutGroup>
         )}
       </motion.div>
