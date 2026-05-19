@@ -1,7 +1,206 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { type FocusCategory, type FocusType, type FocusSubtype, type FocusLabelOptions } from "@/lib/types";
 import { CategoryIcon } from "./task-app";
 import { ModalShell } from "./modal-shell";
+
+const manualInputClassName = "h-12 rounded-full border border-[#ddd6fb] bg-white px-4 text-sm font-semibold text-[#1f2642] shadow-[0_10px_24px_rgba(111,87,246,0.08)] outline-none transition placeholder:text-[#a59cc7] focus:border-[#c8bcff] dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35 dark:focus:border-white/20";
+
+type ManualSelectOption = {
+  label: string;
+  value: string;
+};
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <span className="ui-field-label dark:text-white/40">{children}</span>;
+}
+
+function ManualSuggestionInput({
+  forceSelectedTone = false,
+  label,
+  onChange,
+  options,
+  placeholder,
+  value,
+}: {
+  forceSelectedTone?: boolean;
+  label: string;
+  onChange: (value: string) => void;
+  options: string[];
+  placeholder?: string;
+  value: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLLabelElement>(null);
+  const normalizedValue = value.trim().toLowerCase();
+  const hasExactMatch = options.some((option) => option.trim().toLowerCase() === normalizedValue);
+  const hasSelectedTone = forceSelectedTone || hasExactMatch;
+  const filteredOptions = options.filter((option) => {
+    const normalizedOption = option.trim().toLowerCase();
+    if (!normalizedValue) {
+      return true;
+    }
+    return normalizedOption.includes(normalizedValue);
+  }).slice(0, 8);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isOpen]);
+
+  return (
+    <label className="flex flex-col gap-2" ref={rootRef}>
+      <FieldLabel>{label}</FieldLabel>
+      <div className="relative">
+        <input
+          className={`w-full pr-11 px-4 py-2 ui-input-light ${manualInputClassName} ${hasSelectedTone ? "text-[#6f57f6] placeholder:text-[#8b70ff] dark:text-[#cabfff] dark:placeholder:text-[#cabfff]/70" : ""}`}
+          onChange={(event) => {
+            onChange(event.target.value);
+            setIsOpen(true);
+          }}
+          onFocus={() => setIsOpen(true)}
+          placeholder={placeholder}
+          type="text"
+          value={value}
+        />
+        <button
+          aria-expanded={isOpen}
+          className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center justify-center text-[#6f57f6] dark:text-[#cabfff]"
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
+          <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        </button>
+        {isOpen && filteredOptions.length > 0 ? (
+          <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 w-full overflow-hidden rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+            <div className="grid gap-1">
+              {filteredOptions.map((option) => {
+                const isSelected = option.trim().toLowerCase() === normalizedValue;
+                return (
+                  <button
+                    className={`flex w-full items-center rounded-[0.9rem] px-3 py-2 text-left text-sm font-semibold transition-colors ${isSelected
+                      ? "bg-[#f2edff] text-[#6f57f6] dark:bg-[#312555] dark:text-[#cabfff]"
+                      : "text-[#3a4260] hover:bg-[#f7f4ff] dark:text-white/80 dark:hover:bg-white/8"}`}
+                    key={option}
+                    onClick={() => {
+                      onChange(option);
+                      setIsOpen(false);
+                    }}
+                    type="button"
+                  >
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </label>
+  );
+}
+
+function ManualPillSelect({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  options: ManualSelectOption[];
+  value: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selectedLabel = options.find((option) => option.value === value)?.label ?? "";
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className="grid gap-2" ref={rootRef}>
+      <FieldLabel>{label}</FieldLabel>
+      <div className="relative">
+        <button
+          aria-expanded={isOpen}
+          className="flex h-12 w-full items-center justify-between rounded-full border border-[#ddd6fb] bg-white px-4 text-sm font-semibold text-[#1f2642] shadow-[0_10px_24px_rgba(111,87,246,0.08)] transition hover:border-[#c8bcff] dark:border-white/10 dark:bg-white/8 dark:text-white dark:hover:border-white/20"
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
+          <span className="truncate pr-3 text-left">{selectedLabel}</span>
+          <ChevronDown className={`h-4 w-4 shrink-0 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
+        </button>
+        {isOpen ? (
+          <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 min-w-full overflow-hidden rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+            <div className="grid gap-1">
+              {options.map((option) => {
+                const isSelected = option.value === value;
+                return (
+                  <button
+                    className={`flex w-full items-center rounded-[0.9rem] px-3 py-2 text-left text-sm font-semibold transition-colors ${isSelected
+                      ? "bg-[#f2edff] text-[#6f57f6] dark:bg-[#312555] dark:text-[#cabfff]"
+                      : "text-[#3a4260] hover:bg-[#f7f4ff] dark:text-white/80 dark:hover:bg-white/8"}`}
+                    key={option.value}
+                    onClick={() => {
+                      onChange(option.value);
+                      setIsOpen(false);
+                    }}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function todayLocalISO() {
   const date = new Date();
@@ -50,9 +249,9 @@ export function SessionFinishModal({
 
         <div className="mt-10 space-y-6">
           <label className="flex flex-col gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-40">Session Title</span>
+            <FieldLabel>Session Title</FieldLabel>
             <input
-              className="px-4 py-2 ui-input-light"
+              className={`px-4 py-2 ui-input-light ${manualInputClassName}`}
               list="finish-focus-titles"
               onChange={(e) => setTitle(e.target.value)}
               type="text"
@@ -65,9 +264,9 @@ export function SessionFinishModal({
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="flex flex-col gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider opacity-40">Focus Type</span>
+              <FieldLabel>Focus Type</FieldLabel>
               <input
-                className="px-4 py-2 ui-input-light"
+                className={`px-4 py-2 ui-input-light ${manualInputClassName}`}
                 list="finish-focus-types"
                 onChange={(e) => setFocusType(e.target.value as FocusType)}
                 type="text"
@@ -78,9 +277,9 @@ export function SessionFinishModal({
               </datalist>
             </label>
             <label className="flex flex-col gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype</span>
+              <FieldLabel>Subtype</FieldLabel>
               <input
-                className="px-4 py-2 ui-input-light"
+                className={`px-4 py-2 ui-input-light ${manualInputClassName}`}
                 list="finish-primary-subtypes"
                 onChange={(e) => setFocusSubtype(e.target.value as FocusSubtype)}
                 type="text"
@@ -93,9 +292,9 @@ export function SessionFinishModal({
           </div>
 
           <label className="flex flex-col gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype 2</span>
+            <FieldLabel>Subtype 2</FieldLabel>
             <input
-              className="px-4 py-2 ui-input-light"
+              className={`px-4 py-2 ui-input-light ${manualInputClassName}`}
               list="finish-secondary-subtypes"
               onChange={(e) => setFocusSubtype2(e.target.value)}
               placeholder="Optional"
@@ -108,9 +307,9 @@ export function SessionFinishModal({
           </label>
 
           <label className="flex flex-col gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-40">Session Notes</span>
+            <FieldLabel>Session Notes</FieldLabel>
             <textarea
-              className="min-h-[100px] resize-none px-4 py-3 ui-input-light"
+              className="min-h-[100px] resize-none rounded-[1.25rem] border border-[#ddd6fb] bg-white px-4 py-3 text-sm font-semibold text-[#1f2642] shadow-[0_10px_24px_rgba(111,87,246,0.08)] outline-none transition placeholder:text-[#a59cc7] focus:border-[#c8bcff] dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35 dark:focus:border-white/20"
               onChange={(e) => setNotes(e.target.value)}
               placeholder="What did you accomplish?"
               value={notes}
@@ -140,11 +339,13 @@ export function SessionFinishModal({
 
 export function ManualEntryModal({
   categories,
+  initialTitle,
   labelOptions,
   onSave,
   onClose,
 }: {
   categories: FocusCategory[];
+  initialTitle?: string;
   labelOptions: FocusLabelOptions;
   onSave: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<boolean>;
   onClose: () => void;
@@ -153,7 +354,7 @@ export function ManualEntryModal({
   const [hours, setHours] = useState("0");
   const [minutes, setMinutes] = useState("0");
   const [date, setDate] = useState(todayLocalISO());
-  const [title, setTitle] = useState(categories[0]?.title ?? "");
+  const [title, setTitle] = useState(initialTitle ?? categories[0]?.title ?? "");
   const [focusType, setFocusType] = useState<FocusType>(categories[0]?.focusType ?? "Work");
   const [focusSubtype, setFocusSubtype] = useState<FocusSubtype>(categories[0]?.focusSubtype ?? "");
   const [focusSubtype2, setFocusSubtype2] = useState(categories[0]?.focusSubtype2 ?? "");
@@ -197,97 +398,72 @@ export function ManualEntryModal({
 
   return (
     <ModalShell className="w-full max-w-2xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
-        <h2 className="text-center text-3xl font-black text-[var(--text-primary)]">Manual Entry</h2>
+        <h2 className="ui-display-font text-center text-3xl tracking-[0.08em] text-[#6f57f6] dark:text-[#cabfff]">Manual Entry</h2>
 
         <div className="mt-10 space-y-6">
-          <label className="flex flex-col gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-40">Saved Category</span>
-            <select
-              className="px-4 py-3 ui-input-light"
-              onChange={(e) => handleCategoryChange(e.target.value)}
-              value={catId}
-            >
-              <option value="__none__">No saved category</option>
-              {categories.map((category) => <option key={category.id} value={category.id}>{category.title}</option>)}
-            </select>
-          </label>
+          <ManualPillSelect
+            label="Saved Category"
+            onChange={handleCategoryChange}
+            options={[
+              { label: "No saved category", value: "__none__" },
+              ...categories.map((category) => ({ label: category.title, value: category.id })),
+            ]}
+            value={catId}
+          />
 
-          <label className="flex flex-col gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-40">Session Title</span>
-            <input
-              className="px-4 py-2 ui-input-light"
-              list="manual-focus-titles"
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Deep Work"
-              type="text"
-              value={title}
-            />
-            <datalist id="manual-focus-titles">
-              {labelOptions.titles.map((option) => <option key={option} value={option} />)}
-            </datalist>
-          </label>
+          <ManualSuggestionInput
+            label="Session Title"
+            onChange={setTitle}
+            options={labelOptions.titles}
+            placeholder="Deep Work"
+            value={title}
+          />
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,7rem)_minmax(0,7rem)_minmax(0,1fr)]">
             <label className="flex flex-col gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider opacity-40">Hours</span>
-              <input className="px-4 py-2 ui-input-light" min="0" onChange={(e) => setHours(e.target.value)} type="number" value={hours} />
+              <FieldLabel>Hours</FieldLabel>
+              <input className={`px-4 py-2 ui-input-light ${manualInputClassName}`} min="0" onChange={(e) => setHours(e.target.value)} type="number" value={hours} />
             </label>
             <label className="flex flex-col gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider opacity-40">Minutes</span>
-              <input className="px-4 py-2 ui-input-light" max="59" min="0" onChange={(e) => setMinutes(e.target.value)} type="number" value={minutes} />
+              <FieldLabel>Minutes</FieldLabel>
+              <input className={`px-4 py-2 ui-input-light ${manualInputClassName}`} max="59" min="0" onChange={(e) => setMinutes(e.target.value)} type="number" value={minutes} />
+            </label>
+            <label className="flex flex-col gap-2">
+              <FieldLabel>Date</FieldLabel>
+              <input className={`px-4 py-3 ui-input-light ${manualInputClassName}`} onChange={(e) => setDate(e.target.value)} type="date" value={date} />
             </label>
           </div>
 
-          <label className="flex flex-col gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-40">Date</span>
-            <input className="px-4 py-3 ui-input-light" onChange={(e) => setDate(e.target.value)} type="date" value={date} />
-          </label>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <input
-              className="px-4 py-2 ui-input-light"
-              list="manual-focus-types"
-              onChange={(e) => setFocusType(e.target.value as FocusType)}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <ManualSuggestionInput
+              label="Focus Type"
+              onChange={(value) => setFocusType(value as FocusType)}
+              options={labelOptions.types}
               placeholder="Work"
-              type="text"
               value={focusType}
             />
-            <datalist id="manual-focus-types">
-              {labelOptions.types.map((option) => <option key={option} value={option} />)}
-            </datalist>
 
-            <input
-              className="px-4 py-2 ui-input-light"
-              list="manual-primary-subtypes"
-              onChange={(e) => setFocusSubtype(e.target.value as FocusSubtype)}
+            <ManualSuggestionInput
+              label="Subtype"
+              onChange={(value) => setFocusSubtype(value as FocusSubtype)}
+              options={labelOptions.primarySubtypes}
               placeholder="Productive"
-              type="text"
               value={focusSubtype}
             />
-            <datalist id="manual-primary-subtypes">
-              {labelOptions.primarySubtypes.map((option) => <option key={option} value={option} />)}
-            </datalist>
+            <ManualSuggestionInput
+              forceSelectedTone
+              label="Subtype 2"
+              onChange={setFocusSubtype2}
+              options={labelOptions.secondarySubtypes}
+              placeholder="Optional"
+              value={focusSubtype2}
+            />
           </div>
 
           <label className="flex flex-col gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype 2</span>
-            <input
-              className="px-4 py-2 ui-input-light"
-              list="manual-secondary-subtypes"
-              onChange={(e) => setFocusSubtype2(e.target.value)}
-              placeholder="Optional"
-              type="text"
-              value={focusSubtype2}
-            />
-            <datalist id="manual-secondary-subtypes">
-              {labelOptions.secondarySubtypes.map((option) => <option key={option} value={option} />)}
-            </datalist>
-          </label>
-
-          <label className="flex flex-col gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-40">Notes</span>
+            <FieldLabel>Notes</FieldLabel>
             <textarea
-              className="min-h-[80px] resize-none px-4 py-3 ui-input-light"
+              className="min-h-[80px] resize-none rounded-[1.25rem] border border-[#ddd6fb] bg-white px-4 py-3 text-sm font-semibold text-[#1f2642] shadow-[0_10px_24px_rgba(111,87,246,0.08)] outline-none transition placeholder:text-[#a59cc7] focus:border-[#c8bcff] dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35 dark:focus:border-white/20"
               onChange={(e) => setNotes(e.target.value)}
               placeholder="What happened during this time?"
               value={notes}

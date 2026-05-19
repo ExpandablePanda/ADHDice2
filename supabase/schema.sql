@@ -20,6 +20,7 @@ create table public.adhdice_clean_tasks (
   due_on date,
   due_time time,
   estimated_minutes integer check (estimated_minutes is null or estimated_minutes > 0),
+  actual_seconds integer not null default 0 check (actual_seconds >= 0),
   tags text[] not null default '{}',
   external_link_label text,
   external_link_url text,
@@ -95,6 +96,31 @@ create table public.adhdice_task_focus_days (
   primary key (user_id, focus_date)
 );
 
+create table public.adhdice_task_lists (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  built_in_key text,
+  name text not null check (char_length(trim(name)) > 0),
+  list_type text not null default 'custom' check (list_type in ('system', 'smart', 'custom')),
+  membership_mode text not null default 'manual' check (membership_mode in ('manual', 'rules', 'hybrid')),
+  is_deletable boolean not null default true,
+  is_editable boolean not null default true,
+  is_visible boolean not null default true,
+  sort_order bigint not null default 0,
+  rules_json text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.adhdice_task_list_manual_memberships (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  task_id uuid not null references public.adhdice_clean_tasks(id) on delete cascade,
+  list_id text not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, task_id, list_id)
+);
+
 create table public.adhdice_task_history (
   id uuid primary key default gen_random_uuid(),
   task_id uuid not null references public.adhdice_clean_tasks(id) on delete cascade,
@@ -138,6 +164,10 @@ create index adhdice_focus_active_sessions_user_updated_idx
   on public.adhdice_focus_active_sessions (user_id, updated_at desc);
 create index adhdice_task_focus_days_user_date_idx
   on public.adhdice_task_focus_days (user_id, focus_date desc);
+create index adhdice_task_lists_user_sort_idx
+  on public.adhdice_task_lists (user_id, sort_order, created_at);
+create index adhdice_task_list_manual_memberships_user_task_idx
+  on public.adhdice_task_list_manual_memberships (user_id, task_id, list_id);
 create index adhdice_task_history_user_date_idx
   on public.adhdice_task_history (user_id, entry_date desc, created_at desc);
 create index adhdice_task_subtasks_task_sort_idx
@@ -151,6 +181,8 @@ alter table public.adhdice_focus_categories enable row level security;
 alter table public.adhdice_focus_sessions enable row level security;
 alter table public.adhdice_focus_active_sessions enable row level security;
 alter table public.adhdice_task_focus_days enable row level security;
+alter table public.adhdice_task_lists enable row level security;
+alter table public.adhdice_task_list_manual_memberships enable row level security;
 alter table public.adhdice_task_history enable row level security;
 alter table public.adhdice_task_subtasks enable row level security;
 alter table public.adhdice_task_grid_layouts enable row level security;
@@ -276,6 +308,48 @@ create policy "Users can delete their own task focus days"
   for delete
   using (auth.uid() = user_id);
 
+create policy "Users can read their own task lists"
+  on public.adhdice_task_lists
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can create their own task lists"
+  on public.adhdice_task_lists
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own task lists"
+  on public.adhdice_task_lists
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own task lists"
+  on public.adhdice_task_lists
+  for delete
+  using (auth.uid() = user_id);
+
+create policy "Users can read their own task list memberships"
+  on public.adhdice_task_list_manual_memberships
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can create their own task list memberships"
+  on public.adhdice_task_list_manual_memberships
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own task list memberships"
+  on public.adhdice_task_list_manual_memberships
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own task list memberships"
+  on public.adhdice_task_list_manual_memberships
+  for delete
+  using (auth.uid() = user_id);
+
 create policy "Users can read their own task history"
   on public.adhdice_task_history
   for select
@@ -374,6 +448,11 @@ create trigger adhdice_task_focus_days_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
+create trigger adhdice_task_lists_set_updated_at
+  before update on public.adhdice_task_lists
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
 create trigger adhdice_task_history_set_updated_at
   before update on public.adhdice_task_history
   for each row
@@ -394,6 +473,8 @@ alter publication supabase_realtime add table public.adhdice_focus_categories;
 alter publication supabase_realtime add table public.adhdice_focus_sessions;
 alter publication supabase_realtime add table public.adhdice_focus_active_sessions;
 alter publication supabase_realtime add table public.adhdice_task_focus_days;
+alter publication supabase_realtime add table public.adhdice_task_lists;
+alter publication supabase_realtime add table public.adhdice_task_list_manual_memberships;
 alter publication supabase_realtime add table public.adhdice_task_history;
 alter publication supabase_realtime add table public.adhdice_task_subtasks;
 alter publication supabase_realtime add table public.adhdice_task_grid_layouts;

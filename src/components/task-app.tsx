@@ -33,6 +33,7 @@ import {
   Headphones,
   Heart,
   House,
+  Keyboard,
   Layers,
   Lock,
   LucideIcon,
@@ -65,7 +66,7 @@ import { FocusPage } from "./focus-page";
 import { ManualEntryModal } from "./focus-modals";
 const GamesPage = lazy(() => import("./games-page").then((m) => ({ default: m.GamesPage })));
 const Dice3DCanvas = lazy(() => import("./dice-3d").then((m) => ({ default: m.Dice3DCanvas })));
-import AgentPlan, { type AgentPlanMetaPill, type AgentPlanStatus, type AgentPlanSubtaskItem, type AgentPlanTaskItem } from "@/components/ui/agent-plan";
+import AgentPlan, { type AgentPlanColumnId, type AgentPlanMetaPill, type AgentPlanStatus, type AgentPlanSubtaskItem, type AgentPlanTaskItem } from "@/components/ui/agent-plan";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
 import { useEconomy } from "@/hooks/useEconomy";
@@ -86,6 +87,21 @@ import {
 } from "@/lib/types";
 import { formatLocalDate, todayISO, withBasePath } from "@/lib/utils";
 import { runStorageMigrations } from "@/lib/storage-migrations";
+import {
+  buildManualMembershipMap,
+  buildTaskListCounts,
+  evaluateTaskListMemberships,
+  getBuiltInTaskLists,
+  isBuiltInTaskListId,
+  parseTaskListRules,
+  taskBelongsToList,
+  type TaskListDefinition,
+  type TaskListEvaluationContext,
+  type TaskListId,
+  type TaskListManualMembership,
+  type TaskListRule,
+  type TaskListRuleGroup,
+} from "@/lib/task-lists";
 import type {
   FocusCategory as DbFocusCategory,
   Note,
@@ -105,6 +121,9 @@ import type {
   TaskUpdate,
   TaskHistory as DbTaskHistory,
   TaskHistoryInsert,
+  TaskList as DbTaskList,
+  TaskListInsert,
+  TaskListManualMembership as DbTaskListManualMembership,
   VaultPrize,
   VaultPrizeInsert,
   VaultPrizeTier,
@@ -121,9 +140,8 @@ type TaskEditorMode = "create" | "edit";
 type ThemeMode = "light" | "dark";
 type FilterChipTone = "purple" | "orange" | "red" | "neutral";
 type TaskViewMode = "list" | "cards" | "matrix" | "grid";
-type TaskBucket = "inbox" | "today" | "focus" | "urgent" | "quick_wins" | "recurring" | "waiting" | "later" | "done" | "missed";
-type SavedTaskView = "all" | "today" | "focus" | "urgent" | "recurring" | "low_energy" | "inbox";
-type TaskRoutingBucket = "inbox" | "today" | "waiting" | "later";
+type TaskBucket = "all" | "inbox" | "today" | "focus" | "urgent" | "quick_wins" | "recurring" | "waiting" | "later" | "done" | "missed";
+type TaskRoutingBucket = "inbox" | "today" | "quick_wins" | "waiting" | "later";
 type MomentumView = "urgent" | "today" | "focus";
 type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
 type FocusPlannerStep = 0 | 1 | 2;
@@ -144,15 +162,27 @@ type TaskGridItem = {
   x: number;
   y: number;
 };
+type TaskKeyboardShortcut = {
+  action: string;
+  alternateKeys?: string[];
+  keys: string[];
+};
+type VerticalScrollIndicator = {
+  active: boolean;
+  height: number;
+  scrollable: boolean;
+  top: number;
+};
 type TaskUiState = {
   matchAny: boolean;
   quickFilters: TaskQuickFilter[];
-  savedView: SavedTaskView;
   search: string;
-  selectedBucket: TaskBucket;
+  selectedBucket: string;
   statusFilters: TaskStatus[];
+  uiStateVersion: number;
   view: TaskViewMode;
   energyFilters: TaskEnergy[];
+  visibleColumnsByView: Record<TaskViewMode, AgentPlanColumnId[]>;
 };
 type TaskEditorDraft = {
   title: string;
@@ -188,6 +218,33 @@ type BatchFieldMode = "clear" | "set" | "unchanged";
 type BatchBooleanChoice = "false" | "true" | "unchanged";
 type BatchRouteChoice = TaskRoutingBucket | "clear" | "focus" | "unchanged";
 type BatchTagsMode = "clear" | "replace" | "unchanged";
+type TaskListSettingsDraft = {
+  isCollapsed: boolean;
+  isVisible: boolean;
+  name: string;
+  rules: TaskListRuleGroup | null;
+};
+type TaskListRuleField = TaskListRule["field"];
+type TaskListRuleRowOperator =
+  | "is"
+  | "is_not"
+  | "is_today"
+  | "is_not_today"
+  | "is_overdue"
+  | "is_not_overdue"
+  | "is_empty"
+  | "is_future";
+type TaskListSaveInput = {
+  id: TaskListId;
+  isVisible: boolean;
+  name: string;
+  rules: ReturnType<typeof parseTaskListRules>;
+};
+type CustomTaskListInput = {
+  membershipMode: "manual" | "rules";
+  name: string;
+  rules: ReturnType<typeof parseTaskListRules>;
+};
 type BatchTaskEditDraft = {
   dueOn: string;
   dueOnMode: BatchFieldMode;
@@ -370,17 +427,51 @@ const TASK_FOCUS_STORAGE_KEY = "adhdice-task-focus";
 const DAILY_PLANNING_COLLAPSED_STORAGE_KEY = "adhdice-daily-planning-collapsed";
 const TASK_FILTERS_OPEN_STORAGE_KEY = "adhdice-task-filters-open";
 const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
+const TASK_UI_SCHEMA_VERSION = 2;
+const DEFAULT_LIST_VISIBLE_COLUMNS: AgentPlanColumnId[] = ["bucket", "due", "estimated_time", "actual_time", "priority", "energy", "repeat", "signal"];
+const DEFAULT_VISIBLE_COLUMNS_BY_VIEW: Record<TaskViewMode, AgentPlanColumnId[]> = {
+  list: [...DEFAULT_LIST_VISIBLE_COLUMNS],
+  cards: [...DEFAULT_LIST_VISIBLE_COLUMNS],
+  matrix: [...DEFAULT_LIST_VISIBLE_COLUMNS],
+  grid: [...DEFAULT_LIST_VISIBLE_COLUMNS],
+};
+const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
+  bucket: "Lists",
+  due: "Due",
+  energy: "Energy",
+  estimated_time: "Estimated Time",
+  actual_time: "Actual Time",
+  priority: "Priority",
+  repeat: "Repeat",
+  signal: "Indicators",
+};
+const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "due", "estimated_time", "actual_time", "priority", "energy", "repeat", "signal"];
+const TASK_KEYBOARD_SHORTCUTS: TaskKeyboardShortcut[] = [
+  { action: "Search tasks", keys: ["/"] },
+  { action: "New task", keys: ["N"], alternateKeys: ["A"] },
+  { action: "Open selected task", keys: ["E"] },
+  { action: "Complete selected task", keys: ["C"] },
+  { action: "Move selected to Today", keys: ["T"] },
+  { action: "Move selected to Focus", keys: ["F"] },
+  { action: "Open Focus Planner", keys: ["Shift", "F"] },
+  { action: "Move selected to Waiting", keys: ["W"] },
+  { action: "Move selected to Later", keys: ["L"] },
+  { action: "Move row selection", keys: ["Up", "Down"] },
+  { action: "Jump to first / last row", keys: ["Home", "End"] },
+];
 const DEFAULT_TASK_UI_STATE: TaskUiState = {
   matchAny: true,
   quickFilters: [],
-  savedView: "all",
   search: "",
   selectedBucket: "today",
   statusFilters: [],
+  uiStateVersion: TASK_UI_SCHEMA_VERSION,
   view: "list",
   energyFilters: [],
+  visibleColumnsByView: DEFAULT_VISIBLE_COLUMNS_BY_VIEW,
 };
 const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
+  all: "All",
   inbox: "Inbox",
   today: "Today",
   focus: "Focus",
@@ -393,6 +484,7 @@ const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
   missed: "Missed",
 };
 const TASK_BUCKET_DESCRIPTIONS: Record<TaskBucket, string> = {
+  all: "Everything that matches the current search and filters.",
   inbox: "Fresh captures and uncategorized tasks.",
   today: "Work realistically in play today.",
   focus: "The short list chosen for today.",
@@ -404,13 +496,57 @@ const TASK_BUCKET_DESCRIPTIONS: Record<TaskBucket, string> = {
   done: "Completed and closed loops.",
   missed: "Tasks that slipped and need a new decision.",
 };
-const SAVED_VIEW_BUCKET_MAP: Record<Exclude<SavedTaskView, "all">, TaskBucket> = {
-  today: "today",
-  focus: "focus",
-  urgent: "urgent",
-  recurring: "recurring",
-  low_energy: "quick_wins",
-  inbox: "inbox",
+const EMPTY_TASK_LIST_RULE_GROUP: TaskListRuleGroup = {
+  combinator: "all",
+  rules: [],
+};
+const TASK_LIST_RULE_FIELD_OPTIONS: Array<{ label: string; value: TaskListRuleField }> = [
+  { label: "Status", value: "status" },
+  { label: "Date Added", value: "date_added" },
+  { label: "Due", value: "due" },
+  { label: "Energy", value: "energy" },
+  { label: "Focus", value: "focus" },
+  { label: "Urgent", value: "is_urgent" },
+  { label: "Important", value: "is_important" },
+  { label: "Repeats", value: "repeat" },
+];
+const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: string; value: TaskListRuleRowOperator }>> = {
+  date_added: [
+    { label: "is today", value: "is_today" },
+    { label: "isn't today", value: "is_not_today" },
+  ],
+  due: [
+    { label: "is today", value: "is_today" },
+    { label: "isn't today", value: "is_not_today" },
+    { label: "is overdue", value: "is_overdue" },
+    { label: "isn't overdue", value: "is_not_overdue" },
+    { label: "has no date", value: "is_empty" },
+    { label: "has a later date", value: "is_future" },
+  ],
+  energy: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
+  ],
+  focus: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
+  ],
+  is_important: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
+  ],
+  is_urgent: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
+  ],
+  repeat: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
+  ],
+  status: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
+  ],
 };
 const DEFAULT_PROFILE: UserProfile = {
   avatarSrc: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80",
@@ -532,6 +668,8 @@ export function TaskApp() {
   } = useFocus(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent);
   const [taskUiState, setTaskUiState] = useState<TaskUiState>(DEFAULT_TASK_UI_STATE);
   const [taskRouting, setTaskRouting] = useState<Record<string, TaskRoutingBucket>>({});
+  const [taskLists, setTaskLists] = useState<TaskListDefinition[]>([]);
+  const [taskListManualMemberships, setTaskListManualMemberships] = useState<TaskListManualMembership[]>([]);
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
   const [taskSubtasks, setTaskSubtasks] = useState<DbTaskSubtask[]>([]);
@@ -550,6 +688,11 @@ export function TaskApp() {
   const profile = useProfileStore();
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [isTaskFiltersOpen, setIsTaskFiltersOpen] = useState(false);
+  const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
+  const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
+  const [isTaskListSettingsOpen, setIsTaskListSettingsOpen] = useState(false);
+  const [isImportWidgetMenuOpen, setIsImportWidgetMenuOpen] = useState(false);
+  const [draggedListColumnId, setDraggedListColumnId] = useState<AgentPlanColumnId | null>(null);
   const [isTaskEditorOpen, setIsTaskEditorOpen] = useState(false);
   const [taskEditorMode, setTaskEditorMode] = useState<TaskEditorMode>("create");
   const [taskEditorTaskId, setTaskEditorTaskId] = useState<string | null>(null);
@@ -559,6 +702,7 @@ export function TaskApp() {
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
   const [pendingTaskEditorRestore, setPendingTaskEditorRestore] = useState<PersistedTaskEditorUiState | null>(null);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
+  const [taskActualTimeEntryTaskId, setTaskActualTimeEntryTaskId] = useState<string | null>(null);
   const gridColumns = useResponsiveTaskGridColumns();
   const [dayStartTime, setDayStartTime] = useState<string>(() => {
     if (typeof window === "undefined") return "06:00";
@@ -574,6 +718,8 @@ export function TaskApp() {
       ? (window.localStorage.getItem(DAY_RESET_STORAGE_KEY) ?? "")
       : "",
   );
+  const listColumnMenuRef = useRef<HTMLDivElement | null>(null);
+  const keyboardShortcutsMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!supabase) {
@@ -667,7 +813,7 @@ export function TaskApp() {
   }, [supabase]);
 
   useEffect(() => {
-    if (!message || message.tone !== "good" || session?.user) {
+    if (!message || message.tone !== "good") {
       return;
     }
 
@@ -676,7 +822,7 @@ export function TaskApp() {
     }, 3000);
 
     return () => window.clearTimeout(timeoutId);
-  }, [message, session?.user]);
+  }, [message]);
 
   useEffect(() => {
     if (!supabase || !session?.user) {
@@ -693,7 +839,7 @@ export function TaskApp() {
         setIsWorkspaceLoading(true);
       }
 
-      const [taskResult, taskSubtasksResult, taskHistoryResult, profileResult, categoryResult, activeResult, historyResult, focusDayResult, gridLayoutResult] = await Promise.all([
+      const [taskResult, taskSubtasksResult, taskHistoryResult, profileResult, categoryResult, activeResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult] = await Promise.all([
         client
           .from("adhdice_clean_tasks")
           .select("*")
@@ -742,6 +888,17 @@ export function TaskApp() {
           .eq("user_id", userId)
           .order("focus_date", { ascending: false }),
         client
+          .from("adhdice_task_lists")
+          .select("*")
+          .eq("user_id", userId)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true }),
+        client
+          .from("adhdice_task_list_manual_memberships")
+          .select("*")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: true }),
+        client
           .from("adhdice_task_grid_layouts")
           .select("*")
           .eq("user_id", userId)
@@ -761,6 +918,8 @@ export function TaskApp() {
         activeResult.error,
         historyResult.error,
         focusDayResult.error,
+        taskListsResult.error && !isMissingTaskListsTableError(taskListsResult.error.message) ? taskListsResult.error : null,
+        manualMembershipResult.error && !isMissingTaskListManualMembershipsTableError(manualMembershipResult.error.message) ? manualMembershipResult.error : null,
         gridLayoutResult.error,
       ].filter(Boolean);
 
@@ -774,6 +933,12 @@ export function TaskApp() {
       let nextActiveSessions = mapActiveSessions(activeResult.data ?? []);
       let nextFocusHistory = mergeStoredFocusHistory((historyResult.data ?? []).map(mapFocusSessionRow));
       let nextFocusedTaskIdsByDate = mapTaskFocusDayRows(focusDayResult.data ?? [], taskResult.data ?? []);
+      const nextTaskLists = (taskListsResult.error && isMissingTaskListsTableError(taskListsResult.error.message))
+        ? []
+        : (taskListsResult.data ?? []).map(mapTaskListRow).filter((list): list is TaskListDefinition => list !== null);
+      const nextTaskListManualMemberships = (manualMembershipResult.error && isMissingTaskListManualMembershipsTableError(manualMembershipResult.error.message))
+        ? []
+        : (manualMembershipResult.data ?? []).map(mapTaskListManualMembershipRow);
       const nextTaskGridLayout = resolveTaskGridLayout(gridLayoutResult.data);
       const nextTaskHistory = (taskHistoryResult.data ?? []).map(mapTaskHistoryRow);
       const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
@@ -843,6 +1008,8 @@ export function TaskApp() {
       setActiveSessions(nextActiveSessions);
       setFocusHistory(nextFocusHistory);
       setFocusedTaskIdsByDate(nextFocusedTaskIdsByDate);
+      setTaskLists(nextTaskLists);
+      setTaskListManualMemberships(nextTaskListManualMemberships);
       setTaskHistory(nextTaskHistory);
       setTaskSubtasks(nextTaskSubtasks);
       setTaskGridLayout(nextTaskGridLayout);
@@ -1155,6 +1322,13 @@ export function TaskApp() {
       return;
     }
 
+    const primarySelectedTaskId = selectedListTaskIds.includes(lastSelectedListTaskId ?? "")
+      ? lastSelectedListTaskId
+      : selectedListTaskIds[0] ?? null;
+    const primarySelectedTask = primarySelectedTaskId
+      ? tasks.find((task) => task.id === primarySelectedTaskId) ?? null
+      : null;
+
     const isTextInput = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) {
         return false;
@@ -1174,21 +1348,96 @@ export function TaskApp() {
         return;
       }
 
-      if (event.key.toLowerCase() === "a") {
+      if (event.key.toLowerCase() === "a" || event.key.toLowerCase() === "n") {
         event.preventDefault();
         openNewTaskEditor();
         return;
       }
 
-      if (event.key.toLowerCase() === "f") {
+      if (event.key === "F") {
         event.preventDefault();
         openFocusPlanner();
+        return;
+      }
+
+      if (!primarySelectedTask) {
+        return;
+      }
+
+      if (event.key.toLowerCase() === "e") {
+        event.preventDefault();
+        openEditTaskEditor(primarySelectedTask);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        void updateTask(primarySelectedTask.id, {
+          completed_at: primarySelectedTask.status === "done" ? null : new Date().toISOString(),
+          status: primarySelectedTask.status === "done" ? "pending" : "done",
+        });
+        return;
+      }
+
+      if (event.key.toLowerCase() === "t") {
+        event.preventDefault();
+        planTasksForToday([primarySelectedTask.id]);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        focusTask(primarySelectedTask.id);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "w") {
+        event.preventDefault();
+        sendTaskToWaiting(primarySelectedTask.id);
+        return;
+      }
+
+      if (event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        deferTask(primarySelectedTask.id);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activePage]);
+  }, [activePage, lastSelectedListTaskId, selectedListTaskIds, tasks]);
+
+  useEffect(() => {
+    if (!isListColumnMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest("[data-list-columns-menu]") && !listColumnMenuRef.current?.contains(event.target as Node)) {
+        setIsListColumnMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isListColumnMenuOpen]);
+
+  useEffect(() => {
+    if (!isKeyboardShortcutsMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest("[data-keyboard-shortcuts-menu]") && !keyboardShortcutsMenuRef.current?.contains(event.target as Node)) {
+        setIsKeyboardShortcutsMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isKeyboardShortcutsMenuOpen]);
 
   useEffect(() => {
     if (selectedGridWidgetId && !taskGridLayout.some((item) => item.id === selectedGridWidgetId)) {
@@ -1328,6 +1577,36 @@ export function TaskApp() {
   const todayKey = getTodayKey();
   const focusedTaskIds = focusedTaskIdsByDate[todayKey] ?? [];
   const focusedTaskIdSet = useMemo(() => new Set(focusedTaskIds), [focusedTaskIds]);
+  const builtInTaskLists = useMemo(() => getBuiltInTaskLists(), []);
+  const availableTaskLists = useMemo(() => {
+    const byId = new Map<TaskListId, TaskListDefinition>();
+    for (const list of builtInTaskLists) {
+      byId.set(list.id, list);
+    }
+    for (const list of taskLists) {
+      byId.set(list.id, list);
+    }
+    return Array.from(byId.values()).sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
+  }, [builtInTaskLists, taskLists]);
+  const compatibilityRoutingMemberships = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(taskRouting).map(([taskId, route]) => [taskId, route as TaskListId]),
+      ) as Record<string, TaskListId | undefined>,
+    [taskRouting],
+  );
+  const manualMembershipsByTaskId = useMemo(
+    () => buildManualMembershipMap(taskListManualMemberships, compatibilityRoutingMemberships),
+    [compatibilityRoutingMemberships, taskListManualMemberships],
+  );
+  const taskListEvaluationContext = useMemo<TaskListEvaluationContext>(() => ({
+    focusedTaskIds: focusedTaskIdSet,
+    isDueToday,
+    isLater,
+    isOpen: isTaskOpen,
+    isOverdue,
+    manualMembershipsByTaskId,
+  }), [focusedTaskIdSet, manualMembershipsByTaskId]);
   const deferredSearchQuery = useDeferredValue(taskUiState.search.trim().toLowerCase());
   const bucketContext = useMemo(() => ({
     focusedTaskIds: focusedTaskIdSet,
@@ -1385,11 +1664,21 @@ export function TaskApp() {
     return matchesQuickFilters && matchesStatus && matchesEnergy;
   });
   const filteredTasksSorted = sortTasksForCockpit(filteredTasks, bucketContext);
-  const visibleBucketCounts = buildTaskBucketCounts(filteredTasksSorted, bucketContext);
-  const filteredTasksByBucket = taskUiState.selectedBucket === "done"
-    ? filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "done")
-    : filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === taskUiState.selectedBucket);
-  const filteredTasksByView = applySavedTaskView(filteredTasksByBucket, taskUiState.savedView, bucketContext);
+  const taskListMembershipsByTaskId = useMemo(
+    () =>
+      filteredTasksSorted.reduce<Record<string, ReturnType<typeof evaluateTaskListMemberships>>>((accumulator, task) => {
+        accumulator[task.id] = evaluateTaskListMemberships(task, availableTaskLists, taskListEvaluationContext);
+        return accumulator;
+      }, {}),
+    [availableTaskLists, filteredTasksSorted, taskListEvaluationContext],
+  );
+  const visibleListCounts = useMemo(
+    () => buildTaskListCounts(filteredTasksSorted, availableTaskLists, taskListEvaluationContext),
+    [availableTaskLists, filteredTasksSorted, taskListEvaluationContext],
+  );
+  const filteredTasksByBucket = taskUiState.selectedBucket === "all"
+    ? filteredTasksSorted
+    : filteredTasksSorted.filter((task) => taskBelongsToList(task, taskUiState.selectedBucket, availableTaskLists, taskListEvaluationContext));
   const filteredActiveTasks = filteredTasksSorted.filter(isTaskOpen);
   const filteredDoneTasks = filteredTasksSorted.filter(isTaskFinished);
   const filteredOverdueTasks = filteredActiveTasks.filter((task) => isOverdue(task.due_on));
@@ -1397,13 +1686,13 @@ export function TaskApp() {
   const filteredFocusTasks = filteredActiveTasks.filter((task) => focusedTaskIds.includes(task.id));
   const filteredLowEnergyTasks = filteredActiveTasks.filter((task) => task.energy === "low").slice(0, 4);
   const filteredTodayTasks = filteredActiveTasks.filter((task) => isDueToday(task.due_on));
-  const selectedBucketTasks = filteredTasksByView;
-  const inboxTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "inbox");
-  const waitingTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "waiting");
-  const recurringTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "recurring");
-  const laterTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "later");
-  const missedTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "missed");
-  const quickWinTasks = filteredTasksSorted.filter((task) => getTaskBucket(task, bucketContext) === "quick_wins");
+  const selectedBucketTasks = filteredTasksByBucket;
+  const inboxTasks = filteredTasksSorted.filter((task) => taskListMembershipsByTaskId[task.id]?.some((membership) => membership.id === "inbox"));
+  const waitingTasks = filteredTasksSorted.filter((task) => taskListMembershipsByTaskId[task.id]?.some((membership) => membership.id === "waiting"));
+  const recurringTasks = filteredTasksSorted.filter((task) => taskListMembershipsByTaskId[task.id]?.some((membership) => membership.id === "recurring"));
+  const laterTasks = filteredTasksSorted.filter((task) => taskListMembershipsByTaskId[task.id]?.some((membership) => membership.id === "later"));
+  const missedTasks = filteredTasksSorted.filter((task) => taskListMembershipsByTaskId[task.id]?.some((membership) => membership.id === "missed"));
+  const quickWinTasks = filteredTasksSorted.filter((task) => taskListMembershipsByTaskId[task.id]?.some((membership) => membership.id === "quick_wins"));
   const planningCandidates = sortTasksForCockpit([
     ...inboxTasks,
     ...laterTasks.filter((task) => !inboxTasks.some((inboxTask) => inboxTask.id === task.id)).slice(0, 8),
@@ -1413,10 +1702,14 @@ export function TaskApp() {
     .slice(0, 5);
   const focusPlannerTasks = sortTasksForCockpit(
     filteredTasksSorted.filter((task) => {
-      const bucket = getTaskBucket(task, bucketContext);
-      return isTaskOpen(task) && (bucket === "today" || bucket === "urgent" || bucket === "quick_wins" || bucket === "focus");
+      const memberships = taskListMembershipsByTaskId[task.id] ?? [];
+      return isTaskOpen(task) && memberships.some((membership) => membership.id === "today" || membership.id === "urgent" || membership.id === "quick_wins" || membership.id === "focus");
     }),
     bucketContext,
+  );
+  const taskFocusLabelOptions = useMemo(
+    () => buildFocusLabelOptions(focusCategories, focusHistory),
+    [focusCategories, focusHistory],
   );
   const hasFocusedToday = focusedTaskIds.length > 0;
   const momentumPercent = activeTasks.length === 0
@@ -1434,19 +1727,45 @@ export function TaskApp() {
   const selectedTaskForEditor = taskEditorTaskId
     ? tasks.find((task) => task.id === taskEditorTaskId) ?? null
     : null;
-  const listViewBucketOptions = (Object.keys(TASK_BUCKET_LABELS) as TaskBucket[]).map((bucket) => ({
-    count: visibleBucketCounts[bucket],
-    label: TASK_BUCKET_LABELS[bucket],
-    value: bucket,
-  }));
+  const taskForActualTimeEntry = taskActualTimeEntryTaskId
+    ? tasks.find((task) => task.id === taskActualTimeEntryTaskId) ?? null
+    : null;
+  const listVisibleColumns = taskUiState.visibleColumnsByView.list;
+  const listColumnPickerColumns = [
+    ...listVisibleColumns,
+    ...LIST_COLUMN_PICKER_ORDER.filter((columnId) => !listVisibleColumns.includes(columnId)),
+  ].filter((columnId, index, columns) => columns.indexOf(columnId) === index);
+  const visibleTaskLists = availableTaskLists.filter((list) => list.isVisible && (list.id !== "missed" || (visibleListCounts[list.id] ?? 0) > 0));
+  const listRailOptions = [
+    {
+      count: filteredTasksSorted.length,
+      description: "Everything that matches the current search and filters.",
+      id: "all",
+      label: "All",
+    },
+    ...visibleTaskLists.map((list) => ({
+      count: visibleListCounts[list.id] ?? 0,
+      description: list.description,
+      id: list.id,
+      label: list.name,
+    })),
+  ];
+  const manualListOptions = availableTaskLists
+    .filter((list) => list.membershipMode !== "rules" || list.id === "waiting")
+    .map((list) => ({
+      count: visibleListCounts[list.id] ?? 0,
+      label: list.name,
+      value: list.id,
+    }));
   const listViewTasks: AgentPlanTaskItem[] = selectedBucketTasks.map((task) => buildAgentPlanTaskItem(task, {
     bucketContext,
+    listDefinitions: availableTaskLists,
+    listMemberships: taskListMembershipsByTaskId[task.id] ?? [],
     focusedTaskIdSet,
     subtasks: taskSubtasksByTaskId[task.id] ?? [],
   }));
   const visibleListTaskIds = listViewTasks.map((task) => task.id);
   const selectedListTasks = tasks.filter((task) => selectedListTaskIds.includes(task.id));
-
   useEffect(() => {
     setSelectedListTaskIds([]);
     setLastSelectedListTaskId(null);
@@ -1454,7 +1773,6 @@ export function TaskApp() {
     taskUiState.energyFilters,
     taskUiState.matchAny,
     taskUiState.quickFilters,
-    taskUiState.savedView,
     taskUiState.search,
     taskUiState.selectedBucket,
     taskUiState.statusFilters,
@@ -1538,6 +1856,11 @@ export function TaskApp() {
     setLastSelectedListTaskId(visibleListTaskIds.at(-1) ?? null);
   }
 
+  function selectSingleListTask(taskId: string) {
+    setSelectedListTaskIds([taskId]);
+    setLastSelectedListTaskId(taskId);
+  }
+
   function toggleListTaskSelection(taskId: string, options?: { additive?: boolean; range?: boolean }) {
     setSelectedListTaskIds((current) => {
       if (options?.range && lastSelectedListTaskId && visibleListTaskIds.includes(lastSelectedListTaskId)) {
@@ -1548,6 +1871,10 @@ export function TaskApp() {
           const rangeIds = visibleListTaskIds.slice(from, to + 1);
           return Array.from(new Set([...current, ...rangeIds]));
         }
+      }
+
+      if (!options?.additive) {
+        return [taskId];
       }
 
       if (current.includes(taskId)) {
@@ -1668,12 +1995,56 @@ export function TaskApp() {
     setShowFocusPlanner(true);
   }
 
-  function setSelectedBucket(bucket: TaskBucket) {
+  function setSelectedBucket(bucket: string) {
     setTaskUiState((prev) => ({
       ...prev,
-      savedView: "all",
       selectedBucket: bucket,
     }));
+  }
+
+  function toggleListColumn(columnId: AgentPlanColumnId) {
+    setTaskUiState((prev) => {
+      const currentColumns = prev.visibleColumnsByView.list;
+      const nextColumns = currentColumns.includes(columnId)
+        ? currentColumns.filter((column) => column !== columnId)
+        : [...currentColumns, columnId];
+
+      return {
+        ...prev,
+        visibleColumnsByView: {
+          ...prev.visibleColumnsByView,
+          list: nextColumns,
+        },
+      };
+    });
+  }
+
+  function reorderListColumns(columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) {
+    if (columnId === targetColumnId) {
+      return;
+    }
+
+    setTaskUiState((prev) => {
+      const currentColumns = prev.visibleColumnsByView.list;
+      const nextColumns = [...currentColumns];
+      const fromIndex = nextColumns.indexOf(columnId);
+      const toIndex = nextColumns.indexOf(targetColumnId);
+
+      if (fromIndex === -1 || toIndex === -1) {
+        return prev;
+      }
+
+      const [moved] = nextColumns.splice(fromIndex, 1);
+      nextColumns.splice(toIndex, 0, moved);
+
+      return {
+        ...prev,
+        visibleColumnsByView: {
+          ...prev.visibleColumnsByView,
+          list: nextColumns,
+        },
+      };
+    });
   }
 
   function routeTask(taskId: string, bucket: TaskRoutingBucket | null) {
@@ -1688,6 +2059,222 @@ export function TaskApp() {
         [taskId]: bucket,
       };
     });
+  }
+
+  async function setTaskManualListMembership(taskId: string, listId: TaskListId, included: boolean) {
+    const isCompatibilityList = listId === "today" || listId === "later" || listId === "quick_wins" || listId === "waiting";
+
+    setTaskListManualMemberships((current) => {
+      const alreadyIncluded = current.some((membership) => membership.task_id === taskId && membership.list_id === listId);
+      if (included) {
+        if (alreadyIncluded) {
+          return current;
+        }
+        return [
+          ...current,
+          {
+            created_at: new Date().toISOString(),
+            id: `temp:${taskId}:${listId}`,
+            list_id: listId,
+            task_id: taskId,
+            user_id: currentUser.id,
+          },
+        ];
+      }
+
+      return current.filter((membership) => !(membership.task_id === taskId && membership.list_id === listId));
+    });
+
+    if (isCompatibilityList) {
+      routeTask(taskId, included ? listId : null);
+    }
+
+    const existingMembership = taskListManualMemberships.find((membership) => membership.task_id === taskId && membership.list_id === listId);
+    if (included && existingMembership && !existingMembership.id.startsWith("temp:")) {
+      return;
+    }
+
+    if (!included && !existingMembership) {
+      return;
+    }
+
+    if (included) {
+      const { data, error } = await client
+        .from("adhdice_task_list_manual_memberships")
+        .insert({
+          list_id: listId,
+          task_id: taskId,
+          user_id: currentUser.id,
+        })
+        .select("*")
+        .single();
+
+      if (error) {
+        if (isMissingTaskListManualMembershipsTableError(error.message)) {
+          if (!isCompatibilityList) {
+            setMessage({ tone: "warn", text: "Task list memberships are not migrated yet, so custom/manual list placement will only last for this session." });
+          }
+          return;
+        }
+        setMessage({ tone: "warn", text: error.message });
+        return;
+      }
+
+      if (data) {
+        const mapped = mapTaskListManualMembershipRow(data);
+        setTaskListManualMemberships((current) => [
+          ...current.filter((membership) => !(membership.task_id === taskId && membership.list_id === listId)),
+          mapped,
+        ]);
+      }
+
+      return;
+    }
+
+    const membershipId = existingMembership?.id ?? null;
+    if (membershipId && !membershipId.startsWith("temp:")) {
+      const { error } = await client
+        .from("adhdice_task_list_manual_memberships")
+        .delete()
+        .eq("id", membershipId)
+        .eq("user_id", currentUser.id);
+
+      if (error && !isMissingTaskListManualMembershipsTableError(error.message)) {
+        setMessage({ tone: "warn", text: error.message });
+      }
+    }
+  }
+
+  async function toggleTaskManualListMembership(taskId: string, listId: string) {
+    const typedListId = listId as TaskListId;
+    const currentlyIncluded = (manualMembershipsByTaskId[taskId] ?? []).includes(typedListId);
+    await setTaskManualListMembership(taskId, typedListId, !currentlyIncluded);
+  }
+
+  async function saveTaskListDefinition(input: TaskListSaveInput) {
+    const existingOverride = taskLists.find((list) => list.id === input.id) ?? null;
+    const builtInList = builtInTaskLists.find((list) => list.id === input.id) ?? null;
+    const baseline = existingOverride ?? builtInList;
+    if (!baseline) {
+      setMessage({ tone: "warn", text: "That list could not be found." });
+      return false;
+    }
+
+    const nextDefinition: TaskListDefinition = {
+      ...baseline,
+      isVisible: input.isVisible,
+      name: baseline.type === "custom" ? input.name : baseline.name,
+      rules: baseline.membershipMode === "manual" ? null : input.rules,
+    };
+
+    setTaskLists((current) => [
+      ...current.filter((list) => list.id !== nextDefinition.id),
+      nextDefinition,
+    ]);
+
+    const payload: TaskListInsert = {
+      built_in_key: isBuiltInTaskListId(nextDefinition.id) ? nextDefinition.id : null,
+      id: nextDefinition.id,
+      is_deletable: nextDefinition.isDeletable,
+      is_editable: nextDefinition.isEditable,
+      is_visible: nextDefinition.isVisible,
+      list_type: nextDefinition.type,
+      membership_mode: nextDefinition.membershipMode,
+      name: nextDefinition.name,
+      rules_json: nextDefinition.rules ? JSON.stringify(nextDefinition.rules) : null,
+      sort_order: nextDefinition.sortOrder,
+      user_id: currentUser.id,
+    };
+
+    const { data, error } = await client
+      .from("adhdice_task_lists")
+      .upsert(payload, { onConflict: "id" })
+      .select("*")
+      .single();
+
+    if (error) {
+      if (isMissingTaskListsTableError(error.message)) {
+        setMessage({ tone: "warn", text: "Task list settings are not migrated yet, so these changes will only last for this session." });
+        return true;
+      }
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if (data) {
+      const mapped = mapTaskListRow(data);
+      if (mapped) {
+        setTaskLists((current) => [
+          ...current.filter((list) => list.id !== mapped.id),
+          mapped,
+        ]);
+      }
+    }
+
+    setMessage({ tone: "good", text: `${nextDefinition.name} settings saved.` });
+    return true;
+  }
+
+  async function createCustomTaskList(input: CustomTaskListInput) {
+    const nextId = `list:${crypto.randomUUID()}` as TaskListId;
+    const nextDefinition: TaskListDefinition = {
+      description: input.membershipMode === "manual"
+        ? "Manual custom list."
+        : "Custom smart list driven by rules.",
+      id: nextId,
+      isDeletable: true,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: input.membershipMode,
+      name: input.name,
+      rules: input.membershipMode === "rules" ? input.rules : null,
+      sortOrder: availableTaskLists.length + taskLists.length + 1,
+      type: "custom",
+    };
+
+    setTaskLists((current) => [...current, nextDefinition]);
+
+    const payload: TaskListInsert = {
+      built_in_key: null,
+      id: nextDefinition.id,
+      is_deletable: true,
+      is_editable: true,
+      is_visible: true,
+      list_type: "custom",
+      membership_mode: nextDefinition.membershipMode,
+      name: nextDefinition.name,
+      rules_json: nextDefinition.rules ? JSON.stringify(nextDefinition.rules) : null,
+      sort_order: nextDefinition.sortOrder,
+      user_id: currentUser.id,
+    };
+
+    const { data, error } = await client
+      .from("adhdice_task_lists")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) {
+      if (isMissingTaskListsTableError(error.message)) {
+        setMessage({ tone: "warn", text: "Task lists are not migrated yet, so this custom list will only last for this session." });
+        return true;
+      }
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if (data) {
+      const mapped = mapTaskListRow(data);
+      if (mapped) {
+        setTaskLists((current) => [
+          ...current.filter((list) => list.id !== mapped.id),
+          mapped,
+        ]);
+      }
+    }
+
+    setMessage({ tone: "good", text: `${nextDefinition.name} created.` });
+    return true;
   }
 
   function selectTaskBucket(task: Task, bucket: TaskBucket) {
@@ -1719,6 +2306,7 @@ export function TaskApp() {
     const routeMap: Partial<Record<TaskBucket, TaskRoutingBucket>> = {
       inbox: "inbox",
       later: "later",
+      quick_wins: "quick_wins",
       today: "today",
       waiting: "waiting",
     };
@@ -1743,18 +2331,78 @@ export function TaskApp() {
       }
       return next;
     });
-    setTaskUiState((prev) => ({ ...prev, savedView: "today", selectedBucket: "today" }));
+    setTaskUiState((prev) => ({ ...prev, selectedBucket: "today" }));
     setMessage({ tone: "good", text: `${taskIds.length} task${taskIds.length === 1 ? "" : "s"} moved into Today.` });
+  }
+
+  function focusTask(taskId: string) {
+    void saveFocusSelection(Array.from(new Set([...focusedTaskIds, taskId])));
+    routeTask(taskId, "today");
+    setTaskUiState((prev) => ({ ...prev, selectedBucket: "focus" }));
+    setMessage({ tone: "good", text: "Moved into Focus so it stays visible in today’s plan." });
   }
 
   function sendTaskToWaiting(taskId: string) {
     routeTask(taskId, "waiting");
-    setMessage({ tone: "neutral", text: "Moved to Waiting so it stops crowding today." });
+    setMessage({ tone: "neutral", text: "Moved to Waiting. Use this for blocked work and handoffs." });
   }
 
   function deferTask(taskId: string) {
     routeTask(taskId, "later");
-    setMessage({ tone: "neutral", text: "Deferred to Later." });
+    setMessage({ tone: "neutral", text: "Moved to Later so it stays out of today’s lane." });
+  }
+
+  function setTaskDuePreset(taskId: string, preset: "next_week" | "none" | "today" | "tomorrow") {
+    const baseDate = new Date(`${todayISO()}T12:00:00`);
+    const nextDate = new Date(baseDate);
+    if (preset === "tomorrow") {
+      nextDate.setDate(baseDate.getDate() + 1);
+    } else if (preset === "next_week") {
+      nextDate.setDate(baseDate.getDate() + 7);
+    }
+
+    const nextDueOn = preset === "none"
+      ? null
+      : preset === "today"
+        ? todayISO()
+        : nextDate.toISOString().slice(0, 10);
+    void updateTask(taskId, { due_on: nextDueOn });
+  }
+
+  async function setTaskPriority(taskId: string, priority: "focus" | "important" | "none" | "urgent") {
+    const nextFocusedTaskIds = priority === "focus"
+      ? Array.from(new Set([...focusedTaskIds, taskId]))
+      : focusedTaskIds.filter((id) => id !== taskId);
+
+    await saveFocusSelection(nextFocusedTaskIds);
+    if (priority === "focus") {
+      routeTask(taskId, "today");
+    }
+
+    await updateTask(taskId, {
+      is_important: priority === "important",
+      is_urgent: priority === "urgent",
+    });
+  }
+
+  function setTaskEnergy(taskId: string, energy: TaskEnergy) {
+    void updateTask(taskId, { energy });
+  }
+
+  function setTaskRecurringPreset(taskId: string, preset: "daily" | "weekly" | "monthly") {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      return;
+    }
+
+    const anchorDate = task.due_on ? new Date(`${task.due_on}T12:00:00`) : new Date(`${todayISO()}T12:00:00`);
+    void updateTask(taskId, {
+      repeat_frequency: preset,
+      repeat_interval: 1,
+      repeat_days_of_week: preset === "weekly" ? [anchorDate.getDay()] : [],
+      repeat_day_of_month: preset === "monthly" ? anchorDate.getDate() : null,
+    });
+    setMessage({ tone: "good", text: `${task.title} now repeats ${preset}.` });
   }
 
   function scrollToTaskElement(elementId: string) {
@@ -1762,6 +2410,29 @@ export function TaskApp() {
       return;
     }
     document.getElementById(elementId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  async function openTaskImportPanel() {
+    if (taskUiState.view === "list") {
+      setIsImportWidgetMenuOpen(true);
+      return;
+    }
+
+    setTaskUiState((prev) => ({
+      ...prev,
+      view: "grid",
+    }));
+
+    const existingImportWidget = taskGridLayout.find((item) => item.type === "import") ?? null;
+    if (existingImportWidget) {
+      setSelectedGridWidgetId(existingImportWidget.id);
+    } else {
+      await handleAddGridWidget("import");
+    }
+
+    window.setTimeout(() => {
+      scrollToTaskElement("task-import-panel");
+    }, 80);
   }
 
   async function addTask(task: TaskDraft) {
@@ -1946,6 +2617,27 @@ export function TaskApp() {
 
     if (
       initialResult.error
+      && values.actual_seconds !== undefined
+      && isMissingTaskActualSecondsColumnError(initialResult.error.message)
+    ) {
+      const { actual_seconds: _actualSeconds, ...fallbackValues } = values;
+      const retryResult = await client
+        .from("adhdice_clean_tasks")
+        .update(fallbackValues)
+        .eq("id", taskId)
+        .select("*")
+        .single();
+
+      return {
+        data: retryResult.data,
+        error: retryResult.error,
+        usedEnergyFallback: false,
+        usedActualSecondsFallback: !retryResult.error,
+      };
+    }
+
+    if (
+      initialResult.error
       && values.energy === "none"
       && isMissingTaskEnergyNoneEnumError(initialResult.error.message)
     ) {
@@ -1960,6 +2652,7 @@ export function TaskApp() {
         data: retryResult.data,
         error: retryResult.error,
         usedEnergyFallback: !retryResult.error,
+        usedActualSecondsFallback: false,
       };
     }
 
@@ -1967,6 +2660,7 @@ export function TaskApp() {
       data: initialResult.data,
       error: initialResult.error,
       usedEnergyFallback: false,
+      usedActualSecondsFallback: false,
     };
   }
 
@@ -1979,7 +2673,7 @@ export function TaskApp() {
 
     if (isEditing && taskId) {
       const { id: _id, ...updateValues } = values;
-      const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(taskId, updateValues);
+      const { data, error, usedEnergyFallback, usedActualSecondsFallback } = await updateTaskRowWithLegacyEnergyFallback(taskId, updateValues);
 
       if (error) {
         setMessage({ tone: "warn", text: error.message });
@@ -1991,7 +2685,11 @@ export function TaskApp() {
         return false;
       }
 
-      setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? data : task)));
+      const nextData = usedActualSecondsFallback && typeof updateValues.actual_seconds === "number"
+        ? { ...data, actual_seconds: updateValues.actual_seconds }
+        : data;
+
+      setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
 
       const historySaved = await syncTaskHistoryEntry(taskId, data.status);
       if (!historySaved) {
@@ -2012,11 +2710,13 @@ export function TaskApp() {
         ? Array.from(new Set([...focusedTaskIds, taskId]))
         : focusedTaskIds.filter((id) => id !== taskId);
       await saveFocusSelection(nextFocusIds);
-      const usedAnyFallback = usedEnergyFallback || subtasksResult.usedNestedFallback;
+      const usedAnyFallback = usedEnergyFallback || usedActualSecondsFallback || subtasksResult.usedNestedFallback;
       setMessage({
         tone: usedAnyFallback ? "warn" : "good",
         text: subtasksResult.usedNestedFallback
           ? "Your database is missing nested-subtask support, so subtasks were saved as a flat list. Run the subtask parent migration to enable nesting."
+          : usedActualSecondsFallback
+            ? "Manual time was saved, but your database is missing the task actual-time column. Run the actual-seconds migration to persist Actual Time on tasks."
           : usedEnergyFallback
             ? "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run the energy migration to enable \"none\"."
             : "Task updated.",
@@ -2191,6 +2891,73 @@ export function TaskApp() {
     return true;
   }
 
+  async function deleteTaskSubtask(subtaskId: string) {
+    const descendantIds = collectDescendantSubtaskIds(taskSubtasks, subtaskId);
+    const idsToDelete = [subtaskId, ...descendantIds];
+
+    const { error } = await client
+      .from("adhdice_task_subtasks")
+      .delete()
+      .in("id", idsToDelete)
+      .eq("user_id", currentUser.id);
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    const deletedIdSet = new Set(idsToDelete);
+    setTaskSubtasks((current) => current.filter((subtask) => !deletedIdSet.has(subtask.id)));
+    return true;
+  }
+
+  async function addTaskSubtask(taskId: string) {
+    const nextSortOrder = taskSubtasks
+      .filter((subtask) => subtask.task_id === taskId)
+      .reduce((max, subtask) => Math.max(max, subtask.sort_order), -1) + 1;
+
+    const basePayload = {
+      id: crypto.randomUUID(),
+      sort_order: nextSortOrder,
+      status: "pending" as const,
+      task_id: taskId,
+      title: "New step",
+      user_id: currentUser.id,
+    };
+
+    const primaryPayload: TaskSubtaskInsert = supportsNestedSubtasks
+      ? { ...basePayload, parent_subtask_id: null }
+      : basePayload;
+
+    let insertResult = await client
+      .from("adhdice_task_subtasks")
+      .insert(primaryPayload)
+      .select("*")
+      .single();
+
+    if (insertResult.error && isMissingParentSubtaskColumnError(insertResult.error.message)) {
+      setSupportsNestedSubtasks(false);
+      insertResult = await client
+        .from("adhdice_task_subtasks")
+        .insert(basePayload)
+        .select("*")
+        .single();
+    }
+
+    if (insertResult.error) {
+      setMessage({ tone: "warn", text: insertResult.error.message });
+      return null;
+    }
+
+    if (!insertResult.data) {
+      return null;
+    }
+
+    const mappedSubtask = mapTaskSubtaskRow(insertResult.data);
+    setTaskSubtasks((current) => [...current, mappedSubtask]);
+    return mappedSubtask.id;
+  }
+
   async function addChildTaskSubtask(parentSubtaskId: string) {
     const parentSubtask = taskSubtasks.find((subtask) => subtask.id === parentSubtaskId) ?? null;
     if (!parentSubtask) {
@@ -2304,7 +3071,7 @@ export function TaskApp() {
   }
 
   async function updateTask(taskId: string, values: TaskUpdate) {
-    const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(taskId, values);
+    const { data, error, usedEnergyFallback, usedActualSecondsFallback } = await updateTaskRowWithLegacyEnergyFallback(taskId, values);
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
@@ -2312,7 +3079,11 @@ export function TaskApp() {
     }
 
     if (data) {
-      setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? data : task)));
+      const nextData = usedActualSecondsFallback && typeof values.actual_seconds === "number"
+        ? { ...data, actual_seconds: values.actual_seconds }
+        : data;
+
+      setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
       if (data.status === "done" || data.status === "archived") {
         routeTask(taskId, null);
       }
@@ -2348,6 +3119,11 @@ export function TaskApp() {
         setMessage({
           tone: "warn",
           text: "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run the energy migration to enable \"none\".",
+        });
+      } else if (usedActualSecondsFallback) {
+        setMessage({
+          tone: "warn",
+          text: "Manual time was saved, but your database is missing the task actual-time column. Run `supabase/add_task_actual_seconds.sql` to persist Actual Time on tasks.",
         });
       }
     }
@@ -2642,6 +3418,45 @@ export function TaskApp() {
             profile={profile}
           />
         ) : null}
+        {isTaskListSettingsOpen ? (
+          <TaskListSettingsModal
+            listCounts={visibleListCounts}
+            lists={availableTaskLists}
+            onClose={() => setIsTaskListSettingsOpen(false)}
+            onCreateCustomList={createCustomTaskList}
+            onSaveList={saveTaskListDefinition}
+          />
+        ) : null}
+        {isImportWidgetMenuOpen ? (
+          <ModalShell className="w-full max-w-2xl rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Import list" onClose={() => setIsImportWidgetMenuOpen(false)}>
+            <div className="space-y-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Import</p>
+                  <h2 className="mt-2 text-2xl font-black text-[#1f2642] dark:text-white">Import list</h2>
+                  <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/55">
+                    Paste a rough list and turn it into calm, structured tasks without leaving list view.
+                  </p>
+                </div>
+                <button
+                  aria-label="Close"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white"
+                  onClick={() => setIsImportWidgetMenuOpen(false)}
+                  type="button"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <ImportWidgetCard
+                message={message}
+                onImport={async (lines) => {
+                  await importTasks(lines);
+                  setIsImportWidgetMenuOpen(false);
+                }}
+              />
+            </div>
+          </ModalShell>
+        ) : null}
         <TopHeader
           doneCount={doneTasks.length}
           economy={economy}
@@ -2712,7 +3527,7 @@ export function TaskApp() {
                 mode={taskEditorMode}
                 onClose={closeTaskEditor}
                 onLogActualTime={async ({ date, durationSeconds, notes, title }) => {
-                  await handleManualFocusEntry({
+                  const success = await handleManualFocusEntry({
                     categoryId: null,
                     date,
                     durationSeconds,
@@ -2720,7 +3535,18 @@ export function TaskApp() {
                     notes,
                     title,
                   });
-                  return true;
+                  if (success && selectedTaskForEditor) {
+                    const nextActualSeconds = (selectedTaskForEditor.actual_seconds ?? 0) + durationSeconds;
+                    setTasks((current) => sortTasksForUi(current.map((task) => (
+                      task.id === selectedTaskForEditor.id
+                        ? { ...task, actual_seconds: nextActualSeconds }
+                        : task
+                    ))));
+                    await updateTask(selectedTaskForEditor.id, {
+                      actual_seconds: nextActualSeconds,
+                    });
+                  }
+                  return success;
                 }}
                 onOpenHistory={selectedTaskForEditor ? () => setTaskHistoryModalTaskId(selectedTaskForEditor.id) : undefined}
                 onSave={async (draft) => {
@@ -2737,6 +3563,37 @@ export function TaskApp() {
                 }}
                 subtasks={selectedTaskForEditor ? taskSubtasksByTaskId[selectedTaskForEditor.id] ?? [] : []}
                 task={selectedTaskForEditor}
+              />
+            ) : null}
+            {taskForActualTimeEntry ? (
+              <ManualEntryModal
+                categories={focusCategories}
+                initialTitle={taskForActualTimeEntry.title}
+                labelOptions={taskFocusLabelOptions}
+                onClose={() => setTaskActualTimeEntryTaskId(null)}
+                onSave={async ({ date, durationSeconds, notes, title }) => {
+                  const success = await handleManualFocusEntry({
+                    categoryId: null,
+                    date,
+                    durationSeconds,
+                    focusType: "Work",
+                    notes,
+                    title,
+                  });
+                  if (success) {
+                    const nextActualSeconds = (taskForActualTimeEntry.actual_seconds ?? 0) + durationSeconds;
+                    setTasks((current) => sortTasksForUi(current.map((task) => (
+                      task.id === taskForActualTimeEntry.id
+                        ? { ...task, actual_seconds: nextActualSeconds }
+                        : task
+                    ))));
+                    await updateTask(taskForActualTimeEntry.id, {
+                      actual_seconds: nextActualSeconds,
+                    });
+                    setTaskActualTimeEntryTaskId(null);
+                  }
+                  return success;
+                }}
               />
             ) : null}
             {isBatchEditModalOpen ? (
@@ -2808,7 +3665,7 @@ export function TaskApp() {
               onCycleMomentum={() => setMomentumView(getNextMomentumView(momentumView))}
               onOpenComposer={openNewTaskEditor}
               onOpenFocusPlanner={openFocusPlanner}
-              onOpenImport={() => scrollToTaskElement("task-import-panel")}
+              onOpenImport={() => { void openTaskImportPanel(); }}
               onOpenMomentumDetails={() => setIsMomentumListOpen(true)}
               onSearchChange={(search) => setTaskUiState((prev) => ({ ...prev, search }))}
               onViewChange={(view) => setTaskUiState((prev) => ({ ...prev, view }))}
@@ -2830,70 +3687,201 @@ export function TaskApp() {
                       value={taskUiState.search}
                     />
                   </label>
-                  <FilterRows
-                    compact
-                    hasActiveFilters={
-                      taskUiState.search.trim().length > 0 ||
-                      taskUiState.quickFilters.length > 0 ||
-                      taskUiState.statusFilters.length > 0 ||
-                      taskUiState.energyFilters.length > 0 ||
-                      taskUiState.matchAny !== DEFAULT_TASK_UI_STATE.matchAny ||
-                      taskUiState.savedView !== DEFAULT_TASK_UI_STATE.savedView
-                    }
-                    isOpen={isTaskFiltersOpen}
-                    matchAny={taskUiState.matchAny}
-                    onReset={() => setTaskUiState((prev) => ({ ...DEFAULT_TASK_UI_STATE, view: prev.view, selectedBucket: prev.selectedBucket }))}
-                    onToggleEnergy={(energy) =>
-                      setTaskUiState((prev) => ({
-                        ...prev,
-                        energyFilters: prev.energyFilters.includes(energy)
-                          ? prev.energyFilters.filter((value) => value !== energy)
-                          : [...prev.energyFilters, energy],
-                      }))
-                    }
-                    onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
-                    onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
-                    onToggleStatusFilter={(status) =>
-                      setTaskUiState((prev) => ({
-                        ...prev,
-                        statusFilters: prev.statusFilters.includes(status)
-                          ? prev.statusFilters.filter((value) => value !== status)
-                          : [...prev.statusFilters, status],
-                      }))
-                    }
-                    statusCounts={taskStatusCounts}
-                    selectedStatuses={taskUiState.statusFilters}
-                    selectedEnergies={taskUiState.energyFilters}
-                  />
+                  <div className="flex flex-wrap items-start justify-end gap-3">
+                    <button
+                      className="rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 text-sm font-semibold text-[#5f6983] transition hover:border-[#d7cdfc] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/70 dark:hover:text-[#cabfff]"
+                      onClick={() => setIsTaskListSettingsOpen(true)}
+                      type="button"
+                    >
+                      List settings
+                    </button>
+                    <div className="relative" data-list-columns-menu ref={listColumnMenuRef}>
+                      <button
+                        aria-expanded={isListColumnMenuOpen}
+                        className="rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 text-sm font-semibold text-[#5f6983] transition hover:border-[#d7cdfc] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/70 dark:hover:text-[#cabfff]"
+                        onClick={() => setIsListColumnMenuOpen((current) => !current)}
+                        type="button"
+                      >
+                        Columns
+                      </button>
+                      {isListColumnMenuOpen ? (
+                        <div className="absolute right-0 top-[calc(100%+0.55rem)] z-40 min-w-[13rem] rounded-[1rem] border border-[#ece8f8] bg-white p-3 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1a1230]">
+                          <p className="px-1 pb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa3bb] dark:text-white/30">
+                            Visible columns
+                          </p>
+                          <div className="space-y-1">
+                            {listColumnPickerColumns.map((columnId) => {
+                              const isVisible = listVisibleColumns.includes(columnId);
+                              return (
+                                <div
+                                  className={`flex items-center gap-3 rounded-[0.8rem] px-2 py-2 text-sm text-[#59627e] transition hover:bg-[#f6f1ff] dark:text-white/70 dark:hover:bg-white/[0.08] ${draggedListColumnId === columnId ? "bg-[#f6f1ff] dark:bg-white/[0.08]" : ""}`}
+                                  draggable={isVisible}
+                                  key={columnId}
+                                  onDragEnd={() => setDraggedListColumnId(null)}
+                                  onDragOver={isVisible ? (event) => {
+                                    event.preventDefault();
+                                  } : undefined}
+                                  onDragStart={isVisible ? () => setDraggedListColumnId(columnId) : undefined}
+                                  onDrop={isVisible ? () => {
+                                    if (draggedListColumnId) {
+                                      reorderListColumns(draggedListColumnId, columnId);
+                                    }
+                                    setDraggedListColumnId(null);
+                                  } : undefined}
+                                >
+                                  <GripVertical className={`h-4 w-4 shrink-0 ${isVisible ? "text-[#b8afd8] dark:text-white/35" : "text-[#ddd6f3] opacity-40 dark:text-white/15"}`} />
+                                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3" htmlFor={`list-column-${columnId}`}>
+                                    <input
+                                      checked={isVisible}
+                                      className="h-4 w-4 rounded border-[#d9cffb] text-[#6f57f6] focus:ring-[#6f57f6]"
+                                      id={`list-column-${columnId}`}
+                                      onChange={() => toggleListColumn(columnId)}
+                                      type="checkbox"
+                                    />
+                                    <span>{LIST_COLUMN_LABELS[columnId]}</span>
+                                  </label>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="relative" data-keyboard-shortcuts-menu ref={keyboardShortcutsMenuRef}>
+                      <button
+                        aria-expanded={isKeyboardShortcutsMenuOpen}
+                        aria-label="Keyboard shortcuts"
+                        className="inline-flex items-center gap-2 rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 text-sm font-semibold text-[#5f6983] transition hover:border-[#d7cdfc] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/70 dark:hover:text-[#cabfff]"
+                        onClick={() => setIsKeyboardShortcutsMenuOpen((current) => !current)}
+                        type="button"
+                      >
+                        <Keyboard className="h-4 w-4" />
+                        Shortcuts
+                      </button>
+                      {isKeyboardShortcutsMenuOpen ? (
+                        <div className="absolute right-0 top-[calc(100%+0.55rem)] z-40 w-[19rem] rounded-[1rem] border border-[#ece8f8] bg-white p-3 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1a1230]">
+                          <p className="px-1 pb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa3bb] dark:text-white/30">
+                            Keyboard shortcuts
+                          </p>
+                          <div className="grid gap-1">
+                            {TASK_KEYBOARD_SHORTCUTS.map((shortcut) => (
+                              <div
+                                className="flex items-center justify-between gap-3 rounded-[0.8rem] px-2 py-2 text-sm text-[#59627e] dark:text-white/70"
+                                key={shortcut.action}
+                              >
+                                <span>{shortcut.action}</span>
+                                <span className="flex shrink-0 items-center gap-1">
+                                  {shortcut.keys.map((key) => (
+                                    <kbd
+                                      className="rounded-md border border-[#ddd6fb] bg-[#f7f4ff] px-2 py-0.5 text-[11px] font-bold text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.08] dark:text-[#cabfff]"
+                                      key={key}
+                                    >
+                                      {key}
+                                    </kbd>
+                                  ))}
+                                  {shortcut.alternateKeys ? (
+                                    <>
+                                      <span className="px-1 text-[11px] text-[#9aa3bb] dark:text-white/35">or</span>
+                                      {shortcut.alternateKeys.map((key) => (
+                                        <kbd
+                                          className="rounded-md border border-[#ddd6fb] bg-[#f7f4ff] px-2 py-0.5 text-[11px] font-bold text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.08] dark:text-[#cabfff]"
+                                          key={key}
+                                        >
+                                          {key}
+                                        </kbd>
+                                      ))}
+                                    </>
+                                  ) : null}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    <FilterRows
+                      compact
+                      hasActiveFilters={
+                        taskUiState.search.trim().length > 0 ||
+                        taskUiState.quickFilters.length > 0 ||
+                        taskUiState.statusFilters.length > 0 ||
+                        taskUiState.energyFilters.length > 0 ||
+                        taskUiState.matchAny !== DEFAULT_TASK_UI_STATE.matchAny
+                      }
+                      isOpen={isTaskFiltersOpen}
+                      matchAny={taskUiState.matchAny}
+                      onReset={() => setTaskUiState((prev) => ({
+                        ...DEFAULT_TASK_UI_STATE,
+                        selectedBucket: prev.selectedBucket,
+                        view: prev.view,
+                        visibleColumnsByView: prev.visibleColumnsByView,
+                      }))}
+                      onToggleEnergy={(energy) =>
+                        setTaskUiState((prev) => ({
+                          ...prev,
+                          energyFilters: prev.energyFilters.includes(energy)
+                            ? prev.energyFilters.filter((value) => value !== energy)
+                            : [...prev.energyFilters, energy],
+                        }))
+                      }
+                      onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
+                      onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
+                      onToggleStatusFilter={(status) =>
+                        setTaskUiState((prev) => ({
+                          ...prev,
+                          statusFilters: prev.statusFilters.includes(status)
+                            ? prev.statusFilters.filter((value) => value !== status)
+                            : [...prev.statusFilters, status],
+                        }))
+                      }
+                      statusCounts={taskStatusCounts}
+                      selectedStatuses={taskUiState.statusFilters}
+                      selectedEnergies={taskUiState.energyFilters}
+                    />
+                  </div>
                 </div>
                 <AgentPlan
-                  buckets={listViewBucketOptions}
+                  listOptions={listRailOptions.map((list) => ({ count: list.count, label: list.label, value: list.id }))}
+                  manualListOptions={manualListOptions}
+                  onAddTaskSubtask={addTaskSubtask}
+                  onAddChildSubtask={(parentSubtaskId) => addChildTaskSubtask(parentSubtaskId)}
                   onEditTask={(taskId) => {
                     const task = tasks.find((entry) => entry.id === taskId);
                     if (task) {
                       openEditTaskEditor(task);
                     }
                   }}
-                  onAddChildSubtask={(parentSubtaskId) => addChildTaskSubtask(parentSubtaskId)}
                   onClearTaskSelection={clearListTaskSelection}
+                  onDeleteSubtask={deleteTaskSubtask}
                   onDeleteSelectedTasks={() => setIsBatchDeleteModalOpen(true)}
+                  onOpenTaskActualTime={setTaskActualTimeEntryTaskId}
                   onRenameSubtask={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
                   onRenameTask={(taskId, title) => { void updateTask(taskId, { title: title.trim() }); }}
                   onOpenBatchEdit={() => setIsBatchEditModalOpen(true)}
-                  onSelectBucket={(bucket) => setSelectedBucket(bucket as TaskBucket)}
-                  onSelectAllVisible={selectAllVisibleListTasks}
+                  onReorderColumns={reorderListColumns}
+                  onSelectSingleTask={selectSingleListTask}
+                  onSetTaskEstimatedMinutes={async (taskId, minutes) => { await updateTask(taskId, { estimated_minutes: minutes }); }}
                   onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status as TaskSubtaskStatus); }}
+                  onSetTaskDuePreset={setTaskDuePreset}
+                  onSetTaskEnergy={setTaskEnergy}
+                  onSetTaskBucket={(taskId, bucket) => {
+                    void toggleTaskManualListMembership(taskId, bucket);
+                  }}
+                  onSetTaskPriority={setTaskPriority}
+                  onSelectBucket={setSelectedBucket}
+                  onSelectAllVisible={selectAllVisibleListTasks}
                   onSetTaskStatus={(taskId, status) => { void updateTask(taskId, { status }); }}
                   onToggleTaskSelection={toggleListTaskSelection}
                   selectedBucket={taskUiState.selectedBucket}
                   selectedTaskIds={selectedListTaskIds}
                   tasks={listViewTasks}
+                  visibleColumns={listVisibleColumns}
                 />
               </section>
             ) : (
               <section className="mt-4 grid gap-4 xl:grid-cols-[15.5rem_minmax(0,1fr)]">
                 <TaskBucketRail
-                  counts={visibleBucketCounts}
+                  lists={listRailOptions}
                   onSelectBucket={setSelectedBucket}
                   selectedBucket={taskUiState.selectedBucket}
                 />
@@ -2904,12 +3892,16 @@ export function TaskApp() {
                       taskUiState.quickFilters.length > 0 ||
                       taskUiState.statusFilters.length > 0 ||
                       taskUiState.energyFilters.length > 0 ||
-                      taskUiState.matchAny !== DEFAULT_TASK_UI_STATE.matchAny ||
-                      taskUiState.savedView !== DEFAULT_TASK_UI_STATE.savedView
+                      taskUiState.matchAny !== DEFAULT_TASK_UI_STATE.matchAny
                     }
                     isOpen={isTaskFiltersOpen}
                     matchAny={taskUiState.matchAny}
-                    onReset={() => setTaskUiState((prev) => ({ ...DEFAULT_TASK_UI_STATE, view: prev.view, selectedBucket: prev.selectedBucket }))}
+                    onReset={() => setTaskUiState((prev) => ({
+                      ...DEFAULT_TASK_UI_STATE,
+                      selectedBucket: prev.selectedBucket,
+                      view: prev.view,
+                      visibleColumnsByView: prev.visibleColumnsByView,
+                    }))}
                     onToggleEnergy={(energy) =>
                       setTaskUiState((prev) => ({
                         ...prev,
@@ -2938,6 +3930,7 @@ export function TaskApp() {
                     isCollapsed={isDailyPlanningCollapsed}
                     missedCount={missedTasks.length}
                     onOpenFocusPlanner={openFocusPlanner}
+                    onSetTaskRecurring={setTaskRecurringPreset}
                     onToggleCollapsed={() => setIsDailyPlanningCollapsed((current) => !current)}
                     onSelectBucket={setSelectedBucket}
                     planningCandidates={planningCandidates}
@@ -2945,7 +3938,7 @@ export function TaskApp() {
                     routeTaskToToday={(taskId) => planTasksForToday([taskId])}
                     sendTaskToLater={deferTask}
                     sendTaskToWaiting={sendTaskToWaiting}
-                    todayCount={visibleBucketCounts.today + visibleBucketCounts.focus + visibleBucketCounts.urgent}
+                    todayCount={(visibleListCounts.today ?? 0) + (visibleListCounts.focus ?? 0) + (visibleListCounts.urgent ?? 0)}
                     waitingCount={waitingTasks.length}
                   />
 
@@ -3139,7 +4132,7 @@ function ConfigSplash() {
             Add your Supabase keys
           </h1>
           <p className={`mt-3 text-base text-[#707a95] dark:text-white/55`}>
-            Create `.env.2.0.43` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
+            Create `.env.2.2.1` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, then restart the app.
           </p>
         </div>
       </section>
@@ -3355,7 +4348,7 @@ function TopHeader({
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-            v.2.0.43
+            v.2.2.1
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>
@@ -4938,6 +5931,212 @@ function SettingsPage({
 
 // ─── Page placeholder (Games, Test, unknown) ─────────────────────────────────
 
+const TEST_LIST_TRAY_PREVIEW_OPTIONS = ["Inbox", "Today", "Focus", "Recurring", "Waiting", "Later", "Done", "Missed"];
+const TEST_LIST_TRAY_PREVIEW_ROWS = [
+  ["Inbox", "Today", "Focus", "Recurring"],
+  ["Waiting", "Later", "Done", "Missed"],
+];
+
+function TestBucketTrayPreview() {
+  const [activeBucketPreview, setActiveBucketPreview] = useState("Inbox");
+  const [isTrayOpen, setIsTrayOpen] = useState(true);
+  const previewChipClass = "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold leading-none whitespace-nowrap";
+
+  return (
+    <div className="mx-auto mt-10 w-full max-w-6xl rounded-[2rem] border border-[#eee7ff] bg-[linear-gradient(180deg,#fcfbff_0%,#f8f4ff_100%)] p-6 text-left shadow-[0_28px_80px_rgba(116,88,255,0.12)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(35,28,58,0.95)_0%,rgba(25,20,43,0.98)_100%)]">
+      <div className="max-w-2xl">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be] dark:text-white/35">
+          Lists Menu Preview
+        </p>
+        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[#342d56] dark:text-white">
+          Boxed dropdown vs floating chip tray
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-[#726a96] dark:text-white/60">
+          Same trigger chip, two different expanded states. The left version behaves like a dropdown panel. The right version feels lighter, softer, and more like a tray made of chips.
+        </p>
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <div className="rounded-[1.75rem] border border-[#ede6ff] bg-white/82 p-5 shadow-[0_18px_40px_rgba(121,93,255,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04]">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#b19bc8] dark:text-white/35">
+            Before
+          </p>
+          <h3 className="mt-2 text-lg font-semibold text-[#3a335c] dark:text-white">
+            Boxed dropdown panel
+          </h3>
+          <p className="mt-1 text-sm leading-6 text-[#7c739f] dark:text-white/55">
+            Reads like a menu card first, chips second.
+          </p>
+          <div className="mt-5">
+            <button className="appearance-none border-0 bg-transparent p-0 text-left" type="button">
+              <span className="inline-flex items-center rounded-full bg-[#f4f5f8] px-2.5 py-1 text-[11px] font-semibold leading-none text-[#68738c] whitespace-nowrap dark:bg-white/8 dark:text-white/60">
+                Inbox
+              </span>
+            </button>
+            <div className="mt-3 w-full max-w-[20rem] rounded-[1.1rem] border border-[#ece8f8] bg-white p-3 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1a1230]">
+              <div className="flex flex-wrap gap-2">
+                {TEST_LIST_TRAY_PREVIEW_OPTIONS.map((bucket) => (
+                  <button className="appearance-none border-0 bg-transparent p-0 text-left" key={`boxed-${bucket}`} type="button">
+                    <span
+                      className={`inline-flex items-center rounded-full px-3 py-1.5 text-[13px] font-semibold leading-none whitespace-nowrap ${
+                        bucket === "Inbox"
+                          ? "bg-[#efe9ff] text-[#6f57f6] dark:bg-[#2b214d] dark:text-[#cabfff]"
+                          : "bg-[#f4f5f8] text-[#7c86a1] dark:bg-white/8 dark:text-white/60"
+                      }`}
+                    >
+                      {bucket}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-[1.75rem] border border-[#ede6ff] bg-white/82 p-5 shadow-[0_18px_40px_rgba(121,93,255,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04]">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8f7cff] dark:text-[#cabfff]">
+            After
+          </p>
+          <h3 className="mt-2 text-lg font-semibold text-[#3a335c] dark:text-white">
+            Floating chip tray
+          </h3>
+          <p className="mt-1 text-sm leading-6 text-[#7c739f] dark:text-white/55">
+            Reads like a small floating surface made from chips, and every tray chip stays the exact same size as the trigger chip.
+          </p>
+          <div className="mt-5">
+            <button
+              className="appearance-none border-0 bg-transparent p-0 text-left"
+              onClick={() => setIsTrayOpen((current) => !current)}
+              type="button"
+            >
+              <span className={`${previewChipClass} bg-[#f4f5f8] text-[#68738c] dark:bg-white/8 dark:text-white/60`}>
+                {activeBucketPreview}
+              </span>
+            </button>
+            {isTrayOpen ? (
+              <div className="relative mt-3 inline-block w-fit rounded-[1.5rem] bg-white/78 px-2 py-2 shadow-[0_24px_60px_rgba(115,88,255,0.14)] ring-1 ring-[#ede6ff] backdrop-blur-md dark:bg-white/[0.05] dark:ring-white/10">
+                <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(128,100,255,0.35),transparent)] dark:bg-[linear-gradient(90deg,transparent,rgba(202,191,255,0.35),transparent)]" />
+                <div className="inline-flex flex-col items-start gap-2">
+                  {TEST_LIST_TRAY_PREVIEW_ROWS.map((row, rowIndex) => (
+                    <div className="flex items-center gap-2" key={`tray-row-${rowIndex}`}>
+                      {row.map((bucket) => (
+                        <button
+                          className="appearance-none border-0 bg-transparent p-0 text-left"
+                          key={`tray-${bucket}`}
+                          onClick={() => setActiveBucketPreview(bucket)}
+                          type="button"
+                        >
+                          <span
+                            className={`${previewChipClass} ${
+                              bucket === activeBucketPreview
+                                ? "bg-[#efe9ff] text-[#6f57f6] shadow-[0_6px_18px_rgba(111,87,246,0.18)] dark:bg-[#2b214d] dark:text-[#cabfff]"
+                                : "bg-[#f4f5f8] text-[#7c86a1] dark:bg-white/8 dark:text-white/60"
+                            }`}
+                          >
+                            {bucket}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TestRuleBuilderPreview() {
+  const [rules, setRules] = useState<TaskListRuleGroup>({
+    combinator: "all",
+    rules: [
+      { field: "status", op: "is", value: "in_progress" },
+      { field: "energy", op: "is", value: "medium" },
+      { field: "due", op: "is_today" },
+    ],
+  });
+
+  return (
+    <div className="mx-auto mt-10 w-full max-w-6xl rounded-[2rem] border border-[#eee7ff] bg-[linear-gradient(180deg,#fcfbff_0%,#f8f4ff_100%)] p-6 text-left shadow-[0_28px_80px_rgba(116,88,255,0.12)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(35,28,58,0.95)_0%,rgba(25,20,43,0.98)_100%)]">
+      <div className="max-w-3xl">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be] dark:text-white/35">
+          Rules Builder Preview
+        </p>
+        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[#342d56] dark:text-white">
+          Chip-based rule rows
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-[#726a96] dark:text-white/60">
+          This built-in test page previews the list settings rule builder with chip controls instead of system dropdowns.
+        </p>
+      </div>
+
+      <div className="mt-6 rounded-[1.75rem] border border-[#ede6ff] bg-white/82 p-5 shadow-[0_18px_40px_rgba(121,93,255,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.04]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8f7cff] dark:text-[#cabfff]">
+            Preview state
+          </span>
+          <div className="flex items-center gap-2">
+            {(["all", "any"] as const).map((value) => {
+              const active = rules.combinator === value;
+              return (
+                <button
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                    active
+                      ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                      : "bg-[#f5f1ff] text-[#6f57f6] dark:bg-white/[0.06] dark:text-[#cabfff]"
+                  }`}
+                  key={`test-${value}`}
+                  onClick={() => setRules((current) => ({ ...current, combinator: value }))}
+                  type="button"
+                >
+                  {value === "all" ? "Match all" : "Match any"}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          {rules.rules.map((rule, ruleIndex) => (
+            <TaskListRuleRowEditor
+              key={`test-rule-${ruleIndex}`}
+              onChange={(nextRule) => setRules((current) => ({
+                ...current,
+                rules: current.rules.map((entry, index) => index === ruleIndex ? nextRule : entry),
+              }))}
+              onRemove={() => setRules((current) => ({
+                ...current,
+                rules: current.rules.filter((_, index) => index !== ruleIndex),
+              }))}
+              rule={rule}
+            />
+          ))}
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <button
+            className="inline-flex items-center gap-2 rounded-full border border-[#ddd6fb] bg-white px-4 py-2 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+            onClick={() => setRules((current) => ({
+              ...current,
+              rules: [...current.rules, createDefaultTaskListRule()],
+            }))}
+            type="button"
+          >
+            <Plus className="h-4 w-4" />
+            Add preview rule
+          </button>
+          <p className="text-sm text-[#726a96] dark:text-white/60">
+            {summarizeTaskListRules(rules)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PagePlaceholder({
   count,
   page,
@@ -4979,6 +6178,12 @@ function PagePlaceholder({
         <OverviewStatCard detail="next page candidate" label="Current Section" value={page} />
         <OverviewStatCard detail="stays in bottom dock" label="Navigation" value="Persistent" />
       </div>
+      {page === "Test" ? (
+        <div className="w-full">
+          <TestBucketTrayPreview />
+          <TestRuleBuilderPreview />
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -5292,24 +6497,21 @@ function HeroMetaCard({
 }
 
 function TaskBucketRail({
-  counts,
+  lists,
   onSelectBucket,
   selectedBucket,
 }: {
-  counts: Record<TaskBucket, number>;
-  onSelectBucket: (bucket: TaskBucket) => void;
-  selectedBucket: TaskBucket;
+  lists: Array<{ count: number; description: string; id: string; label: string }>;
+  onSelectBucket: (bucket: string) => void;
+  selectedBucket: string;
 }) {
-  const orderedBuckets = (Object.keys(TASK_BUCKET_LABELS) as TaskBucket[])
-    .filter((bucket) => bucket !== "missed" || counts.missed > 0);
-
   return (
     <>
       <aside className="hidden h-fit rounded-[1.5rem] border border-[#ece8f8] bg-white/90 p-3 shadow-[0_16px_40px_rgba(81,61,168,0.06)] xl:block dark:border-white/10 dark:bg-white/6">
-        <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8e88a9] dark:text-white/35">Buckets</p>
+        <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8e88a9] dark:text-white/35">Lists</p>
         <div className="space-y-1.5">
-          {orderedBuckets.map((bucket) => {
-            const active = bucket === selectedBucket;
+          {lists.map((list) => {
+            const active = list.id === selectedBucket;
             return (
               <button
                 aria-pressed={active}
@@ -5318,40 +6520,689 @@ function TaskBucketRail({
                     ? "bg-[#f3efff] text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.08)] dark:bg-[#261e49] dark:text-[#cabfff]"
                     : "text-[#58637f] hover:bg-[#faf8ff] dark:text-white/65 dark:hover:bg-white/[0.04]"
                 }`}
-                key={bucket}
-                onClick={() => onSelectBucket(bucket)}
+                key={list.id}
+                onClick={() => onSelectBucket(list.id)}
                 type="button"
               >
                 <span className="min-w-0">
-                  <span className="block text-sm font-semibold">{TASK_BUCKET_LABELS[bucket]}</span>
-                  <span className="mt-0.5 block text-xs opacity-70">{TASK_BUCKET_DESCRIPTIONS[bucket]}</span>
+                  <span className="block text-sm font-semibold">{list.label}</span>
+                  <span className="mt-0.5 block text-xs opacity-70">{list.description}</span>
                 </span>
                 <span className="ml-3 shrink-0 rounded-full bg-white px-2 py-1 text-xs font-bold text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]">
-                  {counts[bucket]}
+                  {list.count}
                 </span>
               </button>
             );
           })}
         </div>
       </aside>
-      <div className="flex gap-2 overflow-x-auto pb-1 xl:hidden [&::-webkit-scrollbar]:hidden">
-        {orderedBuckets.map((bucket) => (
+      <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-1 xl:hidden">
+        {lists.map((list) => (
           <button
-            aria-pressed={bucket === selectedBucket}
+            aria-pressed={list.id === selectedBucket}
             className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold ${
-              bucket === selectedBucket
+              list.id === selectedBucket
                 ? "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]"
                 : "bg-white text-[#5f6983] dark:bg-white/8 dark:text-white/65"
             }`}
-            key={bucket}
-            onClick={() => onSelectBucket(bucket)}
+            key={list.id}
+            onClick={() => onSelectBucket(list.id)}
             type="button"
           >
-            {TASK_BUCKET_LABELS[bucket]} <span className="opacity-70">{counts[bucket]}</span>
+            {list.label} <span className="opacity-70">{list.count}</span>
           </button>
         ))}
       </div>
     </>
+  );
+}
+
+function normalizeTaskListRuleGroup(group: TaskListRuleGroup | null): TaskListRuleGroup {
+  return group ? { combinator: group.combinator, rules: [...group.rules] } : { ...EMPTY_TASK_LIST_RULE_GROUP, rules: [] };
+}
+
+function createDefaultTaskListRule(field: TaskListRuleField = "status"): TaskListRule {
+  switch (field) {
+    case "date_added":
+      return { field: "date_added", op: "is_today" };
+    case "due":
+      return { field: "due", op: "is_today" };
+    case "energy":
+      return { field: "energy", op: "is", value: ["medium"] };
+    case "focus":
+      return { field: "focus", op: "is", value: true };
+    case "is_urgent":
+      return { field: "is_urgent", op: "is", value: true };
+    case "is_important":
+      return { field: "is_important", op: "is", value: true };
+    case "repeat":
+      return { field: "repeat", op: "is", value: true };
+    case "status":
+    default:
+      return { field: "status", op: "is", value: ["pending"] };
+  }
+}
+
+function getTaskListRuleOperator(rule: TaskListRule): TaskListRuleRowOperator {
+  return rule.op;
+}
+
+function taskListRuleNeedsValue(rule: TaskListRule) {
+  return rule.field === "status" || rule.field === "energy";
+}
+
+function normalizeTaskListRuleValues<T extends string>(value: T | T[]) {
+  return Array.isArray(value) ? value : [value];
+}
+
+function formatTaskListRule(rule: TaskListRule) {
+  switch (rule.field) {
+    case "status":
+      return `Status ${rule.op === "is" ? "is" : "isn't"} ${normalizeTaskListRuleValues(rule.value).map((entry) => formatOptionLabel(entry)).join(" or ")}`;
+    case "energy":
+      return `Energy ${rule.op === "is" ? "is" : "isn't"} ${normalizeTaskListRuleValues(rule.value).map((entry) => formatOptionLabel(entry)).join(" or ")}`;
+    case "focus":
+      return `Focus ${rule.op === "is" ? "is on" : "is off"}`;
+    case "is_urgent":
+      return `Urgent ${rule.op === "is" ? "is on" : "is off"}`;
+    case "is_important":
+      return `Important ${rule.op === "is" ? "is on" : "is off"}`;
+    case "repeat":
+      return `Repeats ${rule.op === "is" ? "is on" : "is off"}`;
+    case "due":
+      if (rule.op === "is_today") return "Due is today";
+      if (rule.op === "is_not_today") return "Due isn't today";
+      if (rule.op === "is_overdue") return "Due is overdue";
+      if (rule.op === "is_not_overdue") return "Due isn't overdue";
+      if (rule.op === "is_empty") return "Due has no date";
+      return "Due has a later date";
+    case "date_added":
+      return rule.op === "is_today" ? "Date added is today" : "Date added isn't today";
+    default:
+      return "Rule";
+  }
+}
+
+function summarizeTaskListRules(group: TaskListRuleGroup | null) {
+  if (!group || group.rules.length === 0) {
+    return "No rules yet.";
+  }
+  const summary = group.rules.slice(0, 2).map(formatTaskListRule).join(group.combinator === "all" ? " and " : " or ");
+  return group.rules.length > 2 ? `${summary}, +${group.rules.length - 2} more` : summary;
+}
+
+function updateTaskListRuleField(rule: TaskListRule, field: TaskListRuleField): TaskListRule {
+  if (rule.field === field) {
+    return rule;
+  }
+  return createDefaultTaskListRule(field);
+}
+
+function updateTaskListRuleOperator(rule: TaskListRule, operator: TaskListRuleRowOperator): TaskListRule {
+  switch (rule.field) {
+    case "status":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "status", op: operator, value: rule.value };
+      }
+      return rule;
+    case "energy":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "energy", op: operator, value: rule.value };
+      }
+      return rule;
+    case "focus":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "focus", op: operator, value: true };
+      }
+      return rule;
+    case "is_urgent":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "is_urgent", op: operator, value: true };
+      }
+      return rule;
+    case "is_important":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "is_important", op: operator, value: true };
+      }
+      return rule;
+    case "repeat":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "repeat", op: operator, value: true };
+      }
+      return rule;
+    case "due":
+      if (
+        operator === "is_today"
+        || operator === "is_not_today"
+        || operator === "is_overdue"
+        || operator === "is_not_overdue"
+        || operator === "is_empty"
+        || operator === "is_future"
+      ) {
+        return { field: "due", op: operator };
+      }
+      return rule;
+    case "date_added":
+      if (operator === "is_today" || operator === "is_not_today") {
+        return { field: "date_added", op: operator };
+      }
+      return rule;
+    default:
+      return rule;
+  }
+}
+
+function updateTaskListRuleValue(rule: TaskListRule, value: string): TaskListRule {
+  if (rule.field === "status") {
+    const currentValues = normalizeTaskListRuleValues(rule.value);
+    const nextValue = value as TaskStatus;
+    const nextValues = currentValues.includes(nextValue)
+      ? currentValues.filter((entry) => entry !== nextValue)
+      : [...currentValues, nextValue];
+    return { ...rule, value: nextValues.length > 0 ? nextValues : [nextValue] };
+  }
+  if (rule.field === "energy") {
+    const currentValues = normalizeTaskListRuleValues(rule.value);
+    const nextValue = value as TaskEnergy;
+    const nextValues = currentValues.includes(nextValue)
+      ? currentValues.filter((entry) => entry !== nextValue)
+      : [...currentValues, nextValue];
+    return { ...rule, value: nextValues.length > 0 ? nextValues : [nextValue] };
+  }
+  return rule;
+}
+
+function RuleChipGroup({
+  multiSelect = false,
+  options,
+  onSelect,
+  selectedValue,
+  selectedValues,
+}: {
+  multiSelect?: boolean;
+  options: Array<{ label: string; value: string }>;
+  onSelect: (value: string) => void;
+  selectedValue?: string;
+  selectedValues?: string[];
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((option) => {
+        const active = multiSelect
+          ? (selectedValues ?? []).includes(option.value)
+          : option.value === selectedValue;
+        return (
+          <button
+            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+              active
+                ? "bg-[#efe9ff] text-[#6f57f6] shadow-[0_6px_18px_rgba(111,87,246,0.16)] dark:bg-[#2b214d] dark:text-[#cabfff]"
+                : "bg-white text-[#68738c] hover:bg-[#ede8ff] dark:bg-white/[0.05] dark:text-white/60 dark:hover:bg-white/[0.08]"
+            }`}
+            key={option.value}
+            onClick={() => onSelect(option.value)}
+            type="button"
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TaskListRuleRowEditor({
+  onChange,
+  onRemove,
+  rule,
+}: {
+  onChange: (rule: TaskListRule) => void;
+  onRemove: () => void;
+  rule: TaskListRule;
+}) {
+  const operatorOptions = TASK_LIST_RULE_OPERATOR_OPTIONS[rule.field];
+  const valueOptions = (rule.field === "status" ? taskStatusOptions : energyOptions).map((option) => ({
+    label: formatOptionLabel(option),
+    value: option,
+  }));
+  return (
+    <div className="space-y-3 rounded-[1rem] border border-[#ece8f8] bg-[#faf8ff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-3">
+          <RuleChipGroup
+            onSelect={(value) => onChange(updateTaskListRuleField(rule, value as TaskListRuleField))}
+            options={TASK_LIST_RULE_FIELD_OPTIONS}
+            selectedValue={rule.field}
+          />
+          <RuleChipGroup
+            onSelect={(value) => onChange(updateTaskListRuleOperator(rule, value as TaskListRuleRowOperator))}
+            options={operatorOptions}
+            selectedValue={getTaskListRuleOperator(rule)}
+          />
+          {taskListRuleNeedsValue(rule) ? (
+            <RuleChipGroup
+              multiSelect
+              onSelect={(value) => onChange(updateTaskListRuleValue(rule, value))}
+              options={valueOptions}
+              selectedValues={normalizeTaskListRuleValues(rule.value)}
+            />
+          ) : (
+            <div className="rounded-[0.85rem] border border-[#ece8f8] bg-white px-3 py-2 text-sm text-[#68738f] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/55">
+              {formatTaskListRule(rule)}
+            </div>
+          )}
+        </div>
+        <button
+          aria-label="Remove rule"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe4e9] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+          onClick={onRemove}
+          type="button"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TaskListSettingsModal({
+  listCounts,
+  lists,
+  onClose,
+  onCreateCustomList,
+  onSaveList,
+}: {
+  listCounts: Record<string, number>;
+  lists: TaskListDefinition[];
+  onClose: () => void;
+  onCreateCustomList: (input: CustomTaskListInput) => Promise<boolean>;
+  onSaveList: (input: TaskListSaveInput) => Promise<boolean>;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, TaskListSettingsDraft>>(() =>
+    Object.fromEntries(
+      lists.map((list, index) => [
+        list.id,
+        {
+          isCollapsed: !(index === 0 && list.isVisible && list.type === "system"),
+          isVisible: list.isVisible,
+          name: list.name,
+          rules: normalizeTaskListRuleGroup(list.rules),
+        },
+      ]),
+    ),
+  );
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const [newListName, setNewListName] = useState("");
+  const [newListMode, setNewListMode] = useState<"manual" | "rules">("manual");
+  const [newListRules, setNewListRules] = useState<TaskListRuleGroup>({ ...EMPTY_TASK_LIST_RULE_GROUP, rules: [] });
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDrafts((current) =>
+      Object.fromEntries(
+        lists.map((list, index) => [
+          list.id,
+          {
+            isCollapsed: current[list.id]?.isCollapsed ?? !(index === 0 && list.isVisible && list.type === "system"),
+            isVisible: current[list.id]?.isVisible ?? list.isVisible,
+            name: current[list.id]?.name ?? list.name,
+            rules: current[list.id]?.rules ?? normalizeTaskListRuleGroup(list.rules),
+          },
+        ]),
+      ),
+    );
+    setRowErrors({});
+  }, [lists]);
+
+  function updateDraft(listId: string, patch: Partial<TaskListSettingsDraft>) {
+    setDrafts((current) => {
+      const existing = current[listId];
+      if (!existing) {
+        return current;
+      }
+      return {
+        ...current,
+        [listId]: {
+          ...existing,
+          ...patch,
+        },
+      };
+    });
+  }
+
+  async function handleSave(list: TaskListDefinition) {
+    const draft = drafts[list.id];
+    if (!draft) {
+      return;
+    }
+
+    let parsedRules = null;
+    if (list.membershipMode !== "manual") {
+      parsedRules = draft.rules;
+      if (!parsedRules || parsedRules.rules.length === 0) {
+        setRowErrors((current) => ({
+          ...current,
+          [list.id]: "Pick at least one rule for a rules-based list.",
+        }));
+        return;
+      }
+    }
+
+    setRowErrors((current) => {
+      const next = { ...current };
+      delete next[list.id];
+      return next;
+    });
+
+    const success = await onSaveList({
+      id: list.id,
+      isVisible: draft.isVisible,
+      name: draft.name.trim() || list.name,
+      rules: parsedRules,
+    });
+
+    if (!success) {
+      setRowErrors((current) => ({
+        ...current,
+        [list.id]: current[list.id] ?? "Save failed. Check the banner message for details.",
+      }));
+    }
+  }
+
+  async function handleCreateCustomList() {
+    const trimmedName = newListName.trim();
+    if (!trimmedName) {
+      setCreateError("Custom lists need a name.");
+      return;
+    }
+
+    let parsedRules = null;
+    if (newListMode === "rules") {
+      parsedRules = newListRules;
+      if (!parsedRules.rules.length) {
+        setCreateError("Custom smart lists need at least one rule.");
+        return;
+      }
+    }
+
+    setCreateError(null);
+    const success = await onCreateCustomList({
+      membershipMode: newListMode,
+      name: trimmedName,
+      rules: parsedRules,
+    });
+
+    if (success) {
+      setNewListName("");
+      setNewListMode("manual");
+      setNewListRules({ ...EMPTY_TASK_LIST_RULE_GROUP, rules: [] });
+    }
+  }
+
+  return (
+    <ModalShell className="adhdice-scrollbar w-full max-w-[56rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="List settings" onClose={onClose}>
+      <div className="space-y-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Lists</p>
+            <h2 className="mt-2 text-2xl font-black text-[#1f2642] dark:text-white">List settings</h2>
+            <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/55">
+              Review built-in behavior, change visibility, and edit smart-list rules. Custom lists can be manual or rules-based.
+            </p>
+          </div>
+          <button
+            aria-label="Close"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <section className="rounded-[1.5rem] border border-[#ece8f8] bg-[#faf8ff] p-4 dark:border-white/10 dark:bg-white/[0.03]">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">New custom list</p>
+              <p className="mt-1 text-sm text-[#68738f] dark:text-white/55">Create a manual list or a smart list that matches tasks by rules.</p>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.2fr)_12rem]">
+            <input
+              className="rounded-[1rem] border border-[#ddd6fb] bg-white px-4 py-3 text-sm text-[#27304c] outline-none dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
+              onChange={(event) => setNewListName(event.target.value)}
+              placeholder="Weekend Reset"
+              value={newListName}
+            />
+            <select
+              className="rounded-[1rem] border border-[#ddd6fb] bg-white px-4 py-3 text-sm text-[#27304c] outline-none dark:border-white/10 dark:bg-white/[0.05] dark:text-white"
+              onChange={(event) => setNewListMode(event.target.value as "manual" | "rules")}
+              value={newListMode}
+            >
+              <option value="manual">Manual custom list</option>
+              <option value="rules">Smart custom list</option>
+            </select>
+          </div>
+          {newListMode === "rules" ? (
+            <div className="mt-3 space-y-3 rounded-[1rem] border border-[#ddd6fb] bg-white px-4 py-3 dark:border-white/10 dark:bg-white/[0.05]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Rules</span>
+                <div className="flex items-center gap-2">
+                  {(["all", "any"] as const).map((value) => {
+                    const active = newListRules.combinator === value;
+                    return (
+                      <button
+                        className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                          active
+                            ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                            : "bg-[#f5f1ff] text-[#6f57f6] dark:bg-white/[0.06] dark:text-[#cabfff]"
+                        }`}
+                        key={`new-list-${value}`}
+                        onClick={() => setNewListRules((current) => ({ ...current, combinator: value }))}
+                        type="button"
+                      >
+                        {value === "all" ? "Match all" : "Match any"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="space-y-2">
+                {newListRules.rules.map((rule, ruleIndex) => (
+                  <TaskListRuleRowEditor
+                    key={`new-list-rule-${ruleIndex}`}
+                    onChange={(nextRule) => setNewListRules((current) => ({
+                      ...current,
+                      rules: current.rules.map((entry, index) => index === ruleIndex ? nextRule : entry),
+                    }))}
+                    onRemove={() => setNewListRules((current) => ({
+                      ...current,
+                      rules: current.rules.filter((_, index) => index !== ruleIndex),
+                    }))}
+                    rule={rule}
+                  />
+                ))}
+              </div>
+              <button
+                className="inline-flex items-center gap-2 rounded-full border border-[#ddd6fb] bg-white px-4 py-2 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                onClick={() => setNewListRules((current) => ({
+                  ...current,
+                  rules: [...current.rules, createDefaultTaskListRule()],
+                }))}
+                type="button"
+              >
+                <Plus className="h-4 w-4" />
+                Add rule
+              </button>
+            </div>
+          ) : null}
+          {createError ? (
+            <p className="mt-3 text-sm text-[#d94e67] dark:text-[#ff9eaf]">{createError}</p>
+          ) : null}
+          <div className="mt-4 flex justify-end">
+            <button
+              className="rounded-full bg-[#6f57f6] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+              onClick={() => { void handleCreateCustomList(); }}
+              type="button"
+            >
+              Create custom list
+            </button>
+          </div>
+        </section>
+
+        <div className="space-y-4">
+          {lists.map((list) => {
+            const draft = drafts[list.id];
+            if (!draft) {
+              return null;
+            }
+
+            return (
+              <section className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-4 shadow-[0_12px_30px_rgba(81,61,168,0.05)] dark:border-white/10 dark:bg-white/[0.03]" key={list.id}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-lg font-bold text-[#1f2642] dark:text-white">{list.name}</h3>
+                      <span className="rounded-full bg-[#f3efff] px-2.5 py-1 text-[11px] font-semibold text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]">
+                        {list.type === "system" ? "System List" : list.type === "smart" ? "Smart List" : "Custom List"}
+                      </span>
+                      <span className="rounded-full bg-[#f7f4ff] px-2.5 py-1 text-[11px] font-semibold text-[#7a7397] dark:bg-white/[0.06] dark:text-white/55">
+                        {list.membershipMode === "manual" ? "Manual" : list.membershipMode === "hybrid" ? "Hybrid" : "Rules only"}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-[#68738f] dark:text-white/55">{list.description}</p>
+                    <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/35">{listCounts[list.id] ?? 0} task{(listCounts[list.id] ?? 0) === 1 ? "" : "s"} currently visible</p>
+                    {draft.isCollapsed ? (
+                      <p className="mt-2 text-xs text-[#7a7397] dark:text-white/45">
+                        {list.membershipMode === "manual" ? "Manual list membership." : summarizeTaskListRules(draft.rules)}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      aria-label={draft.isCollapsed ? `Expand ${list.name}` : `Collapse ${list.name}`}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                      onClick={() => updateDraft(list.id, { isCollapsed: !draft.isCollapsed })}
+                      type="button"
+                    >
+                      {draft.isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                    </button>
+                    <button
+                      className="rounded-full border border-[#ddd6fb] bg-white px-4 py-2 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                      onClick={() => { void handleSave(list); }}
+                      type="button"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+                {!draft.isCollapsed ? (
+                  <>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      <label className="space-y-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Name</span>
+                        <input
+                          className="w-full rounded-[1rem] border border-[#ddd6fb] bg-white px-4 py-3 text-sm text-[#27304c] outline-none disabled:cursor-not-allowed disabled:bg-[#f7f4ff] disabled:text-[#8d87a7] dark:border-white/10 dark:bg-white/[0.05] dark:text-white dark:disabled:bg-white/[0.03] dark:disabled:text-white/35"
+                          disabled={list.type !== "custom"}
+                          onChange={(event) => updateDraft(list.id, { name: event.target.value })}
+                          value={draft.name}
+                        />
+                      </label>
+                      <label className="flex items-end">
+                        <span className="flex w-full items-center justify-between rounded-[1rem] border border-[#ddd6fb] bg-white px-4 py-3 text-sm text-[#27304c] dark:border-white/10 dark:bg-white/[0.05] dark:text-white">
+                          <span>
+                            <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Visible in rail</span>
+                            <span className="mt-1 block">Show this list in the main rail.</span>
+                          </span>
+                          <input
+                            checked={draft.isVisible}
+                            className="h-4 w-4 rounded border-[#d9cffb] text-[#6f57f6] focus:ring-[#6f57f6]"
+                            onChange={(event) => updateDraft(list.id, { isVisible: event.target.checked })}
+                            type="checkbox"
+                          />
+                        </span>
+                      </label>
+                    </div>
+
+                    {list.membershipMode !== "manual" ? (
+                      <div className="mt-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Rules</span>
+                          <div className="flex items-center gap-2">
+                            {(["all", "any"] as const).map((value) => {
+                              const active = (draft.rules?.combinator ?? "all") === value;
+                              return (
+                                <button
+                                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                                    active
+                                      ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                                      : "bg-[#f5f1ff] text-[#6f57f6] dark:bg-white/[0.06] dark:text-[#cabfff]"
+                                  }`}
+                                  key={`${list.id}-${value}`}
+                                  onClick={() => updateDraft(list.id, {
+                                    rules: {
+                                      combinator: value,
+                                      rules: draft.rules?.rules ?? [],
+                                    },
+                                  })}
+                                  type="button"
+                                >
+                                  {value === "all" ? "Match all" : "Match any"}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          {(draft.rules?.rules ?? []).map((rule, ruleIndex) => (
+                            <TaskListRuleRowEditor
+                              key={`${list.id}-rule-${ruleIndex}`}
+                              onChange={(nextRule) => updateDraft(list.id, {
+                                rules: {
+                                  combinator: draft.rules?.combinator ?? "all",
+                                  rules: (draft.rules?.rules ?? []).map((entry, index) => index === ruleIndex ? nextRule : entry),
+                                },
+                              })}
+                              onRemove={() => updateDraft(list.id, {
+                                rules: {
+                                  combinator: draft.rules?.combinator ?? "all",
+                                  rules: (draft.rules?.rules ?? []).filter((_, index) => index !== ruleIndex),
+                                },
+                              })}
+                              rule={rule}
+                            />
+                          ))}
+                        </div>
+                        <button
+                          className="inline-flex items-center gap-2 rounded-full border border-[#ddd6fb] bg-white px-4 py-2 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                          onClick={() => updateDraft(list.id, {
+                            rules: {
+                              combinator: draft.rules?.combinator ?? "all",
+                              rules: [...(draft.rules?.rules ?? []), createDefaultTaskListRule()],
+                            },
+                          })}
+                          type="button"
+                        >
+                          <Plus className="h-4 w-4" />
+                          Add rule
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-[1rem] border border-dashed border-[#ddd6fb] bg-[#faf8ff] px-4 py-3 text-sm text-[#68738f] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
+                        This is a manual list. Tasks appear here when you explicitly add them.
+                      </div>
+                    )}
+
+                    {rowErrors[list.id] ? (
+                      <p className="mt-3 text-sm text-[#d94e67] dark:text-[#ff9eaf]">{rowErrors[list.id]}</p>
+                    ) : null}
+                  </>
+                ) : null}
+              </section>
+            );
+          })}
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -5361,6 +7212,7 @@ function DailyPlanningPanel({
   isCollapsed,
   missedCount,
   onOpenFocusPlanner,
+  onSetTaskRecurring,
   onToggleCollapsed,
   onSelectBucket,
   planningCandidates,
@@ -5376,8 +7228,9 @@ function DailyPlanningPanel({
   isCollapsed: boolean;
   missedCount: number;
   onOpenFocusPlanner: () => void;
+  onSetTaskRecurring: (taskId: string, preset: "daily" | "weekly" | "monthly") => void;
   onToggleCollapsed: () => void;
-  onSelectBucket: (bucket: TaskBucket) => void;
+  onSelectBucket: (bucket: string) => void;
   planningCandidates: Task[];
   recurringCount: number;
   routeTaskToToday: (taskId: string) => void;
@@ -5402,7 +7255,7 @@ function DailyPlanningPanel({
             </button>
           </div>
           <p className="mt-1 text-sm text-[#68738f] dark:text-white/55">
-            {todayCount} in Today, {focusCount} in Focus, {inboxCount} in Inbox, {waitingCount} waiting, {recurringCount} recurring.
+            {todayCount} in Today, {focusCount} in Focus, {inboxCount} in Inbox, {waitingCount} waiting, {recurringCount} recurring. Triage Inbox fast, then protect the real work.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -5456,6 +7309,13 @@ function DailyPlanningPanel({
                   type="button"
                 >
                   Later
+                </button>
+                <button
+                  className="rounded-full bg-[#fff6df] px-3 py-2 text-xs font-semibold text-[#a87200] dark:bg-[#44350d] dark:text-[#ffd36c]"
+                  onClick={() => onSetTaskRecurring(task.id, "weekly")}
+                  type="button"
+                >
+                  Repeat Weekly
                 </button>
               </div>
             </div>
@@ -5985,7 +7845,7 @@ function TaskGridWidgetShell({
         />
       ) : null}
       <div className={`h-full min-h-0 overflow-hidden ${isEditMode ? "pointer-events-none" : ""}`}>
-        <div className={`h-full min-h-0 overflow-y-auto ${isEditMode && selected ? "pb-56" : ""}`}>
+        <div className={`adhdice-scrollbar h-full min-h-0 overflow-y-auto ${isEditMode && selected ? "pb-56" : ""}`}>
           {children}
         </div>
       </div>
@@ -6819,11 +8679,13 @@ function SubtaskRow({ depth, onAddChild, onRemove, onUpdate, subtask }: {
           value={subtask.title}
         />
         <button
-          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
+          className={`shrink-0 rounded-full p-2 bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
           onClick={() => onAddChild(subtask.id)}
           title="Add child step"
           type="button"
-        >+</button>
+        >
+          <Footprints className="h-3.5 w-3.5" />
+        </button>
         <button
           className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]`}
           onClick={() => onRemove(subtask.id)}
@@ -6896,7 +8758,7 @@ function TagChipInput({ allTags, onChange, values }: {
         </button>
       </div>
       {showDropdown && filtered.length > 0 ? (
-        <div className={`absolute left-0 right-0 top-full z-20 mt-1 max-h-36 overflow-y-auto rounded-[1rem] border shadow-lg border-[#ece8f8] bg-white dark:border-white/10 dark:bg-[#1a1230]`}>
+        <div className={`adhdice-scrollbar absolute left-0 right-0 top-full z-20 mt-1 max-h-36 overflow-y-auto rounded-[1rem] border shadow-lg border-[#ece8f8] bg-white dark:border-white/10 dark:bg-[#1a1230]`}>
           {filtered.map((tag) => (
             <button
               className={`w-full px-4 py-2 text-left text-sm text-[#1f2642] hover:bg-[#f7f5ff] dark:text-white dark:hover:bg-white/8`}
@@ -6973,7 +8835,7 @@ function NoteLinkPicker({
         ))}
       </div>
       {isOpen ? (
-        <div className="max-h-56 overflow-y-auto rounded-[1rem] border border-[#ece8f8] bg-[#fcfbff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+        <div className="adhdice-scrollbar max-h-56 overflow-y-auto rounded-[1rem] border border-[#ece8f8] bg-[#fcfbff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
           <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Notes</p>
           <div className="space-y-2">
             {allNotes.length === 0 ? (
@@ -7032,7 +8894,7 @@ function TaskBatchEditModal({
   const tagsModeOptions = ["unchanged", "replace", "clear"] as const;
 
   return (
-    <ModalShell className="w-full max-w-[42rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Batch edit tasks" onClose={onClose}>
+    <ModalShell className="adhdice-scrollbar w-full max-w-[42rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Batch edit tasks" onClose={onClose}>
       <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-[#ece8f8] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#171328]">
         <button aria-label="Close" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white" onClick={onClose} type="button">
           <X className="h-4 w-4" />
@@ -7063,7 +8925,7 @@ function TaskBatchEditModal({
                 value={draft.status}
               />
               <CompactSelectField
-                label="Bucket / Route"
+                label="Lists / Routing"
                 onChange={(value) => setDraft((current) => ({ ...current, route: value }))}
                 options={routeOptions}
                 renderValueLabel={(value) => value === "unchanged"
@@ -7249,8 +9111,17 @@ function TaskEditorModal({
   const [isSaving, setIsSaving] = useState(false);
   const [isEstimatedTimeMenuOpen, setIsEstimatedTimeMenuOpen] = useState(false);
   const [showActualTimeModal, setShowActualTimeModal] = useState(false);
+  const [editorScrollIndicator, setEditorScrollIndicator] = useState<VerticalScrollIndicator>({
+    active: false,
+    height: 0,
+    scrollable: false,
+    top: 0,
+  });
   const isEditing = mode === "edit" && task !== null;
   const draftRef = useRef<TaskEditorDraft>(createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks));
+  const editorScrollContentRef = useRef<HTMLDivElement | null>(null);
+  const editorScrollRef = useRef<HTMLDivElement | null>(null);
+  const editorScrollIdleTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     setDraft(createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks));
@@ -7261,6 +9132,69 @@ function TaskEditorModal({
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  useEffect(() => () => {
+    if (editorScrollIdleTimeoutRef.current) {
+      window.clearTimeout(editorScrollIdleTimeoutRef.current);
+    }
+  }, []);
+
+  function updateEditorScrollIndicator(active = false) {
+    const scrollElement = editorScrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    const { clientHeight, scrollHeight, scrollTop } = scrollElement;
+    const scrollable = scrollHeight > clientHeight + 1;
+    const height = scrollable ? Math.max(56, (clientHeight / scrollHeight) * clientHeight) : 0;
+    const maxTop = Math.max(0, clientHeight - height);
+    const maxScroll = Math.max(1, scrollHeight - clientHeight);
+    const top = scrollable ? (scrollTop / maxScroll) * maxTop : 0;
+
+    setEditorScrollIndicator({
+      active,
+      height,
+      scrollable,
+      top,
+    });
+  }
+
+  function handleEditorScroll() {
+    updateEditorScrollIndicator(true);
+
+    if (editorScrollIdleTimeoutRef.current) {
+      window.clearTimeout(editorScrollIdleTimeoutRef.current);
+    }
+
+    editorScrollIdleTimeoutRef.current = window.setTimeout(() => {
+      updateEditorScrollIndicator(false);
+    }, 900);
+  }
+
+  useEffect(() => {
+    const scrollElement = editorScrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    const measure = () => updateEditorScrollIndicator(false);
+    measure();
+    const frame = window.requestAnimationFrame(measure);
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(scrollElement);
+
+    if (editorScrollContentRef.current) {
+      resizeObserver.observe(editorScrollContentRef.current);
+    }
+
+    window.addEventListener("resize", measure);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [availableNotes.length, draft, isEstimatedTimeMenuOpen, showActualTimeModal, subtaskMultiAdd, task]);
 
   useEffect(() => {
     let cancelled = false;
@@ -7358,7 +9292,13 @@ function TaskEditorModal({
   const handleManualFocusEntryProxy = onLogActualTime;
 
   return (
-    <ModalShell className={`w-full max-w-[42rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="Task editor" onClose={onClose}>
+    <ModalShell className={`relative w-full max-w-[42rem] max-h-[92vh] overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="Task editor" onClose={onClose}>
+      <div
+        className="adhdice-scrollbar-overlay max-h-[92vh] overflow-y-auto"
+        onScroll={handleEditorScroll}
+        ref={editorScrollRef}
+      >
+        <div ref={editorScrollContentRef}>
       {/* Header */}
       <div className={`sticky top-0 z-10 flex items-center gap-3 px-5 py-4 bg-white border-b border-[#ece8f8] dark:bg-[#171328] dark:border-b dark:border-white/10`}>
         <span className={`flex-1 text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>{isEditing ? "Edit Task" : "New Task"}</span>
@@ -7440,10 +9380,10 @@ function TaskEditorModal({
         {/* Title */}
         <label className="block rounded-[1.35rem] border border-[#e5def8] bg-[#fbfaff] px-4 py-4 shadow-[0_14px_34px_rgba(81,61,168,0.07)] focus-within:border-[#9d8cff] focus-within:bg-white focus-within:shadow-[0_18px_44px_rgba(111,87,246,0.14)] dark:border-white/10 dark:bg-white/[0.04] dark:focus-within:border-[#cabfff]/50 dark:focus-within:bg-white/[0.07]">
           <input
-            className="w-full bg-transparent text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] outline-none placeholder:text-[#b5a9ef] dark:text-[#c9bbff] dark:placeholder:text-white/25"
-            style={{ fontFamily: "\"Avenir Next\", Manrope, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif", fontWeight: 900 }}
+            className="ui-display-font w-full bg-transparent text-[15px] font-black uppercase tracking-[0.18em] text-[#7a63f7] leading-none outline-none placeholder:text-[#b5a9ef] dark:text-[#c9bbff] dark:placeholder:text-white/25"
             onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))}
             placeholder="Name the task"
+            style={{ WebkitFontSmoothing: "antialiased", fontWeight: 900, textRendering: "geometricPrecision" }}
             value={draft.title}
           />
         </label>
@@ -7458,7 +9398,7 @@ function TaskEditorModal({
               <CompactSelectField
                 label="Status"
                 onChange={(value) => setDraft((c) => ({ ...c, status: value }))}
-                optionButtonClassName={(status, selected) => `${TASK_STATUS_CHIP_STYLES[status as TaskStatus]} ${selected ? "ring-2 ring-[#6f57f6]/25" : "hover:opacity-90"}`}
+                optionButtonClassName={(status, selected) => `${TASK_STATUS_CHIP_STYLES[status as TaskStatus]} ${selected ? "" : "hover:opacity-90"}`}
                 options={visibleStatusOptions}
                 renderOption={(status) => renderTaskStatusChip(status as TaskStatus, { size: "sm" })}
                 renderValueNode={(status) => renderTaskStatusChip(status as TaskStatus, { size: "sm" })}
@@ -7469,11 +9409,11 @@ function TaskEditorModal({
               <CompactSelectField label="Repeat" onChange={(value) => setDraft((c) => ({ ...c, repeatFrequency: value }))} options={compactRepeatOptions} renderValueLabel={(value) => value === "custom" ? "Custom cadence" : formatOptionLabel(value)} value={draft.repeatFrequency} />
             </div>
 
-            <div className="grid gap-2">
-              <div className="grid gap-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Estimated Time</span>
-                  <div className="relative w-max">
+            <div className="grid gap-4">
+              <div className="grid gap-3 sm:grid-cols-[max-content_max-content] sm:justify-start sm:gap-6">
+                <div className="flex items-center gap-3">
+                  <span className="ui-field-label dark:text-white/40">Estimated Time</span>
+                  <div className="relative">
                     <button
                       aria-expanded={isEstimatedTimeMenuOpen}
                       className={`flex h-12 w-12 items-center justify-center rounded-full border text-[11px] font-bold shadow-[0_10px_24px_rgba(111,87,246,0.08)] transition ${draft.estimatedMinutes
@@ -7510,7 +9450,7 @@ function TaskEditorModal({
                         </div>
                         <div className="mt-3 flex gap-4">
                           <label className="grid justify-items-center gap-2">
-                            <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Hours</span>
+                            <span className="ui-field-label mb-1 block dark:text-white/40">Hours</span>
                             <input
                               className="h-16 w-16 rounded-full border border-[#e5e0f5] bg-[#fbfaff] px-0 text-center text-lg outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
                               inputMode="numeric"
@@ -7521,7 +9461,7 @@ function TaskEditorModal({
                             />
                           </label>
                           <label className="grid justify-items-center gap-2">
-                            <span className="mb-1 block text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Minutes</span>
+                            <span className="ui-field-label mb-1 block dark:text-white/40">Minutes</span>
                             <input
                               className="h-16 w-16 rounded-full border border-[#e5e0f5] bg-[#fbfaff] px-0 text-center text-lg outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
                               inputMode="numeric"
@@ -7536,37 +9476,39 @@ function TaskEditorModal({
                     ) : null}
                   </div>
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Actual Time</span>
+                <div className="flex items-center gap-3">
+                  <span className="ui-field-label dark:text-white/40">Actual Time</span>
                   <button
-                    className="flex h-12 items-center justify-center rounded-full border border-[#e5e0f5] bg-white px-4 text-[11px] font-bold uppercase tracking-[0.18em] text-[#1f2846] shadow-[0_10px_24px_rgba(111,87,246,0.08)] transition hover:border-[#c4b8ff] dark:border-white/15 dark:bg-white/8 dark:text-white/80"
+                    aria-label="Add manual time"
+                    className="flex h-12 w-12 items-center justify-center rounded-full border border-[#e5e0f5] bg-white text-[#1f2846] shadow-[0_10px_24px_rgba(111,87,246,0.08)] transition hover:border-[#c4b8ff] dark:border-white/15 dark:bg-white/8 dark:text-white/80 dark:hover:border-white/30"
                     onClick={() => setShowActualTimeModal(true)}
+                    title="Add manual time"
                     type="button"
                   >
-                    Add Manual Time
+                    <Clock className="h-4 w-4" />
                   </button>
                 </div>
               </div>
-            </div>
 
-            <div className="flex flex-wrap gap-2">
-              {([
-                { key: "isUrgent", label: "Urgent", activeClass: "bg-[#f05566] text-white border-[#f05566]", idleClass: "border-[#ffd8de] text-[#c24d5d] dark:border-[#6d3240] dark:text-[#ffb0bc]" },
-                { key: "isImportant", label: "Important", activeClass: "bg-[#f4b400] text-white border-[#f4b400]", idleClass: "border-[#f4dba6] text-[#a87200] dark:border-[#6b5314] dark:text-[#ffd36c]" },
-                { key: "focusToday", label: "Focus Today", activeClass: "bg-[#6f57f6] text-white border-[#6f57f6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:border-[#cabfff]", idleClass: "border-[#d9d0ff] text-[#6f57f6] dark:border-[#4b3b8f] dark:text-[#cabfff]" },
-              ] as const).map(({ key, label, activeClass, idleClass }) => {
-                const checked = draft[key] as boolean;
-                return (
-                  <button
-                    className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${checked ? activeClass : idleClass}`}
-                    key={key}
-                    onClick={() => setDraft((c) => ({ ...c, [key]: !checked }))}
-                    type="button"
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+              <div className="flex flex-wrap gap-2">
+                {([
+                  { key: "isUrgent", label: "Urgent", activeClass: "bg-[#f05566] text-white border-[#f05566]", idleClass: "border-[#ffd8de] text-[#c24d5d] dark:border-[#6d3240] dark:text-[#ffb0bc]" },
+                  { key: "isImportant", label: "Important", activeClass: "bg-[#f4b400] text-white border-[#f4b400]", idleClass: "border-[#f4dba6] text-[#a87200] dark:border-[#6b5314] dark:text-[#ffd36c]" },
+                  { key: "focusToday", label: "Focus Today", activeClass: "bg-[#6f57f6] text-white border-[#6f57f6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:border-[#cabfff]", idleClass: "border-[#d9d0ff] text-[#6f57f6] dark:border-[#4b3b8f] dark:text-[#cabfff]" },
+                ] as const).map(({ key, label, activeClass, idleClass }) => {
+                  const checked = draft[key] as boolean;
+                  return (
+                    <button
+                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition-colors ${checked ? activeClass : idleClass}`}
+                      key={key}
+                      onClick={() => setDraft((c) => ({ ...c, [key]: !checked }))}
+                      type="button"
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </EditorCollapsibleSection>
@@ -7825,6 +9767,7 @@ function TaskEditorModal({
         {showActualTimeModal ? (
           <ManualEntryModal
             categories={focusCategories}
+            initialTitle={draft.title.trim() || undefined}
             labelOptions={focusLabelOptions}
             onClose={() => setShowActualTimeModal(false)}
             onSave={async (data) => {
@@ -7924,6 +9867,22 @@ function TaskEditorModal({
           </div>
         ) : null}
       </form>
+        </div>
+      </div>
+      {editorScrollIndicator.scrollable ? (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none absolute right-1 top-0 h-full w-1.5 overflow-hidden rounded-full bg-[#efeaff] transition-opacity duration-200 dark:bg-white/10 ${editorScrollIndicator.active ? "opacity-100" : "opacity-85"}`}
+        >
+          <span
+            className="absolute left-0 top-0 block w-full rounded-full bg-[#8d78ff] shadow-[0_0_12px_rgba(124,92,255,0.38)]"
+            style={{
+              height: `${editorScrollIndicator.height}px`,
+              transform: `translateY(${editorScrollIndicator.top}px)`,
+            }}
+          />
+        </div>
+      ) : null}
     </ModalShell>
   );
 }
@@ -8173,7 +10132,7 @@ function FocusPlannerModal({
           value={search}
         />
       </label>
-      <div className={`mt-4 max-h-[24rem] overflow-y-auto rounded-[1.5rem] border border-[#ece8f8] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.03]`}>
+      <div className={`adhdice-scrollbar mt-4 max-h-[24rem] overflow-y-auto rounded-[1.5rem] border border-[#ece8f8] bg-[#fcfbff] dark:border-white/10 dark:bg-white/[0.03]`}>
         {filtered.length === 0 ? (
           <div className="p-4">
             <EmptyTaskState text="No tasks match this step yet." />
@@ -8301,7 +10260,7 @@ function TaskHistoryModal({
       </div>
 
       {/* 12-week heatmap */}
-      <div className="flex gap-1 overflow-x-auto pb-1">
+      <div className="adhdice-scrollbar flex gap-1 overflow-x-auto pb-1">
         {weeks.map((week, wi) => (
           <div className="flex flex-col gap-1" key={wi}>
             {week.map((dateKey) => (
@@ -8554,8 +10513,8 @@ function BottomDock({
     ? { bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }
     : undefined;
   const dockShapeClass = dockPlacement === "bottom"
-    ? "mx-auto flex w-fit max-w-full items-center gap-[3px] rounded-[1.75rem] px-[3px] py-1 overflow-x-auto sm:overflow-x-visible [&::-webkit-scrollbar]:hidden touch-pan-x"
-    : "flex max-h-full w-[5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
+    ? "adhdice-scrollbar mx-auto flex w-fit max-w-full items-center gap-[3px] rounded-[1.75rem] px-[3px] py-1 overflow-x-auto sm:overflow-x-visible touch-pan-x"
+    : "adhdice-scrollbar flex max-h-full w-[5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
   const collapsingStyle = isDockCollapsing
     ? dockPlacement === "bottom"
       ? { maxWidth: "4rem", width: "4rem", height: "4rem", borderRadius: "9999px", padding: "0" }
@@ -8747,7 +10706,7 @@ function LabeledInput({
 }) {
   return (
     <label className="grid gap-2">
-      <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span>
+      <span className="ui-field-label dark:text-white/40">{label}</span>
       <input
         className={`h-12 rounded-[1rem] px-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white`}
         onChange={(event) => onChange(event.target.value)}
@@ -8834,7 +10793,7 @@ function CompactSelectField<T extends string>({
 
   return (
     <div className="grid gap-2" ref={rootRef}>
-      <span className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</span>
+      <span className="ui-field-label dark:text-white/40">{label}</span>
       <div className="relative">
         <button
           aria-expanded={isOpen}
@@ -9056,7 +11015,7 @@ function EditorCollapsibleSection({
           type="button"
         >
           <div className="min-w-0">
-            <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">{title}</p>
+            <p className="ui-display-font text-sm uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">{title}</p>
             {summary ? <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{summary}</p> : null}
           </div>
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]">
@@ -9383,15 +11342,34 @@ function migrateLegacyTaskUiState(state: TaskUiState): TaskUiState {
   const nextView = state.view === "list" || state.view === "cards" || state.view === "matrix" || state.view === "grid"
     ? state.view
     : DEFAULT_TASK_UI_STATE.view;
-  const nextBucket = isTaskBucket(state.selectedBucket) ? state.selectedBucket : DEFAULT_TASK_UI_STATE.selectedBucket;
-  const nextSavedView = isSavedTaskView(state.savedView) ? state.savedView : DEFAULT_TASK_UI_STATE.savedView;
+  const nextBucket = typeof state.selectedBucket === "string" && state.selectedBucket.length > 0
+    ? state.selectedBucket
+    : DEFAULT_TASK_UI_STATE.selectedBucket;
+  const storedUiStateVersion = typeof state.uiStateVersion === "number" ? state.uiStateVersion : 1;
+  const validColumnIds: AgentPlanColumnId[] = ["bucket", "due", "estimated_time", "actual_time", "priority", "energy", "repeat", "signal"];
+  const nextVisibleColumnsByView = (["list", "cards", "matrix", "grid"] as const).reduce<Record<TaskViewMode, AgentPlanColumnId[]>>((accumulator, view) => {
+    const candidate = state.visibleColumnsByView?.[view];
+    const normalized = Array.isArray(candidate)
+      ? candidate.filter((columnId): columnId is AgentPlanColumnId => validColumnIds.includes(columnId as AgentPlanColumnId))
+      : [];
+    const deduped = normalized.length > 0 ? Array.from(new Set(normalized)) : [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW[view]];
+    const withEstimated = deduped.includes("estimated_time") ? deduped : [...deduped, "estimated_time"];
+    accumulator[view] = withEstimated.includes("actual_time") ? withEstimated : [...withEstimated, "actual_time"];
+    return accumulator;
+  }, {
+    list: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.list],
+    cards: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.cards],
+    matrix: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.matrix],
+    grid: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.grid],
+  });
 
   return {
     ...state,
-    savedView: nextSavedView,
     selectedBucket: nextBucket,
     view: nextView,
     statusFilters: Array.isArray(state.statusFilters) ? state.statusFilters : [],
+    uiStateVersion: TASK_UI_SCHEMA_VERSION,
+    visibleColumnsByView: nextVisibleColumnsByView,
   };
 }
 
@@ -9486,10 +11464,6 @@ function isTaskBucket(value: unknown): value is TaskBucket {
   return typeof value === "string" && value in TASK_BUCKET_LABELS;
 }
 
-function isSavedTaskView(value: unknown): value is SavedTaskView {
-  return value === "all" || value === "today" || value === "focus" || value === "urgent" || value === "recurring" || value === "low_energy" || value === "inbox";
-}
-
 function shouldRouteTaskToInbox(task: Task) {
   return isTaskOpen(task)
     && !task.due_on
@@ -9522,6 +11496,9 @@ function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucket {
   }
   if (routedBucket === "today") {
     return "today";
+  }
+  if (routedBucket === "quick_wins") {
+    return "quick_wins";
   }
 
   if (shouldRouteTaskToInbox(task)) {
@@ -9561,9 +11538,11 @@ function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucket {
 
 function buildTaskBucketCounts(tasks: Task[], context: TaskBucketContext) {
   return tasks.reduce<Record<TaskBucket, number>>((accumulator, task) => {
+    accumulator.all += 1;
     accumulator[getTaskBucket(task, context)] += 1;
     return accumulator;
   }, {
+    all: 0,
     inbox: 0,
     today: 0,
     focus: 0,
@@ -9575,19 +11554,6 @@ function buildTaskBucketCounts(tasks: Task[], context: TaskBucketContext) {
     done: 0,
     missed: 0,
   });
-}
-
-function applySavedTaskView(tasks: Task[], view: SavedTaskView, context: TaskBucketContext) {
-  if (view === "all") {
-    return tasks;
-  }
-
-  if (view === "low_energy") {
-    return tasks.filter((task) => isTaskOpen(task) && task.energy === "low");
-  }
-
-  const targetBucket = SAVED_VIEW_BUCKET_MAP[view];
-  return tasks.filter((task) => getTaskBucket(task, context) === targetBucket);
 }
 
 function sortTasksForCockpit(tasks: Task[], context: TaskBucketContext) {
@@ -9616,6 +11582,7 @@ function sortTasksForCockpit(tasks: Task[], context: TaskBucketContext) {
 function getTaskCockpitSortScore(task: Task, context: TaskBucketContext) {
   const bucket = getTaskBucket(task, context);
   const bucketBase: Record<TaskBucket, number> = {
+    all: 5,
     missed: 0,
     today: 10,
     focus: 20,
@@ -9684,6 +11651,19 @@ function describePlanningCandidate(task: Task) {
   ].filter(Boolean);
 
   return parts.join(" · ");
+}
+
+function getListPriorityLabel(task: Task, focusedTaskIdSet: Set<string>) {
+  if (task.is_urgent) {
+    return "Urgent";
+  }
+  if (task.is_important) {
+    return "Important";
+  }
+  if (focusedTaskIdSet.has(task.id)) {
+    return "Focus";
+  }
+  return "None";
 }
 
 function matchesTaskQuickFilter(task: Task, filter: TaskQuickFilter, focusedTaskIds: string[]) {
@@ -10147,6 +12127,15 @@ function formatEstimatedMinutesLabel(value: string) {
   return `${remainingMinutes}m`;
 }
 
+function formatActualSecondsLabel(seconds: number | null | undefined) {
+  if (!seconds || seconds <= 0) {
+    return "Time";
+  }
+
+  const roundedMinutes = Math.max(1, Math.ceil(seconds / 60));
+  return formatEstimatedMinutesLabel(String(roundedMinutes));
+}
+
 function formatTaskMetaLine(task: Task) {
   const parts = [formatDueLabel(task.due_on)];
   const dueTime = formatDueTimeLabel(task.due_time);
@@ -10157,6 +12146,9 @@ function formatTaskMetaLine(task: Task) {
   parts.push(task.is_important ? "important" : `${task.priority} priority`);
   if (task.estimated_minutes) {
     parts.push(`${task.estimated_minutes} min`);
+  }
+  if (task.actual_seconds > 0) {
+    parts.push(formatActualSecondsLabel(task.actual_seconds));
   }
   return parts.join(" · ");
 }
@@ -10448,18 +12440,9 @@ function buildAgentPlanSubtaskItems(subtasks: DbTaskSubtask[], parentId: string 
     }));
 }
 
-function buildAgentPlanDescription(task: Task) {
-  const notePreview = task.notes?.trim();
-  if (notePreview) {
-    return notePreview;
-  }
-
-  const parts = [
-    formatTaskDueLabel(task),
-    task.estimated_minutes ? `${task.estimated_minutes} min` : null,
-  ].filter((value) => value && value !== "No date");
-
-  return parts.length > 0 ? parts.join(" · ") : null;
+function collectDescendantSubtaskIds(subtasks: DbTaskSubtask[], parentId: string): string[] {
+  const directChildren = subtasks.filter((subtask) => (subtask.parent_subtask_id ?? null) === parentId);
+  return directChildren.flatMap((subtask) => [subtask.id, ...collectDescendantSubtaskIds(subtasks, subtask.id)]);
 }
 
 function buildAgentPlanMetadata(
@@ -10467,12 +12450,19 @@ function buildAgentPlanMetadata(
   context: {
     bucketContext: TaskBucketContext;
     focusedTaskIdSet: Set<string>;
+    listDefinitions: TaskListDefinition[];
+    listMemberships: ReturnType<typeof evaluateTaskListMemberships>;
   },
 ) {
+  const primaryListLabel = context.listMemberships
+    .map((membership) => context.listDefinitions.find((list) => list.id === membership.id)?.name ?? null)
+    .filter((value): value is string => Boolean(value))
+    .slice(0, 2)
+    .join(", ");
   const metadata: AgentPlanTaskItem["metadata"] = [
     {
-      label: "Bucket",
-      value: TASK_BUCKET_LABELS[getTaskBucket(task, context.bucketContext)],
+      label: "Lists",
+      value: primaryListLabel || TASK_BUCKET_LABELS[getTaskBucket(task, context.bucketContext)],
     },
     {
       label: "Due",
@@ -10480,7 +12470,7 @@ function buildAgentPlanMetadata(
     },
     {
       label: "Priority",
-      value: formatOptionLabel(task.priority),
+      value: getListPriorityLabel(task, context.focusedTaskIdSet),
     },
     {
       label: "Energy",
@@ -10488,10 +12478,17 @@ function buildAgentPlanMetadata(
     },
   ];
 
-  if (context.focusedTaskIdSet.has(task.id)) {
+  if (task.estimated_minutes) {
     metadata.push({
-      label: "Focus",
-      value: "Today",
+      label: "Estimated Time",
+      value: formatEstimatedMinutesLabel(String(task.estimated_minutes)),
+    });
+  }
+
+  if (task.actual_seconds > 0) {
+    metadata.push({
+      label: "Actual Time",
+      value: formatActualSecondsLabel(task.actual_seconds),
     });
   }
 
@@ -10541,19 +12538,92 @@ function buildAgentPlanMetaPills(
   return pills;
 }
 
+function buildAgentPlanRowChips(
+  task: Task,
+  subtasks: DbTaskSubtask[],
+  context: {
+    bucketContext: TaskBucketContext;
+    focusedTaskIdSet: Set<string>;
+  },
+): AgentPlanMetaPill[] {
+  const chips: AgentPlanMetaPill[] = [];
+  const seenLabels = new Set<string>();
+  const dueLabel = formatTaskDueLabel(task);
+  const repeatSummary = formatRepeatSummary(task);
+  const pushChip = (chip: AgentPlanMetaPill) => {
+    if (seenLabels.has(chip.label)) {
+      return;
+    }
+    seenLabels.add(chip.label);
+    chips.push(chip);
+  };
+
+  if (dueLabel !== "No date") {
+    pushChip({
+      label: dueLabel,
+      tone: isTaskOpen(task) && isOverdue(task.due_on) ? "danger" : "neutral",
+    });
+  }
+
+  if (task.is_urgent) {
+    pushChip({ label: "Urgent", tone: "danger" });
+  }
+
+  if (task.is_important) {
+    pushChip({ label: "Important", tone: "warning" });
+  }
+
+  if (context.focusedTaskIdSet.has(task.id)) {
+    pushChip({ label: "Focus", tone: "accent" });
+  }
+
+  if (repeatSummary) {
+    pushChip({ label: repeatSummary, tone: "warning" });
+  }
+
+  if (subtasks.length > 0) {
+    const completedCount = subtasks.filter((subtask) => isClosedSubtaskStatus(subtask.status)).length;
+    pushChip({
+      label: `${completedCount}/${subtasks.length} steps`,
+      tone: completedCount === subtasks.length ? "success" : "neutral",
+    });
+  }
+
+  return chips;
+}
+
 function buildAgentPlanTaskItem(
   task: Task,
   context: {
     bucketContext: TaskBucketContext;
     focusedTaskIdSet: Set<string>;
+    listDefinitions: TaskListDefinition[];
+    listMemberships: ReturnType<typeof evaluateTaskListMemberships>;
     subtasks: DbTaskSubtask[];
   },
 ): AgentPlanTaskItem {
   return {
-    description: buildAgentPlanDescription(task),
+    actualSeconds: task.actual_seconds ?? 0,
+    bucket: getTaskBucket(task, context.bucketContext),
+    estimatedMinutes: task.estimated_minutes ?? null,
     id: task.id,
+    lists: [...context.listDefinitions]
+      .flatMap((listDefinition) => {
+        const membership = context.listMemberships.find((entry) => entry.id === listDefinition.id);
+        if (!membership) {
+          return [];
+        }
+        return [{
+          id: membership.id,
+          isManual: membership.isManual,
+          label: listDefinition.name,
+          tone: getTaskListTone(membership.id),
+        }];
+      })
+      .filter((list): list is AgentPlanTaskItem["lists"][number] => list !== null),
     metadata: buildAgentPlanMetadata(task, context),
     metaPills: buildAgentPlanMetaPills(task, context.subtasks, context),
+    rowChips: buildAgentPlanRowChips(task, context.subtasks, context),
     status: toAgentPlanStatus(task.status),
     subtasks: buildAgentPlanSubtaskItems(context.subtasks),
     title: task.title,
@@ -10577,9 +12647,78 @@ function mapTaskSubtaskRow(row: DbTaskSubtask) {
   };
 }
 
+function mapTaskListRow(row: DbTaskList): TaskListDefinition | null {
+  let rules = null;
+  if (row.rules_json) {
+    try {
+      rules = parseTaskListRules(JSON.parse(row.rules_json));
+    } catch {
+      rules = null;
+    }
+  }
+  if (
+    row.list_type !== "system"
+    && row.list_type !== "smart"
+    && row.list_type !== "custom"
+  ) {
+    return null;
+  }
+  if (
+    row.membership_mode !== "manual"
+    && row.membership_mode !== "rules"
+    && row.membership_mode !== "hybrid"
+  ) {
+    return null;
+  }
+
+  const id = row.id.startsWith("list:") || isBuiltInTaskListId(row.id)
+    ? row.id as TaskListId
+    : `list:${row.id}` as TaskListId;
+
+  return {
+    description: row.built_in_key ? TASK_BUCKET_DESCRIPTIONS[row.built_in_key as TaskBucket] ?? row.name : row.name,
+    id,
+    isDeletable: row.is_deletable,
+    isEditable: row.is_editable,
+    isVisible: row.is_visible,
+    membershipMode: row.membership_mode,
+    name: row.name,
+    rules,
+    sortOrder: row.sort_order,
+    type: row.list_type,
+  };
+}
+
+function mapTaskListManualMembershipRow(row: DbTaskListManualMembership): TaskListManualMembership {
+  return {
+    ...row,
+    list_id: (row.list_id.startsWith("list:") || isBuiltInTaskListId(row.list_id))
+      ? row.list_id as TaskListId
+      : `list:${row.list_id}` as TaskListId,
+  };
+}
+
+function getTaskListTone(listId: string): AgentPlanMetaPill["tone"] {
+  if (listId === "focus") return "accent";
+  if (listId === "urgent" || listId === "missed") return "danger";
+  if (listId === "important" || listId === "recurring") return "warning";
+  if (listId === "done" || listId === "quick_wins") return "success";
+  return "neutral";
+}
+
 function isMissingParentSubtaskColumnError(message: string) {
   return message.includes("parent_subtask_id")
     && message.includes("adhdice_task_subtasks")
+    && message.includes("schema cache");
+}
+
+function isMissingTaskListsTableError(message: string) {
+  return message.includes("adhdice_task_lists")
+    && message.includes("schema cache");
+}
+
+function isMissingTaskListManualMembershipsTableError(message: string) {
+  return message.includes("adhdice_task_list_manual_memberships")
     && message.includes("schema cache");
 }
 
@@ -10587,6 +12726,12 @@ function isMissingTaskEnergyNoneEnumError(message: string) {
   return message.includes("adhdice_clean_task_energy")
     && message.includes("invalid input value for enum")
     && message.includes("\"none\"");
+}
+
+function isMissingTaskActualSecondsColumnError(message: string) {
+  return message.includes("actual_seconds")
+    && message.includes("adhdice_clean_tasks")
+    && message.includes("schema cache");
 }
 
 function getNextPendingSubtask(taskId: string, subtasksByTaskId: Record<string, DbTaskSubtask[]>) {

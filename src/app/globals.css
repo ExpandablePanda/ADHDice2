@@ -135,11 +135,82 @@
     background: var(--accent-soft);
     color: var(--accent);
   }
+
+  .ui-display-font {
+    font-family:
+      "Avenir Next", Manrope, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      sans-serif;
+    font-weight: 900;
+  }
+
+  .ui-field-label {
+    color: #8d87a7;
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+}
+
+:root {
+  --adhdice-scrollbar-track: rgba(124, 92, 255, 0.1);
+  --adhdice-scrollbar-thumb: rgba(124, 92, 255, 0.42);
+  --adhdice-scrollbar-thumb-hover: rgba(124, 92, 255, 0.68);
+}
+
+.adhdice-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 92, 255, 0.42) rgba(124, 92, 255, 0.1) !important;
 }
 
 html,
 body {
   overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 92, 255, 0.42) rgba(124, 92, 255, 0.1) !important;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.adhdice-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+.adhdice-scrollbar::-webkit-scrollbar-track {
+  background-color: rgba(124, 92, 255, 0.1) !important;
+  border-radius: 999px;
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+.adhdice-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(124, 92, 255, 0.42) !important;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 999px rgba(124, 92, 255, 0.42);
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+.adhdice-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(124, 92, 255, 0.68) !important;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  box-shadow: inset 0 0 0 999px rgba(124, 92, 255, 0.68);
+}
+
+.adhdice-scrollbar-overlay {
+  scrollbar-width: none;
+}
+
+.adhdice-scrollbar-overlay::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 html {

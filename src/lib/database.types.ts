@@ -52,6 +52,73 @@ export type TaskGridLayoutUpdate = Partial<
   Pick<TaskGridLayout, "layout_json">
 >;
 
+export type TaskListKind = "system" | "smart" | "custom";
+export type TaskListMembershipMode = "manual" | "rules" | "hybrid";
+
+export type TaskList = {
+  id: string;
+  user_id: string;
+  built_in_key: string | null;
+  name: string;
+  list_type: TaskListKind;
+  membership_mode: TaskListMembershipMode;
+  is_deletable: boolean;
+  is_editable: boolean;
+  is_visible: boolean;
+  sort_order: number;
+  rules_json: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskListInsert = {
+  id: string;
+  user_id: string;
+  built_in_key?: string | null;
+  name: string;
+  list_type?: TaskListKind;
+  membership_mode?: TaskListMembershipMode;
+  is_deletable?: boolean;
+  is_editable?: boolean;
+  is_visible?: boolean;
+  sort_order?: number;
+  rules_json?: string | null;
+};
+
+export type TaskListUpdate = Partial<
+  Pick<
+    TaskList,
+    | "built_in_key"
+    | "name"
+    | "list_type"
+    | "membership_mode"
+    | "is_deletable"
+    | "is_editable"
+    | "is_visible"
+    | "sort_order"
+    | "rules_json"
+  >
+>;
+
+export type TaskListManualMembership = {
+  id: string;
+  user_id: string;
+  task_id: string;
+  list_id: string;
+  created_at: string;
+};
+
+export type TaskListManualMembershipInsert = {
+  id?: string;
+  user_id: string;
+  task_id: string;
+  list_id: string;
+};
+
+export type TaskListManualMembershipUpdate = Partial<
+  Pick<TaskListManualMembership, "list_id">
+>;
+
 export type Task = {
   id: string;
   user_id: string;
@@ -65,6 +132,7 @@ export type Task = {
   due_on: string | null;
   due_time: string | null;
   estimated_minutes: number | null;
+  actual_seconds: number;
   tags: string[];
   external_link_label: string | null;
   external_link_url: string | null;
@@ -93,6 +161,7 @@ export type TaskInsert = {
   due_on?: string | null;
   due_time?: string | null;
   estimated_minutes?: number | null;
+  actual_seconds?: number;
   tags?: string[];
   external_link_label?: string | null;
   external_link_url?: string | null;
@@ -119,6 +188,7 @@ export type TaskUpdate = Partial<
     | "due_on"
     | "due_time"
     | "estimated_minutes"
+    | "actual_seconds"
     | "tags"
     | "external_link_label"
     | "external_link_url"
@@ -464,6 +534,18 @@ export type Database = {
         Row: TaskFocusDay;
         Insert: TaskFocusDayInsert;
         Update: TaskFocusDayUpdate;
+        Relationships: [];
+      };
+      adhdice_task_lists: {
+        Row: TaskList;
+        Insert: TaskListInsert;
+        Update: TaskListUpdate;
+        Relationships: [];
+      };
+      adhdice_task_list_manual_memberships: {
+        Row: TaskListManualMembership;
+        Insert: TaskListManualMembershipInsert;
+        Update: TaskListManualMembershipUpdate;
         Relationships: [];
       };
       adhdice_task_grid_layouts: {

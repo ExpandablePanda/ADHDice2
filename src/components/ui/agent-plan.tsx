@@ -8,17 +8,17 @@ import {
 } from "framer-motion";
 import {
   ArrowRight,
-  CirclePlus,
   ChevronDown,
   ChevronRight,
   Circle,
   CircleX,
   Ellipsis,
+  Footprints,
   Clock,
   PenLine,
   Star,
 } from "lucide-react";
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 export type AgentPlanStatus =
   | "pending"
@@ -36,6 +36,10 @@ export type AgentPlanMetaPill = {
   tone?: AgentPlanMetaTone;
 };
 
+export type AgentPlanColumnId = "bucket" | "due" | "energy" | "estimated_time" | "actual_time" | "priority" | "repeat" | "signal";
+
+const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "due", "energy", "estimated_time", "actual_time", "priority", "repeat", "signal"];
+
 export type AgentPlanSubtaskItem = {
   children: AgentPlanSubtaskItem[];
   id: string;
@@ -44,13 +48,22 @@ export type AgentPlanSubtaskItem = {
 };
 
 export type AgentPlanTaskItem = {
-  description?: string | null;
+  actualSeconds: number;
+  bucket: string;
+  estimatedMinutes: number | null;
   id: string;
+  lists: Array<{
+    id: string;
+    isManual: boolean;
+    label: string;
+    tone?: AgentPlanMetaTone;
+  }>;
   metadata: Array<{
     label: string;
     value: string;
   }>;
   metaPills: AgentPlanMetaPill[];
+  rowChips: AgentPlanMetaPill[];
   status: AgentPlanStatus;
   subtasks: AgentPlanSubtaskItem[];
   title: string;
@@ -62,23 +75,44 @@ export type AgentPlanBucketOption = {
   value: string;
 };
 
+type AgentPlanDuePreset = "next_week" | "none" | "today" | "tomorrow";
+type AgentPlanEnergyValue = "high" | "low" | "medium" | "none";
+type AgentPlanPriorityValue = "focus" | "important" | "none" | "urgent";
+type EditableTaskField = "bucket" | "due" | "energy" | "priority";
+type OpenTaskFieldMenu = {
+  field: EditableTaskField;
+  taskId: string;
+} | null;
+
 type AgentPlanProps = {
-  buckets: AgentPlanBucketOption[];
+  listOptions: AgentPlanBucketOption[];
+  manualListOptions: AgentPlanBucketOption[];
+  onAddTaskSubtask: (taskId: string) => Promise<string | null>;
   onAddChildSubtask: (parentSubtaskId: string) => Promise<string | null>;
   onClearTaskSelection: () => void;
+  onDeleteSubtask: (subtaskId: string) => Promise<boolean>;
   onDeleteSelectedTasks: () => void;
   onEditTask: (taskId: string) => void;
+  onOpenTaskActualTime: (taskId: string) => void;
   onOpenBatchEdit: () => void;
+  onReorderColumns: (columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) => void;
   onRenameSubtask: (subtaskId: string, title: string) => void;
   onRenameTask: (taskId: string, title: string) => void;
+  onSelectSingleTask: (taskId: string) => void;
+  onSetTaskEstimatedMinutes: (taskId: string, minutes: number | null) => Promise<void> | void;
+  onSetSubtaskStatus: (subtaskId: string, status: AgentPlanStatus) => void;
+  onSetTaskDuePreset: (taskId: string, preset: AgentPlanDuePreset) => void;
+  onSetTaskEnergy: (taskId: string, energy: AgentPlanEnergyValue) => void;
+  onSetTaskBucket: (taskId: string, bucket: string) => void;
+  onSetTaskPriority: (taskId: string, priority: AgentPlanPriorityValue) => void;
   onSelectBucket: (bucket: string) => void;
   onSelectAllVisible: () => void;
-  onSetSubtaskStatus: (subtaskId: string, status: AgentPlanStatus) => void;
   onSetTaskStatus: (taskId: string, status: AgentPlanStatus) => void;
   onToggleTaskSelection: (taskId: string, options?: { additive?: boolean; range?: boolean }) => void;
   selectedBucket: string;
   selectedTaskIds: string[];
   tasks: AgentPlanTaskItem[];
+  visibleColumns: AgentPlanColumnId[];
 };
 
 const STATUS_OPTIONS: AgentPlanStatus[] = [
@@ -90,6 +124,50 @@ const STATUS_OPTIONS: AgentPlanStatus[] = [
   "upcoming",
   "not_due",
 ];
+
+const DUE_PRESET_OPTIONS: Array<{ label: string; value: AgentPlanDuePreset }> = [
+  { label: "No Date", value: "none" },
+  { label: "Today", value: "today" },
+  { label: "Tomorrow", value: "tomorrow" },
+  { label: "Next Week", value: "next_week" },
+];
+
+const PRIORITY_OPTIONS: Array<{ label: string; value: AgentPlanPriorityValue }> = [
+  { label: "None", value: "none" },
+  { label: "Focus", value: "focus" },
+  { label: "Important", value: "important" },
+  { label: "Urgent", value: "urgent" },
+];
+
+const ENERGY_OPTIONS: Array<{ label: string; value: AgentPlanEnergyValue }> = [
+  { label: "None", value: "none" },
+  { label: "Low", value: "low" },
+  { label: "Medium", value: "medium" },
+  { label: "High", value: "high" },
+];
+
+function getIsoDateOffset(days: number) {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function getDuePresetValueFromLabel(label: string): AgentPlanDuePreset | null {
+  if (label === "No date") {
+    return "none";
+  }
+  if (label === "Today") {
+    return "today";
+  }
+  if (label === "Tomorrow") {
+    return "tomorrow";
+  }
+  if (label === getIsoDateOffset(7)) {
+    return "next_week";
+  }
+  return null;
+}
 
 const STATUS_LABELS: Record<AgentPlanStatus, string> = {
   pending: "Pending",
@@ -111,16 +189,6 @@ const STATUS_BADGE_STYLES: Record<AgentPlanStatus, string> = {
   not_due: "border border-[#a9daf7] bg-white text-[#3388c9]",
 };
 
-const STATUS_DOT_STYLES: Record<AgentPlanStatus, string> = {
-  pending: "border border-[#d96b1c] bg-white",
-  in_progress: "bg-[#4473df]",
-  done: "bg-[#119a69]",
-  missed: "bg-[#d94e67]",
-  did_my_best: "bg-[#4a5fd3]",
-  upcoming: "bg-[#68738c]",
-  not_due: "bg-[#3388c9]",
-};
-
 const META_PILL_STYLES: Record<AgentPlanMetaTone, string> = {
   accent: "bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]",
   danger: "bg-[#fff1f3] text-[#d94e67] dark:bg-[#44232f] dark:text-[#ff9eaf]",
@@ -128,10 +196,49 @@ const META_PILL_STYLES: Record<AgentPlanMetaTone, string> = {
   success: "bg-[#e8fbf2] text-[#119a69] dark:bg-[#16352c] dark:text-[#7de4b8]",
   warning: "bg-[#fff6df] text-[#b77900] dark:bg-[#44350d] dark:text-[#ffd56b]",
 };
+const META_PILL_BASE_CLASS = "inline-flex max-w-full shrink-0 items-center rounded-full px-2.5 py-1 text-[13px] font-semibold leading-none whitespace-nowrap";
 
+const CONNECTOR_ICON_GAP = 22;
 const SUBTASK_RAIL_WIDTH_CLASS = "grid-cols-[2.25rem_minmax(0,1fr)]";
 const SUBTASK_CHILD_LIST_PADDING_CLASS = "pl-[2.25rem]";
-const CONNECTOR_ICON_GAP = 22;
+const TASK_CONNECTOR_STROKE = "#d8ccff";
+const FOCUS_RING_CLASS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-[#cabfff] dark:focus-visible:ring-offset-[#171328]";
+const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
+  bucket: 150,
+  due: 168,
+  energy: 132,
+  estimated_time: 156,
+  actual_time: 132,
+  priority: 132,
+  repeat: 150,
+  signal: 176,
+  status: 74,
+  task: 360,
+};
+const MIN_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
+  bucket: 84,
+  due: 52,
+  energy: 92,
+  estimated_time: 92,
+  actual_time: 108,
+  priority: 96,
+  repeat: 88,
+  signal: 122,
+  status: 38,
+  task: 160,
+};
+const COLUMN_HEADER_LABELS: Record<ResizableColumnId, string> = {
+  bucket: "Lists",
+  due: "Due",
+  energy: "Energy",
+  estimated_time: "Est. Time",
+  actual_time: "Actual time",
+  priority: "Priority",
+  repeat: "Repeat",
+  signal: "Indicators",
+  status: "Status",
+  task: "Task",
+};
 
 type ConnectorLine = {
   x: number;
@@ -139,8 +246,55 @@ type ConnectorLine = {
   y2: number;
 };
 
+type HorizontalScrollIndicator = {
+  active: boolean;
+  left: number;
+  scrollable: boolean;
+  width: number;
+};
+
+type ResizableColumnId = "bucket" | "due" | "energy" | "estimated_time" | "actual_time" | "priority" | "repeat" | "signal" | "status" | "task";
+
+function getPriorityTone(priority: AgentPlanPriorityValue): AgentPlanMetaTone {
+  if (priority === "focus") return "accent";
+  if (priority === "important") return "warning";
+  if (priority === "urgent") return "danger";
+  return "neutral";
+}
+
+function getEnergyTone(energy: AgentPlanEnergyValue): AgentPlanMetaTone {
+  if (energy === "low") return "success";
+  if (energy === "medium") return "warning";
+  if (energy === "high") return "danger";
+  return "neutral";
+}
+
 function getMetadataValue(task: AgentPlanTaskItem, label: string) {
   return task.metadata.find((item) => item.label === label)?.value ?? "—";
+}
+
+function formatDurationMinutes(minutes: number | null) {
+  if (!minutes || minutes <= 0) {
+    return null;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours > 0 && remainingMinutes > 0) {
+    return `${hours}h ${remainingMinutes}m`;
+  }
+  if (hours > 0) {
+    return `${hours}h`;
+  }
+  return `${remainingMinutes}m`;
+}
+
+function formatDurationSeconds(seconds: number) {
+  if (seconds <= 0) {
+    return null;
+  }
+
+  return formatDurationMinutes(Math.max(1, Math.ceil(seconds / 60)));
 }
 
 function isClosedStatus(status: AgentPlanStatus) {
@@ -223,8 +377,10 @@ type SubtaskBranchProps = {
   autofocusSubtaskId: string | null;
   connectorsSettling: boolean;
   onAddChildSubtask: (parentSubtaskId: string) => Promise<string | null>;
+  onDeleteSubtask: (subtaskId: string) => Promise<boolean>;
   onAutofocusHandled: () => void;
   onConnectorSettled: () => void;
+  onConnectorSettling: () => void;
   onRenameSubtask: (subtaskId: string, title: string) => void;
   onSetSubtaskStatus: (subtaskId: string, status: AgentPlanStatus) => void;
   registerAnchor: (subtaskId: string, element: HTMLDivElement | null) => void;
@@ -235,8 +391,10 @@ function SubtaskBranch({
   autofocusSubtaskId,
   connectorsSettling,
   onAddChildSubtask,
+  onDeleteSubtask,
   onAutofocusHandled,
   onConnectorSettled,
+  onConnectorSettling,
   onRenameSubtask,
   onSetSubtaskStatus,
   registerAnchor,
@@ -287,7 +445,7 @@ function SubtaskBranch({
         <div className="relative flex min-h-[2.4rem] justify-center">
           <div className="relative pt-0.5" ref={(element) => registerAnchor(subtask.id, element)}>
             <button
-              className="shrink-0"
+              className={`shrink-0 rounded-full ${FOCUS_RING_CLASS}`}
               onClick={(event) => {
                 event.stopPropagation();
                 setMenuOpen((current) => !current);
@@ -321,7 +479,7 @@ function SubtaskBranch({
               <button
                 className="mt-0.5 shrink-0 text-[#8d97b0] transition hover:text-[#6f57f6] dark:text-white/40 dark:hover:text-[#cabfff]"
                 onClick={() => {
-                  markConnectorsSettling();
+                  onConnectorSettling();
                   setIsOpen((current) => !current);
                 }}
                 type="button"
@@ -365,18 +523,29 @@ function SubtaskBranch({
               )}
               <button
                 aria-label="Add child step"
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#6f57f6] transition hover:bg-[#f1ecff] hover:text-[#5a45d1] dark:text-[#cabfff] dark:hover:bg-white/[0.08] dark:hover:text-white"
+                className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#f3efff] text-[#6f57f6] transition hover:bg-[#e8e0ff] hover:text-[#5a45d1] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2d2254] dark:hover:text-white ${FOCUS_RING_CLASS}`}
                 onClick={async (event) => {
                   event.stopPropagation();
                   const nextSubtaskId = await onAddChildSubtask(subtask.id);
                   if (nextSubtaskId && !isOpen) {
-                    markConnectorsSettling();
+                    onConnectorSettling();
                     setIsOpen(true);
                   }
                 }}
                 type="button"
               >
-                <CirclePlus className="h-3.5 w-3.5" />
+                <Footprints className="h-3.5 w-3.5" />
+              </button>
+              <button
+                aria-label="Delete step"
+                className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#fff3ea] text-[#d96b1c] transition hover:bg-[#ffe5d1] hover:text-[#bf5d14] dark:bg-[#3a2117] dark:text-[#ffbd7a] dark:hover:bg-[#4a2b1f] dark:hover:text-white ${FOCUS_RING_CLASS}`}
+                onClick={async (event) => {
+                  event.stopPropagation();
+                  await onDeleteSubtask(subtask.id);
+                }}
+                type="button"
+              >
+                <CircleX className="h-3.5 w-3.5" />
               </button>
             </div>
           </div>
@@ -400,8 +569,10 @@ function SubtaskBranch({
                   connectFromParent
                   connectorsSettling={connectorsSettling}
                   onAddChildSubtask={onAddChildSubtask}
+                  onDeleteSubtask={onDeleteSubtask}
                   onAutofocusHandled={onAutofocusHandled}
                   onConnectorSettled={onConnectorSettled}
+                  onConnectorSettling={onConnectorSettling}
                   onRenameSubtask={onRenameSubtask}
                   onSetSubtaskStatus={onSetSubtaskStatus}
                   subtasks={subtask.children}
@@ -420,8 +591,10 @@ function SubtaskList({
   connectFromParent = false,
   connectorsSettling = false,
   onAddChildSubtask,
+  onDeleteSubtask,
   onAutofocusHandled,
   onConnectorSettled,
+  onConnectorSettling,
   onRenameSubtask,
   onSetSubtaskStatus,
   subtasks,
@@ -430,8 +603,10 @@ function SubtaskList({
   connectFromParent?: boolean;
   connectorsSettling?: boolean;
   onAddChildSubtask: (parentSubtaskId: string) => Promise<string | null>;
+  onDeleteSubtask: (subtaskId: string) => Promise<boolean>;
   onAutofocusHandled: () => void;
   onConnectorSettled: () => void;
+  onConnectorSettling: () => void;
   onRenameSubtask: (subtaskId: string, title: string) => void;
   onSetSubtaskStatus: (subtaskId: string, status: AgentPlanStatus) => void;
   subtasks: AgentPlanSubtaskItem[];
@@ -506,7 +681,7 @@ function SubtaskList({
         {connectors.map((connector) => (
           <line
             key={`${connector.x}-${connector.y1}-${connector.y2}`}
-            stroke="#ddd6f9"
+            stroke={TASK_CONNECTOR_STROKE}
             strokeDasharray="8 8"
             strokeWidth="2"
             x1={connector.x}
@@ -524,8 +699,10 @@ function SubtaskList({
               connectorsSettling={connectorsSettling}
               key={subtask.id}
               onAddChildSubtask={onAddChildSubtask}
+              onDeleteSubtask={onDeleteSubtask}
               onAutofocusHandled={onAutofocusHandled}
               onConnectorSettled={onConnectorSettled}
+              onConnectorSettling={onConnectorSettling}
               onRenameSubtask={onRenameSubtask}
               onSetSubtaskStatus={onSetSubtaskStatus}
               registerAnchor={(subtaskId, element) => {
@@ -541,22 +718,34 @@ function SubtaskList({
 }
 
 export default function AgentPlan({
-  buckets,
+  listOptions,
+  manualListOptions,
+  onAddTaskSubtask,
   onAddChildSubtask,
   onClearTaskSelection,
+  onDeleteSubtask,
   onDeleteSelectedTasks,
   onEditTask,
+  onOpenTaskActualTime,
   onOpenBatchEdit,
+  onReorderColumns,
   onRenameSubtask,
   onRenameTask,
+  onSelectSingleTask,
+  onSetTaskEstimatedMinutes,
+  onSetSubtaskStatus,
+  onSetTaskDuePreset,
+  onSetTaskEnergy,
+  onSetTaskBucket,
+  onSetTaskPriority,
   onSelectBucket,
   onSelectAllVisible,
-  onSetSubtaskStatus,
   onSetTaskStatus,
   onToggleTaskSelection,
   selectedBucket,
   selectedTaskIds,
   tasks,
+  visibleColumns,
 }: AgentPlanProps) {
   const prefersReducedMotion = useReducedMotion();
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -564,29 +753,247 @@ export default function AgentPlan({
   const [autofocusSubtaskId, setAutofocusSubtaskId] = useState<string | null>(null);
   const [connectorsSettling, setConnectorsSettling] = useState(false);
   const [openTaskIconMenuId, setOpenTaskIconMenuId] = useState<string | null>(null);
-  const [openStatusTaskId, setOpenStatusTaskId] = useState<string | null>(null);
+  const [openTaskFieldMenu, setOpenTaskFieldMenu] = useState<OpenTaskFieldMenu>(null);
+  const [openEstimatedTimeMenuTaskId, setOpenEstimatedTimeMenuTaskId] = useState<string | null>(null);
+  const [estimatedTimeDrafts, setEstimatedTimeDrafts] = useState<Record<string, { hours: string; minutes: string }>>({});
+  const [draggedHeaderColumnId, setDraggedHeaderColumnId] = useState<AgentPlanColumnId | null>(null);
+  const [columnWidths, setColumnWidths] = useState<Record<ResizableColumnId, number>>(DEFAULT_COLUMN_WIDTHS);
+  const [taskScrollIndicator, setTaskScrollIndicator] = useState<HorizontalScrollIndicator>({
+    active: false,
+    left: 0,
+    scrollable: false,
+    width: 0,
+  });
+  const taskScrollRef = useRef<HTMLDivElement | null>(null);
   const taskRailRef = useRef<HTMLDivElement | null>(null);
+  const taskTableRef = useRef<HTMLTableElement | null>(null);
+  const taskRowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
   const taskStatusAnchorRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [taskConnectors, setTaskConnectors] = useState<ConnectorLine[]>([]);
   const [taskTitleDraft, setTaskTitleDraft] = useState("");
+  const taskScrollIdleTimeoutRef = useRef<number | null>(null);
+  const resizeStateRef = useRef<{ columnId: ResizableColumnId; startWidth: number; startX: number } | null>(null);
+  const headerDragStateRef = useRef<{ columnId: AgentPlanColumnId; lastTargetId: AgentPlanColumnId | null } | null>(null);
   const selectedTaskIdSet = new Set(selectedTaskIds);
+  const orderedOptionalColumns = useMemo(() => visibleColumns, [visibleColumns]);
+  const estimatedTimePresets = useMemo(() => ([
+    { label: "5m", minutes: 5 },
+    { label: "10m", minutes: 10 },
+    { label: "15m", minutes: 15 },
+    { label: "30m", minutes: 30 },
+    { label: "45m", minutes: 45 },
+    { label: "1h", minutes: 60 },
+  ]), []);
+  const assignableBucketOptions = useMemo(() => manualListOptions, [manualListOptions]);
+  const assignableBucketRows = useMemo(
+    () => [
+      assignableBucketOptions.slice(0, 4),
+      assignableBucketOptions.slice(4),
+    ].filter((row) => row.length > 0),
+    [assignableBucketOptions],
+  );
+  const duePresetRows = useMemo(
+    () => [DUE_PRESET_OPTIONS.slice(0, 2), DUE_PRESET_OPTIONS.slice(2)].filter((row) => row.length > 0),
+    [],
+  );
+  const priorityRows = useMemo(() => [PRIORITY_OPTIONS], []);
+  const energyRows = useMemo(() => [ENERGY_OPTIONS], []);
+  const totalTableWidth = useMemo(() => {
+    let total = columnWidths.status + columnWidths.task;
+    for (const columnId of orderedOptionalColumns) {
+      total += columnWidths[columnId];
+    }
+    return total;
+  }, [columnWidths, orderedOptionalColumns]);
+  const isTaskFieldMenuOpen = (taskId: string, field: EditableTaskField) => (
+    openTaskFieldMenu?.taskId === taskId && openTaskFieldMenu.field === field
+  );
+  const openTaskField = (taskId: string, field: EditableTaskField) => {
+    setOpenTaskFieldMenu((current) => current?.taskId === taskId && current.field === field
+      ? null
+      : { field, taskId });
+  };
 
   useEffect(() => {
     setExpandedTaskIds((current) => current.filter((taskId) => tasks.some((task) => task.id === taskId)));
   }, [tasks]);
 
   useEffect(() => {
-    if (tasks.length === 0) {
+    setOpenTaskIconMenuId(null);
+    setOpenTaskFieldMenu(null);
+    setOpenEstimatedTimeMenuTaskId(null);
+  }, [selectedBucket, tasks]);
+
+  useEffect(() => {
+    if (!openTaskFieldMenu) {
       return;
     }
 
-    setExpandedTaskIds((current) => (current.length === 0 ? [tasks[0].id] : current));
-  }, [tasks]);
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest("[data-task-field-menu]")) {
+        setOpenTaskFieldMenu(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [openTaskFieldMenu]);
 
   useEffect(() => {
-    setOpenTaskIconMenuId(null);
-    setOpenStatusTaskId(null);
-  }, [selectedBucket, tasks]);
+    if (!openEstimatedTimeMenuTaskId) {
+      return;
+    }
+
+    const task = tasks.find((entry) => entry.id === openEstimatedTimeMenuTaskId);
+    const currentMinutes = task?.estimatedMinutes ?? 0;
+    setEstimatedTimeDrafts((current) => ({
+      ...current,
+      [openEstimatedTimeMenuTaskId]: {
+        hours: currentMinutes > 0 ? String(Math.floor(currentMinutes / 60)) : "",
+        minutes: currentMinutes > 0 ? String(currentMinutes % 60) : "",
+      },
+    }));
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest("[data-estimated-time-menu]")) {
+        setOpenEstimatedTimeMenuTaskId(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [openEstimatedTimeMenuTaskId, tasks]);
+
+  useEffect(() => () => {
+    if (taskScrollIdleTimeoutRef.current) {
+      window.clearTimeout(taskScrollIdleTimeoutRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState) {
+        return;
+      }
+
+      const nextWidth = Math.max(
+        MIN_COLUMN_WIDTHS[resizeState.columnId],
+        resizeState.startWidth + (event.clientX - resizeState.startX),
+      );
+      setColumnWidths((current) => ({
+        ...current,
+        [resizeState.columnId]: nextWidth,
+      }));
+    };
+
+    const handlePointerUp = () => {
+      resizeStateRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const dragState = headerDragStateRef.current;
+      if (!dragState) {
+        return;
+      }
+
+      const targetColumn = document
+        .elementFromPoint(event.clientX, event.clientY)
+        ?.closest<HTMLElement>("[data-agent-column-id]");
+      const targetColumnId = targetColumn?.dataset.agentColumnId;
+
+      if (
+        targetColumnId &&
+        REORDERABLE_COLUMN_IDS.includes(targetColumnId as AgentPlanColumnId) &&
+        visibleColumns.includes(targetColumnId as AgentPlanColumnId) &&
+        targetColumnId !== dragState.columnId &&
+        targetColumnId !== dragState.lastTargetId
+      ) {
+        dragState.lastTargetId = targetColumnId as AgentPlanColumnId;
+        onReorderColumns(dragState.columnId, targetColumnId as AgentPlanColumnId);
+      }
+    };
+
+    const handlePointerUp = () => {
+      headerDragStateRef.current = null;
+      setDraggedHeaderColumnId(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [onReorderColumns, visibleColumns]);
+
+  function updateTaskScrollIndicator(active = false) {
+    const scrollElement = taskScrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    const { clientWidth, scrollLeft, scrollWidth } = scrollElement;
+    const scrollable = scrollWidth > clientWidth + 1;
+    const width = scrollable ? Math.max(48, (clientWidth / scrollWidth) * clientWidth) : 0;
+    const maxLeft = Math.max(0, clientWidth - width);
+    const maxScroll = Math.max(1, scrollWidth - clientWidth);
+    const left = scrollable ? (scrollLeft / maxScroll) * maxLeft : 0;
+
+    setTaskScrollIndicator({
+      active,
+      left,
+      scrollable,
+      width,
+    });
+  }
+
+  function handleTaskRailScroll() {
+    updateTaskScrollIndicator(true);
+
+    if (taskScrollIdleTimeoutRef.current) {
+      window.clearTimeout(taskScrollIdleTimeoutRef.current);
+    }
+
+    taskScrollIdleTimeoutRef.current = window.setTimeout(() => {
+      updateTaskScrollIndicator(false);
+    }, 900);
+  }
+
+  useLayoutEffect(() => {
+    const scrollElement = taskScrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    const measure = () => updateTaskScrollIndicator(false);
+    measure();
+    const frame = window.requestAnimationFrame(measure);
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(scrollElement);
+
+    if (scrollElement.firstElementChild instanceof HTMLElement) {
+      resizeObserver.observe(scrollElement.firstElementChild);
+    }
+
+    window.addEventListener("resize", measure);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [orderedOptionalColumns, tasks.length, totalTableWidth]);
 
   useEffect(() => {
     if (!editingTaskId || tasks.some((task) => task.id === editingTaskId)) {
@@ -638,7 +1045,7 @@ export default function AgentPlan({
       resizeObserver.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [expandedTaskIds, tasks]);
+  }, [tasks]);
 
   function beginTaskRename(taskId: string, title: string) {
     setEditingTaskId(taskId);
@@ -691,20 +1098,221 @@ export default function AgentPlan({
     );
   }
 
+  function focusTaskRow(taskId: string) {
+    taskRowRefs.current[taskId]?.focus();
+  }
+
+  function moveTaskFocus(taskId: string, direction: "next" | "previous" | "first" | "last") {
+    const currentIndex = tasks.findIndex((task) => task.id === taskId);
+    if (currentIndex === -1 || tasks.length === 0) {
+      return;
+    }
+
+    const nextTask = direction === "first"
+      ? tasks[0]
+      : direction === "last"
+        ? tasks.at(-1)
+        : direction === "next"
+          ? tasks[Math.min(tasks.length - 1, currentIndex + 1)]
+          : tasks[Math.max(0, currentIndex - 1)];
+
+    if (!nextTask) {
+      return;
+    }
+
+    onSelectSingleTask(nextTask.id);
+    window.requestAnimationFrame(() => focusTaskRow(nextTask.id));
+  }
+
+  function beginColumnResize(event: ReactPointerEvent<HTMLSpanElement>, columnId: ResizableColumnId) {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeStateRef.current = {
+      columnId,
+      startWidth: columnWidths[columnId],
+      startX: event.clientX,
+    };
+  }
+
+  function getMeasurementDisplay(display: string) {
+    if (display.includes("grid")) {
+      return "inline-grid";
+    }
+    if (display.includes("flex")) {
+      return "inline-flex";
+    }
+    return "inline-block";
+  }
+
+  function measureColumnContentWidth(cell: HTMLElement, measurementLayer: HTMLDivElement) {
+    const measurementTarget = cell.querySelector<HTMLElement>("[data-column-measure]") ?? cell;
+    const probe = measurementTarget === cell
+      ? document.createElement("div")
+      : measurementTarget.cloneNode(true) as HTMLElement;
+    const computedStyle = window.getComputedStyle(measurementTarget);
+
+    if (measurementTarget === cell) {
+      probe.className = cell.className;
+      probe.textContent = cell.textContent?.trim() ?? "";
+    }
+
+    probe.style.position = "absolute";
+    probe.style.left = "-99999px";
+    probe.style.top = "0";
+    probe.style.visibility = "hidden";
+    probe.style.pointerEvents = "none";
+    probe.style.width = "max-content";
+    probe.style.maxWidth = "none";
+    probe.style.minWidth = "0";
+    probe.style.whiteSpace = "nowrap";
+    probe.style.display = getMeasurementDisplay(computedStyle.display);
+    measurementLayer.appendChild(probe);
+
+    const measuredWidth = Math.ceil(probe.getBoundingClientRect().width);
+    measurementLayer.removeChild(probe);
+    return measuredWidth;
+  }
+
+  function autoFitAllColumns() {
+    const table = taskTableRef.current;
+    if (!table) {
+      return;
+    }
+
+    const measurementLayer = document.createElement("div");
+    measurementLayer.style.position = "absolute";
+    measurementLayer.style.left = "-99999px";
+    measurementLayer.style.top = "0";
+    measurementLayer.style.width = "0";
+    measurementLayer.style.height = "0";
+    measurementLayer.style.overflow = "hidden";
+    measurementLayer.style.pointerEvents = "none";
+    document.body.appendChild(measurementLayer);
+
+    try {
+      const columnIds: ResizableColumnId[] = ["status", "task", ...orderedOptionalColumns];
+      const nextWidths = { ...columnWidths };
+
+      columnIds.forEach((columnId, columnIndex) => {
+        let maxWidth = MIN_COLUMN_WIDTHS[columnId];
+
+        if (columnId !== "status") {
+          const headerProbe = document.createElement("span");
+          headerProbe.textContent = COLUMN_HEADER_LABELS[columnId];
+          headerProbe.style.position = "absolute";
+          headerProbe.style.left = "-99999px";
+          headerProbe.style.top = "0";
+          headerProbe.style.visibility = "hidden";
+          headerProbe.style.pointerEvents = "none";
+          headerProbe.style.whiteSpace = "nowrap";
+          headerProbe.style.fontSize = "11px";
+          headerProbe.style.fontWeight = "600";
+          headerProbe.style.letterSpacing = "0.18em";
+          headerProbe.style.textTransform = "uppercase";
+          measurementLayer.appendChild(headerProbe);
+          const headerLabelWidth = Math.ceil(headerProbe.getBoundingClientRect().width);
+          measurementLayer.removeChild(headerProbe);
+          const headerRailWidth = columnId === "task" ? 72 : 40;
+          maxWidth = Math.max(maxWidth, headerLabelWidth + headerRailWidth + 11);
+        }
+
+        Array.from(table.rows).forEach((row) => {
+          if (row.cells.length !== columnIds.length) {
+            return;
+          }
+
+          const cell = row.cells.item(columnIndex);
+          if (!(cell instanceof HTMLElement)) {
+            return;
+          }
+
+          maxWidth = Math.max(maxWidth, measureColumnContentWidth(cell, measurementLayer) + 3);
+        });
+
+        nextWidths[columnId] = maxWidth;
+      });
+
+      setColumnWidths(nextWidths);
+    } finally {
+      document.body.removeChild(measurementLayer);
+    }
+  }
+
+  function beginColumnHeaderDrag(event: ReactPointerEvent<HTMLTableCellElement>, columnId: ResizableColumnId) {
+    if (columnId === "status" || columnId === "task" || (event.target as HTMLElement).closest("[data-resize-handle]")) {
+      return;
+    }
+
+    const reorderableColumnId = columnId as AgentPlanColumnId;
+    event.preventDefault();
+    headerDragStateRef.current = {
+      columnId: reorderableColumnId,
+      lastTargetId: null,
+    };
+    setDraggedHeaderColumnId(reorderableColumnId);
+  }
+
+  function renderColumnHeader(label: string, columnId: ResizableColumnId, extraClassName = "") {
+    const canDrag = columnId !== "status" && columnId !== "task";
+    const isStatusColumn = columnId === "status";
+    const connectorMinWidth = columnId === "task" ? "4rem" : "1.75rem";
+    return (
+      <th
+        key={columnId}
+        className={`relative overflow-hidden border-b border-[#f0ebfb] px-[3px] pb-2 pt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa3bb] align-middle dark:border-white/10 dark:text-white/30 ${canDrag ? "cursor-grab select-none active:cursor-grabbing" : ""} ${draggedHeaderColumnId === columnId ? "bg-[#f7f3ff] text-[#6f57f6] dark:bg-white/[0.04] dark:text-[#cabfff]" : ""} ${extraClassName}`}
+        data-agent-column-id={canDrag ? columnId : undefined}
+        onPointerDown={canDrag ? (event) => beginColumnHeaderDrag(event, columnId) : undefined}
+      >
+        <span
+          className={`flex w-full min-w-0 items-center ${isStatusColumn ? "justify-center" : "gap-1.5"}`}
+        >
+          {isStatusColumn ? <span className="sr-only">Status</span> : <span className="min-w-0 truncate" data-column-measure>{label}</span>}
+          <span
+            aria-hidden="true"
+            className="group/resize cursor-col-resize rounded-full"
+            data-resize-handle
+            onDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              autoFitAllColumns();
+            }}
+            onPointerDown={(event) => beginColumnResize(event, columnId)}
+            style={{ alignItems: "center", display: "flex", flex: "1 1 auto", height: "1.25rem", minWidth: connectorMinWidth }}
+          >
+            <span
+              className="block rounded-full transition group-hover/resize:h-1.5"
+              style={{
+                backgroundImage: "repeating-linear-gradient(90deg, #d8ccff 0 8px, transparent 8px 16px)",
+                backgroundRepeat: "repeat-x",
+                backgroundSize: "16px 4px",
+                backgroundPosition: "left center",
+                boxShadow: "0 0 0 1px rgba(216, 204, 255, 0.18)",
+                height: "0.25rem",
+                minWidth: connectorMinWidth,
+                width: "100%",
+              }}
+            />
+          </span>
+        </span>
+      </th>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="pb-3">
-        <div className="overflow-x-auto px-1 pt-1 [&::-webkit-scrollbar]:hidden">
+        <div className="adhdice-scrollbar overflow-x-auto px-1 pt-1">
           <div className="flex min-w-max gap-2">
-            {buckets.map((bucket) => {
+            {listOptions.map((bucket) => {
               const active = bucket.value === selectedBucket;
               return (
                 <button
-                className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
-                  active
-                    ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                    : "bg-white text-[#64708a] hover:bg-[#faf8ff] dark:bg-white/[0.06] dark:text-white/70 dark:hover:bg-white/[0.09]"
-                }`}
+                  aria-pressed={active}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${FOCUS_RING_CLASS} ${
+                    active
+                      ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                      : "bg-white text-[#64708a] hover:bg-[#faf8ff] dark:bg-white/[0.06] dark:text-white/70 dark:hover:bg-white/[0.09]"
+                  }`}
                   key={bucket.value}
                   onClick={() => onSelectBucket(bucket.value)}
                   type="button"
@@ -728,7 +1336,11 @@ export default function AgentPlan({
       >
         {tasks.length === 0 ? (
           <div className="rounded-[1.2rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-4 py-8 text-center text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
-            No tasks match this bucket right now.
+            {selectedBucket === "missed"
+              ? "Nothing is missed right now. Keep this list empty on purpose."
+              : selectedBucket === "inbox"
+                ? "Inbox is clear. New untriaged tasks will land here until something else qualifies them."
+                : "No tasks match this list right now."}
           </div>
         ) : (
           <LayoutGroup>
@@ -739,28 +1351,28 @@ export default function AgentPlan({
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    className="rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                    className={`rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff] ${FOCUS_RING_CLASS}`}
                     onClick={onSelectAllVisible}
                     type="button"
                   >
                     Select all visible
                   </button>
                   <button
-                    className="rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                    className={`rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff] ${FOCUS_RING_CLASS}`}
                     onClick={onClearTaskSelection}
                     type="button"
                   >
                     Clear selection
                   </button>
                   <button
-                    className="rounded-full bg-[#6f57f6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                    className={`rounded-full bg-[#6f57f6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff] ${FOCUS_RING_CLASS}`}
                     onClick={onOpenBatchEdit}
                     type="button"
                   >
                     Edit selected
                   </button>
                   <button
-                    className="rounded-full bg-[#fff1f3] px-3 py-1.5 text-sm font-semibold text-[#d94e67] transition hover:bg-[#ffe4e9] dark:bg-[#44232f] dark:text-[#ff9eaf] dark:hover:bg-[#56303c]"
+                    className={`rounded-full bg-[#fff1f3] px-3 py-1.5 text-sm font-semibold text-[#d94e67] transition hover:bg-[#ffe4e9] dark:bg-[#44232f] dark:text-[#ff9eaf] dark:hover:bg-[#56303c] ${FOCUS_RING_CLASS}`}
                     onClick={onDeleteSelectedTasks}
                     type="button"
                   >
@@ -769,11 +1381,16 @@ export default function AgentPlan({
                 </div>
               </div>
             ) : null}
-            <div className="overflow-x-auto">
-              <div className="relative min-w-[75rem]" ref={taskRailRef}>
+            <div className="relative pb-3">
+            <div
+              className="adhdice-scrollbar adhdice-scrollbar-overlay overflow-x-auto pb-2"
+              onScroll={handleTaskRailScroll}
+              ref={taskScrollRef}
+            >
+              <div className="relative min-w-max" ref={taskRailRef}>
                 <svg
                   aria-hidden="true"
-                  className={`pointer-events-none absolute inset-0 z-0 overflow-visible transition-opacity duration-100 ${connectorsSettling ? "opacity-0" : "opacity-100"}`}
+                className="pointer-events-none absolute inset-0 z-0 overflow-visible transition-opacity duration-100"
                   height="100%"
                   preserveAspectRatio="none"
                   width="100%"
@@ -781,7 +1398,7 @@ export default function AgentPlan({
                   {taskConnectors.map((connector) => (
                     <line
                       key={`${connector.x}-${connector.y1}-${connector.y2}`}
-                      stroke="#ddd6f9"
+                      stroke={TASK_CONNECTOR_STROKE}
                       strokeDasharray="8 8"
                       strokeWidth="2"
                       x1={connector.x}
@@ -791,30 +1408,29 @@ export default function AgentPlan({
                     />
                   ))}
                 </svg>
-              <table className="relative z-10 w-full table-fixed border-separate border-spacing-y-1 text-left">
+              <table className="relative z-10 border-separate border-spacing-y-1 text-left table-fixed" ref={taskTableRef} style={{ width: `${totalTableWidth}px` }}>
                 <colgroup>
-                  <col className="w-24" />
-                  <col className="w-[24rem]" />
-                  <col className="w-32" />
-                  <col className="w-36" />
-                  <col className="w-28" />
-                  <col className="w-28" />
-                  <col className="w-28" />
-                  <col className="w-36" />
-                  <col className="w-44" />
+                  <col style={{ width: `${columnWidths.status}px` }} />
+                  <col style={{ width: `${columnWidths.task}px` }} />
+                  {orderedOptionalColumns.map((columnId) => (
+                    <col key={columnId} style={{ width: `${columnWidths[columnId]}px` }} />
+                  ))}
                 </colgroup>
                 <thead>
                   <tr className="border-b border-[#f0ebfb] dark:border-white/10">
-                    <th className="border-b border-[#f0ebfb] px-3 pb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa3bb] dark:border-white/10 dark:text-white/30">
-                      Status
-                    </th>
-                    {["Task", "Bucket", "Due", "Priority", "Energy", "Focus", "Repeat", "Signal"].map((label) => (
-                      <th
-                        className="border-b border-[#f0ebfb] px-3 pb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9aa3bb] dark:border-white/10 dark:text-white/30"
-                        key={label}
-                      >
-                        {label}
-                      </th>
+                    {renderColumnHeader("Status", "status")}
+                    {renderColumnHeader("Task", "task")}
+                    {orderedOptionalColumns.map((columnId) => renderColumnHeader(
+                      columnId === "bucket"
+                        ? "Lists"
+                        : columnId === "estimated_time"
+                        ? "Est. Time"
+                        : columnId === "actual_time"
+                        ? "Actual Time"
+                        : columnId === "signal"
+                        ? "Indicators"
+                        : columnId.charAt(0).toUpperCase() + columnId.slice(1),
+                      columnId,
                     ))}
                   </tr>
                 </thead>
@@ -823,23 +1439,35 @@ export default function AgentPlan({
                     const expanded = expandedTaskIds.includes(task.id);
                     const isEditingTaskTitle = editingTaskId === task.id;
                     const isDone = isClosedStatus(task.status);
-                    const bucketValue = getMetadataValue(task, "Bucket");
                     const dueValue = getMetadataValue(task, "Due");
+                    const estimatedTimeValue = getMetadataValue(task, "Estimated Time");
+                    const actualTimeValue = getMetadataValue(task, "Actual Time");
                     const priorityValue = getMetadataValue(task, "Priority");
                     const energyValue = getMetadataValue(task, "Energy");
-                    const focusValue = getMetadataValue(task, "Focus");
                     const repeatValue = getMetadataValue(task, "Repeat");
+                    const metadataValueByColumn: Partial<Record<AgentPlanColumnId, string>> = {
+                      bucket: getMetadataValue(task, "Lists"),
+                      due: dueValue,
+                      energy: energyValue,
+                      estimated_time: estimatedTimeValue,
+                      actual_time: actualTimeValue,
+                      priority: priorityValue,
+                      repeat: repeatValue,
+                    };
 
                     return (
                       <Fragment key={task.id}>
                         <motion.tr
                           animate={{ opacity: 1, y: 0 }}
-                          className={`group cursor-pointer rounded-[1rem] transition ${
+                          className={`group cursor-pointer rounded-[1rem] transition focus-visible:outline-none ${FOCUS_RING_CLASS} ${
                             selectedTaskIdSet.has(task.id)
                               ? "bg-[#f6f2ff] dark:bg-[#261f43]"
-                              : "hover:bg-[#fbf9ff] dark:hover:bg-white/[0.03]"
+                              : ""
                           }`}
                           initial={{ opacity: 0, y: prefersReducedMotion ? 0 : 6 }}
+                          ref={(element) => {
+                            taskRowRefs.current[task.id] = element;
+                          }}
                           onClick={(event) => {
                             onToggleTaskSelection(task.id, {
                               additive: event.metaKey || event.ctrlKey,
@@ -848,6 +1476,26 @@ export default function AgentPlan({
                           }}
                           onKeyDown={(event) => {
                             if (event.target !== event.currentTarget) {
+                              return;
+                            }
+                            if (event.key === "ArrowDown") {
+                              event.preventDefault();
+                              moveTaskFocus(task.id, "next");
+                              return;
+                            }
+                            if (event.key === "ArrowUp") {
+                              event.preventDefault();
+                              moveTaskFocus(task.id, "previous");
+                              return;
+                            }
+                            if (event.key === "Home") {
+                              event.preventDefault();
+                              moveTaskFocus(task.id, "first");
+                              return;
+                            }
+                            if (event.key === "End") {
+                              event.preventDefault();
+                              moveTaskFocus(task.id, "last");
                               return;
                             }
                             if (event.key === "Enter" || event.key === " ") {
@@ -862,12 +1510,13 @@ export default function AgentPlan({
                           tabIndex={0}
                           transition={{ duration: 0.18 }}
                         >
-                          <td className="relative px-3 py-3 align-top">
-                            <div className="flex w-10 justify-center" ref={(element) => {
+                          <td className="relative px-[3px] py-3 align-top">
+                            <div className="flex w-10 justify-center" data-column-measure ref={(element) => {
                               taskStatusAnchorRefs.current[task.id] = element;
                             }}>
                               <button
-                                className="shrink-0"
+                                aria-label={`Change status for ${task.title}`}
+                                className={`shrink-0 rounded-full ${FOCUS_RING_CLASS}`}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   setOpenTaskIconMenuId((current) => (current === task.id ? null : task.id));
@@ -896,58 +1545,58 @@ export default function AgentPlan({
                             ) : null}
                           </td>
 
-                          <td className="min-w-0 px-3 py-3 align-top">
-                            <div className="min-w-0 rounded-[1rem] transition group-hover:bg-[#f8f6ff] group-focus-within:bg-[#f8f6ff] dark:group-hover:bg-white/[0.03] dark:group-focus-within:bg-white/[0.03]">
-                              <div className="flex items-center gap-2">
-                                {(task.subtasks.length > 0 || task.description) ? (
-                                  <button
-                                    aria-label={expanded ? `Collapse ${task.title}` : `Expand ${task.title}`}
-                                    className="shrink-0 text-[#8d97b0] transition hover:text-[#6f57f6] dark:text-white/40 dark:hover:text-[#cabfff]"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      handleToggleTaskExpand(task.id);
-                                    }}
-                                    type="button"
-                                  >
-                                    {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                                  </button>
-                                ) : (
-                                  <span className="h-4 w-4 shrink-0" />
-                                )}
-                                {isEditingTaskTitle ? (
-                                  <input
-                                    autoFocus
-                                    className={`min-w-0 flex-1 rounded-md border border-[#ddd6f9] bg-white px-2 py-1 text-[15px] font-semibold outline-none dark:border-white/10 dark:bg-white/[0.04] ${isDone ? "text-[#8d97b0] line-through dark:text-white/45" : "text-[#1f2642] dark:text-white"}`}
-                                    onBlur={() => finishTaskRename(task, true)}
-                                    onChange={(event) => setTaskTitleDraft(event.target.value)}
-                                    onClick={(event) => event.stopPropagation()}
-                                    onKeyDown={(event) => {
-                                      if (event.key === "Enter") {
-                                        event.preventDefault();
-                                        finishTaskRename(task, true);
-                                      }
-                                      if (event.key === "Escape") {
-                                        event.preventDefault();
-                                        finishTaskRename(task, false);
-                                      }
-                                    }}
-                                    value={taskTitleDraft}
-                                  />
-                                ) : (
-                                  <button
-                                    className={`min-w-0 max-w-full truncate text-left text-[15px] font-semibold transition hover:text-[#6f57f6] dark:hover:text-[#cabfff] ${isDone ? "text-[#8d97b0] line-through dark:text-white/45" : "text-[#1f2642] dark:text-white"}`}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      beginTaskRename(task.id, task.title);
-                                    }}
-                                    type="button"
-                                  >
-                                    {task.title}
-                                  </button>
-                                )}
+                          <td className="min-w-0 px-[3px] py-3 align-top">
+                            <div className="min-w-0 rounded-[1rem] transition group-focus-within:bg-[#f8f6ff] dark:group-focus-within:bg-white/[0.03]" data-column-measure>
+                              <div className="flex items-start gap-2">
+                                <div className="relative inline-flex min-w-0 max-w-full items-center gap-2">
+                                  {task.subtasks.length > 0 ? (
+                                    <button
+                                      aria-label={`${expanded ? "Collapse" : "Expand"} steps for ${task.title}`}
+                                      className="absolute right-full top-1/2 mr-1 -translate-y-1/2 shrink-0 text-[#8d97b0] transition hover:text-[#6f57f6] dark:text-white/40 dark:hover:text-[#cabfff]"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleToggleTaskExpand(task.id);
+                                      }}
+                                      type="button"
+                                    >
+                                      {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                                    </button>
+                                  ) : null}
+                                  {isEditingTaskTitle ? (
+                                    <input
+                                      autoFocus
+                                      className={`min-w-0 w-[min(18rem,100%)] rounded-md border border-[#ddd6f9] bg-white px-2 py-1 text-[15px] font-semibold outline-none dark:border-white/10 dark:bg-white/[0.04] ${isDone ? "text-[#8d97b0] line-through dark:text-white/45" : "text-[#1f2642] dark:text-white"}`}
+                                      onBlur={() => finishTaskRename(task, true)}
+                                      onChange={(event) => setTaskTitleDraft(event.target.value)}
+                                      onClick={(event) => event.stopPropagation()}
+                                      onKeyDown={(event) => {
+                                        if (event.key === "Enter") {
+                                          event.preventDefault();
+                                          finishTaskRename(task, true);
+                                        }
+                                        if (event.key === "Escape") {
+                                          event.preventDefault();
+                                          finishTaskRename(task, false);
+                                        }
+                                      }}
+                                      value={taskTitleDraft}
+                                    />
+                                  ) : (
+                                    <button
+                                      className={`block min-w-0 max-w-full truncate text-left text-[15px] font-semibold transition hover:text-[#6f57f6] dark:hover:text-[#cabfff] ${FOCUS_RING_CLASS} ${isDone ? "text-[#8d97b0] line-through dark:text-white/45" : "text-[#1f2642] dark:text-white"}`}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        beginTaskRename(task.id, task.title);
+                                      }}
+                                      type="button"
+                                    >
+                                      {task.title}
+                                    </button>
+                                  )}
+                                </div>
                                 <button
                                   aria-label={`Edit ${task.title}`}
-                                  className="shrink-0 text-[#8d97b0] transition hover:text-[#6f57f6] dark:text-white/40 dark:hover:text-[#cabfff]"
+                                  className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f3efff] text-[#6f57f6] transition hover:bg-[#e8e0ff] hover:text-[#5a45d1] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2d2254] dark:hover:text-white ${FOCUS_RING_CLASS}`}
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     onEditTask(task.id);
@@ -956,40 +1605,467 @@ export default function AgentPlan({
                                 >
                                   <PenLine className="h-4 w-4" />
                                 </button>
+                                <button
+                                  aria-label={`Add step to ${task.title}`}
+                                  className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f3efff] text-[#6f57f6] transition hover:bg-[#e8e0ff] hover:text-[#5a45d1] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2d2254] dark:hover:text-white ${FOCUS_RING_CLASS}`}
+                                  onClick={async (event) => {
+                                    event.stopPropagation();
+                                    const nextSubtaskId = await onAddTaskSubtask(task.id);
+                                    if (nextSubtaskId) {
+                                      markConnectorsSettling();
+                                      setExpandedTaskIds((current) => current.includes(task.id) ? current : [...current, task.id]);
+                                      setAutofocusSubtaskId(nextSubtaskId);
+                                    } else if (task.subtasks.length > 0) {
+                                      handleToggleTaskExpand(task.id);
+                                    }
+                                  }}
+                                  type="button"
+                                >
+                                  <Footprints className="h-4 w-4" />
+                                </button>
                               </div>
-                              {task.description ? (
-                                <p className="mt-1 line-clamp-1 text-sm text-[#7d88a1] dark:text-white/45">
-                                  {task.description}
-                                </p>
+                              {task.rowChips.length > 0 ? (
+                                <div className="mt-2 flex min-w-0 flex-wrap gap-2">
+                                  {task.rowChips.map((pill, index) => (
+                                    <span
+                                      className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[pill.tone ?? "neutral"]}`}
+                                      key={`${task.id}-row-${index}-${pill.label}`}
+                                    >
+                                      {pill.label}
+                                    </span>
+                                  ))}
+                                </div>
                               ) : null}
                             </div>
                           </td>
 
-                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{bucketValue}</td>
-                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{dueValue}</td>
-                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{priorityValue}</td>
-                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{energyValue}</td>
-                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{focusValue}</td>
-                          <td className="px-3 py-3 align-top text-sm text-[#59627e] dark:text-white/65">{repeatValue}</td>
-                          <td className="px-3 py-3 align-top">
-                            <div className="flex min-h-[1.75rem] min-w-0 flex-wrap gap-2">
-                              {task.metaPills.length > 0 ? (
-                                task.metaPills.map((pill) => (
-                                  <span
-                                    className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${META_PILL_STYLES[pill.tone ?? "neutral"]}`}
-                                    key={`${task.id}-${pill.label}`}
+                          {orderedOptionalColumns.map((columnId) => {
+                            if (columnId === "signal") {
+                              return (
+                                <td className="px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <div className="flex min-h-[1.75rem] min-w-0 flex-wrap gap-2" data-column-measure>
+                                    {task.metaPills.length > 0 ? (
+                                      task.metaPills.map((pill) => (
+                                        <span
+                                          className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[pill.tone ?? "neutral"]}`}
+                                          key={`${task.id}-${pill.label}`}
+                                        >
+                                          {pill.label}
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span className="text-sm text-[#59627e] dark:text-white/65">—</span>
+                                    )}
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "bucket") {
+                              const visibleLists = task.lists.slice(0, 2);
+                              const hiddenListCount = Math.max(0, task.lists.length - visibleLists.length);
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  {task.lists.length > 0 ? (
+                                    <div className="relative" data-task-field-menu>
+                                      <button
+                                        aria-expanded={isTaskFieldMenuOpen(task.id, "bucket")}
+                                        aria-label={`Change lists for ${task.title}`}
+                                        className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                        data-column-measure
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openTaskField(task.id, "bucket");
+                                        }}
+                                        type="button"
+                                      >
+                                        <span className="flex flex-wrap gap-2">
+                                          {visibleLists.map((list) => (
+                                            <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[list.tone ?? "neutral"]}`} key={`${task.id}-list-${list.id}`}>
+                                              {list.label}
+                                            </span>
+                                          ))}
+                                          {hiddenListCount > 0 ? (
+                                            <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`}>+{hiddenListCount}</span>
+                                          ) : null}
+                                        </span>
+                                      </button>
+                                      {isTaskFieldMenuOpen(task.id, "bucket") ? (
+                                        <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 inline-block w-fit rounded-[1.5rem] bg-white/88 px-2 py-2 shadow-[0_24px_60px_rgba(115,88,255,0.14)] ring-1 ring-[#ede6ff] backdrop-blur-md dark:bg-[#1a1230]/92 dark:ring-white/10">
+                                          <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(128,100,255,0.35),transparent)] dark:bg-[linear-gradient(90deg,transparent,rgba(202,191,255,0.35),transparent)]" />
+                                          <div className="inline-flex flex-col items-start gap-2">
+                                            {assignableBucketRows.map((row, rowIndex) => (
+                                              <div className="flex items-center gap-2" key={`${task.id}-bucket-row-${rowIndex}`}>
+                                                {row.map((bucketOption) => (
+                                                  <button
+                                                    aria-pressed={task.lists.some((list) => list.id === bucketOption.value && list.isManual)}
+                                                    className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                                    key={`${task.id}-bucket-${bucketOption.value}`}
+                                                    onClick={(event) => {
+                                                      event.stopPropagation();
+                                                      onSetTaskBucket(task.id, bucketOption.value);
+                                                      setOpenTaskFieldMenu(null);
+                                                    }}
+                                                    type="button"
+                                                  >
+                                                    <span className={`${META_PILL_BASE_CLASS} ${task.lists.some((list) => list.id === bucketOption.value && list.isManual) ? META_PILL_STYLES.accent : META_PILL_STYLES.neutral}`}>
+                                                      {bucketOption.label}
+                                                    </span>
+                                                  </button>
+                                                ))}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    <span className="text-sm text-[#59627e] dark:text-white/65">—</span>
+                                  )}
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "due") {
+                              const dueLabel = metadataValueByColumn.due ?? "No date";
+                              const activeDuePreset = getDuePresetValueFromLabel(dueLabel);
+
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <div className="relative" data-task-field-menu>
+                                    <button
+                                      aria-expanded={isTaskFieldMenuOpen(task.id, "due")}
+                                      aria-label={`Change due date for ${task.title}`}
+                                      className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                      data-column-measure
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openTaskField(task.id, "due");
+                                      }}
+                                      type="button"
+                                    >
+                                      <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`}>
+                                        {dueLabel}
+                                      </span>
+                                    </button>
+                                    {isTaskFieldMenuOpen(task.id, "due") ? (
+                                      <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 inline-block w-fit rounded-[1.5rem] bg-white/88 px-2 py-2 shadow-[0_24px_60px_rgba(115,88,255,0.14)] ring-1 ring-[#ede6ff] backdrop-blur-md dark:bg-[#1a1230]/92 dark:ring-white/10">
+                                        <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(128,100,255,0.35),transparent)] dark:bg-[linear-gradient(90deg,transparent,rgba(202,191,255,0.35),transparent)]" />
+                                        <div className="inline-flex flex-col items-start gap-2">
+                                          {duePresetRows.map((row, rowIndex) => (
+                                            <div className="flex items-center gap-2" key={`${task.id}-due-row-${rowIndex}`}>
+                                              {row.map((option) => (
+                                                <button
+                                                  aria-pressed={activeDuePreset === option.value}
+                                                  className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                                  key={`${task.id}-due-${option.value}`}
+                                                  onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    onSetTaskDuePreset(task.id, option.value);
+                                                    setOpenTaskFieldMenu(null);
+                                                  }}
+                                                  type="button"
+                                                >
+                                                  <span className={`${META_PILL_BASE_CLASS} ${activeDuePreset === option.value ? META_PILL_STYLES.accent : META_PILL_STYLES.neutral}`}>
+                                                    {option.label}
+                                                  </span>
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "estimated_time") {
+                              const estimatedLabel = formatDurationMinutes(task.estimatedMinutes) ?? "Add time";
+                              const estimatedDraft = estimatedTimeDrafts[task.id] ?? { hours: "", minutes: "" };
+
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <div className="relative" data-estimated-time-menu>
+                                    <button
+                                      aria-expanded={openEstimatedTimeMenuTaskId === task.id}
+                                      aria-label={`Set estimated time for ${task.title}`}
+                                      className={task.estimatedMinutes
+                                        ? `inline-flex shrink-0 items-center rounded-full bg-[#6f57f6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff] ${FOCUS_RING_CLASS}`
+                                        : `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f3efff] text-[#6f57f6] transition hover:bg-[#e8e0ff] hover:text-[#5a45d1] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2d2254] dark:hover:text-white ${FOCUS_RING_CLASS}`}
+                                      data-column-measure
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setOpenEstimatedTimeMenuTaskId((current) => current === task.id ? null : task.id);
+                                      }}
+                                      title={estimatedLabel}
+                                      type="button"
+                                    >
+                                      {task.estimatedMinutes ? estimatedLabel : <Clock className="h-4 w-4" />}
+                                    </button>
+                                    {openEstimatedTimeMenuTaskId === task.id ? (
+                                      <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 w-[min(21rem,calc(100vw-3rem))] rounded-[1.2rem] border border-[#ddd6fb] bg-white p-3 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+                                        <div className="flex flex-wrap gap-2">
+                                          {estimatedTimePresets.map((preset) => (
+                                            <button
+                                              className={`rounded-full border px-3 py-2 text-sm font-semibold transition-colors ${task.estimatedMinutes === preset.minutes
+                                                ? "border-transparent bg-[#6f57f6] text-white dark:border-transparent dark:bg-[#cabfff] dark:text-[#1a1431]"
+                                                : "border-[#e5e0f5] bg-white text-[#5a607a] hover:border-[#c4b8ff] dark:border-white/15 dark:bg-white/8 dark:text-white/70 dark:hover:border-white/30"}`}
+                                              key={`${task.id}-estimate-${preset.minutes}`}
+                                              onClick={async (event) => {
+                                                event.stopPropagation();
+                                                await onSetTaskEstimatedMinutes(task.id, task.estimatedMinutes === preset.minutes ? null : preset.minutes);
+                                                setOpenEstimatedTimeMenuTaskId(null);
+                                              }}
+                                              type="button"
+                                            >
+                                              {preset.label}
+                                            </button>
+                                          ))}
+                                        </div>
+                                        <div className="mt-3 flex gap-4">
+                                          <label className="grid justify-items-center gap-2">
+                                            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Hours</span>
+                                            <input
+                                              className="h-14 w-14 rounded-full border border-[#e5e0f5] bg-[#fbfaff] px-0 text-center text-base outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+                                              inputMode="numeric"
+                                              value={estimatedDraft.hours}
+                                              placeholder="0"
+                                              type="text"
+                                              onChange={(event) => {
+                                                const hours = event.target.value.replace(/[^\d]/g, "");
+                                                setEstimatedTimeDrafts((current) => ({
+                                                  ...current,
+                                                  [task.id]: {
+                                                    ...estimatedDraft,
+                                                    hours,
+                                                  },
+                                                }));
+                                              }}
+                                              onClick={(event) => event.stopPropagation()}
+                                              onKeyDown={async (event) => {
+                                                if (event.key !== "Enter") {
+                                                  return;
+                                                }
+                                                event.preventDefault();
+                                                const hours = Number.parseInt(estimatedDraft.hours || "0", 10);
+                                                const minutes = Number.parseInt(estimatedDraft.minutes || "0", 10);
+                                                const totalMinutes = (Number.isFinite(hours) ? Math.max(0, hours) : 0) * 60 + (Number.isFinite(minutes) ? Math.min(59, Math.max(0, minutes)) : 0);
+                                                await onSetTaskEstimatedMinutes(task.id, totalMinutes > 0 ? totalMinutes : null);
+                                                setOpenEstimatedTimeMenuTaskId(null);
+                                              }}
+                                            />
+                                          </label>
+                                          <label className="grid justify-items-center gap-2">
+                                            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Minutes</span>
+                                            <input
+                                              className="h-14 w-14 rounded-full border border-[#e5e0f5] bg-[#fbfaff] px-0 text-center text-base outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+                                              inputMode="numeric"
+                                              value={estimatedDraft.minutes}
+                                              placeholder="0"
+                                              type="text"
+                                              onChange={(event) => {
+                                                const minutes = event.target.value.replace(/[^\d]/g, "");
+                                                setEstimatedTimeDrafts((current) => ({
+                                                  ...current,
+                                                  [task.id]: {
+                                                    ...estimatedDraft,
+                                                    minutes,
+                                                  },
+                                                }));
+                                              }}
+                                              onClick={(event) => event.stopPropagation()}
+                                              onKeyDown={async (event) => {
+                                                if (event.key !== "Enter") {
+                                                  return;
+                                                }
+                                                event.preventDefault();
+                                                const minutes = Number.parseInt(estimatedDraft.minutes || "0", 10);
+                                                const hours = Number.parseInt(estimatedDraft.hours || "0", 10);
+                                                const totalMinutes = (Number.isFinite(hours) ? Math.max(0, hours) : 0) * 60 + (Number.isFinite(minutes) ? Math.min(59, Math.max(0, minutes)) : 0);
+                                                await onSetTaskEstimatedMinutes(task.id, totalMinutes > 0 ? totalMinutes : null);
+                                                setOpenEstimatedTimeMenuTaskId(null);
+                                              }}
+                                            />
+                                          </label>
+                                        </div>
+                                        <div className="mt-3 flex items-center justify-end gap-2">
+                                          <button
+                                            className="rounded-full border border-[#e5e0f5] px-3 py-2 text-sm font-semibold text-[#5a607a] transition hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"
+                                            onClick={async (event) => {
+                                              event.stopPropagation();
+                                              await onSetTaskEstimatedMinutes(task.id, null);
+                                              setOpenEstimatedTimeMenuTaskId(null);
+                                            }}
+                                            type="button"
+                                          >
+                                            Clear
+                                          </button>
+                                          <button
+                                            className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                            onClick={async (event) => {
+                                              event.stopPropagation();
+                                              const hours = Number.parseInt(estimatedDraft.hours || "0", 10);
+                                              const minutes = Number.parseInt(estimatedDraft.minutes || "0", 10);
+                                              const totalMinutes = (Number.isFinite(hours) ? Math.max(0, hours) : 0) * 60 + (Number.isFinite(minutes) ? Math.min(59, Math.max(0, minutes)) : 0);
+                                              await onSetTaskEstimatedMinutes(task.id, totalMinutes > 0 ? totalMinutes : null);
+                                              setOpenEstimatedTimeMenuTaskId(null);
+                                            }}
+                                            type="button"
+                                          >
+                                            Apply
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "actual_time") {
+                              const actualLabel = formatDurationSeconds(task.actualSeconds) ?? "Log time";
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <button
+                                    aria-label={`Log actual time for ${task.title}`}
+                                    className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition ${FOCUS_RING_CLASS} ${task.actualSeconds > 0
+                                      ? "bg-[#6f57f6] text-white hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                      : "bg-[#f3efff] text-[#6f57f6] hover:bg-[#e8e0ff] hover:text-[#5a45d1] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2d2254] dark:hover:text-white"}`}
+                                    data-column-measure
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      onOpenTaskActualTime(task.id);
+                                    }}
+                                    title={actualLabel}
+                                    type="button"
                                   >
-                                    {pill.label}
-                                  </span>
-                                ))
-                              ) : (
-                                <span className="text-sm text-[#59627e] dark:text-white/65">—</span>
-                              )}
-                            </div>
-                          </td>
+                                    <Clock className="h-4 w-4" />
+                                  </button>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "priority") {
+                              const priorityLabel = metadataValueByColumn.priority ?? "None";
+                              const activePriority = priorityLabel.toLowerCase() as AgentPlanPriorityValue;
+
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <div className="relative" data-task-field-menu>
+                                    <button
+                                      aria-expanded={isTaskFieldMenuOpen(task.id, "priority")}
+                                      aria-label={`Change priority for ${task.title}`}
+                                      className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                      data-column-measure
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openTaskField(task.id, "priority");
+                                      }}
+                                      type="button"
+                                    >
+                                      <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[getPriorityTone(activePriority)]}`}>
+                                        {priorityLabel}
+                                      </span>
+                                    </button>
+                                    {isTaskFieldMenuOpen(task.id, "priority") ? (
+                                      <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 inline-block w-fit rounded-[1.5rem] bg-white/88 px-2 py-2 shadow-[0_24px_60px_rgba(115,88,255,0.14)] ring-1 ring-[#ede6ff] backdrop-blur-md dark:bg-[#1a1230]/92 dark:ring-white/10">
+                                        <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(128,100,255,0.35),transparent)] dark:bg-[linear-gradient(90deg,transparent,rgba(202,191,255,0.35),transparent)]" />
+                                        <div className="inline-flex flex-col items-start gap-2">
+                                          {priorityRows.map((row, rowIndex) => (
+                                            <div className="flex items-center gap-2" key={`${task.id}-priority-row-${rowIndex}`}>
+                                              {row.map((option) => (
+                                                <button
+                                                  aria-pressed={activePriority === option.value}
+                                                  className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                                  key={`${task.id}-priority-${option.value}`}
+                                                  onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    onSetTaskPriority(task.id, option.value);
+                                                    setOpenTaskFieldMenu(null);
+                                                  }}
+                                                  type="button"
+                                                >
+                                                  <span className={`${META_PILL_BASE_CLASS} ${activePriority === option.value ? META_PILL_STYLES[getPriorityTone(option.value)] : META_PILL_STYLES.neutral}`}>
+                                                    {option.label}
+                                                  </span>
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "energy") {
+                              const energyLabel = metadataValueByColumn.energy ?? "None";
+                              const activeEnergy = energyLabel.toLowerCase() as AgentPlanEnergyValue;
+
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <div className="relative" data-task-field-menu>
+                                    <button
+                                      aria-expanded={isTaskFieldMenuOpen(task.id, "energy")}
+                                      aria-label={`Change energy for ${task.title}`}
+                                      className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                      data-column-measure
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openTaskField(task.id, "energy");
+                                      }}
+                                      type="button"
+                                    >
+                                      <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[getEnergyTone(activeEnergy)]}`}>
+                                        {energyLabel}
+                                      </span>
+                                    </button>
+                                    {isTaskFieldMenuOpen(task.id, "energy") ? (
+                                      <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 inline-block w-fit rounded-[1.5rem] bg-white/88 px-2 py-2 shadow-[0_24px_60px_rgba(115,88,255,0.14)] ring-1 ring-[#ede6ff] backdrop-blur-md dark:bg-[#1a1230]/92 dark:ring-white/10">
+                                        <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(128,100,255,0.35),transparent)] dark:bg-[linear-gradient(90deg,transparent,rgba(202,191,255,0.35),transparent)]" />
+                                        <div className="inline-flex flex-col items-start gap-2">
+                                          {energyRows.map((row, rowIndex) => (
+                                            <div className="flex items-center gap-2" key={`${task.id}-energy-row-${rowIndex}`}>
+                                              {row.map((option) => (
+                                                <button
+                                                  aria-pressed={activeEnergy === option.value}
+                                                  className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                                  key={`${task.id}-energy-${option.value}`}
+                                                  onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    onSetTaskEnergy(task.id, option.value);
+                                                    setOpenTaskFieldMenu(null);
+                                                  }}
+                                                  type="button"
+                                                >
+                                                  <span className={`${META_PILL_BASE_CLASS} ${activeEnergy === option.value ? META_PILL_STYLES[getEnergyTone(option.value)] : META_PILL_STYLES.neutral}`}>
+                                                    {option.label}
+                                                  </span>
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            return (
+                              <td className="px-[3px] py-3 align-top text-sm text-[#59627e] dark:text-white/65" key={`${task.id}-${columnId}`}>
+                                {metadataValueByColumn[columnId] ?? "—"}
+                              </td>
+                            );
+                          })}
                         </motion.tr>
                         <AnimatePresence initial={false}>
-                          {expanded && (task.subtasks.length > 0 || task.description) ? (
+                          {expanded && task.subtasks.length > 0 ? (
                             <motion.tr
                               animate={{ opacity: 1, height: "auto" }}
                               exit={{ opacity: 0, height: 0 }}
@@ -997,32 +2073,23 @@ export default function AgentPlan({
                               onAnimationComplete={markConnectorsSettled}
                               transition={{ duration: 0.22 }}
                             >
-                              <td className="px-3 pt-0 pb-2" colSpan={9}>
-                                <div>
-                                  {task.description ? (
-                                    <div className="mb-3 rounded-[1rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-4 py-4 text-sm text-[#59627e] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/65">
-                                      {task.description}
-                                    </div>
-                                  ) : null}
-                                  {task.subtasks.length > 0 ? (
-                                    <div className={SUBTASK_CHILD_LIST_PADDING_CLASS}>
-                                      <SubtaskList
-                                        autofocusSubtaskId={autofocusSubtaskId}
-                                        connectFromParent
-                                        connectorsSettling={connectorsSettling}
-                                        onAddChildSubtask={handleAutofocusSubtask}
-                                        onAutofocusHandled={() => setAutofocusSubtaskId(null)}
-                                        onConnectorSettled={markConnectorsSettled}
-                                        onRenameSubtask={onRenameSubtask}
-                                        onSetSubtaskStatus={onSetSubtaskStatus}
-                                        subtasks={task.subtasks}
-                                      />
-                                    </div>
-                                  ) : !task.description ? (
-                                    <div className="rounded-[1rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-4 py-4 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/50">
-                                      No subtasks yet.
-                                    </div>
-                                  ) : null}
+                              <td className="px-3 pt-0 pb-2" colSpan={2 + orderedOptionalColumns.length}>
+                                <div style={{ paddingLeft: `${columnWidths.status}px` }}>
+                                  <div>
+                                    <SubtaskList
+                                      autofocusSubtaskId={autofocusSubtaskId}
+                                      connectFromParent
+                                      connectorsSettling={connectorsSettling}
+                                      onAddChildSubtask={handleAutofocusSubtask}
+                                      onDeleteSubtask={onDeleteSubtask}
+                                      onAutofocusHandled={() => setAutofocusSubtaskId(null)}
+                                      onConnectorSettled={markConnectorsSettled}
+                                      onConnectorSettling={markConnectorsSettling}
+                                      onRenameSubtask={onRenameSubtask}
+                                      onSetSubtaskStatus={onSetSubtaskStatus}
+                                      subtasks={task.subtasks}
+                                    />
+                                  </div>
                                 </div>
                               </td>
                             </motion.tr>
@@ -1034,6 +2101,21 @@ export default function AgentPlan({
                 </tbody>
               </table>
               </div>
+              </div>
+            {taskScrollIndicator.scrollable ? (
+              <div
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-x-4 bottom-0 h-1.5 overflow-hidden rounded-full bg-[#efeaff] transition-opacity duration-200 dark:bg-white/10 ${taskScrollIndicator.active ? "opacity-100" : "opacity-80"}`}
+              >
+                <span
+                  className="absolute left-0 top-0 block h-full rounded-full bg-[#8d78ff] shadow-[0_0_12px_rgba(124,92,255,0.38)]"
+                  style={{
+                    transform: `translateX(${taskScrollIndicator.left}px)`,
+                    width: `${taskScrollIndicator.width}px`,
+                  }}
+                />
+              </div>
+            ) : null}
             </div>
           </LayoutGroup>
         )}
