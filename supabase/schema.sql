@@ -88,6 +88,19 @@ create table public.adhdice_focus_active_sessions (
   primary key (user_id, category_id)
 );
 
+create table public.adhdice_task_active_timers (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  task_id uuid not null references public.adhdice_clean_tasks(id) on delete cascade,
+  title_snapshot text not null check (char_length(trim(title_snapshot)) > 0),
+  start_time timestamptz,
+  accumulated_seconds integer not null default 0 check (accumulated_seconds >= 0),
+  started_actual_seconds integer not null default 0 check (started_actual_seconds >= 0),
+  is_running boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, task_id)
+);
+
 create table public.adhdice_task_focus_days (
   user_id uuid not null references auth.users(id) on delete cascade,
   focus_date date not null,
@@ -133,6 +146,17 @@ create table public.adhdice_task_history (
   unique (user_id, task_id, entry_date)
 );
 
+create table public.adhdice_task_actual_time_entries (
+  id uuid primary key default gen_random_uuid(),
+  task_id uuid not null references public.adhdice_clean_tasks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entry_date date not null,
+  title_snapshot text not null check (char_length(trim(title_snapshot)) > 0),
+  duration_seconds integer not null check (duration_seconds > 0),
+  notes text,
+  created_at timestamptz not null default now()
+);
+
 create table public.adhdice_task_subtasks (
   id uuid primary key default gen_random_uuid(),
   task_id uuid not null references public.adhdice_clean_tasks(id) on delete cascade,
@@ -150,6 +174,126 @@ create table public.adhdice_task_grid_layouts (
   updated_at timestamptz not null default now()
 );
 
+create table public.adhdice_health_profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  preferred_weight_unit text not null default 'lb' check (preferred_weight_unit in ('lb', 'kg')),
+  calorie_goal integer check (calorie_goal is null or calorie_goal >= 0),
+  protein_goal_grams integer check (protein_goal_grams is null or protein_goal_grams >= 0),
+  carbs_goal_grams integer check (carbs_goal_grams is null or carbs_goal_grams >= 0),
+  fat_goal_grams integer check (fat_goal_grams is null or fat_goal_grams >= 0),
+  movement_goal integer check (movement_goal is null or movement_goal >= 0),
+  sleep_goal_minutes integer check (sleep_goal_minutes is null or sleep_goal_minutes >= 0),
+  target_weight_kg numeric(7,2) check (target_weight_kg is null or target_weight_kg > 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.adhdice_health_checkins (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entry_date date not null,
+  mood_score integer check (mood_score is null or (mood_score >= 1 and mood_score <= 5)),
+  energy_score integer check (energy_score is null or (energy_score >= 1 and energy_score <= 5)),
+  symptom_tags text[] not null default '{}',
+  reflection text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, entry_date)
+);
+
+create table public.adhdice_health_food_library (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  food_name text not null check (char_length(trim(food_name)) > 0),
+  brand_name text,
+  serving_label text,
+  calories integer not null default 0 check (calories >= 0),
+  protein_g numeric(7,2) check (protein_g is null or protein_g >= 0),
+  carbs_g numeric(7,2) check (carbs_g is null or carbs_g >= 0),
+  fat_g numeric(7,2) check (fat_g is null or fat_g >= 0),
+  barcode text,
+  provider text not null default 'manual',
+  provider_item_id text,
+  attribution text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.adhdice_health_meal_entries (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entry_date date not null,
+  meal_slot text not null check (meal_slot in ('breakfast', 'lunch', 'dinner', 'snack')),
+  logged_at timestamptz not null default now(),
+  food_name text not null check (char_length(trim(food_name)) > 0),
+  brand_name text,
+  serving_label text,
+  calories integer not null default 0 check (calories >= 0),
+  protein_g numeric(7,2) check (protein_g is null or protein_g >= 0),
+  carbs_g numeric(7,2) check (carbs_g is null or carbs_g >= 0),
+  fat_g numeric(7,2) check (fat_g is null or fat_g >= 0),
+  barcode text,
+  provider text not null default 'manual',
+  provider_item_id text,
+  attribution text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.adhdice_health_weight_entries (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entry_date date not null,
+  logged_at timestamptz not null default now(),
+  weight_kg numeric(7,2) not null check (weight_kg > 0),
+  source text not null default 'manual' check (source in ('manual', 'apple_health_import')),
+  note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table public.adhdice_health_metric_entries (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  metric_type text not null check (metric_type in ('steps', 'active_energy_kcal', 'exercise_minutes', 'sleep_minutes', 'body_mass_kg')),
+  metric_date date not null,
+  metric_value numeric(10,2) not null check (metric_value >= 0),
+  source text not null default 'apple_health_import' check (source in ('apple_health_import', 'manual')),
+  source_fingerprint text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, source_fingerprint)
+);
+
+create table public.adhdice_health_import_audits (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  source text not null,
+  imported_count integer not null default 0 check (imported_count >= 0),
+  duplicate_count integer not null default 0 check (duplicate_count >= 0),
+  skipped_count integer not null default 0 check (skipped_count >= 0),
+  import_start_date date,
+  import_end_date date,
+  summary_text text,
+  started_at timestamptz not null default now(),
+  completed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table public.adhdice_health_achievement_awards (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  achievement_code text not null check (achievement_code in ('first_check_in', 'seven_gentle_days', 'nourishment_notes', 'scale_awareness', 'connected_care', 'rest_noticed', 'motion_noticed', 'care_week', 'care_month')),
+  title text not null,
+  description text not null,
+  awarded_points integer not null default 0 check (awarded_points >= 0),
+  awarded_xp integer not null default 0 check (awarded_xp >= 0),
+  awarded_tokens integer not null default 0 check (awarded_tokens >= 0),
+  earned_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  unique (user_id, achievement_code)
+);
+
 create index adhdice_clean_tasks_user_status_sort_idx
   on public.adhdice_clean_tasks (user_id, status, sort_order, created_at desc);
 create index adhdice_clean_tasks_user_due_idx
@@ -162,6 +306,8 @@ create index adhdice_focus_sessions_user_date_idx
   on public.adhdice_focus_sessions (user_id, session_date desc, created_at desc);
 create index adhdice_focus_active_sessions_user_updated_idx
   on public.adhdice_focus_active_sessions (user_id, updated_at desc);
+create index adhdice_task_active_timers_user_created_idx
+  on public.adhdice_task_active_timers (user_id, created_at asc, updated_at desc);
 create index adhdice_task_focus_days_user_date_idx
   on public.adhdice_task_focus_days (user_id, focus_date desc);
 create index adhdice_task_lists_user_sort_idx
@@ -170,22 +316,48 @@ create index adhdice_task_list_manual_memberships_user_task_idx
   on public.adhdice_task_list_manual_memberships (user_id, task_id, list_id);
 create index adhdice_task_history_user_date_idx
   on public.adhdice_task_history (user_id, entry_date desc, created_at desc);
+create index adhdice_task_actual_time_entries_user_task_date_idx
+  on public.adhdice_task_actual_time_entries (user_id, task_id, entry_date desc, created_at desc);
 create index adhdice_task_subtasks_task_sort_idx
   on public.adhdice_task_subtasks (task_id, sort_order, created_at asc);
 create index adhdice_task_grid_layouts_updated_at_idx
   on public.adhdice_task_grid_layouts (updated_at desc);
+create index adhdice_health_checkins_user_date_idx
+  on public.adhdice_health_checkins (user_id, entry_date desc, updated_at desc);
+create index adhdice_health_food_library_user_updated_idx
+  on public.adhdice_health_food_library (user_id, updated_at desc, created_at desc);
+create index adhdice_health_meal_entries_user_date_idx
+  on public.adhdice_health_meal_entries (user_id, entry_date desc, logged_at desc);
+create index adhdice_health_weight_entries_user_date_idx
+  on public.adhdice_health_weight_entries (user_id, entry_date desc, logged_at desc);
+create index adhdice_health_metric_entries_user_date_idx
+  on public.adhdice_health_metric_entries (user_id, metric_date desc, metric_type);
+create index adhdice_health_import_audits_user_started_idx
+  on public.adhdice_health_import_audits (user_id, started_at desc);
+create index adhdice_health_achievement_awards_user_earned_idx
+  on public.adhdice_health_achievement_awards (user_id, earned_at desc);
 
 alter table public.adhdice_clean_tasks enable row level security;
 alter table public.adhdice_user_profiles enable row level security;
 alter table public.adhdice_focus_categories enable row level security;
 alter table public.adhdice_focus_sessions enable row level security;
 alter table public.adhdice_focus_active_sessions enable row level security;
+alter table public.adhdice_task_active_timers enable row level security;
 alter table public.adhdice_task_focus_days enable row level security;
 alter table public.adhdice_task_lists enable row level security;
 alter table public.adhdice_task_list_manual_memberships enable row level security;
 alter table public.adhdice_task_history enable row level security;
+alter table public.adhdice_task_actual_time_entries enable row level security;
 alter table public.adhdice_task_subtasks enable row level security;
 alter table public.adhdice_task_grid_layouts enable row level security;
+alter table public.adhdice_health_profiles enable row level security;
+alter table public.adhdice_health_checkins enable row level security;
+alter table public.adhdice_health_food_library enable row level security;
+alter table public.adhdice_health_meal_entries enable row level security;
+alter table public.adhdice_health_weight_entries enable row level security;
+alter table public.adhdice_health_metric_entries enable row level security;
+alter table public.adhdice_health_import_audits enable row level security;
+alter table public.adhdice_health_achievement_awards enable row level security;
 
 create policy "Users can read their own clean tasks"
   on public.adhdice_clean_tasks
@@ -287,6 +459,27 @@ create policy "Users can delete their own active focus sessions"
   for delete
   using (auth.uid() = user_id);
 
+create policy "Users can read their own active task timers"
+  on public.adhdice_task_active_timers
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can create their own active task timers"
+  on public.adhdice_task_active_timers
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own active task timers"
+  on public.adhdice_task_active_timers
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own active task timers"
+  on public.adhdice_task_active_timers
+  for delete
+  using (auth.uid() = user_id);
+
 create policy "Users can read their own task focus days"
   on public.adhdice_task_focus_days
   for select
@@ -371,6 +564,27 @@ create policy "Users can delete their own task history"
   for delete
   using (auth.uid() = user_id);
 
+create policy "Users can read their own task actual time entries"
+  on public.adhdice_task_actual_time_entries
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can create their own task actual time entries"
+  on public.adhdice_task_actual_time_entries
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own task actual time entries"
+  on public.adhdice_task_actual_time_entries
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own task actual time entries"
+  on public.adhdice_task_actual_time_entries
+  for delete
+  using (auth.uid() = user_id);
+
 create policy "Users can read their own task subtasks"
   on public.adhdice_task_subtasks
   for select
@@ -413,6 +627,69 @@ create policy "Users can delete their own task grid layouts"
   for delete
   using (auth.uid() = user_id);
 
+create policy "Users can read their own health profiles"
+  on public.adhdice_health_profiles
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can create their own health profiles"
+  on public.adhdice_health_profiles
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own health profiles"
+  on public.adhdice_health_profiles
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own health profiles"
+  on public.adhdice_health_profiles
+  for delete
+  using (auth.uid() = user_id);
+
+create policy "Users can manage their own health check-ins"
+  on public.adhdice_health_checkins
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can manage their own health food library"
+  on public.adhdice_health_food_library
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can manage their own health meal entries"
+  on public.adhdice_health_meal_entries
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can manage their own health weight entries"
+  on public.adhdice_health_weight_entries
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can manage their own health metric entries"
+  on public.adhdice_health_metric_entries
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can manage their own health import audits"
+  on public.adhdice_health_import_audits
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can manage their own health achievement awards"
+  on public.adhdice_health_achievement_awards
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
 create or replace function public.adhdice_clean_set_updated_at()
 returns trigger
 language plpgsql
@@ -443,6 +720,11 @@ create trigger adhdice_focus_active_sessions_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
+create trigger adhdice_task_active_timers_set_updated_at
+  before update on public.adhdice_task_active_timers
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
 create trigger adhdice_task_focus_days_set_updated_at
   before update on public.adhdice_task_focus_days
   for each row
@@ -468,13 +750,53 @@ create trigger adhdice_task_grid_layouts_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
+create trigger adhdice_health_profiles_set_updated_at
+  before update on public.adhdice_health_profiles
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_checkins_set_updated_at
+  before update on public.adhdice_health_checkins
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_food_library_set_updated_at
+  before update on public.adhdice_health_food_library
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_meal_entries_set_updated_at
+  before update on public.adhdice_health_meal_entries
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_weight_entries_set_updated_at
+  before update on public.adhdice_health_weight_entries
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_health_metric_entries_set_updated_at
+  before update on public.adhdice_health_metric_entries
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
 alter publication supabase_realtime add table public.adhdice_clean_tasks;
 alter publication supabase_realtime add table public.adhdice_focus_categories;
 alter publication supabase_realtime add table public.adhdice_focus_sessions;
 alter publication supabase_realtime add table public.adhdice_focus_active_sessions;
+alter publication supabase_realtime add table public.adhdice_task_active_timers;
 alter publication supabase_realtime add table public.adhdice_task_focus_days;
 alter publication supabase_realtime add table public.adhdice_task_lists;
 alter publication supabase_realtime add table public.adhdice_task_list_manual_memberships;
 alter publication supabase_realtime add table public.adhdice_task_history;
+alter publication supabase_realtime add table public.adhdice_task_actual_time_entries;
 alter publication supabase_realtime add table public.adhdice_task_subtasks;
 alter publication supabase_realtime add table public.adhdice_task_grid_layouts;
+alter publication supabase_realtime add table public.adhdice_health_profiles;
+alter publication supabase_realtime add table public.adhdice_health_checkins;
+alter publication supabase_realtime add table public.adhdice_health_food_library;
+alter publication supabase_realtime add table public.adhdice_health_meal_entries;
+alter publication supabase_realtime add table public.adhdice_health_weight_entries;
+alter publication supabase_realtime add table public.adhdice_health_metric_entries;
+alter publication supabase_realtime add table public.adhdice_health_import_audits;
+alter publication supabase_realtime add table public.adhdice_health_achievement_awards;

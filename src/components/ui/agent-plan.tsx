@@ -36,9 +36,9 @@ export type AgentPlanMetaPill = {
   tone?: AgentPlanMetaTone;
 };
 
-export type AgentPlanColumnId = "bucket" | "due" | "energy" | "estimated_time" | "actual_time" | "priority" | "repeat" | "signal";
+export type AgentPlanColumnId = "bucket" | "date_added" | "due" | "energy" | "estimated_time" | "actual_time" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal";
 
-const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "due", "energy", "estimated_time", "actual_time", "priority", "repeat", "signal"];
+const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "date_added", "due", "energy", "estimated_time", "actual_time", "tags", "link", "notes", "priority", "repeat", "signal"];
 
 export type AgentPlanSubtaskItem = {
   children: AgentPlanSubtaskItem[];
@@ -50,8 +50,22 @@ export type AgentPlanSubtaskItem = {
 export type AgentPlanTaskItem = {
   actualSeconds: number;
   bucket: string;
+  dueOn: string | null;
+  dueTime: string | null;
   estimatedMinutes: number | null;
+  externalLinkLabel: string | null;
+  externalLinkUrl: string | null;
   id: string;
+  isFocused: boolean;
+  isImportant: boolean;
+  isUrgent: boolean;
+  createdAt: string;
+  linkedNotes: Array<{
+    body: string;
+    id: string;
+    title: string;
+    updatedAt: string;
+  }>;
   lists: Array<{
     id: string;
     isManual: boolean;
@@ -63,9 +77,12 @@ export type AgentPlanTaskItem = {
     value: string;
   }>;
   metaPills: AgentPlanMetaPill[];
+  notes: string;
   rowChips: AgentPlanMetaPill[];
+  repeatFrequency: "none" | "daily" | "weekly" | "monthly" | "custom";
   status: AgentPlanStatus;
   subtasks: AgentPlanSubtaskItem[];
+  tags: string[];
   title: string;
 };
 
@@ -78,13 +95,22 @@ export type AgentPlanBucketOption = {
 type AgentPlanDuePreset = "next_week" | "none" | "today" | "tomorrow";
 type AgentPlanEnergyValue = "high" | "low" | "medium" | "none";
 type AgentPlanPriorityValue = "focus" | "important" | "none" | "urgent";
-type EditableTaskField = "bucket" | "due" | "energy" | "priority";
+type AgentPlanRepeatValue = "custom" | "daily" | "monthly" | "none" | "weekly";
+type EditableTaskField = "bucket" | "due" | "energy" | "priority" | "repeat" | "tags" | "link" | "notes";
 type OpenTaskFieldMenu = {
   field: EditableTaskField;
   taskId: string;
 } | null;
 
 type AgentPlanProps = {
+  allNotes: Array<{
+    body: string;
+    id: string;
+    linked_task_ids: string[];
+    title: string;
+    updated_at: string;
+  }>;
+  allTags: string[];
   listOptions: AgentPlanBucketOption[];
   manualListOptions: AgentPlanBucketOption[];
   onAddTaskSubtask: (taskId: string) => Promise<string | null>;
@@ -100,11 +126,17 @@ type AgentPlanProps = {
   onRenameTask: (taskId: string, title: string) => void;
   onSelectSingleTask: (taskId: string) => void;
   onSetTaskEstimatedMinutes: (taskId: string, minutes: number | null) => Promise<void> | void;
+  onSetTaskLink: (taskId: string, nextLink: { label: string; url: string }) => Promise<void> | void;
+  onSetTaskLinkedNoteIds: (taskId: string, linkedNoteIds: string[]) => Promise<void> | void;
+  onSetTaskNotes: (taskId: string, notes: string) => Promise<void> | void;
   onSetSubtaskStatus: (subtaskId: string, status: AgentPlanStatus) => void;
   onSetTaskDuePreset: (taskId: string, preset: AgentPlanDuePreset) => void;
+  onSetTaskDueSchedule?: (taskId: string, schedule: { dueOn: string | null; dueTime: string | null }) => void;
   onSetTaskEnergy: (taskId: string, energy: AgentPlanEnergyValue) => void;
   onSetTaskBucket: (taskId: string, bucket: string) => void;
+  onSetTaskTags: (taskId: string, tags: string[]) => Promise<void> | void;
   onSetTaskPriority: (taskId: string, priority: AgentPlanPriorityValue) => void;
+  onSetTaskRecurringPreset?: (taskId: string, preset: AgentPlanRepeatValue) => void;
   onSelectBucket: (bucket: string) => void;
   onSelectAllVisible: () => void;
   onSetTaskStatus: (taskId: string, status: AgentPlanStatus) => void;
@@ -113,6 +145,7 @@ type AgentPlanProps = {
   selectedTaskIds: string[];
   tasks: AgentPlanTaskItem[];
   visibleColumns: AgentPlanColumnId[];
+  experimentalMode?: boolean;
 };
 
 const STATUS_OPTIONS: AgentPlanStatus[] = [
@@ -144,6 +177,14 @@ const ENERGY_OPTIONS: Array<{ label: string; value: AgentPlanEnergyValue }> = [
   { label: "Low", value: "low" },
   { label: "Medium", value: "medium" },
   { label: "High", value: "high" },
+];
+
+const REPEAT_OPTIONS: Array<{ label: string; value: AgentPlanRepeatValue }> = [
+  { label: "No Repeat", value: "none" },
+  { label: "Daily", value: "daily" },
+  { label: "Weekly", value: "weekly" },
+  { label: "Monthly", value: "monthly" },
+  { label: "Custom Cadence", value: "custom" },
 ];
 
 function getIsoDateOffset(days: number) {
@@ -205,10 +246,14 @@ const TASK_CONNECTOR_STROKE = "#d8ccff";
 const FOCUS_RING_CLASS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-[#cabfff] dark:focus-visible:ring-offset-[#171328]";
 const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   bucket: 150,
+  date_added: 168,
   due: 168,
   energy: 132,
   estimated_time: 156,
   actual_time: 132,
+  tags: 156,
+  link: 156,
+  notes: 176,
   priority: 132,
   repeat: 150,
   signal: 176,
@@ -217,10 +262,14 @@ const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
 };
 const MIN_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   bucket: 84,
+  date_added: 112,
   due: 52,
   energy: 92,
   estimated_time: 92,
   actual_time: 108,
+  tags: 72,
+  link: 68,
+  notes: 80,
   priority: 96,
   repeat: 88,
   signal: 122,
@@ -229,10 +278,14 @@ const MIN_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
 };
 const COLUMN_HEADER_LABELS: Record<ResizableColumnId, string> = {
   bucket: "Lists",
+  date_added: "Date Added",
   due: "Due",
   energy: "Energy",
   estimated_time: "Est. Time",
   actual_time: "Actual time",
+  tags: "Tags",
+  link: "Link",
+  notes: "Notes",
   priority: "Priority",
   repeat: "Repeat",
   signal: "Indicators",
@@ -253,7 +306,7 @@ type HorizontalScrollIndicator = {
   width: number;
 };
 
-type ResizableColumnId = "bucket" | "due" | "energy" | "estimated_time" | "actual_time" | "priority" | "repeat" | "signal" | "status" | "task";
+type ResizableColumnId = "bucket" | "date_added" | "due" | "energy" | "estimated_time" | "actual_time" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal" | "status" | "task";
 
 function getPriorityTone(priority: AgentPlanPriorityValue): AgentPlanMetaTone {
   if (priority === "focus") return "accent";
@@ -271,6 +324,52 @@ function getEnergyTone(energy: AgentPlanEnergyValue): AgentPlanMetaTone {
 
 function getMetadataValue(task: AgentPlanTaskItem, label: string) {
   return task.metadata.find((item) => item.label === label)?.value ?? "—";
+}
+
+function formatDueDateChipLabel(dueOn: string | null) {
+  if (!dueOn) {
+    return "No date";
+  }
+  if (dueOn === getIsoDateOffset(0)) {
+    return "Today";
+  }
+  if (dueOn === getIsoDateOffset(1)) {
+    return "Tomorrow";
+  }
+  return dueOn;
+}
+
+function formatDateAddedLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value || "—";
+  }
+
+  return date.toLocaleString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatDueTimeChipLabel(dueTime: string | null) {
+  if (!dueTime) {
+    return null;
+  }
+
+  const [hours, minutes] = dueTime.split(":");
+  const parsedHours = Number.parseInt(hours ?? "", 10);
+  const parsedMinutes = Number.parseInt(minutes ?? "", 10);
+  if (!Number.isFinite(parsedHours) || !Number.isFinite(parsedMinutes)) {
+    return dueTime;
+  }
+
+  const normalizedHours = parsedHours % 24;
+  const suffix = normalizedHours >= 12 ? "PM" : "AM";
+  const displayHours = normalizedHours % 12 === 0 ? 12 : normalizedHours % 12;
+  return `${displayHours}:${String(parsedMinutes).padStart(2, "0")} ${suffix}`;
 }
 
 function formatDurationMinutes(minutes: number | null) {
@@ -295,6 +394,40 @@ function formatDurationSeconds(seconds: number) {
   }
 
   return formatDurationMinutes(Math.max(1, Math.ceil(seconds / 60)));
+}
+
+function isProbablyValidUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function summarizeTags(tags: string[]) {
+  if (tags.length === 0) {
+    return "#";
+  }
+  if (tags.length === 1) {
+    return `#${tags[0]}`;
+  }
+  return `#${tags[0]} +${tags.length - 1}`;
+}
+
+function summarizeNotes(task: AgentPlanTaskItem) {
+  const hasTaskNotes = task.notes.trim().length > 0;
+  const linkedCount = task.linkedNotes.length;
+  if (!hasTaskNotes && linkedCount === 0) {
+    return "Notes";
+  }
+  if (hasTaskNotes && linkedCount > 0) {
+    return `Note +${linkedCount}`;
+  }
+  if (hasTaskNotes) {
+    return "Note";
+  }
+  return linkedCount === 1 ? "1 linked" : `${linkedCount} linked`;
 }
 
 function isClosedStatus(status: AgentPlanStatus) {
@@ -718,6 +851,8 @@ function SubtaskList({
 }
 
 export default function AgentPlan({
+  allNotes,
+  allTags,
   listOptions,
   manualListOptions,
   onAddTaskSubtask,
@@ -733,11 +868,17 @@ export default function AgentPlan({
   onRenameTask,
   onSelectSingleTask,
   onSetTaskEstimatedMinutes,
+  onSetTaskLink,
+  onSetTaskLinkedNoteIds,
+  onSetTaskNotes,
   onSetSubtaskStatus,
+  onSetTaskDueSchedule,
   onSetTaskDuePreset,
   onSetTaskEnergy,
   onSetTaskBucket,
+  onSetTaskTags,
   onSetTaskPriority,
+  onSetTaskRecurringPreset,
   onSelectBucket,
   onSelectAllVisible,
   onSetTaskStatus,
@@ -746,6 +887,7 @@ export default function AgentPlan({
   selectedTaskIds,
   tasks,
   visibleColumns,
+  experimentalMode = false,
 }: AgentPlanProps) {
   const prefersReducedMotion = useReducedMotion();
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -756,6 +898,10 @@ export default function AgentPlan({
   const [openTaskFieldMenu, setOpenTaskFieldMenu] = useState<OpenTaskFieldMenu>(null);
   const [openEstimatedTimeMenuTaskId, setOpenEstimatedTimeMenuTaskId] = useState<string | null>(null);
   const [estimatedTimeDrafts, setEstimatedTimeDrafts] = useState<Record<string, { hours: string; minutes: string }>>({});
+  const [dueDrafts, setDueDrafts] = useState<Record<string, { dueOn: string; dueTime: string }>>({});
+  const [tagInputDrafts, setTagInputDrafts] = useState<Record<string, string>>({});
+  const [linkDrafts, setLinkDrafts] = useState<Record<string, { label: string; url: string }>>({});
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, { linkedNoteIds: string[]; notes: string }>>({});
   const [draggedHeaderColumnId, setDraggedHeaderColumnId] = useState<AgentPlanColumnId | null>(null);
   const [columnWidths, setColumnWidths] = useState<Record<ResizableColumnId, number>>(DEFAULT_COLUMN_WIDTHS);
   const [taskScrollIndicator, setTaskScrollIndicator] = useState<HorizontalScrollIndicator>({
@@ -774,6 +920,7 @@ export default function AgentPlan({
   const taskScrollIdleTimeoutRef = useRef<number | null>(null);
   const resizeStateRef = useRef<{ columnId: ResizableColumnId; startWidth: number; startX: number } | null>(null);
   const headerDragStateRef = useRef<{ columnId: AgentPlanColumnId; lastTargetId: AgentPlanColumnId | null } | null>(null);
+  const isLargeTaskList = tasks.length >= 150;
   const selectedTaskIdSet = new Set(selectedTaskIds);
   const orderedOptionalColumns = useMemo(() => visibleColumns, [visibleColumns]);
   const estimatedTimePresets = useMemo(() => ([
@@ -797,7 +944,16 @@ export default function AgentPlan({
     [],
   );
   const priorityRows = useMemo(() => [PRIORITY_OPTIONS], []);
+  const repeatRows = useMemo(() => [REPEAT_OPTIONS.slice(0, 3), REPEAT_OPTIONS.slice(3)].filter((row) => row.length > 0), []);
   const energyRows = useMemo(() => [ENERGY_OPTIONS], []);
+  const taskById = useMemo(
+    () => new Map(tasks.map((task) => [task.id, task])),
+    [tasks],
+  );
+  const allNotesById = useMemo(
+    () => new Map(allNotes.map((note) => [note.id, note])),
+    [allNotes],
+  );
   const totalTableWidth = useMemo(() => {
     let total = columnWidths.status + columnWidths.task;
     for (const columnId of orderedOptionalColumns) {
@@ -812,6 +968,38 @@ export default function AgentPlan({
     setOpenTaskFieldMenu((current) => current?.taskId === taskId && current.field === field
       ? null
       : { field, taskId });
+  };
+  const toggleTaskTag = async (task: AgentPlanTaskItem, tag: string) => {
+    const normalizedTag = tag.trim().toLowerCase();
+    if (!normalizedTag) {
+      return;
+    }
+    const nextTags = task.tags.includes(normalizedTag)
+      ? task.tags.filter((value) => value !== normalizedTag)
+      : [...task.tags, normalizedTag];
+    await onSetTaskTags(task.id, nextTags);
+  };
+  const addTaskTag = async (task: AgentPlanTaskItem, rawTag: string) => {
+    const normalizedTag = rawTag.trim().toLowerCase();
+    if (!normalizedTag || task.tags.includes(normalizedTag)) {
+      return;
+    }
+    await onSetTaskTags(task.id, [...task.tags, normalizedTag]);
+  };
+  const toggleDraftLinkedNote = (taskId: string, noteId: string) => {
+    setNoteDrafts((current) => {
+      const existing = current[taskId] ?? { linkedNoteIds: [], notes: "" };
+      const linkedNoteIds = existing.linkedNoteIds.includes(noteId)
+        ? existing.linkedNoteIds.filter((value) => value !== noteId)
+        : [...existing.linkedNoteIds, noteId];
+      return {
+        ...current,
+        [taskId]: {
+          ...existing,
+          linkedNoteIds,
+        },
+      };
+    });
   };
 
   useEffect(() => {
@@ -829,6 +1017,28 @@ export default function AgentPlan({
       return;
     }
 
+    if (openTaskFieldMenu.field === "link") {
+      const task = taskById.get(openTaskFieldMenu.taskId);
+      setLinkDrafts((current) => ({
+        ...current,
+        [openTaskFieldMenu.taskId]: {
+          label: task?.externalLinkLabel ?? "",
+          url: task?.externalLinkUrl ?? "",
+        },
+      }));
+    }
+
+    if (openTaskFieldMenu.field === "notes") {
+      const task = taskById.get(openTaskFieldMenu.taskId);
+      setNoteDrafts((current) => ({
+        ...current,
+        [openTaskFieldMenu.taskId]: {
+          linkedNoteIds: task?.linkedNotes.map((note) => note.id) ?? [],
+          notes: task?.notes ?? "",
+        },
+      }));
+    }
+
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
       if (!target?.closest("[data-task-field-menu]")) {
@@ -838,7 +1048,7 @@ export default function AgentPlan({
 
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [openTaskFieldMenu]);
+  }, [openTaskFieldMenu, taskById]);
 
   useEffect(() => {
     if (!openEstimatedTimeMenuTaskId) {
@@ -1004,6 +1214,11 @@ export default function AgentPlan({
   }, [editingTaskId, tasks]);
 
   useLayoutEffect(() => {
+    if (isLargeTaskList) {
+      setTaskConnectors([]);
+      return;
+    }
+
     const wrapper = taskRailRef.current;
     if (!wrapper) {
       return;
@@ -1045,7 +1260,7 @@ export default function AgentPlan({
       resizeObserver.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [tasks]);
+  }, [isLargeTaskList, tasks]);
 
   function beginTaskRename(taskId: string, title: string) {
     setEditingTaskId(taskId);
@@ -1388,26 +1603,28 @@ export default function AgentPlan({
               ref={taskScrollRef}
             >
               <div className="relative min-w-max" ref={taskRailRef}>
-                <svg
-                  aria-hidden="true"
-                className="pointer-events-none absolute inset-0 z-0 overflow-visible transition-opacity duration-100"
-                  height="100%"
-                  preserveAspectRatio="none"
-                  width="100%"
-                >
-                  {taskConnectors.map((connector) => (
-                    <line
-                      key={`${connector.x}-${connector.y1}-${connector.y2}`}
-                      stroke={TASK_CONNECTOR_STROKE}
-                      strokeDasharray="8 8"
-                      strokeWidth="2"
-                      x1={connector.x}
-                      x2={connector.x}
-                      y1={connector.y1}
-                      y2={connector.y2}
-                    />
-                  ))}
-                </svg>
+                {!isLargeTaskList ? (
+                  <svg
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 z-0 overflow-visible transition-opacity duration-100"
+                    height="100%"
+                    preserveAspectRatio="none"
+                    width="100%"
+                  >
+                    {taskConnectors.map((connector) => (
+                      <line
+                        key={`${connector.x}-${connector.y1}-${connector.y2}`}
+                        stroke={TASK_CONNECTOR_STROKE}
+                        strokeDasharray="8 8"
+                        strokeWidth="2"
+                        x1={connector.x}
+                        x2={connector.x}
+                        y1={connector.y1}
+                        y2={connector.y2}
+                      />
+                    ))}
+                  </svg>
+                ) : null}
               <table className="relative z-10 border-separate border-spacing-y-1 text-left table-fixed" ref={taskTableRef} style={{ width: `${totalTableWidth}px` }}>
                 <colgroup>
                   <col style={{ width: `${columnWidths.status}px` }} />
@@ -1420,18 +1637,7 @@ export default function AgentPlan({
                   <tr className="border-b border-[#f0ebfb] dark:border-white/10">
                     {renderColumnHeader("Status", "status")}
                     {renderColumnHeader("Task", "task")}
-                    {orderedOptionalColumns.map((columnId) => renderColumnHeader(
-                      columnId === "bucket"
-                        ? "Lists"
-                        : columnId === "estimated_time"
-                        ? "Est. Time"
-                        : columnId === "actual_time"
-                        ? "Actual Time"
-                        : columnId === "signal"
-                        ? "Indicators"
-                        : columnId.charAt(0).toUpperCase() + columnId.slice(1),
-                      columnId,
-                    ))}
+                    {orderedOptionalColumns.map((columnId) => renderColumnHeader(COLUMN_HEADER_LABELS[columnId], columnId))}
                   </tr>
                 </thead>
                 <tbody>
@@ -1447,6 +1653,7 @@ export default function AgentPlan({
                     const repeatValue = getMetadataValue(task, "Repeat");
                     const metadataValueByColumn: Partial<Record<AgentPlanColumnId, string>> = {
                       bucket: getMetadataValue(task, "Lists"),
+                      date_added: formatDateAddedLabel(task.createdAt),
                       due: dueValue,
                       energy: energyValue,
                       estimated_time: estimatedTimeValue,
@@ -1726,9 +1933,24 @@ export default function AgentPlan({
                               );
                             }
 
+                            if (columnId === "date_added") {
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`} data-column-measure>
+                                    {formatDateAddedLabel(task.createdAt)}
+                                  </span>
+                                </td>
+                              );
+                            }
+
                             if (columnId === "due") {
-                              const dueLabel = metadataValueByColumn.due ?? "No date";
+                              const dueLabel = experimentalMode ? formatDueDateChipLabel(task.dueOn) : (metadataValueByColumn.due ?? "No date");
+                              const dueTimeLabel = experimentalMode ? formatDueTimeChipLabel(task.dueTime) : null;
                               const activeDuePreset = getDuePresetValueFromLabel(dueLabel);
+                              const dueDraft = experimentalMode ? (dueDrafts[task.id] ?? {
+                                dueOn: task.dueOn ?? "",
+                                dueTime: task.dueTime ?? "",
+                              }) : null;
 
                               return (
                                 <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
@@ -1744,14 +1966,21 @@ export default function AgentPlan({
                                       }}
                                       type="button"
                                     >
-                                      <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`}>
-                                        {dueLabel}
+                                      <span className="flex flex-wrap gap-2">
+                                        <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`}>
+                                          {dueLabel}
+                                        </span>
+                                        {dueTimeLabel ? (
+                                          <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`}>
+                                            {dueTimeLabel}
+                                          </span>
+                                        ) : null}
                                       </span>
                                     </button>
                                     {isTaskFieldMenuOpen(task.id, "due") ? (
                                       <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 inline-block w-fit rounded-[1.5rem] bg-white/88 px-2 py-2 shadow-[0_24px_60px_rgba(115,88,255,0.14)] ring-1 ring-[#ede6ff] backdrop-blur-md dark:bg-[#1a1230]/92 dark:ring-white/10">
                                         <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(128,100,255,0.35),transparent)] dark:bg-[linear-gradient(90deg,transparent,rgba(202,191,255,0.35),transparent)]" />
-                                        <div className="inline-flex flex-col items-start gap-2">
+                                        <div className="inline-flex flex-col items-start gap-3">
                                           {duePresetRows.map((row, rowIndex) => (
                                             <div className="flex items-center gap-2" key={`${task.id}-due-row-${rowIndex}`}>
                                               {row.map((option) => (
@@ -1773,6 +2002,65 @@ export default function AgentPlan({
                                               ))}
                                             </div>
                                           ))}
+                                          {experimentalMode && onSetTaskDueSchedule && dueDraft ? (
+                                            <>
+                                              <div className="grid w-full gap-2">
+                                                <input
+                                                  className="rounded-[0.9rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-sm outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+                                                  onChange={(event) => setDueDrafts((current) => ({
+                                                    ...current,
+                                                    [task.id]: {
+                                                      ...dueDraft,
+                                                      dueOn: event.target.value,
+                                                    },
+                                                  }))}
+                                                  onClick={(event) => event.stopPropagation()}
+                                                  type="date"
+                                                  value={dueDraft.dueOn}
+                                                />
+                                                <input
+                                                  className="rounded-[0.9rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-sm outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+                                                  onChange={(event) => setDueDrafts((current) => ({
+                                                    ...current,
+                                                    [task.id]: {
+                                                      ...dueDraft,
+                                                      dueTime: event.target.value,
+                                                    },
+                                                  }))}
+                                                  onClick={(event) => event.stopPropagation()}
+                                                  type="time"
+                                                  value={dueDraft.dueTime}
+                                                />
+                                              </div>
+                                              <div className="flex w-full items-center justify-between gap-2">
+                                                <button
+                                                  className="rounded-full border border-[#e5e0f5] px-3 py-2 text-sm font-semibold text-[#5a607a] transition hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"
+                                                  onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    onSetTaskDueSchedule(task.id, { dueOn: null, dueTime: null });
+                                                    setOpenTaskFieldMenu(null);
+                                                  }}
+                                                  type="button"
+                                                >
+                                                  Clear
+                                                </button>
+                                                <button
+                                                  className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                                  onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    onSetTaskDueSchedule(task.id, {
+                                                      dueOn: dueDraft.dueOn.trim() || null,
+                                                      dueTime: dueDraft.dueTime.trim() || null,
+                                                    });
+                                                    setOpenTaskFieldMenu(null);
+                                                  }}
+                                                  type="button"
+                                                >
+                                                  Save
+                                                </button>
+                                              </div>
+                                            </>
+                                          ) : null}
                                         </div>
                                       </div>
                                     ) : null}
@@ -1947,9 +2235,482 @@ export default function AgentPlan({
                               );
                             }
 
+                            if (columnId === "tags") {
+                              const tagsMenuOpen = isTaskFieldMenuOpen(task.id, "tags");
+                              const tagInput = tagInputDrafts[task.id] ?? "";
+                              const normalizedTagInput = tagInput.trim().toLowerCase();
+                              const availableTagOptions = tagsMenuOpen && normalizedTagInput
+                                ? allTags.filter((tag) => tag.includes(normalizedTagInput) && !task.tags.includes(tag))
+                                : [];
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <div className="relative" data-task-field-menu>
+                                    <button
+                                      aria-expanded={tagsMenuOpen}
+                                      aria-label={`Edit tags for ${task.title}`}
+                                      className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                      data-column-measure
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openTaskField(task.id, "tags");
+                                      }}
+                                      type="button"
+                                    >
+                                      <span className={`${META_PILL_BASE_CLASS} ${task.tags.length > 0 ? META_PILL_STYLES.accent : META_PILL_STYLES.neutral}`}>
+                                        {summarizeTags(task.tags)}
+                                      </span>
+                                    </button>
+                                    {tagsMenuOpen ? (
+                                      <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 w-[min(20rem,calc(100vw-3rem))] rounded-[1.2rem] border border-[#ddd6fb] bg-white p-3 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+                                        <div className="flex flex-wrap gap-2">
+                                          {task.tags.map((tag) => (
+                                            <button
+                                              className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.accent}`}
+                                              key={`${task.id}-tag-${tag}`}
+                                              onClick={async (event) => {
+                                                event.stopPropagation();
+                                                await toggleTaskTag(task, tag);
+                                              }}
+                                              type="button"
+                                            >
+                                              #{tag} ✕
+                                            </button>
+                                          ))}
+                                        </div>
+                                        <div className="mt-3 flex gap-2">
+                                          <input
+                                            className="min-w-0 flex-1 rounded-[0.9rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-sm outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+                                            onChange={(event) => setTagInputDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
+                                            onClick={(event) => event.stopPropagation()}
+                                            onKeyDown={async (event) => {
+                                              if (event.key !== "Enter") {
+                                                return;
+                                              }
+                                              event.preventDefault();
+                                              await addTaskTag(task, tagInput);
+                                              setTagInputDrafts((current) => ({ ...current, [task.id]: "" }));
+                                            }}
+                                            placeholder="Add tag…"
+                                            value={tagInput}
+                                          />
+                                          <button
+                                            className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                            onClick={async (event) => {
+                                              event.stopPropagation();
+                                              await addTaskTag(task, tagInput);
+                                              setTagInputDrafts((current) => ({ ...current, [task.id]: "" }));
+                                            }}
+                                            type="button"
+                                          >
+                                            Add
+                                          </button>
+                                        </div>
+                                        <div className="mt-3 flex max-h-40 flex-wrap gap-2 overflow-y-auto pr-1">
+                                          {allTags.length === 0 ? (
+                                            <span className="text-sm text-[#8d97b0] dark:text-white/45">No saved tags yet.</span>
+                                          ) : (
+                                            allTags.map((tag) => {
+                                              const selected = task.tags.includes(tag);
+                                              return (
+                                                <button
+                                                  className={`${META_PILL_BASE_CLASS} ${selected ? META_PILL_STYLES.accent : META_PILL_STYLES.neutral}`}
+                                                  key={`${task.id}-tag-option-${tag}`}
+                                                  onClick={async (event) => {
+                                                    event.stopPropagation();
+                                                    await toggleTaskTag(task, tag);
+                                                  }}
+                                                  type="button"
+                                                >
+                                                  #{tag}
+                                                </button>
+                                              );
+                                            })
+                                          )}
+                                        </div>
+                                        {availableTagOptions.length > 0 ? (
+                                          <div className="mt-3 border-t border-[#efe9ff] pt-3 dark:border-white/10">
+                                            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Matches</p>
+                                            <div className="flex flex-wrap gap-2">
+                                              {availableTagOptions.slice(0, 8).map((tag) => (
+                                                <button
+                                                  className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`}
+                                                  key={`${task.id}-tag-match-${tag}`}
+                                                  onClick={async (event) => {
+                                                    event.stopPropagation();
+                                                    await addTaskTag(task, tag);
+                                                    setTagInputDrafts((current) => ({ ...current, [task.id]: "" }));
+                                                  }}
+                                                  type="button"
+                                                >
+                                                  #{tag}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "link") {
+                              const linkMenuOpen = isTaskFieldMenuOpen(task.id, "link");
+                              const linkDraft = linkDrafts[task.id] ?? {
+                                label: task.externalLinkLabel ?? "",
+                                url: task.externalLinkUrl ?? "",
+                              };
+                              const normalizedUrl = linkDraft.url.trim();
+                              const hasUrlError = normalizedUrl.length > 0 && !isProbablyValidUrl(normalizedUrl);
+                              const linkLabel = task.externalLinkLabel?.trim() || (task.externalLinkUrl ? "Open link" : "Link");
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <div className="relative" data-task-field-menu>
+                                    <button
+                                      aria-expanded={linkMenuOpen}
+                                      aria-label={`Edit link for ${task.title}`}
+                                      className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                      data-column-measure
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openTaskField(task.id, "link");
+                                      }}
+                                      type="button"
+                                    >
+                                      <span className={`${META_PILL_BASE_CLASS} ${task.externalLinkUrl ? META_PILL_STYLES.accent : META_PILL_STYLES.neutral}`}>
+                                        {linkLabel}
+                                      </span>
+                                    </button>
+                                    {linkMenuOpen ? (
+                                      <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 w-[min(22rem,calc(100vw-3rem))] rounded-[1.2rem] border border-[#ddd6fb] bg-white p-3 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+                                        {task.externalLinkUrl ? (
+                                          <button
+                                            className="mb-3 rounded-full bg-[#f3efff] px-3 py-2 text-sm font-semibold text-[#6f57f6] transition hover:bg-[#e8e0ff] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2d2254]"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              window.open(task.externalLinkUrl ?? "", "_blank", "noopener,noreferrer");
+                                            }}
+                                            type="button"
+                                          >
+                                            Open link
+                                          </button>
+                                        ) : null}
+                                        <div className="grid gap-2">
+                                          <input
+                                            className="rounded-[0.9rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-sm outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+                                            onChange={(event) => setLinkDrafts((current) => ({
+                                              ...current,
+                                              [task.id]: {
+                                                ...linkDraft,
+                                                label: event.target.value,
+                                              },
+                                            }))}
+                                            onClick={(event) => event.stopPropagation()}
+                                            placeholder="Link label"
+                                            value={linkDraft.label}
+                                          />
+                                          <input
+                                            className={`rounded-[0.9rem] border bg-[#fbfaff] px-3 py-2 text-sm outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30 ${hasUrlError ? "border-[#f4afbc] text-[#d94e67] dark:border-[#ff9eaf] dark:text-[#ffb3c0]" : "border-[#e5e0f5]"}`}
+                                            onChange={(event) => setLinkDrafts((current) => ({
+                                              ...current,
+                                              [task.id]: {
+                                                ...linkDraft,
+                                                url: event.target.value,
+                                              },
+                                            }))}
+                                            onClick={(event) => event.stopPropagation()}
+                                            placeholder="https://example.com"
+                                            value={linkDraft.url}
+                                          />
+                                          {hasUrlError ? (
+                                            <p className="text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">Use a full `http://` or `https://` URL.</p>
+                                          ) : null}
+                                        </div>
+                                        <div className="mt-3 flex items-center justify-end gap-2">
+                                          <button
+                                            className="rounded-full border border-[#e5e0f5] px-3 py-2 text-sm font-semibold text-[#5a607a] transition hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"
+                                            onClick={async (event) => {
+                                              event.stopPropagation();
+                                              await onSetTaskLink(task.id, { label: "", url: "" });
+                                              setOpenTaskFieldMenu(null);
+                                            }}
+                                            type="button"
+                                          >
+                                            Clear
+                                          </button>
+                                          <button
+                                            className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                            disabled={hasUrlError}
+                                            onClick={async (event) => {
+                                              event.stopPropagation();
+                                              if (hasUrlError) {
+                                                return;
+                                              }
+                                              await onSetTaskLink(task.id, { label: linkDraft.label, url: linkDraft.url });
+                                              setOpenTaskFieldMenu(null);
+                                            }}
+                                            type="button"
+                                          >
+                                            Save
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "notes") {
+                              const notesMenuOpen = isTaskFieldMenuOpen(task.id, "notes");
+                              const noteDraft = noteDrafts[task.id] ?? {
+                                linkedNoteIds: task.linkedNotes.map((note) => note.id),
+                                notes: task.notes,
+                              };
+                              const selectedNotes = notesMenuOpen
+                                ? noteDraft.linkedNoteIds.map((noteId) => allNotesById.get(noteId)).filter((note): note is NonNullable<typeof note> => Boolean(note))
+                                : [];
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <div className="relative" data-task-field-menu>
+                                    <button
+                                      aria-expanded={notesMenuOpen}
+                                      aria-label={`Edit notes for ${task.title}`}
+                                      className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                      data-column-measure
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openTaskField(task.id, "notes");
+                                      }}
+                                      type="button"
+                                    >
+                                      <span className={`${META_PILL_BASE_CLASS} ${task.notes.trim().length > 0 || task.linkedNotes.length > 0 ? META_PILL_STYLES.accent : META_PILL_STYLES.neutral}`}>
+                                        {summarizeNotes(task)}
+                                      </span>
+                                    </button>
+                                    {notesMenuOpen ? (
+                                      <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 w-[min(24rem,calc(100vw-3rem))] rounded-[1.2rem] border border-[#ddd6fb] bg-white p-3 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+                                        <label className="block">
+                                          <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Task note</span>
+                                          <textarea
+                                            className="min-h-[7rem] w-full rounded-[1rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-3 text-sm outline-none placeholder:text-[#b0aac8] focus:border-[#9d8cff] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+                                            onChange={(event) => setNoteDrafts((current) => ({
+                                              ...current,
+                                              [task.id]: {
+                                                ...noteDraft,
+                                                notes: event.target.value,
+                                              },
+                                            }))}
+                                            onClick={(event) => event.stopPropagation()}
+                                            placeholder="Add a quick task note…"
+                                            value={noteDraft.notes}
+                                          />
+                                        </label>
+                                        <div className="mt-3">
+                                          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8d87a7] dark:text-white/40">Linked notes</p>
+                                          <div className="mb-2 flex flex-wrap gap-2">
+                                            {selectedNotes.map((note) => (
+                                              <button
+                                                className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.accent}`}
+                                                key={`${task.id}-linked-note-${note.id}`}
+                                                onClick={(event) => {
+                                                  event.stopPropagation();
+                                                  toggleDraftLinkedNote(task.id, note.id);
+                                                }}
+                                                type="button"
+                                              >
+                                                {note.title.trim() || "Untitled note"} ✕
+                                              </button>
+                                            ))}
+                                          </div>
+                                          <div className="adhdice-scrollbar max-h-44 space-y-2 overflow-y-auto pr-1">
+                                            {allNotes.length === 0 ? (
+                                              <span className="text-sm text-[#8d97b0] dark:text-white/45">No saved notes yet.</span>
+                                            ) : (
+                                              allNotes.map((note) => {
+                                                const selected = noteDraft.linkedNoteIds.includes(note.id);
+                                                const preview = note.body.trim().slice(0, 72);
+                                                return (
+                                                  <button
+                                                    className={`flex w-full items-start justify-between gap-3 rounded-[0.95rem] px-3 py-3 text-left transition ${selected
+                                                      ? "bg-[#ede8ff] text-[#1f2642] dark:bg-[#22193f] dark:text-white"
+                                                      : "bg-[#fbfaff] text-[#1f2642] hover:bg-[#f6f1ff] dark:bg-white/[0.04] dark:text-white dark:hover:bg-white/8"}`}
+                                                    key={`${task.id}-note-option-${note.id}`}
+                                                    onClick={(event) => {
+                                                      event.stopPropagation();
+                                                      toggleDraftLinkedNote(task.id, note.id);
+                                                    }}
+                                                    type="button"
+                                                  >
+                                                    <div className="min-w-0">
+                                                      <p className="truncate text-sm font-semibold">{note.title.trim() || "Untitled note"}</p>
+                                                      {preview ? <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/50">{preview}</p> : null}
+                                                    </div>
+                                                    <span className={`mt-0.5 h-3 w-3 shrink-0 rounded-full ${selected ? "bg-[#6f57f6] dark:bg-[#cabfff]" : "bg-[#d8d0ee] dark:bg-white/20"}`} />
+                                                  </button>
+                                                );
+                                              })
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div className="mt-3 flex items-center justify-end gap-2">
+                                          <button
+                                            className="rounded-full border border-[#e5e0f5] px-3 py-2 text-sm font-semibold text-[#5a607a] transition hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              setNoteDrafts((current) => ({
+                                                ...current,
+                                                [task.id]: {
+                                                  linkedNoteIds: [],
+                                                  notes: "",
+                                                },
+                                              }));
+                                            }}
+                                            type="button"
+                                          >
+                                            Clear draft
+                                          </button>
+                                          <button
+                                            className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                            onClick={async (event) => {
+                                              event.stopPropagation();
+                                              await onSetTaskNotes(task.id, noteDraft.notes);
+                                              await onSetTaskLinkedNoteIds(task.id, noteDraft.linkedNoteIds);
+                                              setOpenTaskFieldMenu(null);
+                                            }}
+                                            type="button"
+                                          >
+                                            Save
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "repeat" && experimentalMode && onSetTaskRecurringPreset) {
+                              const repeatLabel = metadataValueByColumn.repeat ?? "No Repeat";
+                              const activeRepeat = task.repeatFrequency;
+
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <div className="relative" data-task-field-menu>
+                                    <button
+                                      aria-expanded={isTaskFieldMenuOpen(task.id, "repeat")}
+                                      aria-label={`Change repeat for ${task.title}`}
+                                      className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                      data-column-measure
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openTaskField(task.id, "repeat");
+                                      }}
+                                      type="button"
+                                    >
+                                      <span className={`${META_PILL_BASE_CLASS} ${activeRepeat === "none" ? META_PILL_STYLES.neutral : META_PILL_STYLES.warning}`}>
+                                        {repeatLabel}
+                                      </span>
+                                    </button>
+                                    {isTaskFieldMenuOpen(task.id, "repeat") ? (
+                                      <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 inline-block w-fit rounded-[1.5rem] bg-white/88 px-2 py-2 shadow-[0_24px_60px_rgba(115,88,255,0.14)] ring-1 ring-[#ede6ff] backdrop-blur-md dark:bg-[#1a1230]/92 dark:ring-white/10">
+                                        <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(128,100,255,0.35),transparent)] dark:bg-[linear-gradient(90deg,transparent,rgba(202,191,255,0.35),transparent)]" />
+                                        <div className="inline-flex flex-col items-start gap-2">
+                                          {repeatRows.map((row, rowIndex) => (
+                                            <div className="flex items-center gap-2" key={`${task.id}-repeat-row-${rowIndex}`}>
+                                              {row.map((option) => (
+                                                <button
+                                                  aria-pressed={activeRepeat === option.value}
+                                                  className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                                  key={`${task.id}-repeat-${option.value}`}
+                                                  onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    if (option.value === "custom") {
+                                                      onEditTask(task.id);
+                                                    } else {
+                                                      onSetTaskRecurringPreset(task.id, option.value);
+                                                    }
+                                                    setOpenTaskFieldMenu(null);
+                                                  }}
+                                                  type="button"
+                                                >
+                                                  <span className={`${META_PILL_BASE_CLASS} ${activeRepeat === option.value ? META_PILL_STYLES.warning : META_PILL_STYLES.neutral}`}>
+                                                    {option.label}
+                                                  </span>
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              );
+                            }
+
                             if (columnId === "priority") {
-                              const priorityLabel = metadataValueByColumn.priority ?? "None";
-                              const activePriority = priorityLabel.toLowerCase() as AgentPlanPriorityValue;
+                              if (!experimentalMode) {
+                                const priorityLabel = metadataValueByColumn.priority ?? "None";
+                                const activePriority = priorityLabel.toLowerCase() as AgentPlanPriorityValue;
+
+                                return (
+                                  <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                    <div className="relative" data-task-field-menu>
+                                      <button
+                                        aria-expanded={isTaskFieldMenuOpen(task.id, "priority")}
+                                        aria-label={`Change priority for ${task.title}`}
+                                        className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                        data-column-measure
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openTaskField(task.id, "priority");
+                                        }}
+                                        type="button"
+                                      >
+                                        <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[getPriorityTone(activePriority)]}`}>
+                                          {priorityLabel}
+                                        </span>
+                                      </button>
+                                      {isTaskFieldMenuOpen(task.id, "priority") ? (
+                                        <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 inline-block w-fit rounded-[1.5rem] bg-white/88 px-2 py-2 shadow-[0_24px_60px_rgba(115,88,255,0.14)] ring-1 ring-[#ede6ff] backdrop-blur-md dark:bg-[#1a1230]/92 dark:ring-white/10">
+                                          <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(128,100,255,0.35),transparent)] dark:bg-[linear-gradient(90deg,transparent,rgba(202,191,255,0.35),transparent)]" />
+                                          <div className="inline-flex flex-col items-start gap-2">
+                                            {priorityRows.map((row, rowIndex) => (
+                                              <div className="flex items-center gap-2" key={`${task.id}-priority-row-${rowIndex}`}>
+                                                {row.map((option) => (
+                                                  <button
+                                                    aria-pressed={activePriority === option.value}
+                                                    className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
+                                                    key={`${task.id}-priority-${option.value}`}
+                                                    onClick={(event) => {
+                                                      event.stopPropagation();
+                                                      onSetTaskPriority(task.id, option.value);
+                                                      setOpenTaskFieldMenu(null);
+                                                    }}
+                                                    type="button"
+                                                  >
+                                                    <span className={`${META_PILL_BASE_CLASS} ${activePriority === option.value ? META_PILL_STYLES[getPriorityTone(option.value)] : META_PILL_STYLES.neutral}`}>
+                                                      {option.label}
+                                                    </span>
+                                                  </button>
+                                                ))}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  </td>
+                                );
+                              }
+
+                              const activePriorities: AgentPlanPriorityValue[] = [
+                                ...(task.isFocused ? ["focus" as const] : []),
+                                ...(task.isImportant ? ["important" as const] : []),
+                                ...(task.isUrgent ? ["urgent" as const] : []),
+                              ];
 
                               return (
                                 <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
@@ -1965,8 +2726,16 @@ export default function AgentPlan({
                                       }}
                                       type="button"
                                     >
-                                      <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[getPriorityTone(activePriority)]}`}>
-                                        {priorityLabel}
+                                      <span className="flex flex-wrap gap-2">
+                                        {activePriorities.length === 0 ? (
+                                          <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`}>None</span>
+                                        ) : (
+                                          activePriorities.map((priority) => (
+                                            <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[getPriorityTone(priority)]}`} key={`${task.id}-priority-chip-${priority}`}>
+                                              {PRIORITY_OPTIONS.find((option) => option.value === priority)?.label ?? priority}
+                                            </span>
+                                          ))
+                                        )}
                                       </span>
                                     </button>
                                     {isTaskFieldMenuOpen(task.id, "priority") ? (
@@ -1977,17 +2746,18 @@ export default function AgentPlan({
                                             <div className="flex items-center gap-2" key={`${task.id}-priority-row-${rowIndex}`}>
                                               {row.map((option) => (
                                                 <button
-                                                  aria-pressed={activePriority === option.value}
+                                                  aria-pressed={option.value === "none" ? activePriorities.length === 0 : activePriorities.includes(option.value)}
                                                   className={`appearance-none border-0 bg-transparent p-0 text-left ${FOCUS_RING_CLASS}`}
                                                   key={`${task.id}-priority-${option.value}`}
                                                   onClick={(event) => {
                                                     event.stopPropagation();
                                                     onSetTaskPriority(task.id, option.value);
-                                                    setOpenTaskFieldMenu(null);
                                                   }}
                                                   type="button"
                                                 >
-                                                  <span className={`${META_PILL_BASE_CLASS} ${activePriority === option.value ? META_PILL_STYLES[getPriorityTone(option.value)] : META_PILL_STYLES.neutral}`}>
+                                                  <span className={`${META_PILL_BASE_CLASS} ${option.value === "none"
+                                                    ? (activePriorities.length === 0 ? META_PILL_STYLES.neutral : META_PILL_STYLES.warning)
+                                                    : (activePriorities.includes(option.value) ? META_PILL_STYLES[getPriorityTone(option.value)] : META_PILL_STYLES.neutral)}`}>
                                                     {option.label}
                                                   </span>
                                                 </button>

@@ -1,12 +1,17 @@
 {
   "name": "adhdice-clean-prototype",
-  "version": "2.2.1",
+  "version": "3.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "lint:taskapp-wave": "eslint src/components/task-app.tsx src/lib/profile-store.ts src/lib/task-db-compat.ts src/lib/task-focus-days.ts src/lib/task-formatting.ts src/lib/task-input-parsing.ts src/lib/task-repeat.ts test/task-refactor-helpers.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "typecheck:taskapp-wave": "tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/*.test.ts",
+    "test:taskapp-wave": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/task-helper-modules.test.ts test/task-refactor-helpers.test.ts test/task-action-hooks-smoke.test.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

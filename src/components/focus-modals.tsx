@@ -339,20 +339,25 @@ export function SessionFinishModal({
 
 export function ManualEntryModal({
   categories,
+  initialDurationSeconds,
   initialTitle,
   labelOptions,
+  onClear,
   onSave,
   onClose,
 }: {
   categories: FocusCategory[];
+  initialDurationSeconds?: number;
   initialTitle?: string;
   labelOptions: FocusLabelOptions;
+  onClear?: () => Promise<boolean> | boolean;
   onSave: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<boolean>;
   onClose: () => void;
 }) {
+  const initialTotalMinutes = initialDurationSeconds ? Math.max(0, Math.round(initialDurationSeconds / 60)) : 0;
   const [catId, setCatId] = useState(categories[0]?.id ?? "__none__");
-  const [hours, setHours] = useState("0");
-  const [minutes, setMinutes] = useState("0");
+  const [hours, setHours] = useState(String(Math.floor(initialTotalMinutes / 60)));
+  const [minutes, setMinutes] = useState(String(initialTotalMinutes % 60));
   const [date, setDate] = useState(todayLocalISO());
   const [title, setTitle] = useState(initialTitle ?? categories[0]?.title ?? "");
   const [focusType, setFocusType] = useState<FocusType>(categories[0]?.focusType ?? "Work");
@@ -360,6 +365,7 @@ export function ManualEntryModal({
   const [focusSubtype2, setFocusSubtype2] = useState(categories[0]?.focusSubtype2 ?? "");
   const [notes, setNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   const handleCategoryChange = (id: string) => {
     setCatId(id);
@@ -393,6 +399,18 @@ export function ManualEntryModal({
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const clear = async () => {
+    if (!onClear) {
+      return;
+    }
+    setIsClearing(true);
+    try {
+      await onClear();
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -472,16 +490,27 @@ export function ManualEntryModal({
         </div>
 
         <div className="mt-10 flex gap-4">
+          {onClear ? (
+            <button
+              className="py-4 px-5 font-bold transition rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] hover:bg-[#ffe6ea] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+              disabled={isSaving || isClearing}
+              onClick={() => void clear()}
+              type="button"
+            >
+              {isClearing ? "Clearing..." : "Clear Actual Time"}
+            </button>
+          ) : null}
           <button
             className="flex-1 py-4 font-bold transition hover:bg-white/5 ui-pill-button-light dark:bg-transparent dark:text-white dark:rounded-full"
             onClick={onClose}
             type="button"
+            disabled={isSaving || isClearing}
           >
             Cancel
           </button>
           <button
             className="flex-1 py-4 font-bold transition hover:scale-105 ui-pill-button-strong-light dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
-            disabled={isSaving || !title.trim() || !focusType.trim()}
+            disabled={isSaving || isClearing || !title.trim() || !focusType.trim()}
             onClick={() => void submit()}
             type="button"
           >

@@ -1,8 +1,17 @@
 import { useState, useRef } from "react";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusType, FocusSubtype } from "@/lib/types";
-import type { FocusCategory as DbFocusCategory } from "@/lib/database.types";
+import type { FocusCategory as DbFocusCategory, FocusSession as DbFocusSession } from "@/lib/database.types";
 import type { AppendEconomyEventOpts } from "@/hooks/useEconomy";
+import {
+  dedupeCategoriesByName,
+  isUuid,
+  normalizeCategoryTitle,
+  preferStoredOptionalValue,
+  preferStoredValue,
+  sanitizeFocusLabel,
+  sanitizeOptionalFocusLabel,
+} from "@/lib/focus-utils";
 import { todayISO } from "@/lib/utils";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -35,47 +44,6 @@ export function saveFocusCategories(categories: FocusCategory[]) {
 export function saveFocusHistory(history: HistoricalFocusSession[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(FOCUS_HISTORY_STORAGE_KEY, JSON.stringify(history));
-}
-
-function sanitizeFocusLabel(value: string | null | undefined, fallback: string) {
-  const trimmed = (value ?? "").trim();
-  return trimmed || fallback;
-}
-
-function sanitizeOptionalFocusLabel(value: string | null | undefined) {
-  const trimmed = (value ?? "").trim();
-  return trimmed || null;
-}
-
-function isUuid(value: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function normalizeCategoryTitle(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function preferStoredValue(storedValue: string | null | undefined, currentValue: string | null | undefined) {
-  const normalizedStoredValue = sanitizeFocusLabel(storedValue, "");
-  const normalizedCurrentValue = sanitizeFocusLabel(currentValue, "");
-  return normalizedCurrentValue || normalizedStoredValue;
-}
-
-function preferStoredOptionalValue(storedValue: string | null | undefined, currentValue: string | null | undefined) {
-  const normalizedStoredValue = sanitizeFocusLabel(storedValue, "");
-  const normalizedCurrentValue = sanitizeFocusLabel(currentValue, "");
-  return normalizedCurrentValue || normalizedStoredValue || null;
-}
-
-function dedupeCategoriesByName(categories: FocusCategory[]) {
-  return Array.from(
-    categories.reduce((accumulator, category) => {
-      const normalizedTitle = normalizeCategoryTitle(category.title);
-      if (!normalizedTitle) return accumulator;
-      accumulator.set(normalizedTitle, category);
-      return accumulator;
-    }, new Map<string, FocusCategory>()).values(),
-  );
 }
 
 export function mapFocusCategoryRow(row: DbFocusCategory): FocusCategory {
@@ -111,27 +79,16 @@ export function mapActiveSessions(
   }, {});
 }
 
-export function mapFocusSessionRow(row: {
-  id: string;
-  category_id: string | null;
-  title_snapshot: string;
-  focus_type_snapshot: FocusType;
-  focus_subtype_snapshot?: FocusSubtype | null;
-  focus_subtype_2_snapshot?: FocusSubtype | null;
-  session_date: string;
-  duration_seconds: number;
-  notes: string | null;
-  created_at?: string;
-}): HistoricalFocusSession {
+export function mapFocusSessionRow(row: DbFocusSession): HistoricalFocusSession {
   return {
     id: row.id,
     categoryId: row.category_id,
     title: row.title_snapshot,
     date: row.session_date,
     durationSeconds: row.duration_seconds,
-    focusType: row.focus_type_snapshot,
-    focusSubtype: row.focus_subtype_snapshot ?? undefined,
-    focusSubtype2: row.focus_subtype_2_snapshot ?? undefined,
+    focusType: row.focus_type_snapshot as FocusType,
+    focusSubtype: row.focus_subtype_snapshot ? row.focus_subtype_snapshot as FocusSubtype : undefined,
+    focusSubtype2: row.focus_subtype_2_snapshot ? row.focus_subtype_2_snapshot as FocusSubtype : undefined,
     notes: row.notes ?? undefined,
     createdAt: row.created_at,
   };

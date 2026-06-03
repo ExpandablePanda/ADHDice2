@@ -111,6 +111,20 @@
     color: var(--text-muted);
   }
 
+  .health-input {
+    border: 1px solid var(--border-soft);
+    background: var(--surface-elevated);
+    color: var(--text-primary);
+    border-radius: 1rem;
+    min-height: 3rem;
+    padding: 0.75rem 1rem;
+    width: 100%;
+  }
+
+  .health-input::placeholder {
+    color: var(--text-muted);
+  }
+
   .ui-pill-button-light {
     border-radius: var(--radius-pill);
     background: var(--accent-soft);
@@ -160,48 +174,44 @@
 }
 
 .adhdice-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(124, 92, 255, 0.42) rgba(124, 92, 255, 0.1) !important;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 html,
 body {
   overflow-x: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(124, 92, 255, 0.42) rgba(124, 92, 255, 0.1) !important;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 html::-webkit-scrollbar,
 body::-webkit-scrollbar,
 .adhdice-scrollbar::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 0;
+  height: 0;
 }
 
 html::-webkit-scrollbar-track,
 body::-webkit-scrollbar-track,
 .adhdice-scrollbar::-webkit-scrollbar-track {
-  background-color: rgba(124, 92, 255, 0.1) !important;
-  border-radius: 999px;
+  background: transparent !important;
 }
 
 html::-webkit-scrollbar-thumb,
 body::-webkit-scrollbar-thumb,
 .adhdice-scrollbar::-webkit-scrollbar-thumb {
-  background-color: rgba(124, 92, 255, 0.42) !important;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-  border-radius: 999px;
-  box-shadow: inset 0 0 0 999px rgba(124, 92, 255, 0.42);
+  background: transparent !important;
+  border: 0;
+  box-shadow: none;
 }
 
 html::-webkit-scrollbar-thumb:hover,
 body::-webkit-scrollbar-thumb:hover,
 .adhdice-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(124, 92, 255, 0.68) !important;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-  box-shadow: inset 0 0 0 999px rgba(124, 92, 255, 0.68);
+  background: transparent !important;
+  border: 0;
+  box-shadow: none;
 }
 
 .adhdice-scrollbar-overlay {

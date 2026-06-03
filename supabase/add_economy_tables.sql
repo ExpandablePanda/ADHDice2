@@ -35,7 +35,7 @@ create table if not exists public.adhdice_point_ledger (
   delta integer not null,
   reason text not null,
   balance_after integer not null,
-  source text not null check (source in ('task', 'focus', 'roll', 'manual', 'system')),
+  source text not null check (source in ('task', 'focus', 'roll', 'manual', 'system', 'health')),
   ref_id uuid,
   created_at timestamptz not null default now()
 );

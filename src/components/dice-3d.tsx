@@ -1,44 +1,474 @@
 "use client";
 
 import { Canvas, useFrame } from "@react-three/fiber";
-import { useGLTF } from "@react-three/drei";
-import { useEffect, useMemo, useRef } from "react";
+import { OrbitControls, useGLTF } from "@react-three/drei";
+import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { withBasePath } from "@/lib/utils";
 
 export type DicePhase = "idle" | "rolling" | "settling";
 export type DiceLayout = "d20" | "d20-d6" | "d20-d20-d6";
+export type D20MaterialPreset = "ceramic" | "candy" | "glass" | "matte" | "metal";
+
+// These rotations map the requested top face value to the actual d6.glb orientation.
+const D6_FACE_ROTATIONS: Record<number, [number, number, number]> = {
+  1: [1.5708, -0.7854, 3.2289],
+  2: [0.6981, -0.0873, -1.4835],
+  3: [-0.6981, Math.PI, Math.PI / 2],
+  4: [2.3387, -2.9496, 1.3788],
+  5: [-0.0873, 2.5133, Math.PI],
+  6: [-1.5708, 0.7854, Math.PI],
+};
+
+export const D6_FACE_ROTATION_PRESETS = D6_FACE_ROTATIONS;
+
+const D20_FACE_ROTATIONS: Record<number, [number, number, number]> = {
+  1: [1.501, 3.1416, 3.1416],
+  2: [2.1468, 1.0123, 0.2793],
+  3: [-0.9948, 2.1118, 0.9076],
+  4: [0.4538, 0.5585, 2.234],
+  5: [-1.1694, -2.1468, -0.9599],
+  6: [0.4189, -0.5236, -2.2515],
+  7: [5.7945, 3.1765, 0],
+  8: [2.042, -1.0123, -0.192],
+  9: [-0.6109, -0.0698, 0.5236],
+  10: [2.3736, -0.1047, -0.6458],
+  11: [-0.7679, -0.0698, -0.6981],
+  12: [2.6005, 0.0524, 0.576],
+  13: [-1.1868, 5.2709, -0.384],
+  14: [2.4609, -3.1067, 0],
+  15: [0.3142, -2.5831, 0.9425],
+  16: [1.7279, -2.1817, -0.8727],
+  17: [0.2443, 2.5831, -0.8901],
+  18: [1.7279, 2.2166, 1.0647],
+  19: [-1.0472, 1.0647, 0.2618],
+  20: [1.4137, -0.0175, 0],
+};
+
+export const D20_FACE_ROTATION_PRESETS = D20_FACE_ROTATIONS;
+
+const D6_BODY_COLOR = "#cbbcff";
+const D6_BODY_EMISSIVE = "#8f7af6";
+const D6_PIP_COLOR = "#ffffff";
+const D6_PIP_EMISSIVE = "#f7f4ff";
+const REWARD_DICE_BOUNDS = { x: 3.45, y: 1.9 };
+
+export type D6MaterialPreset = "candy" | "ceramic" | "glass" | "matte" | "metal";
+
+export type D6VisualStyle = {
+  bodyColor: string;
+  bodyEmissive: string;
+  bodyEmissiveIntensity: number;
+  bodyMetalness: number;
+  bodyOpacity: number;
+  bodyRoughness: number;
+  finish: D6MaterialPreset;
+  pipColor: string;
+  pipEmissive: string;
+  pipEmissiveIntensity: number;
+  pipMetalness: number;
+  pipOpacity: number;
+  pipRoughness: number;
+};
+
+export const DEFAULT_D6_VISUAL_STYLE: D6VisualStyle = {
+  bodyColor: D6_BODY_COLOR,
+  bodyEmissive: D6_BODY_EMISSIVE,
+  bodyEmissiveIntensity: 0.05,
+  bodyMetalness: 0.06,
+  bodyOpacity: 1,
+  bodyRoughness: 0.5,
+  finish: "ceramic",
+  pipColor: D6_PIP_COLOR,
+  pipEmissive: D6_PIP_EMISSIVE,
+  pipEmissiveIntensity: 0.12,
+  pipMetalness: 0.04,
+  pipOpacity: 1,
+  pipRoughness: 0.18,
+};
+
+export type D20VisualStyle = {
+  bodyColor: string;
+  bodyEmissive: string;
+  bodyEmissiveIntensity: number;
+  bodyMetalness: number;
+  bodyOpacity: number;
+  bodyRoughness: number;
+  finish: D20MaterialPreset;
+  pipColor: string;
+  pipEmissive: string;
+  pipEmissiveIntensity: number;
+  pipMetalness: number;
+  pipOpacity: number;
+  pipRoughness: number;
+};
+
+export const DEFAULT_D20_VISUAL_STYLE: D20VisualStyle = {
+  bodyColor: "#8e82f9",
+  bodyEmissive: "#6552f1",
+  bodyEmissiveIntensity: 0.08,
+  bodyMetalness: 0.08,
+  bodyOpacity: 1,
+  bodyRoughness: 0.38,
+  finish: "ceramic",
+  pipColor: "#f7f4ff",
+  pipEmissive: "#ffffff",
+  pipEmissiveIntensity: 0.16,
+  pipMetalness: 0.06,
+  pipOpacity: 1,
+  pipRoughness: 0.2,
+};
+
+const DEFAULT_D20_CAMERA_POSITION: [number, number, number] = [0, 0.2, 12.2];
+
+type RewardDiceMotionState = {
+  position: THREE.Vector3;
+  radius: number;
+  velocity: THREE.Vector3;
+};
+
+function isD6PipMesh(mesh: THREE.Mesh) {
+  return mesh.name.includes("Material001");
+}
+
+function getD6MaterialFinish(finish: D6MaterialPreset, isPipMesh: boolean) {
+  if (finish === "matte") {
+    return {
+      emissiveIntensity: isPipMesh ? 0.05 : 0.03,
+      metalness: 0.02,
+      roughness: isPipMesh ? 0.24 : 0.72,
+    };
+  }
+
+  if (finish === "candy") {
+    return {
+      emissiveIntensity: isPipMesh ? 0.12 : 0.08,
+      metalness: 0.08,
+      roughness: isPipMesh ? 0.14 : 0.32,
+    };
+  }
+
+  if (finish === "glass") {
+    return {
+      emissiveIntensity: isPipMesh ? 0.1 : 0.06,
+      metalness: 0.02,
+      roughness: isPipMesh ? 0.04 : 0.12,
+    };
+  }
+
+  if (finish === "metal") {
+    return {
+      emissiveIntensity: isPipMesh ? 0.08 : 0.03,
+      metalness: isPipMesh ? 0.32 : 0.74,
+      roughness: isPipMesh ? 0.18 : 0.26,
+    };
+  }
+
+  return {
+    emissiveIntensity: isPipMesh ? 0.12 : 0.05,
+    metalness: isPipMesh ? 0.04 : 0.06,
+    roughness: isPipMesh ? 0.18 : 0.5,
+  };
+}
+
+function getD20MaterialFinish(finish: D20MaterialPreset, isPipMesh: boolean) {
+  if (finish === "matte") {
+    return {
+      emissiveIntensity: isPipMesh ? 0.08 : 0.05,
+      metalness: 0.03,
+      roughness: isPipMesh ? 0.28 : 0.7,
+    };
+  }
+
+  if (finish === "candy") {
+    return {
+      emissiveIntensity: isPipMesh ? 0.18 : 0.12,
+      metalness: 0.12,
+      roughness: isPipMesh ? 0.14 : 0.28,
+    };
+  }
+
+  if (finish === "glass") {
+    return {
+      emissiveIntensity: isPipMesh ? 0.14 : 0.08,
+      metalness: 0.04,
+      roughness: isPipMesh ? 0.06 : 0.12,
+    };
+  }
+
+  if (finish === "metal") {
+    return {
+      emissiveIntensity: isPipMesh ? 0.1 : 0.04,
+      metalness: isPipMesh ? 0.48 : 0.82,
+      roughness: isPipMesh ? 0.16 : 0.24,
+    };
+  }
+
+  return {
+    emissiveIntensity: isPipMesh ? 0.16 : 0.08,
+    metalness: isPipMesh ? 0.06 : 0.08,
+    roughness: isPipMesh ? 0.2 : 0.38,
+  };
+}
+
+export function applyD6MaterialPreset(baseStyle: D6VisualStyle, finish: D6MaterialPreset): D6VisualStyle {
+  const bodyFinish = getD6MaterialFinish(finish, false);
+  const pipFinish = getD6MaterialFinish(finish, true);
+  const bodyOpacity = finish === "glass" ? 0.72 : finish === "metal" ? 0.96 : 1;
+  const pipOpacity = finish === "glass" ? 0.9 : 1;
+
+  return {
+    ...baseStyle,
+    bodyEmissiveIntensity: bodyFinish.emissiveIntensity,
+    bodyMetalness: bodyFinish.metalness,
+    bodyOpacity,
+    bodyRoughness: bodyFinish.roughness,
+    finish,
+    pipEmissiveIntensity: pipFinish.emissiveIntensity,
+    pipMetalness: pipFinish.metalness,
+    pipOpacity,
+    pipRoughness: pipFinish.roughness,
+  };
+}
+
+export function applyD20MaterialPreset(baseStyle: D20VisualStyle, finish: D20MaterialPreset): D20VisualStyle {
+  const bodyFinish = getD20MaterialFinish(finish, false);
+  const pipFinish = getD20MaterialFinish(finish, true);
+  const bodyOpacity = finish === "glass" ? 0.78 : finish === "metal" ? 0.96 : 1;
+  const pipOpacity = finish === "glass" ? 0.94 : 1;
+
+  return {
+    ...baseStyle,
+    bodyEmissiveIntensity: bodyFinish.emissiveIntensity,
+    bodyMetalness: bodyFinish.metalness,
+    bodyOpacity,
+    bodyRoughness: bodyFinish.roughness,
+    finish,
+    pipEmissiveIntensity: pipFinish.emissiveIntensity,
+    pipMetalness: pipFinish.metalness,
+    pipOpacity,
+    pipRoughness: pipFinish.roughness,
+  };
+}
+
+function buildRewardD6Material(mesh: THREE.Mesh, style: D6VisualStyle = DEFAULT_D6_VISUAL_STYLE) {
+  const isPipMesh = isD6PipMesh(mesh);
+
+  return new THREE.MeshStandardMaterial({
+    color: isPipMesh ? style.pipColor : style.bodyColor,
+    metalness: isPipMesh ? style.pipMetalness : style.bodyMetalness,
+    opacity: isPipMesh ? style.pipOpacity : style.bodyOpacity,
+    roughness: isPipMesh ? style.pipRoughness : style.bodyRoughness,
+    emissive: isPipMesh ? style.pipEmissive : style.bodyEmissive,
+    emissiveIntensity: isPipMesh ? style.pipEmissiveIntensity : style.bodyEmissiveIntensity,
+    transparent: (isPipMesh ? style.pipOpacity : style.bodyOpacity) < 0.999,
+  });
+}
+
+function isD20LetterMesh(mesh: THREE.Mesh) {
+  return mesh.name.includes("Letters") || (mesh.material instanceof THREE.Material && mesh.material.name === "Letters");
+}
+
+function buildD20Material(mesh: THREE.Mesh, style: D20VisualStyle = DEFAULT_D20_VISUAL_STYLE) {
+  const isLetterMesh = isD20LetterMesh(mesh);
+
+  return new THREE.MeshStandardMaterial({
+    color: isLetterMesh ? style.pipColor : style.bodyColor,
+    emissive: isLetterMesh ? style.pipEmissive : style.bodyEmissive,
+    emissiveIntensity: isLetterMesh ? style.pipEmissiveIntensity : style.bodyEmissiveIntensity,
+    metalness: isLetterMesh ? style.pipMetalness : style.bodyMetalness,
+    opacity: isLetterMesh ? style.pipOpacity : style.bodyOpacity,
+    roughness: isLetterMesh ? style.pipRoughness : style.bodyRoughness,
+    transparent: (isLetterMesh ? style.pipOpacity : style.bodyOpacity) < 0.999,
+  });
+}
+
+function clampRewardDieToBounds(position: THREE.Vector3, velocity: THREE.Vector3, radius: number) {
+  if (position.x > REWARD_DICE_BOUNDS.x - radius) {
+    position.x = REWARD_DICE_BOUNDS.x - radius;
+    velocity.x *= -0.82;
+  } else if (position.x < -REWARD_DICE_BOUNDS.x + radius) {
+    position.x = -REWARD_DICE_BOUNDS.x + radius;
+    velocity.x *= -0.82;
+  }
+
+  if (position.y > REWARD_DICE_BOUNDS.y - radius) {
+    position.y = REWARD_DICE_BOUNDS.y - radius;
+    velocity.y *= -0.78;
+  } else if (position.y < -REWARD_DICE_BOUNDS.y + radius) {
+    position.y = -REWARD_DICE_BOUNDS.y + radius;
+    velocity.y *= -0.78;
+  }
+}
+
+function resolveRewardDiceCollisions(sharedStates: MutableRefObject<Array<RewardDiceMotionState | null>>, index: number) {
+  const currentState = sharedStates.current[index];
+  if (!currentState) {
+    return;
+  }
+
+  for (let otherIndex = index + 1; otherIndex < sharedStates.current.length; otherIndex += 1) {
+    const otherState = sharedStates.current[otherIndex];
+    if (!otherState) {
+      continue;
+    }
+
+    const dx = otherState.position.x - currentState.position.x;
+    const dy = otherState.position.y - currentState.position.y;
+    const distance = Math.hypot(dx, dy);
+    const minDistance = currentState.radius + otherState.radius;
+    if (distance === 0 || distance >= minDistance) {
+      continue;
+    }
+
+    const normalX = dx / distance;
+    const normalY = dy / distance;
+    const overlap = minDistance - distance;
+    const pushX = normalX * overlap * 0.5;
+    const pushY = normalY * overlap * 0.5;
+
+    currentState.position.x -= pushX;
+    currentState.position.y -= pushY;
+    otherState.position.x += pushX;
+    otherState.position.y += pushY;
+
+    const relativeVelocityX = currentState.velocity.x - otherState.velocity.x;
+    const relativeVelocityY = currentState.velocity.y - otherState.velocity.y;
+    const separatingSpeed = (relativeVelocityX * normalX) + (relativeVelocityY * normalY);
+    if (separatingSpeed > 0) {
+      continue;
+    }
+
+    const impulse = -separatingSpeed * 0.88;
+    currentState.velocity.x += normalX * impulse;
+    currentState.velocity.y += normalY * impulse;
+    otherState.velocity.x -= normalX * impulse;
+    otherState.velocity.y -= normalY * impulse;
+  }
+}
+
+function angleDelta(current: number, target: number) {
+  return Math.atan2(Math.sin(target - current), Math.cos(target - current));
+}
+
+function lerpAngle(current: number, target: number, alpha: number) {
+  return current + (angleDelta(current, target) * alpha);
+}
+
+function randomUnit() {
+  if (typeof crypto !== "undefined" && "getRandomValues" in crypto) {
+    const buffer = new Uint32Array(1);
+    crypto.getRandomValues(buffer);
+    return (buffer[0] ?? 0) / 0x100000000;
+  }
+
+  return Math.random();
+}
+
+function randomInRange(min: number, max: number) {
+  return min + ((max - min) * randomUnit());
+}
 
 function DiceModel({
+  faceValue,
   path,
   scale,
   phase,
   offset,
+  normalizeFitSize,
+  style,
   speedMult,
   isLead,
   onSettled,
 }: {
+  faceValue?: number;
   path: string;
   scale: number;
   phase: DicePhase;
   offset: [number, number, number];
+  normalizeFitSize?: number;
+  style?: D20VisualStyle;
   speedMult: number;
   isLead: boolean;
   onSettled: () => void;
 }) {
   const { scene } = useGLTF(path);
-  const clone = useMemo(() => scene.clone(true), [scene]);
+  const clone = useMemo(() => {
+    const nextScene = scene.clone(true);
+    if (style && path.includes("/d20.glb")) {
+      nextScene.traverse((obj) => {
+        if (!(obj as THREE.Mesh).isMesh) {
+          return;
+        }
+        const mesh = obj as THREE.Mesh;
+        mesh.material = buildD20Material(mesh, style);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      });
+    }
+    return nextScene;
+  }, [path, scene, style]);
   const groupRef = useRef<THREE.Group>(null!);
   const vel = useRef({ x: 0, y: 0, z: 0 });
+  const driftOffsets = useRef({
+    phaseX: 0,
+    phaseY: 0,
+    phaseZ: 0,
+    yawSign: 1,
+  });
   const notified = useRef(false);
+  const motionTime = useRef(0);
+  const settleProgress = useRef(0);
+  const settleStartRotation = useRef<[number, number, number] | null>(null);
+  const settleRotation = useMemo(() => {
+    if (!path.includes("/d20.glb") || faceValue === undefined) {
+      return null;
+    }
+    const [x, y, z] = D20_FACE_ROTATIONS[faceValue] ?? D20_FACE_ROTATIONS[20];
+    return new THREE.Euler(x, y, z);
+  }, [faceValue, path]);
+  const normalizedTransform = useMemo(() => {
+    if (!normalizeFitSize) {
+      return {
+        scale: scale,
+        position: [0, 0, 0] as [number, number, number],
+      };
+    }
+
+    const bounds = new THREE.Box3().setFromObject(clone);
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    bounds.getCenter(center);
+    bounds.getSize(size);
+    const maxDimension = Math.max(size.x, size.y, size.z) || 1;
+    const fittedScale = (normalizeFitSize / maxDimension) * scale;
+
+    return {
+      scale: fittedScale,
+      position: [
+        -center.x * fittedScale,
+        -center.y * fittedScale,
+        -center.z * fittedScale,
+      ] as [number, number, number],
+    };
+  }, [clone, normalizeFitSize, scale]);
 
   useEffect(() => {
     if (phase === "rolling") {
       notified.current = false;
+      motionTime.current = 0;
+      settleProgress.current = 0;
+      settleStartRotation.current = null;
+      driftOffsets.current = {
+        phaseX: randomInRange(0, Math.PI * 2),
+        phaseY: randomInRange(0, Math.PI * 2),
+        phaseZ: randomInRange(0, Math.PI * 2),
+        yawSign: randomUnit() > 0.5 ? 1 : -1,
+      };
       vel.current = {
-        x: (10 + Math.random() * 6) * speedMult,
-        y: (16 + Math.random() * 8) * speedMult,
-        z: (4 + Math.random() * 4) * speedMult,
+        x: randomInRange(10, 16) * speedMult,
+        y: randomInRange(16, 24) * speedMult * driftOffsets.current.yawSign,
+        z: randomInRange(4, 8) * speedMult,
       };
     }
   }, [phase, speedMult]);
@@ -46,21 +476,68 @@ function DiceModel({
   useFrame((_, dt) => {
     const g = groupRef.current;
     if (!g) return;
+    motionTime.current += dt;
     if (phase === "rolling") {
       g.rotation.x += vel.current.x * dt;
       g.rotation.y += vel.current.y * dt;
       g.rotation.z += vel.current.z * dt;
+      if (settleRotation) {
+        const wobbleX = Math.sin((motionTime.current * 4.2) + driftOffsets.current.phaseX) * 0.14;
+        const wobbleY = Math.cos((motionTime.current * 3.3) + driftOffsets.current.phaseY) * 0.12;
+        const wobbleZ = Math.sin((motionTime.current * 5.1) + driftOffsets.current.phaseZ) * 0.08;
+        g.position.set(
+          offset[0] + wobbleX,
+          offset[1] + wobbleY,
+          offset[2] + wobbleZ,
+        );
+      }
     } else if (phase === "settling") {
       vel.current.x *= 0.87;
       vel.current.y *= 0.87;
       vel.current.z *= 0.87;
-      g.rotation.x += vel.current.x * dt;
-      g.rotation.y += vel.current.y * dt;
-      g.rotation.z += vel.current.z * dt;
-      if (isLead && !notified.current && Math.abs(vel.current.y) < 0.06) {
+      if (!settleStartRotation.current) {
+        settleStartRotation.current = [g.rotation.x, g.rotation.y, g.rotation.z];
+        settleProgress.current = 0;
+      }
+      settleProgress.current = Math.min(1, settleProgress.current + (dt / 1.05));
+      g.rotation.x += vel.current.x * dt * 0.4;
+      g.rotation.y += vel.current.y * dt * 0.4;
+      g.rotation.z += vel.current.z * dt * 0.4;
+
+      if (settleRotation) {
+        const [startX, startY, startZ] = settleStartRotation.current;
+        const t = settleProgress.current;
+        const eased = 1 - ((1 - t) ** 3);
+        const wobble = Math.sin(t * Math.PI * 4.5) * ((1 - t) ** 2) * 0.24;
+        g.rotation.x = lerpAngle(startX, settleRotation.x, eased) + wobble;
+        g.rotation.y = lerpAngle(startY, settleRotation.y, eased) + (wobble * 0.78);
+        g.rotation.z = lerpAngle(startZ, settleRotation.z, eased) + (wobble * 0.56);
+        g.position.set(
+          offset[0] + (Math.sin(t * Math.PI * 3.2) * (1 - t) * 0.12),
+          offset[1] + (Math.sin(t * Math.PI * 5.4) * (1 - t) * 0.2),
+          offset[2] + (Math.cos(t * Math.PI * 3.2) * (1 - t) * 0.05),
+        );
+
+        if (
+          isLead
+          && !notified.current
+          && t > 0.96
+          && Math.abs(angleDelta(g.rotation.x, settleRotation.x)) < 0.05
+          && Math.abs(angleDelta(g.rotation.y, settleRotation.y)) < 0.05
+          && Math.abs(angleDelta(g.rotation.z, settleRotation.z)) < 0.05
+        ) {
+          g.rotation.set(settleRotation.x, settleRotation.y, settleRotation.z);
+          g.position.set(...offset);
+          notified.current = true;
+          setTimeout(onSettled, 0);
+        }
+      } else if (isLead && !notified.current && Math.abs(vel.current.y) < 0.06) {
         notified.current = true;
         setTimeout(onSettled, 0);
       }
+    } else if (settleRotation) {
+      g.position.set(...offset);
+      g.rotation.set(settleRotation.x, settleRotation.y, settleRotation.z);
     }
   });
 
@@ -80,7 +557,9 @@ function DiceModel({
 
   return (
     <group ref={groupRef} position={offset}>
-      <primitive object={clone} scale={scale} />
+      <group position={normalizedTransform.position}>
+        <primitive object={clone} scale={normalizedTransform.scale} />
+      </group>
     </group>
   );
 }
@@ -90,18 +569,32 @@ export function Dice3DCanvas({
   layout,
   onSettled,
   dark,
+  d20Style = DEFAULT_D20_VISUAL_STYLE,
+  faceValue,
 }: {
   phase: DicePhase;
   layout: DiceLayout;
   onSettled: () => void;
   dark: boolean;
+  d20Style?: D20VisualStyle;
+  faceValue?: number;
 }) {
   const bg = dark ? "#130e24" : "#f0ecff";
   const accentColor = dark ? "#cabfff" : "#9b87ff";
+  const isSingleD20 = layout === "d20";
+  const containerClass = isSingleD20
+    ? "mx-auto aspect-square w-full max-w-[24rem] rounded-2xl overflow-hidden"
+    : "w-full rounded-2xl overflow-hidden";
+  const containerStyle = isSingleD20
+    ? { background: bg }
+    : { height: 180, background: bg };
+  const cameraPosition: [number, number, number] = isSingleD20 ? DEFAULT_D20_CAMERA_POSITION : [0, 0, 7];
+  const cameraFov = isSingleD20 ? 56 : 48;
+  const d20Scale = isSingleD20 ? 1.02 : 2.0;
 
   return (
-    <div className="w-full rounded-2xl overflow-hidden" style={{ height: 180, background: bg }}>
-      <Canvas camera={{ position: [0, 0, 7], fov: 48 }} gl={{ antialias: true }}>
+    <div className={containerClass} style={containerStyle}>
+      <Canvas camera={{ position: cameraPosition, fov: cameraFov }} gl={{ antialias: true }}>
         <color attach="background" args={[bg]} />
         <ambientLight intensity={0.65} />
         <directionalLight position={[4, 8, 6]} intensity={1.1} />
@@ -109,10 +602,13 @@ export function Dice3DCanvas({
 
         {layout === "d20" && (
           <DiceModel
+            faceValue={faceValue}
             path={withBasePath("/d20.glb")}
-            scale={2.0}
+            scale={d20Scale}
             phase={phase}
             offset={[0, 0, 0]}
+            normalizeFitSize={3.45}
+            style={d20Style}
             speedMult={1}
             isLead
             onSettled={onSettled}
@@ -122,10 +618,12 @@ export function Dice3DCanvas({
         {layout === "d20-d6" && (
           <>
             <DiceModel
+              faceValue={faceValue}
               path={withBasePath("/d20.glb")}
               scale={1.7}
               phase={phase}
               offset={[-1.4, 0, 0]}
+              style={d20Style}
               speedMult={1}
               isLead
               onSettled={onSettled}
@@ -145,19 +643,23 @@ export function Dice3DCanvas({
         {layout === "d20-d20-d6" && (
           <>
             <DiceModel
+              faceValue={faceValue}
               path={withBasePath("/d20.glb")}
               scale={1.5}
               phase={phase}
               offset={[-2.2, 0.3, 0]}
+              style={d20Style}
               speedMult={1}
               isLead
               onSettled={onSettled}
             />
             <DiceModel
+              faceValue={faceValue}
               path={withBasePath("/d20.glb")}
               scale={1.5}
               phase={phase}
               offset={[0, -0.3, -0.5]}
+              style={d20Style}
               speedMult={1.1}
               isLead={false}
               onSettled={() => {}}
@@ -180,3 +682,510 @@ export function Dice3DCanvas({
 
 useGLTF.preload(withBasePath("/d20.glb"));
 useGLTF.preload(withBasePath("/d6.glb"));
+
+function RewardDiceModel({
+  faceValue,
+  isLead,
+  motionIndex,
+  offset,
+  onSettled,
+  phase,
+  scale,
+  sharedMotionStates,
+  speedScale = 1,
+  speedMult,
+}: {
+  faceValue: number;
+  isLead: boolean;
+  motionIndex: number;
+  offset: [number, number, number];
+  onSettled: () => void;
+  phase: DicePhase;
+  scale: number;
+  sharedMotionStates: MutableRefObject<Array<RewardDiceMotionState | null>>;
+  speedScale?: number;
+  speedMult: number;
+}) {
+  const { scene } = useGLTF(withBasePath("/d6.glb"));
+  const clone = useMemo(() => {
+    const nextScene = scene.clone(true);
+    nextScene.traverse((obj) => {
+      if (!(obj as THREE.Mesh).isMesh) {
+        return;
+      }
+
+      const mesh = obj as THREE.Mesh;
+      mesh.material = buildRewardD6Material(mesh);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    });
+    return nextScene;
+  }, [scene]);
+  const groupRef = useRef<THREE.Group>(null!);
+  const vel = useRef({ x: 0, y: 0, z: 0 });
+  const linearVelocity = useRef(new THREE.Vector3());
+  const currentPosition = useRef(new THREE.Vector3(...offset));
+  const dieRadius = useRef(scale * 0.48);
+  const notified = useRef(false);
+  const settleRotation = useMemo(() => {
+    const [x, y, z] = D6_FACE_ROTATIONS[faceValue] ?? D6_FACE_ROTATIONS[1];
+    return new THREE.Euler(x, y, z);
+  }, [faceValue]);
+
+  useEffect(() => {
+    if (phase === "rolling") {
+      notified.current = false;
+      currentPosition.current.set(
+        (Math.random() > 0.5 ? -1 : 1) * (REWARD_DICE_BOUNDS.x + 1 + (Math.random() * 0.9)),
+        THREE.MathUtils.randFloat(-0.75, 0.95),
+        offset[2],
+      );
+      linearVelocity.current.set(
+        (offset[0] - currentPosition.current.x) * THREE.MathUtils.randFloat(1.3, 1.7),
+        THREE.MathUtils.randFloat(-1.55, 1.55),
+        0,
+      );
+      vel.current = {
+        x: (9.25 + Math.random() * 4) * speedMult * speedScale,
+        y: (12.5 + Math.random() * 5.5) * speedMult * speedScale,
+        z: (7 + Math.random() * 4.5) * speedMult * speedScale,
+      };
+      sharedMotionStates.current[motionIndex] = {
+        position: currentPosition.current,
+        radius: dieRadius.current,
+        velocity: linearVelocity.current,
+      };
+    }
+  }, [motionIndex, offset, phase, sharedMotionStates, speedMult, speedScale]);
+
+  useEffect(() => {
+    if (phase === "idle") {
+      currentPosition.current.set(...offset);
+      linearVelocity.current.set(0, 0, 0);
+      sharedMotionStates.current[motionIndex] = {
+        position: currentPosition.current,
+        radius: dieRadius.current,
+        velocity: linearVelocity.current,
+      };
+    }
+  }, [motionIndex, offset, phase, sharedMotionStates]);
+
+  useFrame((_, dt) => {
+    const group = groupRef.current;
+    if (!group) {
+      return;
+    }
+
+    const position = currentPosition.current;
+    const motionVelocity = linearVelocity.current;
+
+    if (phase === "rolling") {
+      position.x += motionVelocity.x * dt;
+      position.y += motionVelocity.y * dt;
+      motionVelocity.multiplyScalar(0.995);
+      clampRewardDieToBounds(position, motionVelocity, dieRadius.current);
+      resolveRewardDiceCollisions(sharedMotionStates, motionIndex);
+
+      group.position.set(position.x, position.y, offset[2]);
+      group.rotation.x += vel.current.x * dt;
+      group.rotation.y += vel.current.y * dt;
+      group.rotation.z += vel.current.z * dt;
+      return;
+    }
+
+    if (phase === "settling") {
+      vel.current.x *= 0.89;
+      vel.current.y *= 0.89;
+      vel.current.z *= 0.89;
+      motionVelocity.multiplyScalar(0.9);
+      position.x += motionVelocity.x * dt;
+      position.y += motionVelocity.y * dt;
+      clampRewardDieToBounds(position, motionVelocity, dieRadius.current);
+      resolveRewardDiceCollisions(sharedMotionStates, motionIndex);
+
+      position.x = THREE.MathUtils.lerp(position.x, offset[0], 0.2);
+      position.y = THREE.MathUtils.lerp(position.y, offset[1], 0.2);
+      group.position.set(position.x, position.y, offset[2]);
+      group.rotation.x += vel.current.x * dt;
+      group.rotation.y += vel.current.y * dt;
+      group.rotation.z += vel.current.z * dt;
+      group.rotation.x = THREE.MathUtils.lerp(group.rotation.x, settleRotation.x, 0.16);
+      group.rotation.y = THREE.MathUtils.lerp(group.rotation.y, settleRotation.y, 0.16);
+      group.rotation.z = THREE.MathUtils.lerp(group.rotation.z, settleRotation.z, 0.16);
+
+      if (
+        isLead
+        && !notified.current
+        && Math.abs(group.rotation.x - settleRotation.x) < 0.04
+        && Math.abs(group.rotation.y - settleRotation.y) < 0.04
+        && Math.abs(group.rotation.z - settleRotation.z) < 0.04
+      ) {
+        notified.current = true;
+        setTimeout(onSettled, 0);
+      }
+    }
+  });
+
+  useEffect(() => {
+    return () => {
+      sharedMotionStates.current[motionIndex] = null;
+      clone.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          const mesh = obj as THREE.Mesh;
+          mesh.geometry?.dispose();
+          const material = mesh.material;
+          if (Array.isArray(material)) {
+            material.forEach((entry) => entry.dispose());
+          } else {
+            material?.dispose();
+          }
+        }
+      });
+    };
+  }, [clone, motionIndex, sharedMotionStates]);
+
+  return (
+    <group ref={groupRef} position={offset}>
+      <primitive object={clone} scale={scale} />
+    </group>
+  );
+}
+
+function PreviewD6Model({
+  style = DEFAULT_D6_VISUAL_STYLE,
+  rotation,
+  scale,
+}: {
+  style?: D6VisualStyle;
+  rotation: [number, number, number];
+  scale: number;
+}) {
+  const { scene } = useGLTF(withBasePath("/d6.glb"));
+  const clone = useMemo(() => {
+    const nextScene = scene.clone(true);
+    nextScene.traverse((obj) => {
+      if (!(obj as THREE.Mesh).isMesh) {
+        return;
+      }
+
+      const mesh = obj as THREE.Mesh;
+      mesh.material = buildRewardD6Material(mesh, style);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    });
+    return nextScene;
+  }, [scene, style]);
+
+  useEffect(() => {
+    return () => {
+      clone.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          const mesh = obj as THREE.Mesh;
+          mesh.geometry?.dispose();
+          const material = mesh.material;
+          if (Array.isArray(material)) {
+            material.forEach((entry) => entry.dispose());
+          } else {
+            material?.dispose();
+          }
+        }
+      });
+    };
+  }, [clone]);
+
+  return (
+    <group rotation={rotation}>
+      <primitive object={clone} scale={scale} />
+    </group>
+  );
+}
+
+function PreviewD20Model({
+  rotation,
+  scale,
+  style = DEFAULT_D20_VISUAL_STYLE,
+}: {
+  rotation: [number, number, number];
+  scale: number;
+  style?: D20VisualStyle;
+}) {
+  const { scene } = useGLTF(withBasePath("/d20.glb"));
+  const clone = useMemo(() => {
+    const nextScene = scene.clone(true);
+    nextScene.traverse((obj) => {
+      if (!(obj as THREE.Mesh).isMesh) {
+        return;
+      }
+
+      const mesh = obj as THREE.Mesh;
+      mesh.material = buildD20Material(mesh, style);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    });
+    return nextScene;
+  }, [scene, style]);
+  const normalizedTransform = useMemo(() => {
+    const bounds = new THREE.Box3().setFromObject(clone);
+    const center = new THREE.Vector3();
+    const size = new THREE.Vector3();
+    bounds.getCenter(center);
+    bounds.getSize(size);
+    const maxDimension = Math.max(size.x, size.y, size.z) || 1;
+    const fittedScale = (3.45 / maxDimension) * scale;
+
+    return {
+      scale: fittedScale,
+      position: [
+        -center.x * fittedScale,
+        -center.y * fittedScale,
+        -center.z * fittedScale,
+      ] as [number, number, number],
+    };
+  }, [clone, scale]);
+
+  useEffect(() => {
+    return () => {
+      clone.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          const mesh = obj as THREE.Mesh;
+          mesh.geometry?.dispose();
+          const material = mesh.material;
+          if (Array.isArray(material)) {
+            material.forEach((entry) => entry.dispose());
+          } else {
+            material?.dispose();
+          }
+        }
+      });
+    };
+  }, [clone]);
+
+  return (
+    <group rotation={rotation}>
+      <group position={normalizedTransform.position}>
+        <primitive object={clone} scale={normalizedTransform.scale} />
+      </group>
+    </group>
+  );
+}
+
+function getRewardDiceOffsets(count: number): Array<[number, number, number]> {
+  if (count === 1) {
+    return [[0, 0, 0]];
+  }
+
+  if (count === 2) {
+    return [
+      [-1.45, 0.06, -0.12],
+      [1.45, -0.06, 0.12],
+    ];
+  }
+
+  if (count === 3) {
+    return [
+      [-1.55, 0.42, -0.16],
+      [1.55, 0.18, 0.16],
+      [0, -0.9, 0],
+    ];
+  }
+
+  const spacingX = count > 8 ? 1.25 : count > 4 ? 1.45 : 1.7;
+  const spacingY = count > 8 ? 1.15 : 1.3;
+  const columns = count <= 3 ? count : count <= 8 ? Math.min(4, count) : Math.min(5, count);
+  const rows = Math.ceil(count / columns);
+  const columnCenter = (columns - 1) / 2;
+  const rowCenter = (rows - 1) / 2;
+
+  return Array.from({ length: count }, (_, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    return [
+      (column - columnCenter) * spacingX,
+      (rowCenter - row) * spacingY,
+      (column - columnCenter) * 0.12 + (row % 2 === 0 ? 0.08 : -0.12),
+    ];
+  });
+}
+
+export function RewardDice3DCanvas({
+  className = "",
+  dark,
+  height = 220,
+  onSettled,
+  phase,
+  results,
+  speedScale = 1,
+}: {
+  className?: string;
+  dark: boolean;
+  height?: number;
+  onSettled: () => void;
+  phase: DicePhase;
+  results: number[];
+  speedScale?: number;
+}) {
+  const bg = dark ? "#130e24" : "#f0ecff";
+  const accentColor = dark ? "#cabfff" : "#9b87ff";
+  const offsets = useMemo(() => getRewardDiceOffsets(results.length), [results.length]);
+  const scale = results.length >= 10 ? 0.78 : results.length >= 6 ? 0.92 : 1.08;
+  const sharedMotionStates = useRef<Array<RewardDiceMotionState | null>>([]);
+
+  return (
+    <div className={`w-full overflow-hidden rounded-2xl ${className}`} style={{ height, background: bg }}>
+      <Canvas camera={{ position: [0, 0, 8.5], fov: 46 }} gl={{ antialias: true }}>
+        <color attach="background" args={[bg]} />
+        <ambientLight intensity={1.08} />
+        <directionalLight position={[4, 8, 6]} intensity={1.28} />
+        <pointLight color={accentColor} intensity={0.35} position={[-3, -2, 4]} />
+        {results.map((result, index) => (
+          <RewardDiceModel
+            faceValue={result}
+            isLead={index === 0}
+            key={`${index}-${result}`}
+            motionIndex={index}
+            offset={offsets[index] ?? [0, 0, 0]}
+            onSettled={onSettled}
+            phase={phase}
+            scale={scale}
+            sharedMotionStates={sharedMotionStates}
+            speedScale={speedScale}
+            speedMult={1 + (index * 0.04)}
+          />
+        ))}
+      </Canvas>
+    </div>
+  );
+}
+
+export function D6CalibrationCanvas({
+  dark,
+  height = 280,
+  interactive = false,
+  rotation,
+  scale = 1.8,
+  style = DEFAULT_D6_VISUAL_STYLE,
+}: {
+  dark: boolean;
+  height?: number;
+  interactive?: boolean;
+  rotation: [number, number, number];
+  scale?: number;
+  style?: D6VisualStyle;
+}) {
+  const bg = dark ? "#130e24" : "#f0ecff";
+  const accentColor = dark ? "#cabfff" : "#9b87ff";
+
+  return (
+    <div className="w-full overflow-hidden rounded-2xl" style={{ height, background: bg }}>
+      <Canvas camera={{ position: [0, 0.25, 7.9], fov: 42 }} gl={{ antialias: true }}>
+        <color attach="background" args={[bg]} />
+        <ambientLight intensity={1.05} />
+        <directionalLight position={[4, 8, 6]} intensity={1.35} />
+        <pointLight color={accentColor} intensity={0.38} position={[-3, -2, 4]} />
+        <pointLight color="#ffffff" intensity={0.4} position={[2, 1.5, 5]} />
+        {interactive ? (
+          <OrbitControls
+            enableDamping
+            enablePan
+            maxDistance={11}
+            minDistance={5.2}
+            panSpeed={0.85}
+            rotateSpeed={0.9}
+            target={[0, 0.1, 0]}
+            zoomSpeed={0.8}
+          />
+        ) : null}
+        <PreviewD6Model rotation={rotation} scale={scale} style={style} />
+      </Canvas>
+    </div>
+  );
+}
+
+export function D20CalibrationCanvas({
+  dark,
+  height = 420,
+  interactive = false,
+  onRotationChange,
+  rotation,
+  scale = 1.02,
+  style = DEFAULT_D20_VISUAL_STYLE,
+}: {
+  dark: boolean;
+  height?: number;
+  interactive?: boolean;
+  onRotationChange?: (nextRotation: [number, number, number]) => void;
+  rotation: [number, number, number];
+  scale?: number;
+  style?: D20VisualStyle;
+}) {
+  const bg = dark ? "#130e24" : "#f0ecff";
+  const accentColor = dark ? "#cabfff" : "#9b87ff";
+  const dragState = useRef<{
+    active: boolean;
+    baseRotation: [number, number, number];
+    pointerId: number | null;
+    startX: number;
+    startY: number;
+  }>({
+    active: false,
+    baseRotation: rotation,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+  });
+  const currentRotationRef = useRef(rotation);
+
+  useEffect(() => {
+    currentRotationRef.current = rotation;
+  }, [rotation]);
+
+  return (
+    <div className="relative w-full overflow-hidden rounded-2xl" style={{ height, background: bg }}>
+      <Canvas camera={{ position: DEFAULT_D20_CAMERA_POSITION, fov: 56 }} gl={{ antialias: true }}>
+        <color attach="background" args={[bg]} />
+        <ambientLight intensity={0.8} />
+        <directionalLight position={[4, 8, 6]} intensity={1.2} />
+        <pointLight color={accentColor} intensity={0.45} position={[-3, -2, 4]} />
+        <pointLight color="#ffffff" intensity={0.42} position={[2, 1.5, 5]} />
+        <PreviewD20Model rotation={rotation} scale={scale} style={style} />
+      </Canvas>
+      {interactive && onRotationChange ? (
+        <div
+          className="absolute inset-0 z-10 cursor-grab active:cursor-grabbing"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            dragState.current = {
+              active: true,
+              baseRotation: currentRotationRef.current,
+              pointerId: event.pointerId,
+              startX: event.clientX,
+              startY: event.clientY,
+            };
+          }}
+          onPointerMove={(event) => {
+            const drag = dragState.current;
+            if (!drag.active || drag.pointerId !== event.pointerId) {
+              return;
+            }
+
+            const deltaX = event.clientX - drag.startX;
+            const deltaY = event.clientY - drag.startY;
+            onRotationChange([
+              drag.baseRotation[0] + (deltaY * 0.0125),
+              drag.baseRotation[1] + (deltaX * 0.0125),
+              drag.baseRotation[2],
+            ]);
+          }}
+          onPointerUp={(event) => {
+            if (dragState.current.pointerId !== event.pointerId) {
+              return;
+            }
+            dragState.current.active = false;
+            dragState.current.pointerId = null;
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}

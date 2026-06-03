@@ -1,0 +1,39 @@
+# TaskApp Behavior Contract
+
+This document freezes current `TaskApp` behavior so refactors can be validated against a stable target.
+
+## Pages
+
+- `Home`: shows cockpit-style task momentum and quick actions without mutating task semantics.
+- `Tasks`: supports `list`, `grid`, `cards`, and `matrix` views with shared task data, filters, and routing semantics.
+- `Focus`: supports focus categories, active sessions, history, and focus-day task selection.
+- `Roll`: supports roll/economy gameplay without changing task routing semantics.
+- `Stats`: reflects task/focus/economy aggregates from current workspace state.
+- `Notes`: supports note CRUD and task linking behavior.
+- `Settings`: supports profile and app-level configuration.
+- `Games`: lazy-loaded surface; failures stay isolated behind error boundaries.
+
+## Core Modals and Flows
+
+- Task create/edit modal preserves existing save semantics.
+- Batch edit + batch delete preserve current selection and task update behavior.
+- Focus planner modal preserves "save selection by day" behavior.
+- Import flow preserves existing parse, create, and feedback behavior.
+- Task history + momentum modals preserve existing read/write behavior.
+- Actual-time entry modal preserves task time update behavior.
+
+## State and Routing Invariants
+
+- Priority/list semantics remain explicit: `urgent`, `important`, `focus`.
+- Built-in bucket/list routing behavior stays stable (`inbox`, `today`, `focus`, `urgent`, `quick_wins`, `recurring`, `waiting`, `later`, `done`, `missed`).
+- Persisted UI state (active page, task view, filters, layout, collapse/open states) must continue to migrate from legacy snapshots.
+- Supabase-compatible fallback behavior remains intact for known legacy schema variants.
+- Focus-day persistence continues to normalize and dedupe task IDs.
+
+## Refactor Acceptance Checklist
+
+- No user-facing regression in page behavior above.
+- No regression in modal flows above.
+- No regression in routing/list semantics (`urgent`, `important`, `focus`).
+- No regression in persisted UI state restore/reset/migration.
+- No regression in online vs fallback behavior for supported schema variants.

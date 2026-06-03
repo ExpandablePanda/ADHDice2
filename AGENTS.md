@@ -7,6 +7,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 # Local Agent Rules
 
 Prioritize conserving usage and keeping context small.
+Optimize for safe work, low regression risk, clean organization, and design consistency by default so the user does not need to remember to request those guardrails explicitly.
 
 ## Exploration
 - Minimize token usage.
@@ -28,10 +29,46 @@ Prioritize conserving usage and keeping context small.
 - Before editing, state the file(s) you plan to inspect or modify.
 - For small edits, do not refactor unrelated code.
 - For styling or copy changes, modify no more than 1-2 files unless absolutely necessary.
+- Prefer preserving surrounding behavior over making broad “cleanups” during the same pass.
+- When changing shared state, routing, data loading, or reusable UI, look for nearby dependent code paths before editing so a local fix does not quietly break another surface.
+- For larger changes, prefer extracting or isolating code into clearly named files/modules instead of growing monolithic files further.
+- Keep folder structure organized by responsibility. Prefer app-specific surfaces under app-specific folders, shared reusable UI under shared UI folders, hooks in hooks folders, and pure logic in lib folders.
+- Avoid introducing duplicate helpers, duplicate constants, or copy-pasted logic when an existing local utility already covers the need.
+- If the codebase already has a pattern, component style, naming scheme, or module boundary for the thing being edited, follow it unless there is a strong reason not to.
 
 ## Execution
 - Do not run dev servers, builds, package installs, or full test suites unless asked.
 - Do not open a local build or inspect the site in-browser unless the user explicitly asks for it. For this project, avoid using in-app browser/site inspection as a default verification step because it is token-heavy and the sandbox/browser path is unreliable.
+
+## Verification
+- After code changes, run `npm run lint` when the project provides a lint script, unless the user explicitly says not to.
+- After code changes, run `npm run typecheck` when the project provides a typecheck script and the change touches TypeScript, shared logic, imports/exports, hooks, state, or multi-file code paths.
+- Check `package.json` scripts before naming or running verification commands, and choose the smallest relevant available verification step for the change.
+- For small localized UI or copy edits, lint plus source-level sanity checks may be enough.
+- For logic changes, hooks, data loading, state management, reusable components, or multi-file refactors, run the relevant lightweight tests when available, such as `npm test`, and include `npm run typecheck` when TypeScript coverage matters.
+- For structural changes that may affect compilation, imports/exports, routing, rendering boundaries, or framework behavior, run `npm run build` when the user has not asked to avoid heavier verification.
+- If lint fails, fix issues that are directly related to the files changed in the current task and report any remaining unrelated lint findings clearly.
+- In the final response, explicitly say what verification was run, what failed, and what was intentionally not run.
+- If lint is unavailable or too expensive for a tiny source-only change, say that clearly in the final response.
+
+## Architecture
+- Prefer incremental refactors over rewrites. Stabilize first, then extract, then simplify.
+- When a file is large or tangled, reduce future spaghetti by extracting coherent surfaces, helper modules, or shared controls into dedicated files with narrow responsibilities.
+- Keep feature logic, presentation logic, and persistence logic from collapsing into the same place when a cleaner local boundary is available.
+- When adding a new feature or menu, place it where a future developer would naturally look for it first.
+
+## Design
+- Keep new UI in the spirit of the existing product: calm, cohesive, professional, and streamlined.
+- Reuse existing spacing, typography, radii, button styles, menu patterns, icon usage, and interaction patterns before inventing new ones.
+- Avoid random one-off styling decisions that make the product feel inconsistent.
+- Prefer clear visual hierarchy, restrained type scale, and tidy alignment over decorative or novelty-heavy UI.
+- When editing or adding menus, modals, panels, and controls, make them feel like part of the same design system rather than isolated inventions.
+- If the repo already has a design language for chips, cards, toggles, list controls, or headers, continue that language consistently.
+
+## Next.js
+- This repo uses Next `16.2.4`. Do not assume older Next.js behavior is correct.
+- Consult `node_modules/next/dist/docs/` when touching Next-specific behavior such as routing, server/client boundaries, rendering behavior, config, metadata, asset handling, or framework APIs.
+- For small component-only edits that do not touch Next-specific behavior, do not expand scope by reading framework docs unnecessarily.
 
 ## Local Browser Access
 - Treat `localhost`, `127.0.0.1`, `::1`, LAN IPs like `192.168.x.x`, and VPN/private-network dev URLs as potentially unreachable from Browser Use navigation, even if the in-app browser UI can show them.

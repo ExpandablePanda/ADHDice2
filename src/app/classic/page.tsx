@@ -8,13 +8,13 @@ function BucketTrayPreview() {
       <div className="rounded-[2rem] border border-[#eee7ff] bg-[linear-gradient(180deg,#fcfbff_0%,#f8f4ff_100%)] p-6 shadow-[0_28px_80px_rgba(116,88,255,0.12)]">
         <div className="max-w-2xl">
           <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be]">
-            Bucket Menu Preview
+            Legacy Demo Preview
           </p>
           <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[#342d56]">
-            Floating chip tray concept
+            Classic bucket tray concept
           </h2>
           <p className="mt-2 text-sm leading-6 text-[#726a96]">
-            This version keeps the active bucket as the same quiet chip, then opens into a softer chip tray instead of a panel full of controls.
+            This preserved prototype shows the older bucket tray idea. The main app now lives on the primary route and this page stays here as a legacy reference.
           </p>
         </div>
 

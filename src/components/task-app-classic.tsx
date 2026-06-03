@@ -144,6 +144,7 @@ export function TaskApp() {
       repeat_day_of_month: null,
       sort_order: Date.now(),
       completed_at: null,
+      actual_seconds: 0,
       created_at: now,
       updated_at: now,
     }, ...current]);
@@ -179,6 +180,7 @@ export function TaskApp() {
       repeat_day_of_month: null,
       sort_order: Date.now() + index,
       completed_at: null,
+      actual_seconds: 0,
       created_at: now,
       updated_at: now,
     }));
@@ -1128,6 +1130,7 @@ function createDemoTasks(): Task[] {
       repeat_day_of_month: null,
       sort_order: index + 1,
       completed_at: completedAt,
+      actual_seconds: 0,
       created_at: createdAt,
       updated_at: createdAt,
     };
