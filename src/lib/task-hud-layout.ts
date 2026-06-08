@@ -6,6 +6,8 @@ export type HudWidgetType =
   | "points"
   | "tokens"
   | "streak"
+  | "notification_inbox"
+  | "focus_alarm"
   | "focus_timer"
   | "zoom"
   | "new_task"
@@ -32,12 +34,13 @@ export type HudPage = {
 export type HudUiState = {
   activeHudPageId: HudPage["id"];
   hudPages: HudPage[];
+  isHudCollapsed: boolean;
   hudUiVersion: number;
   isHudEditMode: boolean;
   selectedHudWidgetId: string | null;
 };
 
-export const HUD_UI_SCHEMA_VERSION = 1;
+export const HUD_UI_SCHEMA_VERSION = 4;
 export const HUD_PAGE_IDS: HudPage["id"][] = ["overview", "command"];
 export const HUD_WIDGET_TYPES: HudWidgetType[] = [
   "dark_mode",
@@ -47,6 +50,8 @@ export const HUD_WIDGET_TYPES: HudWidgetType[] = [
   "points",
   "tokens",
   "streak",
+  "notification_inbox",
+  "focus_alarm",
   "focus_timer",
   "zoom",
   "new_task",
@@ -58,8 +63,10 @@ export const HUD_WIDGET_TYPES: HudWidgetType[] = [
 export const HUD_WIDGET_LABELS: Record<HudWidgetType, string> = {
   calm: "Calm",
   dark_mode: "Dark Mode",
+  focus_alarm: "Focus Alarm",
   focus_timer: "Focus Timer",
   new_task: "New Task",
+  notification_inbox: "Notifications",
   points: "Points",
   quick_capture: "Quick Capture",
   refocus: "Refocus",
@@ -74,8 +81,10 @@ export const HUD_WIDGET_LABELS: Record<HudWidgetType, string> = {
 const DEFAULT_WIDGET_SIZES: Record<HudWidgetType, HudWidgetSize> = {
   calm: "1x1",
   dark_mode: "1x1",
+  focus_alarm: "2x1",
   focus_timer: "2x2",
   new_task: "1x1",
+  notification_inbox: "1x1",
   points: "1x1",
   quick_capture: "1x1",
   refocus: "1x1",
@@ -109,6 +118,8 @@ export const DEFAULT_HUD_UI_STATE: HudUiState = {
         defaultWidget("points"),
         defaultWidget("tokens"),
         defaultWidget("streak"),
+        defaultWidget("notification_inbox"),
+        defaultWidget("focus_alarm"),
       ],
     },
     {
@@ -124,6 +135,7 @@ export const DEFAULT_HUD_UI_STATE: HudUiState = {
       ],
     },
   ],
+  isHudCollapsed: false,
   hudUiVersion: HUD_UI_SCHEMA_VERSION,
   isHudEditMode: false,
   selectedHudWidgetId: null,
@@ -171,7 +183,7 @@ function normalizeHudWidget(value: unknown): HudWidgetLayoutItem | null {
   };
 }
 
-function normalizePageWidgets(pageId: HudPage["id"], widgets: unknown): HudWidgetLayoutItem[] {
+function normalizePageWidgets(pageId: HudPage["id"], widgets: unknown, includeMissingDefaults: boolean): HudWidgetLayoutItem[] {
   const normalized = Array.isArray(widgets)
     ? widgets.flatMap((widget) => {
       if (isLegacyThemeWidget(widget)) {
@@ -205,6 +217,15 @@ function normalizePageWidgets(pageId: HudPage["id"], widgets: unknown): HudWidge
     return expectedTypes.map((type) => defaultWidget(type));
   }
 
+  if (includeMissingDefaults) {
+    for (const type of expectedTypes) {
+      if (!seenTypes.has(type)) {
+        deduped.push(defaultWidget(type));
+        seenTypes.add(type);
+      }
+    }
+  }
+
   return deduped;
 }
 
@@ -215,6 +236,7 @@ export function normalizeHudUiState(value: unknown): HudUiState {
 
   const candidate = value as Partial<HudUiState>;
   const incomingPages = Array.isArray(candidate.hudPages) ? candidate.hudPages : [];
+  const includeMissingDefaults = candidate.hudUiVersion !== HUD_UI_SCHEMA_VERSION;
 
   const hudPages: HudPage[] = HUD_PAGE_IDS.map((pageId) => {
     const source = incomingPages.find((page) => page && typeof page === "object" && isHudPageId((page as Partial<HudPage>).id) && (page as Partial<HudPage>).id === pageId) as Partial<HudPage> | undefined;
@@ -223,13 +245,14 @@ export function normalizeHudUiState(value: unknown): HudUiState {
       title: typeof source?.title === "string" && source.title.length > 0
         ? source.title
         : (DEFAULT_HUD_UI_STATE.hudPages.find((page) => page.id === pageId)?.title ?? pageId),
-      widgets: normalizePageWidgets(pageId, source?.widgets),
+      widgets: normalizePageWidgets(pageId, source?.widgets, includeMissingDefaults),
     };
   });
 
   return {
     activeHudPageId: isHudPageId(candidate.activeHudPageId) ? candidate.activeHudPageId : DEFAULT_HUD_UI_STATE.activeHudPageId,
     hudPages,
+    isHudCollapsed: candidate.isHudCollapsed === true,
     hudUiVersion: HUD_UI_SCHEMA_VERSION,
     isHudEditMode: candidate.isHudEditMode === true,
     selectedHudWidgetId: typeof candidate.selectedHudWidgetId === "string" ? candidate.selectedHudWidgetId : null,

@@ -13,26 +13,35 @@ export function ModalShell({
   label?: string;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const latestOnCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    latestOnCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     const el = dialogRef.current;
     if (!el) return;
 
-    // Focus the first focusable element on mount
+    // Focus the first focusable element only on first mount so rerenders do not steal focus.
     const focusable = el.querySelectorAll<HTMLElement>(
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
     (focusable[0] ?? el).focus();
+  }, []);
 
-    // Trap focus within the modal
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el) return;
+
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && onClose) {
-        onClose();
+      if (e.key === "Escape" && latestOnCloseRef.current) {
+        latestOnCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
       const focusableEls = Array.from(
-        el!.querySelectorAll<HTMLElement>(
+        el.querySelectorAll<HTMLElement>(
           'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
         ),
       );
@@ -48,7 +57,7 @@ export function ModalShell({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, []);
 
   if (typeof document === "undefined") {
     return null;

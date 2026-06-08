@@ -11,10 +11,10 @@ import { useTaskSubtaskActions } from "@/hooks/useTaskSubtaskActions";
 import { useTaskUpdateAction } from "@/hooks/useTaskUpdateAction";
 import { useTaskListActions } from "@/hooks/useTaskListActions";
 import type { TaskStatus } from "@/lib/database.types";
-import { todayISO } from "@/lib/utils";
 
 type UseTaskActionsOptions = {
   crud: Parameters<typeof useTaskCrudActions>[0];
+  currentDayKey: string;
   create: Omit<Parameters<typeof useTaskCreateAction>[0], "routeTask">;
   editorSave: Omit<Parameters<typeof useTaskEditorSaveAction>[0], "replaceTaskSubtasks" | "syncTaskHistoryEntry" | "syncTaskNoteLinks">;
   batchEdit: Omit<Parameters<typeof useTaskBatchEditAction>[0], "routeTask" | "saveFocusSelection" | "syncTaskHistoryEntry">;
@@ -28,6 +28,7 @@ type UseTaskActionsOptions = {
 
 export function useTaskActions({
   crud,
+  currentDayKey,
   create,
   editorSave,
   batchEdit,
@@ -41,7 +42,7 @@ export function useTaskActions({
   const routingActions = useTaskRoutingActions(routing);
   const historyActions = useTaskHistoryActions(history);
   const syncTaskHistoryEntry = (taskId: string, status: TaskStatus) =>
-    historyActions.syncTaskHistoryEntry(taskId, status, todayISO());
+    historyActions.syncTaskHistoryEntry(taskId, status, currentDayKey);
   const noteLinkActions = useTaskNoteLinkActions(noteLinks);
   const subtaskActions = useTaskSubtaskActions(subtask);
   const crudActions = useTaskCrudActions(crud);

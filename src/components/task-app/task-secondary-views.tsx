@@ -140,7 +140,7 @@ export function TaskComposerCardComponent({
           <span className="text-sm font-semibold text-[#5f6983] dark:text-white/65">Due date</span>
           <input className="h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white" onChange={(event) => setDueOn(event.target.value)} type="date" value={dueOn} />
         </label>
-        <button className="w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] dark:bg-[#cabfff] dark:text-[#1a1431]" disabled={isSubmitting} type="submit">Add Task</button>
+        <button className="ui-pill-button-strong-light w-full" disabled={isSubmitting} type="submit">Add Task</button>
       </form>
     </section>
   );
@@ -172,7 +172,7 @@ export function SupportPanelComponent({ doneCount, lowEnergyTasks, message, onIm
 
         <form className="mt-4 space-y-3" onSubmit={async (event) => { event.preventDefault(); setIsSubmitting(true); await onImport(lines); setText(""); setIsSubmitting(false); }}>
           <textarea className="min-h-36 w-full resize-y rounded-[1.25rem] px-4 py-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30" onChange={(event) => setText(event.target.value)} placeholder={"Call dentist\nDrink water\nChoose dinner"} value={text} />
-          <button className="w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" disabled={lines.length === 0 || isSubmitting} type="submit">Import {lines.length || ""}</button>
+          <button className="ui-pill-button-strong-light w-full" disabled={lines.length === 0 || isSubmitting} type="submit">Import {lines.length || ""}</button>
         </form>
 
         <p className="mt-3 text-sm text-[#8c94ac] dark:text-white/45">{message?.text}</p>
@@ -213,12 +213,12 @@ export function TaskLaneComponent({ count, defaultExpanded = false, onEditTask, 
               </div>
               <div className="flex items-center gap-2 sm:shrink-0">
                 <span className={`self-start rounded-full px-3 py-1 text-xs font-semibold ${index % 2 === 0 ? "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" : "bg-[#eef9f4] text-[#12a876] dark:bg-[#17362d] dark:text-[#7de4b8]"}`}>{index % 2 === 0 ? "Visible" : "Queued"}</span>
-                <button className="rounded-full px-3 py-1 text-xs font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" onClick={() => onEditTask(task)} type="button">Edit</button>
+                <button className="ui-pill-button-strong-light" onClick={() => onEditTask(task)} type="button">Edit</button>
               </div>
             </div>
           </div>
         ))}
-        {tasks.length > DEFAULT_VISIBLE_COUNT ? <button className="w-full rounded-[1rem] border px-4 py-3 text-sm font-semibold border-[#e6defb] bg-[#faf7ff] text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.04] dark:text-[#cabfff]" onClick={() => setIsExpanded((prev) => !prev)} type="button">{isExpanded ? "Show fewer" : `Show ${hiddenCount} more`}</button> : null}
+        {tasks.length > DEFAULT_VISIBLE_COUNT ? <button className="ui-pill-button-light w-full" onClick={() => setIsExpanded((prev) => !prev)} type="button">{isExpanded ? "Show fewer" : `Show ${hiddenCount} more`}</button> : null}
       </div>
     </section>
   );
@@ -256,7 +256,7 @@ export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStat
             </div>
             <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
             <div className="mt-5">
-              <button className="rounded-[1rem] px-4 py-3 text-sm font-bold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" onClick={() => onEditTask(task)} type="button">Edit</button>
+              <button className="ui-pill-button-strong-light" onClick={() => onEditTask(task)} type="button">Edit</button>
             </div>
           </article>
         ))}
@@ -299,7 +299,7 @@ export function TaskMatrixViewComponent({ onEditTask, onSetStatus, subtasksByTas
                       </button>
                     );
                   })}
-                  <button className="rounded-full px-3 py-1 text-xs font-semibold bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" onClick={() => onEditTask(task)} type="button">Edit</button>
+                  <button className="ui-pill-button-strong-light" onClick={() => onEditTask(task)} type="button">Edit</button>
                 </div>
               </div>
             ))}

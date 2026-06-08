@@ -69,14 +69,14 @@ export function TaskEditFlows({
             </div>
             <div className="flex justify-end gap-3">
               <button
-                className="rounded-full border border-[#ddd6fb] bg-white px-5 py-3 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                className="ui-pill-button-light transition"
                 onClick={batchDeleteFlow.onClose}
                 type="button"
               >
                 Cancel
               </button>
               <button
-                className="rounded-full bg-[#f05566] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#df4059]"
+                className="ui-pill-button-danger-light transition"
                 onClick={batchDeleteFlow.onConfirm}
                 type="button"
               >

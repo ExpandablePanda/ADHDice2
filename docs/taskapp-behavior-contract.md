@@ -1,5 +1,7 @@
 # TaskApp Behavior Contract
 
+Last reviewed: 2026-06-04
+
 This document freezes current `TaskApp` behavior so refactors can be validated against a stable target.
 
 ## Pages
@@ -7,11 +9,14 @@ This document freezes current `TaskApp` behavior so refactors can be validated a
 - `Home`: shows cockpit-style task momentum and quick actions without mutating task semantics.
 - `Tasks`: supports `list`, `grid`, `cards`, and `matrix` views with shared task data, filters, and routing semantics.
 - `Focus`: supports focus categories, active sessions, history, and focus-day task selection.
-- `Roll`: supports roll/economy gameplay without changing task routing semantics.
+- `Health`: supports check-ins, meals, weight logging, imported metrics, Apple Health import flow, and care-oriented achievements.
+- `Roll`: supports roll/economy gameplay, reward boards, free-roll banking, prize baskets, and history without changing task routing semantics.
+- `Achievements`: supports dice-face unlock tracking, set progress, and celebration overlays.
+- `Games`: lazy-loaded surface; failures stay isolated behind error boundaries.
 - `Stats`: reflects task/focus/economy aggregates from current workspace state.
 - `Notes`: supports note CRUD and task linking behavior.
-- `Settings`: supports profile and app-level configuration.
-- `Games`: lazy-loaded surface; failures stay isolated behind error boundaries.
+- `Settings`: supports profile and app-level configuration, including theme, calm-mode preferences, and economy reset.
+- `Test`: internal sandbox surface for isolated prototypes and experiments that should not silently change production pages.
 
 ## Core Modals and Flows
 
@@ -21,6 +26,9 @@ This document freezes current `TaskApp` behavior so refactors can be validated a
 - Import flow preserves existing parse, create, and feedback behavior.
 - Task history + momentum modals preserve existing read/write behavior.
 - Actual-time entry modal preserves task time update behavior.
+- Task reward flow preserves current eligibility checks, roll resolution, and recurring-task follow-up behavior.
+- Health import flow preserves preview, save-progress, and user-feedback behavior.
+- Achievement celebration overlays stay dismissible and isolated from the surrounding page state.
 
 ## State and Routing Invariants
 
@@ -29,6 +37,7 @@ This document freezes current `TaskApp` behavior so refactors can be validated a
 - Persisted UI state (active page, task view, filters, layout, collapse/open states) must continue to migrate from legacy snapshots.
 - Supabase-compatible fallback behavior remains intact for known legacy schema variants.
 - Focus-day persistence continues to normalize and dedupe task IDs.
+- Test-page experiments stay isolated unless they are intentionally promoted into production surfaces.
 
 ## Refactor Acceptance Checklist
 

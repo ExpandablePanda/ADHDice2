@@ -105,7 +105,7 @@ export function FilterRowsComponent({
             {hasActiveFilters ? (
               <div className="flex justify-end">
                 <button
-                  className="rounded-full border border-[#e5e0f5] bg-white px-4 py-2 text-sm font-semibold text-[#5c647d] shadow-[0_10px_24px_rgba(81,61,168,0.05)] dark:border-white/15 dark:bg-white/8 dark:text-white/75"
+                  className="ui-pill-button-light"
                   onClick={onReset}
                   type="button"
                 >

@@ -1,15 +1,19 @@
 # TaskApp Orchestrator Contract (Step 1 Addendum)
 
+Last reviewed: 2026-06-04
+
 This addendum locks the `TaskApp` core boundary while extraction continues.
 
 ## What `TaskApp` Owns
-- Top-level route composition across `Home`, `Tasks`, `Focus`, `Roll`, `Stats`, `Notes`, `Settings`, and `Games`.
+- Top-level route composition across `Home`, `Tasks`, `Focus`, `Health`, `Roll`, `Achievements`, `Games`, `Stats`, `Notes`, `Settings`, and `Test`.
 - Hook composition and wiring:
   - `useWorkspaceData` for workspace load/sync/fallback entry.
   - `useTaskActions` for task mutations and persistence side effects.
   - `useTaskUiState` for persisted UI mode/filter/layout state.
+  - `useEconomy`, `useAchievements`, `useFocus`, and `useHealth` for cross-surface state and persistence.
 - Cross-surface callback plumbing between extracted page adapters/components.
 - Session/auth shell flow (`ConfigSplash`, `LoadingSplash`, `AuthSplash`).
+- Route-level overlays and orchestration concerns such as reward resolution, achievement celebrations, and dock-driven page switching.
 
 ## What Must Move Out (or Stay Out)
 - Pure derived data calculations (filters, list counts, bucket splits, planning candidates, list option shaping).
@@ -21,3 +25,4 @@ This addendum locks the `TaskApp` core boundary while extraction continues.
 - Existing persistence keys and restore/reset behavior remain stable.
 - Supabase fallback and migration behavior remain unchanged.
 - Every extraction pass removes dead imports/constants tied to the moved block.
+- Test-page prototype surfaces remain isolated unless explicitly promoted.

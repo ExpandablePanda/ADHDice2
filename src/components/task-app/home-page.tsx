@@ -44,7 +44,7 @@ export function HomePage({
           Start here for momentum, urgent tasks, low-energy wins, and quick jumps into the rest of ADHDice.
         </p>
         <button
-          className="mt-6 rounded-[1.25rem] bg-[#6f57f6] px-5 py-3 text-lg font-bold text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] transition hover:-translate-y-0.5 dark:bg-[#cabfff] dark:text-[#1a1431]"
+          className="ui-pill-button-strong-light mt-6 transition hover:-translate-y-0.5"
           onClick={() => setActivePage("Tasks")}
           type="button"
         >
@@ -127,20 +127,16 @@ function DashboardJumpCard({
   title: string;
 }) {
   return (
-    <button
-      className="flex w-fit self-start rounded-[2rem] border border-[#ece8f8] bg-white px-5 py-3 text-center shadow-[0_18px_50px_rgba(81,61,168,0.07)] transition hover:-translate-y-0.5 dark:border-white/10 dark:bg-white/6"
-      onClick={onClick}
-      type="button"
-    >
+    <section className="flex w-fit self-start rounded-[2rem] border border-[#ece8f8] bg-white px-5 py-3 text-center shadow-[0_18px_50px_rgba(81,61,168,0.07)] transition hover:-translate-y-0.5 dark:border-white/10 dark:bg-white/6">
       <div className="flex flex-col items-center">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Overview</p>
         <h2 className="mt-1.5 text-2xl font-black text-[#26304c] dark:text-white">{title}</h2>
         <p className="mt-1.5 max-w-[260px] text-sm leading-6 text-[#7a839e] dark:text-white/55">{description}</p>
-        <span className="mt-3 inline-flex rounded-full bg-[#f1ecff] px-4 py-2 text-sm font-semibold text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]">
+        <button className="ui-pill-button-strong-light mt-3" onClick={onClick} type="button">
           {cta}
-        </span>
+        </button>
       </div>
-    </button>
+    </section>
   );
 }
 
@@ -158,7 +154,7 @@ function HomeUrgentPreview({
           Urgent Snapshot
         </h2>
         <button
-          className="min-w-[110px] rounded-full bg-[#f1ecff] px-4 py-2 text-sm font-semibold text-[#6f57f6] transition dark:bg-[#22193f] dark:text-[#cabfff]"
+          className="ui-pill-button-strong-light min-w-[110px] transition"
           onClick={onClick}
           type="button"
         >
@@ -198,7 +194,7 @@ function HomeAchievementPreview({
           </p>
         </div>
         <button
-          className="min-w-[140px] rounded-full bg-[#10264b] px-4 py-2 text-sm font-semibold text-white transition dark:bg-white dark:text-[#10264b]"
+          className="ui-pill-button-strong-light min-w-[140px] transition"
           onClick={onClick}
           type="button"
         >
@@ -237,7 +233,7 @@ function HomeLowEnergyPreview({
           Low Energy Wins
         </h2>
         <button
-          className="min-w-[110px] rounded-full bg-[#f1ecff] px-4 py-2 text-sm font-semibold text-[#6f57f6] transition dark:bg-[#22193f] dark:text-[#cabfff]"
+          className="ui-pill-button-strong-light min-w-[110px] transition"
           onClick={onClick}
           type="button"
         >

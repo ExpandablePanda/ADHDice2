@@ -22,6 +22,7 @@ type TaskRewardModalProps = {
 type RewardStage = "intro" | "base_rolling" | "base_revealed" | "multiplier_rolling" | "multiplier_revealed" | "result";
 const BASE_ROLL_DURATION_MS = 1500;
 const MULTIPLIER_ROLL_DURATION_MS = 1750;
+const REVEAL_STEP_DURATION_MS = 2000;
 const REWARD_STEP_COUNT = 4;
 
 function rewardTierClass(selected: boolean, disabled: boolean) {
@@ -58,6 +59,7 @@ export function TaskRewardModal({
   const [resolution, setResolution] = useState<TaskRewardResolution | null>(null);
   const [stage, setStage] = useState<RewardStage>("intro");
   const [isClaiming, setIsClaiming] = useState(false);
+  const [isAutoAdvancePaused, setIsAutoAdvancePaused] = useState(false);
 
   const basePhase: DicePhase = stage === "base_rolling" ? "rolling" : stage === "base_revealed" || stage === "multiplier_rolling" || stage === "multiplier_revealed" || stage === "result" ? "settling" : "idle";
   const multiplierPhase: DicePhase = stage === "multiplier_rolling" ? "rolling" : stage === "multiplier_revealed" || stage === "result" ? "settling" : "idle";
@@ -88,8 +90,33 @@ export function TaskRewardModal({
     return () => window.clearTimeout(timeoutId);
   }, [stage]);
 
+  useEffect(() => {
+    if (isAutoAdvancePaused || stage === "intro" || stage === "base_rolling" || stage === "multiplier_rolling") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (stage === "base_revealed") {
+        setStage("multiplier_rolling");
+        return;
+      }
+
+      if (stage === "multiplier_revealed") {
+        setStage("result");
+        return;
+      }
+
+      if (stage === "result" && resolution && !isClaiming) {
+        void handleClaim();
+      }
+    }, REVEAL_STEP_DURATION_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isAutoAdvancePaused, isClaiming, resolution, stage]);
+
   function startRewardRoll() {
     const nextResolution = buildTaskRewardResolution(pendingReward);
+    setIsAutoAdvancePaused(false);
     setResolution(nextResolution);
     setStage("base_rolling");
   }
@@ -100,9 +127,14 @@ export function TaskRewardModal({
     }
 
     setIsClaiming(true);
-    const claimed = await onClaim(resolution);
-    if (!claimed) {
+    try {
+      const claimed = await onClaim(resolution);
+      if (!claimed) {
+        setIsClaiming(false);
+      }
+    } catch (error) {
       setIsClaiming(false);
+      throw error;
     }
   }
 
@@ -111,7 +143,19 @@ export function TaskRewardModal({
     : "fixed inset-x-3 bottom-24 top-[8.75rem] z-[140] bg-white/36 backdrop-blur-md sm:inset-x-5 sm:top-[8.5rem] lg:inset-x-8 lg:top-[8.25rem] dark:bg-[#0f0b1d]/52";
 
   return (
-    <div className={rootClassName}>
+    <div
+      className={rootClassName}
+      onFocusCapture={() => {
+        if (stage !== "intro") {
+          setIsAutoAdvancePaused(true);
+        }
+      }}
+      onPointerDownCapture={() => {
+        if (stage !== "intro") {
+          setIsAutoAdvancePaused(true);
+        }
+      }}
+    >
       <div
         aria-label="Task reward"
         aria-modal="true"
@@ -155,7 +199,7 @@ export function TaskRewardModal({
                       );
                     })}
                     <button
-                      className="shrink-0 rounded-[1.35rem] bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] px-6 py-3.5 text-sm font-black text-white shadow-[0_18px_36px_rgba(111,87,246,0.24)] dark:bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] dark:text-[#171127]"
+                      className="ui-pill-button-strong-light shrink-0"
                       onClick={startRewardRoll}
                       type="button"
                     >
@@ -231,15 +275,15 @@ export function TaskRewardModal({
                       </div>
                       {stage === "base_revealed" && resolution ? (
                         <button
-                          className="rounded-[1.2rem] bg-[#6f57f6] px-5 py-3 text-sm font-black text-white dark:bg-[#cabfff] dark:text-[#171127]"
+                          className="ui-pill-button-strong-light"
                           onClick={() => setStage("multiplier_rolling")}
                           type="button"
                         >
-                          Roll Multiplier
+                          {isAutoAdvancePaused ? "Roll Multiplier" : "Continue now"}
                         </button>
                       ) : (
                         <div className="rounded-[1.2rem] border border-[#e1daf8] px-5 py-3 text-sm font-semibold text-[#9a90c2] dark:border-white/10 dark:text-white/35">
-                          Multiplier unlocks after the base roll settles
+                          {isAutoAdvancePaused ? "Auto-advance paused while you inspect the roll." : "Multiplier unlocks after the base roll settles"}
                         </div>
                       )}
                     </div>
@@ -297,15 +341,15 @@ export function TaskRewardModal({
                       </div>
                       {stage === "multiplier_revealed" ? (
                         <button
-                          className="rounded-[1.2rem] bg-[#6f57f6] px-5 py-3 text-sm font-black text-white dark:bg-[#cabfff] dark:text-[#171127]"
+                          className="ui-pill-button-strong-light"
                           onClick={() => setStage("result")}
                           type="button"
                         >
-                          Continue To Final Points
+                          {isAutoAdvancePaused ? "Continue To Final Points" : "Show final points now"}
                         </button>
                       ) : (
                         <div className="rounded-[1.2rem] border border-[#e1daf8] px-5 py-3 text-sm font-semibold text-[#9a90c2] dark:border-white/10 dark:text-white/35">
-                          Final points appear after the multiplier lands
+                          {isAutoAdvancePaused ? "Auto-advance paused while you inspect the roll." : "Final points appear after the multiplier lands"}
                         </div>
                       )}
                     </div>
@@ -340,14 +384,17 @@ export function TaskRewardModal({
                   </div>
                   <div className="flex justify-center">
                     <button
-                      className="rounded-[1.35rem] bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] px-6 py-3.5 text-sm font-black text-white shadow-[0_18px_36px_rgba(111,87,246,0.24)] disabled:opacity-60 dark:bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] dark:text-[#171127]"
+                      className="ui-pill-button-strong-light disabled:opacity-60"
                       disabled={isClaiming}
                       onClick={() => { void handleClaim(); }}
                       type="button"
                     >
-                      {isClaiming ? "Claiming reward..." : "Claim Reward"}
+                      {isClaiming ? "Claiming reward..." : isAutoAdvancePaused ? "Claim Reward" : "Claim reward now"}
                     </button>
                   </div>
+                  {!isAutoAdvancePaused ? (
+                    <p className="text-center text-xs text-[#8e88a9] dark:text-white/35">Closing automatically in about 2 seconds.</p>
+                  ) : null}
                 </div>
               ) : null}
             </section>

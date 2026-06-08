@@ -7,6 +7,7 @@ import {
   ArrowRight,
   ArrowUp,
   BarChart2,
+  Bell,
   BookOpen,
   Box,
   Brain,
@@ -63,7 +64,7 @@ import {
   Zap,
 } from "lucide-react";
 import dynamicIconImports from "lucide-react/dynamicIconImports";
-import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { FocusPage } from "./focus-page";
 import { AchievementCelebrationOverlay, AchievementsPage } from "./task-app/achievements-page";
 import { HomePage as TaskHomePage } from "./task-app/home-page";
@@ -89,23 +90,29 @@ import { TasksListAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TasksPageOrchestrator } from "./task-app/tasks-page-orchestrator";
 import { HudCommandCenter } from "./task-app/hud-command-center";
-import { TestD20FaceMapper } from "./task-app/test-d20-face-mapper";
-import { TestDiceFaceMapper } from "./task-app/test-dice-face-mapper";
-import { TestDiceMaterialLab } from "./task-app/test-dice-material-lab";
-import { TestTaskTablePrototype } from "./task-app/test-task-table-prototype";
+import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import {
+  applyTaskEditorDraftOverrides,
+  createTaskEditorDraft,
   emptyToNull,
   parseDayOfMonth,
   parsePositiveInteger,
+  type TaskDraft,
   type TaskEditorDraft,
   type TaskEditorMode,
+  type TaskSubtaskDraft,
 } from "./task-app/task-editor-model";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 const GamesPage = lazy(() => import("./games-page").then((m) => ({ default: m.GamesPage })));
+const TestD20FaceMapper = lazy(() => import("./task-app/test-d20-face-mapper").then((m) => ({ default: m.TestD20FaceMapper })));
+const TestDiceFaceMapper = lazy(() => import("./task-app/test-dice-face-mapper").then((m) => ({ default: m.TestDiceFaceMapper })));
+const TestDiceMaterialLab = lazy(() => import("./task-app/test-dice-material-lab").then((m) => ({ default: m.TestDiceMaterialLab })));
+const TestTaskTablePrototype = lazy(() => import("./task-app/test-task-table-prototype").then((m) => ({ default: m.TestTaskTablePrototype })));
 import type { AgentPlanColumnId, AgentPlanTaskItem } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
+import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievements } from "@/hooks/useAchievements";
 import { useFocus, mapFocusCategoryRow, mapActiveSessions, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
@@ -128,13 +135,14 @@ import {
   sanitizeOptionalFocusLabel,
 } from "@/lib/focus-utils";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
+import { getLevelProgress } from "@/lib/economy-levels";
 import { buildHealthReminderTemplate, type HealthReminderTemplateKey } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "@/lib/task-filter-state";
+import { appendTaskListRuleRow, removeTaskListRuleRow, summarizeTaskListRules, updateTaskListRuleRow, updateTaskListRuleRowConnector } from "@/lib/task-list-rule-editor";
 import {
-  formatDateKey,
   normalizeTaskGridLayout,
   shiftDateKey,
   type TaskGridLayoutItem,
@@ -159,6 +167,7 @@ import {
   type HistoricalFocusSession,
 } from "@/lib/types";
 import { formatLocalDate, todayISO, withBasePath } from "@/lib/utils";
+import { getBrowserTimeZone, getLogicalDayKey, saveLogicalDaySettings } from "@/lib/logical-day";
 import { runStorageMigrations } from "@/lib/storage-migrations";
 import { buildProfileSnapshot, DEFAULT_PROFILE, saveProfile, type UserProfile, useProfileStore } from "@/lib/profile-store";
 import {
@@ -176,11 +185,12 @@ import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/li
 import { buildFocusLabelOptions, getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
-import { calcNextDueDate } from "@/lib/task-repeat";
+import { calcNextDueDateFromDate } from "@/lib/task-repeat";
 import { buildAgentPlanTaskItem } from "@/lib/task-agent-plan";
 import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
 import {
   computeTaskHistoryStats,
+  computeTaskSpecificHistoryStats,
   isTaskCompletedForHistory,
   isTaskHistoryStatus,
   mapTaskHistoryRow,
@@ -200,17 +210,8 @@ import {
   type TaskListRuleGroup,
 } from "@/lib/task-lists";
 import {
-  createDefaultTaskListRule,
-  formatTaskListRule,
-  getTaskListRuleOperator,
-  normalizeTaskListRuleValues,
-  summarizeTaskListRules,
-  taskListRuleNeedsValue,
   type TaskListRuleField,
   type TaskListRuleRowOperator,
-  updateTaskListRuleField,
-  updateTaskListRuleOperator,
-  updateTaskListRuleValue,
 } from "@/lib/task-list-rule-editor";
 import { mapTaskListManualMembershipRow, mapTaskListRow } from "@/lib/task-list-mappers";
 import {
@@ -220,6 +221,7 @@ import {
   type AppPage,
   type TaskUiState,
 } from "@/lib/task-ui-state";
+
 import type {
   FocusCategory as DbFocusCategory,
   Note,
@@ -243,7 +245,15 @@ type Message = {
   text: string;
 };
 
+type HudNotificationItem = {
+  detail: string;
+  id: string;
+  title: string;
+  tone: "accent" | "danger" | "neutral" | "success" | "warning";
+};
+
 type AuthMode = "sign-in" | "sign-up";
+const AUTH_MODE_STORAGE_KEY = "adhdice-auth-mode";
 type ThemeMode = "light" | "dark";
 type FocusPlannerStep = 0 | 1 | 2;
 type TaskGridWidgetType =
@@ -267,6 +277,72 @@ type TaskKeyboardShortcut = {
 function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
   const endTime = timer.pausedAt ?? now;
   return timer.baseSeconds + Math.max(0, Math.floor((endTime - timer.startedAt) / 1000));
+}
+
+const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
+const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
+const HUD_VERSION = "4.0.21";
+
+type PersistedFocusAlarmState = {
+  enabled: boolean;
+  intervalMinutes: number;
+  nextRingAt: number | null;
+};
+
+function getFocusAlarmStorageKey(userId: string) {
+  return `${FOCUS_ALARM_STORAGE_KEY_PREFIX}:${userId}`;
+}
+
+function normalizeFocusAlarmNextRingAt(nextRingAt: number | null, now: number, intervalMinutes: number) {
+  const intervalMs = Math.max(1, intervalMinutes) * 60_000;
+  if (!Number.isFinite(nextRingAt) || nextRingAt === null) {
+    return now + intervalMs;
+  }
+  if (nextRingAt > now) {
+    return nextRingAt;
+  }
+  const elapsedIntervals = Math.floor((now - nextRingAt) / intervalMs) + 1;
+  return nextRingAt + elapsedIntervals * intervalMs;
+}
+
+function getFocusAlarmRemainingMs(nextRingAt: number | null, now: number) {
+  return nextRingAt === null ? null : Math.max(0, nextRingAt - now);
+}
+
+function formatFocusAlarmRemaining(remainingMs: number) {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function readPersistedFocusAlarmState(userId: string): PersistedFocusAlarmState | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getFocusAlarmStorageKey(userId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<PersistedFocusAlarmState>;
+    return {
+      enabled: parsed.enabled === true,
+      intervalMinutes: typeof parsed.intervalMinutes === "number" ? parsed.intervalMinutes : DEFAULT_FOCUS_ALARM_INTERVAL_MINUTES,
+      nextRingAt: typeof parsed.nextRingAt === "number" ? parsed.nextRingAt : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedFocusAlarmState(userId: string, state: PersistedFocusAlarmState) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(getFocusAlarmStorageKey(userId), JSON.stringify(state));
 }
 export type {
   ActiveFocusSession,
@@ -391,6 +467,10 @@ export function CategoryIcon({ name, ...props }: { name: string } & React.SVGPro
 const FOCUS_CATEGORIES_STORAGE_KEY = "adhdice_focus_categories";
 const FOCUS_ACTIVE_STORAGE_KEY = "adhdice_active_sessions";
 const FOCUS_HISTORY_STORAGE_KEY = "adhdice_focus_history";
+const DEFAULT_FOCUS_ALARM_INTERVAL_MINUTES = 20;
+const MIN_FOCUS_ALARM_INTERVAL_MINUTES = 5;
+const MAX_FOCUS_ALARM_INTERVAL_MINUTES = 120;
+const FOCUS_ALARM_INTERVAL_STEP_MINUTES = 5;
 const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   bucket: "Lists",
   date_added: "Date Added",
@@ -431,9 +511,13 @@ const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
   later: "Later",
   done: "Done",
   missed: "Missed",
+  trash: "Trash",
 };
 const TASK_LIST_RULE_FIELD_OPTIONS: Array<{ label: string; value: TaskListRuleField }> = [
   { label: "Status", value: "status" },
+  { label: "List", value: "list" },
+  { label: "Steps", value: "steps" },
+  { label: "Streak", value: "streak" },
   { label: "Date Added", value: "date_added" },
   { label: "Due", value: "due" },
   { label: "Energy", value: "energy" },
@@ -443,6 +527,14 @@ const TASK_LIST_RULE_FIELD_OPTIONS: Array<{ label: string; value: TaskListRuleFi
   { label: "Repeats", value: "repeat" },
 ];
 const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: string; value: TaskListRuleRowOperator }>> = {
+  list: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
+  ],
+  steps: [
+    { label: "has steps", value: "is" },
+    { label: "doesn't have steps", value: "is_not" },
+  ],
   date_added: [
     { label: "is today", value: "is_today" },
     { label: "isn't today", value: "is_not_today" },
@@ -456,6 +548,10 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
     { label: "has a later date", value: "is_future" },
   ],
   energy: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
+  ],
+  streak: [
     { label: "is", value: "is" },
     { label: "isn't", value: "is_not" },
   ],
@@ -507,12 +603,13 @@ const dockIcons: Record<AppPage, string> = {
   Settings: "Monitor",
   Test: "FlaskConical",
 };
-const DAY_RESET_STORAGE_KEY = "adhdice-day-reset";
 const TASK_GRID_MAX_COLUMNS = 4;
 const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
 const TASK_GRID_ROW_HEIGHT = 42;
 const TASK_GRID_MAX_DISPLAY_ROWS = 24;
+const INITIAL_LIST_TASK_COUNT = 24;
+const LIST_TASK_BATCH_SIZE = 48;
 const TASK_GRID_WIDGET_LABELS: Record<TaskGridWidgetType, string> = {
   urgent: "Urgent Tasks",
   focus_today: "Focus",
@@ -537,7 +634,8 @@ const TASK_GRID_STARTER_LAYOUT: TaskGridItem[] = normalizeTaskGridLayout([
 
 function isSupabaseSessionLockError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return message.includes("Lock was stolen by another request");
+  return message.includes("Lock was stolen by another request")
+    || message.includes("Lock was not released within 5000ms");
 }
 
 function isSupabaseLoadFailure(error: unknown) {
@@ -550,12 +648,19 @@ function isSupabaseLoadFailure(error: unknown) {
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const hudShellRef = useRef<HTMLDivElement | null>(null);
+  const profileSettingsHydratedRef = useRef(false);
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(supabase !== null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [message, setMessage] = useState<Message | null>(null);
+  const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
+  const lastHudNotificationMessageRef = useRef<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("light");
   const [lowStim, setLowStim] = useState(false);
+  const [accentColor, setAccentColor] = useState("#6f57f6");
+  const [focusAlarmEnabled, setFocusAlarmEnabled] = useState(false);
+  const [focusAlarmIntervalMinutes, setFocusAlarmIntervalMinutes] = useState(DEFAULT_FOCUS_ALARM_INTERVAL_MINUTES);
+  const [focusAlarmNextRingAt, setFocusAlarmNextRingAt] = useState<number | null>(null);
+  const [focusAlarmNow, setFocusAlarmNow] = useState(() => Date.now());
   const [mobileZoom, setMobileZoom] = useState<(typeof MOBILE_ZOOM_LEVELS)[number]>(1);
   const { economy, setEconomy, appendEconomyEvent, commitTaskReward, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
@@ -660,8 +765,10 @@ export function TaskApp() {
   const [taskActualTimeEntryTaskId, setTaskActualTimeEntryTaskId] = useState<string | null>(null);
   const [taskActualTimeEntryPrefill, setTaskActualTimeEntryPrefill] = useState<{ durationSeconds: number; title: string } | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
+  const [renderedListTaskCount, setRenderedListTaskCount] = useState(INITIAL_LIST_TASK_COUNT);
   const [activeTaskTimerIndex, setActiveTaskTimerIndex] = useState(0);
   const [taskTimerNow, setTaskTimerNow] = useState(() => Date.now());
+  const [logicalDayNow, setLogicalDayNow] = useState(() => Date.now());
   const [notePageOpenNoteId, setNotePageOpenNoteId] = useState<string | null>(null);
   const {
     runningTaskTimers,
@@ -675,15 +782,72 @@ export function TaskApp() {
     phoneColumns: TASK_GRID_PHONE_COLUMNS,
     tabletColumns: TASK_GRID_TABLET_COLUMNS,
   });
-  const [dayStartTime, setDayStartTime] = useState<string>(() => {
-    if (typeof window === "undefined") return "06:00";
-    return window.localStorage.getItem("adhdice-day-start-time") ?? "06:00";
-  });
-  const lastResetDateRef = useRef<string>(
-    typeof window !== "undefined"
-      ? (window.localStorage.getItem(DAY_RESET_STORAGE_KEY) ?? "")
-      : "",
-  );
+  const [dayStartTime, setDayStartTime] = useState<string>("06:00");
+  const [userTimeZone, setUserTimeZone] = useState<string>(getBrowserTimeZone());
+  const [focusAlarmAudioBlocked, setFocusAlarmAudioBlocked] = useState(false);
+  const lastResetDateRef = useRef<string>("");
+  const focusAlarmAudioRef = useRef<HTMLAudioElement | null>(null);
+  const focusAlarmHydratedUserIdRef = useRef<string | null>(null);
+  const focusAlarmPreviousSettingsRef = useRef<{ enabled: boolean; intervalMinutes: number } | null>(null);
+  const focusAlarmSkipNextPersistRef = useRef(false);
+  const pendingTaskMutationExpirationsRef = useRef<Map<string, number>>(new Map());
+
+  function clampFocusAlarmInterval(minutes: number) {
+    return Math.max(MIN_FOCUS_ALARM_INTERVAL_MINUTES, Math.min(MAX_FOCUS_ALARM_INTERVAL_MINUTES, minutes));
+  }
+
+  async function playFocusAlarmSound(options?: { rearmOnly?: boolean }) {
+    const audio = focusAlarmAudioRef.current ?? new Audio("/calm-alarm.wav");
+    focusAlarmAudioRef.current = audio;
+    audio.currentTime = 0;
+    try {
+      await audio.play();
+      if (options?.rearmOnly) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+      setFocusAlarmAudioBlocked(false);
+      setMessage((previous) => previous?.text === FOCUS_ALARM_BLOCKED_MESSAGE ? null : previous);
+      return true;
+    } catch {
+      setFocusAlarmAudioBlocked(true);
+      setMessage({ tone: "warn", text: FOCUS_ALARM_BLOCKED_MESSAGE });
+      return false;
+    }
+  }
+
+  const markPendingTaskMutations = useCallback((taskIds: string[]) => {
+    const expiresAt = Date.now() + 10_000;
+    for (const taskId of taskIds) {
+      pendingTaskMutationExpirationsRef.current.set(taskId, expiresAt);
+    }
+  }, []);
+
+  const clearPendingTaskMutations = useCallback((taskIds: string[]) => {
+    for (const taskId of taskIds) {
+      pendingTaskMutationExpirationsRef.current.delete(taskId);
+    }
+  }, []);
+
+  const shouldSkipTaskReload = useCallback((change: { eventType: string; taskId: string | null }) => {
+    const taskId = change.taskId;
+    if (!taskId) {
+      return false;
+    }
+
+    const expiresAt = pendingTaskMutationExpirationsRef.current.get(taskId);
+    if (!expiresAt) {
+      return false;
+    }
+
+    if (expiresAt < Date.now()) {
+      pendingTaskMutationExpirationsRef.current.delete(taskId);
+      return false;
+    }
+
+    pendingTaskMutationExpirationsRef.current.delete(taskId);
+    return true;
+  }, []);
   const listColumnMenuRef = useRef<HTMLDivElement | null>(null);
   const keyboardShortcutsMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -692,14 +856,9 @@ export function TaskApp() {
   }, []);
 
   useEffect(() => {
-    const savedAccent = window.localStorage.getItem("adhdice-accent-color");
-    if (!savedAccent) {
-      return;
-    }
-
-    document.documentElement.style.setProperty("--accent", savedAccent);
-    document.documentElement.style.setProperty("--accent-strong", savedAccent);
-  }, []);
+    document.documentElement.style.setProperty("--accent", accentColor);
+    document.documentElement.style.setProperty("--accent-strong", accentColor);
+  }, [accentColor]);
 
   const resolveTaskGridLayoutFromRow = (row: DbTaskGridLayout | null) =>
     resolveTaskGridLayout(
@@ -728,11 +887,42 @@ export function TaskApp() {
     migrateLocalFocusState,
     migrateLocalTaskFocusDays,
     onProfileLoaded: (profileRow, user) => {
+      const persistedFocusAlarmState = readPersistedFocusAlarmState(user.id);
+      const nextFocusAlarmEnabled = persistedFocusAlarmState?.enabled
+        ?? (profileRow?.focus_alarm_enabled ?? false);
+      const nextFocusAlarmIntervalMinutes = clampFocusAlarmInterval(
+        persistedFocusAlarmState?.intervalMinutes
+          ?? profileRow?.focus_alarm_interval_minutes
+          ?? DEFAULT_FOCUS_ALARM_INTERVAL_MINUTES,
+      );
+
       saveProfile(buildProfileSnapshot(profileRow, user));
+      if (profileRow) {
+        const nextDayStartTime = profileRow.day_start_time ?? "06:00";
+        const nextTimeZone = profileRow.timezone ?? getBrowserTimeZone();
+        setTheme(profileRow.theme_preference ?? "light");
+        setLowStim(profileRow.low_stim_mode ?? false);
+        setAccentColor(profileRow.accent_color ?? "#6f57f6");
+        setDayStartTime(nextDayStartTime);
+        setUserTimeZone(nextTimeZone);
+        saveLogicalDaySettings({ dayStartTime: nextDayStartTime, timezone: nextTimeZone });
+      } else {
+        const browserTimeZone = getBrowserTimeZone();
+        setTheme("light");
+        setLowStim(false);
+        setAccentColor("#6f57f6");
+        setDayStartTime("06:00");
+        setUserTimeZone(browserTimeZone);
+        saveLogicalDaySettings({ dayStartTime: "06:00", timezone: browserTimeZone });
+      }
+      setFocusAlarmEnabled(nextFocusAlarmEnabled);
+      setFocusAlarmIntervalMinutes(nextFocusAlarmIntervalMinutes);
+      profileSettingsHydratedRef.current = true;
     },
     resolveTaskGridLayout: resolveTaskGridLayoutFromRow,
     saveFocusCategories,
     saveFocusHistory,
+    shouldSkipTaskReload,
     setActiveSessions,
     setAvailableTaskNotes,
     setEconomy,
@@ -759,62 +949,15 @@ export function TaskApp() {
       return;
     }
 
-    let isMounted = true;
-    const loadingTimeoutId = window.setTimeout(() => {
-      if (!isMounted) {
-        return;
-      }
-      setLoading(false);
-    }, 3500);
-
     function handleSessionLockRejection(event: PromiseRejectionEvent) {
       if (!isSupabaseSessionLockError(event.reason)) {
         return;
       }
 
       event.preventDefault();
-      setSession(null);
-      setLoading(false);
     }
 
     window.addEventListener("unhandledrejection", handleSessionLockRejection);
-
-    supabase.auth.getSession()
-      .then(({ data }) => {
-        if (!isMounted) {
-          return;
-        }
-        setLoading(false);
-        window.requestAnimationFrame(() => {
-          if (!isMounted) {
-            return;
-          }
-          setSession(data.session);
-        });
-      })
-      .catch((error) => {
-        if (!isMounted) {
-          return;
-        }
-        if (isSupabaseSessionLockError(error)) {
-          setSession(null);
-          setLoading(false);
-          return;
-        }
-
-        if (isSupabaseLoadFailure(error)) {
-          setSession(null);
-          setMessage({
-            tone: "warn",
-            text: "Could not reach Supabase right now. The app loaded in offline mode.",
-          });
-          setLoading(false);
-          return;
-        }
-
-        console.error("Failed to get session:", error);
-        setLoading(false);
-      });
 
     const {
       data: { subscription },
@@ -835,18 +978,12 @@ export function TaskApp() {
         setPendingTaskEditorRestore(null);
         saveProfile(DEFAULT_PROFILE);
       }
-      setLoading(false);
-      window.requestAnimationFrame(() => {
-        if (!isMounted) {
-          return;
-        }
+      if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED" || event === "PASSWORD_RECOVERY") {
         setSession(nextSession);
-      });
+      }
     });
 
     return () => {
-      isMounted = false;
-      window.clearTimeout(loadingTimeoutId);
       window.removeEventListener("unhandledrejection", handleSessionLockRejection);
       subscription.unsubscribe();
     };
@@ -862,6 +999,26 @@ export function TaskApp() {
     }, 3000);
 
     return () => window.clearTimeout(timeoutId);
+  }, [message]);
+
+  useEffect(() => {
+    if (!message) {
+      return;
+    }
+
+    const messageKey = `${message.tone}:${message.text}`;
+    if (lastHudNotificationMessageRef.current === messageKey) {
+      return;
+    }
+    lastHudNotificationMessageRef.current = messageKey;
+
+    const nextItem: HudNotificationItem = {
+      detail: message.text,
+      id: `message-${Date.now()}`,
+      title: message.tone === "good" ? "Update saved" : message.tone === "warn" ? "Needs attention" : "Task update",
+      tone: message.tone === "good" ? "success" : message.tone === "warn" ? "warning" : "neutral",
+    };
+    setHudNotificationEvents((current) => [nextItem, ...current].slice(0, 8));
   }, [message]);
 
   useEffect(() => {
@@ -955,10 +1112,187 @@ export function TaskApp() {
   }, [isWorkspaceLoading, pendingTaskEditorRestore, tasks]);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem("adhdice-day-start-time", dayStartTime);
+    if (!session?.user?.id) {
+      profileSettingsHydratedRef.current = false;
+      return;
     }
-  }, [dayStartTime]);
+
+    if (!supabase || !profileSettingsHydratedRef.current) {
+      return;
+    }
+
+    void supabase
+      .from("adhdice_user_profiles")
+      .upsert({
+        user_id: session.user.id,
+        accent_color: accentColor,
+        day_start_time: dayStartTime,
+        timezone: userTimeZone,
+        focus_alarm_enabled: focusAlarmEnabled,
+        focus_alarm_interval_minutes: focusAlarmIntervalMinutes,
+        low_stim_mode: lowStim,
+        theme_preference: theme,
+      });
+  }, [accentColor, dayStartTime, focusAlarmEnabled, focusAlarmIntervalMinutes, lowStim, session?.user?.id, supabase, theme, userTimeZone]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      lastResetDateRef.current = "";
+    }
+    saveLogicalDaySettings({ dayStartTime, timezone: userTimeZone });
+  }, [dayStartTime, userTimeZone]);
+
+  useEffect(() => {
+    focusAlarmAudioRef.current = new Audio("/calm-alarm.wav");
+    return () => {
+      focusAlarmAudioRef.current?.pause();
+      focusAlarmAudioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const userId = session?.user?.id ?? null;
+    if (!userId || !profileSettingsHydratedRef.current) {
+      focusAlarmHydratedUserIdRef.current = null;
+      focusAlarmPreviousSettingsRef.current = null;
+      return;
+    }
+
+    if (focusAlarmHydratedUserIdRef.current === userId) {
+      return;
+    }
+
+    const now = Date.now();
+    const persistedState = readPersistedFocusAlarmState(userId);
+    const normalizedNextRingAt = focusAlarmEnabled
+      ? normalizeFocusAlarmNextRingAt(
+          persistedState?.enabled
+            && persistedState.intervalMinutes === focusAlarmIntervalMinutes
+            ? persistedState.nextRingAt
+            : null,
+          now,
+          focusAlarmIntervalMinutes,
+        )
+      : null;
+
+    setFocusAlarmNow(now);
+    focusAlarmSkipNextPersistRef.current = true;
+    setFocusAlarmNextRingAt(normalizedNextRingAt);
+    focusAlarmHydratedUserIdRef.current = userId;
+    focusAlarmPreviousSettingsRef.current = {
+      enabled: focusAlarmEnabled,
+      intervalMinutes: focusAlarmIntervalMinutes,
+    };
+  }, [focusAlarmEnabled, focusAlarmIntervalMinutes, session?.user?.id]);
+
+  useEffect(() => {
+    const userId = session?.user?.id ?? null;
+    if (!userId || focusAlarmHydratedUserIdRef.current !== userId) {
+      return;
+    }
+
+    const previousSettings = focusAlarmPreviousSettingsRef.current;
+    if (!previousSettings) {
+      focusAlarmPreviousSettingsRef.current = {
+        enabled: focusAlarmEnabled,
+        intervalMinutes: focusAlarmIntervalMinutes,
+      };
+      return;
+    }
+
+    const settingsChanged = previousSettings.enabled !== focusAlarmEnabled
+      || previousSettings.intervalMinutes !== focusAlarmIntervalMinutes;
+
+    if (!settingsChanged) {
+      return;
+    }
+
+    const now = Date.now();
+    const persistedState = readPersistedFocusAlarmState(userId);
+    const restoredNextRingAt = persistedState?.enabled
+      && persistedState.intervalMinutes === focusAlarmIntervalMinutes
+      ? persistedState.nextRingAt
+      : null;
+    setFocusAlarmNow(now);
+    setFocusAlarmNextRingAt(
+      focusAlarmEnabled
+        ? normalizeFocusAlarmNextRingAt(restoredNextRingAt, now, focusAlarmIntervalMinutes)
+        : null,
+    );
+    focusAlarmPreviousSettingsRef.current = {
+      enabled: focusAlarmEnabled,
+      intervalMinutes: focusAlarmIntervalMinutes,
+    };
+  }, [focusAlarmEnabled, focusAlarmIntervalMinutes, session?.user?.id]);
+
+  useEffect(() => {
+    const userId = session?.user?.id ?? null;
+    if (!userId || focusAlarmHydratedUserIdRef.current !== userId) {
+      return;
+    }
+
+    if (focusAlarmSkipNextPersistRef.current) {
+      focusAlarmSkipNextPersistRef.current = false;
+      return;
+    }
+
+    const persistedState: PersistedFocusAlarmState = {
+      enabled: focusAlarmEnabled,
+      intervalMinutes: focusAlarmIntervalMinutes,
+      nextRingAt: focusAlarmEnabled ? focusAlarmNextRingAt : null,
+    };
+
+    writePersistedFocusAlarmState(userId, persistedState);
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== getFocusAlarmStorageKey(userId) || !event.newValue) {
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(event.newValue) as PersistedFocusAlarmState;
+        const nextEnabled = parsed.enabled === true;
+        const nextIntervalMinutes = clampFocusAlarmInterval(parsed.intervalMinutes);
+        const now = Date.now();
+        setFocusAlarmEnabled(nextEnabled);
+        setFocusAlarmIntervalMinutes(nextIntervalMinutes);
+        setFocusAlarmNow(now);
+        setFocusAlarmNextRingAt(
+          nextEnabled
+            ? normalizeFocusAlarmNextRingAt(parsed.nextRingAt, now, nextIntervalMinutes)
+            : null,
+        );
+        focusAlarmPreviousSettingsRef.current = {
+          enabled: nextEnabled,
+          intervalMinutes: nextIntervalMinutes,
+        };
+      } catch {
+        // Ignore malformed cross-tab sync payloads.
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [focusAlarmEnabled, focusAlarmIntervalMinutes, focusAlarmNextRingAt, session?.user?.id]);
+
+  useEffect(() => {
+    if (!focusAlarmEnabled || focusAlarmNextRingAt === null) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+      setFocusAlarmNow(now);
+
+      if (now >= focusAlarmNextRingAt) {
+        void playFocusAlarmSound();
+        setMessage({ tone: "neutral", text: "Focus alarm. Time to switch tasks or check in." });
+        setFocusAlarmNextRingAt(now + focusAlarmIntervalMinutes * 60_000);
+      }
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [focusAlarmEnabled, focusAlarmIntervalMinutes, focusAlarmNextRingAt]);
 
   useEffect(() => {
     if (!supabase || !session?.user) return;
@@ -1004,47 +1338,63 @@ export function TaskApp() {
     };
   }, [session?.user?.id, supabase]);
 
+  const todayKey = useMemo(
+    () => getLogicalDayKey(new Date(logicalDayNow), { dayStartTime, timezone: userTimeZone }),
+    [dayStartTime, logicalDayNow, userTimeZone],
+  );
+
   useEffect(() => {
-    if (!supabase || !session?.user) return;
+    const client = supabase;
+    if (!client || !session?.user) return;
     const userId = session.user.id;
 
     async function runDayReset() {
-      const now = new Date();
-      const [startHour, startMinute] = dayStartTime.split(":").map(Number);
-      const dayStart = new Date(now);
-      dayStart.setHours(startHour, startMinute, 0, 0);
-      // Logical "today" starts at dayStartTime; if before that, it's still yesterday's day
-      const effectiveDate = now >= dayStart ? formatDateKey(now) : formatDateKey(new Date(now.getTime() - 86400000));
+      if (lastResetDateRef.current === todayKey) return;
 
-      if (lastResetDateRef.current === effectiveDate) return;
-      lastResetDateRef.current = effectiveDate;
-      window.localStorage.setItem(DAY_RESET_STORAGE_KEY, effectiveDate);
+      const { error } = await ((client as unknown) as {
+        rpc: (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+      }).rpc("adhdice_reconcile_task_rollover", {
+        p_now: new Date().toISOString(),
+        p_user_id: userId,
+      });
 
-      const { data, error } = await supabase!
-        .from("adhdice_clean_tasks")
-        .update({ status: "pending" })
-        .eq("user_id", userId)
-        .eq("status", "upcoming")
-        .lte("due_on", effectiveDate)
-        .select("*");
-
-      if (!error && data && data.length > 0) {
-        setTasks((current) =>
-          sortTasksForUi(current.map((t) => {
-            const updated = data.find((d) => d.id === t.id);
-            return updated ?? t;
-          })),
-        );
+      if (error) {
+        setMessage((previous) => previous ?? { tone: "warn", text: error.message });
+        return;
       }
+
+      lastResetDateRef.current = todayKey;
     }
 
     void runDayReset();
     const interval = setInterval(() => { void runDayReset(); }, 60_000);
-    return () => clearInterval(interval);
-  }, [session?.user?.id, dayStartTime, supabase]);
-
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void runDayReset();
+      }
+    };
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        void runDayReset();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handlePageShow);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
+    };
+  }, [session?.user?.id, supabase, todayKey]);
   const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(taskSubtasks), [taskSubtasks]);
-  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory, todayISO()), [taskHistory]);
+  const hasStepsByTaskId = useMemo(
+    () => tasks.reduce<Record<string, boolean>>((accumulator, task) => {
+      accumulator[task.id] = (taskSubtasksByTaskId[task.id]?.length ?? 0) > 0;
+      return accumulator;
+    }, {}),
+    [taskSubtasksByTaskId, tasks],
+  );
+  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory, todayKey), [taskHistory, todayKey]);
   const {
     activeCelebration: activeAchievementCelebration,
     chargedSetCodes,
@@ -1067,7 +1417,6 @@ export function TaskApp() {
     taskHistoryStats,
     tasks,
   });
-  const todayKey = todayISO();
   const { saveFocusSelection } = useFocusSelectionPersistence({
     currentUserId,
     defaultValidTaskIds: tasks,
@@ -1100,6 +1449,29 @@ export function TaskApp() {
     () => buildManualMembershipMap(taskListManualMemberships, compatibilityRoutingMemberships),
     [compatibilityRoutingMemberships, taskListManualMemberships],
   );
+  const taskHistoryByTaskId = useMemo(
+    () => taskHistory.reduce<Record<string, typeof taskHistory>>((accumulator, entry) => {
+      if (!accumulator[entry.task_id]) {
+        accumulator[entry.task_id] = [];
+      }
+      accumulator[entry.task_id].push(entry);
+      return accumulator;
+    }, {}),
+    [taskHistory],
+  );
+  const currentStreakByTaskId = useMemo(
+    () => Object.fromEntries(
+      tasks.map((task) => [
+        task.id,
+        computeTaskSpecificHistoryStats(
+          task,
+          taskHistoryByTaskId[task.id] ?? [],
+          todayKey,
+        ).currentStreak,
+      ]),
+    ),
+    [taskHistoryByTaskId, tasks, todayKey],
+  );
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   const currentUserIdText = session?.user?.id ?? "";
   const {
@@ -1124,20 +1496,36 @@ export function TaskApp() {
     taskGridLayout,
   });
   const taskListEvaluationContext = useMemo<TaskListEvaluationContext>(() => ({
+    currentStreakByTaskId,
     focusedTaskIds: focusedTaskIdSet,
+    hasStepsByTaskId,
     isDueToday,
     isLater,
     isOpen: isTaskOpen,
     isOverdue,
     manualMembershipsByTaskId,
-  }), [focusedTaskIdSet, manualMembershipsByTaskId]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId]);
   const deferredSearchQuery = useDeferredValue(taskUiState.search.trim().toLowerCase());
+  const taskUiStateForDerivedData = useMemo(() => ({
+    ...taskUiState,
+    search: "",
+  }), [
+    taskUiState.energyFilters,
+    taskUiState.matchAny,
+    taskUiState.quickFilters,
+    taskUiState.statusFilters,
+    taskUiState.uiStateVersion,
+    taskUiState.view,
+    taskUiState.visibleColumnsByView,
+  ]);
   const bucketContext = useMemo(() => ({
     focusedTaskIds: focusedTaskIdSet,
     routing: taskRouting,
   }), [focusedTaskIdSet, taskRouting]);
   const derivedData = useMemo(
-    () => computeTaskAppDerivedData({
+    () => {
+      const startedAt = performance.now();
+      const result = computeTaskAppDerivedData({
       activePage,
       availableTaskLists,
       availableTaskNotes,
@@ -1152,9 +1540,14 @@ export function TaskApp() {
       taskGridWidgetTypes: Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[],
       taskListEvaluationContext,
       taskSubtasksByTaskId,
-      taskUiState,
+      taskUiState: taskUiStateForDerivedData,
       tasks,
-    }),
+      });
+      if (process.env.NODE_ENV !== "production") {
+        console.info(`[tasks] Derived data ready in ${Math.round(performance.now() - startedAt)}ms for ${tasks.length} tasks.`);
+      }
+      return result;
+    },
     [
       activePage,
       availableTaskLists,
@@ -1167,7 +1560,7 @@ export function TaskApp() {
       taskGridLayout,
       taskListEvaluationContext,
       taskSubtasksByTaskId,
-      taskUiState,
+      taskUiStateForDerivedData,
       tasks,
     ],
   );
@@ -1188,6 +1581,8 @@ export function TaskApp() {
     },
     doneTasks,
     focusPlannerTasks,
+    filteredTasksSorted,
+    trashFilteredTasksSorted,
     listColumnPickerColumns,
     listRailOptions,
     lowEnergyTasks,
@@ -1195,7 +1590,6 @@ export function TaskApp() {
     momentumPercent,
     overdueTasks,
     planningCandidates,
-    selectedBucketTasks,
     selectedTaskForEditor,
     taskForActualTimeEntry,
     taskLinkedNotesByTaskId,
@@ -1227,29 +1621,83 @@ export function TaskApp() {
     todayTasks,
     urgentTasks,
   }, momentumView);
+  const selectedBucketTasks = useMemo(() => {
+    if (activePage !== "Tasks") {
+      return [];
+    }
+
+    if (taskUiState.selectedBucket === "trash") {
+      return trashFilteredTasksSorted;
+    }
+
+    if (taskUiState.selectedBucket === "all") {
+      return filteredTasksSorted;
+    }
+
+    return filteredTasksSorted.filter((task) =>
+      (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === taskUiState.selectedBucket),
+    );
+  }, [activePage, filteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const listVisibleColumns = taskUiState.visibleColumnsByView.list;
-  const listViewTasks: AgentPlanTaskItem[] = activePage !== "Tasks"
-    ? []
-    : selectedBucketTasks.map((task) => buildAgentPlanTaskItem(task, {
-      bucketContext,
-      bucketLabels: TASK_BUCKET_LABELS,
-      listDefinitions: availableTaskLists,
-      listMemberships: taskListMembershipsByTaskId[task.id] ?? [],
-      focusedTaskIdSet,
-      linkedNotes: taskLinkedNotesByTaskId[task.id] ?? [],
-      subtasks: taskSubtasksByTaskId[task.id] ?? [],
-    }));
-  const visibleListTaskIds = listViewTasks.map((task) => task.id);
   const listSelectionResetKey = JSON.stringify({
     energyFilters: taskUiState.energyFilters,
     matchAny: taskUiState.matchAny,
     quickFilters: taskUiState.quickFilters,
-    search: taskUiState.search,
+    search: deferredSearchQuery,
     selectedBucket: taskUiState.selectedBucket,
     statusFilters: taskUiState.statusFilters,
     view: taskUiState.view,
   });
+  useEffect(() => {
+    setRenderedListTaskCount(Math.min(INITIAL_LIST_TASK_COUNT, selectedBucketTasks.length));
+  }, [listSelectionResetKey, selectedBucketTasks.length]);
+  const loadMoreListTasks = useCallback(() => {
+    startTransition(() => {
+      setRenderedListTaskCount((current) => Math.min(current + LIST_TASK_BATCH_SIZE, selectedBucketTasks.length));
+    });
+  }, [selectedBucketTasks.length]);
+  const listViewTasks = useMemo<AgentPlanTaskItem[]>(
+    () => {
+      if (activePage !== "Tasks") {
+        return [];
+      }
+
+      const startedAt = performance.now();
+      const result = selectedBucketTasks.slice(0, renderedListTaskCount).map((task) => buildAgentPlanTaskItem(task, {
+        bucketContext,
+        bucketLabels: TASK_BUCKET_LABELS,
+        listDefinitions: availableTaskLists,
+        listMemberships: taskListMembershipsByTaskId[task.id] ?? [],
+        focusedTaskIdSet,
+        linkedNotes: taskLinkedNotesByTaskId[task.id] ?? [],
+        subtasks: taskSubtasksByTaskId[task.id] ?? [],
+        taskHistory: taskHistoryByTaskId[task.id] ?? [],
+        todayDateKey: todayKey,
+      }));
+      if (process.env.NODE_ENV !== "production") {
+        console.info(`[tasks] Built ${result.length} table rows in ${Math.round(performance.now() - startedAt)}ms.`);
+      }
+      return result;
+    },
+    [
+      activePage,
+      availableTaskLists,
+      bucketContext,
+      focusedTaskIdSet,
+      renderedListTaskCount,
+      selectedBucketTasks,
+      taskHistoryByTaskId,
+      taskLinkedNotesByTaskId,
+      taskListMembershipsByTaskId,
+      taskSubtasksByTaskId,
+      todayKey,
+    ],
+  );
+  const visibleListTaskIds = useMemo(
+    () => selectedBucketTasks.map((task) => task.id),
+    [selectedBucketTasks],
+  );
   const {
     clearListTaskSelection,
     lastSelectedListTaskId,
@@ -1268,14 +1716,53 @@ export function TaskApp() {
     claimPendingReward,
     queueTaskRewards,
   } = useTaskRewardController({
-    calcNextDueDate,
+    calcNextDueDateFromDate,
     client,
     commitTaskReward,
+    currentDayKey: todayKey,
     currentUserId: session?.user?.id ?? null,
     setMessage,
+    setTaskSubtasks,
     setTasks,
     sortTasksForUi,
   });
+  const hudNotificationInboxItems = useMemo<HudNotificationItem[]>(() => {
+    const currentItems: HudNotificationItem[] = [];
+    if (activePendingReward) {
+      currentItems.push({
+        detail: "A completed task or subtask has points waiting to claim.",
+        id: "pending-reward",
+        title: "Reward waiting",
+        tone: "success",
+      });
+    }
+    if (missedTasks.length > 0) {
+      currentItems.push({
+        detail: `${missedTasks.length} missed task${missedTasks.length === 1 ? "" : "s"} need review.`,
+        id: "missed-tasks",
+        title: "Missed tasks",
+        tone: "danger",
+      });
+    }
+    if (filteredTodayTasks.length > 0) {
+      currentItems.push({
+        detail: `${filteredTodayTasks.length} task${filteredTodayTasks.length === 1 ? "" : "s"} due today.`,
+        id: "due-today",
+        title: "Due today",
+        tone: "accent",
+      });
+    }
+    const focusAlarmRemainingMs = getFocusAlarmRemainingMs(focusAlarmNextRingAt, focusAlarmNow);
+    if (focusAlarmEnabled && focusAlarmRemainingMs !== null) {
+      currentItems.push({
+        detail: `Next check-in in ${formatFocusAlarmRemaining(focusAlarmRemainingMs)}.`,
+        id: "focus-alarm",
+        title: "Focus alarm armed",
+        tone: "neutral",
+      });
+    }
+    return [...currentItems, ...hudNotificationEvents].slice(0, 8);
+  }, [activePendingReward, filteredTodayTasks.length, focusAlarmEnabled, focusAlarmNextRingAt, focusAlarmNow, hudNotificationEvents, missedTasks.length]);
   const {
     addTask,
     addChildTaskSubtask,
@@ -1290,14 +1777,18 @@ export function TaskApp() {
     routeTask,
     saveTaskEditor,
     saveTaskListDefinition,
+    syncTaskHistoryEntry,
     syncTaskNoteLinks,
     toggleTaskManualListMembership,
     updateTask,
     updateTaskSubtaskStatus,
   } = useTaskActions({
+    currentDayKey: todayKey,
     crud: {
       client,
+      clearPendingTaskMutations,
       currentUserId: currentUserIdText,
+      markPendingTaskMutations,
       setMessage,
       setTaskRouting,
       setTasks,
@@ -1398,13 +1889,17 @@ export function TaskApp() {
       currentUserId: currentUserIdText,
       isMissingParentSubtaskColumnError,
       mapTaskSubtaskRow,
+      onSubtaskCompletedReward: queueTaskRewards,
       setMessage,
       setSupportsNestedSubtasks,
       setTaskSubtasks,
       supportsNestedSubtasks,
+      tasks,
       taskSubtasks,
     },
     update: {
+      clearPendingTaskMutations,
+      markPendingTaskMutations,
       onTasksCompleted: queueTaskRewards,
       setMessage,
       setTasks,
@@ -1445,7 +1940,9 @@ export function TaskApp() {
     taskUiView: taskUiState.view,
     tasks,
     todayIso: todayISO,
-    updateTask,
+    updateTask: async (taskId, updates) => {
+      await updateTask(taskId, updates);
+    },
   });
 
   const openBlankTaskEditor = useCallback(() => {
@@ -1500,6 +1997,50 @@ export function TaskApp() {
     openEditTaskEditor(task);
   }, [openEditTaskEditor]);
 
+  const duplicateTaskInPlace = useCallback(async (task: Task) => {
+    const duplicateValues: TaskDraft = {
+      actual_seconds: 0,
+      completed_at: null,
+      due_on: task.due_on,
+      due_time: task.due_time,
+      energy: task.energy,
+      estimated_minutes: task.estimated_minutes,
+      external_link_label: task.external_link_label,
+      external_link_url: task.external_link_url,
+      is_important: task.is_important,
+      is_urgent: task.is_urgent,
+      notes: task.notes,
+      one_step_at_a_time: task.one_step_at_a_time,
+      priority: task.priority,
+      repeat_day_of_month: task.repeat_day_of_month,
+      repeat_days_of_week: [...task.repeat_days_of_week],
+      repeat_frequency: task.repeat_frequency,
+      repeat_interval: task.repeat_interval,
+      status: "pending",
+      subtasks_auto_reset: task.subtasks_auto_reset,
+      tags: [...task.tags],
+      title: task.title.trim() ? `Copy of ${task.title.trim()}` : "Copy of task",
+    };
+
+    const duplicateTask = await saveTaskEditor(duplicateValues, {
+      focusToday: false,
+      linkedNoteIds: (taskLinkedNotesByTaskId[task.id] ?? []).map((note) => note.id),
+      sortOrder: task.sort_order + 1,
+      subtasks: createTaskEditorDraft(task, false, taskSubtasksByTaskId[task.id] ?? []).subtasks,
+    });
+
+    if (!duplicateTask) {
+      return;
+    }
+
+    const manualListIds = (taskListMembershipsByTaskId[task.id] ?? [])
+      .filter((membership) => membership.isManual)
+      .map((membership) => membership.id);
+    for (const listId of manualListIds) {
+      await toggleTaskManualListMembership(duplicateTask.id, listId);
+    }
+  }, [saveTaskEditor, taskLinkedNotesByTaskId, taskListMembershipsByTaskId, taskSubtasksByTaskId, toggleTaskManualListMembership]);
+
   const closeTaskEditorWithReset = useCallback(() => {
     setTaskEditorInitialDraft(null);
     closeTaskEditor();
@@ -1546,7 +2087,9 @@ export function TaskApp() {
     routeTask,
     saveFocusSelection,
     setMessage,
-    updateTask,
+    updateTask: async (taskId, updates) => {
+      await updateTask(taskId, updates);
+    },
   });
   useEffect(() => {
     if (typeof window === "undefined" || activePage !== "Tasks") {
@@ -1568,8 +2111,16 @@ export function TaskApp() {
       return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
     };
 
+    const isInsideDialog = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) {
+        return false;
+      }
+
+      return Boolean(target.closest('[role="dialog"]'));
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isTextInput(event.target)) {
+      if (event.defaultPrevented || isTextInput(event.target) || isInsideDialog(event.target)) {
         return;
       }
 
@@ -1683,7 +2234,7 @@ export function TaskApp() {
       observer.disconnect();
       window.removeEventListener("resize", updateHudHeight);
     };
-  }, [hudUiState.activeHudPageId, lowStim, mobileZoom, theme]);
+  }, [hudUiState.activeHudPageId, hudUiState.isHudCollapsed, lowStim, mobileZoom, theme]);
 
   const mobileChromeZoomStyle = useMemo<CSSProperties | undefined>(() => {
     if (mobileZoom === 1) {
@@ -1738,6 +2289,13 @@ export function TaskApp() {
   }, [runningTaskTimers.length]);
 
   useEffect(() => {
+    const interval = window.setInterval(() => {
+      setLogicalDayNow(Date.now());
+    }, 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     setActiveTaskTimerIndex((current) => {
       if (runningTaskTimers.length === 0) {
         return 0;
@@ -1748,10 +2306,6 @@ export function TaskApp() {
 
   if (!supabase) {
     return <ConfigSplash />;
-  }
-
-  if (loading) {
-    return <LoadingSplash status="Opening ADHDice..." />;
   }
 
   if (!session?.user) {
@@ -1771,6 +2325,10 @@ export function TaskApp() {
 
           const error = response.error;
           const needsEmailConfirmation = mode === "sign-up" && !response.data.session;
+
+          if (response.data.session) {
+            setSession(response.data.session);
+          }
 
           setMessage(
             error
@@ -2147,17 +2705,17 @@ export function TaskApp() {
   async function handleTaskEditorSave(draft: {
     focusToday: boolean;
     linkedNoteIds: string[];
-    subtasks: Parameters<typeof saveTaskEditor>[1]["subtasks"];
+    subtasks: TaskSubtaskDraft[];
     values: Parameters<typeof saveTaskEditor>[0];
   }) {
-    const success = await saveTaskEditor(draft.values, {
+    const savedTask = await saveTaskEditor(draft.values, {
       focusToday: draft.focusToday,
       linkedNoteIds: draft.linkedNoteIds,
       subtasks: draft.subtasks,
       taskId: selectedTaskForEditor?.id ?? null,
     });
 
-    if (success) {
+    if (savedTask) {
       closeTaskEditorWithReset();
     }
   }
@@ -2166,6 +2724,10 @@ export function TaskApp() {
     if (selectedTaskForEditor) {
       setTaskHistoryModalTaskId(selectedTaskForEditor.id);
     }
+  }
+
+  function openTaskHistoryForTask(taskId: string) {
+    setTaskHistoryModalTaskId(taskId);
   }
 
   function closeActualTimeEntry() {
@@ -2177,9 +2739,124 @@ export function TaskApp() {
     setIsBatchDeleteModalOpen(true);
   }
 
-  function openSingleTaskDeleteModal(taskId: string) {
-    selectSingleListTask(taskId);
-    setIsBatchDeleteModalOpen(true);
+  function restoreTaskSnapshot(task: Task, routingBucket: TaskRoutingBucket | undefined) {
+    setTasks((current) => {
+      const alreadyPresent = current.some((entry) => entry.id === task.id);
+      const nextTasks = alreadyPresent
+        ? current.map((entry) => (entry.id === task.id ? task : entry))
+        : [...current, task];
+      return sortTasksForUi(nextTasks);
+    });
+    setTaskRouting((current) => {
+      const next = { ...current };
+      if (routingBucket) {
+        next[task.id] = routingBucket;
+      } else {
+        delete next[task.id];
+      }
+      return next;
+    });
+  }
+
+  function optimisticallyMoveTaskToTrash(taskId: string) {
+    const nextUpdatedAt = new Date().toISOString();
+    setTasks((current) => sortTasksForUi(current.map((task) => (
+      task.id === taskId
+        ? { ...task, completed_at: null, status: "archived", updated_at: nextUpdatedAt }
+        : task
+    ))));
+    setTaskRouting((current) => {
+      const next = { ...current };
+      delete next[taskId];
+      return next;
+    });
+  }
+
+  function optimisticallyRestoreTaskToInbox(taskId: string) {
+    const nextUpdatedAt = new Date().toISOString();
+    setTasks((current) => sortTasksForUi(current.map((task) => (
+      task.id === taskId
+        ? { ...task, completed_at: null, status: "pending", updated_at: nextUpdatedAt }
+        : task
+    ))));
+    setTaskRouting((current) => ({
+      ...current,
+      [taskId]: "inbox",
+    }));
+  }
+
+  function optimisticallyRemoveTask(taskId: string) {
+    setTasks((current) => current.filter((task) => task.id !== taskId));
+    setTaskRouting((current) => {
+      const next = { ...current };
+      delete next[taskId];
+      return next;
+    });
+  }
+
+  async function openSingleTaskDeleteModal(taskId: string) {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      return;
+    }
+    const previousRoutingBucket = taskRouting[taskId];
+
+    if (task.status === "archived") {
+      optimisticallyRemoveTask(taskId);
+      const didDelete = await deleteTasks([taskId]);
+      if (!didDelete) {
+        restoreTaskSnapshot(task, previousRoutingBucket);
+      }
+      if (selectedListTaskIds.includes(taskId)) {
+        clearListTaskSelection();
+      }
+      return;
+    }
+
+    optimisticallyMoveTaskToTrash(taskId);
+
+    const didArchive = await updateTask(taskId, {
+      completed_at: null,
+      status: "archived",
+    });
+    if (!didArchive) {
+      restoreTaskSnapshot(task, previousRoutingBucket);
+      return;
+    }
+
+    if (focusedTaskIds.includes(taskId)) {
+      void saveFocusSelection(focusedTaskIds.filter((id) => id !== taskId));
+    }
+
+    if (selectedListTaskIds.includes(taskId)) {
+      clearListTaskSelection();
+    }
+  }
+
+  async function restoreTaskFromTrash(taskId: string) {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      return;
+    }
+    const previousRoutingBucket = taskRouting[taskId];
+    optimisticallyRestoreTaskToInbox(taskId);
+    routeTask(taskId, "inbox");
+    const didRestore = await updateTask(taskId, {
+      completed_at: null,
+      status: "pending",
+    });
+    if (!didRestore) {
+      restoreTaskSnapshot(task, previousRoutingBucket);
+      return;
+    }
+
+    if (focusedTaskIds.includes(taskId)) {
+      void saveFocusSelection(focusedTaskIds.filter((id) => id !== taskId));
+    }
+
+    if (selectedListTaskIds.includes(taskId)) {
+      clearListTaskSelection();
+    }
   }
 
   function closeBatchDeleteModal() {
@@ -2276,10 +2953,24 @@ export function TaskApp() {
     task: selectedTaskForEditor,
   } : null;
 
-  const taskHistoryFlow = taskHistoryModalTaskId ? {
+  const taskHistoryModalTask = taskHistoryModalTaskId
+    ? tasks.find((task) => task.id === taskHistoryModalTaskId) ?? null
+    : null;
+  const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
+    onSetStatus: async (entryDate: string, status: "clear" | "did_my_best" | "done" | "missed") => {
+      if (!taskHistoryModalTaskId) {
+        return;
+      }
+      await syncTaskHistoryEntry(
+        taskHistoryModalTaskId,
+        status === "clear" ? "pending" : status,
+        entryDate,
+      );
+    },
+    task: taskHistoryModalTask,
     taskHistory: taskHistory.filter((entry) => entry.task_id === taskHistoryModalTaskId),
-    taskTitle: tasks.find((task) => task.id === taskHistoryModalTaskId)?.title ?? "",
+    taskTitle: taskHistoryModalTask.title,
   } : null;
 
   const taskOperationsHeaderProps = {
@@ -2292,9 +2983,12 @@ export function TaskApp() {
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenMomentumDetails: openMomentumDetails,
+    onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onSearchChange: (search: string) => setTaskUiState((prev) => ({ ...prev, search })),
     onViewChange: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
     search: taskUiState.search,
+    selectedBucket: taskUiState.selectedBucket,
+    trashCount: listRailOptions.find((list) => list.id === "trash")?.count ?? 0,
     todayCount: filteredTodayTasks.length,
     view: taskUiState.view,
   };
@@ -2366,7 +3060,7 @@ export function TaskApp() {
       ) : null}
       <div className="fixed inset-x-0 top-0 z-30 border-b border-[#ece8f8]/70 bg-[linear-gradient(180deg,rgba(244,240,255,0.96),rgba(239,244,255,0.9))] shadow-[0_14px_34px_rgba(81,61,168,0.07)] backdrop-blur-xl dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(19,16,33,0.94),rgba(14,12,27,0.9))]" ref={hudShellRef}>
         <div className="w-full">
-          <div className="w-full border-white/70 bg-white/[0.46] px-0 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] backdrop-blur-[12px] dark:border-white/10 dark:bg-white/[0.05]">
+          <div className={`w-full border-white/70 bg-white/[0.46] px-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] backdrop-blur-[12px] dark:border-white/10 dark:bg-white/[0.05] ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
             <CommandCenterHeader
               activeHudTaskTimer={activeHudTaskTimer}
               activeTaskCount={filteredActiveTasks.length}
@@ -2393,6 +3087,23 @@ export function TaskApp() {
               lowStim={lowStim}
               onLowStimChange={setLowStim}
               currentStreak={taskHistoryStats.currentStreak}
+              notificationInboxItems={hudNotificationInboxItems}
+              focusAlarmEnabled={focusAlarmEnabled}
+              focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
+              focusAlarmRemainingMs={focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - focusAlarmNow) : null}
+              onDecreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current - FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+              onIncreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current + FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+              onToggleFocusAlarmEnabled={() => {
+                if (focusAlarmAudioBlocked && focusAlarmEnabled) {
+                  void playFocusAlarmSound({ rearmOnly: true });
+                  return;
+                }
+
+                setFocusAlarmEnabled((current) => !current);
+                if (focusAlarmEnabled) {
+                  setFocusAlarmAudioBlocked(false);
+                }
+              }}
               mobileZoom={mobileZoom}
               onDecreaseMobileZoom={decreaseMobileZoom}
               onIncreaseMobileZoom={increaseMobileZoom}
@@ -2402,7 +3113,7 @@ export function TaskApp() {
           </div>
         </div>
       </div>
-      <div aria-hidden="true" className="w-full" style={{ height: Math.max(0, hudHeight - 60) }} />
+      <div aria-hidden="true" className="w-full" style={{ height: hudHeight }} />
       <div className="mx-auto w-full" style={shellZoomStyle}>
         <section className="w-full pb-28">
 
@@ -2470,6 +3181,7 @@ export function TaskApp() {
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   activeTaskTimerIndex,
+                  hasMoreRows: renderedListTaskCount < selectedBucketTasks.length,
                   overlayNode: activePendingReward ? (
                     <TaskRewardModal
                       isDark={theme === "dark"}
@@ -2484,7 +3196,10 @@ export function TaskApp() {
                   onDeleteTaskActualTimeEntry: (entryId) => { void deleteTaskActualTimeEntry(entryId); },
                   onOpenBatchDelete: openBatchDeleteModal,
                   onOpenBatchEdit: openBatchEditModal,
-                  onOpenDeleteTask: openSingleTaskDeleteModal,
+                  onOpenDeleteTask: (taskId) => { void openSingleTaskDeleteModal(taskId); },
+                  onRestoreTask: (taskId) => { void restoreTaskFromTrash(taskId); },
+                  onOpenTaskHistory: openTaskHistoryForTask,
+                  onLoadMoreRows: loadMoreListTasks,
                   onPauseTaskTimer: pauseHudTaskTimer,
                   onPreviousTaskTimer: () => cycleHudTaskTimer("previous"),
                   onResumeTaskTimer: resumeHudTaskTimer,
@@ -2516,6 +3231,12 @@ export function TaskApp() {
                       openExistingTaskEditor(task);
                     }
                   },
+                  onDuplicateTask: (taskId) => {
+                    const task = tasks.find((entry) => entry.id === taskId);
+                    if (task) {
+                      void duplicateTaskInPlace(task);
+                    }
+                  },
                   onRequestedOpenTaskHandled: (taskId) => {
                     setRequestedListOverlayTaskId((current) => (current === taskId ? null : current));
                   },
@@ -2531,13 +3252,25 @@ export function TaskApp() {
                       : focusedTaskIds.filter((id) => id !== taskId);
                     void saveFocusSelection(nextFocusedTaskIds);
                   },
-                  onSetRepeat: (taskId, repeat) => { void updateTask(taskId, { repeat_frequency: repeat }); },
+                  onSetRepeat: (taskId, repeat, cadence) => {
+                    void updateTask(taskId, {
+                      repeat_frequency: repeat,
+                      ...(cadence
+                        ? {
+                          repeat_day_of_month: cadence.repeatDayOfMonth,
+                          repeat_days_of_week: repeat === "weekly" || repeat === "custom" ? cadence.repeatDaysOfWeek : [],
+                          repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence.repeatInterval),
+                        }
+                        : {}),
+                    });
+                  },
                   onSetStatus: (taskId, status) => { void updateTask(taskId, { status }); },
-                  onAddTaskSubtask: (taskId) => { void addTaskSubtask(taskId); },
-                  onAddChildTaskSubtask: (subtaskId) => { void addChildTaskSubtask(subtaskId); },
+                  onAddTaskSubtask: (taskId) => addTaskSubtask(taskId),
+                  onAddChildTaskSubtask: (subtaskId) => addChildTaskSubtask(subtaskId),
                   onDeleteTaskSubtask: (subtaskId) => { void deleteTaskSubtask(subtaskId); },
                   onRenameTaskSubtask: (subtaskId, title) => { void renameTaskSubtask(subtaskId, title); },
                   onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); },
+                  onSetTaskSubtasksAutoReset: (taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); },
                   onSetTags: (taskId, tags) => { void updateTask(taskId, { tags }); },
                   onSetTitle: (taskId, title) => { void updateTask(taskId, { title }); },
                   onToggleTaskSelection: toggleListTaskSelection,
@@ -2598,10 +3331,12 @@ export function TaskApp() {
                   onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
                   onToggleListColumn: toggleListColumn,
                   onToggleListColumnMenu: () => setIsListColumnMenuOpen((current) => !current),
+                  onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
                   onUpdateSearch: (search) => setTaskUiState((prev) => ({ ...prev, search })),
                   search: taskUiState.search,
                   selectedBucket: taskUiState.selectedBucket,
                   shortcuts: TASK_KEYBOARD_SHORTCUTS,
+                  trashCount: listRailOptions.find((list) => list.id === "trash")?.count ?? 0,
                   view: taskUiState.view,
                 }}
               />
@@ -2669,7 +3404,6 @@ export function TaskApp() {
             client={client}
             currentUser={currentUser}
             isDark={theme === "dark"}
-            tasks={activeTasks}
             onSpendPoints={(delta, reason) =>
               void appendEconomyEvent({
                 source: "roll",
@@ -2705,8 +3439,12 @@ export function TaskApp() {
           />
         ) : activePage === "Settings" ? (
           <TaskSettingsPage
+            accentColor={accentColor}
             dayStartTime={dayStartTime}
+            timeZone={userTimeZone}
+            onAccentColorChange={setAccentColor}
             onDayStartTimeChange={setDayStartTime}
+            onTimeZoneChange={setUserTimeZone}
             onResetEconomy={resetEconomy}
             onThemeChange={setTheme}
             tasks={tasks}
@@ -2814,10 +3552,25 @@ function AuthSplash({
     mode: AuthMode;
   }) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<AuthMode>("sign-up");
+  const [mode, setMode] = useState<AuthMode>(() => {
+    if (typeof window === "undefined") {
+      return "sign-up";
+    }
+
+    const persistedMode = window.localStorage.getItem(AUTH_MODE_STORAGE_KEY);
+    return persistedMode === "sign-in" ? "sign-in" : "sign-up";
+  });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(AUTH_MODE_STORAGE_KEY, mode);
+  }, [mode]);
 
   return (
     <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
@@ -2853,21 +3606,43 @@ function AuthSplash({
               </p>
             </div>
 
-            <div className={`grid grid-cols-2 gap-2 rounded-[1rem] p-1 bg-[#f7f5ff] dark:bg-white/8`}>
+            <div
+              aria-label="Authentication mode"
+              className="flex rounded-[1rem] bg-[#f7f5ff] p-1 dark:bg-white/8"
+              role="tablist"
+            >
               <button
-                className={`rounded-[0.85rem] px-4 py-3 text-sm font-semibold ${mode === "sign-up"
-                  ? "bg-white text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
-                  : "text-[#7d88a1] dark:text-white/55"}`}
+                aria-pressed={mode === "sign-up"}
+                className={`relative z-10 flex-1 appearance-none rounded-full px-4 py-2 text-center text-sm font-semibold transition ${
+                  mode === "sign-up"
+                    ? "border border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#4b3d77] dark:bg-white/14 dark:text-[#cabfff]"
+                    : "border border-transparent bg-transparent text-[#6f7895] dark:text-white/60"
+                }`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  setMode("sign-up");
+                }}
                 onClick={() => setMode("sign-up")}
+                role="tab"
+                tabIndex={mode === "sign-up" ? 0 : -1}
                 type="button"
               >
                 Create Account
               </button>
               <button
-                className={`rounded-[0.85rem] px-4 py-3 text-sm font-semibold ${mode === "sign-in"
-                  ? "bg-white text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
-                  : "text-[#7d88a1] dark:text-white/55"}`}
+                aria-pressed={mode === "sign-in"}
+                className={`relative z-10 flex-1 appearance-none rounded-full px-4 py-2 text-center text-sm font-semibold transition ${
+                  mode === "sign-in"
+                    ? "border border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#4b3d77] dark:bg-white/14 dark:text-[#cabfff]"
+                    : "border border-transparent bg-transparent text-[#6f7895] dark:text-white/60"
+                }`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  setMode("sign-in");
+                }}
                 onClick={() => setMode("sign-in")}
+                role="tab"
+                tabIndex={mode === "sign-in" ? 0 : -1}
                 type="button"
               >
                 Sign In
@@ -2909,6 +3684,14 @@ function AuthSplash({
                 ? mode === "sign-up" ? "Creating account..." : "Signing in..."
                 : mode === "sign-up" ? "Create Account" : "Sign In"}
             </button>
+
+            <button
+              className="w-full rounded-[1rem] border border-[#e2daf9] bg-transparent px-5 py-3 text-sm font-semibold text-[#6f57f6] transition hover:bg-[#f7f5ff] dark:border-white/12 dark:text-[#cabfff] dark:hover:bg-white/6"
+              onClick={() => setMode((current) => current === "sign-up" ? "sign-in" : "sign-up")}
+              type="button"
+            >
+              {mode === "sign-up" ? "Already have an account? Switch to Sign In" : "Need an account? Switch to Create Account"}
+            </button>
           </form>
 
           {message ? (
@@ -2927,15 +3710,32 @@ function StatusBanner({
 }: {
   message: Message;
 }) {
+  const [isDismissed, setIsDismissed] = useState(false);
+
+  useEffect(() => {
+    setIsDismissed(false);
+  }, [message.text]);
+
   const className = message.tone === "warn"
     ? "border-[#ffd5dc] bg-[#fff2f4] text-[#9f364d] dark:border-[#4d2130] dark:bg-[#2a1620] dark:text-[#ffb1c0]"
     : message.tone === "good"
       ? "border-[#d7f5e9] bg-[#effcf6] text-[#0d8b60] dark:border-[#1f4d3d] dark:bg-[#11271f] dark:text-[#8ce8c0]"
       : "border-[#ece8f8] bg-white text-[#5f6983] dark:border-white/10 dark:bg-white/6 dark:text-white/70";
 
+  if (isDismissed) {
+    return null;
+  }
+
   return (
-    <div className={`rounded-[1.25rem] border px-4 py-3 text-sm font-medium ${className}`}>
-      {message.text}
+    <div className={`flex items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium ${className}`}>
+      <span className="min-w-0 flex-1">{message.text}</span>
+      <TaskTableChipButton
+        className="shrink-0"
+        onClick={() => setIsDismissed(true)}
+        toneClassName="border-current/20 bg-transparent text-current"
+      >
+        Dismiss
+      </TaskTableChipButton>
     </div>
   );
 }
@@ -2966,6 +3766,12 @@ function TopHeader({
   lowStim,
   onLowStimChange,
   currentStreak,
+  focusAlarmEnabled,
+  focusAlarmIntervalMinutes,
+  focusAlarmRemainingMs,
+  onDecreaseFocusAlarmInterval,
+  onIncreaseFocusAlarmInterval,
+  onToggleFocusAlarmEnabled,
   mobileZoom,
   onDecreaseMobileZoom,
   onIncreaseMobileZoom,
@@ -2997,6 +3803,12 @@ function TopHeader({
   lowStim: boolean;
   onLowStimChange: (v: boolean) => void;
   currentStreak: number;
+  focusAlarmEnabled: boolean;
+  focusAlarmIntervalMinutes: number;
+  focusAlarmRemainingMs: number | null;
+  onDecreaseFocusAlarmInterval: () => void;
+  onIncreaseFocusAlarmInterval: () => void;
+  onToggleFocusAlarmEnabled: () => void;
   mobileZoom: number;
   onDecreaseMobileZoom: () => void;
   onIncreaseMobileZoom: () => void;
@@ -3043,7 +3855,8 @@ function TopHeader({
     }
 
     if (widgetType === "xp") {
-      return <ProgressStat label={`Lvl ${economy.level}`} value={`${economy.xp} / ${economy.level * 100} XP`} percent={(economy.xp / (economy.level * 100)) * 100} />;
+      const xpProgress = getLevelProgress(economy.xp);
+      return <ProgressStat label={`Lvl ${economy.level}`} value={`${xpProgress.xpIntoLevel} / ${xpProgress.xpNeededForLevel} XP`} percent={xpProgress.percentToNextLevel} />;
     }
 
     if (widgetType === "sync_status") {
@@ -3069,6 +3882,19 @@ function TopHeader({
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">Streak</p>
           <p className="mt-1 text-2xl font-black">{currentStreak > 0 ? `${currentStreak}d` : "0d"}</p>
         </div>
+      );
+    }
+
+    if (widgetType === "focus_alarm") {
+      return (
+        <FocusAlarmWidget
+          enabled={focusAlarmEnabled}
+          intervalMinutes={focusAlarmIntervalMinutes}
+          onDecreaseInterval={onDecreaseFocusAlarmInterval}
+          onIncreaseInterval={onIncreaseFocusAlarmInterval}
+          onToggleEnabled={onToggleFocusAlarmEnabled}
+          remainingMs={focusAlarmRemainingMs}
+        />
       );
     }
 
@@ -3192,7 +4018,7 @@ function TopHeader({
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-            v3.0.0
+            v3.0.33
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>
@@ -3266,7 +4092,7 @@ function TopHeader({
 function CommandCenterHeader({
   activeHudTaskTimer,
   activeTaskCount,
-  currentHudPageId: _currentHudPageId,
+  currentHudPageId,
   economy,
   hudUiState,
   urgentTaskCount,
@@ -3289,6 +4115,13 @@ function CommandCenterHeader({
   lowStim,
   onLowStimChange,
   currentStreak,
+  notificationInboxItems,
+  focusAlarmEnabled,
+  focusAlarmIntervalMinutes,
+  focusAlarmRemainingMs,
+  onDecreaseFocusAlarmInterval,
+  onIncreaseFocusAlarmInterval,
+  onToggleFocusAlarmEnabled,
   mobileZoom,
   onDecreaseMobileZoom,
   onIncreaseMobileZoom,
@@ -3320,12 +4153,20 @@ function CommandCenterHeader({
   lowStim: boolean;
   onLowStimChange: (v: boolean) => void;
   currentStreak: number;
+  notificationInboxItems: HudNotificationItem[];
+  focusAlarmEnabled: boolean;
+  focusAlarmIntervalMinutes: number;
+  focusAlarmRemainingMs: number | null;
+  onDecreaseFocusAlarmInterval: () => void;
+  onIncreaseFocusAlarmInterval: () => void;
+  onToggleFocusAlarmEnabled: () => void;
   mobileZoom: number;
   onDecreaseMobileZoom: () => void;
   onIncreaseMobileZoom: () => void;
   canDecreaseMobileZoom: boolean;
   canIncreaseMobileZoom: boolean;
 }) {
+  const isHudCollapsed = hudUiState.isHudCollapsed;
   const accountButton = (
     <button className="relative mr-[3px] rounded-full transition-transform hover:scale-[1.02]" onClick={onOpenAccount} type="button">
       <Image
@@ -3343,6 +4184,17 @@ function CommandCenterHeader({
   );
 
   const timerSeconds = activeHudTaskTimer ? getTaskTimerDisplaySeconds(activeHudTaskTimer, taskTimerNow) : 0;
+  const activeHudPageTitle = hudUiState.hudPages.find((page) => page.id === currentHudPageId)?.title ?? "HUD";
+  const [isNotificationInboxOpen, setIsNotificationInboxOpen] = useState(false);
+
+  function setHudCollapsed(isCollapsed: boolean) {
+    setHudUiState((current) => ({
+      ...current,
+      isHudCollapsed: isCollapsed,
+      isHudEditMode: isCollapsed ? false : current.isHudEditMode,
+      selectedHudWidgetId: isCollapsed ? null : current.selectedHudWidgetId,
+    }));
+  }
 
   function renderHudWidget(widgetType: HudWidgetType) {
     if (widgetType === "dark_mode") {
@@ -3361,7 +4213,8 @@ function CommandCenterHeader({
       );
     }
     if (widgetType === "xp") {
-      return <ProgressStat compact label="XP" percent={(economy.xp / (economy.level * 100)) * 100} value={`${economy.xp}/${economy.level * 100}`} />;
+      const xpProgress = getLevelProgress(economy.xp);
+      return <ProgressStat compact label="XP" percent={xpProgress.percentToNextLevel} value={`${xpProgress.xpIntoLevel}/${xpProgress.xpNeededForLevel}`} />;
     }
     if (widgetType === "sync_status") {
       return <MiniStat compact label="Status" value="Synced" />;
@@ -3374,6 +4227,64 @@ function CommandCenterHeader({
     }
     if (widgetType === "streak") {
       return <MiniStat compact label="Streak" value={currentStreak > 0 ? `${currentStreak}d` : "0d"} />;
+    }
+    if (widgetType === "notification_inbox") {
+      const count = notificationInboxItems.length;
+      return (
+        <div className="relative flex h-full items-center justify-center">
+          <button
+            className="relative flex h-full w-full items-center justify-center gap-2 rounded-[0.9rem] bg-transparent px-3 text-sm font-bold text-[#6f57f6] transition hover:bg-white/[0.18] dark:bg-transparent dark:text-[#cabfff] dark:hover:bg-white/[0.06]"
+            onClick={() => setIsNotificationInboxOpen((current) => !current)}
+            type="button"
+          >
+            <Bell className="h-4 w-4" />
+            <span>{count}</span>
+          </button>
+          {isNotificationInboxOpen ? (
+            <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[18rem] rounded-[1.1rem] border border-[#ede6ff] bg-white/96 p-3 text-left shadow-[0_24px_70px_rgba(111,87,246,0.18)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/96">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Inbox</p>
+                <TaskTableChipButton onClick={() => setIsNotificationInboxOpen(false)} toneClassName="border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60">Close</TaskTableChipButton>
+              </div>
+              {notificationInboxItems.length > 0 ? (
+                <div className="space-y-2">
+                  {notificationInboxItems.map((item) => (
+                    <div className="rounded-[0.85rem] border border-[#f0ebfb] bg-[#fbfaff] px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
+                      <p className={`text-sm font-bold ${
+                        item.tone === "danger"
+                          ? "text-[#d94e67]"
+                          : item.tone === "success"
+                            ? "text-[#119a69]"
+                            : item.tone === "warning"
+                              ? "text-[#dc6c1c]"
+                              : "text-[#6f57f6]"
+                      }`}>{item.title}</p>
+                      <p className="mt-1 text-xs font-medium leading-snug text-[#7d7597] dark:text-white/55">{item.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-[0.85rem] border border-[#f0ebfb] bg-[#fbfaff] px-3 py-2 text-xs font-medium text-[#7d7597] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/55">
+                  No task notifications right now.
+                </p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+    if (widgetType === "focus_alarm") {
+      return (
+        <FocusAlarmWidget
+          compact
+          enabled={focusAlarmEnabled}
+          intervalMinutes={focusAlarmIntervalMinutes}
+          onDecreaseInterval={onDecreaseFocusAlarmInterval}
+          onIncreaseInterval={onIncreaseFocusAlarmInterval}
+          onToggleEnabled={onToggleFocusAlarmEnabled}
+          remainingMs={focusAlarmRemainingMs}
+        />
+      );
     }
     if (widgetType === "zoom") {
       return (
@@ -3481,13 +4392,58 @@ function CommandCenterHeader({
     return null;
   }
 
+  if (isHudCollapsed) {
+    return (
+      <header className="flex items-center gap-2 px-3">
+        <div className="min-w-0 flex flex-1 items-center gap-2 rounded-[1.15rem] border border-white/70 bg-white/[0.34] px-2 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] dark:border-white/10 dark:bg-white/[0.03]">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <BrandMark compact profile={profile} />
+            <span className="rounded-full bg-[#f1ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
+              {HUD_VERSION}
+            </span>
+          </div>
+          <span className="hidden rounded-full bg-[#f1ecff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] sm:inline-flex dark:bg-white/10 dark:text-[#c5b8ff]">
+            {activeHudPageTitle}
+          </span>
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
+            {activeHudTaskTimer ? (
+              <div className="hidden min-w-0 items-center gap-2 rounded-full bg-[#f5f1ff] px-2.5 py-1 text-[#5f4ac9] sm:flex dark:bg-[#241c42] dark:text-[#d6cdff]">
+                <Clock className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate text-[11px] font-semibold">{activeHudTaskTimer.title}</span>
+                <span className="shrink-0 text-[10px] font-black uppercase tracking-[0.16em]">
+                  {formatActualSecondsLabel(timerSeconds)}
+                </span>
+              </div>
+            ) : null}
+            <div className="rounded-full bg-[#faf7ff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7c73a0] dark:bg-white/[0.05] dark:text-white/55">
+              Today {todayTaskCount}
+            </div>
+            <div className="rounded-full bg-[#fff5eb] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#c06b1c] dark:bg-[#3b2714] dark:text-[#ffbe87]">
+              Urgent {urgentTaskCount}
+            </div>
+            <TaskTableChipButton
+              aria-label="Expand HUD"
+              className="gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
+              onClick={() => setHudCollapsed(false)}
+              toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+            >
+              <ChevronUp className="h-3.5 w-3.5" />
+              Open
+            </TaskTableChipButton>
+          </div>
+        </div>
+        <div className="shrink-0">{accountButton}</div>
+      </header>
+    );
+  }
+
   return (
     <header className="flex flex-col gap-2 px-3 lg:flex-row lg:items-center lg:justify-between">
       <div className="flex items-center justify-between gap-3 lg:w-[13rem] lg:shrink-0 lg:justify-start">
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-            v3.0.0
+            {HUD_VERSION}
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>
@@ -3497,14 +4453,27 @@ function CommandCenterHeader({
         renderWidget={renderHudWidget}
         setHudUiState={setHudUiState}
       />
-      <div className="hidden lg:block">{accountButton}</div>
+      <div className="flex items-center justify-end gap-2 lg:shrink-0">
+        <TaskTableChipButton
+          aria-label="Collapse HUD"
+          className="gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
+          onClick={() => setHudCollapsed(true)}
+          toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+        >
+          <ChevronUp className="h-3.5 w-3.5 rotate-180" />
+          Collapse
+        </TaskTableChipButton>
+        <div className="hidden lg:block">{accountButton}</div>
+      </div>
     </header>
   );
 }
 
 function BrandMark({
+  compact = false,
   profile,
 }: {
+  compact?: boolean;
   profile: UserProfile;
 }) {
   const [errored, setErrored] = useState(false);
@@ -3513,12 +4482,12 @@ function BrandMark({
   return (
     <Image
       alt="ADHDice logo"
-      className="h-14 w-auto object-contain object-left pl-[3px]"
-      height={56}
+      className="max-w-none object-contain object-left pl-[3px]"
+      height={compact ? 36 : 56}
       onError={() => setErrored(true)}
       src={withBasePath(logoSrc)}
       unoptimized={logoSrc.startsWith("data:")}
-      width={190}
+      width={compact ? 122 : 190}
     />
   );
 }
@@ -3549,7 +4518,7 @@ function AccountModal({
             </h2>
           </div>
           <button
-            className={`rounded-full px-4 py-2 text-sm font-semibold bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
+            className="ui-pill-button-light"
             onClick={onClose}
             type="button"
           >
@@ -3605,7 +4574,7 @@ function AccountModal({
               </div>
             </div>
             <button
-              className={`rounded-[1rem] px-5 py-3 text-base font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
+              className="ui-pill-button-strong-light"
               disabled={isSaving}
               onClick={async () => {
                 setIsSaving(true);
@@ -3621,7 +4590,7 @@ function AccountModal({
             </button>
           </div>
           <button
-            className={`mt-2 w-full rounded-[1rem] px-5 py-3 text-sm font-semibold bg-[#fff1f2] text-[#d64b5f] dark:bg-[#351924] dark:text-[#ff9fbc]`}
+            className="ui-pill-button-danger-light mt-2 w-full"
             onClick={onSignOut}
             type="button"
           >
@@ -3798,12 +4767,17 @@ function TestBucketTrayPreview() {
 }
 
 function TestRuleBuilderPreview() {
+  const previewLists = useMemo(() => getBuiltInTaskLists(), []);
+  const previewListOptions = useMemo(() => previewLists.map((list) => ({ label: list.name, value: list.id })), [previewLists]);
+  const previewListLabelById = useMemo(
+    () => Object.fromEntries(previewListOptions.map((list) => [list.value, list.label])) as Record<string, string>,
+    [previewListOptions],
+  );
   const [rules, setRules] = useState<TaskListRuleGroup>({
-    combinator: "all",
     rules: [
-      { field: "status", op: "is", value: "in_progress" },
-      { field: "energy", op: "is", value: "medium" },
-      { field: "due", op: "is_today" },
+      { rule: { field: "status", op: "is", value: "in_progress" } },
+      { connector: "and", rule: { field: "energy", op: "is", value: "medium" } },
+      { connector: "or", rule: { field: "due", op: "is_today" } },
     ],
   });
 
@@ -3826,62 +4800,52 @@ function TestRuleBuilderPreview() {
           <span className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8f7cff] dark:text-[#cabfff]">
             Preview state
           </span>
-          <div className="flex items-center gap-2">
-            {(["all", "any"] as const).map((value) => {
-              const active = rules.combinator === value;
-              return (
-                <button
-                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                    active
-                      ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                      : "bg-[#f5f1ff] text-[#6f57f6] dark:bg-white/[0.06] dark:text-[#cabfff]"
-                  }`}
-                  key={`test-${value}`}
-                  onClick={() => setRules((current) => ({ ...current, combinator: value }))}
-                  type="button"
-                >
-                  {value === "all" ? "Match all" : "Match any"}
-                </button>
-              );
-            })}
-          </div>
         </div>
 
         <div className="mt-4 space-y-3">
-          {rules.rules.map((rule, ruleIndex) => (
-            <TaskListRuleRowEditor
-              energyOptions={energyOptions}
-              fieldOptions={TASK_LIST_RULE_FIELD_OPTIONS}
-              key={`test-rule-${ruleIndex}`}
-              onChange={(nextRule) => setRules((current) => ({
-                ...current,
-                rules: current.rules.map((entry, index) => index === ruleIndex ? nextRule : entry),
-              }))}
-              onRemove={() => setRules((current) => ({
-                ...current,
-                rules: current.rules.filter((_, index) => index !== ruleIndex),
-              }))}
-              operatorOptionsByField={TASK_LIST_RULE_OPERATOR_OPTIONS}
-              rule={rule}
-              taskStatusOptions={taskStatusOptions}
-            />
+          {rules.rules.map((row, ruleIndex) => (
+            <div className="space-y-2" key={`test-rule-${ruleIndex}`}>
+              {ruleIndex > 0 ? (
+                <div className="flex items-center gap-2 px-2">
+                  {(["and", "or"] as const).map((connector) => (
+                    <TaskTableChipButton
+                      className="transition"
+                      key={`test-${ruleIndex}-${connector}`}
+                      onClick={() => setRules((current) => updateTaskListRuleRowConnector(current, ruleIndex, connector))}
+                      toneClassName={row.connector === connector ? "border-[#e8defe] bg-[#f3eeff] text-[#7762f3] dark:border-[#3a2e63] dark:bg-[#21183d] dark:text-[#c7bcff]" : "border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60"}
+                    >
+                      {connector === "and" ? "And" : "Or"}
+                    </TaskTableChipButton>
+                  ))}
+                </div>
+              ) : null}
+              <TaskListRuleRowEditor
+                energyOptions={energyOptions}
+                fieldOptions={TASK_LIST_RULE_FIELD_OPTIONS}
+                key={`test-row-${ruleIndex}`}
+                listLabelById={previewListLabelById}
+                listOptions={previewListOptions}
+                onChange={(nextRule) => setRules((current) => updateTaskListRuleRow(current, ruleIndex, nextRule))}
+                onRemove={() => setRules((current) => removeTaskListRuleRow(current, ruleIndex))}
+                operatorOptionsByField={TASK_LIST_RULE_OPERATOR_OPTIONS}
+                rule={row.rule}
+                taskStatusOptions={taskStatusOptions}
+              />
+            </div>
           ))}
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <button
-            className="inline-flex items-center gap-2 rounded-full border border-[#ddd6fb] bg-white px-4 py-2 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
-            onClick={() => setRules((current) => ({
-              ...current,
-              rules: [...current.rules, createDefaultTaskListRule()],
-            }))}
+            className="ui-pill-button-light inline-flex items-center gap-2 transition"
+            onClick={() => setRules((current) => appendTaskListRuleRow(current))}
             type="button"
           >
             <Plus className="h-4 w-4" />
             Add preview rule
           </button>
           <p className="text-sm text-[#726a96] dark:text-white/60">
-            {summarizeTaskListRules(rules)}
+            {summarizeTaskListRules(rules, (listId) => previewListLabelById[listId] ?? "")}
           </p>
         </div>
       </div>
@@ -3913,14 +4877,14 @@ function PagePlaceholder({
       </p>
       <div className="mt-12 flex flex-wrap justify-center gap-6">
         <button
-          className={`rounded-full px-8 py-4 text-lg font-bold transition hover:-translate-y-0.5 bg-[#6f57f6] text-white shadow-[0_12px_28px_rgba(111,87,246,0.2)] dark:bg-[#cabfff] dark:text-[#1a1431]`}
+          className="ui-pill-button-strong-light transition hover:-translate-y-0.5"
           onClick={() => setActivePage("Home")}
           type="button"
         >
           Back to Home
         </button>
         <button
-          className={`rounded-full px-8 py-4 text-lg font-bold transition hover:-translate-y-0.5 bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
+          className="ui-pill-button-strong-light transition hover:-translate-y-0.5"
           onClick={() => setActivePage("Tasks")}
           type="button"
         >
@@ -3951,10 +4915,14 @@ function PagePlaceholder({
           </div>
           <TaskManagementTableV2 className="max-w-none p-0" title="Task Table #2" />
           </div>
-          <TestD20FaceMapper dark={isDark} />
-          <TestDiceFaceMapper dark={isDark} />
-          <TestDiceMaterialLab dark={isDark} />
-          <TestTaskTablePrototype />
+          <ErrorBoundary fallback={<div className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-5 text-sm font-medium text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">Test tools failed to load.</div>}>
+            <Suspense fallback={<div className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-5 text-sm font-medium text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">Loading Test tools...</div>}>
+              <TestD20FaceMapper dark={isDark} />
+              <TestDiceFaceMapper dark={isDark} />
+              <TestDiceMaterialLab dark={isDark} />
+              <TestTaskTablePrototype />
+            </Suspense>
+          </ErrorBoundary>
           <TestBucketTrayPreview />
           <TestRuleBuilderPreview />
         </div>

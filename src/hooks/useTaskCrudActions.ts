@@ -12,7 +12,9 @@ type Message = {
 
 type UseTaskCrudActionsOptions = {
   client: SupabaseClient;
+  clearPendingTaskMutations?: (taskIds: string[]) => void;
   currentUserId: string;
+  markPendingTaskMutations?: (taskIds: string[]) => void;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTaskRouting: Dispatch<SetStateAction<Record<string, TaskRoutingBucket>>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -22,7 +24,9 @@ type UseTaskCrudActionsOptions = {
 
 export function useTaskCrudActions({
   client,
+  clearPendingTaskMutations,
   currentUserId,
+  markPendingTaskMutations,
   setMessage,
   setTaskRouting,
   setTasks,
@@ -67,6 +71,7 @@ export function useTaskCrudActions({
   }
 
   async function deleteTasks(taskIds: string[]) {
+    markPendingTaskMutations?.(taskIds);
     const { error } = await client
       .from("adhdice_clean_tasks")
       .delete()
@@ -74,6 +79,7 @@ export function useTaskCrudActions({
       .eq("user_id", currentUserId);
 
     if (error) {
+      clearPendingTaskMutations?.(taskIds);
       setMessage({ tone: "warn", text: error.message });
       return false;
     }

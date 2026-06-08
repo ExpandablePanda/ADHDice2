@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import type { EconomyState } from "@/hooks/useEconomy";
 import type { AchievementUnlockRecord } from "@/lib/achievements";
 import type { Task, TaskEnergy, TaskHistory as DbTaskHistory } from "@/lib/database.types";
+import { getLevelProgress } from "@/lib/economy-levels";
 import type { HistoricalFocusSession } from "@/lib/types";
 import { todayISO } from "@/lib/utils";
 
@@ -71,6 +72,7 @@ export function StatsPage({
     }
     return { energyCounts: counts, totalEnergy: counts.low + counts.medium + counts.high || 1 };
   }, [tasks]);
+  const xpProgress = useMemo(() => getLevelProgress(economy.xp), [economy.xp]);
 
   const statCard = (label: string, value: string, detail: string) => (
     <div className="flex-1 rounded-2xl bg-[#f7f5ff] px-4 py-4 dark:bg-white/5">
@@ -105,14 +107,15 @@ export function StatsPage({
           <div className="flex-1">
             <div className="mb-1 flex justify-between">
               <p className="text-xs text-[#8e88a9] dark:text-white/40">XP</p>
-              <p className="text-xs tabular-nums text-[#8e88a9] dark:text-white/40">{economy.xp} / {economy.level * 100}</p>
+              <p className="text-xs tabular-nums text-[#8e88a9] dark:text-white/40">{xpProgress.xpIntoLevel} / {xpProgress.xpNeededForLevel}</p>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-[#e5e0f5] dark:bg-white/10">
               <div
                 className="h-full rounded-full bg-[linear-gradient(90deg,#7c63f7,#9b87ff)]"
-                style={{ width: `${Math.min(100, Math.round((economy.xp / (economy.level * 100)) * 100))}%` }}
+                style={{ width: `${Math.min(100, Math.round(xpProgress.percentToNextLevel))}%` }}
               />
             </div>
+            <p className="mt-1 text-[10px] text-[#8e88a9] dark:text-white/35">Next level at {xpProgress.nextLevelThresholdXp} total XP</p>
           </div>
         </div>
         <div className="mt-3 flex gap-4">

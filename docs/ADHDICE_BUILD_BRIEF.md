@@ -1,10 +1,12 @@
 # ADHDice Build Brief
 
-ADHDice is a gamified task and focus app for ADHD brains. The core promise is simple:
+Last reviewed: 2026-06-04
 
-> Do real-life tasks and focus sessions, earn points and XP, then spend points on dice rolls that unlock rewards.
+ADHDice is a gamified task, focus, and personal-support app for ADHD brains. The core promise is still simple:
 
-This document turns the current idea cloud into a build map so future implementation can move faster without re-explaining the whole app every time.
+> Do real-life tasks and focus sessions, build momentum, and turn that progress into meaningful rewards.
+
+This is an active working spec. It captures current product direction and roadmap priorities, not frozen implemented behavior; use the TaskApp contract docs for current behavior truth.
 
 ## Product Pillars
 
@@ -15,262 +17,139 @@ This document turns the current idea cloud into a build map so future implementa
 
 2. **Visible momentum**
    - Every completion should give immediate feedback.
-   - Tasks track hot streaks: consecutive days completed.
-   - Tasks track missed streaks: consecutive days the task was expected but missed.
-   - History should be visual enough to understand at a glance.
+   - Tasks track streaks, misses, and history in a way that is easy to scan.
+   - The app should help users see what is moving and what is getting stuck.
 
 3. **Reward loop**
-   - Completing tasks grants XP and spendable points.
-   - XP represents long-term growth/status.
-   - Points are currency for Roll.
-   - Roll uses a D20-style dice mechanic to turn points into rewards.
+   - Completing work grants points and XP.
+   - Roll turns progress into game-like rewards without becoming punishing.
+   - Achievements and dice-face language should reinforce progress without feeling childish or noisy.
 
-4. **Focus support**
-   - Focus timers log real work time.
-   - Focus logs feed category goals and progress graphs.
-   - The app should answer: "How much have I worked, and how much is left?"
+4. **Gentle support**
+   - Focus tools should make real work easier to start and sustain.
+   - Health tools should feel encouraging, not judgment-heavy.
+   - Empty and low-energy states should still suggest one clear next action.
 
-## Main Pages
+## Current App Shape
+
+Current as of this review, ADHDice already includes:
+
+- authenticated task management with realtime sync
+- task history, actual-time tracking, list routing, and multiple task views
+- focus categories, timers, manual entries, and focus history
+- a live Roll surface with reward boards, prize baskets, history, and point spending
+- achievements with dice-face progression and celebration overlays
+- a Health surface for check-ins, meals, weight, imported metrics, and Apple Health import groundwork
+- notes, stats, settings, games, and isolated Test-page prototypes
+
+## Major Product Surfaces
 
 ### Tasks
 
-The task page is the primary dashboard for all to-do work.
+Tasks remains the primary dashboard.
 
-Current prototype:
-- Magic-link auth
-- User-owned tasks
-- Active/done/archive states
-- Priority, energy, due date
-- Pasted-line import
-- Realtime sync
+Current direction:
+- keep capture fast and forgiving
+- keep list routing and filters powerful without making the page feel heavy
+- strengthen history, streaks, and reward visibility where they help the user take action
+- continue using Test-page prototypes before promoting large UI changes into the live Tasks surface
 
-Target features:
-- Status filters: active, done, archived, missed, due today, overdue
-- View picker:
-  - List view: default fast scanning
-  - Matrix view: Eisenhower matrix
-  - Card view: richer task cards with metadata
-- Task detail panel or route:
-  - Title, notes, status, priority, energy, due date
-  - Completion history button
-  - Streak stats
-  - Reward information for completing the task
-- History calendar:
-  - Grid of days with colored squares
-  - Completed, missed, skipped, and neutral days should be visually distinct
-  - Start with one task's history; later add category/project history
+Important product truth:
+- completing a task should feel like logging meaningful progress, not just toggling a checkbox
+- history should remain central to streaks, misses, and stats
+- task rewards should support motivation without punishing imperfect days
 
-Important behavior:
-- Completing a task should create a task event/history row, not only update the task.
-- Undoing completion should either remove/reverse the latest completion event or mark it as voided.
-- Streaks should be derived from history when possible, with cached columns only if needed for speed.
+### Focus
+
+Focus is the work-log and timer surface.
+
+Current direction:
+- keep timer flows simple enough to start quickly
+- make category progress and history visible without turning the page into a dense analytics dashboard
+- keep task handoff between Tasks and Focus smooth
 
 ### Roll
 
 Roll is the reward page. It is not called Store in the UI.
 
-Purpose:
-- Spend earned points.
-- Roll a D20.
-- Receive rewards based on roll result, rarity, or reward table.
+Current direction:
+- keep the roll loop emotionally safe and satisfying
+- support meaningful reward variety through boards, pool prizes, and prize baskets
+- keep the point economy understandable at a glance
 
-MVP behavior:
-- Show current point balance.
-- Button to roll D20 for a fixed cost.
-- Deduct points when rolling.
-- Show roll result and reward.
-- Save roll history.
+Known current behavior:
+- the app already supports roll history, free-roll banking, and managed reward pools
+- the remaining product work is about balance, clarity, and reward quality more than simply making Roll exist
 
-Reward examples:
-- Small break
-- Treat
-- Custom user reward
-- Cosmetic title/badge
-- Bonus XP
-- Reroll token
+### Achievements
 
-Open design choice:
-- Decide whether rewards are purely user-created, built-in, or a mix.
-- Decide whether roll outcome maps directly to rarity:
-  - 1: bad/blank/funny miss
-  - 2-9: common
-  - 10-16: uncommon
-  - 17-19: rare
-  - 20: jackpot
+Achievements is now a real app surface, not just a future idea.
 
-### Focus
+Current direction:
+- use dice-face language and charged-set progress to make milestones feel native to ADHDice
+- keep achievements motivational and readable
+- align achievement rewards and presentation with the broader economy and Health systems
 
-The focus page is a timer and work-log dashboard.
+### Health
 
-Target features:
-- Multiple timer presets or clocks
-- Start, pause, complete, cancel
-- Category assignment for each focus session
-- Goal tracking by category
-- Logged focus history
-- Progress check-ins:
-  - Time worked today
-  - Time remaining today
-  - Time worked this week
-  - Time remaining this week
-  - Category breakdown
-- Graphs:
-  - Daily focus minutes
-  - Weekly totals
-  - Category distribution
-  - Goal progress
+Health is now a real app surface, not just a future idea.
 
-Important behavior:
-- Completing a timer should create a focus session log.
-- Focus sessions can grant XP/points too, but likely at a different rate from tasks.
-- Interrupted/canceled sessions may be saved separately or ignored; decide during build.
+Current direction:
+- keep care tracking gentle, local, and low-shame
+- support easy daily check-ins, meal logging, weight trends, and imported metrics
+- let Health connect to reminders and achievement language without turning it into a punitive compliance tool
 
-## Suggested Data Model
+## Current Data Model Areas
 
-The current database only has `tasks`. The reward loop needs event tables.
+The app is no longer operating on a tasks-only schema.
 
-Likely next tables:
+Current major data areas include:
+- tasks, task lists, manual memberships, subtasks, grid layouts, history, and actual-time entries
+- user profiles and point ledger / reward infrastructure
+- task reward rolls and reward claims
+- roll history and reward-pool prize data
+- focus categories, focus sessions, active sessions, and focus-day selections
+- health profiles, check-ins, meals, weight entries, imported metrics, import audits, and health achievement awards
 
-### `task_events`
+This means the roadmap should prioritize coherence and polish across existing systems, not pretend those systems still need to be invented from scratch.
 
-Records what happened to a task on a date.
+## Current Roadmap Priorities
 
-Fields:
-- `id`
-- `user_id`
-- `task_id`
-- `event_type`: completed, missed, skipped, reopened, archived
-- `event_date`
-- `points_awarded`
-- `xp_awarded`
-- `created_at`
+### 1. Tighten the core task-to-reward loop
 
-### `user_profiles`
+Goal: make completions, history, streaks, and rewards feel clearly connected.
 
-Stores user-level game state.
+Focus:
+- clearer reward visibility on task completion
+- sharper economy messaging
+- less ambiguity around streak/miss logic
 
-Fields:
-- `user_id`
-- `xp_total`
-- `point_balance`
-- `level`
-- `created_at`
-- `updated_at`
+### 2. Keep the main surfaces cohesive
 
-### `point_ledger`
+Goal: make Tasks, Focus, Roll, Health, and Achievements feel like one product instead of adjacent experiments.
 
-Tracks every point gain/spend so balances are auditable.
+Focus:
+- shared language and visual consistency
+- clear handoff between pages
+- aligned progress cues across work, rewards, and care
 
-Fields:
-- `id`
-- `user_id`
-- `source_type`: task, focus, roll, adjustment
-- `source_id`
-- `amount`
-- `balance_after`
-- `created_at`
+### 3. Continue safe TaskApp extraction
 
-### `rewards`
+Goal: keep reducing `task-app.tsx` complexity without changing behavior.
 
-Reward definitions.
+Focus:
+- preserve current routing and persistence semantics
+- continue moving pure logic and standalone UI out of the orchestrator
+- keep verification wave-based instead of drifting into abandoned long checks
 
-Fields:
-- `id`
-- `user_id`
-- `title`
-- `description`
-- `rarity`
-- `active`
-- `created_at`
+### 4. Use the Test page intentionally
 
-### `rolls`
+Goal: keep experimentation fast without destabilizing production surfaces.
 
-Roll history.
-
-Fields:
-- `id`
-- `user_id`
-- `d20_result`
-- `point_cost`
-- `reward_id`
-- `created_at`
-
-### `focus_categories`
-
-User-created work categories.
-
-Fields:
-- `id`
-- `user_id`
-- `name`
-- `color`
-- `daily_goal_minutes`
-- `weekly_goal_minutes`
-- `created_at`
-
-### `focus_sessions`
-
-Completed or attempted timer sessions.
-
-Fields:
-- `id`
-- `user_id`
-- `category_id`
-- `planned_minutes`
-- `actual_minutes`
-- `status`: completed, canceled, interrupted
-- `started_at`
-- `ended_at`
-- `points_awarded`
-- `xp_awarded`
-
-## MVP Build Order
-
-### Phase 1: Task Rewards
-
-Goal: make completing a task feel rewarding.
-
-Build:
-- Add `user_profiles`
-- Add `task_events`
-- Add `point_ledger`
-- Award points and XP when task is marked done
-- Show point balance and XP total in the header
-- Show simple streak count on task cards
-
-### Phase 2: Task Views and History
-
-Goal: make the task dashboard feel like the real app.
-
-Build:
-- Status filters
-- List/card/matrix view picker
-- Task detail panel
-- Task history calendar
-- Missed streak logic for dated/repeating tasks
-
-### Phase 3: Roll
-
-Goal: close the loop from work to reward.
-
-Build:
-- Roll page
-- D20 roll animation/result
-- Point cost
-- Reward table
-- Roll history
-
-### Phase 4: Focus
-
-Goal: support timed work and progress goals.
-
-Build:
-- Focus page
-- Timer presets
-- Category selection
-- Focus session logging
-- Today/week progress summaries
-- Basic graphs
+Focus:
+- prototype larger UI ideas on `Test`
+- promote only the ideas that prove clearer and more cohesive
+- avoid silent drift between prototype and live behavior
 
 ## UX Notes for ADHD
 
@@ -281,23 +160,26 @@ Build:
 - Put advanced stats behind details, not on every card.
 - Celebrate completions without blocking the next action.
 - Make empty states useful: suggest one tiny next step.
+- Keep health and reward systems supportive rather than punitive.
 
-## Open Questions
+## Current Open Product Questions
 
-- Are tasks one-off only at first, or do we need repeating tasks immediately?
-- What is the default point value for a task?
-- Should priority/energy affect reward value?
-- Do missed streaks apply only to repeating tasks and dated tasks?
-- Should focus sessions earn Roll points, XP, or both?
-- Are rewards authored by the user, seeded by the app, or both?
-- Does Roll ever produce penalties, or should every roll be emotionally safe?
+- How generous should the default task reward economy feel across easy vs hard tasks?
+- How much should priority, urgency, energy, or repetition influence reward value?
+- Which rewards should be system-authored, user-authored, or mixed?
+- How should Roll balance surprise and emotional safety over time?
+- How tightly should Health and Achievements feed into the shared economy versus staying mostly parallel?
 
 ## Current Implementation Snapshot
 
-As of this brief, the app has:
-- Next.js 16.2.4, React 19.2.4, Tailwind 4, Supabase
-- Main UI in `src/components/task-app.tsx`
-- Database schema in `supabase/schema.sql`
-- Types in `src/lib/database.types.ts`
+As of this brief, the repo includes:
+- Next.js 16.2.4, React 19.2.4, Tailwind 4, and Supabase
+- a large `src/components/task-app.tsx` orchestrator with extracted page adapters and helpers around it
+- schema and type coverage for tasks, focus, roll/economy, achievements, health, and notes-related flows
+- active documentation contracts for current behavior, orchestration boundaries, verification protocol, and UI system guidance
 
-The next implementation step should probably be Phase 1: add reward state and event logging before building more views. That keeps the central game loop honest.
+## Guidance For Future Work
+
+- Treat this brief as roadmap and product-direction context.
+- Treat the TaskApp contract docs as the source of truth for current implemented behavior.
+- When a product decision is clearly resolved in code and UI, remove it from open questions and reflect it as current direction instead of leaving stale uncertainty in place.

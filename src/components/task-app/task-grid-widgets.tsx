@@ -106,9 +106,9 @@ export function TaskGridSelectedOverlayComponent({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">{widgetLabel}</p>
         <div className="flex flex-wrap gap-2">
-          <button className="rounded-full px-3 py-1.5 text-xs font-semibold bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75" draggable={false} onClick={() => onMove(item.id, "up")} type="button">Up</button>
-          <button className="rounded-full px-3 py-1.5 text-xs font-semibold bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75" draggable={false} onClick={() => onMove(item.id, "down")} type="button">Down</button>
-          <button className="rounded-full px-3 py-1.5 text-xs font-semibold bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]" draggable={false} onClick={onRemove} type="button">Remove</button>
+          <button className="ui-pill-button-light" draggable={false} onClick={() => onMove(item.id, "up")} type="button">Up</button>
+          <button className="ui-pill-button-light" draggable={false} onClick={() => onMove(item.id, "down")} type="button">Down</button>
+          <button className="ui-pill-button-danger-light" draggable={false} onClick={onRemove} type="button">Remove</button>
         </div>
       </div>
       <div className="mt-3 space-y-3">
@@ -116,7 +116,7 @@ export function TaskGridSelectedOverlayComponent({
           <p className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40">Width</p>
           <div className="flex flex-wrap gap-2">
             {widthPresets.map((preset) => (
-              <button className={`rounded-full px-3 py-1.5 text-xs font-semibold ${Math.min(item.w, currentColumns) === preset.width ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75"}`} draggable={false} key={preset.label} onClick={() => onResize(item.id, preset.width, item.h)} type="button">{preset.label}</button>
+              <button className={Math.min(item.w, currentColumns) === preset.width ? "ui-pill-button-strong-light" : "ui-pill-button-light"} draggable={false} key={preset.label} onClick={() => onResize(item.id, preset.width, item.h)} type="button">{preset.label}</button>
             ))}
           </div>
         </div>
@@ -124,7 +124,7 @@ export function TaskGridSelectedOverlayComponent({
           <p className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40">Rows</p>
           <div className="flex flex-wrap gap-2">
             {heightPresets.map((preset) => (
-              <button className={`rounded-full px-3 py-1.5 text-xs font-semibold ${item.h === preset.span ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75"}`} draggable={false} key={preset.label} onClick={() => onResize(item.id, item.w, preset.span)} type="button">{preset.label}</button>
+              <button className={item.h === preset.span ? "ui-pill-button-strong-light" : "ui-pill-button-light"} draggable={false} key={preset.label} onClick={() => onResize(item.id, item.w, preset.span)} type="button">{preset.label}</button>
             ))}
           </div>
         </div>
@@ -133,7 +133,7 @@ export function TaskGridSelectedOverlayComponent({
             <span className="mb-2 block text-[11px] font-black uppercase tracking-[0.18em] text-[#8b84a6] dark:text-white/40">Custom Rows</span>
             <input className="h-11 w-full rounded-[0.9rem] px-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white" draggable={false} inputMode="numeric" max={String(maxDisplayRows)} min="1" onChange={(event) => setCustomRowsInput(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Enter" && clampedCustomRows !== null) { event.preventDefault(); void applyCustomRows(); } }} type="number" value={customRowsInput} />
           </label>
-          <button className="h-11 rounded-[0.9rem] px-4 text-sm font-semibold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" disabled={clampedCustomRows === null} draggable={false} onClick={(event) => { event.stopPropagation(); void applyCustomRows(); }} type="submit">Apply</button>
+          <button className="ui-pill-button-strong-light" disabled={clampedCustomRows === null} draggable={false} onClick={(event) => { event.stopPropagation(); void applyCustomRows(); }} type="submit">Apply</button>
         </form>
       </div>
     </div>
@@ -247,7 +247,7 @@ export function UrgentTasksPanelComponent({
                 </div>
                 <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
               </div>
-              <div className="flex w-full gap-2 sm:w-auto sm:shrink-0"><button className="w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto bg-[#f2edff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" onClick={() => onEditTask(task)} type="button">Edit</button></div>
+              <div className="flex w-full gap-2 sm:w-auto sm:shrink-0"><button className="ui-pill-button-strong-light w-full sm:w-auto" onClick={() => onEditTask(task)} type="button">Edit</button></div>
             </div>
 
             <ul className="mt-5 space-y-2">

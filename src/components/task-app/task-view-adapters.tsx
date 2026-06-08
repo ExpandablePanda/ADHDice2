@@ -12,6 +12,11 @@ import { NotesPageComponent } from "./notes-page";
 import { Select } from "./task-status-select";
 import { TaskGridViewComponent } from "./task-grid-view";
 import {
+  buildTaskDueDateSet,
+  computeTaskSpecificHistoryStats,
+  type TaskHistoryStats,
+} from "@/lib/task-history";
+import {
   TaskCardGalleryComponent,
   TaskComposerCardComponent,
   TaskLaneComponent,
@@ -63,6 +68,16 @@ function EmptyTaskState({ text }: { text: string }) {
   );
 }
 
+function formatCalendarDate(dateKey: string) {
+  const [year, month, day] = dateKey.split("-");
+  if (!year || !month || !day) {
+    return dateKey;
+  }
+  return `${Number(month)}/${Number(day)}/${year}`;
+}
+
+const HISTORY_STATUS_CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
+
 function FocusStatsCard({
   activeCount,
   doneCount,
@@ -72,7 +87,7 @@ function FocusStatsCard({
   activeCount: number;
   doneCount: number;
   overdueCount: number;
-  taskHistoryStats: { bestStreak: number; currentStreak: number; doneRate: number };
+  taskHistoryStats: TaskHistoryStats;
 }) {
   const stats = [
     { label: "Active", meter: Math.min(100, 28 + activeCount * 4), value: String(activeCount) },
@@ -162,7 +177,7 @@ export function ImportWidgetCardAdapter({
           value={text}
         />
         <button
-          className="w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
+          className="ui-pill-button-strong-light w-full"
           disabled={lines.length === 0 || isSubmitting}
           type="submit"
         >
@@ -281,7 +296,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
   overdueCount: number;
   selectedWidgetId: string | null;
   subtasksByTaskId: Record<string, DbTaskSubtask[]>;
-  taskHistoryStats: { bestStreak: number; currentStreak: number; doneRate: number };
+  taskHistoryStats: TaskHistoryStats;
   tasksByWidget: {
     activeQueue: Task[];
     completed: Task[];
@@ -446,71 +461,209 @@ export function MomentumTaskModal({
 
 export function TaskHistoryModal({
   onClose,
+  onSetStatus,
+  task,
   taskHistory,
   taskTitle,
 }: {
   onClose: () => void;
+  onSetStatus: (entryDate: string, status: "clear" | "did_my_best" | "done" | "missed") => Promise<void>;
+  task: Task;
   taskHistory: DbTaskHistory[];
   taskTitle: string;
 }) {
   const today = todayISO();
-  const totalDays = 84;
+  const totalDays = 140;
   const days = Array.from({ length: totalDays }, (_, index) => shiftDateKey(today, index - (totalDays - 1)));
   const historyByDate = new Map(taskHistory.map((historyEntry) => [historyEntry.entry_date, historyEntry]));
+  const [selectedDate, setSelectedDate] = useState(() => [...historyByDate.keys()].sort().at(-1) ?? today);
+  const [isSaving, setIsSaving] = useState(false);
   const weeks: string[][] = [];
+  const dueDates = buildTaskDueDateSet(task, days[0] ?? today, today);
+  const stats = computeTaskSpecificHistoryStats(task, taskHistory, today, days[0] ?? today);
+  const sortedHistory = [...taskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));
+  const selectedEntry = historyByDate.get(selectedDate) ?? null;
+  const selectedIsFuture = selectedDate > today;
+  const selectedIsDue = dueDates.has(selectedDate);
 
-  for (let weekIndex = 0; weekIndex < 12; weekIndex += 1) {
+  for (let weekIndex = 0; weekIndex < Math.ceil(totalDays / 7); weekIndex += 1) {
     weeks.push(days.slice(weekIndex * 7, weekIndex * 7 + 7));
   }
 
-  const completedCount = taskHistory.filter((historyEntry) => historyEntry.was_completed).length;
-
-  function cellColor(dateKey: string) {
-    if (dateKey > today) return "bg-transparent";
+  function cellTone(dateKey: string) {
+    if (dateKey > today) return "border-transparent bg-transparent text-[#d9d4ea] dark:text-white/15";
     const entry = historyByDate.get(dateKey);
-    if (!entry) return "bg-[#ece8f8] dark:bg-white/8";
-    if (entry.was_completed) return "bg-[#6f57f6] dark:bg-[#8b70ff]";
-    return "bg-[#fbd0d5] dark:bg-[#5a2030]";
+    if (!entry) {
+      return dueDates.has(dateKey)
+        ? "border-[#ddd6fb] bg-[#faf8ff] text-[#70698b] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/40"
+        : "border-[#f0ebfb] bg-white text-[#c9bfdc] dark:border-white/[0.06] dark:bg-[#141124] dark:text-white/15";
+    }
+    if (entry.status === "missed") return "border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]";
+    if (entry.status === "did_my_best") return "border-[#b8d4fb] bg-[#eef5ff] text-[#3669d6] dark:border-[#2a4377] dark:bg-[#16233f] dark:text-[#9dc0ff]";
+    return "border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]";
+  }
+
+  async function handleSetStatus(status: "clear" | "did_my_best" | "done" | "missed") {
+    if (selectedIsFuture) {
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await onSetStatus(selectedDate, status);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function renderStatusPill(entry: DbTaskHistory | null) {
+    if (!entry) {
+      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`}>No Entry</span>;
+    }
+    if (entry.status === "missed") {
+      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]`}>Missed</span>;
+    }
+    if (entry.status === "did_my_best") {
+      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#b8d4fb] bg-[#eef5ff] text-[#3669d6] dark:border-[#2a4377] dark:bg-[#16233f] dark:text-[#9dc0ff]`}>Did My Best</span>;
+    }
+    return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]`}>Done</span>;
   }
 
   return (
-    <ModalShell className="w-full max-w-lg rounded-[2rem] border p-5 border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
-      <div className="mb-4 flex items-start justify-between gap-3">
+    <ModalShell className="flex max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2.4rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
+      <div className="flex items-start justify-between gap-4 border-b border-[#efebfb] pb-5 dark:border-white/10">
         <div>
-          <h2 className="text-lg font-black text-[#1f2746] dark:text-white">History</h2>
-          <p className="mt-0.5 text-sm text-[#7d88a1] dark:text-white/50">{taskTitle}</p>
+          <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Task History</p>
+          <h2 className="mt-2 text-3xl font-black text-[#1f2746] dark:text-white">{taskTitle}</h2>
+          <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/50">
+            Edit task history by date without changing past rewards or economy.
+          </p>
         </div>
         <button className="text-2xl leading-none text-[#8e97af] dark:text-white/55" onClick={onClose} type="button">×</button>
       </div>
 
-      <div className="adhdice-scrollbar flex gap-1 overflow-x-auto pb-1">
-        {weeks.map((week, weekIndex) => (
-          <div className="flex flex-col gap-1" key={weekIndex}>
-            {week.map((dateKey) => (
-              <div
-                className={`h-5 w-5 rounded-sm ${cellColor(dateKey)}`}
-                key={dateKey}
-                title={dateKey}
-              />
-            ))}
-          </div>
-        ))}
-      </div>
+      <div className="adhdice-scrollbar mt-6 min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
+        <div className="space-y-6">
+          <section className="rounded-[2rem] border border-[#ece8f8] bg-[#fcfbff] p-5 dark:border-white/10 dark:bg-white/[0.03]">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p>
+                <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Tap a square to inspect or update that date.</p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
+                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#bddbd0] bg-[#edf9f4]" />Done</span>
+                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#b8d4fb] bg-[#eef5ff]" />Did My Best</span>
+                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#f7bbc3] bg-[#fff1f3]" />Missed</span>
+                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#ddd6fb] bg-[#faf8ff]" />Due</span>
+              </div>
+            </div>
+            <div className="adhdice-scrollbar -mx-2 overflow-x-auto px-2 pb-2">
+              <div className="inline-flex w-max gap-1.5 pr-2">
+                {weeks.map((week, weekIndex) => (
+                  <div className="flex flex-col gap-1.5" key={weekIndex}>
+                    {week.map((dateKey) => (
+                      <button
+                        className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDate === dateKey ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""}`}
+                        key={dateKey}
+                        onClick={() => setSelectedDate(dateKey)}
+                        title={dateKey}
+                        type="button"
+                      >
+                        {dateKey.slice(-2)}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
 
-      <div className="mt-4 flex items-center justify-between text-xs">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-3 w-3 rounded-sm bg-[#6f57f6] dark:bg-[#8b70ff]" />
-            <span className="text-[#7d88a1] dark:text-white/50">Done</span>
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block h-3 w-3 rounded-sm bg-[#fbd0d5] dark:bg-[#5a2030]" />
-            <span className="text-[#7d88a1] dark:text-white/50">Missed</span>
-          </span>
+          <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Task Status History</p>
+                <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Recent saved results for this task.</p>
+              </div>
+              <span className="text-xs font-semibold text-[#8d87a7] dark:text-white/40">{sortedHistory.length} logged</span>
+            </div>
+            <div className="adhdice-scrollbar max-h-[20rem] space-y-2 overflow-y-auto pr-1">
+              {sortedHistory.length === 0 ? <EmptyTaskState text="No saved task history yet." /> : null}
+              {sortedHistory.map((entry) => (
+                <button
+                  className={`flex w-full items-center justify-between rounded-[1.25rem] border px-4 py-3 text-left transition ${selectedDate === entry.entry_date ? "border-[#cfc3ff] bg-[#f8f5ff] dark:border-[#6f57f6] dark:bg-[#22193d]" : "border-[#efebfb] bg-[#fcfbff] hover:border-[#ddd3ff] dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20"}`}
+                  key={entry.id}
+                  onClick={() => setSelectedDate(entry.entry_date)}
+                  type="button"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-[#27304c] dark:text-white">{formatCalendarDate(entry.entry_date)}</p>
+                    <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{dueDates.has(entry.entry_date) ? "Due opportunity" : "Manual history entry"}</p>
+                  </div>
+                  {renderStatusPill(entry)}
+                </button>
+              ))}
+            </div>
+          </section>
         </div>
-        <span className="text-[#7d88a1] dark:text-white/50">
-          {completedCount} completed in last 12 weeks
-        </span>
+
+        <div className="space-y-6">
+          <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Edit Selected Date</p>
+                <h3 className="mt-1 text-xl font-black text-[#1f2746] dark:text-white">{formatCalendarDate(selectedDate)}</h3>
+                <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/50">
+                  {selectedIsFuture
+                    ? "Future dates cannot be edited yet."
+                    : selectedIsDue
+                      ? "This date is part of the task's due schedule."
+                      : "This date is outside the inferred due schedule and will be treated as a manual history entry."}
+                </p>
+              </div>
+              {renderStatusPill(selectedEntry)}
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <button className="ui-pill-button-strong-light justify-start" disabled={isSaving || selectedIsFuture} onClick={() => { void handleSetStatus("done"); }} type="button">Done</button>
+              <button className="ui-pill-button-strong-light justify-start" disabled={isSaving || selectedIsFuture} onClick={() => { void handleSetStatus("did_my_best"); }} type="button">Did My Best</button>
+              <button className="ui-pill-button-danger-light justify-start" disabled={isSaving || selectedIsFuture} onClick={() => { void handleSetStatus("missed"); }} type="button">Missed</button>
+              <button className="ui-pill-button-light justify-start" disabled={isSaving || selectedIsFuture} onClick={() => { void handleSetStatus("clear"); }} type="button">Clear</button>
+            </div>
+            <p className="mt-4 text-xs text-[#8d87a7] dark:text-white/40">
+              Calendar edits update saved task history, streaks, and stats only. They do not change past rewards or economy.
+            </p>
+          </section>
+
+          <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Stats</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+              {[
+                { label: "Current Streak", value: stats.currentStreak, detail: "completed due dates in a row" },
+                { label: "Best Streak", value: stats.bestStreak, detail: "best completion streak" },
+                { label: "Missed Streak", value: stats.missedStreak, detail: "missed due dates in a row" },
+                { label: "Completion Rate", value: `${stats.completionRate}%`, detail: task.repeat_frequency === "none" ? "based on logged history" : `${stats.dueDays} due dates in range` },
+              ].map((stat) => (
+                <div className="rounded-[1.25rem] bg-[#f8f5ff] px-4 py-4 dark:bg-white/[0.05]" key={stat.label}>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{stat.label}</p>
+                  <p className="mt-2 text-3xl font-black text-[#1f2746] dark:text-white">{stat.value}</p>
+                  <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/45">{stat.detail}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 grid grid-cols-3 gap-3 text-center">
+              {[
+                { label: "Completed", value: stats.completedDays },
+                { label: "Missed", value: stats.missedDays },
+                { label: "Logged", value: stats.loggedDays },
+              ].map((stat) => (
+                <div className="rounded-[1.1rem] border border-[#ece8f8] bg-[#fcfbff] px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]" key={stat.label}>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{stat.label}</p>
+                  <p className="mt-1 text-xl font-black text-[#27304c] dark:text-white">{stat.value}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+        </div>
       </div>
     </ModalShell>
   );
@@ -545,15 +698,13 @@ export function RollPageAdapter({
   currentUser,
   isDark,
   onSpendPoints,
-  tasks,
 }: {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   currentUser: User;
   isDark: boolean;
   onSpendPoints: (delta: number, reason: string) => void;
-  tasks: Task[];
 }) {
-  return <RollPageComponent client={client} currentUser={currentUser} isDark={isDark} onSpendPoints={onSpendPoints} tasks={tasks} />;
+  return <RollPageComponent client={client} currentUser={currentUser} isDark={isDark} onSpendPoints={onSpendPoints} />;
 }
 
 export function NotesPageAdapter({

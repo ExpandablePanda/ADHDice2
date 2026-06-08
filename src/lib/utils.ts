@@ -1,3 +1,5 @@
+import { formatDateKeyInTimeZone, getLogicalDayKey, getBrowserTimeZone } from "@/lib/logical-day";
+
 export function formatLocalDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -6,7 +8,11 @@ export function formatLocalDate(date: Date): string {
 }
 
 export function todayISO(): string {
-  return formatLocalDate(new Date());
+  return getLogicalDayKey();
+}
+
+export function todayISOInTimeZone(timezone: string): string {
+  return formatDateKeyInTimeZone(new Date(), timezone || getBrowserTimeZone());
 }
 
 export function formatDuration(seconds: number): string {

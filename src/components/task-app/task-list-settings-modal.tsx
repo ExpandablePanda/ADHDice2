@@ -3,13 +3,17 @@
 import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
 import { useState } from "react";
 import { ModalShell } from "@/components/modal-shell";
+import { TaskTableChipButton, TASK_TABLE_INACTIVE_CHIP_CLASS, TASK_TABLE_TAG_CHIP_CLASS } from "@/components/ui/task-table-primitives";
 import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
 import {
-  createDefaultTaskListRule,
+  appendTaskListRuleRow,
   normalizeTaskListRuleGroup,
+  removeTaskListRuleRow,
   summarizeTaskListRules,
   type TaskListRuleField,
   type TaskListRuleRowOperator,
+  updateTaskListRuleRow,
+  updateTaskListRuleRowConnector,
 } from "@/lib/task-list-rule-editor";
 import type { TaskListDefinition, TaskListId, TaskListRuleGroup, parseTaskListRules } from "@/lib/task-lists";
 import { TaskListRuleRowEditor } from "./task-list-rule-row-editor";
@@ -40,7 +44,7 @@ type TaskListSettingsModalProps = {
   listCounts: Record<string, number>;
   lists: TaskListDefinition[];
   onClose: () => void;
-  onCreateCustomList: (input: CustomTaskListInput) => Promise<boolean>;
+  onCreateCustomList: (input: CustomTaskListInput) => Promise<boolean | { id: TaskListId; persisted: boolean }>;
   onDeleteList: (listId: TaskListId) => Promise<boolean>;
   onSaveList: (input: TaskListSaveInput) => Promise<boolean>;
   operatorOptionsByField: Record<TaskListRuleField, Array<{ label: string; value: TaskListRuleRowOperator }>>;
@@ -73,11 +77,16 @@ export function TaskListSettingsModal({
   operatorOptionsByField,
   taskStatusOptions,
 }: TaskListSettingsModalProps) {
+  const listOptions = lists.map((list) => ({
+    label: list.name,
+    value: list.id,
+  }));
+  const listLabelById = Object.fromEntries(listOptions.map((list) => [list.value, list.label])) as Partial<Record<TaskListId, string>>;
   const [drafts, setDrafts] = useState<Record<string, TaskListSettingsDraft>>(() => buildInitialDrafts(lists));
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [newListName, setNewListName] = useState("");
   const [newListMode, setNewListMode] = useState<"manual" | "rules">("manual");
-  const [newListRules, setNewListRules] = useState<TaskListRuleGroup>({ combinator: "all", rules: [] });
+  const [newListRules, setNewListRules] = useState<TaskListRuleGroup>({ rules: [] });
   const [createError, setCreateError] = useState<string | null>(null);
 
   function updateDraft(listId: string, patch: Partial<TaskListSettingsDraft>) {
@@ -157,7 +166,7 @@ export function TaskListSettingsModal({
     if (success) {
       setNewListName("");
       setNewListMode("manual");
-      setNewListRules({ combinator: "all", rules: [] });
+      setNewListRules({ rules: [] });
     }
   }
 
@@ -195,46 +204,50 @@ export function TaskListSettingsModal({
             <div className="mt-3 space-y-3 rounded-[1rem] border border-[#ddd6fb] bg-white px-4 py-3 dark:border-white/10 dark:bg-white/[0.05]">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Rules</span>
-                <div className="flex items-center gap-2">
-                  {(["all", "any"] as const).map((value) => {
-                    const active = newListRules.combinator === value;
-                    return (
-                      <button className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${active ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f5f1ff] text-[#6f57f6] dark:bg-white/[0.06] dark:text-[#cabfff]"}`} key={`new-list-${value}`} onClick={() => setNewListRules((current) => ({ ...current, combinator: value }))} type="button">
-                        {value === "all" ? "Match all" : "Match any"}
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
               <div className="space-y-2">
-                {newListRules.rules.map((rule, ruleIndex) => (
-                  <TaskListRuleRowEditor
-                    energyOptions={energyOptions}
-                    fieldOptions={fieldOptions}
-                    key={`new-list-rule-${ruleIndex}`}
-                    onChange={(nextRule) => setNewListRules((current) => ({
-                      ...current,
-                      rules: current.rules.map((entry, index) => (index === ruleIndex ? nextRule : entry)),
-                    }))}
-                    onRemove={() => setNewListRules((current) => ({
-                      ...current,
-                      rules: current.rules.filter((_, index) => index !== ruleIndex),
-                    }))}
-                    operatorOptionsByField={operatorOptionsByField}
-                    rule={rule}
-                    taskStatusOptions={taskStatusOptions}
-                  />
+                {newListRules.rules.map((row, ruleIndex) => (
+                  <div className="space-y-2" key={`new-list-rule-${ruleIndex}`}>
+                    {ruleIndex > 0 ? (
+                      <div className="flex items-center gap-2 px-2">
+                        {(["and", "or"] as const).map((connector) => (
+                          <TaskTableChipButton
+                            className="transition"
+                            key={`new-list-${ruleIndex}-${connector}`}
+                            onClick={() => setNewListRules((current) => updateTaskListRuleRowConnector(current, ruleIndex, connector))}
+                            toneClassName={row.connector === connector ? TASK_TABLE_TAG_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}
+                          >
+                            {connector === "and" ? "And" : "Or"}
+                          </TaskTableChipButton>
+                        ))}
+                      </div>
+                    ) : null}
+                    <TaskListRuleRowEditor
+                      energyOptions={energyOptions}
+                      fieldOptions={fieldOptions}
+                      listLabelById={listLabelById}
+                      listOptions={listOptions}
+                      onChange={(nextRule) => setNewListRules((current) => updateTaskListRuleRow(current, ruleIndex, nextRule))}
+                      onRemove={() => setNewListRules((current) => removeTaskListRuleRow(current, ruleIndex))}
+                      operatorOptionsByField={operatorOptionsByField}
+                      rule={row.rule}
+                      taskStatusOptions={taskStatusOptions}
+                    />
+                  </div>
                 ))}
               </div>
-              <button className="inline-flex items-center gap-2 rounded-full border border-[#ddd6fb] bg-white px-4 py-2 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]" onClick={() => setNewListRules((current) => ({ ...current, rules: [...current.rules, createDefaultTaskListRule()] }))} type="button">
+              <TaskTableChipButton
+                className="gap-2 transition"
+                onClick={() => setNewListRules((current) => appendTaskListRuleRow(current))}
+              >
                 <Plus className="h-4 w-4" />
                 Add rule
-              </button>
+              </TaskTableChipButton>
             </div>
           ) : null}
           {createError ? <p className="mt-3 text-sm text-[#d94e67] dark:text-[#ff9eaf]">{createError}</p> : null}
           <div className="mt-4 flex justify-end">
-            <button className="rounded-full bg-[#6f57f6] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]" onClick={() => { void handleCreateCustomList(); }} type="button">
+            <button className="ui-pill-button-strong-light transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]" onClick={() => { void handleCreateCustomList(); }} type="button">
               Create custom list
             </button>
           </div>
@@ -255,18 +268,18 @@ export function TaskListSettingsModal({
                     </div>
                     <p className="mt-2 text-sm text-[#68738f] dark:text-white/55">{list.description}</p>
                     <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/35">{listCounts[list.id] ?? 0} task{(listCounts[list.id] ?? 0) === 1 ? "" : "s"} currently visible</p>
-                    {draft.isCollapsed ? <p className="mt-2 text-xs text-[#7a7397] dark:text-white/45">{list.membershipMode === "manual" ? "Manual list membership." : summarizeTaskListRules(draft.rules)}</p> : null}
+                    {draft.isCollapsed ? <p className="mt-2 text-xs text-[#7a7397] dark:text-white/45">{list.membershipMode === "manual" ? "Manual list membership." : summarizeTaskListRules(draft.rules, (listId) => listLabelById[listId] ?? "")}</p> : null}
                   </div>
                   <div className="flex items-center gap-2">
                     <button aria-label={draft.isCollapsed ? `Expand ${list.name}` : `Collapse ${list.name}`} className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]" onClick={() => updateDraft(list.id, { isCollapsed: !draft.isCollapsed })} type="button">
                       {draft.isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
                     </button>
                     {list.type === "custom" && list.isDeletable ? (
-                      <button className="rounded-full border border-[#f5c9d1] bg-white px-4 py-2 text-sm font-semibold text-[#d94e67] transition hover:border-[#ef9aab] dark:border-[#5b2e3b] dark:bg-white/[0.05] dark:text-[#ff9eaf]" onClick={() => { void onDeleteList(list.id); }} type="button">
+                      <button className="ui-pill-button-danger-light transition hover:border-[#ef9aab] dark:border-[#5b2e3b] dark:bg-white/[0.05] dark:text-[#ff9eaf]" onClick={() => { void onDeleteList(list.id); }} type="button">
                         Delete
                       </button>
                     ) : null}
-                    <button className="rounded-full border border-[#ddd6fb] bg-white px-4 py-2 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]" onClick={() => { void handleSave(list); }} type="button">
+                    <button className="ui-pill-button-light transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]" onClick={() => { void handleSave(list); }} type="button">
                       Save
                     </button>
                   </div>
@@ -292,35 +305,45 @@ export function TaskListSettingsModal({
                       <div className="mt-4 space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Rules</span>
-                          <div className="flex items-center gap-2">
-                            {(["all", "any"] as const).map((value) => {
-                              const active = (draft.rules?.combinator ?? "all") === value;
-                              return (
-                                <button className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${active ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f5f1ff] text-[#6f57f6] dark:bg-white/[0.06] dark:text-[#cabfff]"}`} key={`${list.id}-${value}`} onClick={() => updateDraft(list.id, { rules: { combinator: value, rules: draft.rules?.rules ?? [] } })} type="button">
-                                  {value === "all" ? "Match all" : "Match any"}
-                                </button>
-                              );
-                            })}
-                          </div>
                         </div>
                         <div className="space-y-2">
-                          {(draft.rules?.rules ?? []).map((rule, ruleIndex) => (
-                            <TaskListRuleRowEditor
-                              energyOptions={energyOptions}
-                              fieldOptions={fieldOptions}
-                              key={`${list.id}-rule-${ruleIndex}`}
-                              onChange={(nextRule) => updateDraft(list.id, { rules: { combinator: draft.rules?.combinator ?? "all", rules: (draft.rules?.rules ?? []).map((entry, index) => (index === ruleIndex ? nextRule : entry)) } })}
-                              onRemove={() => updateDraft(list.id, { rules: { combinator: draft.rules?.combinator ?? "all", rules: (draft.rules?.rules ?? []).filter((_, index) => index !== ruleIndex) } })}
-                              operatorOptionsByField={operatorOptionsByField}
-                              rule={rule}
-                              taskStatusOptions={taskStatusOptions}
-                            />
+                          {(draft.rules?.rules ?? []).map((row, ruleIndex) => (
+                            <div className="space-y-2" key={`${list.id}-rule-${ruleIndex}`}>
+                              {ruleIndex > 0 ? (
+                                <div className="flex items-center gap-2 px-2">
+                                  {(["and", "or"] as const).map((connector) => (
+                                    <TaskTableChipButton
+                                      className="transition"
+                                      key={`${list.id}-${ruleIndex}-${connector}`}
+                                      onClick={() => updateDraft(list.id, { rules: updateTaskListRuleRowConnector(draft.rules ?? { rules: [] }, ruleIndex, connector) })}
+                                      toneClassName={row.connector === connector ? TASK_TABLE_TAG_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}
+                                    >
+                                      {connector === "and" ? "And" : "Or"}
+                                    </TaskTableChipButton>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <TaskListRuleRowEditor
+                                energyOptions={energyOptions}
+                                fieldOptions={fieldOptions}
+                                listLabelById={listLabelById}
+                                listOptions={listOptions}
+                                onChange={(nextRule) => updateDraft(list.id, { rules: updateTaskListRuleRow(draft.rules ?? { rules: [] }, ruleIndex, nextRule) })}
+                                onRemove={() => updateDraft(list.id, { rules: removeTaskListRuleRow(draft.rules ?? { rules: [] }, ruleIndex) })}
+                                operatorOptionsByField={operatorOptionsByField}
+                                rule={row.rule}
+                                taskStatusOptions={taskStatusOptions}
+                              />
+                            </div>
                           ))}
                         </div>
-                        <button className="inline-flex items-center gap-2 rounded-full border border-[#ddd6fb] bg-white px-4 py-2 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]" onClick={() => updateDraft(list.id, { rules: { combinator: draft.rules?.combinator ?? "all", rules: [...(draft.rules?.rules ?? []), createDefaultTaskListRule()] } })} type="button">
+                        <TaskTableChipButton
+                          className="gap-2 transition"
+                          onClick={() => updateDraft(list.id, { rules: appendTaskListRuleRow(draft.rules ?? { rules: [] }) })}
+                        >
                           <Plus className="h-4 w-4" />
                           Add rule
-                        </button>
+                        </TaskTableChipButton>
                       </div>
                     ) : (
                       <div className="mt-4 rounded-[1rem] border border-dashed border-[#ddd6fb] bg-[#faf8ff] px-4 py-3 text-sm text-[#68738f] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">

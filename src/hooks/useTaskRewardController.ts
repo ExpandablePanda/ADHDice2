@@ -3,7 +3,7 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CommitTaskRewardOpts } from "@/hooks/useEconomy";
-import type { Task, TaskHistory as DbTaskHistory } from "@/lib/database.types";
+import type { Task, TaskHistory as DbTaskHistory, TaskSubtask as DbTaskSubtask } from "@/lib/database.types";
 import {
   buildBatchTaskReward,
   buildSingleTaskReward,
@@ -13,10 +13,10 @@ import {
   type TaskRewardResolution,
 } from "@/lib/task-rewards";
 import {
+  isMissingTaskRewardClaimSubtaskColumnError,
   isMissingTaskRewardClaimsTableError,
   isMissingTaskRewardRollsTableError,
 } from "@/lib/task-db-compat";
-import { todayISO } from "@/lib/utils";
 
 type Message = {
   text: string;
@@ -24,21 +24,25 @@ type Message = {
 };
 
 type UseTaskRewardControllerOptions = {
-  calcNextDueDate: (task: Task) => string | null;
+  calcNextDueDateFromDate: (task: Task, referenceDateKey: string) => string | null;
   client: SupabaseClient;
   commitTaskReward: (opts: CommitTaskRewardOpts) => Promise<boolean>;
+  currentDayKey: string;
   currentUserId: string | null;
   setMessage: Dispatch<SetStateAction<Message | null>>;
+  setTaskSubtasks: Dispatch<SetStateAction<DbTaskSubtask[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
 };
 
 export function useTaskRewardController({
-  calcNextDueDate,
+  calcNextDueDateFromDate,
   client,
   commitTaskReward,
+  currentDayKey,
   currentUserId,
   setMessage,
+  setTaskSubtasks,
   setTasks,
   sortTasksForUi,
 }: UseTaskRewardControllerOptions) {
@@ -53,6 +57,13 @@ export function useTaskRewardController({
     });
   }
 
+  function showSubtaskRewardMigrationMessage() {
+    setMessage({
+      tone: "warn",
+      text: "Subtask reward claims need the new subtask claim column first. Run `supabase/add_task_reward_claim_subtask_id.sql`, then try again.",
+    });
+  }
+
   function isFetchFailure(error: unknown) {
     const message = error instanceof Error ? error.message : String(error ?? "");
     return message.includes("Load failed")
@@ -61,18 +72,18 @@ export function useTaskRewardController({
   }
 
   async function finalizeRecurringTasks(completedTasks: Task[]) {
-    if (!client || completedTasks.length === 0) {
+    if (!client || !currentUserId || completedTasks.length === 0) {
       return;
     }
 
     const updates = await Promise.all(completedTasks.map(async (task) => {
       if (task.repeat_frequency === "none") {
-        return null;
+        return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
 
-      const nextDue = calcNextDueDate(task);
+      const nextDue = calcNextDueDateFromDate(task, currentDayKey);
       if (!nextDue) {
-        return null;
+        return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
 
       const { data, error } = await client
@@ -84,37 +95,82 @@ export function useTaskRewardController({
 
       if (error) {
         setMessage({ tone: "warn", text: error.message });
-        return null;
+        return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
 
-      return data;
+      let resetSubtasks: DbTaskSubtask[] | null = null;
+      if (task.subtasks_auto_reset) {
+        const subtaskReset = await client
+          .from("adhdice_task_subtasks")
+          .update({ status: "pending" })
+          .eq("task_id", task.id)
+          .eq("user_id", currentUserId)
+          .select("*");
+
+        if (subtaskReset.error) {
+          setMessage({ tone: "warn", text: subtaskReset.error.message });
+        } else {
+          resetSubtasks = subtaskReset.data ?? [];
+        }
+      }
+
+      return { resetSubtasks, task: data };
     }));
 
-    const updatedTasks = updates.filter((task): task is Task => Boolean(task));
+    const updatedTasks = updates
+      .map((entry) => entry.task)
+      .filter((task): task is Task => Boolean(task));
     if (updatedTasks.length === 0) {
       return;
     }
 
     const byId = new Map(updatedTasks.map((task) => [task.id, task]));
     setTasks((current) => sortTasksForUi(current.map((task) => byId.get(task.id) ?? task)));
+    const nextSubtasks = updates.flatMap((entry) => entry.resetSubtasks ?? []);
+    if (nextSubtasks.length > 0) {
+      const resetTaskIdSet = new Set(nextSubtasks.map((subtask) => subtask.task_id));
+      setTaskSubtasks((current) => [
+        ...current.filter((subtask) => !resetTaskIdSet.has(subtask.task_id)),
+        ...nextSubtasks,
+      ]);
+    }
   }
 
   async function loadEligibleCandidates(candidates: TaskRewardCandidate[]) {
     if (!client || !currentUserId || candidates.length === 0) {
-      return { eligible: [] as TaskRewardCandidate[], ineligible: [] as TaskRewardCandidate[], rewardDate: todayISO() };
+      return { eligible: [] as TaskRewardCandidate[], ineligible: [] as TaskRewardCandidate[], rewardDate: currentDayKey };
     }
 
-    const rewardDate = todayISO();
+    const rewardDate = currentDayKey;
     const taskIds = candidates.map((candidate) => candidate.task.id);
-    const { data, error } = await client
+    const hasSubtaskCandidates = candidates.some((candidate) => Boolean(candidate.claimRef?.subtaskId));
+    let data: Array<{ subtask_id?: string | null; task_id: string }> | null = null;
+    let error: { message: string } | null = null;
+
+    const primaryQuery = await client
       .from("adhdice_task_reward_claims")
-      .select("task_id")
+      .select("task_id,subtask_id")
       .eq("user_id", currentUserId)
       .eq("reward_date", rewardDate)
       .in("task_id", taskIds);
+    data = primaryQuery.data;
+    error = primaryQuery.error;
+
+    if (error && isMissingTaskRewardClaimSubtaskColumnError(error.message) && !hasSubtaskCandidates) {
+      const fallbackQuery = await client
+        .from("adhdice_task_reward_claims")
+        .select("task_id")
+        .eq("user_id", currentUserId)
+        .eq("reward_date", rewardDate)
+        .in("task_id", taskIds);
+      data = fallbackQuery.data;
+      error = fallbackQuery.error;
+    }
 
     if (error) {
-      if (isMissingTaskRewardClaimsTableError(error.message)) {
+      if (isMissingTaskRewardClaimSubtaskColumnError(error.message)) {
+        showSubtaskRewardMigrationMessage();
+      } else if (isMissingTaskRewardClaimsTableError(error.message)) {
         showRewardMigrationMessage();
       } else {
         setMessage({ tone: "warn", text: error.message });
@@ -122,10 +178,23 @@ export function useTaskRewardController({
       return { eligible: [] as TaskRewardCandidate[], ineligible: candidates, rewardDate };
     }
 
-    const claimedTaskIds = new Set((data ?? []).map((entry) => entry.task_id));
+    const claimedTaskIds = new Set((data ?? []).filter((entry) => !entry.subtask_id).map((entry) => entry.task_id));
+    const claimedSubtaskIds = new Set((data ?? []).map((entry) => entry.subtask_id).filter((value): value is string => Boolean(value)));
     return {
-      eligible: candidates.filter((candidate) => !claimedTaskIds.has(candidate.task.id)),
-      ineligible: candidates.filter((candidate) => claimedTaskIds.has(candidate.task.id)),
+      eligible: candidates.filter((candidate) => {
+        const subtaskId = candidate.claimRef?.subtaskId ?? null;
+        if (subtaskId) {
+          return !claimedSubtaskIds.has(subtaskId);
+        }
+        return !claimedTaskIds.has(candidate.task.id);
+      }),
+      ineligible: candidates.filter((candidate) => {
+        const subtaskId = candidate.claimRef?.subtaskId ?? null;
+        if (subtaskId) {
+          return claimedSubtaskIds.has(subtaskId);
+        }
+        return claimedTaskIds.has(candidate.task.id);
+      }),
       rewardDate,
     };
   }
@@ -151,14 +220,26 @@ export function useTaskRewardController({
         return null;
       }
 
-      return buildSingleTaskReward(candidates.map((candidate) => candidate.task), (data ?? []) as DbTaskHistory[], rewardDate);
+      const pendingReward = buildSingleTaskReward(candidates.map((candidate) => candidate.task), (data ?? []) as DbTaskHistory[], rewardDate);
+      if (!pendingReward) {
+        return null;
+      }
+
+      const claimRef = candidates[0]?.claimRef;
+      return claimRef
+        ? { ...pendingReward, claimRefs: [claimRef] }
+        : pendingReward;
     }
 
     return buildBatchTaskReward(candidates.map((candidate) => candidate.task), rewardDate);
   }
 
   async function queueTaskRewards(candidates: TaskRewardCandidate[]) {
-    const newlyCompleted = candidates.filter((candidate) => isNewRewardCompletion(candidate.previousStatus, candidate.task.status));
+    const newlyCompleted = candidates.filter((candidate) =>
+      candidate.claimRef?.subtaskId
+        ? true
+        : isNewRewardCompletion(candidate.previousStatus, candidate.task.status),
+    );
     if (newlyCompleted.length === 0) {
       return;
     }
@@ -201,11 +282,12 @@ export function useTaskRewardController({
         awardedXp: resolution.xp,
         basePoints: resolution.basePoints,
         baseRolls: resolution.baseRolls,
+        claimRefs: resolution.claimRefs.map((claimRef) => ({ subtaskId: claimRef.subtaskId, taskId: claimRef.taskId })),
         finalPoints: resolution.finalPoints,
         mode: resolution.mode,
         multiplierRoll: resolution.multiplierRoll,
         reason: resolution.mode === "single"
-          ? `Task reward roll: ${resolution.tasks[0]?.title ?? "Completed task"}`
+          ? `Task reward roll: ${resolution.claimRefs[0]?.title ?? resolution.tasks[0]?.title ?? "Completed task"}`
           : `Batch reward roll for ${resolution.tasks.length} tasks`,
         refId: primaryTaskId ?? currentUserId ?? "task-reward",
         rewardDate: resolution.rewardDate,
@@ -219,8 +301,8 @@ export function useTaskRewardController({
         return false;
       }
 
-      await finalizeRecurringTasks(resolution.tasks);
       setPendingRewardQueue((current) => current.slice(1));
+      await finalizeRecurringTasks(resolution.tasks);
       setMessage({
         tone: "good",
         text: `Reward claimed: +${resolution.finalPoints} points, +${resolution.xp} XP, +${resolution.awardedTokens} token${resolution.awardedTokens === 1 ? "" : "s"}.`,

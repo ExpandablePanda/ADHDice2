@@ -4,13 +4,14 @@ import type {
   AgentPlanSubtaskItem,
   AgentPlanTaskItem,
 } from "@/components/ui/agent-plan";
-import type { Task, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory as DbTaskHistory, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskBucketContext } from "@/lib/task-buckets";
 import { getTaskBucket, isTaskOpen } from "@/lib/task-buckets";
 import { formatTaskDueLabel, getListPriorityLabel, isOverdue } from "@/lib/task-cockpit";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import { formatActualSecondsLabel, formatRepeatSummary } from "@/lib/task-formatting";
+import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
 
 function formatEnergyLabel(value: string) {
   return value
@@ -38,7 +39,7 @@ function isClosedSubtaskStatus(status: TaskSubtaskStatus) {
 }
 
 export function toAgentPlanStatus(status: TaskStatus | TaskSubtaskStatus): AgentPlanStatus {
-  if (status === "in_progress" || status === "done" || status === "missed" || status === "did_my_best" || status === "upcoming" || status === "not_due") {
+  if (status === "in_progress" || status === "done" || status === "missed" || status === "did_my_best" || status === "upcoming" || status === "not_due" || status === "archived") {
     return status;
   }
 
@@ -221,8 +222,12 @@ export function buildAgentPlanTaskItem(
     listDefinitions: TaskListDefinition[];
     listMemberships: Array<{ id: string; isManual: boolean }>;
     subtasks: DbTaskSubtask[];
+    taskHistory: DbTaskHistory[];
+    todayDateKey: string;
   },
 ): AgentPlanTaskItem {
+  const taskHistoryStats = computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
+
   return {
     actualSeconds: task.actual_seconds ?? 0,
     bucket: getTaskBucket(task, context.bucketContext),
@@ -236,6 +241,7 @@ export function buildAgentPlanTaskItem(
     isImportant: task.is_important,
     isUrgent: task.is_urgent,
     createdAt: task.created_at,
+    updatedAt: task.updated_at,
     linkedNotes: context.linkedNotes.map((note) => ({
       body: note.body,
       id: note.id,
@@ -259,7 +265,13 @@ export function buildAgentPlanTaskItem(
     metaPills: buildAgentPlanMetaPills(task, context.subtasks, context),
     notes: task.notes ?? "",
     rowChips: buildAgentPlanRowChips(task, context.subtasks, context),
+    currentStreak: taskHistoryStats.currentStreak,
+    missedStreak: taskHistoryStats.missedStreak,
     repeatFrequency: task.repeat_frequency,
+    repeatInterval: Math.max(1, task.repeat_interval ?? 1),
+    repeatDaysOfWeek: task.repeat_days_of_week ?? [],
+    repeatDayOfMonth: task.repeat_day_of_month ?? null,
+    subtasksAutoReset: task.subtasks_auto_reset ?? false,
     status: toAgentPlanStatus(task.status),
     subtasks: buildAgentPlanSubtaskItems(context.subtasks),
     tags: task.tags ?? [],

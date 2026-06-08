@@ -13,6 +13,7 @@ type Message = {
 type SaveTaskEditorOptions = {
   focusToday?: boolean;
   linkedNoteIds?: string[];
+  sortOrder?: number;
   subtasks?: TaskSubtaskDraft[];
   taskId?: string | null;
 };
@@ -64,6 +65,7 @@ export function useTaskEditorSaveAction({
   async function saveTaskEditor(values: TaskDraft, options?: SaveTaskEditorOptions) {
     const focusToday = options?.focusToday ?? false;
     const linkedNoteIds = options?.linkedNoteIds ?? [];
+    const sortOrder = options?.sortOrder ?? Date.now();
     const taskId = options?.taskId ?? null;
     const subtasks = options?.subtasks ?? [];
     const isEditing = Boolean(taskId);
@@ -78,12 +80,12 @@ export function useTaskEditorSaveAction({
 
       if (error) {
         setMessage({ tone: "warn", text: error.message });
-        return false;
+        return null;
       }
 
       if (!data) {
         setMessage({ tone: "warn", text: "Task saved, but Supabase did not return the updated task row." });
-        return false;
+        return null;
       }
 
       const nextData = usedActualSecondsFallback && typeof updateValues.actual_seconds === "number"
@@ -120,23 +122,23 @@ export function useTaskEditorSaveAction({
           ? "Your database is missing nested-subtask support, so subtasks were saved as a flat list. Run the subtask parent migration to enable nesting."
           : usedActualSecondsFallback
             ? "Manual time was saved, but your database is missing the task actual-time column. Run the actual-seconds migration to persist Actual Time on tasks."
-          : usedEnergyFallback
-            ? "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run `supabase/add_task_energy_none.sql` to enable \"none\"."
+            : usedEnergyFallback
+              ? "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run `supabase/add_task_energy_none.sql` to enable \"none\"."
             : "Task updated.",
       });
-      return true;
+      return nextData;
     }
 
     const payload = {
       ...values,
       user_id: currentUserId,
-      sort_order: Date.now(),
+      sort_order: sortOrder,
     };
     const { data, error, usedEnergyFallback } = await insertTaskRowWithLegacyEnergyFallback(payload);
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
-      return false;
+      return null;
     }
 
     if (data) {
@@ -145,7 +147,7 @@ export function useTaskEditorSaveAction({
 
     if (!data?.id) {
       setMessage({ tone: "warn", text: "Task saved, but the new task id was missing." });
-      return false;
+      return null;
     }
 
     const historySaved = await syncTaskHistoryEntry(data.id, data.status);
@@ -181,7 +183,7 @@ export function useTaskEditorSaveAction({
           ? "Your database is missing the newer \"none\" energy level, so this task was saved with low energy instead. Run `supabase/add_task_energy_none.sql` to enable \"none\"."
           : "Task saved.",
     });
-    return true;
+    return data;
   }
 
   return { saveTaskEditor };

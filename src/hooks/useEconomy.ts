@@ -5,6 +5,7 @@ import type {
   TaskRewardMode,
   TaskRewardRollInsert,
 } from "@/lib/database.types";
+import { getLevelFromXp, getLevelUpsEarned } from "@/lib/economy-levels";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -31,6 +32,7 @@ export type CommitTaskRewardOpts = {
   awardedXp: number;
   basePoints: number;
   baseRolls: number[];
+  claimRefs: Array<{ subtaskId: string | null; taskId: string }>;
   finalPoints: number;
   mode: TaskRewardMode;
   multiplierRoll: number;
@@ -41,14 +43,6 @@ export type CommitTaskRewardOpts = {
   streakTierLabel: string | null;
   taskIds: string[];
 };
-
-function getLevelFromXp(xp: number) {
-  let level = 1;
-  while (xp >= level * 100) {
-    level += 1;
-  }
-  return level;
-}
 
 function isFetchFailure(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
@@ -71,24 +65,31 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
     try {
       const { data: profile } = await client
         .from("adhdice_user_profiles")
-        .select("points, xp, level, tokens")
+        .select("points, xp, level, tokens, free_roll_bank")
         .eq("user_id", userId)
         .single();
 
       const currentPoints = profile?.points ?? 0;
       const currentXp = profile?.xp ?? 0;
+      const currentTokens = profile?.tokens ?? 0;
+      const currentFreeRollBank = profile?.free_roll_bank ?? 0;
       const newPoints = currentPoints + opts.points;
       const newXp = currentXp + opts.xp;
       const newLevel = getLevelFromXp(newXp);
+      const levelUpsEarned = getLevelUpsEarned(currentXp, newXp);
+      const newTokens = currentTokens + levelUpsEarned;
+      const newFreeRollBank = currentFreeRollBank + levelUpsEarned;
 
       await client.from("adhdice_user_profiles").upsert({
+        free_roll_bank: newFreeRollBank,
         user_id: userId,
         points: newPoints,
         xp: newXp,
         level: newLevel,
+        tokens: newTokens,
       });
 
-      setEconomy({ level: newLevel, xp: newXp, points: newPoints, tokens: profile?.tokens ?? 0 });
+      setEconomy({ level: newLevel, xp: newXp, points: newPoints, tokens: newTokens });
 
       await client.from("adhdice_point_ledger").insert({
         user_id: userId,
@@ -124,7 +125,7 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
     try {
       const { data: profile, error: profileError } = await client
         .from("adhdice_user_profiles")
-        .select("points, xp, level, tokens")
+        .select("points, xp, level, tokens, free_roll_bank")
         .eq("user_id", userId)
         .single();
 
@@ -135,10 +136,13 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
       const currentPoints = profile?.points ?? 0;
       const currentXp = profile?.xp ?? 0;
       const currentTokens = profile?.tokens ?? 0;
+      const currentFreeRollBank = profile?.free_roll_bank ?? 0;
       const newPoints = currentPoints + opts.finalPoints;
       const newXp = currentXp + opts.awardedXp;
-      const newTokens = currentTokens + opts.awardedTokens;
       const newLevel = getLevelFromXp(newXp);
+      const levelUpsEarned = getLevelUpsEarned(currentXp, newXp);
+      const newTokens = currentTokens + opts.awardedTokens + levelUpsEarned;
+      const newFreeRollBank = currentFreeRollBank + levelUpsEarned;
 
       const rewardRollPayload: TaskRewardRollInsert = {
         awarded_tokens: opts.awardedTokens,
@@ -164,16 +168,23 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
         return false;
       }
 
-      const rewardClaimPayload: TaskRewardClaimInsert[] = opts.taskIds.map((taskId) => ({
-        awarded_token: true,
-        reward_date: opts.rewardDate,
-        reward_roll_id: rewardRoll.id,
-        task_id: taskId,
-        user_id: userId,
-      }));
+      const rewardClaimPayload: TaskRewardClaimInsert[] = opts.claimRefs.map((claimRef) => {
+        const basePayload: TaskRewardClaimInsert = {
+          awarded_token: true,
+          reward_date: opts.rewardDate,
+          reward_roll_id: rewardRoll.id,
+          task_id: claimRef.taskId,
+          user_id: userId,
+        };
+
+        return claimRef.subtaskId
+          ? { ...basePayload, subtask_id: claimRef.subtaskId }
+          : basePayload;
+      });
 
       const [profileUpdate, ledgerInsert, rewardClaimInsert] = await Promise.all([
         client.from("adhdice_user_profiles").upsert({
+          free_roll_bank: newFreeRollBank,
           user_id: userId,
           level: newLevel,
           points: newPoints,
@@ -214,6 +225,7 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
       .from("adhdice_user_profiles")
       .upsert({
         user_id: userId,
+        free_roll_bank: 0,
         level: 1,
         xp: 0,
         points: 0,

@@ -15,7 +15,7 @@ export function buildTaskCollections(
   const filteredUrgentTasks = filteredActiveTasks.filter(isTaskUrgent);
   const filteredFocusTasks = filteredActiveTasks.filter((task) => focusedTaskIds.includes(task.id));
   const filteredLowEnergyTasks = filteredActiveTasks.filter((task) => task.energy === "low").slice(0, 4);
-  const filteredTodayTasks = filteredActiveTasks.filter((task) => isDueToday(task.due_on));
+  const filteredTodayTasks = filteredActiveTasks.filter((task) => task.status !== "missed" && isDueToday(task.due_on));
 
   const withMembership = (membershipId: string) =>
     tasks.filter((task) => taskMembershipsByTaskId[task.id]?.some((membership) => membership.id === membershipId));

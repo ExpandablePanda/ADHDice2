@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpen, CircleX, Clock, Ellipsis, Star } from "lucide-react";
+import { ArrowRight, BookOpen, Clock, Ellipsis, Star, X } from "lucide-react";
 import type { TaskStatus } from "@/lib/database.types";
 import { formatOptionLabel } from "@/lib/task-label-format";
 
@@ -14,7 +14,7 @@ export function renderTaskStatusIcon(status: TaskStatus) {
     case "done":
       return <span className="text-sm font-bold leading-none">✓</span>;
     case "missed":
-      return <CircleX className={iconClassName} />;
+      return <X className={`${iconClassName} translate-y-[0.5px]`} strokeWidth={2.6} />;
     case "did_my_best":
       return <Star className={iconClassName} />;
     case "upcoming":

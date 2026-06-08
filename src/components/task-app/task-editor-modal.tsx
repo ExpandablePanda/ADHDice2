@@ -1,7 +1,7 @@
 "use client";
 
 import type { User } from "@supabase/supabase-js";
-import { AlertCircle, BarChart2, Brain, Clock, Footprints, Star, Trash2 } from "lucide-react";
+import { AlertCircle, Brain, CalendarDays, Clock, Footprints, Star, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ManualEntryModal } from "../focus-modals";
@@ -37,7 +37,7 @@ import {
   TagChipInput,
   ToggleField,
 } from "./task-editor-fields";
-import { TASK_STATUS_CHIP_STYLES, renderTaskStatusChip, renderTaskStatusCircle } from "./task-status-ui";
+import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "./task-status-ui";
 
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "weekly", "monthly", "custom"];
@@ -125,8 +125,8 @@ function SubtaskRow({ depth, onAddChild, onRemove, onUpdate, subtask }: {
                   }}
                   type="button"
                 >
-                  {renderSubtaskStatusIcon(option.status)}
-                  <span>{option.label}</span>
+                  {renderTaskStatusCircle(option.status, "sm")}
+                  <span>{formatTaskStatusLabel(option.status)}</span>
                 </button>
               ))}
             </div>
@@ -184,9 +184,7 @@ function NoteLinkPicker({
     <div className="grid gap-2">
       <div className="flex flex-wrap gap-2">
         <button
-          className={`rounded-full px-3 py-1.5 text-sm font-semibold ${isOpen
-            ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-            : "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"}`}
+          className={isOpen ? "ui-pill-button-strong-light" : "ui-pill-button-light"}
           onClick={() => setIsOpen((current) => !current)}
           type="button"
         >
@@ -194,7 +192,7 @@ function NoteLinkPicker({
         </button>
         {linkedNotes.map((note) => (
           <button
-            className="rounded-full bg-[#f6f1ff] px-3 py-1.5 text-sm font-semibold text-[#6f57f6] dark:bg-white/8 dark:text-[#cabfff]"
+            className="ui-pill-button-light"
             key={note.id}
             onClick={() => onToggle(note.id)}
             type="button"
@@ -481,9 +479,7 @@ export function TaskEditorModal({
       <div className={`sticky top-0 z-10 flex items-center gap-3 px-5 py-4 bg-white border-b border-[#ece8f8] dark:bg-[#171328] dark:border-b dark:border-white/10`}>
         <span className={`flex-1 text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]`}>{isEditing ? "Edit Task" : "New Task"}</span>
         <button
-          className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${draft.oneStepAtATime
-            ? "border-[#6f57f6] bg-[#f2edff] text-[#6f57f6] dark:border-[#cabfff] dark:bg-[#22193f] dark:text-[#cabfff]"
-            : "border-[#e5e0f5] text-[#b0aac8] dark:border-white/15 dark:text-white/35"}`}
+          className={draft.oneStepAtATime ? "ui-pill-button-strong-light" : "ui-pill-button-light"}
           onClick={() => setDraft((c) => ({ ...c, oneStepAtATime: !c.oneStepAtATime }))}
           type="button"
         >
@@ -497,7 +493,7 @@ export function TaskEditorModal({
             title="Task history"
             type="button"
           >
-            <BarChart2 className="h-4 w-4" />
+            <CalendarDays className="h-4 w-4" />
           </button>
         ) : null}
         {isEditing ? (
@@ -612,9 +608,7 @@ export function TaskEditorModal({
                         <div className="flex flex-wrap gap-2">
                           {estimatedTimePresets.map((preset) => (
                             <button
-                              className={`rounded-full border px-3 py-2 text-sm font-semibold transition-colors ${draft.estimatedMinutes === preset.minutes
-                                ? "border-transparent bg-[#6f57f6] text-white dark:border-transparent dark:bg-[#cabfff] dark:text-[#1a1431]"
-                                : "border-[#e5e0f5] bg-white text-[#5a607a] hover:border-[#c4b8ff] dark:border-white/15 dark:bg-white/8 dark:text-white/70 dark:hover:border-white/30"}`}
+                              className={draft.estimatedMinutes === preset.minutes ? "ui-pill-button-strong-light" : "ui-pill-button-light"}
                               key={preset.label}
                               onClick={() => {
                                 setDraft((c) => ({ ...c, estimatedMinutes: c.estimatedMinutes === preset.minutes ? "" : preset.minutes }));
@@ -923,7 +917,7 @@ export function TaskEditorModal({
               value={subtaskMultiAdd}
             />
             <button
-              className={`self-end rounded-[1rem] px-4 py-2.5 text-sm font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`}
+              className="ui-pill-button-strong-light self-end"
               onClick={() => {
                 const next = pendingSubtaskLines;
                 if (!next.length) return;

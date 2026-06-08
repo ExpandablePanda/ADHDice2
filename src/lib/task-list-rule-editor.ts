@@ -1,24 +1,38 @@
 import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
-import type { TaskListRule, TaskListRuleGroup } from "@/lib/task-lists";
+import type { TaskListId, TaskListRule, TaskListRuleConnector, TaskListRuleGroup, TaskListRuleRow } from "@/lib/task-lists";
 import { formatOptionLabel } from "@/lib/task-label-format";
 
 export type TaskListRuleField = TaskListRule["field"];
 export type TaskListRuleRowOperator = TaskListRule["op"];
+type TaskListRuleStreakValue = Extract<TaskListRule, { field: "streak" }>["value"];
 
-const EMPTY_TASK_LIST_RULE_GROUP: TaskListRuleGroup = { combinator: "all", rules: [] };
+const EMPTY_TASK_LIST_RULE_GROUP: TaskListRuleGroup = { rules: [] };
 
 export function normalizeTaskListRuleGroup(group: TaskListRuleGroup | null): TaskListRuleGroup {
-  return group ? { combinator: group.combinator, rules: [...group.rules] } : { ...EMPTY_TASK_LIST_RULE_GROUP, rules: [] };
+  return group
+    ? {
+      rules: group.rules.map((entry, index) => ({
+        connector: index === 0 ? undefined : entry.connector === "or" ? "or" : "and",
+        rule: entry.rule,
+      })),
+    }
+    : { ...EMPTY_TASK_LIST_RULE_GROUP, rules: [] };
 }
 
 export function createDefaultTaskListRule(field: TaskListRuleField = "status"): TaskListRule {
   switch (field) {
+    case "list":
+      return { field: "list", op: "is", value: "inbox" };
+    case "steps":
+      return { field: "steps", op: "is", value: true };
     case "date_added":
       return { field: "date_added", op: "is_today" };
     case "due":
       return { field: "due", op: "is_today" };
     case "energy":
       return { field: "energy", op: "is", value: ["medium"] };
+    case "streak":
+      return { field: "streak", op: "is", value: "over_0" };
     case "focus":
       return { field: "focus", op: "is", value: true };
     case "is_urgent":
@@ -38,19 +52,35 @@ export function getTaskListRuleOperator(rule: TaskListRule): TaskListRuleRowOper
 }
 
 export function taskListRuleNeedsValue(rule: TaskListRule) {
-  return rule.field === "status" || rule.field === "energy";
+  return rule.field === "status" || rule.field === "energy" || rule.field === "streak" || rule.field === "list";
 }
 
 export function normalizeTaskListRuleValues<T extends string>(value: T | T[]) {
   return Array.isArray(value) ? value : [value];
 }
 
-export function formatTaskListRule(rule: TaskListRule) {
+export function formatTaskListRule(rule: TaskListRule, resolveListLabel?: (listId: TaskListId) => string) {
   switch (rule.field) {
     case "status":
       return `Status ${rule.op === "is" ? "is" : "isn't"} ${normalizeTaskListRuleValues(rule.value).map((entry) => formatOptionLabel(entry)).join(" or ")}`;
+    case "list":
+      return `List ${rule.op === "is" ? "is" : "isn't"} ${formatTaskListIdLabel(rule.value, resolveListLabel)}`;
+    case "steps":
+      return `Steps ${rule.op === "is" ? "has steps" : "doesn't have steps"}`;
     case "energy":
       return `Energy ${rule.op === "is" ? "is" : "isn't"} ${normalizeTaskListRuleValues(rule.value).map((entry) => formatOptionLabel(entry)).join(" or ")}`;
+    case "streak": {
+      const label = rule.value === "0"
+        ? "0"
+        : rule.value === "over_0"
+          ? "over 0"
+          : rule.value === "over_7"
+            ? "over 7"
+            : rule.value === "over_14"
+              ? "over 14"
+              : "over 30";
+      return `Streak ${rule.op === "is" ? "is" : "isn't"} ${label}`;
+    }
     case "focus":
       return `Focus ${rule.op === "is" ? "is on" : "is off"}`;
     case "is_urgent":
@@ -73,11 +103,14 @@ export function formatTaskListRule(rule: TaskListRule) {
   }
 }
 
-export function summarizeTaskListRules(group: TaskListRuleGroup | null) {
+export function summarizeTaskListRules(group: TaskListRuleGroup | null, resolveListLabel?: (listId: TaskListId) => string) {
   if (!group || group.rules.length === 0) {
     return "No rules yet.";
   }
-  const summary = group.rules.slice(0, 2).map(formatTaskListRule).join(group.combinator === "all" ? " and " : " or ");
+  const summary = group.rules
+    .slice(0, 2)
+    .map((entry, index) => `${index === 0 ? "" : `${entry.connector === "or" ? "or" : "and"} `}${formatTaskListRule(entry.rule, resolveListLabel)}`)
+    .join(" ");
   return group.rules.length > 2 ? `${summary}, +${group.rules.length - 2} more` : summary;
 }
 
@@ -95,9 +128,24 @@ export function updateTaskListRuleOperator(rule: TaskListRule, operator: TaskLis
         return { field: "status", op: operator, value: rule.value };
       }
       return rule;
+    case "list":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "list", op: operator, value: rule.value };
+      }
+      return rule;
+    case "steps":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "steps", op: operator, value: true };
+      }
+      return rule;
     case "energy":
       if (operator === "is" || operator === "is_not") {
         return { field: "energy", op: operator, value: rule.value };
+      }
+      return rule;
+    case "streak":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "streak", op: operator, value: rule.value };
       }
       return rule;
     case "focus":
@@ -159,5 +207,67 @@ export function updateTaskListRuleValue(rule: TaskListRule, value: string): Task
       : [...currentValues, nextValue];
     return { ...rule, value: nextValues.length > 0 ? nextValues : [nextValue] };
   }
+  if (rule.field === "streak") {
+    return { ...rule, value: value as TaskListRuleStreakValue };
+  }
+  if (rule.field === "list") {
+    return { ...rule, value: value as TaskListId };
+  }
   return rule;
+}
+
+function formatTaskListIdLabel(listId: TaskListId, resolveListLabel?: (listId: TaskListId) => string) {
+  const resolvedLabel = resolveListLabel?.(listId);
+  if (resolvedLabel) {
+    return resolvedLabel;
+  }
+  if (listId.startsWith("list:")) {
+    return "Custom list";
+  }
+  return listId
+    .split("_")
+    .map((entry) => entry.charAt(0).toUpperCase() + entry.slice(1))
+    .join(" ");
+}
+
+export function createTaskListRuleRow(rule: TaskListRule = createDefaultTaskListRule()): TaskListRuleRow {
+  return {
+    rule,
+  };
+}
+
+export function appendTaskListRuleRow(group: TaskListRuleGroup, connector: TaskListRuleConnector = "and") {
+  const nextRule = createTaskListRuleRow();
+  return {
+    rules: [
+      ...group.rules,
+      group.rules.length === 0 ? nextRule : { connector, rule: nextRule.rule },
+    ],
+  } satisfies TaskListRuleGroup;
+}
+
+export function updateTaskListRuleRow(group: TaskListRuleGroup, rowIndex: number, rule: TaskListRule) {
+  return {
+    rules: group.rules.map((entry, index) => index === rowIndex ? { ...entry, rule } : entry),
+  } satisfies TaskListRuleGroup;
+}
+
+export function updateTaskListRuleRowConnector(group: TaskListRuleGroup, rowIndex: number, connector: TaskListRuleConnector) {
+  return {
+    rules: group.rules.map((entry, index) => {
+      if (index !== rowIndex) {
+        return entry;
+      }
+      return {
+        ...entry,
+        connector: index === 0 ? undefined : connector,
+      };
+    }),
+  } satisfies TaskListRuleGroup;
+}
+
+export function removeTaskListRuleRow(group: TaskListRuleGroup, rowIndex: number) {
+  return normalizeTaskListRuleGroup({
+    rules: group.rules.filter((_, index) => index !== rowIndex),
+  });
 }

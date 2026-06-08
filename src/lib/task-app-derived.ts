@@ -15,7 +15,7 @@ import type {
   TaskListDefinition,
   TaskListEvaluationContext,
 } from "./task-lists";
-import { buildTaskListCounts, evaluateTaskListMemberships } from "./task-lists";
+import { evaluateTaskListMemberships } from "./task-lists";
 import { isTaskFinished, isTaskOpen, isTaskUrgent } from "./task-buckets";
 import { isDueToday, isOverdue } from "./task-cockpit";
 
@@ -58,6 +58,16 @@ export function computeTaskAppDerivedData({
   taskUiState,
   tasks,
 }: ComputeTaskAppDerivedDataInput) {
+  const recentTrashFloor = Date.now() - (30 * 24 * 60 * 60 * 1000);
+  const recentlyDeletedTasks = tasks.filter((task) => {
+    if (task.status !== "archived") {
+      return false;
+    }
+
+    const updatedAtMs = new Date(task.updated_at).getTime();
+    return Number.isFinite(updatedAtMs) && updatedAtMs >= recentTrashFloor;
+  });
+  const visibleTasks = tasks.filter((task) => task.status !== "archived");
   const taskLinkedNotesByTaskId = availableTaskNotes.reduce<Record<string, TaskEditorLinkedNote[]>>((accumulator, note) => {
     for (const taskId of note.linked_task_ids) {
       if (!accumulator[taskId]) {
@@ -68,11 +78,11 @@ export function computeTaskAppDerivedData({
     return accumulator;
   }, {});
 
-  const allTaskTags = [...new Set(tasks.flatMap((task) => task.tags ?? []))].sort();
-  const activeTasks = tasks.filter(isTaskOpen);
-  const doneTasks = tasks.filter(isTaskFinished);
+  const allTaskTags = [...new Set(visibleTasks.flatMap((task) => task.tags ?? []))].sort();
+  const activeTasks = visibleTasks.filter(isTaskOpen);
+  const doneTasks = visibleTasks.filter(isTaskFinished);
   const overdueTasks = activeTasks.filter((task) => isOverdue(task.due_on));
-  const todayTasks = activeTasks.filter((task) => isDueToday(task.due_on));
+  const todayTasks = activeTasks.filter((task) => task.status !== "missed" && isDueToday(task.due_on));
   const urgentFlaggedTasks = activeTasks.filter(isTaskUrgent);
   const lowEnergyTasks = activeTasks.filter((task) => task.energy === "low").slice(0, 4);
   const urgentTasks = urgentFlaggedTasks.slice(0, 6);
@@ -90,9 +100,7 @@ export function computeTaskAppDerivedData({
     archived: 0,
   });
 
-  const filteredTasks = activePage !== "Tasks"
-    ? []
-    : tasks.filter((task) => {
+  const matchesTaskFilters = (task: Task) => {
       const subtaskTitles = (taskSubtasksByTaskId[task.id] ?? []).map((subtask) => subtask.title);
       const haystacks = [
         task.title,
@@ -115,9 +123,14 @@ export function computeTaskAppDerivedData({
       const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(task.status);
       const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
       return matchesQuickFilters && matchesStatus && matchesEnergy;
-    });
+    };
 
-  const filteredTasksSorted = activePage === "Tasks" ? sortTasksForCockpit(filteredTasks, bucketContext) : [];
+  const filteredTasksSorted = activePage === "Tasks"
+    ? sortTasksForCockpit(visibleTasks.filter(matchesTaskFilters), bucketContext)
+    : [];
+  const trashFilteredTasksSorted = activePage === "Tasks"
+    ? sortTasksForCockpit(recentlyDeletedTasks.filter(matchesTaskFilters), bucketContext)
+    : [];
   const taskListMembershipsByTaskId = activePage !== "Tasks"
     ? {}
     : filteredTasksSorted.reduce<Record<string, ReturnType<typeof evaluateTaskListMemberships>>>((accumulator, task) => {
@@ -126,15 +139,12 @@ export function computeTaskAppDerivedData({
     }, {});
   const visibleListCounts = activePage !== "Tasks"
     ? {}
-    : buildTaskListCounts(filteredTasksSorted, availableTaskLists, taskListEvaluationContext);
-  const selectedBucketTasks = activePage !== "Tasks"
-    ? []
-    : taskUiState.selectedBucket === "all"
-      ? filteredTasksSorted
-      : filteredTasksSorted.filter((task) =>
-        (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === taskUiState.selectedBucket),
-      );
-
+    : filteredTasksSorted.reduce<Record<string, number>>((accumulator, task) => {
+      for (const membership of taskListMembershipsByTaskId[task.id] ?? []) {
+        accumulator[membership.id] = (accumulator[membership.id] ?? 0) + 1;
+      }
+      return accumulator;
+    }, {});
   const collections = buildTaskCollections(filteredTasksSorted, taskListMembershipsByTaskId, focusedTaskIds);
   const planningCandidates = activePage !== "Tasks"
     ? []
@@ -186,6 +196,12 @@ export function computeTaskAppDerivedData({
         id: list.id,
         label: list.name,
       })),
+      {
+        count: trashFilteredTasksSorted.length,
+        description: "Tasks moved to trash in the last 30 days.",
+        id: "trash",
+        label: "Trash",
+      },
     ];
   const manualListOptions = activePage !== "Tasks"
     ? []
@@ -212,7 +228,8 @@ export function computeTaskAppDerivedData({
     momentumPercent,
     overdueTasks,
     planningCandidates,
-    selectedBucketTasks,
+    filteredTasksSorted,
+    trashFilteredTasksSorted,
     selectedTaskForEditor,
     taskForActualTimeEntry,
     taskLinkedNotesByTaskId,

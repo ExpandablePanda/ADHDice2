@@ -319,14 +319,14 @@ export function SessionFinishModal({
 
         <div className="mt-10 flex gap-4">
           <button
-            className="flex-1 py-4 font-bold transition hover:bg-white/5 ui-pill-button-light dark:bg-transparent dark:text-white dark:rounded-full"
+            className="ui-pill-button-light transition hover:bg-white/5 dark:bg-transparent dark:text-white dark:rounded-full"
             onClick={onCancel}
             type="button"
           >
             Discard
           </button>
           <button
-            className="flex-1 py-4 font-bold transition hover:scale-105 ui-pill-button-strong-light dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
+            className="ui-pill-button-strong-light transition hover:scale-105 dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
             onClick={() => onConfirm({ title, focusType, focusSubtype: focusSubtype.trim() || null, focusSubtype2: focusSubtype2.trim() || null, notes })}
             type="button"
           >
@@ -492,7 +492,7 @@ export function ManualEntryModal({
         <div className="mt-10 flex gap-4">
           {onClear ? (
             <button
-              className="py-4 px-5 font-bold transition rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] hover:bg-[#ffe6ea] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+              className="ui-pill-button-danger-light transition hover:bg-[#ffe6ea] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
               disabled={isSaving || isClearing}
               onClick={() => void clear()}
               type="button"
@@ -501,7 +501,7 @@ export function ManualEntryModal({
             </button>
           ) : null}
           <button
-            className="flex-1 py-4 font-bold transition hover:bg-white/5 ui-pill-button-light dark:bg-transparent dark:text-white dark:rounded-full"
+            className="ui-pill-button-light transition hover:bg-white/5 dark:bg-transparent dark:text-white dark:rounded-full"
             onClick={onClose}
             type="button"
             disabled={isSaving || isClearing}
@@ -509,7 +509,7 @@ export function ManualEntryModal({
             Cancel
           </button>
           <button
-            className="flex-1 py-4 font-bold transition hover:scale-105 ui-pill-button-strong-light dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
+            className="ui-pill-button-strong-light transition hover:scale-105 dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
             disabled={isSaving || isClearing || !title.trim() || !focusType.trim()}
             onClick={() => void submit()}
             type="button"

@@ -11,12 +11,12 @@ import {
   ChevronDown,
   ChevronRight,
   Circle,
-  CircleX,
   Ellipsis,
   Footprints,
   Clock,
   PenLine,
   Star,
+  X,
 } from "lucide-react";
 import { Fragment, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -27,7 +27,8 @@ export type AgentPlanStatus =
   | "missed"
   | "did_my_best"
   | "upcoming"
-  | "not_due";
+  | "not_due"
+  | "archived";
 
 export type AgentPlanMetaTone = "accent" | "danger" | "neutral" | "success" | "warning";
 
@@ -60,6 +61,7 @@ export type AgentPlanTaskItem = {
   isImportant: boolean;
   isUrgent: boolean;
   createdAt: string;
+  updatedAt: string;
   linkedNotes: Array<{
     body: string;
     id: string;
@@ -79,7 +81,13 @@ export type AgentPlanTaskItem = {
   metaPills: AgentPlanMetaPill[];
   notes: string;
   rowChips: AgentPlanMetaPill[];
+  currentStreak: number;
+  missedStreak: number;
   repeatFrequency: "none" | "daily" | "weekly" | "monthly" | "custom";
+  repeatInterval: number;
+  repeatDaysOfWeek: number[];
+  repeatDayOfMonth: number | null;
+  subtasksAutoReset: boolean;
   status: AgentPlanStatus;
   subtasks: AgentPlanSubtaskItem[];
   tags: string[];
@@ -211,6 +219,7 @@ function getDuePresetValueFromLabel(label: string): AgentPlanDuePreset | null {
 }
 
 const STATUS_LABELS: Record<AgentPlanStatus, string> = {
+  archived: "Archived",
   pending: "Pending",
   in_progress: "In Progress",
   done: "Done",
@@ -462,7 +471,7 @@ function StatusIcon({ status }: { status: AgentPlanStatus }) {
   if (status === "missed") {
     return (
       <span className="flex h-5 w-5 items-center justify-center rounded-full border border-[#d94e67] text-[#d94e67] dark:border-[#ff9eaf] dark:text-[#ff9eaf]">
-        <CircleX className="h-3.5 w-3.5" />
+        <X className="h-3.5 w-3.5 translate-y-[0.5px]" strokeWidth={2.6} />
       </span>
     );
   }
@@ -1566,28 +1575,28 @@ export default function AgentPlan({
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
-                    className={`rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff] ${FOCUS_RING_CLASS}`}
+                    className={`ui-pill-button-light transition ${FOCUS_RING_CLASS}`}
                     onClick={onSelectAllVisible}
                     type="button"
                   >
                     Select all visible
                   </button>
                   <button
-                    className={`rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff] ${FOCUS_RING_CLASS}`}
+                    className={`ui-pill-button-light transition ${FOCUS_RING_CLASS}`}
                     onClick={onClearTaskSelection}
                     type="button"
                   >
                     Clear selection
                   </button>
                   <button
-                    className={`rounded-full bg-[#6f57f6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff] ${FOCUS_RING_CLASS}`}
+                    className={`ui-pill-button-strong-light transition ${FOCUS_RING_CLASS}`}
                     onClick={onOpenBatchEdit}
                     type="button"
                   >
                     Edit selected
                   </button>
                   <button
-                    className={`rounded-full bg-[#fff1f3] px-3 py-1.5 text-sm font-semibold text-[#d94e67] transition hover:bg-[#ffe4e9] dark:bg-[#44232f] dark:text-[#ff9eaf] dark:hover:bg-[#56303c] ${FOCUS_RING_CLASS}`}
+                    className={`ui-pill-button-danger-light transition ${FOCUS_RING_CLASS}`}
                     onClick={onDeleteSelectedTasks}
                     type="button"
                   >
@@ -2034,7 +2043,7 @@ export default function AgentPlan({
                                               </div>
                                               <div className="flex w-full items-center justify-between gap-2">
                                                 <button
-                                                  className="rounded-full border border-[#e5e0f5] px-3 py-2 text-sm font-semibold text-[#5a607a] transition hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"
+                                                  className="ui-pill-button-light"
                                                   onClick={(event) => {
                                                     event.stopPropagation();
                                                     onSetTaskDueSchedule(task.id, { dueOn: null, dueTime: null });
@@ -2045,7 +2054,7 @@ export default function AgentPlan({
                                                   Clear
                                                 </button>
                                                 <button
-                                                  className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                                  className="ui-pill-button-strong-light"
                                                   onClick={(event) => {
                                                     event.stopPropagation();
                                                     onSetTaskDueSchedule(task.id, {
@@ -2180,7 +2189,7 @@ export default function AgentPlan({
                                         </div>
                                         <div className="mt-3 flex items-center justify-end gap-2">
                                           <button
-                                            className="rounded-full border border-[#e5e0f5] px-3 py-2 text-sm font-semibold text-[#5a607a] transition hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"
+                                            className="ui-pill-button-light"
                                             onClick={async (event) => {
                                               event.stopPropagation();
                                               await onSetTaskEstimatedMinutes(task.id, null);
@@ -2191,7 +2200,7 @@ export default function AgentPlan({
                                             Clear
                                           </button>
                                           <button
-                                            className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                            className="ui-pill-button-strong-light"
                                             onClick={async (event) => {
                                               event.stopPropagation();
                                               const hours = Number.parseInt(estimatedDraft.hours || "0", 10);
@@ -2294,7 +2303,7 @@ export default function AgentPlan({
                                             value={tagInput}
                                           />
                                           <button
-                                            className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                            className="ui-pill-button-strong-light"
                                             onClick={async (event) => {
                                               event.stopPropagation();
                                               await addTaskTag(task, tagInput);
@@ -2386,7 +2395,7 @@ export default function AgentPlan({
                                       <div className="absolute left-0 top-[calc(100%+0.45rem)] z-40 w-[min(22rem,calc(100vw-3rem))] rounded-[1.2rem] border border-[#ddd6fb] bg-white p-3 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
                                         {task.externalLinkUrl ? (
                                           <button
-                                            className="mb-3 rounded-full bg-[#f3efff] px-3 py-2 text-sm font-semibold text-[#6f57f6] transition hover:bg-[#e8e0ff] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2d2254]"
+                                            className="ui-pill-button-strong-light mb-3 transition"
                                             onClick={(event) => {
                                               event.stopPropagation();
                                               window.open(task.externalLinkUrl ?? "", "_blank", "noopener,noreferrer");
@@ -2429,7 +2438,7 @@ export default function AgentPlan({
                                         </div>
                                         <div className="mt-3 flex items-center justify-end gap-2">
                                           <button
-                                            className="rounded-full border border-[#e5e0f5] px-3 py-2 text-sm font-semibold text-[#5a607a] transition hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"
+                                            className="ui-pill-button-light"
                                             onClick={async (event) => {
                                               event.stopPropagation();
                                               await onSetTaskLink(task.id, { label: "", url: "" });
@@ -2440,7 +2449,7 @@ export default function AgentPlan({
                                             Clear
                                           </button>
                                           <button
-                                            className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                            className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-50"
                                             disabled={hasUrlError}
                                             onClick={async (event) => {
                                               event.stopPropagation();
@@ -2556,7 +2565,7 @@ export default function AgentPlan({
                                         </div>
                                         <div className="mt-3 flex items-center justify-end gap-2">
                                           <button
-                                            className="rounded-full border border-[#e5e0f5] px-3 py-2 text-sm font-semibold text-[#5a607a] transition hover:border-[#c4b8ff] dark:border-white/15 dark:text-white/70 dark:hover:border-white/30"
+                                            className="ui-pill-button-light"
                                             onClick={(event) => {
                                               event.stopPropagation();
                                               setNoteDrafts((current) => ({
@@ -2572,7 +2581,7 @@ export default function AgentPlan({
                                             Clear draft
                                           </button>
                                           <button
-                                            className="rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                                            className="ui-pill-button-strong-light"
                                             onClick={async (event) => {
                                               event.stopPropagation();
                                               await onSetTaskNotes(task.id, noteDraft.notes);

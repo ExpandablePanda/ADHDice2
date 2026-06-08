@@ -309,10 +309,18 @@ export type UserProfile = {
   display_name: string | null;
   avatar_src: string | null;
   logo_src: string | null;
+  accent_color: string | null;
+  day_start_time: string;
+  timezone: string;
+  focus_alarm_enabled: boolean;
+  focus_alarm_interval_minutes: number;
   level: number;
+  low_stim_mode: boolean;
   xp: number;
   points: number;
+  theme_preference: "light" | "dark";
   tokens: number;
+  free_roll_bank: number;
   created_at: string;
   updated_at: string;
 };
@@ -322,14 +330,22 @@ export type UserProfileInsert = {
   display_name?: string | null;
   avatar_src?: string | null;
   logo_src?: string | null;
+  accent_color?: string | null;
+  day_start_time?: string;
+  timezone?: string;
+  focus_alarm_enabled?: boolean;
+  focus_alarm_interval_minutes?: number;
   level?: number;
+  low_stim_mode?: boolean;
   xp?: number;
   points?: number;
+  theme_preference?: "light" | "dark";
   tokens?: number;
+  free_roll_bank?: number;
 };
 
 export type UserProfileUpdate = Partial<
-  Pick<UserProfile, "display_name" | "avatar_src" | "logo_src" | "level" | "xp" | "points" | "tokens">
+  Pick<UserProfile, "display_name" | "avatar_src" | "logo_src" | "accent_color" | "day_start_time" | "timezone" | "focus_alarm_enabled" | "focus_alarm_interval_minutes" | "level" | "low_stim_mode" | "xp" | "points" | "theme_preference" | "tokens" | "free_roll_bank">
 >;
 
 export type TaskEventType = "completed" | "missed" | "streak_bonus";
@@ -415,6 +431,7 @@ export type TaskRewardClaim = {
   id: string;
   user_id: string;
   task_id: string;
+  subtask_id: string | null;
   reward_roll_id: string;
   reward_date: string;
   awarded_token: boolean;
@@ -425,6 +442,7 @@ export type TaskRewardClaimInsert = {
   id?: string;
   user_id: string;
   task_id: string;
+  subtask_id?: string | null;
   reward_roll_id: string;
   reward_date: string;
   awarded_token?: boolean;
@@ -567,6 +585,37 @@ export type RollHistoryInsert = {
 
 export type RollRewardPoolTier = "small" | "big";
 
+export type RollPrizeBasketTier = "small" | "big" | "master";
+
+export type RollPrizeBasketEntry = {
+  id: string;
+  user_id: string;
+  prize_name: string;
+  prize_tier: RollPrizeBasketTier;
+  quantity: number;
+  source_label: string | null;
+  roll_result: number | null;
+  is_claimed: boolean;
+  claimed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RollPrizeBasketEntryInsert = {
+  id?: string;
+  user_id: string;
+  prize_name: string;
+  prize_tier: RollPrizeBasketTier;
+  quantity?: number;
+  source_label?: string | null;
+  roll_result?: number | null;
+  is_claimed?: boolean;
+};
+
+export type RollPrizeBasketEntryUpdate = Partial<
+  Pick<RollPrizeBasketEntry, "claimed_at" | "is_claimed" | "prize_name" | "prize_tier" | "quantity" | "roll_result" | "source_label">
+>;
+
 export type RollRewardPoolPrize = {
   id: string;
   user_id: string;
@@ -631,6 +680,36 @@ export type RollBoardAssignmentInsert = {
 
 export type RollBoardAssignmentUpdate = Partial<
   Pick<RollBoardAssignment, "prize_tier" | "prize_id">
+>;
+
+export type RollDailyBoardAssignmentTier = "small" | "big" | "master";
+
+export type RollDailyBoardAssignment = {
+  cell_number: number;
+  prize_tier: RollDailyBoardAssignmentTier;
+  prize_id: string;
+};
+
+export type RollDailyBoard = {
+  id: string;
+  user_id: string;
+  board_date: string;
+  assignments_json: string;
+  claimed_prize_keys: string[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type RollDailyBoardInsert = {
+  id?: string;
+  user_id: string;
+  board_date: string;
+  assignments_json: string;
+  claimed_prize_keys?: string[];
+};
+
+export type RollDailyBoardUpdate = Partial<
+  Pick<RollDailyBoard, "assignments_json" | "claimed_prize_keys">
 >;
 
 export type VaultPrizeTier = "small" | "big" | "master";
@@ -1204,6 +1283,18 @@ export type Database = {
         Row: RollHistoryEntry;
         Insert: RollHistoryInsert;
         Update: Record<string, never>;
+        Relationships: [];
+      };
+      adhdice_roll_prize_basket: {
+        Row: RollPrizeBasketEntry;
+        Insert: RollPrizeBasketEntryInsert;
+        Update: RollPrizeBasketEntryUpdate;
+        Relationships: [];
+      };
+      adhdice_roll_daily_boards: {
+        Row: RollDailyBoard;
+        Insert: RollDailyBoardInsert;
+        Update: RollDailyBoardUpdate;
         Relationships: [];
       };
       adhdice_roll_board_assignments: {

@@ -1,13 +1,15 @@
 "use client";
 
-import { Children, Fragment, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { Children, Fragment, startTransition, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   CalendarDays,
   ChevronDown,
   Clock3,
   CirclePause,
   CirclePlay,
+  Copy,
+  Flame,
   Footprints,
   Flag,
   Link2,
@@ -15,6 +17,7 @@ import {
   MoveLeft,
   Plus,
   Repeat2,
+  Skull,
   Sparkles,
   StickyNote,
   Tag,
@@ -22,8 +25,23 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import type { TaskActualTimeEntry, TaskStatus } from "@/lib/database.types";
-import { TASK_STATUS_CHIP_STYLES, renderTaskStatusChip, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
+import type { TaskActualTimeEntry, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
+import {
+  TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
+  TASK_TABLE_BODY_VALUE_CLASS as BODY_VALUE_CLASS,
+  TASK_TABLE_CHIP_BASE_CLASS as CHIP_BASE,
+  TASK_TABLE_CONTROL_FONT_CLASS as CONTROL_FONT_CLASS,
+  TASK_TABLE_HEADER_TEXT_CLASS as HEADER_TEXT_CLASS,
+  TASK_TABLE_INACTIVE_CHIP_CLASS as INACTIVE_CHIP_CLASS,
+  TASK_TABLE_INPUT_CLASS as OVERLAY_INPUT_CLASS,
+  TASK_TABLE_ACTIVE_LIST_CHIP_CLASS as ACTIVE_LIST_CHIP_CLASS,
+  TASK_TABLE_LIST_CHIP_CLASS as LIST_CHIP_CLASS,
+  TASK_TABLE_TAG_CHIP_CLASS as TAG_CHIP_CLASS,
+  TASK_TABLE_TEXT_CLASS as UNIFIED_TABLE_TEXT_CLASS,
+  TASK_TABLE_TITLE_CELL_CLASS as TITLE_CELL_CLASS,
+  TaskTableChipButton,
+} from "@/components/ui/task-table-primitives";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = "focus" | "important" | "urgent";
@@ -81,6 +99,7 @@ type OverlayMode = "actual" | "due" | "energy" | "estimated" | "full" | "link" |
 type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "tags";
 type MetadataPanelId = "actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type ColumnAlignment = "center" | "left" | "right";
+type RowContextMenuState = { left: number; taskId: string; top: number };
 export type RunningTaskTimer = { baseSeconds: number; pausedAt?: number | null; startedActualSeconds: number; startedAt: number; taskId: string; title: string };
 export type PrototypeTaskSubtask = {
   children: PrototypeTaskSubtask[];
@@ -108,6 +127,7 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
   return JSON.stringify(rows.map((row) => ({
     actualSeconds: row.actualSeconds,
     createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
     dueOn: row.dueOn,
     dueTime: row.dueTime,
     energy: row.energy,
@@ -119,7 +139,12 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     linkedNotes: row.linkedNotes,
     notes: row.notes,
     priorities: row.priorities,
+    currentStreak: row.currentStreak,
+    missedStreak: row.missedStreak,
     repeat: row.repeat,
+    repeatInterval: row.repeatInterval,
+    repeatDaysOfWeek: row.repeatDaysOfWeek,
+    repeatDayOfMonth: row.repeatDayOfMonth,
     status: row.status,
     subtasks: buildPrototypeSubtaskSignature(row.subtasks),
     tags: row.tags,
@@ -158,6 +183,19 @@ function collectAllPrototypeSubtaskIds(subtasks: PrototypeTaskSubtask[]): string
   return subtasks.flatMap((subtask) => [subtask.id, ...collectAllPrototypeSubtaskIds(subtask.children)]);
 }
 
+function normalizeTaskListLabel(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function taskHasList(task: PrototypeTaskRow, listLabel: string) {
+  const targetLabel = normalizeTaskListLabel(listLabel);
+  if (!targetLabel) {
+    return false;
+  }
+
+  return task.lists.some((entry) => normalizeTaskListLabel(entry) === targetLabel);
+}
+
 function CollapsibleOverlayCard({
   children,
   collapsed,
@@ -194,20 +232,24 @@ function CollapsibleOverlayCard({
 }
 
 function InlineSubtaskEditor({
+  autofocusSubtaskId,
   drafts,
   onAddChild,
+  onAutofocusHandled,
   onCommitTitle,
   onDelete,
   onDraftChange,
   onSetStatus,
   subtasks,
 }: {
+  autofocusSubtaskId?: string | null;
   drafts: Record<string, string>;
   onAddChild?: (subtaskId: string) => void;
+  onAutofocusHandled?: () => void;
   onCommitTitle?: (subtaskId: string) => void;
   onDelete?: (subtaskId: string) => void;
   onDraftChange: (subtaskId: string, value: string) => void;
-  onSetStatus?: (subtaskId: string, nextStatus: TaskStatus) => void;
+  onSetStatus?: (subtaskId: string, nextStatus: TaskSubtaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
 }) {
   return (
@@ -220,9 +262,15 @@ function InlineSubtaskEditor({
                 {renderTaskStatusCircle(subtask.status, "sm")}
               </div>
               <input
+                autoFocus={autofocusSubtaskId === subtask.id}
                 className={`min-w-0 flex-1 bg-transparent text-sm leading-6 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:text-white dark:placeholder:text-white/35 ${subtask.status === "done" ? "line-through opacity-60" : ""}`}
                 onBlur={() => onCommitTitle?.(subtask.id)}
                 onChange={(event) => onDraftChange(subtask.id, event.target.value)}
+                onFocus={() => {
+                  if (autofocusSubtaskId === subtask.id) {
+                    onAutofocusHandled?.();
+                  }
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
@@ -254,10 +302,10 @@ function InlineSubtaskEditor({
               {STATUS_OPTIONS.map((option, optionIndex) => (
                 <button
                   aria-label={`Set step status to ${option.label}`}
-                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full border transition ${
+                  className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${
                     subtask.status === option.value
-                      ? "border-[#cfc1ff] bg-[#f1ecff] shadow-[0_0_0_1px_rgba(111,87,246,0.08)] dark:border-[#6f57f6] dark:bg-[#22193f]"
-                      : "border-[#e6def8] bg-white text-[#8d87a7] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/40"
+                      ? "shadow-[0_0_0_1px_rgba(111,87,246,0.18)]"
+                      : "opacity-78 hover:opacity-100"
                   }`}
                   key={`${option.value || "step-status"}-${optionIndex}`}
                   onClick={() => onSetStatus?.(subtask.id, option.value)}
@@ -271,8 +319,10 @@ function InlineSubtaskEditor({
           {subtask.children.length > 0 ? (
             <div className="ml-5 border-l border-[#ede7f7] pl-3 dark:border-white/10">
               <InlineSubtaskEditor
+                autofocusSubtaskId={autofocusSubtaskId}
                 drafts={drafts}
                 onAddChild={onAddChild}
+                onAutofocusHandled={onAutofocusHandled}
                 onCommitTitle={onCommitTitle}
                 onDelete={onDelete}
                 onDraftChange={onDraftChange}
@@ -291,21 +341,33 @@ function TaskCellSubtaskTree({
   depth = 0,
   onAddChild,
   onDelete,
+  onSetStatus,
   subtasks,
 }: {
   depth?: number;
   onAddChild?: (subtaskId: string) => void;
   onDelete?: (subtaskId: string) => void;
+  onSetStatus?: (subtaskId: string, nextStatus: TaskSubtaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
 }) {
+  const [expandedStatusSubtaskId, setExpandedStatusSubtaskId] = useState<string | null>(null);
+
   return (
     <div className="space-y-1.5">
       {subtasks.map((subtask, subtaskIndex) => (
         <div className="space-y-1.5" key={`${subtask.id || "subtask"}-${subtaskIndex}`}>
           <div className="flex min-w-0 items-center gap-1.5">
-            <div className="flex h-5 w-5 flex-none items-center justify-center">
+            <button
+              aria-label={`Set step status for ${subtask.title}`}
+              className="flex h-5 w-5 flex-none items-center justify-center rounded-full transition hover:scale-105"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpandedStatusSubtaskId((current) => current === subtask.id ? null : subtask.id);
+              }}
+              type="button"
+            >
               {renderTaskStatusCircle(subtask.status, "sm")}
-            </div>
+            </button>
             <p className={`${TITLE_CELL_CLASS} min-w-0 whitespace-normal break-words leading-5 ${subtask.status === "done" ? "opacity-60 line-through" : ""}`}>
               {subtask.title}
             </p>
@@ -338,9 +400,32 @@ function TaskCellSubtaskTree({
               ) : null}
             </div>
           </div>
+          {expandedStatusSubtaskId === subtask.id && onSetStatus ? (
+            <div className="ml-[26px] flex flex-wrap gap-1.5">
+              {STATUS_OPTIONS.map((option, optionIndex) => (
+                <button
+                  aria-label={`Set step status to ${option.label}`}
+                  className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${
+                    subtask.status === option.value
+                      ? "shadow-[0_0_0_1px_rgba(111,87,246,0.18)]"
+                      : "opacity-78 hover:opacity-100"
+                  }`}
+                  key={`${subtask.id}-status-${option.value || "step-status"}-${optionIndex}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSetStatus(subtask.id, option.value);
+                    setExpandedStatusSubtaskId(null);
+                  }}
+                  type="button"
+                >
+                  {renderTaskStatusCircle(option.value, "sm")}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {subtask.children.length > 0 ? (
             <div className={`ml-[9px] border-l border-[#ede7f7] pl-4 dark:border-white/10 ${depth > 0 ? "mt-1" : ""}`}>
-              <TaskCellSubtaskTree depth={depth + 1} onAddChild={onAddChild} onDelete={onDelete} subtasks={subtask.children} />
+              <TaskCellSubtaskTree depth={depth + 1} onAddChild={onAddChild} onDelete={onDelete} onSetStatus={onSetStatus} subtasks={subtask.children} />
             </div>
           ) : null}
         </div>
@@ -352,6 +437,7 @@ function TaskCellSubtaskTree({
 export type PrototypeTaskRow = {
   actualSeconds: number;
   createdAt: string;
+  updatedAt: string;
   dueOn: string;
   dueTime: string;
   energy: TaskEnergy;
@@ -363,7 +449,13 @@ export type PrototypeTaskRow = {
   linkedNotes: Array<{ id: string; title: string }>;
   notes: string;
   priorities: TaskPriority[];
+  currentStreak: number;
+  missedStreak: number;
   repeat: TaskRepeat;
+  repeatInterval: number;
+  repeatDaysOfWeek: number[];
+  repeatDayOfMonth: number | null;
+  subtasksAutoReset: boolean;
   status: TaskStatus;
   subtasks: PrototypeTaskSubtask[];
   tags: string[];
@@ -384,10 +476,14 @@ type TaskManagementTableV2Props = {
   onOpenBatchDelete?: () => void;
   onOpenBatchEdit?: () => void;
   onOpenDeleteTask?: (taskId: string) => void;
+  onDuplicateTask?: (taskId: string) => void;
+  onRestoreTask?: (taskId: string) => void;
+  onOpenTaskHistory?: (taskId: string) => void;
   onOpenFocusTimer?: (taskId: string) => void;
   onOpenNote?: (noteId: string) => void;
   onOpenTaskActualTime?: (taskId: string, options?: { durationSeconds?: number; title?: string }) => void;
   onOpenTaskEditor?: (taskId: string) => void;
+  onLoadMoreRows?: () => void;
   onRequestedOpenTaskHandled?: (taskId: string) => void;
   onPreviousTaskTimer?: () => void;
   onNextTaskTimer?: () => void;
@@ -407,13 +503,14 @@ type TaskManagementTableV2Props = {
   onTaskPriorityChange?: (taskId: string, priorities: TaskPriority[]) => void;
   onRowClick?: (taskId: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
-  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat) => void;
+  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">) => void;
   onTaskStatusChange?: (taskId: string, status: TaskStatus) => void;
-  onTaskSubtaskAdd?: (taskId: string) => void;
-  onTaskSubtaskAddChild?: (subtaskId: string) => void;
+  onTaskSubtaskAdd?: (taskId: string) => string | null | Promise<string | null>;
+  onTaskSubtaskAddChild?: (subtaskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskDelete?: (subtaskId: string) => void;
   onTaskSubtaskRename?: (subtaskId: string, title: string) => void;
-  onTaskSubtaskStatusChange?: (subtaskId: string, status: TaskStatus) => void;
+  onTaskSubtaskStatusChange?: (subtaskId: string, status: TaskSubtaskStatus) => void;
+  onTaskSubtasksAutoResetChange?: (taskId: string, subtasksAutoReset: boolean) => void;
   onTaskTagsChange?: (taskId: string, tags: string[]) => void;
   onTaskTitleChange?: (taskId: string, title: string) => void;
   onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
@@ -428,6 +525,7 @@ type TaskManagementTableV2Props = {
   title?: string;
   visibleColumns?: TaskManagementTableColumnId[];
   activeTaskTimerIndex?: number;
+  hasMoreRows?: boolean;
   shrinkAllColumnsToken?: number;
 };
 
@@ -435,6 +533,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
   {
     actualSeconds: 1200,
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     dueOn: "",
     dueTime: "",
     energy: "low",
@@ -446,7 +545,13 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     linkedNotes: [{ id: "note-1", title: "Morning brief" }],
     notes: "Needs a lighter first pass before turning into a bigger work block.",
     priorities: ["focus"],
+    currentStreak: 1,
+    missedStreak: 0,
     repeat: "daily",
+    repeatInterval: 1,
+    repeatDaysOfWeek: [],
+    repeatDayOfMonth: null,
+    subtasksAutoReset: false,
     status: "pending",
     subtasks: [
       {
@@ -462,6 +567,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
   {
     actualSeconds: 300,
     createdAt: new Date(Date.now() - 3_600_000).toISOString(),
+    updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
     dueOn: offsetDate(1),
     dueTime: "09:00",
     energy: "medium",
@@ -473,7 +579,13 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     linkedNotes: [{ id: "note-2", title: "Client sync notes" }],
     notes: "Follow up with the client and tighten the timeline assumptions.",
     priorities: ["important", "urgent"],
+    currentStreak: 2,
+    missedStreak: 0,
     repeat: "weekly",
+    repeatInterval: 1,
+    repeatDaysOfWeek: [1],
+    repeatDayOfMonth: null,
+    subtasksAutoReset: false,
     status: "in_progress",
     subtasks: [
       {
@@ -496,6 +608,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
   {
     actualSeconds: 0,
     createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+    updatedAt: new Date(Date.now() - 86_400_000).toISOString(),
     dueOn: offsetDate(7),
     dueTime: "",
     energy: "none",
@@ -507,13 +620,22 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     linkedNotes: [],
     notes: "Custom cadence draft for a longer-term maintenance loop.",
     priorities: ["important"],
+    currentStreak: 0,
+    missedStreak: 1,
     repeat: "custom",
+    repeatInterval: 2,
+    repeatDaysOfWeek: [1, 3, 5],
+    repeatDayOfMonth: null,
+    subtasksAutoReset: false,
     status: "pending",
     subtasks: [],
     tags: ["ops", "maintenance"],
     title: "Maintenance cadence prototype",
   },
 ];
+
+const INITIAL_RENDERED_TASK_COUNT = 24;
+const RENDERED_TASK_BATCH_SIZE = 36;
 
 const TASK_TABLE_PREFERENCES_STORAGE_KEY = "adhdice-task-table-v2-preferences-v2";
 
@@ -612,6 +734,16 @@ const REPEAT_OPTIONS: Array<{ label: string; value: TaskRepeat }> = [
   { label: "Custom Cadence", value: "custom" },
 ];
 
+const REPEAT_WEEKDAY_OPTIONS = [
+  { label: "Sun", value: 0 },
+  { label: "Mon", value: 1 },
+  { label: "Tue", value: 2 },
+  { label: "Wed", value: 3 },
+  { label: "Thu", value: 4 },
+  { label: "Fri", value: 5 },
+  { label: "Sat", value: 6 },
+];
+
 const STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
   { label: "Pending", value: "pending" },
   { label: "In Progress", value: "in_progress" },
@@ -631,7 +763,6 @@ const DUE_PRESETS = [
 ];
 const ESTIMATED_TIME_PRESETS = [5, 10, 15, 20, 30, 45, 60];
 
-const CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
 const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   status_icon: 30,
   title: 220,
@@ -683,16 +814,6 @@ const COLUMN_WIDTH_BUFFER: Record<TaskManagementTableColumnId, number> = {
 const TABLE_FONT_STYLE = {
   fontFamily: "\"Avenir Next\", Manrope, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
 } as const;
-const CONTROL_FONT_CLASS = "[font-family:inherit]";
-const UNIFIED_TABLE_TEXT_CLASS = "text-[14px] font-medium normal-case tracking-normal";
-const HEADER_TEXT_CLASS = `${UNIFIED_TABLE_TEXT_CLASS} text-[#938ab8] dark:text-white/42`;
-const BODY_VALUE_CLASS = `${UNIFIED_TABLE_TEXT_CLASS} text-[#595378] dark:text-white/68`;
-const BODY_MUTED_VALUE_CLASS = `${UNIFIED_TABLE_TEXT_CLASS} text-[#80799c] dark:text-white/52`;
-const TITLE_CELL_CLASS = "text-[13px] font-medium leading-none tracking-normal text-[#7a7592] dark:text-white/58";
-const LIST_CHIP_CLASS = "border-[#ece7f5] bg-[#f7f5fb] text-[#7a7592] dark:border-white/8 dark:bg-white/[0.045] dark:text-white/58";
-const TAG_CHIP_CLASS = "border-[#e8defe] bg-[#f3eeff] text-[#7762f3] dark:border-[#3a2e63] dark:bg-[#21183d] dark:text-[#c7bcff]";
-const INACTIVE_CHIP_CLASS = "border border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60";
-const OVERLAY_INPUT_CLASS = `${CONTROL_FONT_CLASS} ${UNIFIED_TABLE_TEXT_CLASS} w-full rounded-[0.95rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35`;
 const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "status_icon", label: "Status", menuLabel: "Status", options: [{ id: "status_asc", label: "Status A-Z" }, { id: "status_desc", label: "Status Z-A" }] },
   { id: "title", label: "Task", menuLabel: "Task", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search tasks" },
@@ -907,6 +1028,77 @@ function dateAddedSortValue(task: PrototypeTaskRow) {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
+function getTrashDaysRemaining(updatedAt: string) {
+  const updatedAtMs = Date.parse(updatedAt);
+  if (Number.isNaN(updatedAtMs)) {
+    return null;
+  }
+
+  const expiresAtMs = updatedAtMs + (30 * 24 * 60 * 60 * 1000);
+  const remainingMs = expiresAtMs - Date.now();
+  if (remainingMs <= 0) {
+    return 0;
+  }
+
+  return Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
+}
+
+function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLButtonElement>) {
+  event.stopPropagation();
+}
+
+function TaskTitleDraftInput({
+  autoFocus = false,
+  className,
+  initialValue,
+  onCommit,
+  onDraftChange,
+  onDone,
+  taskId,
+}: {
+  autoFocus?: boolean;
+  className: string;
+  initialValue: string;
+  onCommit: (taskId: string) => void;
+  onDraftChange: (taskId: string, draft: string) => void;
+  onDone?: () => void;
+  taskId: string;
+}) {
+  const [draft, setDraft] = useState(initialValue);
+
+  useEffect(() => {
+    setDraft(initialValue);
+  }, [initialValue, taskId]);
+
+  return (
+    <input
+      autoFocus={autoFocus}
+      className={className}
+      onBlur={() => {
+        onDraftChange(taskId, draft);
+        onCommit(taskId);
+        onDone?.();
+      }}
+      onChange={(event) => {
+        const nextValue = event.target.value;
+        setDraft(nextValue);
+        onDraftChange(taskId, nextValue);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onDraftChange(taskId, draft);
+          onCommit(taskId);
+          onDone?.();
+        }
+      }}
+      placeholder="Rename task"
+      type="text"
+      value={draft}
+    />
+  );
+}
+
 function textSortValue(task: PrototypeTaskRow, columnId: SortColumnId) {
   switch (columnId) {
     case "title":
@@ -1044,9 +1236,13 @@ export function TaskManagementTableV2({
   onOpenBatchDelete,
   onOpenBatchEdit,
   onOpenDeleteTask,
+  onDuplicateTask,
+  onRestoreTask,
+  onOpenTaskHistory,
   onOpenNote,
   onOpenTaskActualTime,
   onOpenTaskEditor,
+  onLoadMoreRows,
   onRequestedOpenTaskHandled,
   onPreviousTaskTimer,
   onNextTaskTimer,
@@ -1070,6 +1266,7 @@ export function TaskManagementTableV2({
   onTaskStatusChange,
   onTaskSubtaskAdd,
   onTaskSubtaskAddChild,
+  onTaskSubtasksAutoResetChange,
   onTaskSubtaskDelete,
   onTaskSubtaskRename,
   onTaskSubtaskStatusChange,
@@ -1089,21 +1286,27 @@ export function TaskManagementTableV2({
   title = "Table #2 Prototype",
   visibleColumns,
   activeTaskTimerIndex,
+  hasMoreRows = false,
 }: TaskManagementTableV2Props) {
   const shouldReduceMotion = useReducedMotion();
   const [tasks, setTasks] = useState<PrototypeTaskRow[]>(rows);
+  const [renderedTaskCount, setRenderedTaskCount] = useState(INITIAL_RENDERED_TASK_COUNT);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("full");
   const [overlayAnchor, setOverlayAnchor] = useState<{ left: number; top: number } | null>(null);
+  const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
+  const [autofocusSubtaskId, setAutofocusSubtaskId] = useState<string | null>(null);
   const [dueDrafts, setDueDrafts] = useState<Record<string, { dueOn: string; dueTime: string }>>({});
   const [estimatedMinutesDrafts, setEstimatedMinutesDrafts] = useState<Record<string, string>>({});
-  const [titleDrafts, setTitleDrafts] = useState<Record<string, string>>({});
+  const titleDraftsRef = useRef<Record<string, string>>({});
   const [subtaskTitleDrafts, setSubtaskTitleDrafts] = useState<Record<string, string>>({});
   const [linkDrafts, setLinkDrafts] = useState<Record<string, { label: string; url: string }>>({});
   const [notesDrafts, setNotesDrafts] = useState<Record<string, string>>({});
   const [linkedNoteDrafts, setLinkedNoteDrafts] = useState<Record<string, string[]>>({});
   const [tagDrafts, setTagDrafts] = useState<Record<string, string>>({});
   const [listDrafts, setListDrafts] = useState<Record<string, string>>({});
+  const [repeatIntervalDrafts, setRepeatIntervalDrafts] = useState<Record<string, string>>({});
+  const [repeatDayOfMonthDrafts, setRepeatDayOfMonthDrafts] = useState<Record<string, string>>({});
   const [collapsedOverlaySectionsByTaskId, setCollapsedOverlaySectionsByTaskId] = useState<Record<string, Partial<Record<OverlaySectionId, boolean>>>>({});
   const [activeMetadataPanelByTaskId, setActiveMetadataPanelByTaskId] = useState<Record<string, MetadataPanelId>>({});
   const [notePickerOpenByTaskId, setNotePickerOpenByTaskId] = useState<Record<string, boolean>>({});
@@ -1111,6 +1314,7 @@ export function TaskManagementTableV2({
   const [pendingSubtaskAutoExpandByTaskId, setPendingSubtaskAutoExpandByTaskId] = useState<Record<string, boolean>>({});
   const [hiddenSubtaskIds, setHiddenSubtaskIds] = useState<Record<string, boolean>>({});
   const [openColumnMenuId, setOpenColumnMenuId] = useState<SortColumnId | null>(null);
+  const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [sortState, setSortState] = useState<{ columnId: SortColumnId; optionId: SortOptionId } | null>(() => getInitialSortState());
   const [textFilters, setTextFilters] = useState<Partial<Record<TextFilterColumnId, string>>>({});
   const [structuredFilters, setStructuredFilters] = useState<StructuredFilters>(DEFAULT_STRUCTURED_FILTERS);
@@ -1124,11 +1328,11 @@ export function TaskManagementTableV2({
   const [localTimerNow, setLocalTimerNow] = useState(() => Date.now());
   const draggedHeaderColumnIdRef = useRef<TaskManagementTableColumnId | null>(null);
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
+  const rowContextMenuRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreTasksRef = useRef<HTMLDivElement | null>(null);
   const resizeStateRef = useRef<{ columnId: TaskManagementTableColumnId; startWidth: number; startX: number } | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const lastShrinkAllColumnsTokenRef = useRef(0);
-  const longPressTimerRef = useRef<number | null>(null);
-  const longPressTriggeredTaskIdRef = useRef<string | null>(null);
   const lastRowsSignatureRef = useRef(buildPrototypeRowsSignature(rows));
   const effectiveRunningTimers = runningTaskTimers ?? localRunningTimers;
   const effectiveActiveTimerIndex = activeTaskTimerIndex ?? localActiveTimerIndex;
@@ -1151,6 +1355,10 @@ export function TaskManagementTableV2({
   const selectedTask = useMemo(
     () => (selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) ?? null : null),
     [selectedTaskId, tasks],
+  );
+  const rowContextMenuTask = useMemo(
+    () => (rowContextMenu ? tasks.find((task) => task.id === rowContextMenu.taskId) ?? null : null),
+    [rowContextMenu, tasks],
   );
   const selectedTaskActualTimeEntries = useMemo(
     () => (selectedTask ? taskActualTimeEntriesByTaskId?.[selectedTask.id] ?? [] : []),
@@ -1199,6 +1407,19 @@ export function TaskManagementTableV2({
       })
       : filtered;
   }, [activeTaskTimerIds, liveActualSecondsByTaskId, sortState, structuredFilters, tasks, textFilters]);
+  const tableFilterSignature = useMemo(
+    () => JSON.stringify({ sortState, structuredFilters, textFilters }),
+    [sortState, structuredFilters, textFilters],
+  );
+  const visibleTaskIds = useMemo(
+    () => displayedTasks.map((task) => task.id),
+    [displayedTasks],
+  );
+  const renderedTasks = useMemo(
+    () => displayedTasks.slice(0, renderedTaskCount),
+    [displayedTasks, renderedTaskCount],
+  );
+  const remainingRenderedTaskCount = Math.max(0, displayedTasks.length - renderedTasks.length);
   const hasActiveFilters = useMemo(
     () => Object.values(textFilters).some((value) => Boolean(value?.trim()))
       || structuredFilters.status.length > 0
@@ -1208,6 +1429,66 @@ export function TaskManagementTableV2({
     [structuredFilters, textFilters],
   );
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+  const shouldAnimateRows = !shouldReduceMotion && displayedTasks.length <= 80;
+  const tableRowVariants: Variants | undefined = shouldAnimateRows
+    ? {
+        hidden: {
+          opacity: 0,
+          x: -8,
+          scale: 0.995,
+        },
+        visible: {
+          opacity: 1,
+          x: 0,
+          scale: 1,
+          transition: {
+            type: "spring",
+            stiffness: 320,
+            damping: 30,
+            mass: 0.72,
+          },
+        },
+      }
+    : undefined;
+  const measurementSignature = useMemo(
+    () => buildPrototypeRowsSignature(displayedTasks.slice(0, 12)),
+    [displayedTasks],
+  );
+
+  useEffect(() => {
+    setRenderedTaskCount(Math.min(INITIAL_RENDERED_TASK_COUNT, displayedTasks.length));
+  }, [tableFilterSignature]);
+
+  useEffect(() => {
+    if (remainingRenderedTaskCount <= 0 && !hasMoreRows) {
+      return;
+    }
+
+    const sentinel = loadMoreTasksRef.current;
+    if (!sentinel || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+
+    const loadNextBatch = () => {
+      if (remainingRenderedTaskCount > 0) {
+        startTransition(() => {
+          setRenderedTaskCount((current) => Math.min(current + RENDERED_TASK_BATCH_SIZE, displayedTasks.length));
+        });
+        return;
+      }
+
+      onLoadMoreRows?.();
+    };
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadNextBatch();
+      }
+    }, { rootMargin: "720px 0px" });
+
+    observer.observe(sentinel);
+
+    return () => observer.disconnect();
+  }, [displayedTasks.length, hasMoreRows, onLoadMoreRows, remainingRenderedTaskCount]);
 
   useEffect(() => {
     if (!requestedOpenTaskId || !tasks.some((task) => task.id === requestedOpenTaskId)) {
@@ -1322,20 +1603,51 @@ export function TaskManagementTableV2({
   }, [pendingSubtaskAutoExpandByTaskId, tasks]);
 
   useEffect(() => {
-    const nextRequiredWidths = visibleHeaderColumns.reduce<Record<TaskManagementTableColumnId, number>>((accumulator, column) => {
-      const headerWidths = getMeasuredColumnWidths(`[data-column-header-measure="${column.id}"]`);
-      const rowContentWidths = getMeasuredColumnWidths(`[data-column-content-measure="${column.id}"]`);
-      const widestHeader = headerWidths.length > 0 ? Math.max(...headerWidths) : 0;
-      const widestRowContent = rowContentWidths.length > 0 ? Math.max(...rowContentWidths) : 0;
-      accumulator[column.id] = Math.max(MIN_COLUMN_WIDTHS[column.id], widestHeader, widestRowContent) + COLUMN_WIDTH_BUFFER[column.id];
-      return accumulator;
-    }, { ...requiredColumnWidths });
+    if (!selectedTaskId || !(enableInspector || allowInlineInspector)) {
+      return;
+    }
 
-    setRequiredColumnWidths((current) => {
-      const hasChanges = visibleHeaderColumns.some((column) => current[column.id] !== nextRequiredWidths[column.id]);
-      return hasChanges ? nextRequiredWidths : current;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!shellRef.current) {
+        return;
+      }
+
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (!shellRef.current.contains(target)) {
+        closeInspector();
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [allowInlineInspector, enableInspector, selectedTaskId, dueDrafts, estimatedMinutesDrafts, notesDrafts, linkDrafts]);
+
+  useEffect(() => {
+    if (!shellRef.current) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      setRequiredColumnWidths((current) => {
+        const nextRequiredWidths = visibleHeaderColumns.reduce<Record<TaskManagementTableColumnId, number>>((accumulator, column) => {
+          const headerWidths = getMeasuredColumnWidths(`[data-column-header-measure="${column.id}"]`);
+          const rowContentWidths = getMeasuredColumnWidths(`[data-column-content-measure="${column.id}"]`, 12);
+          const widestHeader = headerWidths.length > 0 ? Math.max(...headerWidths) : 0;
+          const widestRowContent = rowContentWidths.length > 0 ? Math.max(...rowContentWidths) : 0;
+          accumulator[column.id] = Math.max(MIN_COLUMN_WIDTHS[column.id], widestHeader, widestRowContent) + COLUMN_WIDTH_BUFFER[column.id];
+          return accumulator;
+        }, { ...current });
+        const hasChanges = visibleHeaderColumns.some((column) => current[column.id] !== nextRequiredWidths[column.id]);
+        return hasChanges ? nextRequiredWidths : current;
+      });
     });
-  }, [effectiveTimerNow, tasks, visibleHeaderColumns]);
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [measurementSignature, visibleHeaderColumns]);
 
   useEffect(() => {
     if (effectiveRunningTimers.length === 0 || taskTimerNow !== undefined) {
@@ -1382,9 +1694,9 @@ export function TaskManagementTableV2({
       return;
     }
 
-    setTitleDrafts((current) => current[selectedTask.id] === undefined
-      ? { ...current, [selectedTask.id]: selectedTask.title }
-      : current);
+    if (titleDraftsRef.current[selectedTask.id] === undefined) {
+      titleDraftsRef.current[selectedTask.id] = selectedTask.title;
+    }
     setLinkDrafts((current) => current[selectedTask.id] === undefined
       ? { ...current, [selectedTask.id]: { label: selectedTask.linkLabel, url: selectedTask.linkUrl } }
       : current);
@@ -1413,11 +1725,32 @@ export function TaskManagementTableV2({
       if (!columnMenuRef.current?.contains(event.target as Node)) {
         setOpenColumnMenuId(null);
       }
+
+      if (!rowContextMenuRef.current?.contains(event.target as Node)) {
+        setRowContextMenu(null);
+      }
     };
 
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setRowContextMenu(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (rowContextMenu && !tasks.some((task) => task.id === rowContextMenu.taskId)) {
+      setRowContextMenu(null);
+    }
+  }, [rowContextMenu, tasks]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -1498,6 +1831,24 @@ export function TaskManagementTableV2({
     onTaskSubtaskDelete?.(subtaskId);
   }
 
+  async function handleTaskSubtaskAdd(taskId: string) {
+    setPendingSubtaskAutoExpandByTaskId((current) => ({
+      ...current,
+      [taskId]: true,
+    }));
+    const newSubtaskId = await onTaskSubtaskAdd?.(taskId);
+    if (newSubtaskId) {
+      setAutofocusSubtaskId(newSubtaskId);
+    }
+  }
+
+  async function handleTaskSubtaskAddChild(subtaskId: string) {
+    const newSubtaskId = await onTaskSubtaskAddChild?.(subtaskId);
+    if (newSubtaskId) {
+      setAutofocusSubtaskId(newSubtaskId);
+    }
+  }
+
   function closeInspector() {
     if (selectedTaskId) {
       commitTaskTitle(selectedTaskId);
@@ -1515,13 +1866,14 @@ export function TaskManagementTableV2({
         }
       }
     }
+    setEditingTaskTitleId(null);
     setSelectedTaskId(null);
     setOverlayMode("full");
     setOverlayAnchor(null);
   }
 
   function commitTaskTitle(taskId: string) {
-    const draft = titleDrafts[taskId];
+    const draft = titleDraftsRef.current[taskId];
     if (typeof draft !== "string") {
       return;
     }
@@ -1531,8 +1883,18 @@ export function TaskManagementTableV2({
       return;
     }
 
+    titleDraftsRef.current[taskId] = nextTitle;
     patchTask(taskId, (task) => ({ ...task, title: nextTitle }));
     onTaskTitleChange?.(taskId, nextTitle);
+  }
+
+  function setTitleDraft(taskId: string, draft: string) {
+    titleDraftsRef.current[taskId] = draft;
+  }
+
+  function setTaskSubtasksAutoReset(taskId: string, subtasksAutoReset: boolean) {
+    patchTask(taskId, (task) => ({ ...task, subtasksAutoReset }));
+    onTaskSubtasksAutoResetChange?.(taskId, subtasksAutoReset);
   }
 
   function commitTaskLink(taskId: string, options?: { closeAfterSave?: boolean }) {
@@ -1599,14 +1961,61 @@ export function TaskManagementTableV2({
     onTaskEnergyChange?.(taskId, energy);
   }
 
-  function setTaskRepeat(taskId: string, repeat: TaskRepeat) {
-    patchTask(taskId, (task) => ({ ...task, repeat }));
-    onTaskRepeatChange?.(taskId, repeat);
+  function parsePositiveDraft(value: string, fallback: number) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 
-  function openTaskEditorFromOverlay(taskId: string) {
-    closeInspector();
-    onOpenTaskEditor?.(taskId);
+  function parseDayOfMonthDraft(value: string) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 31) {
+      return null;
+    }
+    return parsed;
+  }
+
+  function setTaskRepeat(
+    taskId: string,
+    repeat: TaskRepeat,
+    cadencePatch: Partial<Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">> = {},
+  ) {
+    const currentTask = tasks.find((task) => task.id === taskId);
+    if (!currentTask) {
+      return;
+    }
+    const nextCadence = {
+      repeatDayOfMonth: cadencePatch.repeatDayOfMonth ?? currentTask.repeatDayOfMonth,
+      repeatDaysOfWeek: cadencePatch.repeatDaysOfWeek ?? currentTask.repeatDaysOfWeek,
+      repeatInterval: cadencePatch.repeatInterval ?? currentTask.repeatInterval,
+    };
+    patchTask(taskId, (task) => {
+      return {
+        ...task,
+        repeat,
+        ...nextCadence,
+      };
+    });
+    onTaskRepeatChange?.(taskId, repeat, nextCadence);
+  }
+
+  function setTaskRepeatInterval(task: PrototypeTaskRow, value: string) {
+    const repeatInterval = parsePositiveDraft(value, task.repeatInterval);
+    setRepeatIntervalDrafts((current) => ({ ...current, [task.id]: String(repeatInterval) }));
+    setTaskRepeat(task.id, task.repeat, { repeatInterval });
+  }
+
+  function setTaskRepeatDayOfMonth(task: PrototypeTaskRow, value: string) {
+    const repeatDayOfMonth = parseDayOfMonthDraft(value);
+    setRepeatDayOfMonthDrafts((current) => ({ ...current, [task.id]: repeatDayOfMonth ? String(repeatDayOfMonth) : "" }));
+    setTaskRepeat(task.id, task.repeat, { repeatDayOfMonth });
+  }
+
+  function toggleTaskRepeatWeekday(task: PrototypeTaskRow, weekday: number) {
+    const selected = task.repeatDaysOfWeek.includes(weekday);
+    const repeatDaysOfWeek = selected
+      ? task.repeatDaysOfWeek.filter((value) => value !== weekday)
+      : [...task.repeatDaysOfWeek, weekday].sort((left, right) => left - right);
+    setTaskRepeat(task.id, task.repeat, { repeatDaysOfWeek });
   }
 
   function getRunningTimer(taskId: string) {
@@ -1837,11 +2246,11 @@ export function TaskManagementTableV2({
   function toggleTaskList(taskId: string, listLabel: string) {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task) return;
-    const nextLists = task.lists.includes(listLabel)
-      ? task.lists.filter((entry) => entry !== listLabel)
+    const nextLists = taskHasList(task, listLabel)
+      ? task.lists.filter((entry) => normalizeTaskListLabel(entry) !== normalizeTaskListLabel(listLabel))
       : [...task.lists, listLabel];
     patchTask(taskId, (current) => ({ ...current, lists: nextLists }));
-    const listId = allListOptions.find((option) => option.label === listLabel)?.id;
+    const listId = allListOptions.find((option) => normalizeTaskListLabel(option.label) === normalizeTaskListLabel(listLabel))?.id;
     if (listId) {
       onToggleTaskList?.(taskId, listId);
     }
@@ -1852,9 +2261,9 @@ export function TaskManagementTableV2({
     if (!draft) return;
     const created = await onCreateTaskList?.(draft);
     if (created !== false) {
-      patchTask(taskId, (task) => ({ ...task, lists: task.lists.includes(draft) ? task.lists : [...task.lists, draft] }));
+      patchTask(taskId, (task) => ({ ...task, lists: taskHasList(task, draft) ? task.lists : [...task.lists, draft] }));
       const createdListId = typeof created === "object" && created ? created.id : null;
-      const existingListId = createdListId ?? allListOptions.find((option) => option.label === draft)?.id;
+      const existingListId = createdListId ?? allListOptions.find((option) => normalizeTaskListLabel(option.label) === normalizeTaskListLabel(draft))?.id;
       if (existingListId) {
         onToggleTaskList?.(taskId, existingListId);
       }
@@ -1887,6 +2296,7 @@ export function TaskManagementTableV2({
       return;
     }
 
+    setEditingTaskTitleId(null);
     setSelectedTaskId(taskId);
     setOverlayMode(mode);
     setOpenColumnMenuId(null);
@@ -1932,7 +2342,10 @@ export function TaskManagementTableV2({
           }}
           type="button"
         >
-          {renderTaskStatusChip(option.value, { size: "sm" })}
+          <span className={`${inlineAccordionChipContentClass(selectedTaskId === task.id && task.status === option.value ? statusTone(option.value) : `${statusTone(option.value)} opacity-78 hover:opacity-100`)} inline-flex items-center gap-2 whitespace-nowrap`}>
+            {renderTaskStatusCircle(option.value, "sm")}
+            <span>{formatTaskStatusLabel(option.value)}</span>
+          </span>
         </button>
       ));
     }
@@ -2163,16 +2576,62 @@ export function TaskManagementTableV2({
             <span className={inlineAccordionChipContentClass(task.repeat === option.value ? repeatTone(option.value) : INACTIVE_CHIP_CLASS)}>{option.label}</span>
           </button>
         )),
-        ...(task.repeat === "custom"
+        ...(task.repeat !== "none"
           ? [(
-            <button
-              className={inlineAccordionButtonClass()}
-              key="repeat-edit-custom"
-              onClick={() => openTaskEditorFromOverlay(task.id)}
-              type="button"
-            >
-              <span className={inlineAccordionChipContentClass("border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]")}>Edit custom cadence</span>
-            </button>
+            <div className={inlineAccordionInputCardClass("w-[30rem]")} key="repeat-cadence">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
+                <input
+                  className={`${OVERLAY_INPUT_CLASS} w-20`}
+                  inputMode="numeric"
+                  onBlur={(event) => setTaskRepeatInterval(task, event.target.value)}
+                  onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [task.id]: event.target.value.replace(/[^\d]/g, "") }))}
+                  placeholder="1"
+                  type="text"
+                  value={repeatIntervalDrafts[task.id] ?? String(task.repeatInterval)}
+                />
+                {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
+                  <button
+                    className={inlineAccordionButtonClass()}
+                    key={`${task.id}-inline-repeat-unit-${repeatUnit}`}
+                    onClick={() => setTaskRepeat(task.id, repeatUnit)}
+                    type="button"
+                  >
+                    <span className={inlineAccordionChipContentClass(task.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS)}>
+                      {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {task.repeat === "weekly" || task.repeat === "custom" ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {REPEAT_WEEKDAY_OPTIONS.map((option) => (
+                    <button
+                      className={inlineAccordionButtonClass()}
+                      key={`${task.id}-inline-weekday-${option.value}`}
+                      onClick={() => toggleTaskRepeatWeekday(task, option.value)}
+                      type="button"
+                    >
+                      <span className={inlineAccordionChipContentClass(task.repeatDaysOfWeek.includes(option.value) ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS)}>{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {task.repeat === "monthly" || task.repeat === "custom" ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Day</span>
+                  <input
+                    className={`${OVERLAY_INPUT_CLASS} w-20`}
+                    inputMode="numeric"
+                    onBlur={(event) => setTaskRepeatDayOfMonth(task, event.target.value)}
+                    onChange={(event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [task.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) }))}
+                    placeholder="15"
+                    type="text"
+                    value={repeatDayOfMonthDrafts[task.id] ?? (task.repeatDayOfMonth ? String(task.repeatDayOfMonth) : "")}
+                  />
+                </div>
+              ) : null}
+            </div>
           )]
           : []),
       ];
@@ -2218,7 +2677,7 @@ export function TaskManagementTableV2({
           onClick={() => toggleTaskList(task.id, option.label)}
           type="button"
         >
-          <span className={inlineAccordionChipContentClass(task.lists.includes(option.label) ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS)}>{option.label}</span>
+          <span className={inlineAccordionChipContentClass(taskHasList(task, option.label) ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS)}>{option.label}</span>
         </button>
       ));
     }
@@ -2366,34 +2825,6 @@ export function TaskManagementTableV2({
     return null;
   }
 
-  function clearRowLongPress() {
-    if (longPressTimerRef.current !== null) {
-      window.clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-  }
-
-  function beginRowLongPress(taskId: string, visibleTaskIds: string[]) {
-    if (!onToggleTaskSelection) {
-      return;
-    }
-
-    clearRowLongPress();
-    longPressTriggeredTaskIdRef.current = null;
-    longPressTimerRef.current = window.setTimeout(() => {
-      longPressTriggeredTaskIdRef.current = taskId;
-      onToggleTaskSelection(taskId, {
-        additive: selectedTaskIds.length > 0,
-        visibleTaskIds,
-      });
-      longPressTimerRef.current = null;
-    }, 420);
-  }
-
-  useEffect(() => () => {
-    clearRowLongPress();
-  }, []);
-
   function beginColumnResize(event: ReactPointerEvent<HTMLSpanElement>, columnId: TaskManagementTableColumnId) {
     event.preventDefault();
     event.stopPropagation();
@@ -2404,10 +2835,15 @@ export function TaskManagementTableV2({
     };
   }
 
-  function getMeasuredColumnWidths(selector: string) {
-    return Array.from(
+  function getMeasuredColumnWidths(selector: string, maxCount?: number) {
+    const measuredNodes = Array.from(
       shellRef.current?.querySelectorAll<HTMLElement>(selector) ?? [],
-    ).map((node) => {
+    );
+    const nodes = typeof maxCount === "number"
+      ? measuredNodes.slice(0, maxCount)
+      : measuredNodes;
+
+    return nodes.map((node) => {
       const intrinsicWidth = Math.max(node.scrollWidth, node.offsetWidth, node.getBoundingClientRect().width);
       return Math.ceil(intrinsicWidth);
     });
@@ -2492,6 +2928,44 @@ export function TaskManagementTableV2({
   function openActualTimeEntryForTask(taskId: string) {
     closeInspector();
     onOpenTaskActualTime?.(taskId);
+  }
+
+  function openRowContextMenu(taskId: string, clientX: number, clientY: number) {
+    if (!shellRef.current) {
+      return;
+    }
+
+    const shellRect = shellRef.current.getBoundingClientRect();
+    const estimatedMenuWidth = 272;
+    const estimatedMenuHeight = 360;
+    const gutter = 18;
+    const left = Math.min(
+      Math.max(gutter, clientX - shellRect.left),
+      Math.max(gutter, shellRect.width - estimatedMenuWidth - gutter),
+    );
+    const top = Math.min(
+      Math.max(gutter, clientY - shellRect.top),
+      Math.max(gutter, shellRect.height - estimatedMenuHeight - gutter),
+    );
+
+    setOpenColumnMenuId(null);
+    setRowContextMenu({ left, taskId, top });
+  }
+
+  function openTaskOverlayFromContextMenu(taskId: string, mode: OverlayMode, sourceElement?: HTMLElement | null) {
+    setRowContextMenu(null);
+    openInspector(taskId, mode, sourceElement);
+  }
+
+  function openTaskDetailsFromContextMenu(taskId: string, sourceElement?: HTMLElement | null) {
+    setRowContextMenu(null);
+
+    if (enableInspector) {
+      openInspector(taskId, "full", sourceElement);
+      return;
+    }
+
+    onRowClick?.(taskId);
   }
 
   function renderFocusTimerDial(seconds: number, options?: { compact?: boolean; title?: string; showAccentLine?: boolean }) {
@@ -2636,6 +3110,8 @@ export function TaskManagementTableV2({
       const hasSubtasks = visibleSubtasks.length > 0;
       const subtasksExpanded = expandedSubtasksByTaskId[task.id] ?? false;
       const hasSecondaryContent = hasDescription || hasSubtasks;
+      const isRenamingTitle = editingTaskTitleId === task.id;
+      const titleDraft = titleDraftsRef.current[task.id] ?? task.title;
       return (
         <div className="relative min-w-0 w-full pl-[5px]">
           <span
@@ -2646,7 +3122,12 @@ export function TaskManagementTableV2({
           >
             <span className={`flex min-w-0 items-start ${hasSecondaryContent ? "flex-col" : "min-h-[2.25rem] justify-center"}`}>
               <span className="inline-flex min-w-0 items-center gap-2">
-                <span className={`${TITLE_CELL_CLASS} whitespace-normal break-words leading-5`}>{task.title}</span>
+                <span className={`${TITLE_CELL_CLASS} whitespace-normal break-words`}>{task.title}</span>
+                {task.status === "archived" ? (
+                  <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
+                    {`${getTrashDaysRemaining(task.updatedAt) ?? 30}d until auto delete`}
+                  </span>
+                ) : null}
               </span>
               {hasDescription ? (
                 <span className="mt-1 max-w-full truncate text-[12px] font-medium text-[#8d87a7] dark:text-white/40">
@@ -2657,28 +3138,81 @@ export function TaskManagementTableV2({
           </span>
           <div className={`min-w-0 max-w-[40ch] ${hasSecondaryContent ? "space-y-1" : "flex min-h-[2.25rem] items-center"}`} style={{ maxWidth: "min(100%, 40ch)" }}>
             <div className="flex min-w-0 items-center gap-1.5">
-              <p className={`${TITLE_CELL_CLASS} min-w-0 whitespace-normal break-words leading-5`}>{task.title}</p>
+              {isRenamingTitle ? (
+                <TaskTitleDraftInput
+                  autoFocus
+                  className={`${TITLE_CELL_CLASS} min-w-0 flex-1 rounded-[0.75rem] border border-[#ddd2ff] bg-white px-2 py-1 dark:border-[#42306f] dark:bg-[#22193f]`}
+                  initialValue={titleDraft}
+                  onCommit={commitTaskTitle}
+                  onDone={() => setEditingTaskTitleId((current) => (current === task.id ? null : current))}
+                  onDraftChange={setTitleDraft}
+                  taskId={task.id}
+                />
+              ) : (
+                <button
+                  className={`${TITLE_CELL_CLASS} min-w-0 whitespace-normal break-words text-left transition hover:opacity-85`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setEditingTaskTitleId(task.id);
+                    setTitleDraft(task.id, task.title);
+                  }}
+                  type="button"
+                >
+                  {task.title}
+                </button>
+              )}
+              {task.status === "archived" ? (
+                <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
+                  {`${getTrashDaysRemaining(task.updatedAt) ?? 30}d until auto delete`}
+                </span>
+              ) : null}
+              {task.status === "archived" && onRestoreTask ? (
+                <button
+                  aria-label="Restore task to inbox"
+                  className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] transition hover:bg-[#ebe4ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  onPointerDown={stopRowActionPointerEvent}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRestoreTask(task.id);
+                  }}
+                  type="button"
+                >
+                  <MoveLeft className="h-3 w-3" />
+                </button>
+              ) : null}
               {onTaskSubtaskAdd ? (
                 <button
                   aria-label="Add step"
                   className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
                     event.stopPropagation();
-                    setPendingSubtaskAutoExpandByTaskId((current) => ({
-                      ...current,
-                      [task.id]: true,
-                    }));
-                    onTaskSubtaskAdd(task.id);
+                    void handleTaskSubtaskAdd(task.id);
                   }}
                   type="button"
                 >
                   <Footprints className="h-3 w-3" />
                 </button>
               ) : null}
+              {onOpenTaskHistory ? (
+                <button
+                  aria-label="Open task history"
+                  className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] transition hover:bg-[#ebe4ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  onPointerDown={stopRowActionPointerEvent}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenTaskHistory(task.id);
+                  }}
+                  type="button"
+                >
+                  <CalendarDays className="h-3 w-3" />
+                </button>
+              ) : null}
               {onOpenDeleteTask ? (
                 <button
-                  aria-label="Delete task"
+                  aria-label={task.status === "archived" ? "Delete permanently" : "Move to trash"}
                   className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe8ed] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+                  onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
                     event.stopPropagation();
                     onOpenDeleteTask(task.id);
@@ -2687,6 +3221,18 @@ export function TaskManagementTableV2({
                 >
                   <Trash2 className="h-3 w-3" />
                 </button>
+              ) : null}
+              {task.currentStreak > 0 ? (
+                <span className={`${CHIP_BASE} border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e] gap-1 px-2`}>
+                  <Flame className="h-3 w-3" />
+                  {task.currentStreak}
+                </span>
+              ) : null}
+              {task.missedStreak > 0 ? (
+                <span className={`${CHIP_BASE} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] gap-1 px-2`}>
+                  <Skull className="h-3 w-3" />
+                  {task.missedStreak}
+                </span>
               ) : null}
             </div>
             {hasDescription ? (
@@ -2714,8 +3260,9 @@ export function TaskManagementTableV2({
                 {subtasksExpanded ? (
                   <div className="mt-2 w-full min-w-0">
                     <TaskCellSubtaskTree
-                      onAddChild={onTaskSubtaskAddChild}
+                      onAddChild={(subtaskId) => { void handleTaskSubtaskAddChild(subtaskId); }}
                       onDelete={handleTaskSubtaskDelete}
+                      onSetStatus={onTaskSubtaskStatusChange}
                       subtasks={visibleSubtasks}
                     />
                   </div>
@@ -2732,7 +3279,7 @@ export function TaskManagementTableV2({
         wrapMeasuredContent(
           <div className={`flex min-w-0 flex-nowrap gap-2 ${getInlineClusterClass(columnId)}`}>
             {summarizedLists.visibleItems.map((list, listIndex) => (
-              <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`} key={`${task.id || "task"}-list-${list || "blank"}-${listIndex}`}>
+              <span className={`${CHIP_BASE} ${ACTIVE_LIST_CHIP_CLASS}`} key={`${task.id || "task"}-list-${list || "blank"}-${listIndex}`}>
                 {list}
               </span>
             ))}
@@ -3009,6 +3556,11 @@ export function TaskManagementTableV2({
             animate="visible"
             className="adhdice-scrollbar relative max-h-[65vh] overflow-x-auto overflow-y-auto"
             initial="hidden"
+            onScroll={() => {
+              if (rowContextMenu) {
+                setRowContextMenu(null);
+              }
+            }}
             variants={{
               visible: {
                 transition: {
@@ -3119,7 +3671,10 @@ export function TaskManagementTableV2({
                                   onClick={() => toggleStructuredFilter("status", option.value)}
                                   type="button"
                                 >
-                                  {renderTaskStatusChip(option.value, { size: "sm" })}
+                                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-current/20 text-current">
+                                    {renderTaskStatusGlyph(option.value, "sm")}
+                                  </span>
+                                  <span>{formatTaskStatusLabel(option.value)}</span>
                                 </button>
                               );
                             })}
@@ -3284,8 +3839,8 @@ export function TaskManagementTableV2({
                 <div className="flex flex-wrap items-center gap-2">
                   {onSelectAllVisible ? (
                     <button
-                      className="rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
-                      onClick={() => onSelectAllVisible(displayedTasks.map((task) => task.id))}
+                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} transition hover:border-[#c9bcff] hover:text-[#6f57f6]`}
+                      onClick={() => onSelectAllVisible(visibleTaskIds)}
                       type="button"
                     >
                       Select all visible
@@ -3293,7 +3848,7 @@ export function TaskManagementTableV2({
                   ) : null}
                   {onClearSelection ? (
                     <button
-                      className="rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} transition hover:border-[#c9bcff] hover:text-[#6f57f6]`}
                       onClick={onClearSelection}
                       type="button"
                     >
@@ -3302,7 +3857,7 @@ export function TaskManagementTableV2({
                   ) : null}
                   {selectedTaskIds.length === 1 && onOpenTaskEditor ? (
                     <button
-                      className="rounded-full bg-[#6f57f6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] transition hover:bg-[#e9e1ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2a204c]`}
                       onClick={() => onOpenTaskEditor(selectedTaskIds[0])}
                       type="button"
                     >
@@ -3310,7 +3865,7 @@ export function TaskManagementTableV2({
                     </button>
                   ) : selectedTaskIds.length > 1 && onOpenBatchEdit ? (
                     <button
-                      className="rounded-full bg-[#6f57f6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#5e49d6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:hover:bg-[#bda9ff]"
+                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] transition hover:bg-[#e9e1ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2a204c]`}
                       onClick={onOpenBatchEdit}
                       type="button"
                     >
@@ -3319,7 +3874,7 @@ export function TaskManagementTableV2({
                   ) : null}
                   {selectedTaskIds.length > 1 && onOpenBatchDelete ? (
                     <button
-                      className="rounded-full bg-[#fff1f3] px-3 py-1.5 text-sm font-semibold text-[#d94e67] transition hover:bg-[#ffe4e9] dark:bg-[#44232f] dark:text-[#ff9eaf] dark:hover:bg-[#56303c]"
+                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe4e9] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] dark:hover:bg-[#56303c]`}
                       onClick={onOpenBatchDelete}
                       type="button"
                     >
@@ -3334,7 +3889,7 @@ export function TaskManagementTableV2({
               <div className={`ml-[10px] rounded-[1.25rem] border border-dashed border-[#ddd6fb] bg-[#fbfaff] px-6 py-10 text-center ${BODY_MUTED_VALUE_CLASS}`}>
                 No rows match the current table filters.
               </div>
-            ) : displayedTasks.map((task, taskIndex) => {
+            ) : renderedTasks.map((task) => {
               const visibleSubtaskSignature = buildPrototypeSubtaskSignature(filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds));
               const showInlineAccordion = allowInlineInspector
                 && selectedTaskId === task.id
@@ -3343,20 +3898,17 @@ export function TaskManagementTableV2({
               const hasInlineAccordionContent = Children.count(inlineAccordionContent) > 0;
 
               return (
-                <Fragment key={`${task.id || "task"}-${taskIndex}-${visibleSubtaskSignature}`}>
+                <Fragment key={`${task.id || "task"}-${visibleSubtaskSignature}`}>
                   <motion.div
                     className={`${CONTROL_FONT_CLASS} block w-max min-w-full text-center focus:outline-none`}
+                    initial={shouldAnimateRows ? undefined : false}
                     onClick={(event) => {
-                      if (longPressTriggeredTaskIdRef.current === task.id) {
-                        longPressTriggeredTaskIdRef.current = null;
-                        return;
-                      }
-
+                      setRowContextMenu(null);
                       if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
                         onToggleTaskSelection(task.id, {
                           additive: true,
                           range: event.shiftKey,
-                          visibleTaskIds: displayedTasks.map((row) => row.id),
+                          visibleTaskIds,
                         });
                         return;
                       }
@@ -3370,6 +3922,11 @@ export function TaskManagementTableV2({
                         onRowClick(task.id);
                         return;
                       }
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openRowContextMenu(task.id, event.clientX, event.clientY);
                     }}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") {
@@ -3381,7 +3938,7 @@ export function TaskManagementTableV2({
                         onToggleTaskSelection(task.id, {
                           additive: true,
                           range: event.shiftKey,
-                          visibleTaskIds: displayedTasks.map((row) => row.id),
+                          visibleTaskIds,
                         });
                         return;
                       }
@@ -3396,41 +3953,24 @@ export function TaskManagementTableV2({
                         return;
                       }
                     }}
-                    onPointerCancel={clearRowLongPress}
-                    onPointerDown={() => beginRowLongPress(task.id, displayedTasks.map((row) => row.id))}
-                    onPointerLeave={clearRowLongPress}
-                    onPointerUp={clearRowLongPress}
                     role="button"
                     tabIndex={0}
-                    variants={{
-                      hidden: {
-                        opacity: 0,
-                        x: -20,
-                        scale: 0.98,
-                        filter: "blur(4px)",
-                      },
-                      visible: {
-                        opacity: 1,
-                        x: 0,
-                        scale: 1,
-                        filter: "blur(0px)",
-                        transition: {
-                          type: "spring",
-                          stiffness: 380,
-                          damping: 28,
-                          mass: 0.65,
-                        },
-                      },
+                    style={{
+                      containIntrinsicSize: "72px",
+                      contentVisibility: "auto",
                     }}
-                    whileHover={shouldReduceMotion ? undefined : { y: -1 }}
+                    variants={tableRowVariants}
+                    whileHover={shouldAnimateRows ? { y: -0.5 } : undefined}
                   >
-                    <div className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent pl-[3px] pr-0 py-3 text-center transition hover:shadow-[0_18px_40px_rgba(109,83,208,0.10)] dark:border-transparent ${
-                      selectedTaskIdSet.has(task.id) || showInlineAccordion
-                        ? "bg-white dark:bg-[#181226]"
-                        : "bg-white dark:bg-white/[0.04]"
+                    <div className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-3 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${
+                      selectedTaskIdSet.has(task.id)
+                        ? "border-[#ddd2ff] bg-[#f7f2ff] ring-2 ring-[#6f57f6]/15 dark:border-[#42306f] dark:bg-[#201733] dark:ring-[#cabfff]/12"
+                        : showInlineAccordion || rowContextMenu?.taskId === task.id
+                          ? "border-transparent bg-white dark:bg-[#181226]"
+                          : "border-transparent bg-white dark:bg-white/[0.04]"
                     }`} style={{ gridTemplateColumns }}>
-                      {visibleHeaderColumns.map((column, columnIndex) => (
-                        <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} data-column-measure={column.id} key={`${task.id || "task"}-${taskIndex}-${column.id || "column"}-${columnIndex}`}>
+                      {visibleHeaderColumns.map((column) => (
+                        <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} data-column-measure={column.id} key={`${task.id || "task"}-${column.id || "column"}`}>
                           {renderRowCell(task, column.id)}
                         </div>
                       ))}
@@ -3488,9 +4028,192 @@ export function TaskManagementTableV2({
                 </Fragment>
               );
             })}
+            {remainingRenderedTaskCount > 0 || hasMoreRows ? (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none ml-[10px] h-px w-max min-w-full"
+                ref={loadMoreTasksRef}
+              />
+            ) : null}
             </div>
           </motion.div>
         </div>
+
+        {rowContextMenu && rowContextMenuTask ? (
+          <div
+            className="absolute inset-0 z-40"
+            onClick={() => setRowContextMenu(null)}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <div
+              className="absolute w-[17rem] rounded-[1.35rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_24px_70px_rgba(111,87,246,0.18)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95"
+              onClick={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+              ref={rowContextMenuRef}
+              style={{ left: rowContextMenu.left, top: rowContextMenu.top }}
+            >
+              <div className="border-b border-[#f0ebfb] px-2 pb-2 dark:border-white/10">
+                <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
+                  Task actions
+                </p>
+                <p className={`${UNIFIED_TABLE_TEXT_CLASS} mt-1 truncate text-[#2f294a] dark:text-white`}>
+                  {rowContextMenuTask.title}
+                </p>
+              </div>
+
+              <div className="space-y-1 px-1 py-2">
+                {(enableInspector || onRowClick) ? (
+                  <TaskTableChipButton
+                    className="w-full justify-between gap-2"
+                    onClick={(event) => openTaskDetailsFromContextMenu(rowContextMenuTask.id, event.currentTarget)}
+                  >
+                    <span>Open details</span>
+                  </TaskTableChipButton>
+                ) : null}
+                {onOpenTaskEditor ? (
+                  <TaskTableChipButton
+                    className="w-full justify-between gap-2"
+                    onClick={() => {
+                      setRowContextMenu(null);
+                      onOpenTaskEditor(rowContextMenuTask.id);
+                    }}
+                  >
+                    <span>Edit task</span>
+                  </TaskTableChipButton>
+                ) : null}
+                {onDuplicateTask ? (
+                  <TaskTableChipButton
+                    className="w-full justify-between gap-2"
+                    onClick={() => {
+                      setRowContextMenu(null);
+                      onDuplicateTask(rowContextMenuTask.id);
+                    }}
+                  >
+                    <span>Duplicate task</span>
+                    <Copy className="h-3.5 w-3.5" />
+                  </TaskTableChipButton>
+                ) : null}
+                {onOpenTaskHistory ? (
+                  <TaskTableChipButton
+                    className="w-full justify-between gap-2"
+                    onClick={() => {
+                      setRowContextMenu(null);
+                      onOpenTaskHistory(rowContextMenuTask.id);
+                    }}
+                  >
+                    <span>Open history</span>
+                    <CalendarDays className="h-3.5 w-3.5" />
+                  </TaskTableChipButton>
+                ) : null}
+                {onOpenTaskActualTime ? (
+                  <TaskTableChipButton
+                    className="w-full justify-between gap-2"
+                    onClick={() => {
+                      setRowContextMenu(null);
+                      openActualTimeEntryForTask(rowContextMenuTask.id);
+                    }}
+                  >
+                    <span>Open time log</span>
+                    <Clock3 className="h-3.5 w-3.5" />
+                  </TaskTableChipButton>
+                ) : null}
+                {onToggleTaskSelection ? (
+                  <TaskTableChipButton
+                    className="w-full justify-between gap-2"
+                    onClick={() => {
+                      onToggleTaskSelection(rowContextMenuTask.id, {
+                        additive: true,
+                        visibleTaskIds,
+                      });
+                      setRowContextMenu(null);
+                    }}
+                  >
+                    <span>{selectedTaskIdSet.has(rowContextMenuTask.id) ? "Deselect task" : "Select task"}</span>
+                  </TaskTableChipButton>
+                ) : null}
+                {onSelectAllVisible ? (
+                  <TaskTableChipButton
+                    className="w-full justify-between gap-2"
+                    onClick={() => {
+                      onSelectAllVisible(visibleTaskIds);
+                      setRowContextMenu(null);
+                    }}
+                  >
+                    <span>Select all visible</span>
+                  </TaskTableChipButton>
+                ) : null}
+                {selectedTaskIds.length > 0 && onClearSelection ? (
+                  <TaskTableChipButton
+                    className="w-full justify-between gap-2"
+                    onClick={() => {
+                      onClearSelection();
+                      setRowContextMenu(null);
+                    }}
+                  >
+                    <span>Clear selection</span>
+                  </TaskTableChipButton>
+                ) : null}
+                {onOpenDeleteTask ? (
+                  <>
+                    {rowContextMenuTask.status === "archived" && onRestoreTask ? (
+                      <TaskTableChipButton
+                        className="w-full justify-between gap-2"
+                        onClick={() => {
+                          setRowContextMenu(null);
+                          onRestoreTask(rowContextMenuTask.id);
+                        }}
+                      >
+                        <span>Restore to inbox</span>
+                        <MoveLeft className="h-3.5 w-3.5" />
+                      </TaskTableChipButton>
+                    ) : null}
+                  <TaskTableChipButton
+                    className="w-full justify-between gap-2"
+                    toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+                    onClick={() => {
+                      setRowContextMenu(null);
+                      onOpenDeleteTask(rowContextMenuTask.id);
+                    }}
+                  >
+                    <span>{rowContextMenuTask.status === "archived" ? "Delete permanently" : "Move to trash"}</span>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </TaskTableChipButton>
+                  </>
+                ) : null}
+              </div>
+
+              {(enableInspector || allowInlineInspector) ? (
+                <div className="border-t border-[#f0ebfb] px-1 pt-2 dark:border-white/10">
+                  <p className="px-2 pb-2 text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
+                    Quick edit
+                  </p>
+                  <div className="flex flex-wrap gap-2 px-1 pb-1">
+                    {[
+                      { label: "Status", mode: "status" },
+                      { label: "Due", mode: "due" },
+                      { label: "Estimate", mode: "estimated" },
+                      { label: "Actual", mode: "actual" },
+                      { label: "Priority", mode: "priority" },
+                      { label: "Energy", mode: "energy" },
+                      { label: "Repeat", mode: "repeat" },
+                      { label: "Lists", mode: "lists" },
+                      { label: "Tags", mode: "tags" },
+                      { label: "Link", mode: "link" },
+                      { label: "Notes", mode: "notes" },
+                    ].map((item) => (
+                      <TaskTableChipButton
+                        key={item.mode}
+                        onClick={(event) => openTaskOverlayFromContextMenu(rowContextMenuTask.id, item.mode as OverlayMode, event.currentTarget)}
+                      >
+                        {item.label}
+                      </TaskTableChipButton>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         <AnimatePresence>
           {overlayNode ? (
@@ -3551,7 +4274,7 @@ export function TaskManagementTableV2({
                 const showLinkBlock = overlayMode === "full" || overlayMode === "link";
                 const showNotesBlock = overlayMode === "full" || overlayMode === "notes";
                 const isFocusedOverlay = overlayMode !== "full" || overlayAnchor !== null;
-                const titleDraft = titleDrafts[selectedTask.id] ?? selectedTask.title;
+                const titleDraft = titleDraftsRef.current[selectedTask.id] ?? selectedTask.title;
                 const linkDraft = linkDrafts[selectedTask.id] ?? { label: selectedTask.linkLabel, url: selectedTask.linkUrl };
                 const notesDraft = notesDrafts[selectedTask.id] ?? selectedTask.notes;
                 const linkedNoteDraft = linkedNoteDrafts[selectedTask.id] ?? selectedTask.linkedNotes.map((note) => note.id);
@@ -3606,27 +4329,24 @@ export function TaskManagementTableV2({
                 const activeMetadataPanelLabel = metadataPanelId === "status"
                   ? "Status"
                   : metadataPanelOptions.find((option) => option.id === activeMetadataPanel)?.label ?? "Meta Data";
-                function renderInlineTextChoices<T extends string>(options: Array<{ label: string; value: T }>, selectedValues: T[], onSelect: (value: T) => void) {
+                function renderInlineTextChoices<T extends string>(
+                  options: Array<{ label: string; value: T }>,
+                  selectedValues: T[],
+                  onSelect: (value: T) => void,
+                  toneForOption?: (value: T, selected: boolean) => string,
+                ) {
                   return (
-                    <div className="flex flex-wrap items-center gap-y-1.5 text-sm">
+                    <div className="flex flex-wrap gap-2">
                       {options.map((option, index) => {
                         const isSelected = selectedValues.includes(option.value);
                         return (
-                          <div className="flex items-center" key={`${option.label || "inline-option"}-${option.value || "blank"}-${index}`}>
-                            {index > 0 ? <span className="px-2 text-[#c9c0e2] dark:text-white/18">|</span> : null}
-                            <button
-                              className={`inline-flex items-center gap-1.5 transition ${
-                                isSelected
-                                  ? "text-[#6f57f6] dark:text-[#cabfff]"
-                                  : "text-[#8d87a7] hover:text-[#6f57f6] dark:text-white/45 dark:hover:text-[#cabfff]"
-                              }`}
-                              onClick={() => onSelect(option.value)}
-                              type="button"
-                            >
-                              <span>{option.label}</span>
-                              {isSelected ? <span className="h-1.5 w-1.5 rounded-full bg-[#6f57f6] dark:bg-[#cabfff]" /> : null}
-                            </button>
-                          </div>
+                          <TaskTableChipButton
+                            key={`${option.label || "inline-option"}-${option.value || "blank"}-${index}`}
+                            onClick={() => onSelect(option.value)}
+                            toneClassName={toneForOption ? toneForOption(option.value, isSelected) : isSelected ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}
+                          >
+                            {option.label}
+                          </TaskTableChipButton>
                         );
                       })}
                     </div>
@@ -3668,12 +4388,12 @@ export function TaskManagementTableV2({
                         />
                       </div>
                       <div className="mt-3 flex justify-end gap-2">
-                        <button className={`${CONTROL_FONT_CLASS} rounded-full border border-[#ddd6fb] bg-white px-3 py-2 text-sm font-medium text-[#5c6684] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70`} onClick={() => setTaskDue(selectedTask.id, "", "")} type="button">Clear</button>
-                        <button className={`${CONTROL_FONT_CLASS} rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-medium text-white dark:bg-[#cabfff] dark:text-[#1a1431]`} onClick={() => {
+                        <TaskTableChipButton onClick={() => setTaskDue(selectedTask.id, "", "")} toneClassName={INACTIVE_CHIP_CLASS}>Clear</TaskTableChipButton>
+                        <TaskTableChipButton onClick={() => {
                           const draft = dueDrafts[selectedTask.id];
                           if (!draft) return;
                           setTaskDue(selectedTask.id, draft.dueOn, draft.dueTime);
-                        }} type="button">Save date + time</button>
+                        }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save date + time</TaskTableChipButton>
                       </div>
                     </>
                   );
@@ -3690,7 +4410,7 @@ export function TaskManagementTableV2({
                       )}
                       <div className="mt-3 flex gap-2">
                         <input className={OVERLAY_INPUT_CLASS} inputMode="numeric" onChange={(event) => setEstimatedMinutesDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="Custom minutes" type="text" value={estimatedMinutesDraft} />
-                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`} onClick={() => setTaskEstimatedMinutes(selectedTask.id, estimatedMinutesDraft ? Number.parseInt(estimatedMinutesDraft, 10) : null)} type="button">Apply</button>
+                        <TaskTableChipButton onClick={() => setTaskEstimatedMinutes(selectedTask.id, estimatedMinutesDraft ? Number.parseInt(estimatedMinutesDraft, 10) : null)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
                       </div>
                     </>
                   );
@@ -3701,21 +4421,21 @@ export function TaskManagementTableV2({
                       <div className="flex flex-wrap gap-2">
                         {getRunningTimer(selectedTask.id) ? (
                           <>
-                            <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] gap-2`} onClick={() => {
+                            <TaskTableChipButton className="gap-2" onClick={() => {
                               const timer = getRunningTimer(selectedTask.id);
                               if (timer?.pausedAt) {
                                 resumeTaskTimer(selectedTask.id);
                               } else {
                                 pauseTaskTimer(selectedTask.id);
                               }
-                            }} type="button">{getRunningTimer(selectedTask.id)?.pausedAt ? <CirclePlay className="h-3.5 w-3.5" /> : <CirclePause className="h-3.5 w-3.5" />}{getRunningTimer(selectedTask.id)?.pausedAt ? "Continue timer" : "Pause timer"}</button>
-                            <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e] gap-2`} onClick={() => stopTaskTimer(selectedTask.id)} type="button"><TimerReset className="h-3.5 w-3.5" />Stop focus timer</button>
+                            }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">{getRunningTimer(selectedTask.id)?.pausedAt ? <CirclePlay className="h-3.5 w-3.5" /> : <CirclePause className="h-3.5 w-3.5" />}{getRunningTimer(selectedTask.id)?.pausedAt ? "Continue timer" : "Pause timer"}</TaskTableChipButton>
+                            <TaskTableChipButton className="gap-2" onClick={() => stopTaskTimer(selectedTask.id)} toneClassName="border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]"><TimerReset className="h-3.5 w-3.5" />Stop focus timer</TaskTableChipButton>
                           </>
                         ) : (
-                          <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] gap-2`} onClick={() => openFocusTimerForTask(selectedTask.id)} type="button"><CirclePlay className="h-3.5 w-3.5" />Start focus timer</button>
+                          <TaskTableChipButton className="gap-2" onClick={() => openFocusTimerForTask(selectedTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"><CirclePlay className="h-3.5 w-3.5" />Start focus timer</TaskTableChipButton>
                         )}
-                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} gap-2`} onClick={() => openActualTimeEntryForTask(selectedTask.id)} type="button"><Clock3 className="h-3.5 w-3.5" />Manual time entry</button>
-                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] gap-2`} onClick={() => { onTaskActualSecondsChange?.(selectedTask.id, 0); patchTask(selectedTask.id, (task) => ({ ...task, actualSeconds: 0 })); }} type="button"><TimerReset className="h-3.5 w-3.5" />Clear actual time</button>
+                        <TaskTableChipButton className="gap-2" onClick={() => openActualTimeEntryForTask(selectedTask.id)} toneClassName={INACTIVE_CHIP_CLASS}><Clock3 className="h-3.5 w-3.5" />Manual time entry</TaskTableChipButton>
+                        <TaskTableChipButton className="gap-2" onClick={() => { onTaskActualSecondsChange?.(selectedTask.id, 0); patchTask(selectedTask.id, (task) => ({ ...task, actualSeconds: 0 })); }} toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"><TimerReset className="h-3.5 w-3.5" />Clear actual time</TaskTableChipButton>
                       </div>
                     </>
                   );
@@ -3725,9 +4445,9 @@ export function TaskManagementTableV2({
                       {PRIORITY_OPTIONS.map((option, optionIndex) => {
                         const selected = selectedTask.priorities.includes(option.value);
                         const nextPriorities = selected ? selectedTask.priorities.filter((value) => value !== option.value) : [...selectedTask.priorities, option.value];
-                        return <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? priorityTone(option.value) : INACTIVE_CHIP_CLASS}`} key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => setTaskPriorities(selectedTask.id, nextPriorities)} type="button">{option.label}</button>;
+                        return <TaskTableChipButton key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => setTaskPriorities(selectedTask.id, nextPriorities)} toneClassName={selected ? priorityTone(option.value) : INACTIVE_CHIP_CLASS}>{option.label}</TaskTableChipButton>;
                       })}
-                      <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS}`} onClick={() => setTaskPriorities(selectedTask.id, [])} type="button">Clear all</button>
+                      <TaskTableChipButton onClick={() => setTaskPriorities(selectedTask.id, [])} toneClassName={INACTIVE_CHIP_CLASS}>Clear all</TaskTableChipButton>
                     </div>
                   );
                 } else if (metadataPanelId === "repeat") {
@@ -3737,10 +4457,60 @@ export function TaskManagementTableV2({
                         REPEAT_OPTIONS,
                         [selectedTask.repeat],
                         (value) => setTaskRepeat(selectedTask.id, value),
+                        (value, selected) => selected ? repeatTone(value) : INACTIVE_CHIP_CLASS,
                       )}
-                      {selectedTask.repeat === "custom" ? (
-                        <div className="mt-3 flex justify-end">
-                          <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`} onClick={() => openTaskEditorFromOverlay(selectedTask.id)} type="button">Edit custom cadence</button>
+                      {selectedTask.repeat !== "none" ? (
+                        <div className="mt-3 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                          <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom cadence</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
+                            <input
+                              className={`${OVERLAY_INPUT_CLASS} w-24`}
+                              inputMode="numeric"
+                              onBlur={(event) => setTaskRepeatInterval(selectedTask, event.target.value)}
+                              onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "") }))}
+                              placeholder="1"
+                              type="text"
+                              value={repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval)}
+                            />
+                            {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
+                              <TaskTableChipButton
+                                key={`${selectedTask.id}-repeat-unit-${repeatUnit}`}
+                                onClick={() => setTaskRepeat(selectedTask.id, repeatUnit)}
+                                toneClassName={selectedTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}
+                              >
+                                {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
+                              </TaskTableChipButton>
+                            ))}
+                            <TaskTableChipButton onClick={() => setTaskRepeatInterval(selectedTask, repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
+                          </div>
+                          {selectedTask.repeat === "weekly" || selectedTask.repeat === "custom" ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {REPEAT_WEEKDAY_OPTIONS.map((option) => {
+                                const selected = selectedTask.repeatDaysOfWeek.includes(option.value);
+                                return (
+                                  <TaskTableChipButton key={`${selectedTask.id}-weekday-${option.value}`} onClick={() => toggleTaskRepeatWeekday(selectedTask, option.value)} toneClassName={selected ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}>
+                                    {option.label}
+                                  </TaskTableChipButton>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                          {selectedTask.repeat === "monthly" || selectedTask.repeat === "custom" ? (
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Day of month</span>
+                              <input
+                                className={`${OVERLAY_INPUT_CLASS} w-24`}
+                                inputMode="numeric"
+                                onBlur={(event) => setTaskRepeatDayOfMonth(selectedTask, event.target.value)}
+                                onChange={(event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) }))}
+                                placeholder="15"
+                                type="text"
+                                value={repeatDayOfMonthDrafts[selectedTask.id] ?? (selectedTask.repeatDayOfMonth ? String(selectedTask.repeatDayOfMonth) : "")}
+                              />
+                              <TaskTableChipButton onClick={() => setTaskRepeatDayOfMonth(selectedTask, repeatDayOfMonthDrafts[selectedTask.id] ?? (selectedTask.repeatDayOfMonth ? String(selectedTask.repeatDayOfMonth) : ""))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply day</TaskTableChipButton>
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                     </>
@@ -3749,7 +4519,7 @@ export function TaskManagementTableV2({
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
                       {ENERGY_OPTIONS.map((option, optionIndex) => (
-                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selectedTask.energy === option.value ? energyTone(option.value) : INACTIVE_CHIP_CLASS}`} key={`${option.value || "energy-option"}-${optionIndex}`} onClick={() => setTaskEnergy(selectedTask.id, option.value)} type="button">{option.label}</button>
+                        <TaskTableChipButton key={`${option.value || "energy-option"}-${optionIndex}`} onClick={() => setTaskEnergy(selectedTask.id, option.value)} toneClassName={selectedTask.energy === option.value ? energyTone(option.value) : INACTIVE_CHIP_CLASS}>{option.label}</TaskTableChipButton>
                       ))}
                     </div>
                   );
@@ -3757,7 +4527,7 @@ export function TaskManagementTableV2({
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
                       {STATUS_OPTIONS.map((option, optionIndex) => (
-                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selectedTask.status === option.value ? statusTone(option.value) : INACTIVE_CHIP_CLASS}`} key={`${option.value || "status-option"}-${optionIndex}`} onClick={() => setTaskStatus(selectedTask.id, option.value)} type="button">{renderTaskStatusChip(option.value, { size: "sm" })}</button>
+                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selectedTask.status === option.value ? statusTone(option.value) : `${statusTone(option.value)} opacity-78 hover:opacity-100`}`} key={`${option.value || "status-option"}-${optionIndex}`} onClick={() => setTaskStatus(selectedTask.id, option.value)} type="button">{renderTaskStatusCircle(option.value, "sm")}<span>{formatTaskStatusLabel(option.value)}</span></button>
                       ))}
                     </div>
                   );
@@ -3768,15 +4538,16 @@ export function TaskManagementTableV2({
                         mergedListOptions.map((list) => ({ label: list.label, value: list.label })),
                         selectedTask.lists,
                         (value) => toggleTaskList(selectedTask.id, value),
+                        (_value, selected) => selected ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS,
                       )}
-                      <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setListDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value }))} placeholder="Add custom list" type="text" value={listDraft} /><button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`} onClick={() => { void createTaskListForRow(selectedTask.id); }} type="button">Add</button></div>
+                      <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setListDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value }))} placeholder="Add custom list" type="text" value={listDraft} /><TaskTableChipButton onClick={() => { void createTaskListForRow(selectedTask.id); }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Add</TaskTableChipButton></div>
                     </>
                   );
                 } else if (metadataPanelId === "tags") {
                   metadataPanelContent = (
                     <>
-                      <div className="flex flex-wrap gap-2">{mergedTagOptions.map((tag, tagIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selectedTask.tags.includes(tag) ? TAG_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${selectedTask.id || "task"}-tag-choice-${tag || "blank"}-${tagIndex}`} onClick={() => toggleTaskTag(selectedTask.id, tag)} type="button">#{tag}</button>)}</div>
-                      <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setTagDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.toLowerCase().replace(/\s+/g, "-") }))} placeholder="new-tag" type="text" value={tagDraft} /><button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`} onClick={() => addTaskTag(selectedTask.id, tagDraft)} type="button">Add tag</button></div>
+                      <div className="flex flex-wrap gap-2">{mergedTagOptions.map((tag, tagIndex) => <TaskTableChipButton key={`${selectedTask.id || "task"}-tag-choice-${tag || "blank"}-${tagIndex}`} onClick={() => toggleTaskTag(selectedTask.id, tag)} toneClassName={selectedTask.tags.includes(tag) ? TAG_CHIP_CLASS : INACTIVE_CHIP_CLASS}>#{tag}</TaskTableChipButton>)}</div>
+                      <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setTagDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.toLowerCase().replace(/\s+/g, "-") }))} placeholder="new-tag" type="text" value={tagDraft} /><TaskTableChipButton onClick={() => addTaskTag(selectedTask.id, tagDraft)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Add tag</TaskTableChipButton></div>
                     </>
                   );
                 } else if (metadataPanelId === "link") {
@@ -3784,16 +4555,16 @@ export function TaskManagementTableV2({
                     <div className="space-y-2">
                       <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(selectedTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [selectedTask.id]: { ...(current[selectedTask.id] ?? linkDraft), label: event.target.value } }))} placeholder="Link label" type="text" value={linkDraft.label} />
                       <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(selectedTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [selectedTask.id]: { ...(current[selectedTask.id] ?? linkDraft), url: event.target.value } }))} placeholder="https://example.com" type="url" value={linkDraft.url} />
-                      <div className="flex justify-end gap-2"><button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS}`} onClick={() => clearTaskLink(selectedTask.id)} type="button">Clear link</button><button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`} onClick={() => commitTaskLink(selectedTask.id)} type="button">Save link</button></div>
+                      <div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => clearTaskLink(selectedTask.id)} toneClassName={INACTIVE_CHIP_CLASS}>Clear link</TaskTableChipButton><TaskTableChipButton onClick={() => commitTaskLink(selectedTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save link</TaskTableChipButton></div>
                     </div>
                   );
                 } else if (metadataPanelId === "notes") {
                   metadataPanelContent = (
                     <>
                       {selectedTask.linkedNotes.length > 0 ? <div className="mb-3 flex flex-wrap gap-2">{selectedTask.linkedNotes.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${LIST_CHIP_CLASS}`} key={`${note.id || "linked-note"}-${noteIndex}`} onClick={() => openLinkedNote(note.id)} type="button">{note.title}</button>)}</div> : null}
-                      <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} mb-3`} onClick={() => setNotePickerOpenByTaskId((current) => ({ ...current, [selectedTask.id]: !current[selectedTask.id] }))} type="button">{notePickerOpenByTaskId[selectedTask.id] ? "Hide saved notes" : "Connect existing note"}</button>
+                      <TaskTableChipButton className="mb-3" onClick={() => setNotePickerOpenByTaskId((current) => ({ ...current, [selectedTask.id]: !current[selectedTask.id] }))} toneClassName={INACTIVE_CHIP_CLASS}>{notePickerOpenByTaskId[selectedTask.id] ? "Hide saved notes" : "Connect existing note"}</TaskTableChipButton>
                       {notePickerOpenByTaskId[selectedTask.id] ? <div className="mb-3 flex flex-wrap gap-2">{allNoteOptions.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${linkedNoteDraft.includes(note.id) ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${note.id || "note-option"}-${noteIndex}`} onClick={() => { const nextLinked = linkedNoteDraft.includes(note.id) ? linkedNoteDraft.filter((id) => id !== note.id) : [...linkedNoteDraft, note.id]; setLinkedNoteDrafts((current) => ({ ...current, [selectedTask.id]: nextLinked })); setTaskLinkedNoteIds(selectedTask.id, nextLinked); }} type="button">{note.title}</button>)}</div> : null}
-                      <div className="space-y-2"><textarea className={`${OVERLAY_INPUT_CLASS} min-h-[120px] resize-none py-3`} onBlur={() => commitTaskNotes(selectedTask.id)} onChange={(event) => setNotesDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value }))} placeholder="Add notes" value={notesDraft} /><div className="flex justify-end gap-2"><button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS}`} onClick={() => clearTaskNotes(selectedTask.id)} type="button">Clear notes</button><button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`} onClick={() => commitTaskNotes(selectedTask.id)} type="button">Save notes</button></div></div>
+                      <div className="space-y-2"><textarea className={`${OVERLAY_INPUT_CLASS} min-h-[120px] resize-none py-3`} onBlur={() => commitTaskNotes(selectedTask.id)} onChange={(event) => setNotesDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value }))} placeholder="Add notes" value={notesDraft} /><div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => clearTaskNotes(selectedTask.id)} toneClassName={INACTIVE_CHIP_CLASS}>Clear notes</TaskTableChipButton><TaskTableChipButton onClick={() => commitTaskNotes(selectedTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save notes</TaskTableChipButton></div></div>
                     </>
                   );
                 }
@@ -3801,19 +4572,29 @@ export function TaskManagementTableV2({
                   <div className="mt-3 rounded-[1rem] border border-[#ede7f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Steps</p>
-                      <button
-                        aria-label="Add step"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-                        onClick={() => onTaskSubtaskAdd?.(selectedTask.id)}
-                        type="button"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <TaskTableChipButton
+                          onClick={() => setTaskSubtasksAutoReset(selectedTask.id, !selectedTask.subtasksAutoReset)}
+                          toneClassName={selectedTask.subtasksAutoReset ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}
+                        >
+                          {selectedTask.subtasksAutoReset ? "Reset steps on new due date" : "Keep step status on new due date"}
+                        </TaskTableChipButton>
+                        <button
+                          aria-label="Add step"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                          onClick={() => { void handleTaskSubtaskAdd(selectedTask.id); }}
+                          type="button"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
                     {selectedTaskVisibleSubtasks.length > 0 ? (
                       <InlineSubtaskEditor
+                        autofocusSubtaskId={autofocusSubtaskId}
                         drafts={subtaskTitleDrafts}
-                        onAddChild={(subtaskId) => onTaskSubtaskAddChild?.(subtaskId)}
+                        onAddChild={(subtaskId) => { void handleTaskSubtaskAddChild(subtaskId); }}
+                        onAutofocusHandled={() => setAutofocusSubtaskId(null)}
                         onCommitTitle={commitSubtaskTitle}
                         onDelete={handleTaskSubtaskDelete}
                         onDraftChange={(subtaskId, value) => {
@@ -3840,7 +4621,7 @@ export function TaskManagementTableV2({
                   <div className="mt-2 flex items-center gap-2">
                     <button
                       aria-label="Edit status"
-                      className="inline-flex h-11 w-11 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                      className="inline-flex flex-none items-center justify-center rounded-full p-0.5 transition hover:scale-105"
                       onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "status" }))}
                       type="button"
                     >
@@ -3848,22 +4629,12 @@ export function TaskManagementTableV2({
                     </button>
                     <label className="block min-w-0 flex-1">
                       <span className="sr-only">Rename task</span>
-                      <input
+                      <TaskTitleDraftInput
                         className={`${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] text-[18px]`}
-                        onBlur={() => commitTaskTitle(selectedTask.id)}
-                        onChange={(event) => setTitleDrafts((current) => ({
-                          ...current,
-                          [selectedTask.id]: event.target.value,
-                        }))}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            commitTaskTitle(selectedTask.id);
-                          }
-                        }}
-                        placeholder="Rename task"
-                        type="text"
-                        value={titleDraft}
+                        initialValue={titleDraft}
+                        onCommit={commitTaskTitle}
+                        onDraftChange={setTitleDraft}
+                        taskId={selectedTask.id}
                       />
                     </label>
                   </div>
@@ -3916,7 +4687,7 @@ export function TaskManagementTableV2({
                             <div className="mt-2 flex items-center gap-2">
                               <button
                                 aria-label="Edit status"
-                                className="inline-flex h-11 w-11 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                                className="inline-flex flex-none items-center justify-center rounded-full p-0.5 transition hover:scale-105"
                                 onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "status" }))}
                                 type="button"
                               >
@@ -3924,22 +4695,12 @@ export function TaskManagementTableV2({
                               </button>
                               <label className="block min-w-0 flex-1">
                                 <span className="sr-only">Rename task</span>
-                                <input
+                                <TaskTitleDraftInput
                                   className={`${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] text-[18px]`}
-                                  onBlur={() => commitTaskTitle(selectedTask.id)}
-                                  onChange={(event) => setTitleDrafts((current) => ({
-                                    ...current,
-                                    [selectedTask.id]: event.target.value,
-                                  }))}
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Enter") {
-                                      event.preventDefault();
-                                      commitTaskTitle(selectedTask.id);
-                                    }
-                                  }}
-                                  placeholder="Rename task"
-                                  type="text"
-                                  value={titleDraft}
+                                  initialValue={titleDraft}
+                                  onCommit={commitTaskTitle}
+                                  onDraftChange={setTitleDraft}
+                                  taskId={selectedTask.id}
                                 />
                               </label>
                             </div>
@@ -4053,14 +4814,14 @@ export function TaskManagementTableV2({
                     </div>
                     <div className="mt-2 flex justify-end gap-2">
                       <button
-                        className={`${CONTROL_FONT_CLASS} rounded-full border border-[#ddd6fb] bg-white px-3 py-2 text-sm font-medium text-[#5c6684] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70`}
+                        className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS}`}
                         onClick={() => setTaskDue(selectedTask.id, "", "")}
                         type="button"
                       >
                         Clear
                       </button>
                       <button
-                        className={`${CONTROL_FONT_CLASS} rounded-full bg-[#6f57f6] px-3 py-2 text-sm font-medium text-white dark:bg-[#cabfff] dark:text-[#1a1431]`}
+                        className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}
                         onClick={() => {
                           const draft = dueDrafts[selectedTask.id];
                           if (!draft) {
@@ -4198,29 +4959,45 @@ export function TaskManagementTableV2({
                       <Repeat2 className="h-4 w-4" />
                       Repeat
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {REPEAT_OPTIONS.map((option, optionIndex) => (
-                        <button
-                          className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selectedTask.repeat === option.value ? repeatTone(option.value) : INACTIVE_CHIP_CLASS}`}
-                          key={`${option.value || "repeat-option"}-${optionIndex}`}
-                          onClick={() => setTaskRepeat(selectedTask.id, option.value)}
-                          type="button"
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                    {selectedTask.repeat === "custom" ? (
-                      <div className="mt-3 flex justify-end">
-                        <button
-                          className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}
-                          onClick={() => openTaskEditorFromOverlay(selectedTask.id)}
-                          type="button"
-                        >
-                          Edit custom cadence
-                        </button>
-                      </div>
-                    ) : null}
+	                    <div className="flex flex-wrap gap-2">
+	                      {REPEAT_OPTIONS.map((option, optionIndex) => (
+	                        <TaskTableChipButton
+	                          key={`${option.value || "repeat-option"}-${optionIndex}`}
+	                          onClick={() => setTaskRepeat(selectedTask.id, option.value)}
+	                          toneClassName={selectedTask.repeat === option.value ? repeatTone(option.value) : INACTIVE_CHIP_CLASS}
+	                        >
+	                          {option.label}
+	                        </TaskTableChipButton>
+	                      ))}
+	                    </div>
+	                    {selectedTask.repeat !== "none" ? (
+	                      <div className="mt-3 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
+	                        <div className="flex flex-wrap items-center gap-2">
+	                          <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
+	                          <input className={`${OVERLAY_INPUT_CLASS} w-24`} inputMode="numeric" onBlur={(event) => setTaskRepeatInterval(selectedTask, event.target.value)} onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="1" type="text" value={repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval)} />
+	                          {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
+	                            <TaskTableChipButton key={`${selectedTask.id}-full-repeat-unit-${repeatUnit}`} onClick={() => setTaskRepeat(selectedTask.id, repeatUnit)} toneClassName={selectedTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}>
+	                              {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
+	                            </TaskTableChipButton>
+	                          ))}
+	                        </div>
+	                        {selectedTask.repeat === "weekly" || selectedTask.repeat === "custom" ? (
+	                          <div className="mt-3 flex flex-wrap gap-2">
+	                            {REPEAT_WEEKDAY_OPTIONS.map((option) => (
+	                              <TaskTableChipButton key={`${selectedTask.id}-full-weekday-${option.value}`} onClick={() => toggleTaskRepeatWeekday(selectedTask, option.value)} toneClassName={selectedTask.repeatDaysOfWeek.includes(option.value) ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}>
+	                                {option.label}
+	                              </TaskTableChipButton>
+	                            ))}
+	                          </div>
+	                        ) : null}
+	                        {selectedTask.repeat === "monthly" || selectedTask.repeat === "custom" ? (
+	                          <div className="mt-3 flex flex-wrap items-center gap-2">
+	                            <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Day of month</span>
+	                            <input className={`${OVERLAY_INPUT_CLASS} w-24`} inputMode="numeric" onBlur={(event) => setTaskRepeatDayOfMonth(selectedTask, event.target.value)} onChange={(event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) }))} placeholder="15" type="text" value={repeatDayOfMonthDrafts[selectedTask.id] ?? (selectedTask.repeatDayOfMonth ? String(selectedTask.repeatDayOfMonth) : "")} />
+	                          </div>
+	                        ) : null}
+	                      </div>
+	                    ) : null}
                   </section>
                   ) : null}
                 </div>
@@ -4250,7 +5027,7 @@ export function TaskManagementTableV2({
                     <div className={`${overlayMode === "status" ? "" : "mt-4"} flex flex-wrap gap-2`}>
                       {STATUS_OPTIONS.map((option, optionIndex) => (
                         <button
-                          className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selectedTask.status === option.value ? statusTone(option.value) : INACTIVE_CHIP_CLASS}`}
+                          className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selectedTask.status === option.value ? statusTone(option.value) : `${statusTone(option.value)} opacity-78 hover:opacity-100`}`}
                           key={`${option.value || "status-option"}-${optionIndex}`}
                           onClick={() => {
                             setTaskStatus(selectedTask.id, option.value);
@@ -4260,7 +5037,8 @@ export function TaskManagementTableV2({
                           }}
                           type="button"
                         >
-                          {renderTaskStatusChip(option.value, { size: "sm" })}
+                          {renderTaskStatusCircle(option.value, "sm")}
+                          <span>{formatTaskStatusLabel(option.value)}</span>
                         </button>
                       ))}
                     </div>
@@ -4363,7 +5141,7 @@ export function TaskManagementTableV2({
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {mergedListOptions.map((list, listIndex) => (
-                            <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selectedTask.lists.includes(list.label) ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${selectedTask.id || "task"}-list-choice-${list.id || list.label || "blank"}-${listIndex}`} onClick={() => toggleTaskList(selectedTask.id, list.label)} type="button">
+                            <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${taskHasList(selectedTask, list.label) ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${selectedTask.id || "task"}-list-choice-${list.id || list.label || "blank"}-${listIndex}`} onClick={() => toggleTaskList(selectedTask.id, list.label)} type="button">
                               {list.label}
                             </button>
                           ))}

@@ -1,5 +1,5 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
-import { computeTaskHistoryStats } from "@/lib/task-history";
+import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
 import { todayISO } from "@/lib/utils";
 
 export type TaskRewardMode = "single" | "batch";
@@ -13,6 +13,7 @@ export type TaskRewardTier = {
 };
 
 export type PendingTaskReward = {
+  claimRefs: Array<{ subtaskId: string | null; taskId: string; title: string }>;
   createdAt: string;
   diceCount: number;
   mode: TaskRewardMode;
@@ -30,6 +31,7 @@ export type TaskRewardResolution = {
   mode: TaskRewardMode;
   multiplierRoll: number;
   rewardDate: string;
+  claimRefs: Array<{ subtaskId: string | null; taskId: string; title: string }>;
   streakLength: number;
   tasks: Task[];
   tier: TaskRewardTier | null;
@@ -64,6 +66,7 @@ export type TaskRewardClaim = {
 };
 
 export type TaskRewardCandidate = {
+  claimRef?: { subtaskId: string | null; taskId: string; title: string };
   previousStatus: TaskStatus | null;
   task: Task;
 };
@@ -97,10 +100,15 @@ export function buildSingleTaskReward(tasks: Task[], history: DbTaskHistory[], r
     return null;
   }
 
-  const streakLength = computeTaskHistoryStats(history, rewardDate).currentStreak;
+  const streakLength = computeTaskSpecificHistoryStats(
+    task,
+    history.filter((entry) => entry.task_id === task.id),
+    rewardDate,
+  ).currentStreak;
   const tier = resolveTaskRewardTier(streakLength);
 
   return {
+    claimRefs: [{ subtaskId: null, taskId: task.id, title: task.title }],
     createdAt: new Date().toISOString(),
     diceCount: tier.diceCount,
     mode: "single",
@@ -117,6 +125,7 @@ export function buildBatchTaskReward(tasks: Task[], rewardDate = todayISO()): Pe
   }
 
   return {
+    claimRefs: tasks.map((task) => ({ subtaskId: null, taskId: task.id, title: task.title })),
     createdAt: new Date().toISOString(),
     diceCount: tasks.length,
     mode: "batch",
@@ -142,6 +151,7 @@ export function buildTaskRewardResolution(pendingReward: PendingTaskReward): Tas
     awardedTokens: pendingReward.tasks.length,
     basePoints,
     baseRolls,
+    claimRefs: pendingReward.claimRefs,
     finalPoints,
     mode: pendingReward.mode,
     multiplierRoll,

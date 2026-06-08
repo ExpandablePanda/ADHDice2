@@ -1,7 +1,7 @@
 "use client";
 
-import { Check, ChevronDown, Search } from "lucide-react";
-import { useRef, useState } from "react";
+import { Check, ChevronDown, Search, Trash2 } from "lucide-react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { MouseEvent } from "react";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
@@ -112,9 +112,12 @@ export function TaskOperationsHeader({
   onOpenFocusPlanner,
   onOpenImport,
   onOpenMomentumDetails,
+  onOpenTrash,
   onSearchChange,
   onViewChange,
   search,
+  selectedBucket,
+  trashCount,
   todayCount,
   view,
 }: {
@@ -134,14 +137,22 @@ export function TaskOperationsHeader({
   onOpenFocusPlanner: () => void;
   onOpenImport: () => void;
   onOpenMomentumDetails: () => void;
+  onOpenTrash: () => void;
   onSearchChange: (search: string) => void;
   onViewChange: (view: TaskViewMode) => void;
   search: string;
+  selectedBucket: string;
+  trashCount: number;
   todayCount: number;
   view: TaskViewMode;
 }) {
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
+  const [searchDraft, setSearchDraft] = useState(search);
+
+  useEffect(() => {
+    setSearchDraft(search);
+  }, [search]);
 
   const clearLongPress = () => {
     if (longPressTimerRef.current !== null) {
@@ -214,14 +225,20 @@ export function TaskOperationsHeader({
 
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
           {!hideSearch ? (
-            <label className="flex min-w-0 flex-1 items-center gap-3 rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
-              <Search className="h-4.5 w-4.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+            <label className="flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-[0.9rem] border border-[#efe9ff] bg-[#fbfaff] px-3.5 py-1 dark:border-white/10 dark:bg-white/[0.04]">
+              <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
               <input
-                className="min-w-0 flex-1 bg-transparent text-sm text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+                className="min-w-0 flex-1 bg-transparent text-[13px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
                 id="task-search-input"
-                onChange={(event) => onSearchChange(event.target.value)}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setSearchDraft(nextValue);
+                  startTransition(() => {
+                    onSearchChange(nextValue);
+                  });
+                }}
                 placeholder="Search tasks or subtasks"
-                value={search}
+                value={searchDraft}
               />
             </label>
           ) : null}
@@ -232,6 +249,13 @@ export function TaskOperationsHeader({
               </TaskChipButton>
               <TaskChipButton onClick={onOpenComposer} tone="primary">
                 New Task
+              </TaskChipButton>
+              <TaskChipButton active={selectedBucket === "trash"} onClick={() => startTransition(onOpenTrash)}>
+                <span className="inline-flex items-center gap-2">
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Trash
+                  <span className="opacity-70">{trashCount}</span>
+                </span>
               </TaskChipButton>
               <TaskViewsMenu onViewChange={onViewChange} view={view} />
             </div>
@@ -266,10 +290,12 @@ export function TasksListViewPanel(props: {
   onToggleKeyboardShortcutsMenu: () => void;
   onToggleListColumn: (columnId: AgentPlanColumnId) => void;
   onToggleListColumnMenu: () => void;
+  onOpenTrash: () => void;
   onUpdateSearch: (search: string) => void;
   search: string;
   selectedBucket: string;
   shortcuts: Array<{ action: string; alternateKeys?: string[]; keys: string[] }>;
+  trashCount: number;
   view: TaskViewMode;
 }) {
   const {
@@ -292,23 +318,36 @@ export function TasksListViewPanel(props: {
     onToggleKeyboardShortcutsMenu,
     onToggleListColumn,
     onToggleListColumnMenu,
+    onOpenTrash,
     onUpdateSearch,
     search,
     selectedBucket,
+    trashCount,
     view,
   } = props;
+  const [searchDraft, setSearchDraft] = useState(search);
+
+  useEffect(() => {
+    setSearchDraft(search);
+  }, [search]);
 
   return (
     <section className="mt-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start">
-        <label className="flex min-w-0 flex-1 items-center gap-3 rounded-[1.2rem] border border-[#efe9ff] bg-[#fbfaff] px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
-          <Search className="h-4.5 w-4.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+        <label className="flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-[0.9rem] border border-[#efe9ff] bg-[#fbfaff] px-3.5 py-1 dark:border-white/10 dark:bg-white/[0.04]">
+          <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
           <input
-            className="min-w-0 flex-1 bg-transparent text-sm text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+            className="min-w-0 flex-1 bg-transparent text-[13px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
             id="task-search-input"
-            onChange={(event) => onUpdateSearch(event.target.value)}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setSearchDraft(nextValue);
+              startTransition(() => {
+                onUpdateSearch(nextValue);
+              });
+            }}
             placeholder="Search tasks or subtasks"
-            value={search}
+            value={searchDraft}
           />
         </label>
         <div className="flex flex-wrap items-start justify-end gap-3">
@@ -317,6 +356,13 @@ export function TasksListViewPanel(props: {
           </TaskChipButton>
           <TaskChipButton onClick={onOpenComposer} tone="primary">
             New Task
+          </TaskChipButton>
+          <TaskChipButton active={selectedBucket === "trash"} onClick={() => startTransition(onOpenTrash)}>
+            <span className="inline-flex items-center gap-2">
+              <Trash2 className="h-3.5 w-3.5" />
+              Trash
+              <span className="opacity-70">{trashCount}</span>
+            </span>
           </TaskChipButton>
           <TaskViewsMenu onViewChange={onSetView} view={view} />
           <div className="relative" ref={listColumnMenuRef}>
@@ -409,7 +455,11 @@ export function TasksListViewPanel(props: {
             aria-pressed={list.id === selectedBucket}
             className={CHIP_BUTTON_CLASS}
             key={list.id}
-            onClick={() => onSelectBucket(list.id)}
+            onClick={() => {
+              startTransition(() => {
+                onSelectBucket(list.id);
+              });
+            }}
             type="button"
           >
             <span className={list.id === selectedBucket ? CHIP_ACTIVE_CLASS : CHIP_MUTED_CLASS}>
@@ -479,7 +529,11 @@ function TaskBucketRail({
                     : "text-[#58637f] hover:bg-[#faf8ff] dark:text-white/65 dark:hover:bg-white/[0.04]"
                 }`}
                 key={list.id}
-                onClick={() => onSelectBucket(list.id)}
+                onClick={() => {
+                  startTransition(() => {
+                    onSelectBucket(list.id);
+                  });
+                }}
                 type="button"
               >
                 <span className="min-w-0">
@@ -500,7 +554,11 @@ function TaskBucketRail({
             aria-pressed={list.id === selectedBucket}
             className={CHIP_BUTTON_CLASS}
             key={list.id}
-            onClick={() => onSelectBucket(list.id)}
+            onClick={() => {
+              startTransition(() => {
+                onSelectBucket(list.id);
+              });
+            }}
             type="button"
           >
             <span className={list.id === selectedBucket ? CHIP_ACTIVE_CLASS : CHIP_MUTED_CLASS}>

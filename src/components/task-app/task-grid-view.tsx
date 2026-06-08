@@ -103,9 +103,9 @@ export function TaskGridViewComponent({
           </div>
           <div className="flex flex-wrap gap-2">
             {isEditMode ? (
-              <button className="rounded-full px-4 py-3 text-sm font-semibold bg-[#fff4f6] text-[#d94e67] dark:bg-[#432330] dark:text-[#ffb2bf]" onClick={onResetLayout} type="button">Reset Layout</button>
+              <button className="ui-pill-button-danger-light" onClick={onResetLayout} type="button">Reset Layout</button>
             ) : null}
-            <button className={`rounded-full px-5 py-3 text-sm font-semibold ${isEditMode ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]" : "bg-[#f3efff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"}`} onClick={onToggleEditMode} type="button">{isEditMode ? "Done Editing" : "Edit Layout"}</button>
+            <button className={isEditMode ? "ui-pill-button-strong-light" : "ui-pill-button-light"} onClick={onToggleEditMode} type="button">{isEditMode ? "Done Editing" : "Edit Layout"}</button>
           </div>
         </div>
 
@@ -133,9 +133,9 @@ export function TaskGridViewComponent({
                         <p className="mt-0.5 text-xs text-[#8a93aa] dark:text-white/45">{isPresent ? "On grid" : "Hidden"}</p>
                       </div>
                       {isPresent && existingWidget ? (
-                        <button className="shrink-0 rounded-full px-3 py-2 text-xs font-semibold bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]" onClick={() => onRemoveWidget(existingWidget.id)} type="button">Remove</button>
+                        <button className="ui-pill-button-danger-light shrink-0" onClick={() => onRemoveWidget(existingWidget.id)} type="button">Remove</button>
                       ) : (
-                        <button className="shrink-0 rounded-full px-3 py-2 text-xs font-semibold bg-[#edf2ff] text-[#4a5fd3] dark:bg-[#182138] dark:text-[#a7b8ff]" onClick={() => onAddWidget(widgetType)} type="button"><Plus className="mr-1 inline h-3.5 w-3.5" />Add</button>
+                        <button className="ui-pill-button-strong-light shrink-0" onClick={() => onAddWidget(widgetType)} type="button"><Plus className="mr-1 inline h-3.5 w-3.5" />Add</button>
                       )}
                     </div>
                   );

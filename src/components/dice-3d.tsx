@@ -568,6 +568,7 @@ export function Dice3DCanvas({
   phase,
   layout,
   onSettled,
+  onClick,
   dark,
   d20Style = DEFAULT_D20_VISUAL_STYLE,
   faceValue,
@@ -575,6 +576,7 @@ export function Dice3DCanvas({
   phase: DicePhase;
   layout: DiceLayout;
   onSettled: () => void;
+  onClick?: () => void;
   dark: boolean;
   d20Style?: D20VisualStyle;
   faceValue?: number;
@@ -593,7 +595,19 @@ export function Dice3DCanvas({
   const d20Scale = isSingleD20 ? 1.02 : 2.0;
 
   return (
-    <div className={containerClass} style={containerStyle}>
+    <div
+      className={`${containerClass} ${onClick ? "cursor-pointer" : ""}`}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      style={containerStyle}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      } : undefined}
+    >
       <Canvas camera={{ position: cameraPosition, fov: cameraFov }} gl={{ antialias: true }}>
         <color attach="background" args={[bg]} />
         <ambientLight intensity={0.65} />

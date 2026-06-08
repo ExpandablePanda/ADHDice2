@@ -1,5 +1,9 @@
 ADHDice is a gamified task, todo list, and personal planner prototype for ADHD minds. This clean prototype uses Next.js, TypeScript, Tailwind, and Supabase for auth, Postgres storage, and realtime task syncing.
 
+For deeper project documentation, see `docs/INDEX.md`.
+
+Last reviewed: 2026-06-04
+
 ## Getting Started
 
 Install dependencies, then run the development server:
@@ -18,7 +22,7 @@ Open [http://localhost:3000](http://localhost:3000) in Safari or another browser
 4. Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 5. Restart `npm run dev`.
 
-The first app pass supports magic-link sign-in, user-owned tasks, basic task capture, pasted-line imports, archive/done states, and realtime refreshes across browsers logged into the same account.
+Current app surfaces include task planning, focus tracking, reward rolls, achievements, health logging, notes, stats, and isolated Test-page prototypes, with realtime task syncing across signed-in browsers.
 
 ## Project Notes
 

@@ -25,6 +25,14 @@ Optimize for safe work, low regression risk, clean organization, and design cons
 - Do not use skills unless the user explicitly asks or the task clearly matches the skill description.
 - Before using a skill, suggest it briefly and ask for approval if using it will add significant context or token cost.
 
+## Documentation
+- Treat `docs/INDEX.md` as the documentation map for this repo.
+- Treat files listed there as either canonical, active working, tooling/generated, archived, or pointer-only according to their declared role.
+- Use canonical docs for current implemented truth.
+- Use active working docs for product direction and future-facing planning.
+- Do not treat `docs/archive/` as current project context unless the user explicitly asks.
+- Do not treat generated skill docs under `Skills/generated-skill-library/` as product truth.
+
 ## Editing
 - Before editing, state the file(s) you plan to inspect or modify.
 - For small edits, do not refactor unrelated code.
@@ -64,6 +72,10 @@ Optimize for safe work, low regression risk, clean organization, and design cons
 - Prefer clear visual hierarchy, restrained type scale, and tidy alignment over decorative or novelty-heavy UI.
 - When editing or adding menus, modals, panels, and controls, make them feel like part of the same design system rather than isolated inventions.
 - If the repo already has a design language for chips, cards, toggles, list controls, or headers, continue that language consistently.
+- For new chips, pills, and text-labeled controls, consult `docs/ui-design-system.md` first and default to the task-table chip scale unless the feature has a documented reason to diverge.
+- If a control has visible text, default to a clickable chip using the shared task-table primitives in `src/components/ui/task-table-primitives.tsx` instead of introducing a conventional text button.
+- Treat non-chip text buttons as exception-only and use them only when the UI truly needs a larger documented action treatment.
+- Use `npm run audit:text-buttons` as the repo-level drift check for text-labeled `<button>` elements that have not been converted to approved chip patterns.
 
 ## Next.js
 - This repo uses Next `16.2.4`. Do not assume older Next.js behavior is correct.

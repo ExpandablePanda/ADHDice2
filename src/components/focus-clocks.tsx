@@ -322,28 +322,54 @@ export function FocusClockRowDesktop({
     if (aRunning !== bRunning) return aRunning ? -1 : 1;
     return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
   });
+  const categoryRows = sortedCategories.reduce<FocusCategory[][]>((rows, category, index) => {
+    if (index % 5 === 0) {
+      rows.push([]);
+    }
+    rows[rows.length - 1]?.push(category);
+    return rows;
+  }, []);
 
   return (
-    <div className="hidden sm:grid grid-cols-2 justify-items-center gap-3 md:grid-cols-3 lg:grid-cols-4 lg:gap-4 xl:grid-cols-5 xl:gap-3 2xl:gap-4">
-      {sortedCategories.map((cat) => (
-        <div
-          key={cat.id}
-          className="[--clock-scale:0.7] md:[--clock-scale:0.74] lg:[--clock-scale:0.8] xl:[--clock-scale:0.84] 2xl:[--clock-scale:0.72] [height:calc(344px*var(--clock-scale))] [width:calc(272px*var(--clock-scale))]"
-          style={{
-            transform: "scale(var(--clock-scale))",
-            transformOrigin: "top center",
-          }}
-        >
-          <FocusClock
-            activeSession={activeSessions[cat.id]}
-            category={cat}
-            onAdjust={onAdjust}
-            onFinish={onFinish}
-            onReset={onReset}
-            onToggle={onToggle}
-          />
+    <div className="hidden sm:block">
+      <div className="mx-auto max-w-[86rem] overflow-hidden rounded-[2rem] border border-[#ebe4fb] bg-white/82 shadow-[0_18px_48px_rgba(81,61,168,0.08)] backdrop-blur [--clock-scale:0.54] md:[--clock-scale:0.58] lg:[--clock-scale:0.62] xl:[--clock-scale:0.68] 2xl:[--clock-scale:0.72] h-[calc(344px*var(--clock-scale)+3.75rem)] dark:border-white/10 dark:bg-white/[0.05]">
+        <div className="h-full overflow-y-auto px-4 pt-5 pb-3 snap-y snap-mandatory">
+        <div className="flex flex-col gap-14">
+          {categoryRows.map((row, rowIndex) => (
+            <div
+              key={`focus-clock-row-${rowIndex}`}
+              className="grid snap-start grid-cols-5 items-start justify-items-center gap-x-2 pt-5"
+            >
+              {row.map((cat) => (
+                <div
+                  key={cat.id}
+                  className="relative h-[calc(344px*var(--clock-scale))] w-[calc(272px*var(--clock-scale))]"
+                >
+                  <div className="absolute left-1/2 top-0 h-[344px] w-[272px] -translate-x-1/2">
+                    <div
+                      className="h-[344px] w-[272px]"
+                      style={{
+                        transform: "scale(var(--clock-scale))",
+                        transformOrigin: "top center",
+                      }}
+                    >
+                      <FocusClock
+                        activeSession={activeSessions[cat.id]}
+                        category={cat}
+                        onAdjust={onAdjust}
+                        onFinish={onFinish}
+                        onReset={onReset}
+                        onToggle={onToggle}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
-      ))}
+        </div>
+      </div>
     </div>
   );
 }

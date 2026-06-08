@@ -19,18 +19,28 @@ export type TaskListMembershipMode = "hybrid" | "manual" | "rules";
 
 export type TaskListRule =
   | { field: "status"; op: "is" | "is_not"; value: TaskStatus | TaskStatus[] }
+  | { field: "list"; op: "is" | "is_not"; value: TaskListId }
+  | { field: "steps"; op: "is" | "is_not"; value: boolean }
   | { field: "is_urgent"; op: "is" | "is_not"; value: boolean }
   | { field: "is_important"; op: "is" | "is_not"; value: boolean }
   | { field: "focus"; op: "is" | "is_not"; value: boolean }
   | { field: "repeat"; op: "is" | "is_not"; value: boolean }
   | { field: "energy"; op: "is" | "is_not"; value: TaskEnergy | TaskEnergy[] }
+  | { field: "streak"; op: "is" | "is_not"; value: "0" | "over_0" | "over_7" | "over_14" | "over_30" }
   | { field: "due"; op: "is_empty" | "is_overdue" | "is_today" | "is_future" | "is_not_today" | "is_not_overdue" }
   | { field: "date_added"; op: "is_today" | "is_not_today" };
 
-export type TaskListRuleGroup = {
-  combinator: "all" | "any";
-  rules: TaskListRule[];
+export type TaskListRuleConnector = "and" | "or";
+export type TaskListRuleRow = {
+  connector?: TaskListRuleConnector;
+  rule: TaskListRule;
 };
+
+export type TaskListRuleGroup = {
+  rules: TaskListRuleRow[];
+};
+
+type TaskListRuleStreakValue = Extract<TaskListRule, { field: "streak" }>["value"];
 
 export type TaskListDefinition = {
   description: string;
@@ -60,7 +70,9 @@ export type TaskListMembership = {
 };
 
 export type TaskListEvaluationContext = {
+  currentStreakByTaskId: Record<string, number>;
   focusedTaskIds: Set<string>;
+  hasStepsByTaskId: Record<string, boolean>;
   isDueToday: (date: string | null) => boolean;
   isLater: (date: string | null) => boolean;
   isOpen: (task: Task) => boolean;
@@ -97,18 +109,17 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       type: "system",
     },
     {
-      description: "Work realistically in play today through rules or manual planning.",
+      description: "Tasks that are truly due today and still active.",
       id: "today",
       isDeletable: false,
       isEditable: true,
       isVisible: true,
-      membershipMode: "hybrid",
+      membershipMode: "rules",
       name: "Today",
       rules: {
-        combinator: "any",
         rules: [
-          { field: "status", op: "is", value: "in_progress" },
-          { field: "due", op: "is_today" },
+          { rule: { field: "due", op: "is_today" } },
+          { connector: "and", rule: { field: "status", op: "is_not", value: "missed" } },
         ],
       },
       sortOrder: 1,
@@ -123,8 +134,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "rules",
       name: "Focus",
       rules: {
-        combinator: "all",
-        rules: [{ field: "focus", op: "is", value: true }],
+        rules: [{ rule: { field: "focus", op: "is", value: true } }],
       },
       sortOrder: 2,
       type: "smart",
@@ -138,8 +148,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "rules",
       name: "Urgent",
       rules: {
-        combinator: "all",
-        rules: [{ field: "is_urgent", op: "is", value: true }],
+        rules: [{ rule: { field: "is_urgent", op: "is", value: true } }],
       },
       sortOrder: 3,
       type: "smart",
@@ -153,8 +162,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "rules",
       name: "Important",
       rules: {
-        combinator: "all",
-        rules: [{ field: "is_important", op: "is", value: true }],
+        rules: [{ rule: { field: "is_important", op: "is", value: true } }],
       },
       sortOrder: 4,
       type: "smart",
@@ -180,8 +188,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "rules",
       name: "Recurring",
       rules: {
-        combinator: "all",
-        rules: [{ field: "repeat", op: "is", value: true }],
+        rules: [{ rule: { field: "repeat", op: "is", value: true } }],
       },
       sortOrder: 6,
       type: "system",
@@ -195,8 +202,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "rules",
       name: "Waiting",
       rules: {
-        combinator: "all",
-        rules: [{ field: "status", op: "is", value: "upcoming" }],
+        rules: [{ rule: { field: "status", op: "is", value: "upcoming" } }],
       },
       sortOrder: 7,
       type: "system",
@@ -222,10 +228,9 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "rules",
       name: "Done",
       rules: {
-        combinator: "any",
         rules: [
-          { field: "status", op: "is", value: "done" },
-          { field: "status", op: "is", value: "did_my_best" },
+          { rule: { field: "status", op: "is", value: "done" } },
+          { connector: "or", rule: { field: "status", op: "is", value: "did_my_best" } },
         ],
       },
       sortOrder: 9,
@@ -240,8 +245,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "rules",
       name: "Missed",
       rules: {
-        combinator: "all",
-        rules: [{ field: "status", op: "is", value: "missed" }],
+        rules: [{ rule: { field: "status", op: "is", value: "missed" } }],
       },
       sortOrder: 10,
       type: "system",
@@ -288,6 +292,9 @@ export function evaluateTaskListMemberships(
   const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
 
   for (const listId of manualListIds) {
+    if (listId === "today") {
+      continue;
+    }
     memberships.set(listId, {
       id: listId,
       isManual: true,
@@ -296,14 +303,8 @@ export function evaluateTaskListMemberships(
   }
 
   for (const list of lists) {
-    if (!list.rules) {
-      continue;
-    }
-    if (!context.isOpen(task) && list.id !== "done") {
-      continue;
-    }
-    if (matchesTaskListRules(task, list.rules, context)) {
-      const current = memberships.get(list.id);
+    const current = memberships.get(list.id);
+    if (matchesSpecificListRuleMembership(task, list, lists, context)) {
       memberships.set(list.id, {
         id: list.id,
         isManual: current?.isManual ?? false,
@@ -349,16 +350,26 @@ export function taskBelongsToList(
   lists: TaskListDefinition[],
   context: TaskListEvaluationContext,
 ) {
-  return evaluateTaskListMemberships(task, lists, context).some((membership) => membership.id === selectedListId);
+  return taskBelongsToSpecificList(task, selectedListId as TaskListId, lists, context);
 }
 
 export function matchesTaskListRules(
   task: Task,
   group: TaskListRuleGroup,
+  lists: TaskListDefinition[],
   context: TaskListEvaluationContext,
-) {
-  const matches = group.rules.map((rule) => matchesTaskListRule(task, rule, context));
-  return group.combinator === "all" ? matches.every(Boolean) : matches.some(Boolean);
+  visitedListIds: Set<TaskListId> = new Set(),
+): boolean {
+  if (group.rules.length === 0) {
+    return false;
+  }
+
+  let result: boolean = matchesTaskListRule(task, group.rules[0].rule, lists, context, visitedListIds);
+  for (const entry of group.rules.slice(1)) {
+    const nextValue = matchesTaskListRule(task, entry.rule, lists, context, visitedListIds);
+    result = entry.connector === "or" ? (result || nextValue) : (result && nextValue);
+  }
+  return result;
 }
 
 export function parseTaskListRules(value: unknown): TaskListRuleGroup | null {
@@ -366,19 +377,28 @@ export function parseTaskListRules(value: unknown): TaskListRuleGroup | null {
     return null;
   }
 
-  const candidate = value as Partial<TaskListRuleGroup>;
-  if ((candidate.combinator !== "all" && candidate.combinator !== "any") || !Array.isArray(candidate.rules)) {
+  const candidate = value as { combinator?: "all" | "any"; rules?: unknown[] };
+  if (!Array.isArray(candidate.rules)) {
     return null;
   }
 
-  const rules = candidate.rules.filter(isTaskListRule);
-  if (rules.length !== candidate.rules.length) {
+  const rowRules = candidate.rules.filter(isTaskListRuleRow);
+  if (rowRules.length === candidate.rules.length) {
+    return {
+      rules: normalizeTaskListRuleRows(rowRules),
+    };
+  }
+
+  const legacyRules = candidate.rules.filter(isTaskListRule);
+  if (legacyRules.length !== candidate.rules.length || (candidate.combinator !== "all" && candidate.combinator !== "any")) {
     return null;
   }
 
   return {
-    combinator: candidate.combinator,
-    rules,
+    rules: legacyRules.map((rule, index) => ({
+      connector: index === 0 ? undefined : (candidate.combinator === "any" ? "or" : "and"),
+      rule,
+    })),
   };
 }
 
@@ -409,12 +429,31 @@ function shouldAppearInInbox(
 function matchesTaskListRule(
   task: Task,
   rule: TaskListRule,
+  lists: TaskListDefinition[],
   context: TaskListEvaluationContext,
-) {
+  visitedListIds: Set<TaskListId> = new Set(),
+): boolean {
+  const matchesStreakThreshold = (value: TaskListRuleStreakValue) => {
+    const currentStreak = context.currentStreakByTaskId[task.id] ?? 0;
+    if (value === "0") return currentStreak === 0;
+    if (value === "over_0") return currentStreak > 0;
+    if (value === "over_7") return currentStreak > 7;
+    if (value === "over_14") return currentStreak > 14;
+    return currentStreak > 30;
+  };
+
   switch (rule.field) {
     case "status": {
       const values = Array.isArray(rule.value) ? rule.value : [rule.value];
       return rule.op === "is" ? values.includes(task.status) : !values.includes(task.status);
+    }
+    case "list": {
+      const belongsToList = taskBelongsToSpecificList(task, rule.value, lists, context, visitedListIds);
+      return rule.op === "is" ? belongsToList : !belongsToList;
+    }
+    case "steps": {
+      const hasSteps = context.hasStepsByTaskId[task.id] === true;
+      return rule.op === "is" ? hasSteps === rule.value : hasSteps !== rule.value;
     }
     case "is_urgent":
       return rule.op === "is" ? task.is_urgent === rule.value : task.is_urgent !== rule.value;
@@ -432,6 +471,8 @@ function matchesTaskListRule(
       const values = Array.isArray(rule.value) ? rule.value : [rule.value];
       return rule.op === "is" ? values.includes(task.energy) : !values.includes(task.energy);
     }
+    case "streak":
+      return rule.op === "is" ? matchesStreakThreshold(rule.value) : !matchesStreakThreshold(rule.value);
     case "due":
       if (rule.op === "is_empty") return !task.due_on;
       if (rule.op === "is_today") return context.isDueToday(task.due_on);
@@ -459,12 +500,28 @@ function isTaskListRule(value: unknown): value is TaskListRule {
     return (candidate.op === "is" || candidate.op === "is_not")
       && (typeof candidate.value === "string" || (Array.isArray(candidate.value) && candidate.value.every((item) => typeof item === "string")));
   }
+  if (candidate.field === "list") {
+    return (candidate.op === "is" || candidate.op === "is_not") && typeof candidate.value === "string";
+  }
+  if (candidate.field === "steps") {
+    return (candidate.op === "is" || candidate.op === "is_not") && typeof candidate.value === "boolean";
+  }
   if (candidate.field === "is_urgent" || candidate.field === "is_important" || candidate.field === "focus" || candidate.field === "repeat") {
     return (candidate.op === "is" || candidate.op === "is_not") && typeof candidate.value === "boolean";
   }
   if (candidate.field === "energy") {
     return (candidate.op === "is" || candidate.op === "is_not")
       && (typeof candidate.value === "string" || (Array.isArray(candidate.value) && candidate.value.every((item) => typeof item === "string")));
+  }
+  if (candidate.field === "streak") {
+    return (candidate.op === "is" || candidate.op === "is_not")
+      && (
+        candidate.value === "0"
+        || candidate.value === "over_0"
+        || candidate.value === "over_7"
+        || candidate.value === "over_14"
+        || candidate.value === "over_30"
+      );
   }
   if (candidate.field === "due") {
     return candidate.op === "is_empty"
@@ -480,6 +537,87 @@ function isTaskListRule(value: unknown): value is TaskListRule {
   return false;
 }
 
+function isTaskListRuleRow(value: unknown): value is TaskListRuleRow {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<TaskListRuleRow>;
+  if (!isTaskListRule(candidate.rule)) {
+    return false;
+  }
+
+  return candidate.connector === undefined || candidate.connector === "and" || candidate.connector === "or";
+}
+
+function normalizeTaskListRuleRows(rows: TaskListRuleRow[]): TaskListRuleRow[] {
+  return rows.map((entry, index) => ({
+    connector: index === 0 ? undefined : (entry.connector === "or" ? "or" : "and"),
+    rule: entry.rule,
+  }));
+}
+
 export function isTaskListRepeatEnabled(frequency: TaskRepeatFrequency) {
   return frequency !== "none";
+}
+
+function matchesSpecificListRuleMembership(
+  task: Task,
+  list: TaskListDefinition,
+  lists: TaskListDefinition[],
+  context: TaskListEvaluationContext,
+  visitedListIds: Set<TaskListId> = new Set(),
+): boolean {
+  if (!list.rules) {
+    return false;
+  }
+  if (!context.isOpen(task) && list.id !== "done") {
+    return false;
+  }
+  return matchesTaskListRules(task, list.rules, lists, context, visitedListIds);
+}
+
+function taskBelongsToSpecificList(
+  task: Task,
+  selectedListId: TaskListId,
+  lists: TaskListDefinition[],
+  context: TaskListEvaluationContext,
+  visitedListIds: Set<TaskListId> = new Set(),
+): boolean {
+  if (visitedListIds.has(selectedListId)) {
+    return false;
+  }
+
+  const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
+  const hasManualMembership = selectedListId !== "today" && manualListIds.includes(selectedListId);
+  if (hasManualMembership) {
+    return true;
+  }
+
+  if (selectedListId === "inbox") {
+    if (!context.isOpen(task) || task.status === "archived") {
+      return false;
+    }
+
+    const hasAnyManualMembership = manualListIds.length > 0;
+    if (hasAnyManualMembership) {
+      return false;
+    }
+
+    const nextVisited = new Set(visitedListIds);
+    nextVisited.add("inbox");
+    const hasNonInboxRuleMatch = lists.some((list) =>
+      list.id !== "inbox" && matchesSpecificListRuleMembership(task, list, lists, context, nextVisited),
+    );
+    return !hasNonInboxRuleMatch;
+  }
+
+  const list = lists.find((entry) => entry.id === selectedListId);
+  if (!list) {
+    return false;
+  }
+
+  const nextVisited = new Set(visitedListIds);
+  nextVisited.add(selectedListId);
+  return matchesSpecificListRuleMembership(task, list, lists, context, nextVisited);
 }

@@ -4,8 +4,12 @@ import type { Task } from "@/lib/database.types";
 const REPEAT_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 export function calcNextDueDate(task: Task): string | null {
+  return calcNextDueDateFromDate(task, task.due_on ?? formatDateKey(new Date()));
+}
+
+export function calcNextDueDateFromDate(task: Task, referenceDateKey: string): string | null {
   if (task.repeat_frequency === "none") return null;
-  const base = task.due_on ? new Date(`${task.due_on}T12:00:00`) : new Date();
+  const base = new Date(`${referenceDateKey}T12:00:00`);
   const interval = Math.max(1, task.repeat_interval ?? 1);
 
   if (task.repeat_frequency === "daily") {

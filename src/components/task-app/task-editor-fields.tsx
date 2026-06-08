@@ -15,10 +15,10 @@ export function Pill({
 }) {
   return (
     <button
-      className={`rounded-full px-4 py-2 text-base font-semibold ${
+      className={`ui-chip-button-base ${
         selected
-          ? "bg-[#f4efff] text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.08)] dark:bg-[#221a42] dark:text-[#cabfff]"
-          : "bg-white text-[#5c647d] shadow-[0_10px_24px_rgba(81,61,168,0.05)] dark:bg-white/8 dark:text-white/70"
+          ? "bg-[#f4efff] text-[#6f57f6] dark:bg-[#221a42] dark:text-[#cabfff]"
+          : "bg-white text-[#5c647d] dark:bg-white/8 dark:text-white/70"
       }`}
       onClick={onClick}
       type="button"
@@ -57,7 +57,7 @@ export function TagChipInput({
         {values.map((tag) => (
           <span className="flex items-center gap-1 rounded-full bg-[#ede8ff] px-2.5 py-0.5 text-xs font-semibold text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" key={tag}>
             {tag}
-            <button className="opacity-60 hover:opacity-100" onClick={() => onChange(values.filter((value) => value !== tag))} type="button">x</button>
+            <button className="ui-chip-button-base opacity-60 hover:opacity-100" onClick={() => onChange(values.filter((value) => value !== tag))} type="button">x</button>
           </span>
         ))}
       </div>
@@ -80,16 +80,14 @@ export function TagChipInput({
           value={input}
         />
         <button
-          className="shrink-0 rounded-[0.75rem] bg-[#ede8ff] px-3 py-2 text-sm font-semibold text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
+          className="ui-pill-button-strong-light shrink-0"
           onClick={() => addTag(input)}
           type="button"
         >
           Add
         </button>
         <button
-          className={`shrink-0 rounded-[0.75rem] px-3 py-2 text-sm font-semibold ${showExistingTags
-            ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-            : "bg-[#f6f1ff] text-[#6f57f6] dark:bg-white/8 dark:text-[#cabfff]"}`}
+          className={`shrink-0 ${showExistingTags ? "ui-pill-button-strong-light" : "ui-pill-button-light"}`}
           onClick={() => setShowExistingTags((current) => !current)}
           type="button"
         >
@@ -121,9 +119,7 @@ export function TagChipInput({
                 const selected = values.includes(tag);
                 return (
                   <button
-                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${selected
-                      ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                      : "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"}`}
+                    className={`transition ${selected ? "ui-pill-button-strong-light" : "ui-pill-button-light"}`}
                     key={tag}
                     onClick={() => selected ? onChange(values.filter((value) => value !== tag)) : addTag(tag)}
                     type="button"

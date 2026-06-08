@@ -142,7 +142,7 @@ export function HudCommandCenter({
       ...widgets,
       {
         id: `hud-${widgetType}`,
-        size: widgetType === "focus_timer" ? "2x2" : widgetType === "xp" || widgetType === "task_counts" ? "2x1" : "1x1",
+        size: widgetType === "focus_timer" ? "2x2" : widgetType === "xp" || widgetType === "task_counts" || widgetType === "focus_alarm" ? "2x1" : "1x1",
         type: widgetType,
       },
     ]);
@@ -273,6 +273,7 @@ export function HudCommandCenter({
   function renderWidgetTile(widget: HudWidgetLayoutItem, isPrimary = false) {
     const isSelected = hudUiState.isHudEditMode && selectedWidget?.id === widget.id;
     const tilePaddingClass = isPrimary ? "px-3 py-2" : "px-2.5 py-2";
+    const overflowClass = widget.type === "notification_inbox" ? "overflow-visible z-20" : "overflow-hidden";
     const dimensions = getWidgetDimensions(widget, isPrimary);
     const tileStyle: CSSProperties = {
       flex: `0 0 ${dimensions.width}px`,
@@ -283,7 +284,7 @@ export function HudCommandCenter({
 
     return (
       <div
-        className={`relative min-h-0 min-w-0 overflow-hidden rounded-[1rem] border border-white/35 bg-transparent text-left backdrop-blur-[10px] dark:border-white/10 dark:bg-transparent ${tilePaddingClass} ${isSelected ? "ring-2 ring-[#6f57f6]" : ""}`}
+        className={`relative min-h-0 min-w-0 rounded-[1rem] border border-white/35 bg-transparent text-left backdrop-blur-[10px] dark:border-white/10 dark:bg-transparent ${overflowClass} ${tilePaddingClass} ${isSelected ? "ring-2 ring-[#6f57f6]" : ""}`}
         draggable={hudUiState.isHudEditMode && resizeDragRef.current === null}
         key={widget.id}
         style={tileStyle}
@@ -401,7 +402,7 @@ export function HudCommandCenter({
 
         {hudUiState.isHudEditMode ? (
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button className="rounded-full px-3 py-1.5 text-xs font-semibold bg-[#fff1f3] text-[#d94e67] dark:bg-[#44232f] dark:text-[#ff9eaf]" onClick={resetHudLayout} type="button">
+            <button className="ui-pill-button-danger-light" onClick={resetHudLayout} type="button">
               <RotateCcw className="mr-1 inline h-3.5 w-3.5" />
               Reset
             </button>
@@ -414,7 +415,7 @@ export function HudCommandCenter({
                 <span className="rounded-full bg-white/[0.62] px-3 py-1.5 text-xs font-semibold text-[#655f84] dark:bg-white/[0.04] dark:text-white/65">
                   Drag the corner to resize.
                 </span>
-                <button className="rounded-full px-3 py-1.5 text-xs font-semibold bg-white text-[#5c647d] shadow-[0_8px_20px_rgba(81,61,168,0.06)] dark:bg-white/8 dark:text-white/75" onClick={moveSelectedWidgetToOtherPage} type="button">
+                <button className="ui-pill-button-light" onClick={moveSelectedWidgetToOtherPage} type="button">
                   <MoveHorizontal className="mr-1 inline h-3.5 w-3.5" />
                   Move to {activePage.id === "overview" ? "Command" : "Overview"}
                 </button>
@@ -425,7 +426,7 @@ export function HudCommandCenter({
               </span>
             )}
 
-            <button className="rounded-full px-3 py-1.5 text-xs font-semibold bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" onClick={() => setIsHiddenWidgetTrayOpen((current) => !current)} type="button">
+            <button className="ui-pill-button-strong-light" onClick={() => setIsHiddenWidgetTrayOpen((current) => !current)} type="button">
               <Plus className="mr-1 inline h-3.5 w-3.5" />
               {isHiddenWidgetTrayOpen ? "Hide" : hiddenWidgetCount > 0 ? `Add (${hiddenWidgetCount})` : "All shown"}
             </button>
@@ -435,7 +436,7 @@ export function HudCommandCenter({
         {hudUiState.isHudEditMode && isHiddenWidgetTrayOpen ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {hiddenWidgetTypes.length > 0 ? hiddenWidgetTypes.map((widgetType) => (
-              <button className="rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-xs font-semibold text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-[#cabfff]" key={widgetType} onClick={() => addWidget(widgetType)} type="button">
+              <button className="ui-pill-button-light" key={widgetType} onClick={() => addWidget(widgetType)} type="button">
                 <Plus className="mr-1 inline h-3.5 w-3.5" />
                 {HUD_WIDGET_LABELS[widgetType]}
               </button>

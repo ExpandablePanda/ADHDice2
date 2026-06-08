@@ -3,7 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TaskList, TaskListInsert } from "@/lib/database.types";
-import type { TaskListDefinition, TaskListId } from "@/lib/task-lists";
+import type { TaskListDefinition, TaskListId, TaskListManualMembership } from "@/lib/task-lists";
 
 type Message = {
   text: string;
@@ -32,7 +32,7 @@ type UseTaskListActionsOptions = {
   isMissingTaskListsTableError?: (message: string) => boolean;
   mapTaskListRow?: (row: TaskList) => TaskListDefinition | null;
   setMessage?: Dispatch<SetStateAction<Message | null>>;
-  setTaskListManualMemberships?: Dispatch<SetStateAction<Array<{ id: string; list_id: string; task_id: string; user_id: string; created_at: string }>>>;
+  setTaskListManualMemberships?: Dispatch<SetStateAction<TaskListManualMembership[]>>;
   setTaskLists?: Dispatch<SetStateAction<TaskListDefinition[]>>;
   taskLists?: TaskListDefinition[];
 };
@@ -49,7 +49,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
     isMissingTaskListsTableError = () => false,
     mapTaskListRow = () => null,
     setMessage = NOOP_SETTER as Dispatch<SetStateAction<Message | null>>,
-    setTaskListManualMemberships = NOOP_SETTER as Dispatch<SetStateAction<Array<{ id: string; list_id: string; task_id: string; user_id: string; created_at: string }>>>,
+    setTaskListManualMemberships = NOOP_SETTER as Dispatch<SetStateAction<TaskListManualMembership[]>>,
     setTaskLists = NOOP_SETTER as Dispatch<SetStateAction<TaskListDefinition[]>>,
     taskLists = [],
   } = options;

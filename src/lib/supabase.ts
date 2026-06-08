@@ -1,7 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 
-let singleton: ReturnType<typeof createClient<Database>> | null = null;
+type BrowserSupabaseClient = ReturnType<typeof createClient<Database>>;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __adhdiceSupabaseClient: BrowserSupabaseClient | null | undefined;
+}
 
 export function createBrowserSupabaseClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -11,9 +16,9 @@ export function createBrowserSupabaseClient() {
     return null;
   }
 
-  if (!singleton) {
-    singleton = createClient<Database>(url, anonKey);
+  if (!globalThis.__adhdiceSupabaseClient) {
+    globalThis.__adhdiceSupabaseClient = createClient<Database>(url, anonKey);
   }
 
-  return singleton;
+  return globalThis.__adhdiceSupabaseClient;
 }

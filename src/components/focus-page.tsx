@@ -74,25 +74,19 @@ export function FocusPage({
     <>
       <section className="pt-8 flex flex-col items-center text-center">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
-          Deep Work Hub
-        </p>
-        <h1 className="mt-2 text-[clamp(2.4rem,5vw,4rem)] font-black tracking-tight text-[var(--text-primary)]">
-          Focus Session
-        </h1>
-        <p className="mt-1 max-w-3xl text-base text-[var(--text-secondary)]">
-          Choose a category and start your flow state. Your time is tracked persistently across all devices.
+          Focus Timers
         </p>
 
         <div className="mt-4 sm:mt-8 flex justify-center gap-4">
           <button
-            className="px-6 py-2 text-sm font-bold transition hover:-translate-y-0.5 ui-pill-button-light dark:rounded-full dark:bg-white/5 dark:text-[#cabfff]"
+            className="ui-pill-button-light transition hover:-translate-y-0.5 dark:rounded-full dark:bg-white/5 dark:text-[#cabfff]"
             onClick={() => setShowCategoryManager(true)}
             type="button"
           >
             Edit Categories
           </button>
           <button
-            className="px-6 py-2 text-sm font-bold transition hover:-translate-y-0.5 ui-pill-button-strong-light dark:rounded-full dark:bg-[#cabfff] dark:text-[#1a1431]"
+            className="ui-pill-button-strong-light transition hover:-translate-y-0.5 dark:rounded-full dark:bg-[#cabfff] dark:text-[#1a1431]"
             onClick={() => setShowManualEntry(true)}
             type="button"
           >
@@ -499,7 +493,7 @@ function CategoryGoalsModal({
             <h3 className="mt-2 text-2xl font-black text-[var(--text-primary)]">Master Goal Editor</h3>
           </div>
           <button
-            className="rounded-full px-4 py-2 text-sm font-semibold bg-[var(--accent-soft)] text-[var(--accent)]"
+            className="ui-pill-button-light"
             onClick={onClose}
             type="button"
           >

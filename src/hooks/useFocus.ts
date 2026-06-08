@@ -267,7 +267,7 @@ export function useFocus(
       void appendEconomyEvent({
         source: "focus",
         refId: inserted.id,
-        points: focusMinutes,
+        points: 0,
         xp: Math.floor(focusMinutes * 1.5),
         reason: `Focus session: ${focusMinutes}m`,
       });

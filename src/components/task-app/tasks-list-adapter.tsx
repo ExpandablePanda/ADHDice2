@@ -10,8 +10,8 @@ import {
 import type { AgentPlanTaskItem } from "@/components/ui/agent-plan";
 import type { AgentPlanColumnId, AgentPlanSubtaskItem } from "@/components/ui/agent-plan";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { TaskActualTimeEntry, TaskStatus } from "@/lib/database.types";
-import { useState, type ComponentProps, type ReactNode } from "react";
+import type { TaskActualTimeEntry, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 
 type TasksTableSourceProps = {
@@ -26,7 +26,11 @@ type TasksTableSourceProps = {
   onOpenBatchDelete?: () => void;
   onOpenBatchEdit?: () => void;
   onOpenDeleteTask?: (taskId: string) => void;
+  onDuplicateTask?: (taskId: string) => void;
+  onRestoreTask?: (taskId: string) => void;
+  onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
+  onLoadMoreRows?: () => void;
   onNextTaskTimer?: () => void;
   onPreviousTaskTimer?: () => void;
   onClearSelection?: () => void;
@@ -39,13 +43,14 @@ type TasksTableSourceProps = {
   onSetLinkedNoteIds?: (taskId: string, linkedNoteIds: string[]) => void;
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
-  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"]) => void;
+  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">) => void;
   onSetStatus?: (taskId: string, status: TaskStatus) => void;
-  onAddTaskSubtask?: (taskId: string) => void;
-  onAddChildTaskSubtask?: (subtaskId: string) => void;
+  onAddTaskSubtask?: (taskId: string) => string | null | Promise<string | null>;
+  onAddChildTaskSubtask?: (subtaskId: string) => string | null | Promise<string | null>;
   onDeleteTaskSubtask?: (subtaskId: string) => void;
   onRenameTaskSubtask?: (subtaskId: string, title: string) => void;
-  onSetTaskSubtaskStatus?: (subtaskId: string, status: TaskStatus) => void;
+  onSetTaskSubtaskStatus?: (subtaskId: string, status: TaskSubtaskStatus) => void;
+  onSetTaskSubtasksAutoReset?: (taskId: string, subtasksAutoReset: boolean) => void;
   onSetTags?: (taskId: string, tags: string[]) => void;
   onSetTitle?: (taskId: string, title: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
@@ -62,13 +67,14 @@ type TasksTableSourceProps = {
   activeTaskTimerIndex?: number;
   taskTimerNow?: number;
   tasks: AgentPlanTaskItem[];
+  hasMoreRows?: boolean;
   onRequestedOpenTaskHandled?: (taskId: string) => void;
 };
 
 type TasksListAdapterProps = {
   filterRowsNode: ReactNode;
   tableProps: TasksTableSourceProps;
-  panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode">;
+  panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode" | "onShrinkAllColumns">;
 };
 
 function toPrototypeStatus(status: AgentPlanTaskItem["status"]): PrototypeTaskRow["status"] {
@@ -109,6 +115,7 @@ function toPrototypeRows(tasks: AgentPlanTaskItem[]): PrototypeTaskRow[] {
     energy: toPrototypeEnergy(task),
     estimatedMinutes: task.estimatedMinutes,
     createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
     id: task.id,
     linkLabel: task.externalLinkLabel ?? "",
     linkUrl: task.externalLinkUrl ?? "",
@@ -116,7 +123,13 @@ function toPrototypeRows(tasks: AgentPlanTaskItem[]): PrototypeTaskRow[] {
     linkedNotes: task.linkedNotes.map((note) => ({ id: note.id, title: note.title })),
     notes: task.notes,
     priorities: toPrototypePriorities(task),
+    currentStreak: task.currentStreak,
+    missedStreak: task.missedStreak,
     repeat: task.repeatFrequency,
+    repeatInterval: task.repeatInterval,
+    repeatDaysOfWeek: task.repeatDaysOfWeek,
+    repeatDayOfMonth: task.repeatDayOfMonth,
+    subtasksAutoReset: task.subtasksAutoReset,
     status: toPrototypeStatus(task.status),
     subtasks: toPrototypeSubtasks(task.subtasks),
     tags: task.tags,
@@ -145,14 +158,21 @@ export function TasksListAdapter({
   panelProps,
 }: TasksListAdapterProps) {
   const [shrinkAllColumnsToken, setShrinkAllColumnsToken] = useState(0);
-  const rows = toPrototypeRows(tableProps.tasks);
-  const visibleColumns: TaskManagementTableColumnId[] = [
-    "status_icon",
-    "title",
-    ...panelProps.listVisibleColumns
-      .map((columnId) => TASK_TABLE_COLUMN_MAP[columnId])
-      .filter((columnId) => columnId !== "status"),
-  ];
+  const rows = useMemo(() => toPrototypeRows(tableProps.tasks), [tableProps.tasks]);
+  const visibleColumns = useMemo<TaskManagementTableColumnId[]>(
+    () => [
+      "status_icon",
+      "title",
+      ...panelProps.listVisibleColumns
+        .map((columnId) => TASK_TABLE_COLUMN_MAP[columnId])
+        .filter((columnId) => columnId !== "status"),
+    ],
+    [panelProps.listVisibleColumns],
+  );
+  const noteOptions = useMemo(
+    () => tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? [],
+    [tableProps.allNoteOptions],
+  );
 
   return (
     <TasksListViewPanel
@@ -162,7 +182,7 @@ export function TasksListAdapter({
         <TaskManagementTableV2
           allowInlineInspector
           allListOptions={tableProps.allListOptions}
-          allNoteOptions={tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? []}
+          allNoteOptions={noteOptions}
           allTagOptions={tableProps.allTagOptions}
           className="max-w-none p-0"
           enableInspector
@@ -172,10 +192,14 @@ export function TasksListAdapter({
           onOpenBatchDelete={tableProps.onOpenBatchDelete}
           onOpenBatchEdit={tableProps.onOpenBatchEdit}
           onOpenDeleteTask={tableProps.onOpenDeleteTask}
+          onDuplicateTask={tableProps.onDuplicateTask}
+          onRestoreTask={tableProps.onRestoreTask}
+          onOpenTaskHistory={tableProps.onOpenTaskHistory}
           onOpenFocusTimer={tableProps.onOpenFocusTimer}
           onOpenNote={tableProps.onOpenNote}
           onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
+          onLoadMoreRows={tableProps.onLoadMoreRows}
           onNextTaskTimer={tableProps.onNextTaskTimer}
           onPreviousTaskTimer={tableProps.onPreviousTaskTimer}
           onDeleteTaskActualTimeEntry={tableProps.onDeleteTaskActualTimeEntry}
@@ -196,6 +220,7 @@ export function TasksListAdapter({
           onTaskStatusChange={tableProps.onSetStatus}
           onTaskSubtaskAdd={tableProps.onAddTaskSubtask}
           onTaskSubtaskAddChild={tableProps.onAddChildTaskSubtask}
+          onTaskSubtasksAutoResetChange={tableProps.onSetTaskSubtasksAutoReset}
           onTaskSubtaskDelete={tableProps.onDeleteTaskSubtask}
           onTaskSubtaskRename={tableProps.onRenameTaskSubtask}
           onTaskSubtaskStatusChange={tableProps.onSetTaskSubtaskStatus}
@@ -216,6 +241,7 @@ export function TasksListAdapter({
           title="Tasks"
           visibleColumns={visibleColumns}
           activeTaskTimerIndex={tableProps.activeTaskTimerIndex}
+          hasMoreRows={tableProps.hasMoreRows}
           onRequestedOpenTaskHandled={tableProps.onRequestedOpenTaskHandled}
         />
       }

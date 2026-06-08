@@ -3,7 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
 import { isUuid } from "@/lib/focus-utils";
-import type { TaskSubtask as DbTaskSubtask, TaskSubtaskInsert, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskInsert, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
 
 type Message = {
@@ -16,10 +16,12 @@ type UseTaskSubtaskActionsOptions = {
   currentUserId: string;
   isMissingParentSubtaskColumnError: (message: string) => boolean;
   mapTaskSubtaskRow: (row: DbTaskSubtask) => DbTaskSubtask;
+  onSubtaskCompletedReward?: (candidates: Array<{ claimRef: { subtaskId: string; taskId: string; title: string }; previousStatus: TaskStatus | null; task: Task }>) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setSupportsNestedSubtasks: Dispatch<SetStateAction<boolean>>;
   setTaskSubtasks: Dispatch<SetStateAction<DbTaskSubtask[]>>;
   supportsNestedSubtasks: boolean;
+  tasks: Task[];
   taskSubtasks: DbTaskSubtask[];
 };
 
@@ -28,12 +30,18 @@ export function useTaskSubtaskActions({
   currentUserId,
   isMissingParentSubtaskColumnError,
   mapTaskSubtaskRow,
+  onSubtaskCompletedReward,
   setMessage,
   setSupportsNestedSubtasks,
   setTaskSubtasks,
   supportsNestedSubtasks,
+  tasks,
   taskSubtasks,
 }: UseTaskSubtaskActionsOptions) {
+  function isRewardSubtaskStatus(status: TaskSubtaskStatus) {
+    return status === "done" || status === "did_my_best";
+  }
+
   async function replaceTaskSubtasks(taskId: string, subtasks: TaskSubtaskDraft[]) {
     const { error: deleteError } = await client
       .from("adhdice_task_subtasks")
@@ -138,6 +146,7 @@ export function useTaskSubtaskActions({
   }
 
   async function updateTaskSubtaskStatus(subtaskId: string, status: TaskSubtaskStatus) {
+    const previousSubtask = taskSubtasks.find((subtask) => subtask.id === subtaskId) ?? null;
     const { data, error } = await client
       .from("adhdice_task_subtasks")
       .update({ status })
@@ -161,6 +170,26 @@ export function useTaskSubtaskActions({
     if (!data) return;
     const mappedSubtask = mapTaskSubtaskRow(data);
     setTaskSubtasks((current) => current.map((subtask) => subtask.id === mappedSubtask.id ? mappedSubtask : subtask));
+
+    if (
+      onSubtaskCompletedReward
+      && previousSubtask
+      && isRewardSubtaskStatus(mappedSubtask.status)
+      && !isRewardSubtaskStatus(previousSubtask.status)
+    ) {
+      const parentTask = tasks.find((task) => task.id === mappedSubtask.task_id);
+      if (parentTask) {
+        await onSubtaskCompletedReward([{
+          claimRef: {
+            subtaskId: mappedSubtask.id,
+            taskId: parentTask.id,
+            title: mappedSubtask.title,
+          },
+          previousStatus: null,
+          task: parentTask,
+        }]);
+      }
+    }
   }
 
   async function renameTaskSubtask(subtaskId: string, title: string) {

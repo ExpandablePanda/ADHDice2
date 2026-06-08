@@ -18,6 +18,8 @@ type UpdateTaskRowResult = {
 };
 
 type UseTaskUpdateActionOptions = {
+  clearPendingTaskMutations?: (taskIds: string[]) => void;
+  markPendingTaskMutations?: (taskIds: string[]) => void;
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   routeTask: (taskId: string, bucket: TaskRoutingBucket | null) => void;
   setMessage: Dispatch<SetStateAction<Message | null>>;
@@ -29,6 +31,8 @@ type UseTaskUpdateActionOptions = {
 };
 
 export function useTaskUpdateAction({
+  clearPendingTaskMutations,
+  markPendingTaskMutations,
   onTasksCompleted,
   routeTask,
   setMessage,
@@ -39,12 +43,14 @@ export function useTaskUpdateAction({
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskUpdateActionOptions) {
   async function updateTask(taskId: string, values: TaskUpdate) {
+    markPendingTaskMutations?.([taskId]);
     const previousTask = tasks.find((task) => task.id === taskId) ?? null;
     const { data, error, usedEnergyFallback, usedActualSecondsFallback } = await updateTaskRowWithLegacyEnergyFallback(taskId, values);
 
     if (error) {
+      clearPendingTaskMutations?.([taskId]);
       setMessage({ tone: "warn", text: error.message });
-      return;
+      return false;
     }
 
     if (data) {
@@ -74,6 +80,8 @@ export function useTaskUpdateAction({
         });
       }
     }
+
+    return true;
   }
 
   return { updateTask };

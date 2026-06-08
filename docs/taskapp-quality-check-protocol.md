@@ -1,5 +1,7 @@
 # TaskApp Refactor Quality-Check Protocol
 
+Last reviewed: 2026-06-04
+
 Use this protocol during extraction waves to avoid long abandoned verification loops.
 
 ## Wave Gate (Required per wave)

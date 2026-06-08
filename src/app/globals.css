@@ -100,6 +100,24 @@
 }
 
 @layer components {
+  .ui-chip-button-base {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    border-radius: var(--radius-pill);
+    padding: 0.25rem 0.5rem !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    line-height: 1 !important;
+    border: 1px solid var(--border-soft) !important;
+    min-height: auto !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    text-align: center;
+  }
+
   .ui-input-light {
     border: 1px solid var(--border-soft);
     background: var(--surface-elevated);
@@ -127,21 +145,36 @@
 
   .ui-pill-button-light {
     border-radius: var(--radius-pill);
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-soft);
+    padding: 0.25rem 0.5rem !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    line-height: 1 !important;
   }
 
   .ui-pill-button-strong-light {
     border-radius: var(--radius-pill);
-    background: var(--accent);
-    color: #ffffff;
-    box-shadow: 0 14px 32px rgba(111, 87, 246, 0.24);
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, white 78%);
+    padding: 0.25rem 0.5rem !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    line-height: 1 !important;
+    box-shadow: none;
   }
 
   .ui-pill-button-danger-light {
     border-radius: var(--radius-pill);
     background: var(--danger-soft);
     color: var(--danger);
+    border: 1px solid color-mix(in srgb, var(--danger) 20%, white 80%);
+    padding: 0.25rem 0.5rem !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    line-height: 1 !important;
   }
 
   .ui-icon-button-light {

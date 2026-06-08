@@ -1,6 +1,7 @@
 "use client";
 
 import { Trash2 } from "lucide-react";
+import { TaskTableChipButton, TASK_TABLE_INACTIVE_CHIP_CLASS, TASK_TABLE_TAG_CHIP_CLASS } from "@/components/ui/task-table-primitives";
 import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import {
@@ -14,7 +15,7 @@ import {
   updateTaskListRuleOperator,
   updateTaskListRuleValue,
 } from "@/lib/task-list-rule-editor";
-import type { TaskListRule } from "@/lib/task-lists";
+import type { TaskListId, TaskListRule } from "@/lib/task-lists";
 
 function RuleChipGroup({
   multiSelect = false,
@@ -36,18 +37,14 @@ function RuleChipGroup({
           ? (selectedValues ?? []).includes(option.value)
           : option.value === selectedValue;
         return (
-          <button
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-              active
-                ? "bg-[#efe9ff] text-[#6f57f6] shadow-[0_6px_18px_rgba(111,87,246,0.16)] dark:bg-[#2b214d] dark:text-[#cabfff]"
-                : "bg-white text-[#68738c] hover:bg-[#ede8ff] dark:bg-white/[0.05] dark:text-white/60 dark:hover:bg-white/[0.08]"
-            }`}
+          <TaskTableChipButton
+            className="transition"
             key={option.value}
             onClick={() => onSelect(option.value)}
-            type="button"
+            toneClassName={active ? TASK_TABLE_TAG_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}
           >
             {option.label}
-          </button>
+          </TaskTableChipButton>
         );
       })}
     </div>
@@ -57,6 +54,8 @@ function RuleChipGroup({
 export function TaskListRuleRowEditor({
   energyOptions,
   fieldOptions,
+  listLabelById,
+  listOptions,
   onChange,
   onRemove,
   operatorOptionsByField,
@@ -65,6 +64,8 @@ export function TaskListRuleRowEditor({
 }: {
   energyOptions: TaskEnergy[];
   fieldOptions: Array<{ label: string; value: TaskListRuleField }>;
+  listLabelById?: Partial<Record<TaskListId, string>>;
+  listOptions: Array<{ label: string; value: TaskListId }>;
   onChange: (rule: TaskListRule) => void;
   onRemove: () => void;
   operatorOptionsByField: Record<TaskListRuleField, Array<{ label: string; value: TaskListRuleRowOperator }>>;
@@ -72,10 +73,26 @@ export function TaskListRuleRowEditor({
   taskStatusOptions: TaskStatus[];
 }) {
   const operatorOptions = operatorOptionsByField[rule.field];
-  const valueOptions = (rule.field === "status" ? taskStatusOptions : energyOptions).map((option) => ({
-    label: formatOptionLabel(option),
-    value: option,
-  }));
+  const valueOptions = rule.field === "status"
+    ? taskStatusOptions.map((option) => ({
+      label: formatOptionLabel(option),
+      value: option,
+    }))
+    : rule.field === "list"
+      ? listOptions
+    : rule.field === "energy"
+      ? energyOptions.map((option) => ({
+        label: formatOptionLabel(option),
+        value: option,
+      }))
+      : [
+        { label: "0", value: "0" },
+        { label: "Over 0", value: "over_0" },
+        { label: "Over 7", value: "over_7" },
+        { label: "Over 14", value: "over_14" },
+        { label: "Over 30", value: "over_30" },
+      ];
+  const isMultiSelectValueRule = rule.field === "status" || rule.field === "energy";
 
   return (
     <div className="space-y-3 rounded-[1rem] border border-[#ece8f8] bg-[#faf8ff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
@@ -93,25 +110,26 @@ export function TaskListRuleRowEditor({
           />
           {taskListRuleNeedsValue(rule) ? (
             <RuleChipGroup
-              multiSelect
+              multiSelect={isMultiSelectValueRule}
               onSelect={(value) => onChange(updateTaskListRuleValue(rule, value))}
               options={valueOptions}
-              selectedValues={normalizeTaskListRuleValues(rule.value)}
+              selectedValue={rule.field === "streak" || rule.field === "list" ? rule.value : undefined}
+              selectedValues={isMultiSelectValueRule ? normalizeTaskListRuleValues(rule.value) : undefined}
             />
           ) : (
             <div className="rounded-[0.85rem] border border-[#ece8f8] bg-white px-3 py-2 text-sm text-[#68738f] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/55">
-              {formatTaskListRule(rule)}
+              {formatTaskListRule(rule, (listId) => listLabelById?.[listId] ?? "")}
             </div>
           )}
         </div>
-        <button
+        <TaskTableChipButton
           aria-label="Remove rule"
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe4e9] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+          className="h-8 w-8 p-0 transition"
           onClick={onRemove}
-          type="button"
+          toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
         >
           <Trash2 className="h-4 w-4" />
-        </button>
+        </TaskTableChipButton>
       </div>
     </div>
   );

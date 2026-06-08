@@ -733,10 +733,10 @@ export function HealthPage({
           <button
             aria-controls={getHealthTabPanelId(tab)}
             aria-selected={activeTab === tab}
-            className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+            className={`transition ${
               activeTab === tab
-                ? "bg-[#6f57f6] text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] dark:bg-[#cabfff] dark:text-[#1a1431]"
-                : "bg-[#f1effa] text-[#5f56a5] hover:bg-[#ebe6ff] dark:bg-white/8 dark:text-white/70 dark:hover:bg-white/12"
+                ? "ui-pill-button-strong-light"
+                : "ui-pill-button-light hover:bg-[#ebe6ff] dark:hover:bg-white/12"
             }`}
             id={`health-tab-${tab.toLowerCase()}`}
             key={tab}
@@ -807,7 +807,7 @@ export function HealthPage({
                         <p className="mt-1 text-xs leading-5 text-[#73809c] dark:text-white/50">{template.description}</p>
                       </div>
                       <button
-                        className="rounded-full bg-[#eef3ff] px-3 py-1.5 text-xs font-semibold text-[#4e5ec8] dark:bg-[#1d2342] dark:text-[#c4d1ff]"
+                        className="ui-pill-button-strong-light"
                         onClick={() => onOpenReminderTemplate(template.key)}
                         type="button"
                       >
@@ -838,9 +838,9 @@ export function HealthPage({
                     return (
                       <button
                         aria-pressed={selected}
-                        className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        className={`ui-chip-button-base transition ${
                           selected
-                            ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+                            ? "bg-[#efe9ff] text-[#6f57f6] dark:bg-[#2b214d] dark:text-[#cabfff]"
                             : "bg-[#f4f1ff] text-[#615b9c] dark:bg-white/8 dark:text-white/65"
                         }`}
                         key={tag}
@@ -868,7 +868,7 @@ export function HealthPage({
               </label>
               <div className="flex justify-end">
                 <button
-                  className="rounded-full bg-[#6f57f6] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] dark:bg-[#cabfff] dark:text-[#1a1431]"
+                  className="ui-pill-button-strong-light"
                   onClick={() => { void handleSaveJournal(); }}
                   type="button"
                 >
@@ -912,7 +912,7 @@ export function HealthPage({
                       value={foodSearchQuery}
                     />
                     <button
-                      className="inline-flex items-center gap-2 rounded-full bg-[#eef3ff] px-4 py-2 text-sm font-semibold text-[#4e5ec8] dark:bg-[#1d2342] dark:text-[#c4d1ff]"
+                      className="ui-pill-button-strong-light inline-flex items-center gap-2"
                       disabled={foodLookupStatus !== "idle" || foodSearchQuery.trim().length === 0}
                       onClick={() => { void handleFoodSearch(); }}
                       type="button"
@@ -932,7 +932,7 @@ export function HealthPage({
                       value={barcodeLookup}
                     />
                     <button
-                      className="inline-flex items-center gap-2 rounded-full bg-[#eef7f2] px-4 py-2 text-sm font-semibold text-[#23865f] dark:bg-[#173324] dark:text-[#9ce0bc]"
+                      className="ui-pill-button-strong-light inline-flex items-center gap-2"
                       disabled={foodLookupStatus !== "idle" || barcodeLookup.trim().length === 0}
                       onClick={() => { void handleBarcodeLookup(); }}
                       type="button"
@@ -941,7 +941,7 @@ export function HealthPage({
                       Lookup
                     </button>
                     <button
-                      className="inline-flex items-center gap-2 rounded-full bg-[#f4efff] px-4 py-2 text-sm font-semibold text-[#6f57f6] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[#22193f] dark:text-[#cabfff]"
+                      className="ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                       disabled={scannerSupport !== "ready"}
                       onClick={() => {
                         setScannerError("");
@@ -1004,7 +1004,7 @@ export function HealthPage({
                           </p>
                         </div>
                         <button
-                          className="rounded-full bg-[#6f57f6] px-4 py-2 text-xs font-semibold text-white shadow-[0_14px_32px_rgba(111,87,246,0.2)] dark:bg-[#cabfff] dark:text-[#1a1431]"
+                          className="ui-pill-button-strong-light"
                           onClick={() => applyLookupResult(result)}
                           type="button"
                         >
@@ -1055,7 +1055,7 @@ export function HealthPage({
             </div>
             <div className="mt-4 flex justify-end">
               <button
-                className="rounded-full bg-[#6f57f6] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[#cabfff] dark:text-[#1a1431]"
+                className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={!canSaveMeal}
                 onClick={() => { void handleSaveMeal(); }}
                 type="button"
@@ -1079,10 +1079,10 @@ export function HealthPage({
                         </p>
                       </div>
                       <div className="flex gap-2">
-                        <button className="rounded-full bg-[#eef7f2] px-3 py-1.5 text-xs font-semibold text-[#23865f] dark:bg-[#173324] dark:text-[#9ce0bc]" onClick={() => { void handleSaveFavoriteFromMeal(entry); }} type="button">
+                        <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveFavoriteFromMeal(entry); }} type="button">
                           Save Favorite
                         </button>
-                        <button className="rounded-full bg-[#fff1f3] px-3 py-1.5 text-xs font-semibold text-[#d64b5f] dark:bg-[#44232f] dark:text-[#ff9eaf]" onClick={() => { void deleteMealEntry(entry.id); }} type="button">
+                        <button className="ui-pill-button-danger-light" onClick={() => { void deleteMealEntry(entry.id); }} type="button">
                           Remove
                         </button>
                       </div>
@@ -1116,10 +1116,10 @@ export function HealthPage({
                           <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{item.serving_label || "Saved favorite"} / {item.calories} kcal</p>
                         </div>
                         <div className="flex gap-2">
-                          <button className="rounded-full bg-[#eef7f2] px-3 py-1.5 text-xs font-semibold text-[#23865f] dark:bg-[#173324] dark:text-[#9ce0bc]" onClick={() => { void handleFavoriteReuse(item); }} type="button">
+                          <button className="ui-pill-button-strong-light" onClick={() => { void handleFavoriteReuse(item); }} type="button">
                             Add Today
                           </button>
-                          <button className="rounded-full bg-[#fff1f3] px-3 py-1.5 text-xs font-semibold text-[#d64b5f] dark:bg-[#44232f] dark:text-[#ff9eaf]" onClick={() => { void deleteFavoriteFood(item.id); }} type="button">
+                          <button className="ui-pill-button-danger-light" onClick={() => { void deleteFavoriteFood(item.id); }} type="button">
                             Remove
                           </button>
                         </div>
@@ -1145,7 +1145,7 @@ export function HealthPage({
                           </p>
                         </div>
                         <button
-                          className="rounded-full bg-[#eef3ff] px-3 py-1.5 text-xs font-semibold text-[#4e5ec8] dark:bg-[#1d2342] dark:text-[#c4d1ff]"
+                          className="ui-pill-button-strong-light"
                           onClick={() =>
                             applyLookupResult({
                               attribution: item.attribution,
@@ -1187,7 +1187,7 @@ export function HealthPage({
               </Field>
             </div>
             <div className="mt-4 flex justify-end">
-              <button className="rounded-full bg-[#6f57f6] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[#cabfff] dark:text-[#1a1431]" disabled={!canSaveWeight} onClick={() => { void handleSaveWeight(); }} type="button">
+              <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveWeight} onClick={() => { void handleSaveWeight(); }} type="button">
                 Save Weight
               </button>
             </div>
@@ -1216,7 +1216,7 @@ export function HealthPage({
                         <span className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthDateLabel(entry.entry_date)}</span>
                         <div className="flex items-center gap-3">
                           <span className="text-xs text-[#77849f] dark:text-white/50">{displayValue.toFixed(1)} {profile.preferred_weight_unit}</span>
-                          <button className="rounded-full bg-[#fff1f3] px-3 py-1.5 text-xs font-semibold text-[#d64b5f] dark:bg-[#44232f] dark:text-[#ff9eaf]" onClick={() => { void deleteWeightEntry(entry.id); }} type="button">
+                          <button className="ui-pill-button-danger-light" onClick={() => { void deleteWeightEntry(entry.id); }} type="button">
                             Remove
                           </button>
                         </div>
@@ -1437,7 +1437,7 @@ export function HealthPage({
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8d87a7] dark:text-white/40">Health settings</p>
             <h3 className="mt-2 text-2xl font-black text-[#1d2744] dark:text-white">Goals and display</h3>
           </div>
-          <button className="rounded-full bg-[#6f57f6] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(111,87,246,0.24)] dark:bg-[#cabfff] dark:text-[#1a1431]" onClick={() => { void handleSaveProfile(); }} type="button">
+          <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
             Save Goals
           </button>
         </div>
@@ -1549,7 +1549,7 @@ function WellnessRing({
 function LedgerAction({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
-      className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#42507a] shadow-[0_10px_24px_rgba(80,92,138,0.1)] transition hover:-translate-y-0.5 dark:bg-white/[0.07] dark:text-white/75"
+      className="ui-pill-button-light transition hover:-translate-y-0.5"
       onClick={onClick}
       type="button"
     >

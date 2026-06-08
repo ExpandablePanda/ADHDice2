@@ -94,7 +94,7 @@ export function FocusPlannerModalComponent({
         })}
       </div>
       <button
-        className="mt-5 w-full rounded-[1.25rem] px-5 py-4 text-lg font-bold bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
+        className="ui-pill-button-strong-light mt-5 w-full dark:bg-[#cabfff] dark:text-[#1a1431]"
         onClick={() => {
           if (step === 2) {
             onFinish();

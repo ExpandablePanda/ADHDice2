@@ -1,4 +1,5 @@
 import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import { todayISO } from "@/lib/utils";
 
 export type TaskBucket =
   | "all"
@@ -11,7 +12,8 @@ export type TaskBucket =
   | "waiting"
   | "later"
   | "done"
-  | "missed";
+  | "missed"
+  | "trash";
 
 export type TaskRoutingBucket = "inbox" | "today" | "quick_wins" | "waiting" | "later";
 
@@ -63,23 +65,31 @@ export function isTaskQuickWin(task: Task) {
 }
 
 export function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucket {
+  const todayKey = todayISO();
+
+  if (task.status === "archived") {
+    return "trash";
+  }
+
   if (isTaskFinished(task)) {
     return "done";
   }
 
+  if (task.status === "missed" || (isTaskOpen(task) && task.due_on !== null && task.due_on < todayKey)) {
+    return "missed";
+  }
+
   const routedBucket = context.routing[task.id];
+  if (routedBucket === "today" && isTaskOpen(task) && task.due_on === todayKey) {
+    return "today";
+  }
   if (routedBucket === "inbox") return "inbox";
   if (routedBucket === "waiting") return "waiting";
   if (routedBucket === "later") return "later";
-  if (routedBucket === "today") return "today";
   if (routedBucket === "quick_wins") return "quick_wins";
 
   if (shouldRouteTaskToInbox(task)) {
     return "inbox";
-  }
-
-  if (task.status === "missed" || (isTaskOpen(task) && task.due_on !== null && task.due_on < new Date().toISOString().slice(0, 10))) {
-    return "missed";
   }
 
   if (isTaskOpen(task) && context.focusedTaskIds.has(task.id)) {
@@ -90,7 +100,7 @@ export function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucke
     return "urgent";
   }
 
-  if (isTaskOpen(task) && (task.status === "in_progress" || task.due_on === new Date().toISOString().slice(0, 10))) {
+  if (isTaskOpen(task) && task.due_on === todayKey) {
     return "today";
   }
 
@@ -102,7 +112,7 @@ export function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucke
     return "recurring";
   }
 
-  if (isTaskOpen(task) && (task.status === "upcoming" || task.status === "not_due" || (task.due_on !== null && task.due_on > new Date().toISOString().slice(0, 10)))) {
+  if (isTaskOpen(task) && (task.status === "upcoming" || task.status === "not_due" || (task.due_on !== null && task.due_on > todayKey))) {
     return "later";
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { startTransition, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { User } from "@supabase/supabase-js";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
@@ -15,6 +15,7 @@ import type {
   TaskList as DbTaskList,
   TaskListManualMembership as DbTaskListManualMembership,
   TaskSubtask as DbTaskSubtask,
+  UserProfile as DbUserProfile,
 } from "@/lib/database.types";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { TaskListDefinition, TaskListManualMembership } from "@/lib/task-lists";
@@ -51,10 +52,11 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   migrateLocalTaskFocusDays: (client: ResolvedSupabaseClient, user: User) => Promise<boolean>;
   isMissingTaskListManualMembershipsTableError: (message: string) => boolean;
   isMissingTaskListsTableError: (message: string) => boolean;
-  onProfileLoaded: (profileRow: { avatar_src: string | null; display_name: string | null; logo_src: string | null } | null, user: User) => void;
+  onProfileLoaded: (profileRow: DbUserProfile | null, user: User) => void;
   resolveTaskGridLayout: (row: DbTaskGridLayout | null) => TTaskGridItem[];
   saveFocusCategories: (categories: FocusCategory[]) => void;
   saveFocusHistory: (history: HistoricalFocusSession[]) => void;
+  shouldSkipTaskReload?: (change: { eventType: string; taskId: string | null }) => boolean;
   setActiveSessions: Dispatch<SetStateAction<Record<string, {
     accumulatedSeconds: number;
     categoryId: string;
@@ -106,6 +108,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   resolveTaskGridLayout,
   saveFocusCategories,
   saveFocusHistory,
+  shouldSkipTaskReload,
   setActiveSessions,
   setAvailableTaskNotes,
   setEconomy,
@@ -201,26 +204,31 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         setIsWorkspaceLoading(true);
       }
 
-      const [taskResult, taskSubtasksResult, profileResult, categoryResult, activeResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult] = await Promise.all([
-        client
-          .from("adhdice_clean_tasks")
-          .select("*")
-          .eq("user_id", userId)
-          .neq("status", "archived")
-          .order("status", { ascending: true })
-          .order("sort_order", { ascending: true })
-          .order("created_at", { ascending: false }),
-        client
-          .from("adhdice_task_subtasks")
-          .select("*")
-          .eq("user_id", userId)
-          .order("sort_order", { ascending: true })
-          .order("created_at", { ascending: true }),
-        client
-          .from("adhdice_user_profiles")
-          .select("*")
-          .eq("user_id", userId)
-          .maybeSingle(),
+      const loadStartedAt = performance.now();
+      const taskRequest = client
+        .from("adhdice_clean_tasks")
+        .select("*")
+        .eq("user_id", userId)
+        .order("status", { ascending: true })
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: false });
+      const taskSubtasksRequest = client
+        .from("adhdice_task_subtasks")
+        .select("*")
+        .eq("user_id", userId)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true });
+      const profileRequest = client
+        .from("adhdice_user_profiles")
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
+      const criticalCoreRequest = Promise.all([
+        taskRequest,
+        taskSubtasksRequest,
+        profileRequest,
+      ]);
+      const secondaryCoreRequest = Promise.all([
         client
           .from("adhdice_focus_categories")
           .select("*")
@@ -260,15 +268,51 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .eq("user_id", userId)
           .maybeSingle(),
       ]);
+      const [taskResult, taskSubtasksResult, profileResult] = await criticalCoreRequest;
 
       if (!isActive) {
         return;
       }
 
-      const errors = [
+      const criticalErrors = [
         taskResult.error,
         taskSubtasksResult.error,
         profileResult.error,
+      ].filter(Boolean);
+
+      if (criticalErrors.length > 0) {
+        setMessage({ tone: "warn", text: criticalErrors[0]?.message ?? "Could not load your tasks." });
+        setIsWorkspaceLoading(false);
+        return;
+      }
+
+      const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
+      setIsWorkspaceLoading(false);
+      startTransition(() => {
+        setTasks(taskResult.data ?? []);
+        setTaskSubtasks(nextTaskSubtasks);
+        onProfileLoaded(profileResult.data ?? null, user);
+        if (profileResult.data) {
+          setEconomy({
+            level: profileResult.data.level ?? 1,
+            xp: profileResult.data.xp ?? 0,
+            points: profileResult.data.points ?? 0,
+            tokens: profileResult.data.tokens ?? 0,
+          });
+        }
+      });
+
+      if (process.env.NODE_ENV !== "production") {
+        console.info(`[workspace] Tasks ready in ${Math.round(performance.now() - loadStartedAt)}ms.`);
+      }
+
+      const [categoryResult, activeResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult] = await secondaryCoreRequest;
+
+      if (!isActive) {
+        return;
+      }
+
+      const secondaryErrors = [
         categoryResult.error,
         activeResult.error,
         historyResult.error,
@@ -278,9 +322,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         gridLayoutResult.error,
       ].filter(Boolean);
 
-      if (errors.length > 0) {
-        setMessage({ tone: "warn", text: errors[0]?.message ?? "Could not load your workspace." });
-        setIsWorkspaceLoading(false);
+      if (secondaryErrors.length > 0) {
+        setMessage({ tone: "warn", text: secondaryErrors[0]?.message ?? "Could not finish loading workspace details." });
         return;
       }
 
@@ -295,7 +338,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         ? []
         : (manualMembershipResult.data ?? []).map(mapTaskListManualMembershipRow);
       const nextTaskGridLayout = resolveTaskGridLayout(gridLayoutResult.data);
-      const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
 
       if (
         nextCategories.length === 0 &&
@@ -361,27 +403,19 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         }
       }
 
-      setTasks(taskResult.data ?? []);
       setFocusCategories(nextCategories);
       setActiveSessions(nextActiveSessions);
       setFocusHistory(nextFocusHistory);
       setFocusedTaskIdsByDate(nextFocusedTaskIdsByDate);
       setTaskLists(nextTaskLists);
       setTaskListManualMemberships(nextTaskListManualMemberships);
-      setTaskSubtasks(nextTaskSubtasks);
       setTaskGridLayout(nextTaskGridLayout);
       saveFocusCategories(nextCategories);
       saveFocusHistory(nextFocusHistory);
-      onProfileLoaded(profileResult.data ?? null, user);
-      if (profileResult.data) {
-        setEconomy({
-          level: profileResult.data.level ?? 1,
-          xp: profileResult.data.xp ?? 0,
-          points: profileResult.data.points ?? 0,
-          tokens: profileResult.data.tokens ?? 0,
-        });
+
+      if (process.env.NODE_ENV !== "production") {
+        console.info(`[workspace] Background details ready in ${Math.round(performance.now() - loadStartedAt)}ms.`);
       }
-      setIsWorkspaceLoading(false);
 
       if (shouldLoadSecondaryForPage(activePage)) {
         void loadSecondaryWorkspaceData({ silent: true });
@@ -404,7 +438,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           table: "adhdice_clean_tasks",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          const taskId = ((payload.new as { id?: string } | null)?.id ?? (payload.old as { id?: string } | null)?.id ?? null);
+          if (shouldSkipTaskReload?.({ eventType: payload.eventType, taskId })) {
+            return;
+          }
           void loadCoreWorkspaceData({ silent: true });
         },
       )
@@ -542,7 +580,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       isActive = false;
       client.removeChannel(workspaceChannel);
     };
-  }, [activePage, currentUser?.id, supabase, suppressCategoryReload]);
+  }, [activePage, currentUser?.id, shouldSkipTaskReload, supabase, suppressCategoryReload]);
 
   useEffect(() => {
     if (!currentUser) {

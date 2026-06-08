@@ -31,7 +31,7 @@ export function NoteEditorComponent({
   return (
     <section className="px-4 pb-32">
       <div className="flex items-center gap-3 pt-4 pb-4">
-        <button onClick={onClose} type="button" className="text-sm font-semibold text-[#6f57f6] dark:text-[#cabfff]">
+        <button onClick={onClose} type="button" className="ui-pill-button-light">
           ← Back
         </button>
         <div className="flex-1" />
@@ -39,7 +39,7 @@ export function NoteEditorComponent({
           <button
             onClick={() => { void onDelete(draft.id); }}
             type="button"
-            className="text-xs font-semibold text-[#f05566] dark:text-[#ff8090]"
+            className="ui-pill-button-danger-light"
           >
             Delete
           </button>
@@ -47,7 +47,7 @@ export function NoteEditorComponent({
         <button
           onClick={() => { void onSave(draft); }}
           type="button"
-          className="rounded-full px-4 py-2 text-sm font-bold bg-[#6f57f6] text-white dark:bg-[#9b87ff] dark:text-[#171127]"
+          className="ui-pill-button-strong-light"
         >
           Save
         </button>
@@ -76,7 +76,7 @@ export function NoteEditorComponent({
               key={t}
               onClick={() => setDraft((d) => ({ ...d, tags: d.tags.filter((x) => x !== t) }))}
               type="button"
-              className="rounded-full px-3 py-1 text-xs font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]"
+              className="ui-pill-button-strong-light"
             >
               {t} ×
             </button>
@@ -91,7 +91,7 @@ export function NoteEditorComponent({
             value={tagInput}
           />
           <button
-            className="rounded-xl px-4 py-2 text-sm font-semibold bg-[#ede8ff] text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]"
+            className="ui-pill-button-strong-light"
             onClick={addTag}
             type="button"
           >

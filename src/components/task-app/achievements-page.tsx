@@ -292,7 +292,7 @@ export function AchievementCelebrationOverlay({
                 <p className="mt-1 text-sm leading-6 text-[#69748f] dark:text-white/62">{unlock.encouragement}</p>
               </div>
               <button
-                className="rounded-full bg-[#eef3ff] px-3 py-2 text-sm font-semibold text-[#536fa8] dark:bg-white/10 dark:text-white/70"
+                className="ui-pill-button-light"
                 onClick={onDismiss}
                 type="button"
               >

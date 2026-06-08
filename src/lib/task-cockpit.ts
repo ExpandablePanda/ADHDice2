@@ -77,6 +77,7 @@ export function buildTaskBucketCounts(tasks: Task[], context: TaskBucketContext)
     later: 0,
     done: 0,
     missed: 0,
+    trash: 0,
   });
 }
 
@@ -195,6 +196,7 @@ function getTaskCockpitSortScore(task: Task, context: TaskBucketContext) {
     later: 70,
     inbox: 80,
     done: 90,
+    trash: 100,
   };
 
   let score = bucketBase[bucket];

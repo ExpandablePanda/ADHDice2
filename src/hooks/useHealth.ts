@@ -201,7 +201,7 @@ export function useHealth(
     for (const achievement of eligible) {
       const awardRow: HealthAchievementAward = {
         achievement_code: achievement.code,
-        awarded_points: achievement.points,
+        awarded_points: 0,
         awarded_tokens: achievement.tokens,
         awarded_xp: achievement.xp,
         created_at: now,
@@ -216,9 +216,24 @@ export function useHealth(
       let usedAtomicRemoteClaim = false;
 
       if (client && options?.persistRemotely) {
-        const { data: rpcData, error: rpcError } = await client.rpc("adhdice_claim_health_achievement", {
+        const rpcClient = client as unknown as {
+          rpc: (
+            fn: "adhdice_claim_health_achievement",
+            params: {
+              p_achievement_code: HealthAchievementCode;
+              p_awarded_points: number;
+              p_awarded_tokens: number;
+              p_awarded_xp: number;
+              p_description: string;
+              p_earned_at: string;
+              p_title: string;
+              p_user_id: string;
+            },
+          ) => Promise<{ data: Array<Record<string, unknown>> | null; error: { message: string } | null }>;
+        };
+        const { data: rpcData, error: rpcError } = await rpcClient.rpc("adhdice_claim_health_achievement", {
           p_achievement_code: achievement.code,
-          p_awarded_points: achievement.points,
+          p_awarded_points: 0,
           p_awarded_tokens: achievement.tokens,
           p_awarded_xp: achievement.xp,
           p_description: achievement.description,
@@ -227,26 +242,26 @@ export function useHealth(
           p_user_id: snapshot.profile.user_id,
         });
 
-        const rpcRow = Array.isArray(rpcData) ? rpcData[0] : null;
-        if (!rpcError && rpcRow?.created) {
+        const rpcRow = Array.isArray(rpcData) ? (rpcData[0] as Record<string, unknown> | null) : null;
+        if (!rpcError && rpcRow && rpcRow.created === true) {
           usedAtomicRemoteClaim = true;
           insertedAward = {
             ...awardRow,
-            earned_at: rpcRow.earned_at ?? now,
-            id: rpcRow.award_id ?? awardRow.id,
+            earned_at: typeof rpcRow.earned_at === "string" ? rpcRow.earned_at : now,
+            id: typeof rpcRow.award_id === "string" ? rpcRow.award_id : awardRow.id,
           };
           setEconomy({
-            level: rpcRow.level ?? 1,
-            points: rpcRow.points ?? 0,
-            tokens: rpcRow.tokens ?? 0,
-            xp: rpcRow.xp ?? 0,
+            level: typeof rpcRow.level === "number" ? rpcRow.level : 1,
+            points: 0,
+            tokens: typeof rpcRow.tokens === "number" ? rpcRow.tokens : 0,
+            xp: typeof rpcRow.xp === "number" ? rpcRow.xp : 0,
           });
-        } else if (!rpcError && rpcRow && !rpcRow.created) {
+        } else if (!rpcError && rpcRow && rpcRow.created === false) {
           continue;
         } else {
           const payload: HealthAchievementAwardInsert = {
             achievement_code: achievement.code,
-            awarded_points: achievement.points,
+            awarded_points: 0,
             awarded_tokens: achievement.tokens,
             awarded_xp: achievement.xp,
             description: achievement.description,
@@ -274,7 +289,7 @@ export function useHealth(
       nextAwards.push(insertedAward);
       if (client && options?.persistRemotely && !usedAtomicRemoteClaim) {
         await appendEconomyEvent({
-          points: achievement.points,
+          points: 0,
           reason: `Health achievement: ${achievement.title}`,
           refId: insertedAward.id,
           source: "health",

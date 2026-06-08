@@ -239,14 +239,14 @@ export function TaskBatchEditModal({
 
         <div className="sticky bottom-4 z-20 flex justify-end gap-3 pt-2">
           <button
-            className="rounded-full border border-[#ddd6fb] bg-white px-5 py-3 text-sm font-semibold text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+            className="ui-pill-button-light transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
             onClick={onClose}
             type="button"
           >
             Cancel
           </button>
           <button
-            className="rounded-full bg-[#6f57f6] px-6 py-3 text-base font-bold text-white shadow-[0_18px_40px_rgba(111,87,246,0.28)] disabled:opacity-50 dark:bg-[#cabfff] dark:text-[#1a1431]"
+            className="ui-pill-button-strong-light shadow-[0_18px_40px_rgba(111,87,246,0.28)] disabled:opacity-50 dark:bg-[#cabfff] dark:text-[#1a1431]"
             disabled={!isDirty || isSaving}
             type="submit"
           >

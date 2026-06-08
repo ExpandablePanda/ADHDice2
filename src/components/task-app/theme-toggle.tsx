@@ -53,10 +53,10 @@ export function CalmModeButton({
     <button
       aria-label={lowStim ? "Disable low stimulation mode" : "Enable low stimulation mode"}
       aria-pressed={lowStim}
-      className={`flex h-10 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition ${
+      className={`ui-chip-button-base flex h-10 items-center gap-1.5 transition ${
         lowStim
           ? "bg-[#f1ecff] text-[#6f57f6] dark:bg-[#cabfff]/20 dark:text-[#cabfff]"
-          : "text-[#8d87a7] hover:bg-[#f1ecff] dark:text-white/40 dark:hover:bg-white/10"
+          : "bg-transparent text-[#8d87a7] hover:bg-[#f1ecff] dark:text-white/40 dark:hover:bg-white/10"
       }`}
       onClick={() => onLowStimChange(!lowStim)}
       type="button"

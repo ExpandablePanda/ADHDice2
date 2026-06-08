@@ -179,7 +179,7 @@ export function NotesPageComponent({
         />
         {quickCapture ? (
           <button
-            className="text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]"
+            className="ui-pill-button-strong-light"
             onClick={() => {
               void handleQuickCapture();
             }}
@@ -206,11 +206,7 @@ export function NotesPageComponent({
               key={tag}
               onClick={() => setActiveTag(activeTag === tag ? null : tag)}
               type="button"
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                activeTag === tag
-                  ? "bg-[#6f57f6] text-white dark:bg-[#9b87ff] dark:text-[#171127]"
-                  : "bg-[#ede8ff] text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]"
-              }`}
+              className={`transition ${activeTag === tag ? "ui-pill-button-strong-light" : "ui-pill-button-light"}`}
             >
               {tag}
             </button>
