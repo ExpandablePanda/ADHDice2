@@ -81,7 +81,7 @@ import { TaskListRuleRowEditor } from "./task-app/task-list-rule-row-editor";
 import { TaskRewardModal } from "./task-app/task-reward-modal";
 import { TasksListAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
-import { HudCommandCenter } from "./task-app/hud-command-center";
+import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import {
   applyTaskEditorDraftOverrides,
@@ -291,7 +291,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.0.1";
+const HUD_VERSION = "5.0.2";
 
 type PersistedFocusAlarmState = {
   enabled: boolean;
@@ -313,10 +313,6 @@ function normalizeFocusAlarmNextRingAt(nextRingAt: number | null, now: number, i
   }
   const elapsedIntervals = Math.floor((now - nextRingAt) / intervalMs) + 1;
   return nextRingAt + elapsedIntervals * intervalMs;
-}
-
-function getFocusAlarmRemainingMs(nextRingAt: number | null, now: number) {
-  return nextRingAt === null ? null : Math.max(0, nextRingAt - now);
 }
 
 function formatFocusAlarmRemaining(remainingMs: number) {
@@ -668,7 +664,6 @@ export function TaskApp() {
   const [focusAlarmEnabled, setFocusAlarmEnabled] = useState(false);
   const [focusAlarmIntervalMinutes, setFocusAlarmIntervalMinutes] = useState(DEFAULT_FOCUS_ALARM_INTERVAL_MINUTES);
   const [focusAlarmNextRingAt, setFocusAlarmNextRingAt] = useState<number | null>(null);
-  const [focusAlarmNow, setFocusAlarmNow] = useState(() => Date.now());
   const [mobileZoom, setMobileZoom] = useState<(typeof MOBILE_ZOOM_LEVELS)[number]>(1);
   const { economy, setEconomy, appendEconomyEvent, commitTaskReward, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
@@ -774,7 +769,6 @@ export function TaskApp() {
   const [taskActualTimeEntryPrefill, setTaskActualTimeEntryPrefill] = useState<{ durationSeconds: number; title: string } | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [activeTaskTimerIndex, setActiveTaskTimerIndex] = useState(0);
-  const [taskTimerNow, setTaskTimerNow] = useState(() => Date.now());
   const [logicalDayNow, setLogicalDayNow] = useState(() => Date.now());
   const [notePageOpenNoteId, setNotePageOpenNoteId] = useState<string | null>(null);
   const {
@@ -1182,7 +1176,6 @@ export function TaskApp() {
         )
       : null;
 
-    setFocusAlarmNow(now);
     focusAlarmSkipNextPersistRef.current = true;
     setFocusAlarmNextRingAt(normalizedNextRingAt);
     focusAlarmHydratedUserIdRef.current = userId;
@@ -1220,7 +1213,6 @@ export function TaskApp() {
       && persistedState.intervalMinutes === focusAlarmIntervalMinutes
       ? persistedState.nextRingAt
       : null;
-    setFocusAlarmNow(now);
     setFocusAlarmNextRingAt(
       focusAlarmEnabled
         ? normalizeFocusAlarmNextRingAt(restoredNextRingAt, now, focusAlarmIntervalMinutes)
@@ -1263,7 +1255,6 @@ export function TaskApp() {
         const now = Date.now();
         setFocusAlarmEnabled(nextEnabled);
         setFocusAlarmIntervalMinutes(nextIntervalMinutes);
-        setFocusAlarmNow(now);
         setFocusAlarmNextRingAt(
           nextEnabled
             ? normalizeFocusAlarmNextRingAt(parsed.nextRingAt, now, nextIntervalMinutes)
@@ -1287,18 +1278,15 @@ export function TaskApp() {
       return;
     }
 
-    const interval = window.setInterval(() => {
+    const delay = Math.max(0, focusAlarmNextRingAt - Date.now());
+    const timeout = window.setTimeout(() => {
       const now = Date.now();
-      setFocusAlarmNow(now);
+      void playFocusAlarmSound();
+      setMessage({ tone: "neutral", text: "Focus alarm. Time to switch tasks or check in." });
+      setFocusAlarmNextRingAt(now + focusAlarmIntervalMinutes * 60_000);
+    }, Math.min(delay, 2_147_483_647));
 
-      if (now >= focusAlarmNextRingAt) {
-        void playFocusAlarmSound();
-        setMessage({ tone: "neutral", text: "Focus alarm. Time to switch tasks or check in." });
-        setFocusAlarmNextRingAt(now + focusAlarmIntervalMinutes * 60_000);
-      }
-    }, 1000);
-
-    return () => window.clearInterval(interval);
+    return () => window.clearTimeout(timeout);
   }, [focusAlarmEnabled, focusAlarmIntervalMinutes, focusAlarmNextRingAt]);
 
   useEffect(() => {
@@ -1688,7 +1676,7 @@ export function TaskApp() {
     setTasks,
     sortTasksForUi,
   });
-  const hudNotificationInboxItems = useMemo<HudNotificationItem[]>(() => {
+  const hudNotificationBaseItems = useMemo<HudNotificationItem[]>(() => {
     const currentItems: HudNotificationItem[] = [];
     if (activePendingReward) {
       currentItems.push({
@@ -1714,17 +1702,8 @@ export function TaskApp() {
         tone: "accent",
       });
     }
-    const focusAlarmRemainingMs = getFocusAlarmRemainingMs(focusAlarmNextRingAt, focusAlarmNow);
-    if (focusAlarmEnabled && focusAlarmRemainingMs !== null) {
-      currentItems.push({
-        detail: `Next check-in in ${formatFocusAlarmRemaining(focusAlarmRemainingMs)}.`,
-        id: "focus-alarm",
-        title: "Focus alarm armed",
-        tone: "neutral",
-      });
-    }
-    return [...currentItems, ...hudNotificationEvents].slice(0, 8);
-  }, [activePendingReward, filteredTodayTasks.length, focusAlarmEnabled, focusAlarmNextRingAt, focusAlarmNow, hudNotificationEvents, missedTasks.length]);
+    return currentItems;
+  }, [activePendingReward, filteredTodayTasks.length, missedTasks.length]);
   const {
     addTask,
     addChildTaskSubtask,
@@ -2241,16 +2220,6 @@ export function TaskApp() {
     : null;
 
   useEffect(() => {
-    if (runningTaskTimers.length === 0) {
-      return;
-    }
-    const interval = window.setInterval(() => {
-      setTaskTimerNow(Date.now());
-    }, 1000);
-    return () => window.clearInterval(interval);
-  }, [runningTaskTimers.length]);
-
-  useEffect(() => {
     const interval = window.setInterval(() => {
       setLogicalDayNow(Date.now());
     }, 60_000);
@@ -2350,14 +2319,10 @@ export function TaskApp() {
   }
 
   function pauseHudTaskTimer(taskId: string) {
-    const now = Date.now();
-    setTaskTimerNow(now);
     void persistPausedTaskTimer(taskId);
   }
 
   function resumeHudTaskTimer(taskId: string) {
-    const now = Date.now();
-    setTaskTimerNow(now);
     void persistResumedTaskTimer(taskId);
   }
 
@@ -3023,55 +2988,75 @@ export function TaskApp() {
       <div className="fixed inset-x-0 top-0 z-30 border-b border-[#ece8f8]/70 bg-[linear-gradient(180deg,rgba(244,240,255,0.96),rgba(239,244,255,0.9))] shadow-[0_14px_34px_rgba(81,61,168,0.07)] backdrop-blur-xl dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(19,16,33,0.94),rgba(14,12,27,0.9))]" ref={hudShellRef}>
         <div className="w-full">
           <div className={`w-full border-white/70 bg-white/[0.46] px-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] backdrop-blur-[12px] dark:border-white/10 dark:bg-white/[0.05] ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
-            <CommandCenterHeader
-              activeHudTaskTimer={activeHudTaskTimer}
-              activeTaskCount={filteredActiveTasks.length}
-              currentHudPageId={hudUiState.activeHudPageId}
-              economy={economy}
-              hudUiState={hudUiState}
-              urgentTaskCount={filteredUrgentTasks.length}
-              onOpenAccount={() => setIsAccountOpen(true)}
-              onOpenComposer={openBlankTaskEditor}
-              onOpenFocusPlanner={openFocusPlanner}
-              onOpenQuickCapture={() => { void openTaskImportPanel(); }}
-              onNextTaskTimer={() => cycleHudTaskTimer("next")}
-              onPauseTaskTimer={pauseHudTaskTimer}
-              onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
-              onResumeTaskTimer={resumeHudTaskTimer}
-              onStopTaskTimer={stopHudTaskTimer}
-              profile={profile}
-              runningTaskTimers={runningTaskTimers}
-              setHudUiState={setHudUiState}
-              taskTimerNow={taskTimerNow}
-              theme={theme}
-              todayTaskCount={filteredTodayTasks.length}
-              onThemeChange={setTheme}
-              lowStim={lowStim}
-              onLowStimChange={setLowStim}
-              currentStreak={taskHistoryStats.currentStreak}
-              notificationInboxItems={hudNotificationInboxItems}
-              focusAlarmEnabled={focusAlarmEnabled}
-              focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
-              focusAlarmRemainingMs={focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - focusAlarmNow) : null}
-              onDecreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current - FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
-              onIncreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current + FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
-              onToggleFocusAlarmEnabled={() => {
-                if (focusAlarmAudioBlocked && focusAlarmEnabled) {
-                  void playFocusAlarmSound({ rearmOnly: true });
-                  return;
-                }
+            <HudRuntimeClock active={runningTaskTimers.length > 0 || (focusAlarmEnabled && focusAlarmNextRingAt !== null)}>
+              {(hudNow) => {
+                const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
+                const notificationInboxItems = [
+                  ...hudNotificationBaseItems,
+                  ...(focusAlarmRemainingMs !== null
+                    ? [{
+                        detail: `Next check-in in ${formatFocusAlarmRemaining(focusAlarmRemainingMs)}.`,
+                        id: "focus-alarm",
+                        title: "Focus alarm armed",
+                        tone: "neutral" as const,
+                      }]
+                    : []),
+                  ...hudNotificationEvents,
+                ].slice(0, 8);
 
-                setFocusAlarmEnabled((current) => !current);
-                if (focusAlarmEnabled) {
-                  setFocusAlarmAudioBlocked(false);
-                }
+                return (
+                  <CommandCenterHeader
+                    activeHudTaskTimer={activeHudTaskTimer}
+                    activeTaskCount={filteredActiveTasks.length}
+                    currentHudPageId={hudUiState.activeHudPageId}
+                    economy={economy}
+                    hudUiState={hudUiState}
+                    urgentTaskCount={filteredUrgentTasks.length}
+                    onOpenAccount={() => setIsAccountOpen(true)}
+                    onOpenComposer={openBlankTaskEditor}
+                    onOpenFocusPlanner={openFocusPlanner}
+                    onOpenQuickCapture={() => { void openTaskImportPanel(); }}
+                    onNextTaskTimer={() => cycleHudTaskTimer("next")}
+                    onPauseTaskTimer={pauseHudTaskTimer}
+                    onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
+                    onResumeTaskTimer={resumeHudTaskTimer}
+                    onStopTaskTimer={stopHudTaskTimer}
+                    profile={profile}
+                    runningTaskTimers={runningTaskTimers}
+                    setHudUiState={setHudUiState}
+                    taskTimerNow={hudNow}
+                    theme={theme}
+                    todayTaskCount={filteredTodayTasks.length}
+                    onThemeChange={setTheme}
+                    lowStim={lowStim}
+                    onLowStimChange={setLowStim}
+                    currentStreak={taskHistoryStats.currentStreak}
+                    notificationInboxItems={notificationInboxItems}
+                    focusAlarmEnabled={focusAlarmEnabled}
+                    focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
+                    focusAlarmRemainingMs={focusAlarmRemainingMs}
+                    onDecreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current - FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+                    onIncreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current + FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+                    onToggleFocusAlarmEnabled={() => {
+                      if (focusAlarmAudioBlocked && focusAlarmEnabled) {
+                        void playFocusAlarmSound({ rearmOnly: true });
+                        return;
+                      }
+
+                      setFocusAlarmEnabled((current) => !current);
+                      if (focusAlarmEnabled) {
+                        setFocusAlarmAudioBlocked(false);
+                      }
+                    }}
+                    mobileZoom={mobileZoom}
+                    onDecreaseMobileZoom={decreaseMobileZoom}
+                    onIncreaseMobileZoom={increaseMobileZoom}
+                    canDecreaseMobileZoom={canDecreaseMobileZoom}
+                    canIncreaseMobileZoom={canIncreaseMobileZoom}
+                  />
+                );
               }}
-              mobileZoom={mobileZoom}
-              onDecreaseMobileZoom={decreaseMobileZoom}
-              onIncreaseMobileZoom={increaseMobileZoom}
-              canDecreaseMobileZoom={canDecreaseMobileZoom}
-              canIncreaseMobileZoom={canIncreaseMobileZoom}
-            />
+            </HudRuntimeClock>
           </div>
         </div>
       </div>
@@ -3242,7 +3227,6 @@ export function TaskApp() {
                   requestedOpenTaskId: requestedListOverlayTaskId,
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
-                  taskTimerNow,
                   tasks: selectedBucketTasks,
                   rowContext: {
                     focusedTaskIdSet,

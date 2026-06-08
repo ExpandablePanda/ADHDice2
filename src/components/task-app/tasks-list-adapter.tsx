@@ -64,7 +64,6 @@ type TasksTableSourceProps = {
   taskActualTimeEntriesByTaskId?: Record<string, TaskActualTimeEntry[]>;
   runningTaskTimers?: RunningTaskTimer[];
   activeTaskTimerIndex?: number;
-  taskTimerNow?: number;
   tasks: Task[];
   rowContext: {
     focusedTaskIdSet: Set<string>;
@@ -194,7 +193,6 @@ export function TasksListAdapter({
           selectedTaskIds={tableProps.selectedTaskIds}
           showHeader={false}
           shrinkAllColumnsToken={shrinkAllColumnsToken}
-          taskTimerNow={tableProps.taskTimerNow}
           title="Tasks"
           visibleColumns={visibleColumns}
           activeTaskTimerIndex={tableProps.activeTaskTimerIndex}

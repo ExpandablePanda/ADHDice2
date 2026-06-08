@@ -37,6 +37,8 @@ This document freezes current `TaskApp` behavior so refactors can be validated a
 - Persisted UI state (active page, task view, filters, layout, collapse/open states) must continue to migrate from legacy snapshots.
 - Supabase-compatible fallback behavior remains intact for known legacy schema variants.
 - Focus-day persistence continues to normalize and dedupe task IDs.
+- HUD task timers and the focus-alarm countdown remain live without one-second state updates in the top-level `TaskApp`.
+- Focus alarms continue to persist an absolute next-ring timestamp and re-arm after ringing or reload.
 - Test-page experiments stay isolated unless they are intentionally promoted into production surfaces.
 
 ## Refactor Acceptance Checklist

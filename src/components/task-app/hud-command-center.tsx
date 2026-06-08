@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight, GripVertical, MoveHorizontal, Plus, RotateCcw, Settings2, Trash2 } from "lucide-react";
-import { useMemo, useRef, useState, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 import {
   DEFAULT_HUD_UI_STATE,
   HUD_WIDGET_LABELS,
@@ -17,6 +17,27 @@ type HudCommandCenterProps = {
   setHudUiState: Dispatch<SetStateAction<HudUiState>>;
   renderWidget: (widgetType: HudWidgetType) => ReactNode;
 };
+
+export function HudRuntimeClock({
+  active,
+  children,
+}: {
+  active: boolean;
+  children: (now: number) => ReactNode;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [active]);
+
+  return children(now);
+}
 
 const FREEFORM_WIDGET_LIMITS = {
   maxHeight: 220,

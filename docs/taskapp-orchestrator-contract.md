@@ -15,6 +15,7 @@ This addendum locks the `TaskApp` core boundary while extraction continues.
 - Cross-surface callback plumbing between extracted page adapters/components.
 - Session/auth shell flow (`ConfigSplash`, `LoadingSplash`, `AuthSplash`).
 - Route-level overlays and orchestration concerns such as reward resolution, achievement celebrations, and dock-driven page switching.
+- HUD persistence and event callbacks remain orchestrated here, but one-second timer/alarm display ticks are owned by `HudRuntimeClock` inside the HUD subtree so they do not rerender every page workspace.
 
 ## What Must Move Out (or Stay Out)
 - Pure derived data calculations (filters, list counts, bucket splits, planning candidates, list option shaping).
@@ -30,3 +31,4 @@ This addendum locks the `TaskApp` core boundary while extraction continues.
 - Test-page prototype surfaces remain isolated unless explicitly promoted.
 - Route loading fallbacks stay lightweight and do not mutate persisted page or task state.
 - The live Tasks table has one incremental row-loading owner: `TaskManagementTableV2`. `TaskApp` should pass the full selected bucket and must not slice rows with a second rendered-count state.
+- Focus-alarm ringing uses the persisted absolute `nextRingAt` timestamp with one scheduled timeout. Live countdown rendering belongs to the HUD runtime clock rather than a TaskApp-level polling state.
