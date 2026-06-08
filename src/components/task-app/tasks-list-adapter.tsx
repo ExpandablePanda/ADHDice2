@@ -18,6 +18,8 @@ type TasksTableSourceProps = {
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: TaskEditorLinkedNote[];
   allTagOptions?: string[];
+  currentListLabel?: string | null;
+  getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
   overlayNode?: ReactNode;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenFocusTimer?: (taskId: string) => void;
@@ -30,6 +32,8 @@ type TasksTableSourceProps = {
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
+  onFollowDetachedTask?: (taskId: string) => void;
+  onDismissDetachedTask?: (taskId: string) => void;
   onNextTaskTimer?: () => void;
   onPreviousTaskTimer?: () => void;
   onClearSelection?: () => void;
@@ -156,7 +160,9 @@ export function TasksListAdapter({
           allNoteOptions={noteOptions}
           allTagOptions={tableProps.allTagOptions}
           className="max-w-none p-0"
+          currentListLabel={tableProps.currentListLabel}
           enableInspector
+          getFollowTaskDestination={tableProps.getFollowTaskDestination}
           onClearSelection={tableProps.onClearSelection}
           overlayNode={tableProps.overlayNode}
           onCreateTaskList={tableProps.onCreateTaskList}
@@ -170,6 +176,8 @@ export function TasksListAdapter({
           onOpenNote={tableProps.onOpenNote}
           onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
+          onFollowDetachedTask={tableProps.onFollowDetachedTask}
+          onDismissDetachedTask={tableProps.onDismissDetachedTask}
           onNextTaskTimer={tableProps.onNextTaskTimer}
           onPreviousTaskTimer={tableProps.onPreviousTaskTimer}
           onDeleteTaskActualTimeEntry={tableProps.onDeleteTaskActualTimeEntry}

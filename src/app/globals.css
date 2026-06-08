@@ -256,6 +256,17 @@ body::-webkit-scrollbar-thumb:hover,
   height: 0;
 }
 
+.adhdice-hud-workspace-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.adhdice-hud-workspace-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 html {
   text-rendering: optimizeLegibility;
 }

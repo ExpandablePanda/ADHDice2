@@ -25,6 +25,23 @@ export type HudWidgetLayoutItem = {
   widthPx?: number;
 };
 
+export type HudWorkspaceWidget = {
+  heightPx: number;
+  id: string;
+  isVisible: boolean;
+  type: HudWidgetType;
+  widthPx: number;
+  x: number;
+  y: number;
+};
+
+export type HudWorkspace = {
+  heightPx: number;
+  version: number;
+  widgets: HudWorkspaceWidget[];
+  widthPx: number;
+};
+
 export type HudPage = {
   id: "overview" | "command";
   title: string;
@@ -33,6 +50,7 @@ export type HudPage = {
 
 export type HudUiState = {
   activeHudPageId: HudPage["id"];
+  hudWorkspace: HudWorkspace;
   hudPages: HudPage[];
   isHudCollapsed: boolean;
   hudUiVersion: number;
@@ -40,7 +58,9 @@ export type HudUiState = {
   selectedHudWidgetId: string | null;
 };
 
-export const HUD_UI_SCHEMA_VERSION = 4;
+export const HUD_UI_SCHEMA_VERSION = 5;
+export const HUD_WORKSPACE_SCHEMA_VERSION = 1;
+export const HUD_WORKSPACE_SNAP_PX = 8;
 export const HUD_PAGE_IDS: HudPage["id"][] = ["overview", "command"];
 export const HUD_WIDGET_TYPES: HudWidgetType[] = [
   "dark_mode",
@@ -96,6 +116,163 @@ const DEFAULT_WIDGET_SIZES: Record<HudWidgetType, HudWidgetSize> = {
   zoom: "1x1",
 };
 
+const HUD_WIDGET_DIMENSION_LIMITS = {
+  maxHeight: 220,
+  maxWidth: 640,
+  minHeight: 36,
+  minWidth: 44,
+} as const;
+
+const HUD_WORKSPACE_DIMENSION_LIMITS = {
+  maxHeight: 720,
+  maxWidth: 2400,
+  minHeight: 108,
+  minWidth: 320,
+} as const;
+
+const HUD_WORKSPACE_DEFAULT_DIMENSIONS = {
+  heightPx: 120,
+  widthPx: 880,
+} as const;
+
+const HUD_WORKSPACE_GAP_PX = 8;
+const HUD_WORKSPACE_CANVAS_PADDING_PX = HUD_WORKSPACE_GAP_PX * 2;
+
+function snapToWorkspaceGrid(value: number) {
+  return Math.round(value / HUD_WORKSPACE_SNAP_PX) * HUD_WORKSPACE_SNAP_PX;
+}
+
+function clampWorkspaceCoordinate(position: number, size: number, workspaceSize: number) {
+  return Math.max(0, Math.min(Math.max(0, workspaceSize - size), snapToWorkspaceGrid(position)));
+}
+
+function enumerateSnappedCoordinates(max: number) {
+  if (max <= 0) {
+    return [0];
+  }
+
+  const coordinates: number[] = [];
+  for (let value = 0; value <= max; value += HUD_WORKSPACE_SNAP_PX) {
+    coordinates.push(value);
+  }
+  if (coordinates[coordinates.length - 1] !== max) {
+    coordinates.push(max);
+  }
+  return coordinates;
+}
+
+function widgetsOverlap(first: Pick<HudWorkspaceWidget, "heightPx" | "widthPx" | "x" | "y">, second: Pick<HudWorkspaceWidget, "heightPx" | "widthPx" | "x" | "y">) {
+  return first.x < second.x + second.widthPx
+    && first.x + first.widthPx > second.x
+    && first.y < second.y + second.heightPx
+    && first.y + first.heightPx > second.y;
+}
+
+function getWidgetRight(widget: Pick<HudWorkspaceWidget, "widthPx" | "x">) {
+  return widget.x + widget.widthPx;
+}
+
+function getWidgetBottom(widget: Pick<HudWorkspaceWidget, "heightPx" | "y">) {
+  return widget.y + widget.heightPx;
+}
+
+function getVisibleWidgetsExcluding(widgets: HudWorkspaceWidget[], widgetId: string) {
+  return widgets.filter((widget) => widget.id !== widgetId && widget.isVisible);
+}
+
+function getPlacementSearchArea(
+  widgets: HudWorkspaceWidget[],
+  workspace: Pick<HudWorkspace, "heightPx" | "widthPx">,
+  targetWidget: HudWorkspaceWidget,
+  options?: { expandToDesiredPosition?: boolean },
+) {
+  const otherVisibleWidgets = getVisibleWidgetsExcluding(widgets, targetWidget.id);
+  const farRight = otherVisibleWidgets.reduce((maxRight, widget) => Math.max(maxRight, getWidgetRight(widget)), 0);
+  const farBottom = otherVisibleWidgets.reduce((maxBottom, widget) => Math.max(maxBottom, getWidgetBottom(widget)), 0);
+  const desiredRight = options?.expandToDesiredPosition ? Math.max(0, targetWidget.x) + targetWidget.widthPx : 0;
+  const desiredBottom = options?.expandToDesiredPosition ? Math.max(0, targetWidget.y) + targetWidget.heightPx : 0;
+
+  return {
+    heightPx: Math.max(
+      workspace.heightPx,
+      farBottom + targetWidget.heightPx + HUD_WORKSPACE_GAP_PX,
+      desiredBottom + HUD_WORKSPACE_CANVAS_PADDING_PX,
+    ),
+    otherVisibleWidgets,
+    widthPx: Math.max(
+      workspace.widthPx,
+      farRight + targetWidget.widthPx + HUD_WORKSPACE_GAP_PX,
+      desiredRight + HUD_WORKSPACE_CANVAS_PADDING_PX,
+    ),
+  };
+}
+
+function resolveWorkspacePlacement(
+  widgets: HudWorkspaceWidget[],
+  workspace: Pick<HudWorkspace, "heightPx" | "widthPx">,
+  targetWidget: HudWorkspaceWidget,
+  options?: { expandToDesiredPosition?: boolean },
+): HudWorkspaceWidget {
+  if (!targetWidget.isVisible) {
+    return targetWidget;
+  }
+
+  const searchArea = getPlacementSearchArea(widgets, workspace, targetWidget, options);
+  const maxX = Math.max(0, searchArea.widthPx - targetWidget.widthPx);
+  const maxY = Math.max(0, searchArea.heightPx - targetWidget.heightPx);
+  const desiredX = clampWorkspaceCoordinate(targetWidget.x, targetWidget.widthPx, searchArea.widthPx);
+  const desiredY = clampWorkspaceCoordinate(targetWidget.y, targetWidget.heightPx, searchArea.heightPx);
+  const desiredPlacement = {
+    ...targetWidget,
+    x: desiredX,
+    y: desiredY,
+  };
+
+  if (!searchArea.otherVisibleWidgets.some((widget) => widgetsOverlap(desiredPlacement, widget))) {
+    return desiredPlacement;
+  }
+
+  const candidateXs = enumerateSnappedCoordinates(maxX);
+  const candidateYs = enumerateSnappedCoordinates(maxY);
+  let bestPlacement: HudWorkspaceWidget | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const candidateY of candidateYs) {
+    for (const candidateX of candidateXs) {
+      const candidatePlacement = {
+        ...targetWidget,
+        x: candidateX,
+        y: candidateY,
+      };
+      if (searchArea.otherVisibleWidgets.some((widget) => widgetsOverlap(candidatePlacement, widget))) {
+        continue;
+      }
+      const distance = Math.abs(candidateX - desiredX) + Math.abs(candidateY - desiredY);
+      if (
+        distance < bestDistance
+        || (distance === bestDistance && bestPlacement && (candidateY < bestPlacement.y || (candidateY === bestPlacement.y && candidateX < bestPlacement.x)))
+        || (distance === bestDistance && bestPlacement === null)
+      ) {
+        bestPlacement = candidatePlacement;
+        bestDistance = distance;
+      }
+    }
+  }
+
+  if (bestPlacement) {
+    return bestPlacement;
+  }
+
+  const fallbackWidth = searchArea.widthPx + targetWidget.widthPx + HUD_WORKSPACE_GAP_PX;
+  const fallbackHeight = searchArea.heightPx + targetWidget.heightPx + HUD_WORKSPACE_GAP_PX;
+  return resolveWorkspacePlacement(
+    widgets,
+    { heightPx: fallbackHeight, widthPx: fallbackWidth },
+    targetWidget,
+    options,
+  );
+}
+
 function defaultWidget(type: HudWidgetType): HudWidgetLayoutItem {
   return {
     id: `hud-${type}`,
@@ -104,37 +281,214 @@ function defaultWidget(type: HudWidgetType): HudWidgetLayoutItem {
   };
 }
 
+const DEFAULT_HUD_PAGES: HudPage[] = [
+  {
+    id: "overview",
+    title: "Overview",
+    widgets: [
+      defaultWidget("dark_mode"),
+      defaultWidget("calm"),
+      defaultWidget("sync_status"),
+      defaultWidget("xp"),
+      defaultWidget("points"),
+      defaultWidget("tokens"),
+      defaultWidget("streak"),
+      defaultWidget("notification_inbox"),
+      defaultWidget("focus_alarm"),
+    ],
+  },
+  {
+    id: "command",
+    title: "Command",
+    widgets: [
+      defaultWidget("focus_timer"),
+      defaultWidget("zoom"),
+      defaultWidget("new_task"),
+      defaultWidget("refocus"),
+      defaultWidget("quick_capture"),
+      defaultWidget("task_counts"),
+    ],
+  },
+];
+
+function clampDimension(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function getDefaultWidgetDimensions(widget: Pick<HudWidgetLayoutItem, "size" | "type">) {
+  if (widget.type === "dark_mode") {
+    return { heightPx: 50, widthPx: 50 };
+  }
+
+  if (widget.type === "calm") {
+    return { heightPx: 50, widthPx: 96 };
+  }
+
+  return {
+    heightPx: widget.size.endsWith("2") ? 108 : 50,
+    widthPx: widget.size.startsWith("2") ? 260 : 132,
+  };
+}
+
+function getWorkspaceDimensions(widthPx: unknown, heightPx: unknown) {
+  return {
+    heightPx: typeof heightPx === "number" && Number.isFinite(heightPx)
+      ? clampDimension(heightPx, HUD_WORKSPACE_DIMENSION_LIMITS.minHeight, HUD_WORKSPACE_DIMENSION_LIMITS.maxHeight)
+      : HUD_WORKSPACE_DEFAULT_DIMENSIONS.heightPx,
+    widthPx: typeof widthPx === "number" && Number.isFinite(widthPx)
+      ? clampDimension(widthPx, HUD_WORKSPACE_DIMENSION_LIMITS.minWidth, HUD_WORKSPACE_DIMENSION_LIMITS.maxWidth)
+      : HUD_WORKSPACE_DEFAULT_DIMENSIONS.widthPx,
+  };
+}
+
+function createWorkspaceWidget(
+  widget: HudWidgetLayoutItem,
+  position: { x: number; y: number },
+  isVisible: boolean,
+): HudWorkspaceWidget {
+  const defaults = getDefaultWidgetDimensions(widget);
+  return {
+    heightPx: clampDimension(
+      widget.heightPx ?? defaults.heightPx,
+      HUD_WIDGET_DIMENSION_LIMITS.minHeight,
+      HUD_WIDGET_DIMENSION_LIMITS.maxHeight,
+    ),
+    id: widget.id,
+    isVisible,
+    type: widget.type,
+    widthPx: clampDimension(
+      widget.widthPx ?? defaults.widthPx,
+      HUD_WIDGET_DIMENSION_LIMITS.minWidth,
+      HUD_WIDGET_DIMENSION_LIMITS.maxWidth,
+    ),
+    x: Math.max(0, Math.round(position.x)),
+    y: Math.max(0, Math.round(position.y)),
+  };
+}
+
+export function updateHudWorkspaceWidgetLayout(
+  widgets: HudWorkspaceWidget[],
+  workspace: Pick<HudWorkspace, "heightPx" | "widthPx">,
+  widgetId: string,
+  overrides: Partial<Pick<HudWorkspaceWidget, "heightPx" | "isVisible" | "widthPx" | "x" | "y">>,
+): HudWorkspaceWidget[] {
+  const previousWidget = widgets.find((widget) => widget.id === widgetId) ?? null;
+  const nextWidgets = widgets.map((widget) => widget.id === widgetId ? { ...widget, ...overrides } : widget);
+  const targetWidget = nextWidgets.find((widget) => widget.id === widgetId);
+
+  if (!targetWidget) {
+    return widgets;
+  }
+
+  if (!targetWidget.isVisible) {
+    return nextWidgets;
+  }
+
+  const resolvedWidget = resolveWorkspacePlacement(
+    nextWidgets,
+    workspace,
+    targetWidget,
+    { expandToDesiredPosition: overrides.x !== undefined || overrides.y !== undefined || (previousWidget?.isVisible ?? true) },
+  );
+  return nextWidgets.map((widget) => widget.id === widgetId ? resolvedWidget : widget);
+}
+
+function stabilizeWorkspaceWidgets(
+  widgets: HudWorkspaceWidget[],
+  workspace: Pick<HudWorkspace, "heightPx" | "widthPx">,
+) {
+  const hiddenWidgets = widgets.filter((widget) => !widget.isVisible);
+  const visibleWidgets = [...widgets]
+    .filter((widget) => widget.isVisible)
+    .sort((left, right) => {
+      if (left.y !== right.y) {
+        return left.y - right.y;
+      }
+      if (left.x !== right.x) {
+        return left.x - right.x;
+      }
+      return HUD_WIDGET_TYPES.indexOf(left.type) - HUD_WIDGET_TYPES.indexOf(right.type);
+    });
+  const placedWidgets: HudWorkspaceWidget[] = [];
+
+  for (const widget of visibleWidgets) {
+    const resolvedWidget = resolveWorkspacePlacement(
+      [...placedWidgets, ...hiddenWidgets],
+      workspace,
+      widget,
+    );
+    placedWidgets.push(resolvedWidget);
+  }
+
+  return widgets.map((widget) => {
+    if (!widget.isVisible) {
+      return widget;
+    }
+    return placedWidgets.find((placedWidget) => placedWidget.id === widget.id) ?? widget;
+  });
+}
+
+function buildWorkspaceWidgetsFromOrderedItems(
+  orderedWidgets: Array<{ isVisible: boolean; widget: HudWidgetLayoutItem }>,
+  workspaceWidthPx: number,
+) {
+  const widgets: HudWorkspaceWidget[] = [];
+  let cursorX = 0;
+  let cursorY = 0;
+  let rowHeight = 0;
+
+  for (const { isVisible, widget } of orderedWidgets) {
+    const defaults = getDefaultWidgetDimensions(widget);
+    const widthPx = clampDimension(
+      widget.widthPx ?? defaults.widthPx,
+      HUD_WIDGET_DIMENSION_LIMITS.minWidth,
+      HUD_WIDGET_DIMENSION_LIMITS.maxWidth,
+    );
+    const heightPx = clampDimension(
+      widget.heightPx ?? defaults.heightPx,
+      HUD_WIDGET_DIMENSION_LIMITS.minHeight,
+      HUD_WIDGET_DIMENSION_LIMITS.maxHeight,
+    );
+
+    if (cursorX > 0 && cursorX + widthPx > workspaceWidthPx) {
+      cursorX = 0;
+      cursorY += rowHeight + HUD_WORKSPACE_GAP_PX;
+      rowHeight = 0;
+    }
+
+    widgets.push(createWorkspaceWidget(widget, isVisible ? { x: cursorX, y: cursorY } : { x: 0, y: 0 }, isVisible));
+    if (isVisible) {
+      cursorX += widthPx + HUD_WORKSPACE_GAP_PX;
+      rowHeight = Math.max(rowHeight, heightPx);
+    }
+  }
+
+  return widgets;
+}
+
+function buildWorkspaceFromPages(
+  pages: HudPage[],
+  dimensions?: { heightPx?: unknown; widthPx?: unknown },
+): HudWorkspace {
+  const workspaceDimensions = getWorkspaceDimensions(dimensions?.widthPx, dimensions?.heightPx);
+  const orderedVisibleWidgets = pages.flatMap((page) => page.widgets.map((widget) => ({ isVisible: true, widget })));
+  const seenTypes = new Set<HudWidgetType>(orderedVisibleWidgets.map(({ widget }) => widget.type));
+  const hiddenWidgets = HUD_WIDGET_TYPES
+    .filter((type) => !seenTypes.has(type))
+    .map((type) => ({ isVisible: false, widget: defaultWidget(type) }));
+
+  return {
+    heightPx: workspaceDimensions.heightPx,
+    version: HUD_WORKSPACE_SCHEMA_VERSION,
+    widgets: buildWorkspaceWidgetsFromOrderedItems([...orderedVisibleWidgets, ...hiddenWidgets], workspaceDimensions.widthPx),
+    widthPx: workspaceDimensions.widthPx,
+  };
+}
+
 export const DEFAULT_HUD_UI_STATE: HudUiState = {
   activeHudPageId: "overview",
-  hudPages: [
-    {
-      id: "overview",
-      title: "Overview",
-      widgets: [
-        defaultWidget("dark_mode"),
-        defaultWidget("calm"),
-        defaultWidget("sync_status"),
-        defaultWidget("xp"),
-        defaultWidget("points"),
-        defaultWidget("tokens"),
-        defaultWidget("streak"),
-        defaultWidget("notification_inbox"),
-        defaultWidget("focus_alarm"),
-      ],
-    },
-    {
-      id: "command",
-      title: "Command",
-      widgets: [
-        defaultWidget("focus_timer"),
-        defaultWidget("zoom"),
-        defaultWidget("new_task"),
-        defaultWidget("refocus"),
-        defaultWidget("quick_capture"),
-        defaultWidget("task_counts"),
-      ],
-    },
-  ],
+  hudPages: DEFAULT_HUD_PAGES,
+  hudWorkspace: buildWorkspaceFromPages(DEFAULT_HUD_PAGES),
   isHudCollapsed: false,
   hudUiVersion: HUD_UI_SCHEMA_VERSION,
   isHudEditMode: false,
@@ -168,10 +522,10 @@ function normalizeHudWidget(value: unknown): HudWidgetLayoutItem | null {
   }
 
   const widthPx = typeof candidate.widthPx === "number" && Number.isFinite(candidate.widthPx)
-    ? Math.max(44, Math.min(640, Math.round(candidate.widthPx)))
+    ? clampDimension(candidate.widthPx, HUD_WIDGET_DIMENSION_LIMITS.minWidth, HUD_WIDGET_DIMENSION_LIMITS.maxWidth)
     : undefined;
   const heightPx = typeof candidate.heightPx === "number" && Number.isFinite(candidate.heightPx)
-    ? Math.max(36, Math.min(220, Math.round(candidate.heightPx)))
+    ? clampDimension(candidate.heightPx, HUD_WIDGET_DIMENSION_LIMITS.minHeight, HUD_WIDGET_DIMENSION_LIMITS.maxHeight)
     : undefined;
 
   return {
@@ -188,7 +542,7 @@ function normalizePageWidgets(pageId: HudPage["id"], widgets: unknown, includeMi
     ? widgets.flatMap((widget) => {
       if (isLegacyThemeWidget(widget)) {
         const heightPx = typeof widget.heightPx === "number" && Number.isFinite(widget.heightPx)
-          ? Math.max(36, Math.min(220, Math.round(widget.heightPx)))
+          ? clampDimension(widget.heightPx, HUD_WIDGET_DIMENSION_LIMITS.minHeight, HUD_WIDGET_DIMENSION_LIMITS.maxHeight)
           : undefined;
         return [
           { ...defaultWidget("dark_mode"), heightPx, widthPx: 50 },
@@ -212,7 +566,7 @@ function normalizePageWidgets(pageId: HudPage["id"], widgets: unknown, includeMi
     seenTypes.add(widget.type);
   }
 
-  const expectedTypes = DEFAULT_HUD_UI_STATE.hudPages.find((page) => page.id === pageId)?.widgets.map((widget) => widget.type) ?? [];
+  const expectedTypes = DEFAULT_HUD_PAGES.find((page) => page.id === pageId)?.widgets.map((widget) => widget.type) ?? [];
   if (deduped.length === 0) {
     return expectedTypes.map((type) => defaultWidget(type));
   }
@@ -227,6 +581,91 @@ function normalizePageWidgets(pageId: HudPage["id"], widgets: unknown, includeMi
   }
 
   return deduped;
+}
+
+function normalizeWorkspaceWidget(value: unknown): HudWorkspaceWidget | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<HudWorkspaceWidget>;
+  if (!isHudWidgetType(candidate.type)) {
+    return null;
+  }
+
+  const fallbackWidget = {
+    id: typeof candidate.id === "string" && candidate.id.length > 0 ? candidate.id : `hud-${candidate.type}`,
+    size: DEFAULT_WIDGET_SIZES[candidate.type],
+    type: candidate.type,
+    widthPx: typeof candidate.widthPx === "number" ? candidate.widthPx : undefined,
+    heightPx: typeof candidate.heightPx === "number" ? candidate.heightPx : undefined,
+  } satisfies HudWidgetLayoutItem;
+
+  return {
+    ...createWorkspaceWidget(
+      fallbackWidget,
+      {
+        x: typeof candidate.x === "number" && Number.isFinite(candidate.x) ? candidate.x : 0,
+        y: typeof candidate.y === "number" && Number.isFinite(candidate.y) ? candidate.y : 0,
+      },
+      candidate.isVisible !== false,
+    ),
+    id: fallbackWidget.id,
+  };
+}
+
+function normalizeHudWorkspace(
+  value: unknown,
+  fallbackPages: HudPage[],
+  includeMissingDefaults: boolean,
+): HudWorkspace {
+  const candidate = value && typeof value === "object" ? value as Partial<HudWorkspace> : null;
+  const workspaceDimensions = getWorkspaceDimensions(candidate?.widthPx, candidate?.heightPx);
+  const fallbackWorkspace = buildWorkspaceFromPages(fallbackPages, workspaceDimensions);
+
+  if (!candidate) {
+    return fallbackWorkspace;
+  }
+
+  const normalized = Array.isArray(candidate.widgets)
+    ? candidate.widgets.flatMap((widget) => {
+      const normalizedWidget = normalizeWorkspaceWidget(widget);
+      return normalizedWidget ? [normalizedWidget] : [];
+    })
+    : [];
+
+  const deduped: HudWorkspaceWidget[] = [];
+  const seenTypes = new Set<HudWidgetType>();
+
+  for (const widget of normalized) {
+    if (seenTypes.has(widget.type)) {
+      continue;
+    }
+    deduped.push(widget);
+    seenTypes.add(widget.type);
+  }
+
+  if (deduped.length === 0) {
+    return fallbackWorkspace;
+  }
+
+  if (includeMissingDefaults || deduped.length < HUD_WIDGET_TYPES.length) {
+    for (const widget of fallbackWorkspace.widgets) {
+      if (!seenTypes.has(widget.type)) {
+        deduped.push({ ...widget, isVisible: false });
+        seenTypes.add(widget.type);
+      }
+    }
+  }
+
+  return {
+    heightPx: workspaceDimensions.heightPx,
+    version: typeof candidate.version === "number" && Number.isFinite(candidate.version)
+      ? Math.max(HUD_WORKSPACE_SCHEMA_VERSION, Math.round(candidate.version))
+      : HUD_WORKSPACE_SCHEMA_VERSION,
+    widgets: stabilizeWorkspaceWidgets(deduped, workspaceDimensions),
+    widthPx: workspaceDimensions.widthPx,
+  };
 }
 
 export function normalizeHudUiState(value: unknown): HudUiState {
@@ -244,13 +683,14 @@ export function normalizeHudUiState(value: unknown): HudUiState {
       id: pageId,
       title: typeof source?.title === "string" && source.title.length > 0
         ? source.title
-        : (DEFAULT_HUD_UI_STATE.hudPages.find((page) => page.id === pageId)?.title ?? pageId),
+        : (DEFAULT_HUD_PAGES.find((page) => page.id === pageId)?.title ?? pageId),
       widgets: normalizePageWidgets(pageId, source?.widgets, includeMissingDefaults),
     };
   });
 
   return {
     activeHudPageId: isHudPageId(candidate.activeHudPageId) ? candidate.activeHudPageId : DEFAULT_HUD_UI_STATE.activeHudPageId,
+    hudWorkspace: normalizeHudWorkspace((candidate as Partial<HudUiState> & { hudWorkspace?: unknown }).hudWorkspace, hudPages, includeMissingDefaults),
     hudPages,
     isHudCollapsed: candidate.isHudCollapsed === true,
     hudUiVersion: HUD_UI_SCHEMA_VERSION,
