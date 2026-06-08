@@ -1,3 +1,4 @@
+import { processLock } from "@supabase/auth-js";
 import { createClient, type AuthChangeEvent, type Session } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 
@@ -27,7 +28,12 @@ export function createBrowserSupabaseClient() {
   }
 
   if (!globalThis.__adhdiceSupabaseClient) {
-    globalThis.__adhdiceSupabaseClient = createClient<Database>(url, anonKey);
+    globalThis.__adhdiceSupabaseClient = createClient<Database>(url, anonKey, {
+      auth: {
+        // Safari can leave navigator.locks orphaned across reloads in local development.
+        lock: processLock,
+      },
+    });
   }
 
   return globalThis.__adhdiceSupabaseClient;
