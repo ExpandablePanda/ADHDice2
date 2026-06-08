@@ -289,6 +289,7 @@ export function evaluateTaskListMemberships(
   context: TaskListEvaluationContext,
 ) {
   const memberships = new Map<TaskListId, TaskListMembership>();
+  const evaluationCache = new Map<string, boolean>();
   const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
 
   for (const listId of manualListIds) {
@@ -304,7 +305,7 @@ export function evaluateTaskListMemberships(
 
   for (const list of lists) {
     const current = memberships.get(list.id);
-    if (matchesSpecificListRuleMembership(task, list, lists, context)) {
+    if (matchesSpecificListRuleMembership(task, list, lists, context, new Set(), evaluationCache)) {
       memberships.set(list.id, {
         id: list.id,
         isManual: current?.isManual ?? false,
@@ -359,14 +360,15 @@ export function matchesTaskListRules(
   lists: TaskListDefinition[],
   context: TaskListEvaluationContext,
   visitedListIds: Set<TaskListId> = new Set(),
+  evaluationCache: Map<string, boolean> = new Map(),
 ): boolean {
   if (group.rules.length === 0) {
     return false;
   }
 
-  let result: boolean = matchesTaskListRule(task, group.rules[0].rule, lists, context, visitedListIds);
+  let result: boolean = matchesTaskListRule(task, group.rules[0].rule, lists, context, visitedListIds, evaluationCache);
   for (const entry of group.rules.slice(1)) {
-    const nextValue = matchesTaskListRule(task, entry.rule, lists, context, visitedListIds);
+    const nextValue = matchesTaskListRule(task, entry.rule, lists, context, visitedListIds, evaluationCache);
     result = entry.connector === "or" ? (result || nextValue) : (result && nextValue);
   }
   return result;
@@ -432,6 +434,7 @@ function matchesTaskListRule(
   lists: TaskListDefinition[],
   context: TaskListEvaluationContext,
   visitedListIds: Set<TaskListId> = new Set(),
+  evaluationCache: Map<string, boolean> = new Map(),
 ): boolean {
   const matchesStreakThreshold = (value: TaskListRuleStreakValue) => {
     const currentStreak = context.currentStreakByTaskId[task.id] ?? 0;
@@ -448,7 +451,7 @@ function matchesTaskListRule(
       return rule.op === "is" ? values.includes(task.status) : !values.includes(task.status);
     }
     case "list": {
-      const belongsToList = taskBelongsToSpecificList(task, rule.value, lists, context, visitedListIds);
+      const belongsToList = taskBelongsToSpecificList(task, rule.value, lists, context, visitedListIds, evaluationCache);
       return rule.op === "is" ? belongsToList : !belongsToList;
     }
     case "steps": {
@@ -567,14 +570,24 @@ function matchesSpecificListRuleMembership(
   lists: TaskListDefinition[],
   context: TaskListEvaluationContext,
   visitedListIds: Set<TaskListId> = new Set(),
+  evaluationCache: Map<string, boolean> = new Map(),
 ): boolean {
+  const cacheKey = `rule:${list.id}`;
+  const cached = evaluationCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
   if (!list.rules) {
+    evaluationCache.set(cacheKey, false);
     return false;
   }
   if (!context.isOpen(task) && list.id !== "done") {
+    evaluationCache.set(cacheKey, false);
     return false;
   }
-  return matchesTaskListRules(task, list.rules, lists, context, visitedListIds);
+  const matches = matchesTaskListRules(task, list.rules, lists, context, visitedListIds, evaluationCache);
+  evaluationCache.set(cacheKey, matches);
+  return matches;
 }
 
 function taskBelongsToSpecificList(
@@ -583,7 +596,13 @@ function taskBelongsToSpecificList(
   lists: TaskListDefinition[],
   context: TaskListEvaluationContext,
   visitedListIds: Set<TaskListId> = new Set(),
+  evaluationCache: Map<string, boolean> = new Map(),
 ): boolean {
+  const cacheKey = `membership:${selectedListId}`;
+  const cached = evaluationCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
   if (visitedListIds.has(selectedListId)) {
     return false;
   }
@@ -591,33 +610,41 @@ function taskBelongsToSpecificList(
   const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
   const hasManualMembership = selectedListId !== "today" && manualListIds.includes(selectedListId);
   if (hasManualMembership) {
+    evaluationCache.set(cacheKey, true);
     return true;
   }
 
   if (selectedListId === "inbox") {
     if (!context.isOpen(task) || task.status === "archived") {
+      evaluationCache.set(cacheKey, false);
       return false;
     }
 
     const hasAnyManualMembership = manualListIds.length > 0;
     if (hasAnyManualMembership) {
+      evaluationCache.set(cacheKey, false);
       return false;
     }
 
     const nextVisited = new Set(visitedListIds);
     nextVisited.add("inbox");
     const hasNonInboxRuleMatch = lists.some((list) =>
-      list.id !== "inbox" && matchesSpecificListRuleMembership(task, list, lists, context, nextVisited),
+      list.id !== "inbox" && matchesSpecificListRuleMembership(task, list, lists, context, nextVisited, evaluationCache),
     );
-    return !hasNonInboxRuleMatch;
+    const belongsToInbox = !hasNonInboxRuleMatch;
+    evaluationCache.set(cacheKey, belongsToInbox);
+    return belongsToInbox;
   }
 
   const list = lists.find((entry) => entry.id === selectedListId);
   if (!list) {
+    evaluationCache.set(cacheKey, false);
     return false;
   }
 
   const nextVisited = new Set(visitedListIds);
   nextVisited.add(selectedListId);
-  return matchesSpecificListRuleMembership(task, list, lists, context, nextVisited);
+  const belongsToList = matchesSpecificListRuleMembership(task, list, lists, context, nextVisited, evaluationCache);
+  evaluationCache.set(cacheKey, belongsToList);
+  return belongsToList;
 }

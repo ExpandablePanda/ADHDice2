@@ -15,6 +15,7 @@ import { isValidDateKey, normalizeTaskFocusIds } from "../src/lib/task-focus-day
 import { normalizeLogoSrc } from "../src/lib/profile-store.ts";
 import { buildAgentPlanTaskItem } from "../src/lib/task-agent-plan.ts";
 import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
+import { matchesTaskListRules } from "../src/lib/task-lists.ts";
 import { buildFocusLabelOptions } from "../src/lib/task-focus-labels.ts";
 import { buildWidgetTypeGuard, parseTaskGridLayoutJson } from "../src/lib/task-grid-parser.ts";
 import { mapTaskListManualMembershipRow } from "../src/lib/task-list-mappers.ts";
@@ -168,6 +169,60 @@ test("task table row helper maps task directly to live table shape", () => {
   assert.deepEqual(row.priorities, ["focus", "important"]);
   assert.deepEqual(row.lists, ["Custom"]);
   assert.equal(row.subtasks[0]?.title, "Step");
+});
+
+test("task list rule evaluation memoizes duplicate list references", () => {
+  const task = createTask({
+    created_at: "2026-05-20T09:00:00.000Z",
+    energy: "low",
+    id: "task-list-cache",
+    sort_order: 1,
+    status: "pending",
+    title: "Cached list rule",
+  });
+  let isOpenChecks = 0;
+  const lists = [
+    {
+      description: "",
+      id: "list:target" as const,
+      isDeletable: true,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: "rules" as const,
+      name: "Target",
+      rules: { rules: [{ rule: { field: "energy" as const, op: "is" as const, value: "low" as const } }] },
+      sortOrder: 1,
+      type: "custom" as const,
+    },
+  ];
+
+  assert.equal(
+    matchesTaskListRules(
+      task,
+      {
+        rules: [
+          { rule: { field: "list", op: "is", value: "list:target" } },
+          { connector: "or", rule: { field: "list", op: "is", value: "list:target" } },
+        ],
+      },
+      lists,
+      {
+        currentStreakByTaskId: {},
+        focusedTaskIds: new Set<string>(),
+        hasStepsByTaskId: {},
+        isDueToday: () => false,
+        isLater: () => false,
+        isOpen: () => {
+          isOpenChecks += 1;
+          return true;
+        },
+        isOverdue: () => false,
+        manualMembershipsByTaskId: {},
+      },
+    ),
+    true,
+  );
+  assert.equal(isOpenChecks, 1);
 });
 
 test("grid parser helpers handle invalid and valid layout json", () => {

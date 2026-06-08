@@ -121,7 +121,7 @@ import {
   sanitizeFocusLabel,
   sanitizeOptionalFocusLabel,
 } from "@/lib/focus-utils";
-import { createBrowserSupabaseClient } from "@/lib/supabase";
+import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
 import { getLevelProgress } from "@/lib/economy-levels";
 import { buildHealthReminderTemplate, type HealthReminderTemplateKey } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
@@ -277,6 +277,7 @@ type TaskGridWidgetType =
   | "focus_stats";
 
 const MOBILE_ZOOM_LEVELS = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2] as const;
+const EMPTY_TASK_IDS: string[] = [];
 type TaskGridItem = TaskGridLayoutItem<TaskGridWidgetType>;
 type TaskKeyboardShortcut = {
   action: string;
@@ -291,7 +292,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.0.2";
+const HUD_VERSION = "5.0.4";
 
 type PersistedFocusAlarmState = {
   enabled: boolean;
@@ -960,9 +961,7 @@ export function TaskApp() {
 
     window.addEventListener("unhandledrejection", handleSessionLockRejection);
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, nextSession) => {
+    const unsubscribe = subscribeToBrowserAuth((event: AuthChangeEvent, nextSession) => {
       if (event === "SIGNED_OUT") {
         setTasks([]);
         setFocusCategories([]);
@@ -980,13 +979,21 @@ export function TaskApp() {
         saveProfile(DEFAULT_PROFILE);
       }
       if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED" || event === "PASSWORD_RECOVERY") {
-        setSession(nextSession);
+        setSession((currentSession) => {
+          if (
+            currentSession?.access_token === nextSession?.access_token
+            && currentSession?.user.id === nextSession?.user.id
+          ) {
+            return currentSession;
+          }
+          return nextSession;
+        });
       }
     });
 
     return () => {
       window.removeEventListener("unhandledrejection", handleSessionLockRejection);
-      subscription.unsubscribe();
+      unsubscribe();
     };
   }, [supabase]);
 
@@ -1420,7 +1427,7 @@ export function TaskApp() {
     supabase,
     todayKey,
   });
-  const focusedTaskIds = focusedTaskIdsByDate[todayKey] ?? [];
+  const focusedTaskIds = focusedTaskIdsByDate[todayKey] ?? EMPTY_TASK_IDS;
   const focusedTaskIdSet = useMemo(() => new Set(focusedTaskIds), [focusedTaskIds]);
   const builtInTaskLists = useMemo(() => getBuiltInTaskLists(), []);
   const availableTaskLists = useMemo(() => {
@@ -1502,16 +1509,15 @@ export function TaskApp() {
   }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId]);
   const deferredSearchQuery = useDeferredValue(taskUiState.search.trim().toLowerCase());
   const taskUiStateForDerivedData = useMemo(() => ({
-    ...taskUiState,
-    search: "",
+    energyFilters: taskUiState.energyFilters,
+    matchAny: taskUiState.matchAny,
+    quickFilters: taskUiState.quickFilters,
+    statusFilters: taskUiState.statusFilters,
   }), [
     taskUiState.energyFilters,
     taskUiState.matchAny,
     taskUiState.quickFilters,
     taskUiState.statusFilters,
-    taskUiState.uiStateVersion,
-    taskUiState.view,
-    taskUiState.visibleColumnsByView,
   ]);
   const bucketContext = useMemo(() => ({
     focusedTaskIds: focusedTaskIdSet,

@@ -20,6 +20,7 @@ import { isTaskFinished, isTaskOpen, isTaskUrgent } from "./task-buckets";
 import { isDueToday, isOverdue } from "./task-cockpit";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
+type TaskDerivedFilterState = Pick<TaskUiState, "energyFilters" | "matchAny" | "quickFilters" | "statusFilters">;
 
 type ComputeTaskAppDerivedDataInput = {
   activePage: string;
@@ -36,7 +37,7 @@ type ComputeTaskAppDerivedDataInput = {
   taskGridWidgetTypes: string[];
   taskListEvaluationContext: TaskListEvaluationContext;
   taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
-  taskUiState: TaskUiState;
+  taskUiState: TaskDerivedFilterState;
   tasks: Task[];
 };
 
