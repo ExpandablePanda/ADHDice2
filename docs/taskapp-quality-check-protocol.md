@@ -10,6 +10,8 @@ Use this protocol during extraction waves to avoid long abandoned verification l
 2. Run scope-limited type sanity checks.
 3. Run focused tests for touched modules.
 
+For the 5.0 stabilization path, user-approved verification is intentionally narrower: do not run lint, production builds, dev servers, browser tests, or any check likely to hang. Use `git diff --check` and focused Node tests such as `npm run test:taskapp-wave`, stopping checks that approach 90 seconds.
+
 If full-suite checks are too slow at this stage, continue with wave gates and retry full checks at milestone boundaries.
 
 ## Milestone Gate (After major boundary completion)

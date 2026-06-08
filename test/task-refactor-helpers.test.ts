@@ -14,6 +14,7 @@ import { formatTaskMetaLine } from "../src/lib/task-formatting.ts";
 import { isValidDateKey, normalizeTaskFocusIds } from "../src/lib/task-focus-days.ts";
 import { normalizeLogoSrc } from "../src/lib/profile-store.ts";
 import { buildAgentPlanTaskItem } from "../src/lib/task-agent-plan.ts";
+import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
 import { buildFocusLabelOptions } from "../src/lib/task-focus-labels.ts";
 import { buildWidgetTypeGuard, parseTaskGridLayoutJson } from "../src/lib/task-grid-parser.ts";
 import { mapTaskListManualMembershipRow } from "../src/lib/task-list-mappers.ts";
@@ -112,6 +113,61 @@ test("agent plan helper maps task to list row shape", () => {
   assert.equal(row.id, "task-agent-row");
   assert.equal(row.title, "Agent row");
   assert.ok(Array.isArray(row.metadata));
+});
+
+test("task table row helper maps task directly to live table shape", () => {
+  const task = createTask({
+    actual_seconds: 600,
+    created_at: "2026-05-20T09:00:00.000Z",
+    due_on: "2026-05-20",
+    energy: "medium",
+    estimated_minutes: 25,
+    external_link_label: "Spec",
+    external_link_url: "https://example.com/spec",
+    id: "task-table-row",
+    is_important: true,
+    repeat_frequency: "daily",
+    sort_order: 1,
+    status: "pending",
+    tags: ["focus"],
+    title: "Table row",
+  });
+
+  const row = buildTaskTableRow(task, {
+    focusedTaskIdSet: new Set(["task-table-row"]),
+    linkedNotes: [{ body: "", id: "note-1", linked_task_ids: [], title: "Note", updated_at: "2026-05-20T09:00:00.000Z" }],
+    listDefinitions: [{
+      description: "",
+      id: "custom-list",
+      isDeletable: true,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: "manual",
+      name: "Custom",
+      rules: null,
+      sortOrder: 1,
+      type: "custom",
+    }],
+    listMemberships: [{ id: "custom-list", isManual: true }],
+    subtasks: [{
+      created_at: "2026-05-20T09:00:00.000Z",
+      id: "subtask-1",
+      parent_subtask_id: null,
+      sort_order: 1,
+      status: "pending",
+      task_id: "task-table-row",
+      title: "Step",
+      updated_at: "2026-05-20T09:00:00.000Z",
+      user_id: "user-1",
+    }],
+    taskHistory: [],
+    todayDateKey: "2026-05-20",
+  });
+
+  assert.equal(row.id, "task-table-row");
+  assert.deepEqual(row.priorities, ["focus", "important"]);
+  assert.deepEqual(row.lists, ["Custom"]);
+  assert.equal(row.subtasks[0]?.title, "Step");
 });
 
 test("grid parser helpers handle invalid and valid layout json", () => {

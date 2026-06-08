@@ -95,7 +95,7 @@ import {
   type TaskSubtaskDraft,
 } from "./task-app/task-editor-model";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
-import type { AgentPlanColumnId, AgentPlanTaskItem } from "@/components/ui/agent-plan";
+import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
@@ -173,7 +173,6 @@ import { buildFocusLabelOptions, getDefaultFocusCategories } from "@/lib/task-fo
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import { calcNextDueDateFromDate } from "@/lib/task-repeat";
-import { buildAgentPlanTaskItem } from "@/lib/task-agent-plan";
 import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
 import {
   computeTaskHistoryStats,
@@ -238,7 +237,7 @@ function PageLoadingFallback() {
 const TaskHomePage = dynamic(() => import("./task-app/home-page").then((module) => module.HomePage), { loading: PageLoadingFallback });
 const AchievementsPage = dynamic(() => import("./task-app/achievements-page").then((module) => module.AchievementsPage), { loading: PageLoadingFallback });
 const AchievementCelebrationOverlay = dynamic(() => import("./task-app/achievements-page").then((module) => module.AchievementCelebrationOverlay));
-const TasksPageOrchestrator = dynamic(() => import("./task-app/tasks-page-orchestrator").then((module) => module.TasksPageOrchestrator), { loading: PageLoadingFallback });
+const TasksWorkspace = dynamic(() => import("./task-app/tasks-page-orchestrator").then((module) => module.TasksWorkspace), { loading: PageLoadingFallback });
 const FocusPage = dynamic(() => import("./focus-page").then((module) => module.FocusPage), { loading: PageLoadingFallback });
 const TaskHealthPage = dynamic(() => import("./task-app/health-page").then((module) => module.HealthPage), { loading: PageLoadingFallback });
 const RollPage = dynamic(() => import("./task-app/roll-page-route").then((module) => module.RollPageRoute), { loading: PageLoadingFallback });
@@ -292,7 +291,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.0.0";
+const HUD_VERSION = "5.0.1";
 
 type PersistedFocusAlarmState = {
   enabled: boolean;
@@ -619,8 +618,6 @@ const TASK_GRID_TABLET_COLUMNS = 2;
 const TASK_GRID_PHONE_COLUMNS = 1;
 const TASK_GRID_ROW_HEIGHT = 42;
 const TASK_GRID_MAX_DISPLAY_ROWS = 24;
-const INITIAL_LIST_TASK_COUNT = 24;
-const LIST_TASK_BATCH_SIZE = 48;
 const TASK_GRID_WIDGET_LABELS: Record<TaskGridWidgetType, string> = {
   urgent: "Urgent Tasks",
   focus_today: "Focus",
@@ -776,7 +773,6 @@ export function TaskApp() {
   const [taskActualTimeEntryTaskId, setTaskActualTimeEntryTaskId] = useState<string | null>(null);
   const [taskActualTimeEntryPrefill, setTaskActualTimeEntryPrefill] = useState<{ durationSeconds: number; title: string } | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
-  const [renderedListTaskCount, setRenderedListTaskCount] = useState(INITIAL_LIST_TASK_COUNT);
   const [activeTaskTimerIndex, setActiveTaskTimerIndex] = useState(0);
   const [taskTimerNow, setTaskTimerNow] = useState(() => Date.now());
   const [logicalDayNow, setLogicalDayNow] = useState(() => Date.now());
@@ -1660,51 +1656,6 @@ export function TaskApp() {
     statusFilters: taskUiState.statusFilters,
     view: taskUiState.view,
   });
-  useEffect(() => {
-    setRenderedListTaskCount(Math.min(INITIAL_LIST_TASK_COUNT, selectedBucketTasks.length));
-  }, [listSelectionResetKey, selectedBucketTasks.length]);
-  const loadMoreListTasks = useCallback(() => {
-    startTransition(() => {
-      setRenderedListTaskCount((current) => Math.min(current + LIST_TASK_BATCH_SIZE, selectedBucketTasks.length));
-    });
-  }, [selectedBucketTasks.length]);
-  const listViewTasks = useMemo<AgentPlanTaskItem[]>(
-    () => {
-      if (activePage !== "Tasks") {
-        return [];
-      }
-
-      const startedAt = performance.now();
-      const result = selectedBucketTasks.slice(0, renderedListTaskCount).map((task) => buildAgentPlanTaskItem(task, {
-        bucketContext,
-        bucketLabels: TASK_BUCKET_LABELS,
-        listDefinitions: availableTaskLists,
-        listMemberships: taskListMembershipsByTaskId[task.id] ?? [],
-        focusedTaskIdSet,
-        linkedNotes: taskLinkedNotesByTaskId[task.id] ?? [],
-        subtasks: taskSubtasksByTaskId[task.id] ?? [],
-        taskHistory: taskHistoryByTaskId[task.id] ?? [],
-        todayDateKey: todayKey,
-      }));
-      if (process.env.NODE_ENV !== "production") {
-        console.info(`[tasks] Built ${result.length} table rows in ${Math.round(performance.now() - startedAt)}ms.`);
-      }
-      return result;
-    },
-    [
-      activePage,
-      availableTaskLists,
-      bucketContext,
-      focusedTaskIdSet,
-      renderedListTaskCount,
-      selectedBucketTasks,
-      taskHistoryByTaskId,
-      taskLinkedNotesByTaskId,
-      taskListMembershipsByTaskId,
-      taskSubtasksByTaskId,
-      todayKey,
-    ],
-  );
   const visibleListTaskIds = useMemo(
     () => selectedBucketTasks.map((task) => task.id),
     [selectedBucketTasks],
@@ -3175,7 +3126,7 @@ export function TaskApp() {
             unlockedFaceCount={unlockedAchievementFaces}
           />
         ) : activePage === "Tasks" ? (
-          <TasksPageOrchestrator
+          <TasksWorkspace
             flows={(
               <TaskEditFlows
                 actualTimeEntryFlow={actualTimeEntryFlow}
@@ -3196,7 +3147,6 @@ export function TaskApp() {
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   activeTaskTimerIndex,
-                  hasMoreRows: renderedListTaskCount < selectedBucketTasks.length,
                   overlayNode: activePendingReward ? (
                     <TaskRewardModal
                       isDark={theme === "dark"}
@@ -3214,7 +3164,6 @@ export function TaskApp() {
                   onOpenDeleteTask: (taskId) => { void openSingleTaskDeleteModal(taskId); },
                   onRestoreTask: (taskId) => { void restoreTaskFromTrash(taskId); },
                   onOpenTaskHistory: openTaskHistoryForTask,
-                  onLoadMoreRows: loadMoreListTasks,
                   onPauseTaskTimer: pauseHudTaskTimer,
                   onPreviousTaskTimer: () => cycleHudTaskTimer("previous"),
                   onResumeTaskTimer: resumeHudTaskTimer,
@@ -3294,7 +3243,16 @@ export function TaskApp() {
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
                   taskTimerNow,
-                  tasks: listViewTasks,
+                  tasks: selectedBucketTasks,
+                  rowContext: {
+                    focusedTaskIdSet,
+                    linkedNotesByTaskId: taskLinkedNotesByTaskId,
+                    listDefinitions: availableTaskLists,
+                    listMembershipsByTaskId: taskListMembershipsByTaskId,
+                    subtasksByTaskId: taskSubtasksByTaskId,
+                    taskHistoryByTaskId,
+                    todayDateKey: todayKey,
+                  },
                 }}
                 filterRowsNode={(
                   <FilterRows

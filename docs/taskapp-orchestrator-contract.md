@@ -18,6 +18,7 @@ This addendum locks the `TaskApp` core boundary while extraction continues.
 
 ## What Must Move Out (or Stay Out)
 - Pure derived data calculations (filters, list counts, bucket splits, planning candidates, list option shaping).
+- Live Tasks table rows are derived inside the Tasks workspace/list adapter through `src/lib/task-table-row.ts`; do not reintroduce a TaskApp-level `AgentPlanTaskItem` conversion layer for the table.
 - Standalone page UIs and modal assemblies.
 - Format/parse/helper logic that does not need component lifecycle state.
 
@@ -28,3 +29,4 @@ This addendum locks the `TaskApp` core boundary while extraction continues.
 - Every extraction pass removes dead imports/constants tied to the moved block.
 - Test-page prototype surfaces remain isolated unless explicitly promoted.
 - Route loading fallbacks stay lightweight and do not mutate persisted page or task state.
+- The live Tasks table has one incremental row-loading owner: `TaskManagementTableV2`. `TaskApp` should pass the full selected bucket and must not slice rows with a second rendered-count state.

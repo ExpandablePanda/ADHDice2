@@ -3,14 +3,14 @@
 import {
   TaskManagementTableV2,
   type PrototypeTaskRow,
-  type PrototypeTaskSubtask,
   type TaskManagementTableColumnId,
   type RunningTaskTimer,
 } from "@/components/ui/task-management-table-v2";
-import type { AgentPlanTaskItem } from "@/components/ui/agent-plan";
-import type { AgentPlanColumnId, AgentPlanSubtaskItem } from "@/components/ui/agent-plan";
+import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { TaskActualTimeEntry, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskActualTimeEntry, TaskHistory, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import type { TaskListDefinition } from "@/lib/task-lists";
+import { buildTaskTableRow } from "@/lib/task-table-row";
 import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 
@@ -30,7 +30,6 @@ type TasksTableSourceProps = {
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
-  onLoadMoreRows?: () => void;
   onNextTaskTimer?: () => void;
   onPreviousTaskTimer?: () => void;
   onClearSelection?: () => void;
@@ -66,8 +65,16 @@ type TasksTableSourceProps = {
   runningTaskTimers?: RunningTaskTimer[];
   activeTaskTimerIndex?: number;
   taskTimerNow?: number;
-  tasks: AgentPlanTaskItem[];
-  hasMoreRows?: boolean;
+  tasks: Task[];
+  rowContext: {
+    focusedTaskIdSet: Set<string>;
+    linkedNotesByTaskId: Record<string, TaskEditorLinkedNote[]>;
+    listDefinitions: TaskListDefinition[];
+    listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
+    subtasksByTaskId: Record<string, TaskSubtask[]>;
+    taskHistoryByTaskId: Record<string, TaskHistory[]>;
+    todayDateKey: string;
+  };
   onRequestedOpenTaskHandled?: (taskId: string) => void;
 };
 
@@ -76,66 +83,6 @@ type TasksListAdapterProps = {
   tableProps: TasksTableSourceProps;
   panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode" | "onShrinkAllColumns">;
 };
-
-function toPrototypeStatus(status: AgentPlanTaskItem["status"]): PrototypeTaskRow["status"] {
-  return status;
-}
-
-function toPrototypeEnergy(task: AgentPlanTaskItem): PrototypeTaskRow["energy"] {
-  const energyValue = task.metadata.find((item) => item.label === "Energy")?.value.toLowerCase() ?? "none";
-  if (energyValue === "high" || energyValue === "medium" || energyValue === "low") {
-    return energyValue;
-  }
-
-  return "none";
-}
-
-function toPrototypePriorities(task: AgentPlanTaskItem): PrototypeTaskRow["priorities"] {
-  const priorities: PrototypeTaskRow["priorities"] = [];
-  if (task.isFocused) priorities.push("focus");
-  if (task.isImportant) priorities.push("important");
-  if (task.isUrgent) priorities.push("urgent");
-  return priorities;
-}
-
-function toPrototypeSubtasks(subtasks: AgentPlanSubtaskItem[]): PrototypeTaskSubtask[] {
-  return subtasks.map((subtask) => ({
-    children: toPrototypeSubtasks(subtask.children),
-    id: subtask.id,
-    status: subtask.status,
-    title: subtask.title,
-  }));
-}
-
-function toPrototypeRows(tasks: AgentPlanTaskItem[]): PrototypeTaskRow[] {
-  return tasks.map((task) => ({
-    actualSeconds: task.actualSeconds,
-    dueOn: task.dueOn ?? "",
-    dueTime: task.dueTime ?? "",
-    energy: toPrototypeEnergy(task),
-    estimatedMinutes: task.estimatedMinutes,
-    createdAt: task.createdAt,
-    updatedAt: task.updatedAt,
-    id: task.id,
-    linkLabel: task.externalLinkLabel ?? "",
-    linkUrl: task.externalLinkUrl ?? "",
-    lists: task.lists.map((list) => list.label),
-    linkedNotes: task.linkedNotes.map((note) => ({ id: note.id, title: note.title })),
-    notes: task.notes,
-    priorities: toPrototypePriorities(task),
-    currentStreak: task.currentStreak,
-    missedStreak: task.missedStreak,
-    repeat: task.repeatFrequency,
-    repeatInterval: task.repeatInterval,
-    repeatDaysOfWeek: task.repeatDaysOfWeek,
-    repeatDayOfMonth: task.repeatDayOfMonth,
-    subtasksAutoReset: task.subtasksAutoReset,
-    status: toPrototypeStatus(task.status),
-    subtasks: toPrototypeSubtasks(task.subtasks),
-    tags: task.tags,
-    title: task.title,
-  }));
-}
 
 const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumnId> = {
   bucket: "lists",
@@ -158,7 +105,18 @@ export function TasksListAdapter({
   panelProps,
 }: TasksListAdapterProps) {
   const [shrinkAllColumnsToken, setShrinkAllColumnsToken] = useState(0);
-  const rows = useMemo(() => toPrototypeRows(tableProps.tasks), [tableProps.tasks]);
+  const rows = useMemo(
+    () => tableProps.tasks.map((task) => buildTaskTableRow(task, {
+      focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
+      linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
+      listDefinitions: tableProps.rowContext.listDefinitions,
+      listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
+      subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
+      taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+      todayDateKey: tableProps.rowContext.todayDateKey,
+    })),
+    [tableProps.rowContext, tableProps.tasks],
+  );
   const visibleColumns = useMemo<TaskManagementTableColumnId[]>(
     () => [
       "status_icon",
@@ -199,7 +157,6 @@ export function TasksListAdapter({
           onOpenNote={tableProps.onOpenNote}
           onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
-          onLoadMoreRows={tableProps.onLoadMoreRows}
           onNextTaskTimer={tableProps.onNextTaskTimer}
           onPreviousTaskTimer={tableProps.onPreviousTaskTimer}
           onDeleteTaskActualTimeEntry={tableProps.onDeleteTaskActualTimeEntry}
@@ -241,7 +198,6 @@ export function TasksListAdapter({
           title="Tasks"
           visibleColumns={visibleColumns}
           activeTaskTimerIndex={tableProps.activeTaskTimerIndex}
-          hasMoreRows={tableProps.hasMoreRows}
           onRequestedOpenTaskHandled={tableProps.onRequestedOpenTaskHandled}
         />
       }

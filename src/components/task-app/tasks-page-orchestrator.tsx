@@ -13,7 +13,7 @@ type TasksPageOrchestratorProps = {
   view: TaskViewMode;
 };
 
-export function TasksPageOrchestrator({
+export function TasksWorkspace({
   flows,
   listViewPanel,
   nonListViewPanel,
@@ -30,3 +30,5 @@ export function TasksPageOrchestrator({
     />
   );
 }
+
+export const TasksPageOrchestrator = TasksWorkspace;
