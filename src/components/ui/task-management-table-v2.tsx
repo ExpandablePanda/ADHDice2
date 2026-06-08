@@ -40,6 +40,7 @@ import {
   TASK_TABLE_TAG_CHIP_CLASS as TAG_CHIP_CLASS,
   TASK_TABLE_TEXT_CLASS as UNIFIED_TABLE_TEXT_CLASS,
   TASK_TABLE_TITLE_CELL_CLASS as TITLE_CELL_CLASS,
+  TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS as VISIBLE_TITLE_TEXT_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 
@@ -368,7 +369,7 @@ function TaskCellSubtaskTree({
             >
               {renderTaskStatusCircle(subtask.status, "sm")}
             </button>
-            <p className={`${TITLE_CELL_CLASS} min-w-0 whitespace-normal break-words leading-5 ${subtask.status === "done" ? "opacity-60 line-through" : ""}`}>
+            <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 whitespace-normal break-words ${subtask.status === "done" ? "opacity-60 line-through" : ""}`}>
               {subtask.title}
             </p>
             <div className="flex flex-none items-center gap-1">
@@ -3148,7 +3149,7 @@ export function TaskManagementTableV2({
           >
             <span className={`flex min-w-0 items-start ${hasSecondaryContent ? "flex-col" : "min-h-[2.25rem] justify-center"}`}>
               <span className="inline-flex min-w-0 items-center gap-2">
-                <span className={`${TITLE_CELL_CLASS} whitespace-normal break-words`}>{task.title}</span>
+                <span className={`${VISIBLE_TITLE_TEXT_CLASS} whitespace-normal break-words`}>{task.title}</span>
                 {task.status === "archived" ? (
                   <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
                     {`${getTrashDaysRemaining(task.updatedAt) ?? 30}d until auto delete`}
@@ -3167,7 +3168,7 @@ export function TaskManagementTableV2({
               {isRenamingTitle ? (
                 <TaskTitleDraftInput
                   autoFocus
-                  className={`${TITLE_CELL_CLASS} min-w-0 flex-1 rounded-[0.75rem] border border-[#ddd2ff] bg-white px-2 py-1 dark:border-[#42306f] dark:bg-[#22193f]`}
+                  className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 flex-1 rounded-[0.75rem] border border-[#ddd2ff] bg-white px-2 py-1 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                   initialValue={titleDraft}
                   onCommit={commitTaskTitle}
                   onDone={() => setEditingTaskTitleId((current) => (current === task.id ? null : current))}
@@ -3176,7 +3177,7 @@ export function TaskManagementTableV2({
                 />
               ) : (
                 <button
-                  className={`${TITLE_CELL_CLASS} min-w-0 whitespace-normal break-words text-left transition hover:opacity-85`}
+                  className="min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                   onClick={(event) => {
                     event.stopPropagation();
                     setEditingTaskTitleId(task.id);
@@ -3184,7 +3185,9 @@ export function TaskManagementTableV2({
                   }}
                   type="button"
                 >
-                  {task.title}
+                  <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 whitespace-normal break-words`}>
+                    {task.title}
+                  </p>
                 </button>
               )}
               {task.status === "archived" ? (

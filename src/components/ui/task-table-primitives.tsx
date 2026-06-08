@@ -14,6 +14,8 @@ export const TASK_TABLE_HEADER_TEXT_CLASS = `${TASK_TABLE_TEXT_CLASS} text-[#938
 export const TASK_TABLE_BODY_VALUE_CLASS = `${TASK_TABLE_TEXT_CLASS} text-[#595378] dark:text-white/68`;
 export const TASK_TABLE_BODY_MUTED_VALUE_CLASS = `${TASK_TABLE_TEXT_CLASS} text-[#80799c] dark:text-white/52`;
 export const TASK_TABLE_TITLE_CELL_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
+// Visible task and step titles use the same text size and font treatment as table chips.
+export const TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} text-[#7a7592] dark:text-white/58`;
 export const TASK_TABLE_LIST_CHIP_CLASS = "border-[#ece7f5] bg-[#f7f5fb] text-[#7a7592] dark:border-white/8 dark:bg-white/[0.045] dark:text-white/58";
 export const TASK_TABLE_ACTIVE_LIST_CHIP_CLASS = "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white";
 export const TASK_TABLE_TAG_CHIP_CLASS = "border-[#e8defe] bg-[#f3eeff] text-[#7762f3] dark:border-[#3a2e63] dark:bg-[#21183d] dark:text-[#c7bcff]";

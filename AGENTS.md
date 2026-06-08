@@ -72,6 +72,11 @@ Optimize for safe work, low regression risk, clean organization, and design cons
 - Prefer clear visual hierarchy, restrained type scale, and tidy alignment over decorative or novelty-heavy UI.
 - When editing or adding menus, modals, panels, and controls, make them feel like part of the same design system rather than isolated inventions.
 - If the repo already has a design language for chips, cards, toggles, list controls, or headers, continue that language consistently.
+- When the user says a UI element should "match" another visible element, treat the target as visual/render-pattern matching, not just CSS-token matching.
+- Before editing a visual match request, identify the exact render path for the current element, the exact render path for the target element that already looks correct, the actual visible text element type (`button`, `span`, `p`, `input`, etc.), the inner text element/class pattern, and any wrapper, layout, padding, line-height, focus, or browser-control differences.
+- If the target element already looks correct, prefer reusing its exact inner markup/class pattern instead of approximating the same typography with separate classes.
+- Example: if step title text renders as `<p className="...">New step</p>` and a parent task title should match it, make the parent title button act as a neutral click wrapper and render the visible title inside the same kind of inner `<p>` with the same class pattern.
+- After one failed styling pass, stop adjusting typography tokens and compare the exact rendered structure of the current element versus the target element before editing again.
 - For new chips, pills, and text-labeled controls, consult `docs/ui-design-system.md` first and default to the task-table chip scale unless the feature has a documented reason to diverge.
 - If a control has visible text, default to a clickable chip using the shared task-table primitives in `src/components/ui/task-table-primitives.tsx` instead of introducing a conventional text button.
 - Treat non-chip text buttons as exception-only and use them only when the UI truly needs a larger documented action treatment.
