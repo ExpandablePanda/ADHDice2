@@ -222,11 +222,11 @@ export function buildAgentPlanTaskItem(
     listDefinitions: TaskListDefinition[];
     listMemberships: Array<{ id: string; isManual: boolean }>;
     subtasks: DbTaskSubtask[];
-    taskHistory: DbTaskHistory[];
-    todayDateKey: string;
+    taskHistory?: DbTaskHistory[];
+    todayDateKey?: string;
   },
 ): AgentPlanTaskItem {
-  const taskHistoryStats = computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
+  const taskHistoryStats = computeTaskSpecificHistoryStats(task, context.taskHistory ?? [], context.todayDateKey ?? "");
 
   return {
     actualSeconds: task.actual_seconds ?? 0,

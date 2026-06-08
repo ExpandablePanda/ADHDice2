@@ -6,6 +6,7 @@ This addendum locks the `TaskApp` core boundary while extraction continues.
 
 ## What `TaskApp` Owns
 - Top-level route composition across `Home`, `Tasks`, `Focus`, `Health`, `Roll`, `Achievements`, `Games`, `Stats`, `Notes`, `Settings`, and `Test`.
+- Top-level `next/dynamic` boundaries and route-level error isolation for page workspaces. Page implementation modules must not be added back to the initial static client graph without a documented reason.
 - Hook composition and wiring:
   - `useWorkspaceData` for workspace load/sync/fallback entry.
   - `useTaskActions` for task mutations and persistence side effects.
@@ -26,3 +27,4 @@ This addendum locks the `TaskApp` core boundary while extraction continues.
 - Supabase fallback and migration behavior remain unchanged.
 - Every extraction pass removes dead imports/constants tied to the moved block.
 - Test-page prototype surfaces remain isolated unless explicitly promoted.
+- Route loading fallbacks stay lightweight and do not mutate persisted page or task state.

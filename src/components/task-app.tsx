@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
@@ -64,19 +65,11 @@ import {
   Zap,
 } from "lucide-react";
 import dynamicIconImports from "lucide-react/dynamicIconImports";
-import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
-import { FocusPage } from "./focus-page";
-import { AchievementCelebrationOverlay, AchievementsPage } from "./task-app/achievements-page";
-import { HomePage as TaskHomePage } from "./task-app/home-page";
-import { HealthPage as TaskHealthPage } from "./task-app/health-page";
-import { SettingsPage as TaskSettingsPage } from "./task-app/settings-page";
-import { StatsPage as TaskStatsPage } from "./task-app/stats-page";
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import {
   BottomDockAdapter as BottomDock,
   FilterRowsAdapter as FilterRows,
   ImportWidgetCardAdapter as ImportWidgetCard,
-  NotesPageAdapter as NotesPage,
-  RollPageAdapter as RollPage,
   TaskCardGalleryAdapter as TaskCardGallery,
   TaskGridViewAdapter as TaskGridView,
   TaskMatrixViewAdapter as TaskMatrixView,
@@ -88,7 +81,6 @@ import { TaskListRuleRowEditor } from "./task-app/task-list-rule-row-editor";
 import { TaskRewardModal } from "./task-app/task-reward-modal";
 import { TasksListAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
-import { TasksPageOrchestrator } from "./task-app/tasks-page-orchestrator";
 import { HudCommandCenter } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import {
@@ -103,11 +95,6 @@ import {
   type TaskSubtaskDraft,
 } from "./task-app/task-editor-model";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
-const GamesPage = lazy(() => import("./games-page").then((m) => ({ default: m.GamesPage })));
-const TestD20FaceMapper = lazy(() => import("./task-app/test-d20-face-mapper").then((m) => ({ default: m.TestD20FaceMapper })));
-const TestDiceFaceMapper = lazy(() => import("./task-app/test-dice-face-mapper").then((m) => ({ default: m.TestDiceFaceMapper })));
-const TestDiceMaterialLab = lazy(() => import("./task-app/test-dice-material-lab").then((m) => ({ default: m.TestDiceMaterialLab })));
-const TestTaskTablePrototype = lazy(() => import("./task-app/test-task-table-prototype").then((m) => ({ default: m.TestTaskTablePrototype })));
 import type { AgentPlanColumnId, AgentPlanTaskItem } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
@@ -240,6 +227,30 @@ import type {
   TaskHistory as DbTaskHistory,
 } from "@/lib/database.types";
 
+function PageLoadingFallback() {
+  return (
+    <div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">
+      Loading workspace...
+    </div>
+  );
+}
+
+const TaskHomePage = dynamic(() => import("./task-app/home-page").then((module) => module.HomePage), { loading: PageLoadingFallback });
+const AchievementsPage = dynamic(() => import("./task-app/achievements-page").then((module) => module.AchievementsPage), { loading: PageLoadingFallback });
+const AchievementCelebrationOverlay = dynamic(() => import("./task-app/achievements-page").then((module) => module.AchievementCelebrationOverlay));
+const TasksPageOrchestrator = dynamic(() => import("./task-app/tasks-page-orchestrator").then((module) => module.TasksPageOrchestrator), { loading: PageLoadingFallback });
+const FocusPage = dynamic(() => import("./focus-page").then((module) => module.FocusPage), { loading: PageLoadingFallback });
+const TaskHealthPage = dynamic(() => import("./task-app/health-page").then((module) => module.HealthPage), { loading: PageLoadingFallback });
+const RollPage = dynamic(() => import("./task-app/roll-page-route").then((module) => module.RollPageRoute), { loading: PageLoadingFallback });
+const TaskStatsPage = dynamic(() => import("./task-app/stats-page").then((module) => module.StatsPage), { loading: PageLoadingFallback });
+const NotesPage = dynamic(() => import("./task-app/notes-page-route").then((module) => module.NotesPageRoute), { loading: PageLoadingFallback });
+const TaskSettingsPage = dynamic(() => import("./task-app/settings-page").then((module) => module.SettingsPage), { loading: PageLoadingFallback });
+const GamesPage = dynamic(() => import("./games-page").then((module) => module.GamesPage), { loading: PageLoadingFallback });
+const TestD20FaceMapper = dynamic(() => import("./task-app/test-d20-face-mapper").then((module) => module.TestD20FaceMapper), { loading: PageLoadingFallback });
+const TestDiceFaceMapper = dynamic(() => import("./task-app/test-dice-face-mapper").then((module) => module.TestDiceFaceMapper), { loading: PageLoadingFallback });
+const TestDiceMaterialLab = dynamic(() => import("./task-app/test-dice-material-lab").then((module) => module.TestDiceMaterialLab), { loading: PageLoadingFallback });
+const TestTaskTablePrototype = dynamic(() => import("./task-app/test-task-table-prototype").then((module) => module.TestTaskTablePrototype), { loading: PageLoadingFallback });
+
 type Message = {
   tone: "neutral" | "good" | "warn";
   text: string;
@@ -281,7 +292,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "4.0.21";
+const HUD_VERSION = "5.0.0";
 
 type PersistedFocusAlarmState = {
   enabled: boolean;
@@ -3129,6 +3140,10 @@ export function TaskApp() {
           </div>
         ) : null}
 
+        <ErrorBoundary
+          key={activePage}
+          fallback={<div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">This workspace could not load. Switch pages and try again.</div>}
+        >
         {activePage === "Home" ? (
           <TaskHomePage
             activeCount={activeTasks.length}
@@ -3454,16 +3469,12 @@ export function TaskApp() {
             onLowStimChange={setLowStim}
           />
         ) : activePage === "Games" ? (
-          <ErrorBoundary fallback={<div className="flex h-48 items-center justify-center opacity-40">Games failed to load.</div>}>
-            <Suspense fallback={<div className="flex h-48 items-center justify-center opacity-40">Loading…</div>}>
-              <GamesPage
-                taskHistory={taskHistory}
-                onAwardXP={(xp, reason) =>
-                  void appendEconomyEvent({ source: "roll", refId: currentUser.id, points: 0, xp, reason })
-                }
-              />
-            </Suspense>
-          </ErrorBoundary>
+          <GamesPage
+            taskHistory={taskHistory}
+            onAwardXP={(xp, reason) =>
+              void appendEconomyEvent({ source: "roll", refId: currentUser.id, points: 0, xp, reason })
+            }
+          />
         ) : (
           <PagePlaceholder
             count={activeTasks.length}
@@ -3472,6 +3483,7 @@ export function TaskApp() {
             setActivePage={setActivePage}
           />
         )}
+        </ErrorBoundary>
         </section>
       </div>
 
@@ -4916,12 +4928,10 @@ function PagePlaceholder({
           <TaskManagementTableV2 className="max-w-none p-0" title="Task Table #2" />
           </div>
           <ErrorBoundary fallback={<div className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-5 text-sm font-medium text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">Test tools failed to load.</div>}>
-            <Suspense fallback={<div className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-5 text-sm font-medium text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">Loading Test tools...</div>}>
-              <TestD20FaceMapper dark={isDark} />
-              <TestDiceFaceMapper dark={isDark} />
-              <TestDiceMaterialLab dark={isDark} />
-              <TestTaskTablePrototype />
-            </Suspense>
+            <TestD20FaceMapper dark={isDark} />
+            <TestDiceFaceMapper dark={isDark} />
+            <TestDiceMaterialLab dark={isDark} />
+            <TestTaskTablePrototype />
           </ErrorBoundary>
           <TestBucketTrayPreview />
           <TestRuleBuilderPreview />

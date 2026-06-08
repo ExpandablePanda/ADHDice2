@@ -1,14 +1,10 @@
 "use client";
 
 import { useState, type ComponentProps, type JSX, type ReactNode } from "react";
-import type { User } from "@supabase/supabase-js";
 import { ModalShell } from "../modal-shell";
 import { BottomDockComponent } from "./bottom-dock";
 import { FilterRowsComponent } from "./task-filter-rows";
 import { FocusPlannerModalComponent } from "./focus-planner-modal";
-import { PageShellHeader } from "./page-shell-header";
-import { RollPageComponent } from "./roll-page";
-import { NotesPageComponent } from "./notes-page";
 import { Select } from "./task-status-select";
 import { TaskGridViewComponent } from "./task-grid-view";
 import {
@@ -26,7 +22,6 @@ import { UrgentTasksPanelComponent } from "./task-grid-widgets";
 import type { TaskDraft } from "./task-editor-model";
 import { todayISO } from "@/lib/utils";
 import { shiftDateKey } from "@/lib/task-grid-layout";
-import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { AppPage } from "@/lib/task-ui-state";
 import type {
   Task,
@@ -691,34 +686,4 @@ export function BottomDockAdapter({
       renderIcon={renderIcon}
     />
   );
-}
-
-export function RollPageAdapter({
-  client,
-  currentUser,
-  isDark,
-  onSpendPoints,
-}: {
-  client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
-  currentUser: User;
-  isDark: boolean;
-  onSpendPoints: (delta: number, reason: string) => void;
-}) {
-  return <RollPageComponent client={client} currentUser={currentUser} isDark={isDark} onSpendPoints={onSpendPoints} />;
-}
-
-export function NotesPageAdapter({
-  client,
-  currentUser,
-  onOpenNoteHandled,
-  openNoteId,
-  tasks,
-}: {
-  client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
-  currentUser: User;
-  onOpenNoteHandled?: () => void;
-  openNoteId?: string | null;
-  tasks: Task[];
-}) {
-  return <NotesPageComponent client={client} currentUser={currentUser} headerNode={<PageShellHeader subtitle="Knowledge Base" title="Notes" />} onOpenNoteHandled={onOpenNoteHandled} openNoteId={openNoteId} tasks={tasks} />;
 }
