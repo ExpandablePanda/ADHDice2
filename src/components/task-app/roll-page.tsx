@@ -32,6 +32,7 @@ import {
   type RollPrizeTier,
   type SystemMasterPrizeDefinition,
 } from "@/lib/roll-rewards";
+import { withBasePath } from "@/lib/utils";
 
 const Dice3DCanvas = lazy(() => import("../dice-3d").then((module) => ({ default: module.Dice3DCanvas })));
 
@@ -625,7 +626,7 @@ export function RollPageComponent({
       pendingCost.current = actualCost;
     });
 
-    new Audio("/dice-roll.wav").play().catch(() => {});
+    new Audio(withBasePath("/dice-roll.wav")).play().catch(() => {});
     rollSettleTimeoutRef.current = window.setTimeout(() => {
       setPhase("settling");
     }, 650);
@@ -908,7 +909,7 @@ export function RollPageComponent({
     setLastRoll(roll);
     setRollingFace(null);
     setPhase("idle");
-    new Audio("/calm-alarm.wav").play().catch(() => {});
+    new Audio(withBasePath("/calm-alarm.wav")).play().catch(() => {});
 
     if (rollMode.kind === "conditional-check") {
       const totalAmount = rollMode.reward.amount * rollMode.multiplier;

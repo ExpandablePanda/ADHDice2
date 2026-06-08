@@ -292,7 +292,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.0.5";
+const HUD_VERSION = "5.0.6";
 
 type PersistedFocusAlarmState = {
   enabled: boolean;
@@ -799,7 +799,7 @@ export function TaskApp() {
   }
 
   async function playFocusAlarmSound(options?: { rearmOnly?: boolean }) {
-    const audio = focusAlarmAudioRef.current ?? new Audio("/calm-alarm.wav");
+    const audio = focusAlarmAudioRef.current ?? new Audio(withBasePath("/calm-alarm.wav"));
     focusAlarmAudioRef.current = audio;
     audio.currentTime = 0;
     try {
@@ -1151,7 +1151,7 @@ export function TaskApp() {
   }, [dayStartTime, userTimeZone]);
 
   useEffect(() => {
-    focusAlarmAudioRef.current = new Audio("/calm-alarm.wav");
+    focusAlarmAudioRef.current = new Audio(withBasePath("/calm-alarm.wav"));
     return () => {
       focusAlarmAudioRef.current?.pause();
       focusAlarmAudioRef.current = null;

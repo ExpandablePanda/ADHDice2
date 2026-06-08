@@ -1411,6 +1411,10 @@ export function TaskManagementTableV2({
     () => JSON.stringify({ sortState, structuredFilters, textFilters }),
     [sortState, structuredFilters, textFilters],
   );
+  const sourceRowsKey = useMemo(
+    () => rows.map((row) => row.id).join("\u001f"),
+    [rows],
+  );
   const visibleTaskIds = useMemo(
     () => displayedTasks.map((task) => task.id),
     [displayedTasks],
@@ -1457,7 +1461,7 @@ export function TaskManagementTableV2({
 
   useEffect(() => {
     setRenderedTaskCount(Math.min(INITIAL_RENDERED_TASK_COUNT, displayedTasks.length));
-  }, [tableFilterSignature]);
+  }, [displayedTasks.length, sourceRowsKey, tableFilterSignature]);
 
   useEffect(() => {
     if (remainingRenderedTaskCount <= 0 && !hasMoreRows) {
