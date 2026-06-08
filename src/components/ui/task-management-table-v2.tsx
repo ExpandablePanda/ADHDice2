@@ -3,6 +3,7 @@
 import { Children, Fragment, startTransition, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
+  ArrowUp,
   CalendarDays,
   ChevronDown,
   Clock3,
@@ -41,6 +42,7 @@ import {
   TASK_TABLE_TEXT_CLASS as UNIFIED_TABLE_TEXT_CLASS,
   TASK_TABLE_TITLE_CELL_CLASS as TITLE_CELL_CLASS,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS as VISIBLE_TITLE_TEXT_CLASS,
+  ScrollUpButton,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 
@@ -157,6 +159,25 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     tags: row.tags,
     title: row.title,
   })));
+}
+
+function clonePrototypeTaskRow(task: PrototypeTaskRow): PrototypeTaskRow {
+  return {
+    ...task,
+    linkedNotes: task.linkedNotes.map((note) => ({ ...note })),
+    lists: [...task.lists],
+    priorities: [...task.priorities],
+    repeatDaysOfWeek: [...task.repeatDaysOfWeek],
+    subtasks: task.subtasks.map(clonePrototypeSubtask),
+    tags: [...task.tags],
+  };
+}
+
+function clonePrototypeSubtask(subtask: PrototypeTaskSubtask): PrototypeTaskSubtask {
+  return {
+    ...subtask,
+    children: subtask.children.map(clonePrototypeSubtask),
+  };
 }
 
 function filterPrototypeSubtasks(
@@ -749,12 +770,18 @@ export type PrototypeTaskRow = {
   title: string;
 };
 
+type TaskFollowDestination = {
+  id: string;
+  label: string;
+};
+
 type TaskManagementTableV2Props = {
   allowInlineInspector?: boolean;
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
   className?: string;
+  currentListLabel?: string | null;
   enableInspector?: boolean;
   overlayNode?: ReactNode;
   showHeader?: boolean;
@@ -772,6 +799,8 @@ type TaskManagementTableV2Props = {
   onOpenTaskEditor?: (taskId: string) => void;
   onLoadMoreRows?: () => void;
   onRequestedOpenTaskHandled?: (taskId: string) => void;
+  onFollowDetachedTask?: (taskId: string) => void;
+  onDismissDetachedTask?: (taskId: string) => void;
   onPreviousTaskTimer?: () => void;
   onNextTaskTimer?: () => void;
   onDeleteTaskActualTimeEntry?: (entryId: string) => void;
@@ -812,6 +841,7 @@ type TaskManagementTableV2Props = {
   title?: string;
   visibleColumns?: TaskManagementTableColumnId[];
   activeTaskTimerIndex?: number;
+  getFollowTaskDestination?: (taskId: string) => TaskFollowDestination | null;
   hasMoreRows?: boolean;
   shrinkAllColumnsToken?: number;
 };
@@ -1519,6 +1549,7 @@ export function TaskManagementTableV2({
   allNoteOptions = [],
   allTagOptions = [],
   className = "",
+  currentListLabel = null,
   enableInspector = true,
   overlayNode,
   onClearSelection,
@@ -1534,6 +1565,8 @@ export function TaskManagementTableV2({
   onOpenTaskEditor,
   onLoadMoreRows,
   onRequestedOpenTaskHandled,
+  onFollowDetachedTask,
+  onDismissDetachedTask,
   onPreviousTaskTimer,
   onNextTaskTimer,
   onDeleteTaskActualTimeEntry,
@@ -1576,12 +1609,15 @@ export function TaskManagementTableV2({
   title = "Table #2 Prototype",
   visibleColumns,
   activeTaskTimerIndex,
+  getFollowTaskDestination,
   hasMoreRows = false,
 }: TaskManagementTableV2Props) {
   const shouldReduceMotion = useReducedMotion();
   const [tasks, setTasks] = useState<PrototypeTaskRow[]>(rows);
   const [renderedTaskCount, setRenderedTaskCount] = useState(INITIAL_RENDERED_TASK_COUNT);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [retainedSelectedTask, setRetainedSelectedTask] = useState<PrototypeTaskRow | null>(null);
+  const [selectedTaskLeftCurrentList, setSelectedTaskLeftCurrentList] = useState(false);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("full");
   const [overlayAnchor, setOverlayAnchor] = useState<{ left: number; top: number } | null>(null);
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
@@ -1623,6 +1659,9 @@ export function TaskManagementTableV2({
   const loadMoreTasksRef = useRef<HTMLDivElement | null>(null);
   const resizeStateRef = useRef<{ columnId: TaskManagementTableColumnId; startWidth: number; startX: number } | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const [showTableScrollUp, setShowTableScrollUp] = useState(false);
+  const hasSeenSelectedTaskInCurrentListRef = useRef(false);
   const lastShrinkAllColumnsTokenRef = useRef(0);
   const lastRowsSignatureRef = useRef(buildPrototypeRowsSignature(rows));
   const effectiveRunningTimers = runningTaskTimers ?? localRunningTimers;
@@ -1643,9 +1682,18 @@ export function TaskManagementTableV2({
     return { active, done };
   }, [tasks]);
 
-  const selectedTask = useMemo(
+  const selectedTaskFromRows = useMemo(
     () => (selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) ?? null : null),
     [selectedTaskId, tasks],
+  );
+  const selectedTask = useMemo(
+    () => selectedTaskFromRows ?? (selectedTaskId && retainedSelectedTask?.id === selectedTaskId ? retainedSelectedTask : null),
+    [retainedSelectedTask, selectedTaskFromRows, selectedTaskId],
+  );
+  const selectedTaskIsDetached = Boolean(selectedTaskId && selectedTask && !selectedTaskFromRows && selectedTaskLeftCurrentList);
+  const selectedTaskFollowDestination = useMemo(
+    () => (selectedTaskIsDetached && selectedTaskId ? getFollowTaskDestination?.(selectedTaskId) ?? null : null),
+    [getFollowTaskDestination, selectedTaskId, selectedTaskIsDetached],
   );
   const rowContextMenuTask = useMemo(
     () => (rowContextMenu ? tasks.find((task) => task.id === rowContextMenu.taskId) ?? null : null),
@@ -1802,9 +1850,14 @@ export function TaskManagementTableV2({
       return;
     }
 
+    if (selectedTaskId === requestedOpenTaskId && selectedTaskFromRows?.id === requestedOpenTaskId) {
+      onRequestedOpenTaskHandled?.(requestedOpenTaskId);
+      return;
+    }
+
     openInspector(requestedOpenTaskId, "full", shellRef.current);
     onRequestedOpenTaskHandled?.(requestedOpenTaskId);
-  }, [onRequestedOpenTaskHandled, requestedOpenTaskId, tasks]);
+  }, [onRequestedOpenTaskHandled, requestedOpenTaskId, selectedTaskFromRows, selectedTaskId, tasks]);
   const mergedListOptions = useMemo(() => {
     const byLabel = new Map<string, { id: string; label: string }>();
     for (const option of allListOptions) {
@@ -2029,6 +2082,61 @@ export function TaskManagementTableV2({
   }, [selectedTask]);
 
   useEffect(() => {
+    if (!selectedTaskId) {
+      hasSeenSelectedTaskInCurrentListRef.current = false;
+      setRetainedSelectedTask(null);
+      setSelectedTaskLeftCurrentList(false);
+      return;
+    }
+
+    if (selectedTaskFromRows) {
+      hasSeenSelectedTaskInCurrentListRef.current = true;
+      setRetainedSelectedTask(clonePrototypeTaskRow(selectedTaskFromRows));
+      setSelectedTaskLeftCurrentList(false);
+      return;
+    }
+
+    if (hasSeenSelectedTaskInCurrentListRef.current) {
+      setSelectedTaskLeftCurrentList(true);
+    }
+  }, [selectedTaskFromRows, selectedTaskId]);
+
+  useEffect(() => {
+    const scrollContainer = tableScrollContainerRef.current;
+    if (!scrollContainer) {
+      return;
+    }
+
+    const updateTableScrollButton = () => {
+      const availableScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+      const hasMeaningfulTableScroll = availableScroll > Math.max(180, scrollContainer.clientHeight * 0.75);
+      setShowTableScrollUp(hasMeaningfulTableScroll && scrollContainer.scrollTop > scrollContainer.clientHeight * 2);
+    };
+
+    updateTableScrollButton();
+    scrollContainer.addEventListener("scroll", updateTableScrollButton, { passive: true });
+    window.addEventListener("resize", updateTableScrollButton);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => {
+        updateTableScrollButton();
+      });
+      resizeObserver.observe(scrollContainer);
+      const scrollContent = scrollContainer.firstElementChild;
+      if (scrollContent instanceof HTMLElement) {
+        resizeObserver.observe(scrollContent);
+      }
+    }
+
+    return () => {
+      scrollContainer.removeEventListener("scroll", updateTableScrollButton);
+      window.removeEventListener("resize", updateTableScrollButton);
+      resizeObserver?.disconnect();
+    };
+  }, [displayedTasks.length, renderedTaskCount, showHeader, sourceRowsKey, tableFilterSignature, visibleHeaderColumns.length]);
+
+  useEffect(() => {
     setLocalActiveTimerIndex((current) => {
       if (effectiveRunningTimers.length === 0 || activeTaskTimerIndex !== undefined) {
         return 0;
@@ -2100,6 +2208,17 @@ export function TaskManagementTableV2({
 
   function patchTask(taskId: string, updater: (task: PrototypeTaskRow) => PrototypeTaskRow) {
     setTasks((current) => current.map((task) => (task.id === taskId ? updater(task) : task)));
+    setRetainedSelectedTask((current) => {
+      if (!current || current.id !== taskId) {
+        return current;
+      }
+      return clonePrototypeTaskRow(updater(current));
+    });
+  }
+
+  function getTaskById(taskId: string) {
+    return tasks.find((task) => task.id === taskId)
+      ?? (retainedSelectedTask?.id === taskId ? retainedSelectedTask : null);
   }
 
   function removeSubtaskFromTree(subtasks: PrototypeTaskSubtask[], subtaskId: string): PrototypeTaskSubtask[] {
@@ -2120,6 +2239,10 @@ export function TaskManagementTableV2({
       ...task,
       subtasks: removeSubtaskFromTree(task.subtasks, subtaskId),
     })));
+    setRetainedSelectedTask((current) => current ? {
+      ...current,
+      subtasks: removeSubtaskFromTree(current.subtasks, subtaskId),
+    } : current);
   }
 
   function handleTaskSubtaskDelete(subtaskId: string) {
@@ -2187,7 +2310,10 @@ export function TaskManagementTableV2({
     }
     setEditingTaskTitleId(null);
     setEditingSubtaskId(null);
+    hasSeenSelectedTaskInCurrentListRef.current = false;
     setSelectedTaskId(null);
+    setRetainedSelectedTask(null);
+    setSelectedTaskLeftCurrentList(false);
     setOverlayMode("full");
     setOverlayAnchor(null);
   }
@@ -2299,7 +2425,7 @@ export function TaskManagementTableV2({
     repeat: TaskRepeat,
     cadencePatch: Partial<Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">> = {},
   ) {
-    const currentTask = tasks.find((task) => task.id === taskId);
+    const currentTask = getTaskById(taskId);
     if (!currentTask) {
       return;
     }
@@ -2351,7 +2477,7 @@ export function TaskManagementTableV2({
   }
 
   function startTaskTimer(taskId: string) {
-    const task = tasks.find((entry) => entry.id === taskId);
+    const task = getTaskById(taskId);
     if (!task) {
       return;
     }
@@ -2381,7 +2507,7 @@ export function TaskManagementTableV2({
   }
 
   function stopTaskTimer(taskId: string) {
-    const task = tasks.find((entry) => entry.id === taskId);
+    const task = getTaskById(taskId);
     const runningTimer = getRunningTimer(taskId);
     if (!task || !runningTimer) {
       return;
@@ -2551,12 +2677,12 @@ export function TaskManagementTableV2({
     if (!nextTag) {
       return;
     }
-    setTaskTags(taskId, Array.from(new Set([...(tasks.find((task) => task.id === taskId)?.tags ?? []), nextTag])));
+    setTaskTags(taskId, Array.from(new Set([...(getTaskById(taskId)?.tags ?? []), nextTag])));
     setTagDrafts((current) => ({ ...current, [taskId]: "" }));
   }
 
   function toggleTaskTag(taskId: string, tag: string) {
-    const task = tasks.find((entry) => entry.id === taskId);
+    const task = getTaskById(taskId);
     if (!task) return;
     const nextTags = task.tags.includes(tag)
       ? task.tags.filter((entry) => entry !== tag)
@@ -2565,7 +2691,7 @@ export function TaskManagementTableV2({
   }
 
   function toggleTaskList(taskId: string, listLabel: string) {
-    const task = tasks.find((entry) => entry.id === taskId);
+    const task = getTaskById(taskId);
     if (!task) return;
     const nextLists = taskHasList(task, listLabel)
       ? task.lists.filter((entry) => normalizeTaskListLabel(entry) !== normalizeTaskListLabel(listLabel))
@@ -2618,6 +2744,9 @@ export function TaskManagementTableV2({
     }
 
     setEditingTaskTitleId(null);
+    hasSeenSelectedTaskInCurrentListRef.current = tasks.some((task) => task.id === taskId);
+    setSelectedTaskLeftCurrentList(false);
+    setRetainedSelectedTask((current) => current?.id === taskId ? current : null);
     setSelectedTaskId(taskId);
     setOverlayMode(mode);
     setOpenColumnMenuId(null);
@@ -3900,6 +4029,7 @@ export function TaskManagementTableV2({
             animate="visible"
             className="adhdice-scrollbar relative min-h-[min(28rem,65vh)] max-h-[65vh] overflow-x-auto overflow-y-auto"
             initial="hidden"
+            ref={tableScrollContainerRef}
             onScroll={() => {
               if (rowContextMenu) {
                 setRowContextMenu(null);
@@ -4382,6 +4512,18 @@ export function TaskManagementTableV2({
             </div>
           </motion.div>
         </div>
+        {showTableScrollUp ? (
+          <ScrollUpButton
+            aria-label="Scroll table to top"
+            className="absolute right-4 bottom-4 z-20"
+            onClick={() => {
+              tableScrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+              setRowContextMenu(null);
+            }}
+          >
+            <ArrowUp className="h-4 w-4" />
+          </ScrollUpButton>
+        ) : null}
 
         {rowContextMenu && rowContextMenuTask ? (
           <div
@@ -4955,6 +5097,44 @@ export function TaskManagementTableV2({
                     )}
                   </div>
                 ) : null;
+                const detachedTaskNotice = selectedTaskIsDetached ? (
+                  <div className="rounded-[1rem] border border-[#ffe2af] bg-[#fff8ea] px-4 py-3 text-[#7b5b12] dark:border-[#5c4920] dark:bg-[#362814] dark:text-[#f3d38a]">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.18em]">Left current list</p>
+                    <p className="mt-1 text-sm leading-6">
+                      {`This task no longer belongs to ${currentListLabel?.trim() ? currentListLabel : "this list"}. The row already left the list, but you can keep editing here.`}
+                    </p>
+                    {selectedTaskFollowDestination ? (
+                      <p className="mt-1 text-sm leading-6">
+                        {`Follow task to ${selectedTaskFollowDestination.label} when you are ready.`}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-sm leading-6">
+                        It does not have another visible list to follow right now.
+                      </p>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {selectedTaskFollowDestination ? (
+                        <TaskTableChipButton
+                          onClick={() => onFollowDetachedTask?.(selectedTask.id)}
+                          toneClassName="border-[#e4c77b] bg-[#fff2cb] text-[#8d6817] dark:border-[#6e5824] dark:bg-[#4a381a] dark:text-[#f3d38a]"
+                        >
+                          Follow task
+                        </TaskTableChipButton>
+                      ) : null}
+                      <TaskTableChipButton
+                        onClick={() => {
+                          if (!selectedTaskFollowDestination) {
+                            onDismissDetachedTask?.(selectedTask.id);
+                          }
+                          closeInspector();
+                        }}
+                        toneClassName="border-[#f0d79a] bg-white/80 text-[#7b5b12] dark:border-[#5c4920] dark:bg-[#241a0c] dark:text-[#f3d38a]"
+                      >
+                        {selectedTaskFollowDestination ? "Dismiss" : "Close"}
+                      </TaskTableChipButton>
+                    </div>
+                  </div>
+                ) : null;
 
                 return (
                   <>
@@ -4997,6 +5177,7 @@ export function TaskManagementTableV2({
                       value={notesDraft}
                     />
                   </label>
+                  {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
                   {stepsEditorNode}
                 </div>
               </div>
@@ -5020,8 +5201,9 @@ export function TaskManagementTableV2({
                             top: overlayAnchor?.top ?? 24,
                           }
                     }
-                  >
+                    >
                     <div className="grid gap-3">
+                      {overlayMode === "full" ? null : detachedTaskNotice}
                       {overlayMode === "full" ? (
                         <div className="grid gap-3 lg:grid-cols-[1.05fr_0.95fr]">
                           <div className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
@@ -5063,6 +5245,7 @@ export function TaskManagementTableV2({
                                 value={notesDraft}
                               />
                             </label>
+                            {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
                             {stepsEditorNode}
                           </div>
                           <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">

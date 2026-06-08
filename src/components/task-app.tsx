@@ -99,7 +99,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
-import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
+import { ScrollUpButton, TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievements } from "@/hooks/useAchievements";
 import { useFocus, mapFocusCategoryRow, mapActiveSessions, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
@@ -292,7 +292,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.0.32";
+const HUD_VERSION = "5.1.0";
 const HUD_LOADING_SHELL_HEIGHT = 96;
 
 declare global {
@@ -1131,7 +1131,9 @@ export function TaskApp() {
     }
 
     const handleScroll = () => {
-      setShowBackToTop(window.scrollY > 720);
+      const documentHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const hasMeaningfulPageScroll = documentHeight > 300;
+      setShowBackToTop(hasMeaningfulPageScroll && window.scrollY > 300);
     };
 
     handleScroll();
@@ -1756,6 +1758,65 @@ export function TaskApp() {
     () => selectedBucketTasks.map((task) => task.id),
     [selectedBucketTasks],
   );
+  const selectedBucketLabel = useMemo(() => {
+    if (taskUiState.selectedBucket in TASK_BUCKET_LABELS) {
+      return TASK_BUCKET_LABELS[taskUiState.selectedBucket as TaskBucket];
+    }
+    return availableTaskLists.find((list) => list.id === taskUiState.selectedBucket)?.name ?? taskUiState.selectedBucket;
+  }, [availableTaskLists, taskUiState.selectedBucket]);
+  const visibleTaskListOrder = useMemo(
+    () => new Map(
+      availableTaskLists
+        .filter((list) => list.isVisible)
+        .map((list, index) => [list.id, index] as const),
+    ),
+    [availableTaskLists],
+  );
+  const getFollowTaskDestination = useCallback((taskId: string) => {
+    const memberships = taskListMembershipsByTaskId[taskId] ?? [];
+    const nextMembership = memberships
+      .filter((membership) => membership.id !== taskUiState.selectedBucket && visibleTaskListOrder.has(membership.id))
+      .sort((left, right) => {
+        if (left.isManual !== right.isManual) {
+          return left.isManual ? -1 : 1;
+        }
+        return (visibleTaskListOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+          - (visibleTaskListOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER);
+      })[0];
+
+    if (!nextMembership) {
+      return null;
+    }
+
+    const destination = availableTaskLists.find((list) => list.id === nextMembership.id);
+    if (!destination) {
+      return null;
+    }
+
+    return {
+      id: destination.id,
+      label: destination.name,
+    };
+  }, [availableTaskLists, taskListMembershipsByTaskId, taskUiState.selectedBucket, visibleTaskListOrder]);
+  const followDetachedTask = useCallback((taskId: string) => {
+    const destination = getFollowTaskDestination(taskId);
+    if (!destination) {
+      setMessage({ tone: "neutral", text: "That task no longer has another visible list to follow right now." });
+      return;
+    }
+
+    setTaskUiState((prev) => ({
+      ...prev,
+      selectedBucket: destination.id,
+    }));
+    setRequestedListOverlayTaskId(taskId);
+  }, [getFollowTaskDestination, setTaskUiState]);
+  const dismissDetachedTask = useCallback((taskId: string) => {
+    const destination = getFollowTaskDestination(taskId);
+    if (!destination) {
+      setMessage({ tone: "neutral", text: "That task left the current list and does not have another visible list right now." });
+    }
+  }, [getFollowTaskDestination]);
   const {
     clearListTaskSelection,
     lastSelectedListTaskId,
@@ -3255,6 +3316,8 @@ export function TaskApp() {
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   activeTaskTimerIndex,
+                  currentListLabel: selectedBucketLabel,
+                  getFollowTaskDestination,
                   overlayNode: activePendingReward ? (
                     <TaskRewardModal
                       isDark={theme === "dark"}
@@ -3303,6 +3366,8 @@ export function TaskApp() {
                       openExistingTaskEditor(task);
                     }
                   },
+                  onFollowDetachedTask: followDetachedTask,
+                  onDismissDetachedTask: dismissDetachedTask,
                   onDuplicateTask: (taskId) => {
                     const task = tasks.find((entry) => entry.id === taskId);
                     if (task) {
@@ -3562,17 +3627,14 @@ export function TaskApp() {
         />
       </div>
       {showBackToTop ? (
-        <button
-          aria-label="Back to top"
-          className={`fixed right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full shadow-[0_18px_40px_rgba(81,61,168,0.24)] transition hover:-translate-y-0.5 sm:right-8 ${
-            "bg-[linear-gradient(180deg,#7c63f7_0%,#664cf1_100%)] text-white dark:bg-[linear-gradient(180deg,#c9bbff_0%,#9b87ff_100%)] dark:text-[#171127]"
-          }`}
+        <ScrollUpButton
+          aria-label="Scroll to top"
+          className="fixed right-4 bottom-0 z-20 sm:right-8"
           style={mobileBackToTopZoomStyle}
           onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-          type="button"
         >
-          <ArrowUp className="h-6 w-6" />
-        </button>
+          <ArrowUp className="h-4 w-4" />
+        </ScrollUpButton>
       ) : null}
       <AchievementCelebrationOverlay onDismiss={dismissAchievementCelebration} unlock={activeAchievementCelebration} />
     </main>
@@ -4126,7 +4188,7 @@ function TopHeader({
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-            v5.0.31
+            v{HUD_VERSION}
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>
@@ -4547,7 +4609,7 @@ function CommandCenterHeader({
 
   return (
     <header className="flex flex-col gap-2 px-3 lg:flex-row lg:items-center lg:justify-between">
-      <div className="flex items-center justify-between gap-3 lg:w-[13rem] lg:shrink-0 lg:justify-start">
+      <div className="flex items-center justify-between gap-3 lg:mr-[5px] lg:shrink-0 lg:justify-start">
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
@@ -4590,7 +4652,9 @@ function BrandMark({
   return (
     <Image
       alt="ADHDice logo"
-      className="max-w-none object-contain object-left pl-[3px]"
+      className={compact
+        ? "h-9 w-auto max-w-none object-contain object-left pl-[3px]"
+        : "h-[50px] w-auto max-w-none object-contain object-left pl-[3px]"}
       height={compact ? 36 : 56}
       onError={() => setErrored(true)}
       src={withBasePath(logoSrc)}

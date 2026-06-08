@@ -26,6 +26,8 @@ type TaskTableChipButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   toneClassName?: string;
 };
 
+type ScrollUpButtonProps = ButtonHTMLAttributes<HTMLButtonElement>;
+
 export function TaskTableChipButton({
   children,
   className,
@@ -51,6 +53,27 @@ export function TaskTableChipButton({
       >
         {children}
       </span>
+    </button>
+  );
+}
+
+export function ScrollUpButton({
+  children,
+  className,
+  type = "button",
+  ...props
+}: ScrollUpButtonProps) {
+  return (
+    <button
+      className={joinClasses(
+        TASK_TABLE_CONTROL_FONT_CLASS,
+        "flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd2ff] bg-[linear-gradient(180deg,#faf7ff_0%,#efe8ff_100%)] text-[#6f57f6] shadow-[0_14px_32px_rgba(111,87,246,0.18)] transition hover:-translate-y-0.5 hover:border-[#cbbcff] hover:text-[#5b43dc] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b6a7ff] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-[#473a73] dark:bg-[linear-gradient(180deg,#21193d_0%,#19132f_100%)] dark:text-[#cabfff] dark:shadow-[0_14px_32px_rgba(0,0,0,0.24)] dark:hover:border-[#5d4e91] dark:hover:text-white dark:focus-visible:ring-[#7f67ff] dark:focus-visible:ring-offset-[#140f26]",
+        className,
+      )}
+      type={type}
+      {...props}
+    >
+      {children}
     </button>
   );
 }
