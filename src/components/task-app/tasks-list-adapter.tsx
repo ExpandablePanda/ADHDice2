@@ -105,15 +105,29 @@ export function TasksListAdapter({
 }: TasksListAdapterProps) {
   const [shrinkAllColumnsToken, setShrinkAllColumnsToken] = useState(0);
   const rows = useMemo(
-    () => tableProps.tasks.map((task) => buildTaskTableRow(task, {
-      focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
-      linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
-      listDefinitions: tableProps.rowContext.listDefinitions,
-      listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
-      subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
-      taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
-      todayDateKey: tableProps.rowContext.todayDateKey,
-    })),
+    () => {
+      const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
+      const nextRows = tableProps.tasks.map((task) => buildTaskTableRow(task, {
+        focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
+        linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
+        listDefinitions: tableProps.rowContext.listDefinitions,
+        listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
+        subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
+        taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+        todayDateKey: tableProps.rowContext.todayDateKey,
+      }));
+
+      if (process.env.NODE_ENV !== "production") {
+        const message = `[tasks:list-switch] rows mapped in ${Math.round(performance.now() - startedAt)}ms for ${tableProps.tasks.length} tasks`;
+        console.info(message);
+        if (typeof window !== "undefined") {
+          window.__ADHDICE_TASK_LIST_SWITCH_LOGS__ ??= [];
+          window.__ADHDICE_TASK_LIST_SWITCH_LOGS__.push(message);
+        }
+      }
+
+      return nextRows;
+    },
     [tableProps.rowContext, tableProps.tasks],
   );
   const visibleColumns = useMemo<TaskManagementTableColumnId[]>(

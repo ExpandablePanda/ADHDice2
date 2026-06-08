@@ -80,6 +80,22 @@ export type TaskListEvaluationContext = {
   manualMembershipsByTaskId: Record<string, TaskListId[]>;
 };
 
+export type TaskListEvaluationPerf = {
+  inboxCheckMs: number;
+  manualMembershipCount: number;
+  manualMembershipSeedMs: number;
+  matchedRuleMemberships: number;
+  ruleEvaluationMs: number;
+  ruleListChecks: number;
+  taskCount: number;
+};
+
+type TaskListLookup = {
+  listById: Map<TaskListId, TaskListDefinition>;
+  nonInboxRuleLists: TaskListDefinition[];
+  ruleLists: TaskListDefinition[];
+};
+
 export const BUILT_IN_TASK_LIST_IDS: BuiltInTaskListId[] = [
   "inbox",
   "today",
@@ -287,11 +303,19 @@ export function evaluateTaskListMemberships(
   task: Task,
   lists: TaskListDefinition[],
   context: TaskListEvaluationContext,
+  perf?: TaskListEvaluationPerf,
 ) {
   const memberships = new Map<TaskListId, TaskListMembership>();
   const evaluationCache = new Map<string, boolean>();
+  const lookup = buildTaskListLookup(lists);
   const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
+  const canMeasure = Boolean(perf) && typeof performance !== "undefined";
 
+  if (perf) {
+    perf.taskCount += 1;
+  }
+
+  const manualSeedStartedAt = canMeasure ? performance.now() : 0;
   for (const listId of manualListIds) {
     if (listId === "today") {
       continue;
@@ -302,10 +326,18 @@ export function evaluateTaskListMemberships(
       source: "manual",
     });
   }
+  if (perf) {
+    perf.manualMembershipCount += manualListIds.length;
+    if (canMeasure) {
+      perf.manualMembershipSeedMs += performance.now() - manualSeedStartedAt;
+    }
+  }
 
-  for (const list of lists) {
+  const manualRuleMembershipCount = memberships.size;
+  const ruleEvaluationStartedAt = canMeasure ? performance.now() : 0;
+  for (const list of lookup.ruleLists) {
     const current = memberships.get(list.id);
-    if (matchesSpecificListRuleMembership(task, list, lists, context, new Set(), evaluationCache)) {
+    if (matchesSpecificListRuleMembership(task, list, lists, context, new Set(), evaluationCache, lookup)) {
       memberships.set(list.id, {
         id: list.id,
         isManual: current?.isManual ?? false,
@@ -313,7 +345,15 @@ export function evaluateTaskListMemberships(
       });
     }
   }
+  if (perf) {
+    perf.ruleListChecks += lookup.ruleLists.length;
+    perf.matchedRuleMemberships += Math.max(0, memberships.size - manualRuleMembershipCount);
+    if (canMeasure) {
+      perf.ruleEvaluationMs += performance.now() - ruleEvaluationStartedAt;
+    }
+  }
 
+  const inboxCheckStartedAt = canMeasure ? performance.now() : 0;
   if (shouldAppearInInbox(task, memberships, context)) {
     const current = memberships.get("inbox");
     memberships.set("inbox", {
@@ -321,6 +361,9 @@ export function evaluateTaskListMemberships(
       isManual: current?.isManual ?? false,
       source: "rule",
     });
+  }
+  if (perf && canMeasure) {
+    perf.inboxCheckMs += performance.now() - inboxCheckStartedAt;
   }
 
   return Array.from(memberships.values());
@@ -361,14 +404,22 @@ export function matchesTaskListRules(
   context: TaskListEvaluationContext,
   visitedListIds: Set<TaskListId> = new Set(),
   evaluationCache: Map<string, boolean> = new Map(),
+  lookup: TaskListLookup = buildTaskListLookup(lists),
 ): boolean {
   if (group.rules.length === 0) {
     return false;
   }
 
-  let result: boolean = matchesTaskListRule(task, group.rules[0].rule, lists, context, visitedListIds, evaluationCache);
-  for (const entry of group.rules.slice(1)) {
-    const nextValue = matchesTaskListRule(task, entry.rule, lists, context, visitedListIds, evaluationCache);
+  let result: boolean = matchesTaskListRule(task, group.rules[0].rule, lists, context, visitedListIds, evaluationCache, lookup);
+  for (let index = 1; index < group.rules.length; index += 1) {
+    const entry = group.rules[index];
+    if (!entry) {
+      continue;
+    }
+    if (entry.connector === "or" ? result : !result) {
+      continue;
+    }
+    const nextValue = matchesTaskListRule(task, entry.rule, lists, context, visitedListIds, evaluationCache, lookup);
     result = entry.connector === "or" ? (result || nextValue) : (result && nextValue);
   }
   return result;
@@ -435,6 +486,7 @@ function matchesTaskListRule(
   context: TaskListEvaluationContext,
   visitedListIds: Set<TaskListId> = new Set(),
   evaluationCache: Map<string, boolean> = new Map(),
+  lookup: TaskListLookup = buildTaskListLookup(lists),
 ): boolean {
   const matchesStreakThreshold = (value: TaskListRuleStreakValue) => {
     const currentStreak = context.currentStreakByTaskId[task.id] ?? 0;
@@ -451,7 +503,7 @@ function matchesTaskListRule(
       return rule.op === "is" ? values.includes(task.status) : !values.includes(task.status);
     }
     case "list": {
-      const belongsToList = taskBelongsToSpecificList(task, rule.value, lists, context, visitedListIds, evaluationCache);
+      const belongsToList = taskBelongsToSpecificList(task, rule.value, lists, context, visitedListIds, evaluationCache, lookup);
       return rule.op === "is" ? belongsToList : !belongsToList;
     }
     case "steps": {
@@ -571,6 +623,7 @@ function matchesSpecificListRuleMembership(
   context: TaskListEvaluationContext,
   visitedListIds: Set<TaskListId> = new Set(),
   evaluationCache: Map<string, boolean> = new Map(),
+  lookup: TaskListLookup = buildTaskListLookup(lists),
 ): boolean {
   const cacheKey = `rule:${list.id}`;
   const cached = evaluationCache.get(cacheKey);
@@ -585,7 +638,7 @@ function matchesSpecificListRuleMembership(
     evaluationCache.set(cacheKey, false);
     return false;
   }
-  const matches = matchesTaskListRules(task, list.rules, lists, context, visitedListIds, evaluationCache);
+  const matches = matchesTaskListRules(task, list.rules, lists, context, visitedListIds, evaluationCache, lookup);
   evaluationCache.set(cacheKey, matches);
   return matches;
 }
@@ -597,6 +650,7 @@ function taskBelongsToSpecificList(
   context: TaskListEvaluationContext,
   visitedListIds: Set<TaskListId> = new Set(),
   evaluationCache: Map<string, boolean> = new Map(),
+  lookup: TaskListLookup = buildTaskListLookup(lists),
 ): boolean {
   const cacheKey = `membership:${selectedListId}`;
   const cached = evaluationCache.get(cacheKey);
@@ -628,15 +682,15 @@ function taskBelongsToSpecificList(
 
     const nextVisited = new Set(visitedListIds);
     nextVisited.add("inbox");
-    const hasNonInboxRuleMatch = lists.some((list) =>
-      list.id !== "inbox" && matchesSpecificListRuleMembership(task, list, lists, context, nextVisited, evaluationCache),
+    const hasNonInboxRuleMatch = lookup.nonInboxRuleLists.some((list) =>
+      matchesSpecificListRuleMembership(task, list, lists, context, nextVisited, evaluationCache, lookup),
     );
     const belongsToInbox = !hasNonInboxRuleMatch;
     evaluationCache.set(cacheKey, belongsToInbox);
     return belongsToInbox;
   }
 
-  const list = lists.find((entry) => entry.id === selectedListId);
+  const list = lookup.listById.get(selectedListId);
   if (!list) {
     evaluationCache.set(cacheKey, false);
     return false;
@@ -644,7 +698,30 @@ function taskBelongsToSpecificList(
 
   const nextVisited = new Set(visitedListIds);
   nextVisited.add(selectedListId);
-  const belongsToList = matchesSpecificListRuleMembership(task, list, lists, context, nextVisited, evaluationCache);
+  const belongsToList = matchesSpecificListRuleMembership(task, list, lists, context, nextVisited, evaluationCache, lookup);
   evaluationCache.set(cacheKey, belongsToList);
   return belongsToList;
+}
+
+function buildTaskListLookup(lists: TaskListDefinition[]): TaskListLookup {
+  const listById = new Map<TaskListId, TaskListDefinition>();
+  const ruleLists: TaskListDefinition[] = [];
+  const nonInboxRuleLists: TaskListDefinition[] = [];
+
+  for (const list of lists) {
+    listById.set(list.id, list);
+    if (!list.rules) {
+      continue;
+    }
+    ruleLists.push(list);
+    if (list.id !== "inbox") {
+      nonInboxRuleLists.push(list);
+    }
+  }
+
+  return {
+    listById,
+    nonInboxRuleLists,
+    ruleLists,
+  };
 }

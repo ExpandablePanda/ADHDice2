@@ -30,6 +30,8 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `AGENTS.md` - `canonical`
 - `CLAUDE.md` - `pointer-only`
 - `docs/ADHDICE_BUILD_BRIEF.md` - `active working`
+- `docs/CURRENT_STATE.md` - `active working`
+- `docs/MANUAL_QA_CHECKLIST.md` - `active working`
 - `docs/taskapp-behavior-contract.md` - `canonical`
 - `docs/taskapp-orchestrator-contract.md` - `canonical`
 - `docs/taskapp-quality-check-protocol.md` - `canonical`

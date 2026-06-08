@@ -292,7 +292,41 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.0.6";
+const HUD_VERSION = "5.0.11";
+
+declare global {
+  interface Window {
+    __ADHDICE_TASK_DERIVE_LOGS__?: string[];
+    __ADHDICE_TASK_LIST_SWITCH_LOGS__?: string[];
+    clearAdhdiceTaskDeriveLogs?: () => void;
+    clearAdhdiceTaskListSwitchLogs?: () => void;
+    copyAdhdiceTaskDeriveLogs?: () => Promise<void>;
+    copyAdhdiceTaskListSwitchLogs?: () => Promise<void>;
+  }
+}
+
+function getTaskDeriveLogsStore() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  window.__ADHDICE_TASK_DERIVE_LOGS__ ??= [];
+  return window.__ADHDICE_TASK_DERIVE_LOGS__;
+}
+
+function getTaskListSwitchLogsStore() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  window.__ADHDICE_TASK_LIST_SWITCH_LOGS__ ??= [];
+  return window.__ADHDICE_TASK_LIST_SWITCH_LOGS__;
+}
+
+function logTaskListSwitchTiming(message: string) {
+  console.info(message);
+  getTaskListSwitchLogsStore()?.push(message);
+}
 
 type PersistedFocusAlarmState = {
   enabled: boolean;
@@ -852,6 +886,56 @@ export function TaskApp() {
   }, []);
   const listColumnMenuRef = useRef<HTMLDivElement | null>(null);
   const keyboardShortcutsMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production" || typeof window === "undefined") {
+      return;
+    }
+
+    getTaskDeriveLogsStore();
+    getTaskListSwitchLogsStore();
+    window.copyAdhdiceTaskDeriveLogs = async () => {
+      const joinedLogs = (window.__ADHDICE_TASK_DERIVE_LOGS__ ?? []).join("\n");
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(joinedLogs);
+          return;
+        } catch {
+          console.info(joinedLogs);
+          return;
+        }
+      }
+
+      console.info(joinedLogs);
+    };
+    window.clearAdhdiceTaskDeriveLogs = () => {
+      getTaskDeriveLogsStore()?.splice(0);
+    };
+    window.copyAdhdiceTaskListSwitchLogs = async () => {
+      const joinedLogs = (window.__ADHDICE_TASK_LIST_SWITCH_LOGS__ ?? []).join("\n");
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(joinedLogs);
+          return;
+        } catch {
+          console.info(joinedLogs);
+          return;
+        }
+      }
+
+      console.info(joinedLogs);
+    };
+    window.clearAdhdiceTaskListSwitchLogs = () => {
+      getTaskListSwitchLogsStore()?.splice(0);
+    };
+
+    return () => {
+      delete window.copyAdhdiceTaskDeriveLogs;
+      delete window.clearAdhdiceTaskDeriveLogs;
+      delete window.copyAdhdiceTaskListSwitchLogs;
+      delete window.clearAdhdiceTaskListSwitchLogs;
+    };
+  }, []);
 
   useEffect(() => {
     runStorageMigrations();
@@ -1623,21 +1707,27 @@ export function TaskApp() {
     urgentTasks,
   }, momentumView);
   const selectedBucketTasks = useMemo(() => {
+    const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
+    let nextTasks: typeof filteredTasksSorted;
     if (activePage !== "Tasks") {
-      return [];
+      nextTasks = [];
+    } else if (taskUiState.selectedBucket === "trash") {
+      nextTasks = trashFilteredTasksSorted;
+    } else if (taskUiState.selectedBucket === "all") {
+      nextTasks = filteredTasksSorted;
+    } else {
+      nextTasks = filteredTasksSorted.filter((task) =>
+        (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === taskUiState.selectedBucket),
+      );
     }
 
-    if (taskUiState.selectedBucket === "trash") {
-      return trashFilteredTasksSorted;
+    if (process.env.NODE_ENV !== "production") {
+      logTaskListSwitchTiming(
+        `[tasks:list-switch] selectedBucketTasks filtered in ${Math.round(performance.now() - startedAt)}ms for ${nextTasks.length} tasks`,
+      );
     }
 
-    if (taskUiState.selectedBucket === "all") {
-      return filteredTasksSorted;
-    }
-
-    return filteredTasksSorted.filter((task) =>
-      (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === taskUiState.selectedBucket),
-    );
+    return nextTasks;
   }, [activePage, filteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const listVisibleColumns = taskUiState.visibleColumnsByView.list;
@@ -3978,7 +4068,7 @@ function TopHeader({
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-            v3.0.33
+            v5.0.11
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>

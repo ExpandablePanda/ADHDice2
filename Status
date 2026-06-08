@@ -1,0 +1,9 @@
+src/components/ui/agent-plan.tsx:899:    if (columnId === "status" || columnId === "task" || (event.target as HTMLElement).closest("[data-resize-handle]")) {
+src/components/ui/agent-plan.tsx:923:          {isStatusColumn ? <span className="sr-only">Status</span> : <span className="shrink-0">{label}</span>}
+src/components/ui/agent-plan.tsx:928:              data-resize-handle
+src/components/task-app.tsx:7893:                      <span className="sr-only">Estimated time</span>
+src/components/task-app.tsx:9499:      <span className={showLabel ? "text-sm font-semibold text-[#5f6983] dark:text-white/65" : "sr-only"}>{label}</span>
+src/app/globals.css:157:  scrollbar-width: thin;
+src/app/globals.css:158:  scrollbar-color: rgba(111, 87, 246, 0.22) rgba(111, 87, 246, 0.07);
+src/app/globals.css:169:  scrollbar-width: thin;
+src/app/globals.css:170:  scrollbar-color: rgba(111, 87, 246, 0.22) rgba(111, 87, 246, 0.07);

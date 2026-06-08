@@ -95,3 +95,15 @@ Optimize for safe work, low regression risk, clean organization, and design cons
 - Browser skill/docs may claim local URLs are supported, but if agent-side navigation fails on both `localhost` and LAN IPs, assume Browser Use runtime session policy or network isolation is the problem rather than the app itself.
 - Do not patch the bundled browser plugin cache under `.codex/plugins/cache/...` as a permanent fix; those files are runtime artifacts and may be overwritten.
 - When asking Codex to inspect the local app in the in-app browser, open the app yourself first if agent-side navigation fails, then ask Codex to continue from the current tab.
+
+## Workflow Discipline
+
+- One implementation prompt should target one bug, one feature slice, one UI component family, or one performance bottleneck.
+- Do not combine product design, debugging, refactoring, styling, and performance work in one prompt unless explicitly approved.
+- For risky work, first inspect and return a plan. Do not edit until approved.
+- If two attempted fixes do not solve the same issue, stop patching and switch to diagnosis-only mode.
+- For performance complaints, identify the slow layer before refactoring.
+- Always confirm the active render path before claiming a UI fix is complete.
+- After each completed implementation prompt, bump the visible app version and return numbered manual checks.
+- Do not create new documentation files unless explicitly asked.
+- Do not add long historical thread summaries to active repo docs.

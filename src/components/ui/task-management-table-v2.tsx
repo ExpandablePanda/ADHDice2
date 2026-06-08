@@ -1386,6 +1386,7 @@ export function TaskManagementTableV2({
     [effectiveColumnWidths, visibleHeaderColumns],
   );
   const displayedTasks = useMemo(() => {
+    const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
     const filtered = tasks.filter((task) =>
       Object.entries(textFilters).every(([columnId, query]) => {
         const normalizedQuery = query?.trim().toLowerCase();
@@ -1400,12 +1401,23 @@ export function TaskManagementTableV2({
       && (structuredFilters.energy.length === 0 || structuredFilters.energy.includes(task.energy))
       && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(task.repeat)));
 
-    return sortState
+    const nextDisplayedTasks = sortState
       ? sortRows(filtered, sortState.columnId, sortState.optionId, {
         activeTaskTimerIds,
         liveActualSecondsByTaskId,
       })
       : filtered;
+
+    if (process.env.NODE_ENV !== "production") {
+      const message = `[tasks:list-switch] table filtered/sorted in ${Math.round(performance.now() - startedAt)}ms for ${nextDisplayedTasks.length} rows`;
+      console.info(message);
+      if (typeof window !== "undefined") {
+        window.__ADHDICE_TASK_LIST_SWITCH_LOGS__ ??= [];
+        window.__ADHDICE_TASK_LIST_SWITCH_LOGS__.push(message);
+      }
+    }
+
+    return nextDisplayedTasks;
   }, [activeTaskTimerIds, liveActualSecondsByTaskId, sortState, structuredFilters, tasks, textFilters]);
   const tableFilterSignature = useMemo(
     () => JSON.stringify({ sortState, structuredFilters, textFilters }),
@@ -1636,6 +1648,7 @@ export function TaskManagementTableV2({
     }
 
     const frameId = window.requestAnimationFrame(() => {
+      const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
       setRequiredColumnWidths((current) => {
         const nextRequiredWidths = visibleHeaderColumns.reduce<Record<TaskManagementTableColumnId, number>>((accumulator, column) => {
           const headerWidths = getMeasuredColumnWidths(`[data-column-header-measure="${column.id}"]`);
@@ -1648,6 +1661,15 @@ export function TaskManagementTableV2({
         const hasChanges = visibleHeaderColumns.some((column) => current[column.id] !== nextRequiredWidths[column.id]);
         return hasChanges ? nextRequiredWidths : current;
       });
+
+      if (process.env.NODE_ENV !== "production") {
+        const message = `[tasks:list-switch] column measurement ran in ${Math.round(performance.now() - startedAt)}ms for ${visibleHeaderColumns.length} columns`;
+        console.info(message);
+        if (typeof window !== "undefined") {
+          window.__ADHDICE_TASK_LIST_SWITCH_LOGS__ ??= [];
+          window.__ADHDICE_TASK_LIST_SWITCH_LOGS__.push(message);
+        }
+      }
     });
 
     return () => window.cancelAnimationFrame(frameId);

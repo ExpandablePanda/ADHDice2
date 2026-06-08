@@ -82,26 +82,164 @@ export function buildTaskBucketCounts(tasks: Task[], context: TaskBucketContext)
 }
 
 export function sortTasksForCockpit(tasks: Task[], context: TaskBucketContext) {
-  return [...tasks].sort((left, right) => {
-    const leftScore = getTaskCockpitSortScore(left, context);
-    const rightScore = getTaskCockpitSortScore(right, context);
+  const todayKey = todayISO();
+  return tasks
+    .map((task) => buildTaskCockpitSortKey(task, context, todayKey))
+    .sort((left, right) => {
+      if (left.score !== right.score) {
+        return left.score - right.score;
+      }
 
-    if (leftScore !== rightScore) {
-      return leftScore - rightScore;
-    }
+      if (left.due !== right.due) {
+        return left.due.localeCompare(right.due);
+      }
 
-    const leftDue = left.due_on ?? "9999-12-31";
-    const rightDue = right.due_on ?? "9999-12-31";
-    if (leftDue !== rightDue) {
-      return leftDue.localeCompare(rightDue);
-    }
+      if (left.sortOrder !== right.sortOrder) {
+        return left.sortOrder - right.sortOrder;
+      }
 
-    if (left.sort_order !== right.sort_order) {
-      return left.sort_order - right.sort_order;
-    }
+      return right.createdAt.localeCompare(left.createdAt);
+    })
+    .map(({ task }) => task);
+}
 
-    return right.created_at.localeCompare(left.created_at);
+type TaskCockpitSortKey = {
+  createdAt: string;
+  due: string;
+  score: number;
+  sortOrder: number;
+  task: Task;
+};
+
+const TASK_BUCKET_BASE_SCORE: Record<TaskBucket, number> = {
+  all: 5,
+  missed: 0,
+  today: 10,
+  focus: 20,
+  urgent: 30,
+  quick_wins: 40,
+  recurring: 50,
+  waiting: 60,
+  later: 70,
+  inbox: 80,
+  done: 90,
+  trash: 100,
+};
+
+function buildTaskCockpitSortKey(task: Task, context: TaskBucketContext, todayKey: string): TaskCockpitSortKey {
+  const isOpen = isTaskOpen(task);
+  const isFinished = isTaskFinished(task);
+  const isFocused = context.focusedTaskIds.has(task.id);
+  const isDueTodayTask = task.due_on === todayKey;
+  const isOverdueTask = task.due_on !== null && task.due_on < todayKey;
+  const isUrgentTask = isOpen && task.is_urgent;
+  const isQuickWinTask = isOpen
+    && task.energy === "low"
+    && (task.estimated_minutes === null || task.estimated_minutes <= 20);
+  const bucket = getTaskCockpitBucket(task, context, todayKey, {
+    isDueTodayTask,
+    isFinished,
+    isFocused,
+    isOpen,
+    isOverdueTask,
+    isQuickWinTask,
+    isUrgentTask,
   });
+
+  let score = TASK_BUCKET_BASE_SCORE[bucket];
+  if (isOpen && isOverdueTask) score -= 6;
+  if (isDueTodayTask) score -= 4;
+  if (isFocused) score -= 3;
+  if (isUrgentTask) score -= 2;
+  if (task.priority === "high") score -= 1;
+  if (isQuickWinTask) score -= 1;
+
+  return {
+    createdAt: task.created_at,
+    due: task.due_on ?? "9999-12-31",
+    score,
+    sortOrder: task.sort_order,
+    task,
+  };
+}
+
+function getTaskCockpitBucket(
+  task: Task,
+  context: TaskBucketContext,
+  todayKey: string,
+  state: {
+    isDueTodayTask: boolean;
+    isFinished: boolean;
+    isFocused: boolean;
+    isOpen: boolean;
+    isOverdueTask: boolean;
+    isQuickWinTask: boolean;
+    isUrgentTask: boolean;
+  },
+): TaskBucket {
+  if (task.status === "archived") {
+    return "trash";
+  }
+
+  if (state.isFinished) {
+    return "done";
+  }
+
+  if (task.status === "missed" || (state.isOpen && state.isOverdueTask)) {
+    return "missed";
+  }
+
+  const routedBucket = context.routing[task.id];
+  if (routedBucket === "today" && state.isOpen && state.isDueTodayTask) {
+    return "today";
+  }
+  if (routedBucket === "inbox") {
+    return "inbox";
+  }
+  if (routedBucket === "waiting") {
+    return "waiting";
+  }
+  if (routedBucket === "later") {
+    return "later";
+  }
+  if (routedBucket === "quick_wins") {
+    return "quick_wins";
+  }
+
+  if (state.isOpen
+    && !task.due_on
+    && !task.is_urgent
+    && !task.is_important
+    && task.repeat_frequency === "none"
+    && task.status === "pending") {
+    return "inbox";
+  }
+
+  if (state.isOpen && state.isFocused) {
+    return "focus";
+  }
+
+  if (state.isUrgentTask) {
+    return "urgent";
+  }
+
+  if (state.isOpen && state.isDueTodayTask) {
+    return "today";
+  }
+
+  if (state.isQuickWinTask) {
+    return "quick_wins";
+  }
+
+  if (state.isOpen && task.repeat_frequency !== "none") {
+    return "recurring";
+  }
+
+  if (state.isOpen && (task.status === "upcoming" || task.status === "not_due" || (task.due_on !== null && task.due_on > todayKey))) {
+    return "later";
+  }
+
+  return "today";
 }
 
 export function formatTaskDueLabel(task: Task) {
@@ -180,31 +318,4 @@ export function matchesTaskQuickFilter(task: Task, filter: TaskQuickFilter, focu
     default:
       return true;
   }
-}
-
-function getTaskCockpitSortScore(task: Task, context: TaskBucketContext) {
-  const bucket = getTaskBucket(task, context);
-  const bucketBase: Record<TaskBucket, number> = {
-    all: 5,
-    missed: 0,
-    today: 10,
-    focus: 20,
-    urgent: 30,
-    quick_wins: 40,
-    recurring: 50,
-    waiting: 60,
-    later: 70,
-    inbox: 80,
-    done: 90,
-    trash: 100,
-  };
-
-  let score = bucketBase[bucket];
-  if (isTaskOpen(task) && isOverdue(task.due_on)) score -= 6;
-  if (isDueToday(task.due_on)) score -= 4;
-  if (context.focusedTaskIds.has(task.id)) score -= 3;
-  if (isTaskUrgent(task)) score -= 2;
-  if (task.priority === "high") score -= 1;
-  if (isTaskQuickWin(task)) score -= 1;
-  return score;
 }
