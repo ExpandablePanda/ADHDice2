@@ -292,7 +292,8 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.0.15";
+const HUD_VERSION = "5.0.32";
+const HUD_LOADING_SHELL_HEIGHT = 96;
 
 declare global {
   interface Window {
@@ -689,6 +690,7 @@ export function TaskApp() {
   const hudShellRef = useRef<HTMLDivElement | null>(null);
   const profileSettingsHydratedRef = useRef(false);
   const [session, setSession] = useState<Session | null>(null);
+  const [isAuthResolved, setIsAuthResolved] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [message, setMessage] = useState<Message | null>(null);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
@@ -700,6 +702,7 @@ export function TaskApp() {
   const [focusAlarmIntervalMinutes, setFocusAlarmIntervalMinutes] = useState(DEFAULT_FOCUS_ALARM_INTERVAL_MINUTES);
   const [focusAlarmNextRingAt, setFocusAlarmNextRingAt] = useState<number | null>(null);
   const [mobileZoom, setMobileZoom] = useState<(typeof MOBILE_ZOOM_LEVELS)[number]>(1);
+  const [isHudAppearanceReady, setIsHudAppearanceReady] = useState(false);
   const { economy, setEconomy, appendEconomyEvent, commitTaskReward, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
     focusCategories, setFocusCategories,
@@ -746,6 +749,7 @@ export function TaskApp() {
     focusedTaskIdsByDate,
     hudUiState,
     isDailyPlanningCollapsed,
+    isRestoringPersistedUiState,
     isTaskFiltersOpen,
     pendingTaskEditorRestore,
     setActivePage,
@@ -942,6 +946,10 @@ export function TaskApp() {
   }, []);
 
   useEffect(() => {
+    setIsHudAppearanceReady(false);
+  }, [session?.user?.id]);
+
+  useEffect(() => {
     document.documentElement.style.setProperty("--accent", accentColor);
     document.documentElement.style.setProperty("--accent-strong", accentColor);
   }, [accentColor]);
@@ -1004,6 +1012,7 @@ export function TaskApp() {
       setFocusAlarmEnabled(nextFocusAlarmEnabled);
       setFocusAlarmIntervalMinutes(nextFocusAlarmIntervalMinutes);
       profileSettingsHydratedRef.current = true;
+      setIsHudAppearanceReady(true);
     },
     resolveTaskGridLayout: resolveTaskGridLayoutFromRow,
     saveFocusCategories,
@@ -1047,6 +1056,8 @@ export function TaskApp() {
 
     const unsubscribe = subscribeToBrowserAuth((event: AuthChangeEvent, nextSession) => {
       if (event === "SIGNED_OUT") {
+        setSession(null);
+        setIsAuthResolved(true);
         setTasks([]);
         setFocusCategories([]);
         setActiveSessions({});
@@ -1063,6 +1074,7 @@ export function TaskApp() {
         saveProfile(DEFAULT_PROFILE);
       }
       if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED" || event === "PASSWORD_RECOVERY") {
+        setIsAuthResolved(true);
         setSession((currentSession) => {
           if (
             currentSession?.access_token === nextSession?.access_token
@@ -2335,6 +2347,10 @@ export function TaskApp() {
     return <ConfigSplash />;
   }
 
+  if (!isAuthResolved) {
+    return <LoadingSplash status="Restoring your workspace..." />;
+  }
+
   if (!session?.user) {
     return (
       <AuthSplash
@@ -2354,6 +2370,7 @@ export function TaskApp() {
           const needsEmailConfirmation = mode === "sign-up" && !response.data.session;
 
           if (response.data.session) {
+            setIsAuthResolved(true);
             setSession(response.data.session);
           }
 
@@ -2373,6 +2390,8 @@ export function TaskApp() {
   }
 
   const currentUser = session.user;
+  const shouldDeferPageRender = isRestoringPersistedUiState;
+  const shouldShowHudLoadingShell = !isHudAppearanceReady || isWorkspaceLoading || shouldDeferPageRender;
 
   async function handleSaveProfile(profileDraft: UserProfile) {
     const nextProfile = {
@@ -3083,80 +3102,84 @@ export function TaskApp() {
       ) : null}
       <div className="fixed inset-x-0 top-0 z-30 border-b border-[#ece8f8]/70 bg-[linear-gradient(180deg,rgba(244,240,255,0.96),rgba(239,244,255,0.9))] shadow-[0_14px_34px_rgba(81,61,168,0.07)] backdrop-blur-xl dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(19,16,33,0.94),rgba(14,12,27,0.9))]" ref={hudShellRef}>
         <div className="w-full">
-          <div className={`w-full border-white/70 bg-white/[0.46] px-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] backdrop-blur-[12px] dark:border-white/10 dark:bg-white/[0.05] ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
-            <HudRuntimeClock active={runningTaskTimers.length > 0 || (focusAlarmEnabled && focusAlarmNextRingAt !== null)}>
-              {(hudNow) => {
-                const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
-                const notificationInboxItems = [
-                  ...hudNotificationBaseItems,
-                  ...(focusAlarmRemainingMs !== null
-                    ? [{
-                        detail: `Next check-in in ${formatFocusAlarmRemaining(focusAlarmRemainingMs)}.`,
-                        id: "focus-alarm",
-                        title: "Focus alarm armed",
-                        tone: "neutral" as const,
-                      }]
-                    : []),
-                  ...hudNotificationEvents,
-                ].slice(0, 8);
+          {shouldShowHudLoadingShell ? (
+            <HudLoadingShell />
+          ) : (
+            <div className={`w-full border-white/70 bg-white/[0.46] px-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] backdrop-blur-[12px] dark:border-white/10 dark:bg-white/[0.05] ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
+              <HudRuntimeClock active={runningTaskTimers.length > 0 || (focusAlarmEnabled && focusAlarmNextRingAt !== null)}>
+                {(hudNow) => {
+                  const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
+                  const notificationInboxItems = [
+                    ...hudNotificationBaseItems,
+                    ...(focusAlarmRemainingMs !== null
+                      ? [{
+                          detail: `Next check-in in ${formatFocusAlarmRemaining(focusAlarmRemainingMs)}.`,
+                          id: "focus-alarm",
+                          title: "Focus alarm armed",
+                          tone: "neutral" as const,
+                        }]
+                      : []),
+                    ...hudNotificationEvents,
+                  ].slice(0, 8);
 
-                return (
-                  <CommandCenterHeader
-                    activeHudTaskTimer={activeHudTaskTimer}
-                    activeTaskCount={filteredActiveTasks.length}
-                    currentHudPageId={hudUiState.activeHudPageId}
-                    economy={economy}
-                    hudUiState={hudUiState}
-                    urgentTaskCount={filteredUrgentTasks.length}
-                    onOpenAccount={() => setIsAccountOpen(true)}
-                    onOpenComposer={openBlankTaskEditor}
-                    onOpenFocusPlanner={openFocusPlanner}
-                    onOpenQuickCapture={() => { void openTaskImportPanel(); }}
-                    onNextTaskTimer={() => cycleHudTaskTimer("next")}
-                    onPauseTaskTimer={pauseHudTaskTimer}
-                    onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
-                    onResumeTaskTimer={resumeHudTaskTimer}
-                    onStopTaskTimer={stopHudTaskTimer}
-                    profile={profile}
-                    runningTaskTimers={runningTaskTimers}
-                    setHudUiState={setHudUiState}
-                    taskTimerNow={hudNow}
-                    theme={theme}
-                    todayTaskCount={filteredTodayTasks.length}
-                    onThemeChange={setTheme}
-                    lowStim={lowStim}
-                    onLowStimChange={setLowStim}
-                    currentStreak={taskHistoryStats.currentStreak}
-                    notificationInboxItems={notificationInboxItems}
-                    focusAlarmEnabled={focusAlarmEnabled}
-                    focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
-                    focusAlarmRemainingMs={focusAlarmRemainingMs}
-                    onDecreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current - FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
-                    onIncreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current + FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
-                    onToggleFocusAlarmEnabled={() => {
-                      if (focusAlarmAudioBlocked && focusAlarmEnabled) {
-                        void playFocusAlarmSound({ rearmOnly: true });
-                        return;
-                      }
+                  return (
+                    <CommandCenterHeader
+                      activeHudTaskTimer={activeHudTaskTimer}
+                      activeTaskCount={filteredActiveTasks.length}
+                      currentHudPageId={hudUiState.activeHudPageId}
+                      economy={economy}
+                      hudUiState={hudUiState}
+                      urgentTaskCount={filteredUrgentTasks.length}
+                      onOpenAccount={() => setIsAccountOpen(true)}
+                      onOpenComposer={openBlankTaskEditor}
+                      onOpenFocusPlanner={openFocusPlanner}
+                      onOpenQuickCapture={() => { void openTaskImportPanel(); }}
+                      onNextTaskTimer={() => cycleHudTaskTimer("next")}
+                      onPauseTaskTimer={pauseHudTaskTimer}
+                      onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
+                      onResumeTaskTimer={resumeHudTaskTimer}
+                      onStopTaskTimer={stopHudTaskTimer}
+                      profile={profile}
+                      runningTaskTimers={runningTaskTimers}
+                      setHudUiState={setHudUiState}
+                      taskTimerNow={hudNow}
+                      theme={theme}
+                      todayTaskCount={filteredTodayTasks.length}
+                      onThemeChange={setTheme}
+                      lowStim={lowStim}
+                      onLowStimChange={setLowStim}
+                      currentStreak={taskHistoryStats.currentStreak}
+                      notificationInboxItems={notificationInboxItems}
+                      focusAlarmEnabled={focusAlarmEnabled}
+                      focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
+                      focusAlarmRemainingMs={focusAlarmRemainingMs}
+                      onDecreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current - FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+                      onIncreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current + FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+                      onToggleFocusAlarmEnabled={() => {
+                        if (focusAlarmAudioBlocked && focusAlarmEnabled) {
+                          void playFocusAlarmSound({ rearmOnly: true });
+                          return;
+                        }
 
-                      setFocusAlarmEnabled((current) => !current);
-                      if (focusAlarmEnabled) {
-                        setFocusAlarmAudioBlocked(false);
-                      }
-                    }}
-                    mobileZoom={mobileZoom}
-                    onDecreaseMobileZoom={decreaseMobileZoom}
-                    onIncreaseMobileZoom={increaseMobileZoom}
-                    canDecreaseMobileZoom={canDecreaseMobileZoom}
-                    canIncreaseMobileZoom={canIncreaseMobileZoom}
-                  />
-                );
-              }}
-            </HudRuntimeClock>
-          </div>
+                        setFocusAlarmEnabled((current) => !current);
+                        if (focusAlarmEnabled) {
+                          setFocusAlarmAudioBlocked(false);
+                        }
+                      }}
+                      mobileZoom={mobileZoom}
+                      onDecreaseMobileZoom={decreaseMobileZoom}
+                      onIncreaseMobileZoom={increaseMobileZoom}
+                      canDecreaseMobileZoom={canDecreaseMobileZoom}
+                      canIncreaseMobileZoom={canIncreaseMobileZoom}
+                    />
+                  );
+                }}
+              </HudRuntimeClock>
+            </div>
+          )}
         </div>
       </div>
-      <div aria-hidden="true" className="w-full" style={{ height: hudHeight }} />
+      <div aria-hidden="true" className="w-full" style={{ height: shouldShowHudLoadingShell ? HUD_LOADING_SHELL_HEIGHT : hudHeight }} />
       <div className="mx-auto w-full" style={shellZoomStyle}>
         <section className="w-full pb-28">
 
@@ -3173,10 +3196,14 @@ export function TaskApp() {
         ) : null}
 
         <ErrorBoundary
-          key={activePage}
+          key={shouldDeferPageRender ? "restoring-page" : activePage}
           fallback={<div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">This workspace could not load. Switch pages and try again.</div>}
         >
-        {activePage === "Home" ? (
+        {shouldDeferPageRender ? (
+          <div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">
+            Restoring your last page...
+          </div>
+        ) : activePage === "Home" ? (
           <TaskHomePage
             activeCount={activeTasks.length}
             achievementSummary={{
@@ -3591,6 +3618,35 @@ function LoadingSplash({
   );
 }
 
+function HudLoadingShell() {
+  return (
+    <div className="w-full border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,244,255,0.96))] px-0 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+      <header aria-label="Loading HUD" className="flex flex-col gap-2 px-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center justify-between gap-3 lg:w-[13rem] lg:shrink-0 lg:justify-start">
+          <div className="flex items-center gap-1">
+            <BrandMark profile={DEFAULT_PROFILE} />
+            <span className="rounded-full bg-[#f1ecff] px-2 py-0.5 text-[11px] font-semibold text-[#7f6af7]">
+              {HUD_VERSION}
+            </span>
+          </div>
+          <div className="h-11 w-11 rounded-full bg-[#f3efff]" />
+        </div>
+        <div className="grid min-h-[56px] flex-1 grid-cols-2 gap-2 rounded-[1.25rem] border border-[#e8e1fb] bg-white/92 px-2 py-2 shadow-[0_10px_30px_rgba(81,61,168,0.06)] sm:grid-cols-4 lg:min-h-[64px]">
+          <div className="rounded-[1rem] bg-[#faf8ff]" />
+          <div className="rounded-[1rem] bg-[#f7f4ff]" />
+          <div className="rounded-[1rem] bg-[#faf8ff]" />
+          <div className="rounded-[1rem] bg-[#f7f4ff]" />
+        </div>
+        <div className="flex items-center justify-end gap-2 lg:shrink-0">
+          <div className="rounded-full border border-[#ddd6fb] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7]">
+            Loading workspace
+          </div>
+        </div>
+      </header>
+    </div>
+  );
+}
+
 function AuthSplash({
   message,
   onAuthenticate,
@@ -3602,25 +3658,27 @@ function AuthSplash({
     mode: AuthMode;
   }) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<AuthMode>(() => {
-    if (typeof window === "undefined") {
-      return "sign-up";
-    }
-
-    const persistedMode = window.localStorage.getItem(AUTH_MODE_STORAGE_KEY);
-    return persistedMode === "sign-in" ? "sign-in" : "sign-up";
-  });
+  const [mode, setMode] = useState<AuthMode>("sign-up");
+  const [hasHydratedMode, setHasHydratedMode] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
+    const persistedMode = window.localStorage.getItem(AUTH_MODE_STORAGE_KEY);
+    if (persistedMode === "sign-in" || persistedMode === "sign-up") {
+      setMode(persistedMode);
+    }
+    setHasHydratedMode(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydratedMode) {
       return;
     }
 
     window.localStorage.setItem(AUTH_MODE_STORAGE_KEY, mode);
-  }, [mode]);
+  }, [hasHydratedMode, mode]);
 
   return (
     <main className={`min-h-screen px-3 py-8 sm:px-5 lg:px-8 bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}>
@@ -4068,7 +4126,7 @@ function TopHeader({
         <div className="flex items-center gap-1">
           <BrandMark profile={profile} />
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-            v5.0.15
+            v5.0.31
           </span>
         </div>
         <div className="lg:hidden">{accountButton}</div>

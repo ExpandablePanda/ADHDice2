@@ -2,7 +2,7 @@
 
 import { useState, type Dispatch, type SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { CommitTaskRewardOpts } from "@/hooks/useEconomy";
+import type { CommitTaskRewardOpts, CommitTaskRewardResult } from "@/hooks/useEconomy";
 import type { Task, TaskHistory as DbTaskHistory, TaskSubtask as DbTaskSubtask } from "@/lib/database.types";
 import {
   buildBatchTaskReward,
@@ -26,7 +26,7 @@ type Message = {
 type UseTaskRewardControllerOptions = {
   calcNextDueDateFromDate: (task: Task, referenceDateKey: string) => string | null;
   client: SupabaseClient;
-  commitTaskReward: (opts: CommitTaskRewardOpts) => Promise<boolean>;
+  commitTaskReward: (opts: CommitTaskRewardOpts) => Promise<CommitTaskRewardResult>;
   currentDayKey: string;
   currentUserId: string | null;
   setMessage: Dispatch<SetStateAction<Message | null>>;
@@ -69,6 +69,14 @@ export function useTaskRewardController({
     return message.includes("Load failed")
       || message.includes("Failed to fetch")
       || message.includes("Network request failed");
+  }
+
+  function getPendingRewardQueueKey(reward: Pick<PendingTaskReward, "claimRefs" | "rewardDate">) {
+    const claimKey = reward.claimRefs
+      .map((claimRef) => `${claimRef.taskId}:${claimRef.subtaskId ?? "task"}`)
+      .sort()
+      .join("|");
+    return `${reward.rewardDate}:${claimKey}`;
   }
 
   async function finalizeRecurringTasks(completedTasks: Task[]) {
@@ -264,7 +272,12 @@ export function useTaskRewardController({
       return;
     }
 
-    setPendingRewardQueue((current) => [...current, pendingReward]);
+    const pendingRewardKey = getPendingRewardQueueKey(pendingReward);
+    setPendingRewardQueue((current) =>
+      current.some((entry) => getPendingRewardQueueKey(entry) === pendingRewardKey)
+        ? current
+        : [...current, pendingReward],
+    );
   }
 
   async function claimPendingReward(resolution: TaskRewardResolution) {
@@ -277,7 +290,7 @@ export function useTaskRewardController({
       }
 
       const primaryTaskId = resolution.tasks[0]?.id ?? null;
-      const claimed = await commitTaskReward({
+      const claimResult = await commitTaskReward({
         awardedTokens: resolution.awardedTokens,
         awardedXp: resolution.xp,
         basePoints: resolution.basePoints,
@@ -296,7 +309,17 @@ export function useTaskRewardController({
         taskIds: resolution.tasks.map((task) => task.id),
       });
 
-      if (!claimed) {
+      if (claimResult === "already_claimed") {
+        setPendingRewardQueue((current) => current.slice(1));
+        await finalizeRecurringTasks(resolution.tasks);
+        setMessage({
+          tone: "neutral",
+          text: "This reward was already claimed, so the duplicate claim window was cleared.",
+        });
+        return true;
+      }
+
+      if (claimResult !== "claimed") {
         setMessage({ tone: "warn", text: "Could not save the task reward. Please try again." });
         return false;
       }

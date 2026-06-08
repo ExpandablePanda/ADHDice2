@@ -52,6 +52,7 @@ export function useTaskUiState<TTaskGridItem>({
   const [isTaskFiltersOpen, setIsTaskFiltersOpen] = useState(false);
   const [isDailyPlanningCollapsed, setIsDailyPlanningCollapsed] = useState(false);
   const [pendingTaskEditorRestore, setPendingTaskEditorRestore] = useState<PersistedTaskEditorUiState | null>(null);
+  const [restoredUserId, setRestoredUserId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!userId) {
@@ -64,6 +65,7 @@ export function useTaskUiState<TTaskGridItem>({
       setIsTaskFiltersOpen(false);
       setIsDailyPlanningCollapsed(false);
       setPendingTaskEditorRestore(null);
+      setRestoredUserId(null);
       return;
     }
 
@@ -129,7 +131,10 @@ export function useTaskUiState<TTaskGridItem>({
         false,
       ),
     );
+    setRestoredUserId(userId);
   }, [normalizeTaskGridLayout, taskGridStarterLayout, userId]);
+
+  const isRestoringPersistedUiState = Boolean(userId) && restoredUserId !== userId;
 
   useEffect(() => {
     if (!userId || typeof window === "undefined") {
@@ -230,6 +235,7 @@ export function useTaskUiState<TTaskGridItem>({
     focusedTaskIdsByDate,
     hudUiState,
     isDailyPlanningCollapsed,
+    isRestoringPersistedUiState,
     isTaskFiltersOpen,
     pendingTaskEditorRestore,
     setActivePage,

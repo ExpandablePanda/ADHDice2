@@ -71,6 +71,13 @@ export function TaskRewardModal({
   const activeStepIndex = getRewardStepIndex(stage);
 
   useEffect(() => {
+    setResolution(null);
+    setStage("intro");
+    setIsClaiming(false);
+    setIsAutoAdvancePaused(false);
+  }, [pendingReward.createdAt]);
+
+  useEffect(() => {
     if (stage !== "base_rolling" && stage !== "multiplier_rolling") {
       return;
     }

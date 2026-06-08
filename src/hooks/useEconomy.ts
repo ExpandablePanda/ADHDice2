@@ -44,11 +44,33 @@ export type CommitTaskRewardOpts = {
   taskIds: string[];
 };
 
+export type CommitTaskRewardResult = "claimed" | "already_claimed" | "failed";
+
 function isFetchFailure(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   return message.includes("Load failed")
     || message.includes("Failed to fetch")
     || message.includes("Network request failed");
+}
+
+function isTaskRewardClaimConflict(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const maybeError = error as {
+    code?: string;
+    details?: string | null;
+    message?: string;
+    status?: number;
+  };
+  const details = maybeError.details ?? "";
+  const message = maybeError.message ?? "";
+  return maybeError.code === "23505"
+    || maybeError.status === 409
+    || details.includes("adhdice_task_reward_claims_task_day_unique")
+    || details.includes("adhdice_task_reward_claims_subtask_day_unique")
+    || message.includes("duplicate key value violates unique constraint");
 }
 
 export function useEconomy(client: SupabaseClient, userId: string | null) {
@@ -58,6 +80,32 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
     points: 0,
     tokens: 0,
   });
+
+  async function hasExistingTaskRewardClaims(claimRefs: CommitTaskRewardOpts["claimRefs"], rewardDate: string) {
+    if (!client || !userId || claimRefs.length === 0) {
+      return false;
+    }
+
+    const taskIds = Array.from(new Set(claimRefs.map((claimRef) => claimRef.taskId)));
+    const { data, error } = await client
+      .from("adhdice_task_reward_claims")
+      .select("task_id,subtask_id")
+      .eq("user_id", userId)
+      .eq("reward_date", rewardDate)
+      .in("task_id", taskIds);
+
+    if (error) {
+      return false;
+    }
+
+    const parentClaimTaskIds = new Set((data ?? []).filter((entry) => !entry.subtask_id).map((entry) => entry.task_id));
+    const subtaskClaimIds = new Set((data ?? []).map((entry) => entry.subtask_id).filter((value): value is string => Boolean(value)));
+    return claimRefs.every((claimRef) =>
+      claimRef.subtaskId
+        ? subtaskClaimIds.has(claimRef.subtaskId)
+        : parentClaimTaskIds.has(claimRef.taskId),
+    );
+  }
 
   async function appendEconomyEvent(opts: AppendEconomyEventOpts) {
     if (!client || !userId) return;
@@ -117,12 +165,17 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
     }
   }
 
-  async function commitTaskReward(opts: CommitTaskRewardOpts) {
+  async function commitTaskReward(opts: CommitTaskRewardOpts): Promise<CommitTaskRewardResult> {
     if (!client || !userId) {
-      return false;
+      return "failed";
     }
 
     try {
+      const alreadyClaimed = await hasExistingTaskRewardClaims(opts.claimRefs, opts.rewardDate);
+      if (alreadyClaimed) {
+        return "already_claimed";
+      }
+
       const { data: profile, error: profileError } = await client
         .from("adhdice_user_profiles")
         .select("points, xp, level, tokens, free_roll_bank")
@@ -130,7 +183,7 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
         .single();
 
       if (profileError) {
-        return false;
+        return "failed";
       }
 
       const currentPoints = profile?.points ?? 0;
@@ -165,7 +218,7 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
         .single();
 
       if (rewardRollError || !rewardRoll) {
-        return false;
+        return "failed";
       }
 
       const rewardClaimPayload: TaskRewardClaimInsert[] = opts.claimRefs.map((claimRef) => {
@@ -202,15 +255,19 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
         client.from("adhdice_task_reward_claims").insert(rewardClaimPayload),
       ]);
 
+      if (rewardClaimInsert.error && isTaskRewardClaimConflict(rewardClaimInsert.error)) {
+        return "already_claimed";
+      }
+
       if (profileUpdate.error || ledgerInsert.error || rewardClaimInsert.error) {
-        return false;
+        return "failed";
       }
 
       setEconomy({ level: newLevel, xp: newXp, points: newPoints, tokens: newTokens });
-      return true;
+      return "claimed";
     } catch (error) {
       if (isFetchFailure(error)) {
-        return false;
+        return "failed";
       }
       throw error;
     }

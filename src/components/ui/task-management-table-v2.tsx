@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, Fragment, startTransition, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Children, Fragment, startTransition, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   CalendarDays,
@@ -109,6 +109,12 @@ export type PrototypeTaskSubtask = {
   title: string;
 };
 
+declare global {
+  interface Window {
+    copyAdhdiceStepTypographyDebug?: () => Promise<StepTypographyDebugPayload | null>;
+  }
+}
+
 const INLINE_ACCORDION_MODES: OverlayMode[] = ["actual", "due", "energy", "estimated", "link", "lists", "notes", "priority", "repeat", "status", "tags"];
 
 function isInlineAccordionMode(mode: OverlayMode) {
@@ -184,6 +190,141 @@ function collectAllPrototypeSubtaskIds(subtasks: PrototypeTaskSubtask[]): string
   return subtasks.flatMap((subtask) => [subtask.id, ...collectAllPrototypeSubtaskIds(subtask.children)]);
 }
 
+const SUBTASK_RENAME_INPUT_TEXT_CLASS = `[font-family:inherit] min-w-0 flex-1 appearance-none bg-transparent p-0 text-[13px] font-medium leading-none tracking-normal text-left text-[#7a7592] outline-none placeholder:text-[#9b92be] dark:text-white/58 dark:placeholder:text-white/35`;
+const SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
+  color: "rgb(122, 117, 146)",
+  fontFamily: "inherit",
+  fontSize: "13px",
+  fontWeight: 500,
+  letterSpacing: "normal",
+  lineHeight: "13px",
+};
+const PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
+  color: "rgb(122, 117, 146)",
+  fontFamily: "inherit",
+  fontSize: "13px",
+  fontWeight: 500,
+  letterSpacing: "normal",
+  lineHeight: "13px",
+};
+const STEP_TYPOGRAPHY_DEBUG_ACTIVE_INPUT_ATTR = "data-adhdice-step-typography-active-input";
+const STEP_TYPOGRAPHY_DEBUG_VISIBLE_TITLE_ATTR = "data-adhdice-step-typography-visible-title";
+type StepTypographyDebugEntry = {
+  appearance: string;
+  borderBottomWidth: string;
+  borderTopWidth: string;
+  boundingBox: {
+    height: number;
+    left: number;
+    top: number;
+    width: number;
+  };
+  className: string;
+  color: string;
+  fontFamily: string;
+  fontSize: string;
+  fontWeight: string;
+  height: string;
+  letterSpacing: string;
+  lineHeight: string;
+  paddingBottom: string;
+  paddingLeft: string;
+  paddingRight: string;
+  paddingTop: string;
+  tagName: string;
+  transform: string;
+  webkitAppearance: string;
+  zoom: string;
+};
+type StepTypographyDebugPayload = {
+  activeInput: StepTypographyDebugEntry | null;
+  activeInputSelector: string;
+  generatedAt: string;
+  nearestVisibleTitle: StepTypographyDebugEntry | null;
+  visibleTitleSelector: string;
+};
+
+function getStepTypographyDebugEntry(element: Element | null): StepTypographyDebugEntry | null {
+  if (!(element instanceof HTMLElement)) {
+    return null;
+  }
+
+  const styles = window.getComputedStyle(element);
+  const bounds = element.getBoundingClientRect();
+
+  return {
+    appearance: styles.getPropertyValue("appearance"),
+    borderBottomWidth: styles.borderBottomWidth,
+    borderTopWidth: styles.borderTopWidth,
+    boundingBox: {
+      height: bounds.height,
+      left: bounds.left,
+      top: bounds.top,
+      width: bounds.width,
+    },
+    className: element.className,
+    color: styles.color,
+    fontFamily: styles.fontFamily,
+    fontSize: styles.fontSize,
+    fontWeight: styles.fontWeight,
+    height: styles.height,
+    letterSpacing: styles.letterSpacing,
+    lineHeight: styles.lineHeight,
+    paddingBottom: styles.paddingBottom,
+    paddingLeft: styles.paddingLeft,
+    paddingRight: styles.paddingRight,
+    paddingTop: styles.paddingTop,
+    tagName: element.tagName,
+    transform: styles.transform,
+    webkitAppearance: styles.getPropertyValue("-webkit-appearance"),
+    zoom: styles.getPropertyValue("zoom"),
+  };
+}
+
+function findNearestVisibleStepTitle(activeInput: HTMLElement): HTMLElement | null {
+  const visibleTitles = Array.from(document.querySelectorAll<HTMLElement>(`[${STEP_TYPOGRAPHY_DEBUG_VISIBLE_TITLE_ATTR}]`));
+  const inputBounds = activeInput.getBoundingClientRect();
+  const inputCenterX = inputBounds.left + inputBounds.width / 2;
+  const inputCenterY = inputBounds.top + inputBounds.height / 2;
+
+  return visibleTitles.reduce<{ distance: number; title: HTMLElement | null }>((nearest, title) => {
+    const titleBounds = title.getBoundingClientRect();
+    const titleCenterX = titleBounds.left + titleBounds.width / 2;
+    const titleCenterY = titleBounds.top + titleBounds.height / 2;
+    const distance = Math.hypot(titleCenterX - inputCenterX, titleCenterY - inputCenterY);
+
+    return distance < nearest.distance ? { distance, title } : nearest;
+  }, { distance: Number.POSITIVE_INFINITY, title: null }).title;
+}
+
+function installStepTypographyDebugHelper() {
+  if (process.env.NODE_ENV !== "development" || typeof window === "undefined") {
+    return;
+  }
+
+  window.copyAdhdiceStepTypographyDebug = async () => {
+    const activeInput = document.querySelector<HTMLElement>(`[${STEP_TYPOGRAPHY_DEBUG_ACTIVE_INPUT_ATTR}]:focus`)
+      ?? document.querySelector<HTMLElement>(`[${STEP_TYPOGRAPHY_DEBUG_ACTIVE_INPUT_ATTR}]`);
+    const nearestVisibleTitle = activeInput ? findNearestVisibleStepTitle(activeInput) : null;
+    const payload: StepTypographyDebugPayload = {
+      activeInput: getStepTypographyDebugEntry(activeInput),
+      activeInputSelector: `[${STEP_TYPOGRAPHY_DEBUG_ACTIVE_INPUT_ATTR}]`,
+      generatedAt: new Date().toISOString(),
+      nearestVisibleTitle: getStepTypographyDebugEntry(nearestVisibleTitle),
+      visibleTitleSelector: `[${STEP_TYPOGRAPHY_DEBUG_VISIBLE_TITLE_ATTR}]`,
+    };
+    const text = JSON.stringify(payload, null, 2);
+
+    console.log("ADHDice step typography debug", payload);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      console.log("ADHDice step typography debug copied to clipboard.");
+    }
+
+    return payload;
+  };
+}
+
 function normalizeTaskListLabel(value: string) {
   return value.trim().toLowerCase();
 }
@@ -253,6 +394,10 @@ function InlineSubtaskEditor({
   onSetStatus?: (subtaskId: string, nextStatus: TaskSubtaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
 }) {
+  useEffect(() => {
+    installStepTypographyDebugHelper();
+  }, []);
+
   return (
     <div className="space-y-2">
       {subtasks.map((subtask, subtaskIndex) => (
@@ -264,7 +409,8 @@ function InlineSubtaskEditor({
               </div>
               <input
                 autoFocus={autofocusSubtaskId === subtask.id}
-                className={`min-w-0 flex-1 bg-transparent text-sm leading-6 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:text-white dark:placeholder:text-white/35 ${subtask.status === "done" ? "line-through opacity-60" : ""}`}
+                className={`${SUBTASK_RENAME_INPUT_TEXT_CLASS} ${subtask.status === "done" ? "line-through opacity-60" : ""}`}
+                data-adhdice-step-typography-active-input={process.env.NODE_ENV === "development" ? "true" : undefined}
                 onBlur={() => onCommitTitle?.(subtask.id)}
                 onChange={(event) => onDraftChange(subtask.id, event.target.value)}
                 onFocus={() => {
@@ -279,6 +425,7 @@ function InlineSubtaskEditor({
                   }
                 }}
                 placeholder="Step..."
+                style={SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE}
                 type="text"
                 value={drafts[subtask.id] ?? subtask.title}
               />
@@ -339,24 +486,87 @@ function InlineSubtaskEditor({
 }
 
 function TaskCellSubtaskTree({
+  autofocusSubtaskId,
+  drafts,
   depth = 0,
+  editingSubtaskId,
+  ownerTaskId,
   onAddChild,
+  onAddStep,
+  onAutofocusHandled,
+  onCommitTitle,
   onDelete,
+  onDraftChange,
+  onStartEditing,
   onSetStatus,
   subtasks,
 }: {
+  autofocusSubtaskId?: string | null;
+  drafts: Record<string, string>;
   depth?: number;
+  editingSubtaskId?: string | null;
+  ownerTaskId?: string;
   onAddChild?: (subtaskId: string) => void;
+  onAddStep?: (taskId: string) => void;
+  onAutofocusHandled?: () => void;
+  onCommitTitle?: (subtaskId: string) => void;
   onDelete?: (subtaskId: string) => void;
+  onDraftChange: (subtaskId: string, value: string) => void;
+  onStartEditing?: (subtaskId: string, currentTitle: string) => void;
   onSetStatus?: (subtaskId: string, nextStatus: TaskSubtaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
 }) {
   const [expandedStatusSubtaskId, setExpandedStatusSubtaskId] = useState<string | null>(null);
 
+  useEffect(() => {
+    installStepTypographyDebugHelper();
+  }, []);
+
+  function getNextSubtaskAction(currentInput: HTMLInputElement, subtaskId: string) {
+    const stepTree = currentInput.closest("[data-step-tree-root='true']");
+    if (!(stepTree instanceof HTMLElement)) {
+      return null;
+    }
+
+    const stepRows = Array.from(stepTree.querySelectorAll<HTMLElement>("[data-subtask-row-id]"));
+    const currentRowIndex = stepRows.findIndex((row) => row.dataset.subtaskRowId === subtaskId);
+    if (currentRowIndex < 0) {
+      return null;
+    }
+
+    const currentRow = stepRows[currentRowIndex];
+    const nextRow = stepRows[currentRowIndex + 1];
+    const nextSubtaskId = nextRow?.dataset.subtaskRowId;
+    const nextSubtaskTitle = nextRow?.dataset.subtaskTitle;
+    if (nextSubtaskId && typeof nextSubtaskTitle === "string") {
+      return {
+        kind: "edit" as const,
+        subtaskId: nextSubtaskId,
+        title: nextSubtaskTitle,
+      };
+    }
+
+    const currentDepth = Number.parseInt(currentRow?.dataset.subtaskDepth ?? "", 10);
+    if (ownerTaskId && currentDepth === 0) {
+      return {
+        kind: "create" as const,
+        taskId: ownerTaskId,
+      };
+    }
+
+    return null;
+  }
+
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" data-step-tree-root={depth === 0 ? "true" : undefined}>
       {subtasks.map((subtask, subtaskIndex) => (
-        <div className="space-y-1.5" key={`${subtask.id || "subtask"}-${subtaskIndex}`}>
+        <div
+          className="space-y-1.5"
+          data-subtask-depth={depth}
+          data-subtask-row-id={subtask.id}
+          data-subtask-title={subtask.title}
+          key={`${subtask.id || "subtask"}-${subtaskIndex}`}
+        >
           <div className="flex min-w-0 items-center gap-1.5">
             <button
               aria-label={`Set step status for ${subtask.title}`}
@@ -369,9 +579,70 @@ function TaskCellSubtaskTree({
             >
               {renderTaskStatusCircle(subtask.status, "sm")}
             </button>
-            <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 whitespace-normal break-words ${subtask.status === "done" ? "opacity-60 line-through" : ""}`}>
-              {subtask.title}
-            </p>
+            {editingSubtaskId === subtask.id ? (
+              <input
+                autoFocus
+                className={`${SUBTASK_RENAME_INPUT_TEXT_CLASS} h-[15px] min-h-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6] ${subtask.status === "done" ? "opacity-60 line-through" : ""}`}
+                data-adhdice-step-typography-active-input={process.env.NODE_ENV === "development" ? "true" : undefined}
+                onBlur={() => onCommitTitle?.(subtask.id)}
+                onChange={(event) => onDraftChange(subtask.id, event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onFocus={() => {
+                  if (autofocusSubtaskId === subtask.id) {
+                    onAutofocusHandled?.();
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const currentInput = event.currentTarget;
+                    const nextAction = getNextSubtaskAction(currentInput, subtask.id);
+                    onCommitTitle?.(subtask.id);
+                    requestAnimationFrame(() => {
+                      if (nextAction?.kind === "edit") {
+                        onStartEditing?.(nextAction.subtaskId, nextAction.title);
+                        return;
+                      }
+
+                      if (nextAction?.kind === "create") {
+                        onAddStep?.(nextAction.taskId);
+                      }
+                    });
+                    return;
+                  }
+
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onDraftChange(subtask.id, subtask.title);
+                    onCommitTitle?.(subtask.id);
+                  }
+                }}
+                onPointerDown={stopRowActionPointerEvent}
+                style={SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                type="text"
+                value={drafts[subtask.id] ?? subtask.title}
+              />
+            ) : (
+              <button
+                className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.45rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                data-subtask-title-trigger="true"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onStartEditing?.(subtask.id, subtask.title);
+                }}
+                onPointerDown={stopRowActionPointerEvent}
+                type="button"
+              >
+                <p
+                  className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 whitespace-normal break-words ${subtask.status === "done" ? "opacity-60 line-through" : ""}`}
+                  data-adhdice-step-typography-visible-title={process.env.NODE_ENV === "development" ? "true" : undefined}
+                >
+                  {subtask.title}
+                </p>
+              </button>
+            )}
             <div className="flex flex-none items-center gap-1">
               {onAddChild ? (
                 <button
@@ -426,7 +697,22 @@ function TaskCellSubtaskTree({
           ) : null}
           {subtask.children.length > 0 ? (
             <div className={`ml-[9px] border-l border-[#ede7f7] pl-4 dark:border-white/10 ${depth > 0 ? "mt-1" : ""}`}>
-              <TaskCellSubtaskTree depth={depth + 1} onAddChild={onAddChild} onDelete={onDelete} onSetStatus={onSetStatus} subtasks={subtask.children} />
+              <TaskCellSubtaskTree
+                autofocusSubtaskId={autofocusSubtaskId}
+                depth={depth + 1}
+                drafts={drafts}
+                editingSubtaskId={editingSubtaskId}
+                ownerTaskId={ownerTaskId}
+                onAddChild={onAddChild}
+                onAddStep={onAddStep}
+                onAutofocusHandled={onAutofocusHandled}
+                onCommitTitle={onCommitTitle}
+                onDelete={onDelete}
+                onDraftChange={onDraftChange}
+                onSetStatus={onSetStatus}
+                onStartEditing={onStartEditing}
+                subtasks={subtask.children}
+              />
             </div>
           ) : null}
         </div>
@@ -1044,7 +1330,7 @@ function getTrashDaysRemaining(updatedAt: string) {
   return Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
 }
 
-function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLButtonElement>) {
+function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLElement>) {
   event.stopPropagation();
 }
 
@@ -1055,6 +1341,7 @@ function TaskTitleDraftInput({
   onCommit,
   onDraftChange,
   onDone,
+  style,
   taskId,
 }: {
   autoFocus?: boolean;
@@ -1063,6 +1350,7 @@ function TaskTitleDraftInput({
   onCommit: (taskId: string) => void;
   onDraftChange: (taskId: string, draft: string) => void;
   onDone?: () => void;
+  style?: CSSProperties;
   taskId: string;
 }) {
   const [draft, setDraft] = useState(initialValue);
@@ -1094,6 +1382,7 @@ function TaskTitleDraftInput({
         }
       }}
       placeholder="Rename task"
+      style={style}
       type="text"
       value={draft}
     />
@@ -1296,6 +1585,7 @@ export function TaskManagementTableV2({
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("full");
   const [overlayAnchor, setOverlayAnchor] = useState<{ left: number; top: number } | null>(null);
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
+  const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
   const [autofocusSubtaskId, setAutofocusSubtaskId] = useState<string | null>(null);
   const [dueDrafts, setDueDrafts] = useState<Record<string, { dueOn: string; dueTime: string }>>({});
   const [estimatedMinutesDrafts, setEstimatedMinutesDrafts] = useState<Record<string, string>>({});
@@ -1865,6 +2155,7 @@ export function TaskManagementTableV2({
     }));
     const newSubtaskId = await onTaskSubtaskAdd?.(taskId);
     if (newSubtaskId) {
+      setEditingSubtaskId(newSubtaskId);
       setAutofocusSubtaskId(newSubtaskId);
     }
   }
@@ -1872,6 +2163,7 @@ export function TaskManagementTableV2({
   async function handleTaskSubtaskAddChild(subtaskId: string) {
     const newSubtaskId = await onTaskSubtaskAddChild?.(subtaskId);
     if (newSubtaskId) {
+      setEditingSubtaskId(newSubtaskId);
       setAutofocusSubtaskId(newSubtaskId);
     }
   }
@@ -1894,6 +2186,7 @@ export function TaskManagementTableV2({
       }
     }
     setEditingTaskTitleId(null);
+    setEditingSubtaskId(null);
     setSelectedTaskId(null);
     setOverlayMode("full");
     setOverlayAnchor(null);
@@ -2223,6 +2516,7 @@ export function TaskManagementTableV2({
 
   function commitSubtaskTitle(subtaskId: string) {
     const draft = subtaskTitleDrafts[subtaskId];
+    setEditingSubtaskId((current) => current === subtaskId ? null : current);
     if (draft === undefined) {
       return;
     }
@@ -3168,11 +3462,12 @@ export function TaskManagementTableV2({
               {isRenamingTitle ? (
                 <TaskTitleDraftInput
                   autoFocus
-                  className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 flex-1 rounded-[0.75rem] border border-[#ddd2ff] bg-white px-2 py-1 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                  className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 min-w-0 flex-1 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                   initialValue={titleDraft}
                   onCommit={commitTaskTitle}
                   onDone={() => setEditingTaskTitleId((current) => (current === task.id ? null : current))}
                   onDraftChange={setTitleDraft}
+                  style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                   taskId={task.id}
                 />
               ) : (
@@ -3289,9 +3584,29 @@ export function TaskManagementTableV2({
                 {subtasksExpanded ? (
                   <div className="mt-2 w-full min-w-0">
                     <TaskCellSubtaskTree
+                      autofocusSubtaskId={autofocusSubtaskId}
+                      drafts={subtaskTitleDrafts}
+                      editingSubtaskId={editingSubtaskId}
+                      ownerTaskId={task.id}
                       onAddChild={(subtaskId) => { void handleTaskSubtaskAddChild(subtaskId); }}
+                      onAddStep={(taskId) => { void handleTaskSubtaskAdd(taskId); }}
+                      onAutofocusHandled={() => setAutofocusSubtaskId(null)}
+                      onCommitTitle={commitSubtaskTitle}
                       onDelete={handleTaskSubtaskDelete}
+                      onDraftChange={(subtaskId, value) => {
+                        setSubtaskTitleDrafts((current) => ({
+                          ...current,
+                          [subtaskId]: value,
+                        }));
+                      }}
                       onSetStatus={onTaskSubtaskStatusChange}
+                      onStartEditing={(subtaskId, currentTitle) => {
+                        setEditingSubtaskId(subtaskId);
+                        setSubtaskTitleDrafts((current) => ({
+                          ...current,
+                          [subtaskId]: current[subtaskId] ?? currentTitle,
+                        }));
+                      }}
                       subtasks={visibleSubtasks}
                     />
                   </div>
@@ -3583,7 +3898,7 @@ export function TaskManagementTableV2({
         <div className={`${showHeader ? "mt-1" : ""} overflow-hidden rounded-[1.7rem]`}>
           <motion.div
             animate="visible"
-            className="adhdice-scrollbar relative max-h-[65vh] overflow-x-auto overflow-y-auto"
+            className="adhdice-scrollbar relative min-h-[min(28rem,65vh)] max-h-[65vh] overflow-x-auto overflow-y-auto"
             initial="hidden"
             onScroll={() => {
               if (rowContextMenu) {
