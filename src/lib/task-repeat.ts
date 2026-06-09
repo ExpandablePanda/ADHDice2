@@ -1,5 +1,13 @@
 import { formatDateKey } from "@/lib/task-grid-layout";
-import type { Task } from "@/lib/database.types";
+import type { Task, TaskStatus } from "@/lib/database.types";
+
+type ResolveRecurringLiveStatusOptions = {
+  currentDayKey: string;
+  dayStartTime: string;
+  nextDueDate: string;
+  now: Date;
+  timezone: string;
+};
 
 const REPEAT_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -41,6 +49,75 @@ export function calcNextDueDateFromDate(task: Task, referenceDateKey: string): s
 
   base.setDate(base.getDate() + interval);
   return formatDateKey(base);
+}
+
+function getTimePartsInTimeZone(date: Date, timezone: string) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    hourCycle: "h23",
+    minute: "2-digit",
+    timeZone: timezone,
+  });
+  const parts = formatter.formatToParts(date);
+  return {
+    hour: Number.parseInt(parts.find((part) => part.type === "hour")?.value ?? "", 10),
+    minute: Number.parseInt(parts.find((part) => part.type === "minute")?.value ?? "", 10),
+  };
+}
+
+function parseTimeToMinutes(time: string | null) {
+  if (!time) {
+    return null;
+  }
+
+  const [hoursText, minutesText] = time.split(":");
+  const hours = Number.parseInt(hoursText ?? "", 10);
+  const minutes = Number.parseInt(minutesText ?? "", 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+
+  return (hours * 60) + minutes;
+}
+
+function normalizeMinutesWithinLogicalDay(totalMinutes: number, logicalDayStartMinutes: number) {
+  return totalMinutes < logicalDayStartMinutes ? totalMinutes + 1440 : totalMinutes;
+}
+
+export function resolveRecurringLiveStatusFromNextDueDate(
+  task: Pick<Task, "due_time">,
+  {
+    currentDayKey,
+    dayStartTime,
+    nextDueDate,
+    now,
+    timezone,
+  }: ResolveRecurringLiveStatusOptions,
+): TaskStatus {
+  if (nextDueDate > currentDayKey) {
+    return "not_due";
+  }
+
+  if (nextDueDate < currentDayKey) {
+    return "pending";
+  }
+
+  const logicalDayStartMinutes = parseTimeToMinutes(dayStartTime);
+  const dueMinutes = parseTimeToMinutes(task.due_time);
+  if (logicalDayStartMinutes === null || dueMinutes === null) {
+    return "pending";
+  }
+
+  const currentTimeParts = getTimePartsInTimeZone(now, timezone);
+  if (!Number.isFinite(currentTimeParts.hour) || !Number.isFinite(currentTimeParts.minute)) {
+    return "pending";
+  }
+
+  const currentMinutes = (currentTimeParts.hour * 60) + currentTimeParts.minute;
+  const normalizedCurrentMinutes = normalizeMinutesWithinLogicalDay(currentMinutes, logicalDayStartMinutes);
+  const normalizedDueMinutes = normalizeMinutesWithinLogicalDay(dueMinutes, logicalDayStartMinutes);
+
+  return normalizedDueMinutes > normalizedCurrentMinutes ? "upcoming" : "pending";
 }
 
 export function formatRepeatSummary(task: Task) {

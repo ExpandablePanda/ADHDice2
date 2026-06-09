@@ -79,7 +79,7 @@ import { TaskEditFlows } from "./task-app/task-edit-flows";
 import { TaskListSettingsModal } from "./task-app/task-list-settings-modal";
 import { TaskListRuleRowEditor } from "./task-app/task-list-rule-row-editor";
 import { TaskRewardModal } from "./task-app/task-reward-modal";
-import { TasksListAdapter } from "./task-app/tasks-list-adapter";
+import { DuplicateTaskGroupsAdapter, TasksListAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
@@ -174,6 +174,7 @@ import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import { calcNextDueDateFromDate } from "@/lib/task-repeat";
 import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
+import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
 import {
   computeTaskHistoryStats,
   computeTaskSpecificHistoryStats,
@@ -292,7 +293,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.1.0";
+const HUD_VERSION = "5.2.2";
 const HUD_LOADING_SHELL_HEIGHT = 96;
 
 declare global {
@@ -1605,13 +1606,20 @@ export function TaskApp() {
     isOverdue,
     manualMembershipsByTaskId,
   }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId]);
-  const deferredSearchQuery = useDeferredValue(taskUiState.search.trim().toLowerCase());
+  const parsedTaskSearch = useMemo(
+    () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
+    [taskUiState.duplicateTitleMode, taskUiState.search],
+  );
+  const deferredSearchQuery = useDeferredValue(parsedTaskSearch.cleanedQuery);
+  const duplicateTitleModeActive = parsedTaskSearch.duplicateTitleMode;
   const taskUiStateForDerivedData = useMemo(() => ({
+    duplicateTitleMode: duplicateTitleModeActive,
     energyFilters: taskUiState.energyFilters,
     matchAny: taskUiState.matchAny,
     quickFilters: taskUiState.quickFilters,
     statusFilters: taskUiState.statusFilters,
   }), [
+    duplicateTitleModeActive,
     taskUiState.energyFilters,
     taskUiState.matchAny,
     taskUiState.quickFilters,
@@ -1679,6 +1687,7 @@ export function TaskApp() {
       waitingTasks,
     },
     doneTasks,
+    duplicateTitleGroups,
     focusPlannerTasks,
     filteredTasksSorted,
     trashFilteredTasksSorted,
@@ -1746,6 +1755,7 @@ export function TaskApp() {
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const listVisibleColumns = taskUiState.visibleColumnsByView.list;
   const listSelectionResetKey = JSON.stringify({
+    duplicateTitleMode: duplicateTitleModeActive,
     energyFilters: taskUiState.energyFilters,
     matchAny: taskUiState.matchAny,
     quickFilters: taskUiState.quickFilters,
@@ -1840,10 +1850,13 @@ export function TaskApp() {
     commitTaskReward,
     currentDayKey: todayKey,
     currentUserId: session?.user?.id ?? null,
+    dayStartTime,
+    logicalDayNow,
     setMessage,
     setTaskSubtasks,
     setTasks,
     sortTasksForUi,
+    timezone: userTimeZone,
   });
   const hudNotificationBaseItems = useMemo<HudNotificationItem[]>(() => {
     const currentItems: HudNotificationItem[] = [];
@@ -1971,11 +1984,18 @@ export function TaskApp() {
     history: {
       client,
       currentUserId: currentUserIdText,
+      currentDayKey: todayKey,
+      dayStartTime,
       isTaskCompletedForHistory,
       isTaskHistoryStatus,
       mapTaskHistoryRow,
+      now: new Date(logicalDayNow),
       setMessage,
       setTaskHistory,
+      setTasks,
+      sortTasksForUi,
+      tasks,
+      timezone: userTimeZone,
     },
     noteLinks: {
       client,
@@ -2603,6 +2623,29 @@ export function TaskApp() {
       tasks={selectedBucketTasks}
     />
   );
+  const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
+  const toggleDuplicateTitleMode = () => {
+    setTaskUiState((prev) => {
+      if (!duplicateTitleModeActive) {
+        return {
+          ...prev,
+          duplicateTitleMode: true,
+        };
+      }
+
+      const cleanedSearch = prev.search
+        .split(/\s+/)
+        .filter((token) => !DUPLICATE_TITLE_SEARCH_OPERATORS.includes(token.toLowerCase() as (typeof DUPLICATE_TITLE_SEARCH_OPERATORS)[number]))
+        .join(" ")
+        .trim();
+
+      return {
+        ...prev,
+        duplicateTitleMode: false,
+        search: cleanedSearch,
+      };
+    });
+  };
   const nonListDailyPlanningNode = (
     <DailyPlanningPanel
       focusCount={filteredFocusTasks.length}
@@ -2625,10 +2668,12 @@ export function TaskApp() {
 
   const nonListFilterRowsNode = (
     <FilterRows
-      hasActiveFilters={hasActiveTaskFilters(taskUiState)}
+      duplicateTitleMode={duplicateTitleModeActive}
+      hasActiveFilters={hasActiveTaskFilters(effectiveTaskUiState)}
       isOpen={isTaskFiltersOpen}
       matchAny={taskUiState.matchAny}
       onReset={() => setTaskUiState((prev) => resetTaskFiltersPreservingView(prev))}
+      onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
       onToggleEnergy={(energy) =>
         setTaskUiState((prev) => ({
           ...prev,
@@ -3069,17 +3114,85 @@ export function TaskApp() {
         taskHistoryModalTaskId,
         status === "clear" ? "pending" : status,
         entryDate,
+        { syncLiveTask: true },
       );
     },
     task: taskHistoryModalTask,
     taskHistory: taskHistory.filter((entry) => entry.task_id === taskHistoryModalTaskId),
     taskTitle: taskHistoryModalTask.title,
+    todayDateKey: todayKey,
   } : null;
+  const taskFilterRowsNode = (
+    <FilterRows
+      compact
+      duplicateTitleMode={duplicateTitleModeActive}
+      hasActiveFilters={hasActiveTaskFilters(effectiveTaskUiState)}
+      isOpen={isTaskFiltersOpen}
+      matchAny={taskUiState.matchAny}
+      onReset={() => setTaskUiState((prev) => resetTaskFiltersPreservingView(prev))}
+      onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
+      onToggleEnergy={(energy) =>
+        setTaskUiState((prev) => ({
+          ...prev,
+          energyFilters: prev.energyFilters.includes(energy)
+            ? prev.energyFilters.filter((value) => value !== energy)
+            : [...prev.energyFilters, energy],
+        }))
+      }
+      onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
+      onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
+      onToggleStatusFilter={(status) =>
+        setTaskUiState((prev) => ({
+          ...prev,
+          statusFilters: prev.statusFilters.includes(status)
+            ? prev.statusFilters.filter((value) => value !== status)
+            : [...prev.statusFilters, status],
+        }))
+      }
+      statusCounts={taskStatusCounts}
+      selectedStatuses={taskUiState.statusFilters}
+      selectedEnergies={taskUiState.energyFilters}
+    />
+  );
+  const listPanelProps = {
+    draggedListColumnId,
+    isKeyboardShortcutsMenuOpen,
+    isListColumnMenuOpen,
+    keyboardShortcutsMenuRef,
+    listColumnLabels: LIST_COLUMN_LABELS,
+    listColumnMenuRef,
+    listColumnPickerColumns: listColumnPickerColumns as AgentPlanColumnId[],
+    lists: listRailOptions,
+    listVisibleColumns,
+    onOpenComposer: openInlineNewListTaskComposer,
+    onOpenImport: () => { void openTaskImportPanel(); },
+    onOpenListSettings: () => setIsTaskListSettingsOpen(true),
+    onSelectBucket: setSelectedBucket,
+    onReorderListColumns: reorderListColumns,
+    onSetDraggedListColumnId: setDraggedListColumnId,
+    onSetView: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
+    onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
+    onToggleListColumn: toggleListColumn,
+    onToggleListColumnMenu: () => setIsListColumnMenuOpen((current) => !current),
+    onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
+    onUpdateSearch: (search: string) => setTaskUiState((prev) => ({ ...prev, search })),
+    search: taskUiState.search,
+    selectedBucket: taskUiState.selectedBucket,
+    shortcuts: TASK_KEYBOARD_SHORTCUTS,
+    trashCount: listRailOptions.find((list) => list.id === "trash")?.count ?? 0,
+    view: taskUiState.view,
+  };
+  const openTaskEditorFromId = (taskId: string) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (task) {
+      openExistingTaskEditor(task);
+    }
+  };
 
   const taskOperationsHeaderProps = {
     actionLabel: hasFocusedToday ? "Refocus" : "Focus",
     activeCount: filteredActiveTasks.length,
-    hideSearch: taskUiState.view === "list",
+    hideSearch: taskUiState.view === "list" || duplicateTitleModeActive,
     metric: momentumMetric,
     onCycleMomentum: () => setMomentumView(getNextMomentumView(momentumView)),
     onOpenComposer: openBlankTaskEditor,
@@ -3308,9 +3421,26 @@ export function TaskApp() {
               />
             )}
             operationsHeaderProps={taskOperationsHeaderProps}
-            view={taskUiState.view}
+            view={duplicateTitleModeActive ? "list" : taskUiState.view}
             listViewPanel={(
-              <TasksListAdapter
+              duplicateTitleModeActive ? (
+                <DuplicateTaskGroupsAdapter
+                  duplicateGroups={duplicateTitleGroups}
+                  filterRowsNode={taskFilterRowsNode}
+                  listDefinitions={availableTaskLists}
+                  listMembershipsByTaskId={taskListMembershipsByTaskId}
+                  onClearSelection={clearListTaskSelection}
+                  onOpenBatchDelete={openBatchDeleteModal}
+                  onOpenBatchEdit={openBatchEditModal}
+                  onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
+                  onOpenTaskEditor={openTaskEditorFromId}
+                  onSelectTaskIds={selectAllVisibleListTasks}
+                  onToggleTaskSelection={toggleListTaskSelection}
+                  panelProps={listPanelProps}
+                  selectedTaskIds={selectedListTaskIds}
+                />
+              ) : (
+                <TasksListAdapter
                 tableProps={{
                   allListOptions: availableTaskLists.map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
@@ -3360,12 +3490,7 @@ export function TaskApp() {
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
                   taskActualTimeEntriesByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
-                  onOpenTaskEditor: (taskId) => {
-                    const task = tasks.find((entry) => entry.id === taskId);
-                    if (task) {
-                      openExistingTaskEditor(task);
-                    }
-                  },
+                  onOpenTaskEditor: openTaskEditorFromId,
                   onFollowDetachedTask: followDetachedTask,
                   onDismissDetachedTask: dismissDetachedTask,
                   onDuplicateTask: (taskId) => {
@@ -3426,65 +3551,10 @@ export function TaskApp() {
                     todayDateKey: todayKey,
                   },
                 }}
-                filterRowsNode={(
-                  <FilterRows
-                    compact
-                    hasActiveFilters={hasActiveTaskFilters(taskUiState)}
-                    isOpen={isTaskFiltersOpen}
-                    matchAny={taskUiState.matchAny}
-                    onReset={() => setTaskUiState((prev) => resetTaskFiltersPreservingView(prev))}
-                    onToggleEnergy={(energy) =>
-                      setTaskUiState((prev) => ({
-                        ...prev,
-                        energyFilters: prev.energyFilters.includes(energy)
-                          ? prev.energyFilters.filter((value) => value !== energy)
-                          : [...prev.energyFilters, energy],
-                      }))
-                    }
-                    onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
-                    onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
-                    onToggleStatusFilter={(status) =>
-                      setTaskUiState((prev) => ({
-                        ...prev,
-                        statusFilters: prev.statusFilters.includes(status)
-                          ? prev.statusFilters.filter((value) => value !== status)
-                          : [...prev.statusFilters, status],
-                      }))
-                    }
-                    statusCounts={taskStatusCounts}
-                    selectedStatuses={taskUiState.statusFilters}
-                    selectedEnergies={taskUiState.energyFilters}
-                  />
-                )}
-                panelProps={{
-                  draggedListColumnId,
-                  isKeyboardShortcutsMenuOpen,
-                  isListColumnMenuOpen,
-                  keyboardShortcutsMenuRef,
-                  listColumnLabels: LIST_COLUMN_LABELS,
-                  listColumnMenuRef,
-                  listColumnPickerColumns: listColumnPickerColumns as AgentPlanColumnId[],
-                  lists: listRailOptions,
-                  listVisibleColumns,
-                  onOpenComposer: openInlineNewListTaskComposer,
-                  onOpenImport: () => { void openTaskImportPanel(); },
-                  onOpenListSettings: () => setIsTaskListSettingsOpen(true),
-                  onSelectBucket: setSelectedBucket,
-                  onReorderListColumns: reorderListColumns,
-                  onSetDraggedListColumnId: setDraggedListColumnId,
-                  onSetView: (view) => setTaskUiState((prev) => ({ ...prev, view })),
-                  onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
-                  onToggleListColumn: toggleListColumn,
-                  onToggleListColumnMenu: () => setIsListColumnMenuOpen((current) => !current),
-                  onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
-                  onUpdateSearch: (search) => setTaskUiState((prev) => ({ ...prev, search })),
-                  search: taskUiState.search,
-                  selectedBucket: taskUiState.selectedBucket,
-                  shortcuts: TASK_KEYBOARD_SHORTCUTS,
-                  trashCount: listRailOptions.find((list) => list.id === "trash")?.count ?? 0,
-                  view: taskUiState.view,
-                }}
+                filterRowsNode={taskFilterRowsNode}
+                panelProps={listPanelProps}
               />
+              )
             )}
             nonListViewPanel={(
               <TasksNonListShell

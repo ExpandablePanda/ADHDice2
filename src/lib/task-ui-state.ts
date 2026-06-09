@@ -23,6 +23,7 @@ export type PersistedTaskEditorUiState = {
   taskId: string | null;
 };
 export type TaskUiState = {
+  duplicateTitleMode: boolean;
   matchAny: boolean;
   quickFilters: TaskQuickFilter[];
   search: string;
@@ -44,7 +45,7 @@ export const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
 export const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
 export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
-export const TASK_UI_SCHEMA_VERSION = 2;
+export const TASK_UI_SCHEMA_VERSION = 3;
 export const VALID_TASK_VIEWS: TaskViewMode[] = ["list", "cards", "matrix", "grid"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
@@ -69,6 +70,7 @@ export const DEFAULT_VISIBLE_COLUMNS_BY_VIEW: Record<TaskViewMode, AgentPlanColu
   grid: [...DEFAULT_LIST_VISIBLE_COLUMNS],
 };
 export const DEFAULT_TASK_UI_STATE: TaskUiState = {
+  duplicateTitleMode: false,
   matchAny: true,
   quickFilters: [],
   search: "",
@@ -166,6 +168,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
   return {
     ...DEFAULT_TASK_UI_STATE,
     ...state,
+    duplicateTitleMode: state.duplicateTitleMode === true,
     selectedBucket: nextBucket,
     statusFilters: Array.isArray(state.statusFilters) ? state.statusFilters : [],
     view: nextView,

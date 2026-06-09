@@ -20,7 +20,6 @@ import {
 } from "./task-secondary-views";
 import { UrgentTasksPanelComponent } from "./task-grid-widgets";
 import type { TaskDraft } from "./task-editor-model";
-import { todayISO } from "@/lib/utils";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 import type { AppPage } from "@/lib/task-ui-state";
 import type {
@@ -460,21 +459,23 @@ export function TaskHistoryModal({
   task,
   taskHistory,
   taskTitle,
+  todayDateKey,
 }: {
   onClose: () => void;
   onSetStatus: (entryDate: string, status: "clear" | "did_my_best" | "done" | "missed") => Promise<void>;
   task: Task;
   taskHistory: DbTaskHistory[];
   taskTitle: string;
+  todayDateKey: string;
 }) {
-  const today = todayISO();
+  const today = todayDateKey;
   const totalDays = 140;
   const days = Array.from({ length: totalDays }, (_, index) => shiftDateKey(today, index - (totalDays - 1)));
   const historyByDate = new Map(taskHistory.map((historyEntry) => [historyEntry.entry_date, historyEntry]));
   const [selectedDate, setSelectedDate] = useState(() => [...historyByDate.keys()].sort().at(-1) ?? today);
   const [isSaving, setIsSaving] = useState(false);
   const weeks: string[][] = [];
-  const dueDates = buildTaskDueDateSet(task, days[0] ?? today, today);
+  const dueDates = buildTaskDueDateSet(task, days[0] ?? today, today, taskHistory);
   const stats = computeTaskSpecificHistoryStats(task, taskHistory, today, days[0] ?? today);
   const sortedHistory = [...taskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));
   const selectedEntry = historyByDate.get(selectedDate) ?? null;
@@ -624,7 +625,7 @@ export function TaskHistoryModal({
               <button className="ui-pill-button-light justify-start" disabled={isSaving || selectedIsFuture} onClick={() => { void handleSetStatus("clear"); }} type="button">Clear</button>
             </div>
             <p className="mt-4 text-xs text-[#8d87a7] dark:text-white/40">
-              Calendar edits update saved task history, streaks, and stats only. They do not change past rewards or economy.
+              Calendar edits update saved task history, streaks, and the live task status when the active unresolved state changes. They do not change past rewards or economy.
             </p>
           </section>
 

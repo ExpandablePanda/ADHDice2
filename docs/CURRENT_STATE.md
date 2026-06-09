@@ -1,12 +1,22 @@
 # Current State
 
-Last reviewed: 2026-06-08
+Last reviewed: 2026-06-09
 
 Role: active working
 
 ## Current App Version
-- Current visible app/package version: the visible UI badge and `package.json` are aligned at `5.0.11`.
+- Current visible app/package version: the visible UI badge and `package.json` are aligned at `5.1.3`.
 - Where version is displayed/updated: displayed in the top-level `TaskApp` header badge; package version is updated in `package.json`.
+- Current release group: `5.1.x`, the Table/Search Productivity Polish release group.
+
+## Release Roadmap
+
+- `5.1.x`: Table/search productivity polish
+- `5.2.x`: Rollover, history, and streak correctness
+- `5.3.x`: Smart-list rule expansion
+- `5.4.x`: Cleanup, debug instrumentation removal, QA hardening
+- `5.5.x`: Import/inbox cleanup tools
+- `5.6.x`: Automation polish
 
 ## Current Product Shape
 Brief summary of current major surfaces:

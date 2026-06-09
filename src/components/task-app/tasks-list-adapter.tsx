@@ -7,6 +7,8 @@ import {
   type RunningTaskTimer,
 } from "@/components/ui/task-management-table-v2";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
+import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
+import type { DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskListDefinition } from "@/lib/task-lists";
@@ -222,6 +224,62 @@ export function TasksListAdapter({
         />
       }
       filterRowsNode={filterRowsNode}
+    />
+  );
+}
+
+type DuplicateTaskGroupsAdapterProps = {
+  duplicateGroups: DuplicateTitleGroup[];
+  filterRowsNode: ReactNode;
+  listDefinitions: TaskListDefinition[];
+  listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
+  onClearSelection: () => void;
+  onOpenBatchDelete?: () => void;
+  onOpenBatchEdit?: () => void;
+  onOpenDeleteTask?: (taskId: string) => void;
+  onOpenTaskEditor?: (taskId: string) => void;
+  onSelectTaskIds: (taskIds: string[]) => void;
+  onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
+  panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode" | "lists" | "onShrinkAllColumns">;
+  selectedTaskIds: string[];
+};
+
+export function DuplicateTaskGroupsAdapter({
+  duplicateGroups,
+  filterRowsNode,
+  listDefinitions,
+  listMembershipsByTaskId,
+  onClearSelection,
+  onOpenBatchDelete,
+  onOpenBatchEdit,
+  onOpenDeleteTask,
+  onOpenTaskEditor,
+  onSelectTaskIds,
+  onToggleTaskSelection,
+  panelProps,
+  selectedTaskIds,
+}: DuplicateTaskGroupsAdapterProps) {
+  return (
+    <TasksListViewPanel
+      {...panelProps}
+      filterRowsNode={filterRowsNode}
+      lists={[]}
+      onShrinkAllColumns={() => {}}
+      agentPlanNode={(
+        <DuplicateTaskGroupsPanel
+          groups={duplicateGroups}
+          listDefinitions={listDefinitions}
+          listMembershipsByTaskId={listMembershipsByTaskId}
+          onClearSelection={onClearSelection}
+          onOpenBatchDelete={onOpenBatchDelete}
+          onOpenBatchEdit={onOpenBatchEdit}
+          onOpenDeleteTask={onOpenDeleteTask}
+          onOpenTaskEditor={onOpenTaskEditor}
+          onSelectTaskIds={onSelectTaskIds}
+          onToggleTaskSelection={onToggleTaskSelection}
+          selectedTaskIds={selectedTaskIds}
+        />
+      )}
     />
   );
 }

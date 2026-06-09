@@ -12,6 +12,7 @@ import {
   type TaskRewardCandidate,
   type TaskRewardResolution,
 } from "@/lib/task-rewards";
+import { resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
 import {
   isMissingTaskRewardClaimSubtaskColumnError,
   isMissingTaskRewardClaimsTableError,
@@ -29,10 +30,13 @@ type UseTaskRewardControllerOptions = {
   commitTaskReward: (opts: CommitTaskRewardOpts) => Promise<CommitTaskRewardResult>;
   currentDayKey: string;
   currentUserId: string | null;
+  dayStartTime: string;
+  logicalDayNow: number;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTaskSubtasks: Dispatch<SetStateAction<DbTaskSubtask[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
+  timezone: string;
 };
 
 export function useTaskRewardController({
@@ -41,10 +45,13 @@ export function useTaskRewardController({
   commitTaskReward,
   currentDayKey,
   currentUserId,
+  dayStartTime,
+  logicalDayNow,
   setMessage,
   setTaskSubtasks,
   setTasks,
   sortTasksForUi,
+  timezone,
 }: UseTaskRewardControllerOptions) {
   const [pendingRewardQueue, setPendingRewardQueue] = useState<PendingTaskReward[]>([]);
   const [areRewardTablesUnavailable, setAreRewardTablesUnavailable] = useState(false);
@@ -79,6 +86,16 @@ export function useTaskRewardController({
     return `${reward.rewardDate}:${claimKey}`;
   }
 
+  function getRecurringFinalizationCandidates(candidates: TaskRewardCandidate[]) {
+    return candidates
+      .filter((candidate) =>
+        !candidate.claimRef?.subtaskId
+        && candidate.task.repeat_frequency !== "none"
+        && isNewRewardCompletion(candidate.previousStatus, candidate.task.status),
+      )
+      .map((candidate) => candidate.task);
+  }
+
   async function finalizeRecurringTasks(completedTasks: Task[]) {
     if (!client || !currentUserId || completedTasks.length === 0) {
       return;
@@ -94,9 +111,17 @@ export function useTaskRewardController({
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
 
+      const nextStatus = resolveRecurringLiveStatusFromNextDueDate(task, {
+        currentDayKey,
+        dayStartTime,
+        nextDueDate: nextDue,
+        now: new Date(logicalDayNow),
+        timezone,
+      });
+
       const { data, error } = await client
         .from("adhdice_clean_tasks")
-        .update({ status: "upcoming", due_on: nextDue, completed_at: null })
+        .update({ status: nextStatus, due_on: nextDue, completed_at: null })
         .eq("id", task.id)
         .select("*")
         .single();
@@ -252,14 +277,16 @@ export function useTaskRewardController({
       return;
     }
 
+    const recurringTasksToFinalize = getRecurringFinalizationCandidates(newlyCompleted);
+
     if (areRewardTablesUnavailable) {
-      await finalizeRecurringTasks(newlyCompleted.map((candidate) => candidate.task));
+      await finalizeRecurringTasks(recurringTasksToFinalize);
       return;
     }
 
     const { eligible, ineligible, rewardDate } = await loadEligibleCandidates(newlyCompleted);
     if (ineligible.length > 0) {
-      await finalizeRecurringTasks(ineligible.map((candidate) => candidate.task));
+      await finalizeRecurringTasks(getRecurringFinalizationCandidates(ineligible));
     }
 
     if (eligible.length === 0) {
@@ -268,7 +295,7 @@ export function useTaskRewardController({
 
     const pendingReward = await buildPendingReward(eligible, rewardDate);
     if (!pendingReward) {
-      await finalizeRecurringTasks(eligible.map((candidate) => candidate.task));
+      await finalizeRecurringTasks(getRecurringFinalizationCandidates(eligible));
       return;
     }
 
@@ -278,6 +305,10 @@ export function useTaskRewardController({
         ? current
         : [...current, pendingReward],
     );
+
+    if (recurringTasksToFinalize.length > 0) {
+      await finalizeRecurringTasks(recurringTasksToFinalize);
+    }
   }
 
   async function claimPendingReward(resolution: TaskRewardResolution) {

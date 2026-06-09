@@ -1,5 +1,6 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
+import { resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
 
 export function isTaskCompletedForHistory(status: TaskStatus) {
   return status === "done" || status === "did_my_best";
@@ -22,6 +23,72 @@ export type TaskHistoryStats = {
 
 export function mapTaskHistoryRow(row: DbTaskHistory) {
   return row;
+}
+
+type TaskHistoryLiveStatusContext = {
+  currentDayKey: string;
+  dayStartTime: string;
+  now: Date;
+  timezone: string;
+};
+
+function getSortedHistoryThroughDay(history: DbTaskHistory[], currentDayKey: string) {
+  return history
+    .filter((entry) => entry.entry_date <= currentDayKey)
+    .sort((left, right) => compareDateKeys(left.entry_date, right.entry_date));
+}
+
+export function resolveLiveTaskStatusFromHistory(
+  task: Task,
+  history: DbTaskHistory[],
+  {
+    currentDayKey,
+    dayStartTime,
+    now,
+    timezone,
+  }: TaskHistoryLiveStatusContext,
+): { completedAt: string | null; status: TaskStatus } {
+  const sortedHistory = getSortedHistoryThroughDay(history, currentDayKey);
+  const latestEntry = sortedHistory.at(-1) ?? null;
+
+  if (latestEntry?.status === "missed") {
+    return {
+      completedAt: null,
+      status: "missed",
+    };
+  }
+
+  if (task.repeat_frequency === "none") {
+    if (latestEntry?.status === "done" || latestEntry?.status === "did_my_best") {
+      return {
+        completedAt: task.completed_at ?? now.toISOString(),
+        status: latestEntry.status,
+      };
+    }
+
+    return {
+      completedAt: null,
+      status: "pending",
+    };
+  }
+
+  if (!task.due_on) {
+    return {
+      completedAt: null,
+      status: "pending",
+    };
+  }
+
+  return {
+    completedAt: null,
+    status: resolveRecurringLiveStatusFromNextDueDate(task, {
+      currentDayKey,
+      dayStartTime,
+      nextDueDate: task.due_on,
+      now,
+      timezone,
+    }),
+  };
 }
 
 export function computeTaskHistoryStats(history: DbTaskHistory[], todayDateKey: string): TaskHistoryStats {
@@ -62,8 +129,11 @@ export function computeTaskHistoryStats(history: DbTaskHistory[], todayDateKey: 
   }
 
   let missedStreak = 0;
-  let missedCursor = todayDateKey;
-  while (loggedDates.includes(missedCursor) && !byDate.get(missedCursor)?.completed) {
+  const latestLoggedDate = loggedDates.at(-1) ?? null;
+  let missedCursor = byDate.has(todayDateKey)
+    ? todayDateKey
+    : latestLoggedDate;
+  while (missedCursor && loggedDates.includes(missedCursor) && !byDate.get(missedCursor)?.completed) {
     missedStreak += 1;
     missedCursor = shiftDateKey(missedCursor, -1);
   }
@@ -100,6 +170,10 @@ function monthsBetween(startDateKey: string, endDateKey: string) {
   return (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
 }
 
+function isAlignedToInterval(distance: number, interval: number) {
+  return ((distance % interval) + interval) % interval === 0;
+}
+
 function getMonthlyOccurrenceDay(task: Task, dateKey: string) {
   const date = toDate(dateKey);
   const maxDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -124,7 +198,7 @@ export function isTaskDueOnDate(task: Task, dateKey: string) {
   const interval = Math.max(1, task.repeat_interval ?? 1);
 
   if (task.repeat_frequency === "daily" || task.repeat_frequency === "custom") {
-    return daysBetween(anchorDateKey, dateKey) % interval === 0;
+    return isAlignedToInterval(daysBetween(anchorDateKey, dateKey), interval);
   }
 
   if (task.repeat_frequency === "weekly") {
@@ -141,12 +215,12 @@ export function isTaskDueOnDate(task: Task, dateKey: string) {
     const currentWeekStart = new Date(current);
     currentWeekStart.setDate(current.getDate() - current.getDay());
     const weekDiff = Math.round((currentWeekStart.getTime() - anchorWeekStart.getTime()) / (7 * 86_400_000));
-    return weekDiff >= 0 && weekDiff % interval === 0;
+    return weekDiff >= 0 && isAlignedToInterval(weekDiff, interval);
   }
 
   if (task.repeat_frequency === "monthly") {
     const monthDiff = monthsBetween(anchorDateKey, dateKey);
-    if (monthDiff < 0 || monthDiff % interval !== 0) {
+    if (monthDiff < 0 || !isAlignedToInterval(monthDiff, interval)) {
       return false;
     }
     return toDate(dateKey).getDate() === getMonthlyOccurrenceDay(task, dateKey);
@@ -155,7 +229,47 @@ export function isTaskDueOnDate(task: Task, dateKey: string) {
   return false;
 }
 
-export function buildTaskDueDateSet(task: Task, startDateKey: string, endDateKey: string) {
+function isHistoricalRecurringDueDate(task: Task, dateKey: string) {
+  const anchorDateKey = task.due_on;
+  if (!anchorDateKey || task.repeat_frequency === "none") {
+    return false;
+  }
+
+  const interval = Math.max(1, task.repeat_interval ?? 1);
+
+  if (task.repeat_frequency === "daily" || task.repeat_frequency === "custom") {
+    return isAlignedToInterval(daysBetween(anchorDateKey, dateKey), interval);
+  }
+
+  if (task.repeat_frequency === "weekly") {
+    const anchor = toDate(anchorDateKey);
+    const current = toDate(dateKey);
+    const scheduledDays = task.repeat_days_of_week?.length
+      ? task.repeat_days_of_week
+      : [anchor.getDay()];
+    if (!scheduledDays.includes(current.getDay())) {
+      return false;
+    }
+    const anchorWeekStart = new Date(anchor);
+    anchorWeekStart.setDate(anchor.getDate() - anchor.getDay());
+    const currentWeekStart = new Date(current);
+    currentWeekStart.setDate(current.getDate() - current.getDay());
+    const weekDiff = Math.round((currentWeekStart.getTime() - anchorWeekStart.getTime()) / (7 * 86_400_000));
+    return isAlignedToInterval(weekDiff, interval);
+  }
+
+  if (task.repeat_frequency === "monthly") {
+    const monthDiff = monthsBetween(anchorDateKey, dateKey);
+    if (!isAlignedToInterval(monthDiff, interval)) {
+      return false;
+    }
+    return toDate(dateKey).getDate() === getMonthlyOccurrenceDay(task, dateKey);
+  }
+
+  return false;
+}
+
+export function buildTaskDueDateSet(task: Task, startDateKey: string, endDateKey: string, history: DbTaskHistory[] = []) {
   const dueDates = new Set<string>();
   if (!task.due_on) {
     return dueDates;
@@ -167,6 +281,17 @@ export function buildTaskDueDateSet(task: Task, startDateKey: string, endDateKey
       dueDates.add(cursor);
     }
     cursor = shiftDateKey(cursor, 1);
+  }
+
+  if (task.repeat_frequency !== "none") {
+    for (const entry of history) {
+      if (compareDateKeys(entry.entry_date, startDateKey) < 0 || compareDateKeys(entry.entry_date, endDateKey) > 0) {
+        continue;
+      }
+      if (isHistoricalRecurringDueDate(task, entry.entry_date)) {
+        dueDates.add(entry.entry_date);
+      }
+    }
   }
 
   return dueDates;

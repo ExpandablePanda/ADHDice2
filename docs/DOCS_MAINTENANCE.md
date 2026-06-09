@@ -38,6 +38,11 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/ui-design-system.md` - `canonical`
 - `Skills/generated-skill-library/**/SKILL.md` - `tooling/generated`
 
+## Cross-reference notes
+
+- `AGENTS.md` carries the standing Codex workflow rules, including versioning policy.
+- `docs/CURRENT_STATE.md` carries the live app version, release group, and roadmap.
+
 ## Archive policy
 
 - `docs/archive/` exists as the home for retired documentation.

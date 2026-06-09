@@ -118,6 +118,7 @@ declare global {
 }
 
 const INLINE_ACCORDION_MODES: OverlayMode[] = ["actual", "due", "energy", "estimated", "link", "lists", "notes", "priority", "repeat", "status", "tags"];
+const BATCH_QUICK_EDIT_MODES: OverlayMode[] = ["due", "energy", "estimated", "lists", "priority", "repeat", "status", "tags"];
 
 function isInlineAccordionMode(mode: OverlayMode) {
   return INLINE_ACCORDION_MODES.includes(mode);
@@ -1661,9 +1662,11 @@ export function TaskManagementTableV2({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const [showTableScrollUp, setShowTableScrollUp] = useState(false);
+  const [quickEditTargetTaskIds, setQuickEditTargetTaskIds] = useState<string[] | null>(null);
   const hasSeenSelectedTaskInCurrentListRef = useRef(false);
   const lastShrinkAllColumnsTokenRef = useRef(0);
   const lastRowsSignatureRef = useRef(buildPrototypeRowsSignature(rows));
+  const pendingRowClickTimeoutRef = useRef<number | null>(null);
   const effectiveRunningTimers = runningTaskTimers ?? localRunningTimers;
   const effectiveActiveTimerIndex = activeTaskTimerIndex ?? localActiveTimerIndex;
   const effectiveTimerNow = taskTimerNow ?? localTimerNow;
@@ -1784,6 +1787,15 @@ export function TaskManagementTableV2({
     [structuredFilters, textFilters],
   );
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+  const rowContextMenuQuickEditTargetIds = useMemo(
+    () => rowContextMenu?.taskId && selectedTaskIdSet.has(rowContextMenu.taskId) && selectedTaskIds.length > 1
+      ? Array.from(new Set(selectedTaskIds))
+      : rowContextMenu?.taskId
+        ? [rowContextMenu.taskId]
+        : [],
+    [rowContextMenu, selectedTaskIdSet, selectedTaskIds],
+  );
+  const rowContextMenuHasBatchQuickEdit = rowContextMenuQuickEditTargetIds.length > 1;
   const shouldAnimateRows = !shouldReduceMotion && displayedTasks.length <= 80;
   const tableRowVariants: Variants | undefined = shouldAnimateRows
     ? {
@@ -2171,6 +2183,13 @@ export function TaskManagementTableV2({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  useEffect(() => () => {
+    if (pendingRowClickTimeoutRef.current !== null) {
+      window.clearTimeout(pendingRowClickTimeoutRef.current);
+      pendingRowClickTimeoutRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     if (rowContextMenu && !tasks.some((task) => task.id === rowContextMenu.taskId)) {
       setRowContextMenu(null);
@@ -2216,9 +2235,41 @@ export function TaskManagementTableV2({
     });
   }
 
+  function patchTasks(taskIds: string[], updater: (task: PrototypeTaskRow) => PrototypeTaskRow) {
+    const uniqueTaskIds = Array.from(new Set(taskIds));
+    if (uniqueTaskIds.length === 0) {
+      return;
+    }
+
+    const taskIdSet = new Set(uniqueTaskIds);
+    setTasks((current) => current.map((task) => (taskIdSet.has(task.id) ? updater(task) : task)));
+    setRetainedSelectedTask((current) => {
+      if (!current || !taskIdSet.has(current.id)) {
+        return current;
+      }
+      return clonePrototypeTaskRow(updater(current));
+    });
+  }
+
   function getTaskById(taskId: string) {
     return tasks.find((task) => task.id === taskId)
       ?? (retainedSelectedTask?.id === taskId ? retainedSelectedTask : null);
+  }
+
+  function modeSupportsBatchQuickEdit(mode: OverlayMode) {
+    return BATCH_QUICK_EDIT_MODES.includes(mode);
+  }
+
+  function getQuickEditTargetTaskIds(taskId: string) {
+    const candidateIds = quickEditTargetTaskIds?.length ? quickEditTargetTaskIds : [taskId];
+    return Array.from(new Set(candidateIds.filter((candidateId): candidateId is string => Boolean(candidateId))));
+  }
+
+  function getContextMenuQuickEditTargetTaskIds(taskId: string) {
+    if (selectedTaskIdSet.has(taskId) && selectedTaskIds.length > 1) {
+      return Array.from(new Set(selectedTaskIds));
+    }
+    return [taskId];
   }
 
   function removeSubtaskFromTree(subtasks: PrototypeTaskSubtask[], subtaskId: string): PrototypeTaskSubtask[] {
@@ -2314,6 +2365,7 @@ export function TaskManagementTableV2({
     setSelectedTaskId(null);
     setRetainedSelectedTask(null);
     setSelectedTaskLeftCurrentList(false);
+    setQuickEditTargetTaskIds(null);
     setOverlayMode("full");
     setOverlayAnchor(null);
   }
@@ -2381,7 +2433,8 @@ export function TaskManagementTableV2({
   }
 
   function setTaskDue(taskId: string, dueOn: string, dueTime: string) {
-    patchTask(taskId, (task) => ({
+    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    patchTasks(targetTaskIds, (task) => ({
       ...task,
       dueOn,
       dueTime,
@@ -2389,22 +2442,33 @@ export function TaskManagementTableV2({
         ? Array.from(new Set(task.lists.filter((list) => list !== "Inbox").concat("Today")))
         : task.lists.filter((list) => list !== "Today"),
     }));
-    onTaskDueChange?.(taskId, { dueOn, dueTime });
+    for (const targetTaskId of targetTaskIds) {
+      onTaskDueChange?.(targetTaskId, { dueOn, dueTime });
+    }
   }
 
   function setTaskStatus(taskId: string, status: TaskStatus) {
-    patchTask(taskId, (task) => ({ ...task, status }));
-    onTaskStatusChange?.(taskId, status);
+    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    patchTasks(targetTaskIds, (task) => ({ ...task, status }));
+    for (const targetTaskId of targetTaskIds) {
+      onTaskStatusChange?.(targetTaskId, status);
+    }
   }
 
   function setTaskEstimatedMinutes(taskId: string, minutes: number | null) {
-    patchTask(taskId, (task) => ({ ...task, estimatedMinutes: minutes }));
-    onTaskEstimatedMinutesChange?.(taskId, minutes);
+    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    patchTasks(targetTaskIds, (task) => ({ ...task, estimatedMinutes: minutes }));
+    for (const targetTaskId of targetTaskIds) {
+      onTaskEstimatedMinutesChange?.(targetTaskId, minutes);
+    }
   }
 
   function setTaskEnergy(taskId: string, energy: TaskEnergy) {
-    patchTask(taskId, (task) => ({ ...task, energy }));
-    onTaskEnergyChange?.(taskId, energy);
+    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    patchTasks(targetTaskIds, (task) => ({ ...task, energy }));
+    for (const targetTaskId of targetTaskIds) {
+      onTaskEnergyChange?.(targetTaskId, energy);
+    }
   }
 
   function parsePositiveDraft(value: string, fallback: number) {
@@ -2429,19 +2493,22 @@ export function TaskManagementTableV2({
     if (!currentTask) {
       return;
     }
+    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
     const nextCadence = {
       repeatDayOfMonth: cadencePatch.repeatDayOfMonth ?? currentTask.repeatDayOfMonth,
       repeatDaysOfWeek: cadencePatch.repeatDaysOfWeek ?? currentTask.repeatDaysOfWeek,
       repeatInterval: cadencePatch.repeatInterval ?? currentTask.repeatInterval,
     };
-    patchTask(taskId, (task) => {
+    patchTasks(targetTaskIds, (task) => {
       return {
         ...task,
         repeat,
         ...nextCadence,
       };
     });
-    onTaskRepeatChange?.(taskId, repeat, nextCadence);
+    for (const targetTaskId of targetTaskIds) {
+      onTaskRepeatChange?.(targetTaskId, repeat, nextCadence);
+    }
   }
 
   function setTaskRepeatInterval(task: PrototypeTaskRow, value: string) {
@@ -2602,13 +2669,19 @@ export function TaskManagementTableV2({
   }
 
   function setTaskPriorities(taskId: string, priorities: TaskPriority[]) {
-    patchTask(taskId, (task) => ({ ...task, priorities }));
-    onTaskPriorityChange?.(taskId, priorities);
+    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    patchTasks(targetTaskIds, (task) => ({ ...task, priorities }));
+    for (const targetTaskId of targetTaskIds) {
+      onTaskPriorityChange?.(targetTaskId, priorities);
+    }
   }
 
   function setTaskTags(taskId: string, tags: string[]) {
-    patchTask(taskId, (task) => ({ ...task, tags }));
-    onTaskTagsChange?.(taskId, tags);
+    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    patchTasks(targetTaskIds, (task) => ({ ...task, tags }));
+    for (const targetTaskId of targetTaskIds) {
+      onTaskTagsChange?.(targetTaskId, tags);
+    }
   }
 
   function setTaskLinkedNoteIds(taskId: string, linkedNoteIds: string[]) {
@@ -2677,29 +2750,72 @@ export function TaskManagementTableV2({
     if (!nextTag) {
       return;
     }
-    setTaskTags(taskId, Array.from(new Set([...(getTaskById(taskId)?.tags ?? []), nextTag])));
+    const targetTasks = getQuickEditTargetTaskIds(taskId)
+      .map((targetTaskId) => getTaskById(targetTaskId))
+      .filter((task): task is PrototypeTaskRow => Boolean(task));
+    if (targetTasks.length === 0) {
+      return;
+    }
+
+    const nextTagsByTaskId = new Map(
+      targetTasks.map((task) => [task.id, Array.from(new Set([...task.tags, nextTag]))] as const),
+    );
+    patchTasks(targetTasks.map((task) => task.id), (task) => ({
+      ...task,
+      tags: nextTagsByTaskId.get(task.id) ?? task.tags,
+    }));
+    for (const task of targetTasks) {
+      onTaskTagsChange?.(task.id, nextTagsByTaskId.get(task.id) ?? task.tags);
+    }
     setTagDrafts((current) => ({ ...current, [taskId]: "" }));
   }
 
   function toggleTaskTag(taskId: string, tag: string) {
     const task = getTaskById(taskId);
     if (!task) return;
-    const nextTags = task.tags.includes(tag)
-      ? task.tags.filter((entry) => entry !== tag)
-      : [...task.tags, tag];
-    setTaskTags(taskId, nextTags);
+
+    const shouldRemove = task.tags.includes(tag);
+    const targetTasks = getQuickEditTargetTaskIds(taskId)
+      .map((targetTaskId) => getTaskById(targetTaskId))
+      .filter((candidate): candidate is PrototypeTaskRow => Boolean(candidate));
+    const nextTagsByTaskId = new Map(
+      targetTasks.map((candidate) => [candidate.id, shouldRemove
+        ? candidate.tags.filter((entry) => entry !== tag)
+        : Array.from(new Set([...candidate.tags, tag]))] as const),
+    );
+    patchTasks(targetTasks.map((candidate) => candidate.id), (candidate) => ({
+      ...candidate,
+      tags: nextTagsByTaskId.get(candidate.id) ?? candidate.tags,
+    }));
+    for (const candidate of targetTasks) {
+      onTaskTagsChange?.(candidate.id, nextTagsByTaskId.get(candidate.id) ?? candidate.tags);
+    }
   }
 
   function toggleTaskList(taskId: string, listLabel: string) {
     const task = getTaskById(taskId);
     if (!task) return;
-    const nextLists = taskHasList(task, listLabel)
-      ? task.lists.filter((entry) => normalizeTaskListLabel(entry) !== normalizeTaskListLabel(listLabel))
-      : [...task.lists, listLabel];
-    patchTask(taskId, (current) => ({ ...current, lists: nextLists }));
+    const shouldRemove = taskHasList(task, listLabel);
+    const targetTasks = getQuickEditTargetTaskIds(taskId)
+      .map((targetTaskId) => getTaskById(targetTaskId))
+      .filter((candidate): candidate is PrototypeTaskRow => Boolean(candidate));
+    const changedTasks = targetTasks.filter((candidate) => shouldRemove
+      ? taskHasList(candidate, listLabel)
+      : !taskHasList(candidate, listLabel));
+    const nextListsByTaskId = new Map(
+      changedTasks.map((candidate) => [candidate.id, shouldRemove
+        ? candidate.lists.filter((entry) => normalizeTaskListLabel(entry) !== normalizeTaskListLabel(listLabel))
+        : [...candidate.lists, listLabel]] as const),
+    );
+    patchTasks(changedTasks.map((candidate) => candidate.id), (candidate) => ({
+      ...candidate,
+      lists: nextListsByTaskId.get(candidate.id) ?? candidate.lists,
+    }));
     const listId = allListOptions.find((option) => normalizeTaskListLabel(option.label) === normalizeTaskListLabel(listLabel))?.id;
     if (listId) {
-      onToggleTaskList?.(taskId, listId);
+      for (const candidate of changedTasks) {
+        onToggleTaskList?.(candidate.id, listId);
+      }
     }
   }
 
@@ -2708,11 +2824,20 @@ export function TaskManagementTableV2({
     if (!draft) return;
     const created = await onCreateTaskList?.(draft);
     if (created !== false) {
-      patchTask(taskId, (task) => ({ ...task, lists: taskHasList(task, draft) ? task.lists : [...task.lists, draft] }));
+      const targetTasks = getQuickEditTargetTaskIds(taskId)
+        .map((targetTaskId) => getTaskById(targetTaskId))
+        .filter((candidate): candidate is PrototypeTaskRow => Boolean(candidate));
+      const changedTasks = targetTasks.filter((candidate) => !taskHasList(candidate, draft));
+      patchTasks(changedTasks.map((candidate) => candidate.id), (candidate) => ({
+        ...candidate,
+        lists: [...candidate.lists, draft],
+      }));
       const createdListId = typeof created === "object" && created ? created.id : null;
       const existingListId = createdListId ?? allListOptions.find((option) => normalizeTaskListLabel(option.label) === normalizeTaskListLabel(draft))?.id;
       if (existingListId) {
-        onToggleTaskList?.(taskId, existingListId);
+        for (const candidate of changedTasks) {
+          onToggleTaskList?.(candidate.id, existingListId);
+        }
       }
       setListDrafts((current) => ({ ...current, [taskId]: "" }));
     }
@@ -2737,7 +2862,7 @@ export function TaskManagementTableV2({
     setStructuredFilters(DEFAULT_STRUCTURED_FILTERS);
   }
 
-  function openInspector(taskId: string, mode: OverlayMode = "full", sourceElement?: HTMLElement | null) {
+  function openInspector(taskId: string, mode: OverlayMode = "full", sourceElement?: HTMLElement | null, nextQuickEditTargetTaskIds: string[] | null = null) {
     if (allowInlineInspector && isInlineAccordionMode(mode) && selectedTaskId === taskId && overlayMode === mode) {
       closeInspector();
       return;
@@ -2747,6 +2872,7 @@ export function TaskManagementTableV2({
     hasSeenSelectedTaskInCurrentListRef.current = tasks.some((task) => task.id === taskId);
     setSelectedTaskLeftCurrentList(false);
     setRetainedSelectedTask((current) => current?.id === taskId ? current : null);
+    setQuickEditTargetTaskIds(nextQuickEditTargetTaskIds);
     setSelectedTaskId(taskId);
     setOverlayMode(mode);
     setOpenColumnMenuId(null);
@@ -3404,12 +3530,37 @@ export function TaskManagementTableV2({
 
   function openTaskOverlayFromContextMenu(taskId: string, mode: OverlayMode, sourceElement?: HTMLElement | null) {
     setRowContextMenu(null);
-    openInspector(taskId, mode, sourceElement);
+    openInspector(taskId, mode, sourceElement, modeSupportsBatchQuickEdit(mode) ? getContextMenuQuickEditTargetTaskIds(taskId) : null);
   }
 
   function openTaskDetailsFromContextMenu(taskId: string, sourceElement?: HTMLElement | null) {
     setRowContextMenu(null);
 
+    if (enableInspector) {
+      openInspector(taskId, "full", sourceElement);
+      return;
+    }
+
+    onRowClick?.(taskId);
+  }
+
+  function clearPendingRowClick() {
+    if (pendingRowClickTimeoutRef.current !== null) {
+      window.clearTimeout(pendingRowClickTimeoutRef.current);
+      pendingRowClickTimeoutRef.current = null;
+    }
+  }
+
+  function startTaskSelection(taskId: string, options?: { additive?: boolean; range?: boolean }) {
+    setRowContextMenu(null);
+    onToggleTaskSelection?.(taskId, {
+      additive: options?.additive ?? true,
+      range: options?.range,
+      visibleTaskIds,
+    });
+  }
+
+  function openRowPrimaryAction(taskId: string, sourceElement: HTMLElement) {
     if (enableInspector) {
       openInspector(taskId, "full", sourceElement);
       return;
@@ -4306,7 +4457,7 @@ export function TaskManagementTableV2({
             </div>
 
             {selectedTaskIds.length > 0 ? (
-              <div className="mb-4 flex flex-wrap items-center gap-3 rounded-[1.25rem] border border-[#ddd6fb] bg-[#faf8ff]/95 px-4 py-3 text-left shadow-[0_16px_40px_rgba(81,61,168,0.10)] backdrop-blur dark:border-white/10 dark:bg-[#1f1836]/95">
+              <div className="sticky top-[3rem] z-30 mb-4 flex flex-wrap items-center gap-3 rounded-[1.25rem] border border-[#ddd6fb] bg-[#faf8ff]/95 px-4 py-3 text-left shadow-[0_16px_40px_rgba(81,61,168,0.10)] backdrop-blur-md dark:border-white/10 dark:bg-[#1f1836]/95">
                 <span className="rounded-full bg-[#ede8ff] px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-[#6f57f6] dark:bg-[#2a2148] dark:text-[#cabfff]">
                   {selectedTaskIds.length} selected
                 </span>
@@ -4377,27 +4528,32 @@ export function TaskManagementTableV2({
                     className={`${CONTROL_FONT_CLASS} block w-max min-w-full text-center focus:outline-none`}
                     initial={shouldAnimateRows ? undefined : false}
                     onClick={(event) => {
-                      setRowContextMenu(null);
                       if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
-                        onToggleTaskSelection(task.id, {
+                        clearPendingRowClick();
+                        startTaskSelection(task.id, {
                           additive: true,
                           range: event.shiftKey,
-                          visibleTaskIds,
                         });
                         return;
                       }
 
-                      if (enableInspector) {
-                        openInspector(task.id, "full", event.currentTarget);
+                      clearPendingRowClick();
+                      pendingRowClickTimeoutRef.current = window.setTimeout(() => {
+                        pendingRowClickTimeoutRef.current = null;
+                        openRowPrimaryAction(task.id, event.currentTarget);
+                      }, 180);
+                    }}
+                    onDoubleClick={(event) => {
+                      if (!onToggleTaskSelection) {
                         return;
                       }
 
-                      if (onRowClick) {
-                        onRowClick(task.id);
-                        return;
-                      }
+                      event.preventDefault();
+                      clearPendingRowClick();
+                      startTaskSelection(task.id, { additive: true });
                     }}
                     onContextMenu={(event) => {
+                      clearPendingRowClick();
                       event.preventDefault();
                       event.stopPropagation();
                       openRowContextMenu(task.id, event.clientX, event.clientY);
@@ -4409,23 +4565,14 @@ export function TaskManagementTableV2({
 
                       event.preventDefault();
                       if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
-                        onToggleTaskSelection(task.id, {
+                        startTaskSelection(task.id, {
                           additive: true,
                           range: event.shiftKey,
-                          visibleTaskIds,
                         });
                         return;
                       }
 
-                      if (enableInspector) {
-                        openInspector(task.id, "full", event.currentTarget);
-                        return;
-                      }
-
-                      if (onRowClick) {
-                        onRowClick(task.id);
-                        return;
-                      }
+                      openRowPrimaryAction(task.id, event.currentTarget);
                     }}
                     role="button"
                     tabIndex={0}
@@ -4671,8 +4818,13 @@ export function TaskManagementTableV2({
               {(enableInspector || allowInlineInspector) ? (
                 <div className="border-t border-[#f0ebfb] px-1 pt-2 dark:border-white/10">
                   <p className="px-2 pb-2 text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-                    Quick edit
+                    {rowContextMenuHasBatchQuickEdit ? `Quick edit ${rowContextMenuQuickEditTargetIds.length} selected tasks` : "Quick edit"}
                   </p>
+                  {rowContextMenuHasBatchQuickEdit ? (
+                    <p className="px-2 pb-2 text-[11px] leading-5 text-[#8d87a7] dark:text-white/45">
+                      Status, due, estimate, priority, energy, repeat, lists, and tags apply to all selected. Actual, link, and notes stay single-task.
+                    </p>
+                  ) : null}
                   <div className="flex flex-wrap gap-2 px-1 pb-1">
                     {[
                       { label: "Status", mode: "status" },
@@ -4760,6 +4912,8 @@ export function TaskManagementTableV2({
                 const showLinkBlock = overlayMode === "full" || overlayMode === "link";
                 const showNotesBlock = overlayMode === "full" || overlayMode === "notes";
                 const isFocusedOverlay = overlayMode !== "full" || overlayAnchor !== null;
+                const batchQuickEditCount = quickEditTargetTaskIds?.length ?? 0;
+                const batchQuickEditLabel = batchQuickEditCount > 1 ? `Applying to ${batchQuickEditCount} selected tasks` : null;
                 const titleDraft = titleDraftsRef.current[selectedTask.id] ?? selectedTask.title;
                 const linkDraft = linkDrafts[selectedTask.id] ?? { label: selectedTask.linkLabel, url: selectedTask.linkUrl };
                 const notesDraft = notesDrafts[selectedTask.id] ?? selectedTask.notes;
@@ -5142,6 +5296,9 @@ export function TaskManagementTableV2({
               <div className="border-b border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530]" onClick={(event) => event.stopPropagation()}>
                 <div className="min-w-0 flex-1">
                   <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
+                  {batchQuickEditLabel ? (
+                    <p className="mt-1 text-[11px] leading-5 text-[#7f6af7] dark:text-[#cabfff]">{batchQuickEditLabel}</p>
+                  ) : null}
                   <div className="mt-2 flex items-center gap-2">
                     <button
                       aria-label="Edit status"
@@ -5209,6 +5366,9 @@ export function TaskManagementTableV2({
                           <div className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
                             <div className="min-w-0 flex-1">
                               <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
+                              {batchQuickEditLabel ? (
+                                <p className="mt-1 text-[11px] leading-5 text-[#7f6af7] dark:text-[#cabfff]">{batchQuickEditLabel}</p>
+                              ) : null}
                             </div>
                             <div className="mt-2 flex items-center gap-2">
                               <button
@@ -5286,6 +5446,9 @@ export function TaskManagementTableV2({
                         <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
                           <div>
                             <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
+                            {batchQuickEditLabel ? (
+                              <p className="mt-1 text-[11px] leading-5 text-[#7f6af7] dark:text-[#cabfff]">{batchQuickEditLabel}</p>
+                            ) : null}
                           </div>
                           <div className="mt-4">{metadataPanelContent}</div>
                         </section>

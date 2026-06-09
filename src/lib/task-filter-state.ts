@@ -4,7 +4,8 @@ import {
 } from "@/lib/task-ui-state";
 
 export function hasActiveTaskFilters(state: TaskUiState) {
-  return state.search.trim().length > 0
+  return state.duplicateTitleMode
+    || state.search.trim().length > 0
     || state.quickFilters.length > 0
     || state.statusFilters.length > 0
     || state.energyFilters.length > 0

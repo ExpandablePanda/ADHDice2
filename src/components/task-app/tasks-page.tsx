@@ -237,7 +237,7 @@ export function TaskOperationsHeader({
                     onSearchChange(nextValue);
                   });
                 }}
-                placeholder="Search tasks or subtasks"
+                placeholder="Search tasks, or type duplicate:title"
                 value={searchDraft}
               />
             </label>
@@ -346,7 +346,7 @@ export function TasksListViewPanel(props: {
                 onUpdateSearch(nextValue);
               });
             }}
-            placeholder="Search tasks or subtasks"
+            placeholder="Search tasks, or type duplicate:title"
             value={searchDraft}
           />
         </label>

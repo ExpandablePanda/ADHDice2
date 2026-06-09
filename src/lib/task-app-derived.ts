@@ -19,9 +19,17 @@ import type {
 import { evaluateTaskListMemberships } from "./task-lists";
 import { isTaskFinished, isTaskOpen, isTaskUrgent } from "./task-buckets";
 import { isDueToday, isOverdue } from "./task-cockpit";
+import { normalizeTitleForDuplicateDetection } from "./task-search";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
-type TaskDerivedFilterState = Pick<TaskUiState, "energyFilters" | "matchAny" | "quickFilters" | "statusFilters">;
+type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "matchAny" | "quickFilters" | "statusFilters">;
+
+export type DuplicateTitleGroup = {
+  count: number;
+  displayTitle: string;
+  normalizedTitle: string;
+  tasks: Task[];
+};
 
 const EMPTY_TASKS: Task[] = [];
 const isDevelopment = process.env.NODE_ENV !== "production";
@@ -52,6 +60,56 @@ function logTaskDeriveStep(
   pushTaskDeriveLog(
     `[tasks:derive] ${step} in ${Math.round(performance.now() - startedAt)}ms${detailString ? ` ${detailString}` : ""}`,
   );
+}
+
+function compareTasksByNewest(left: Task, right: Task) {
+  const leftCreatedAt = new Date(left.created_at).getTime();
+  const rightCreatedAt = new Date(right.created_at).getTime();
+  if (Number.isFinite(leftCreatedAt) && Number.isFinite(rightCreatedAt) && leftCreatedAt !== rightCreatedAt) {
+    return rightCreatedAt - leftCreatedAt;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function buildDuplicateTitleGroups(tasks: Task[]) {
+  const groupsByTitle = new Map<string, Task[]>();
+
+  for (const task of tasks) {
+    const normalizedTitle = normalizeTitleForDuplicateDetection(task.title);
+    if (!normalizedTitle) {
+      continue;
+    }
+
+    const currentGroup = groupsByTitle.get(normalizedTitle);
+    if (currentGroup) {
+      currentGroup.push(task);
+      continue;
+    }
+
+    groupsByTitle.set(normalizedTitle, [task]);
+  }
+
+  return Array.from(groupsByTitle.entries())
+    .map(([normalizedTitle, groupedTasks]) => {
+      const sortedTasks = [...groupedTasks].sort(compareTasksByNewest);
+      const displayTitle = sortedTasks.find((task) => task.title.trim().length > 0)?.title.trim() ?? normalizedTitle;
+
+      return {
+        count: sortedTasks.length,
+        displayTitle,
+        normalizedTitle,
+        tasks: sortedTasks,
+      } satisfies DuplicateTitleGroup;
+    })
+    .filter((group) => group.count >= 2)
+    .sort((left, right) => {
+      if (left.count !== right.count) {
+        return right.count - left.count;
+      }
+
+      return left.displayTitle.localeCompare(right.displayTitle, undefined, { sensitivity: "base" });
+    });
 }
 
 type ComputeTaskAppDerivedDataInput = {
@@ -152,6 +210,18 @@ export function computeTaskAppDerivedData({
   });
 
   const matchesTaskFilters = (task: Task) => {
+    const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(task, filter, focusedTaskIds));
+    const matchesQuickFilters = quickChecks.length === 0
+      ? true
+      : taskUiState.matchAny
+        ? quickChecks.some(Boolean)
+        : quickChecks.every(Boolean);
+    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(task.status);
+    const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
+    if (!(matchesQuickFilters && matchesStatus && matchesEnergy)) {
+      return false;
+    }
+
     const subtaskTitles = (taskSubtasksByTaskId[task.id] ?? []).map((subtask) => subtask.title);
     const haystacks = [
       task.title,
@@ -160,11 +230,10 @@ export function computeTaskAppDerivedData({
       ...subtaskTitles,
       ...(task.tags ?? []),
     ].map((value) => value.toLowerCase());
-    const matchesSearch = deferredSearchQuery.length === 0 || haystacks.some((value) => value.includes(deferredSearchQuery));
-    if (!matchesSearch) {
-      return false;
-    }
+    return deferredSearchQuery.length === 0 || haystacks.some((value) => value.includes(deferredSearchQuery));
+  };
 
+  const matchesTaskStructuredFilters = (task: Task) => {
     const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(task, filter, focusedTaskIds));
     const matchesQuickFilters = quickChecks.length === 0
       ? true
@@ -214,6 +283,21 @@ export function computeTaskAppDerivedData({
     tasks: filteredTrashTasks.length,
   });
 
+  const duplicateGroupsStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
+  const duplicateTitleGroups = activePage !== "Tasks" || !taskUiState.duplicateTitleMode
+    ? []
+    : buildDuplicateTitleGroups(visibleTasks.filter(matchesTaskStructuredFilters))
+      .filter((group) => deferredSearchQuery.length === 0 || group.tasks.some((task) => matchesTaskFilters(task)));
+  logTaskDeriveStep("duplicate title grouping", duplicateGroupsStartedAt, {
+    groups: duplicateTitleGroups.length,
+    tasks: duplicateTitleGroups.reduce((count, group) => count + group.tasks.length, 0),
+  });
+
+  const duplicateGroupTaskIds = new Set<string>(duplicateTitleGroups.flatMap((group) => group.tasks.map((task) => task.id)));
+  const duplicateGroupTasks = visibleTasks
+    .filter((task) => duplicateGroupTaskIds.has(task.id))
+    .sort(compareTasksByNewest);
+
   const taskListMembershipPerf: TaskListEvaluationPerf | undefined = isDevelopment
     ? {
       inboxCheckMs: 0,
@@ -226,9 +310,10 @@ export function computeTaskAppDerivedData({
     }
     : undefined;
   const membershipStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
+  const membershipSourceTasks = taskUiState.duplicateTitleMode ? duplicateGroupTasks : filteredTasksSorted;
   const taskListMembershipsByTaskId = activePage !== "Tasks"
     ? {}
-    : filteredTasksSorted.reduce<Record<string, ReturnType<typeof evaluateTaskListMemberships>>>((accumulator, task) => {
+    : membershipSourceTasks.reduce<Record<string, ReturnType<typeof evaluateTaskListMemberships>>>((accumulator, task) => {
       accumulator[task.id] = evaluateTaskListMemberships(task, availableTaskLists, taskListEvaluationContext, taskListMembershipPerf);
       return accumulator;
     }, {});
@@ -239,7 +324,7 @@ export function computeTaskAppDerivedData({
     lists: availableTaskLists.length,
     matchedMemberships: taskListMembershipPerf?.matchedRuleMemberships ?? 0,
     rules: availableRuleCount,
-    tasks: filteredTasksSorted.length,
+    tasks: membershipSourceTasks.length,
   });
 
   const visibleCountStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
@@ -371,6 +456,7 @@ export function computeTaskAppDerivedData({
     activeTasks,
     allTaskTags,
     collections,
+    duplicateTitleGroups,
     doneTasks,
     focusPlannerTasks,
     listColumnPickerColumns,

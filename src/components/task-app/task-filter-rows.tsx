@@ -12,10 +12,12 @@ const CHIP_MUTED_CLASS = "inline-flex items-center rounded-full bg-[#f1ecff] px-
 
 type FilterRowsProps = {
   compact?: boolean;
+  duplicateTitleMode: boolean;
   hasActiveFilters: boolean;
   isOpen: boolean;
   matchAny: boolean;
   onReset: () => void;
+  onToggleDuplicateTitleMode: () => void;
   onToggleEnergy: (energy: TaskEnergy) => void;
   onToggleMatchMode: () => void;
   onToggleOpen: () => void;
@@ -27,10 +29,12 @@ type FilterRowsProps = {
 
 export function FilterRowsComponent({
   compact = false,
+  duplicateTitleMode,
   hasActiveFilters,
   isOpen,
   matchAny,
   onReset,
+  onToggleDuplicateTitleMode,
   onToggleEnergy,
   onToggleMatchMode,
   onToggleOpen,
@@ -39,7 +43,7 @@ export function FilterRowsComponent({
   selectedStatuses,
   statusCounts,
 }: FilterRowsProps) {
-  const activeFilterCount = selectedStatuses.length + selectedEnergies.length;
+  const activeFilterCount = selectedStatuses.length + selectedEnergies.length + (duplicateTitleMode ? 1 : 0);
 
   return (
     <div className={`${compact ? "relative" : "mt-5"}`}>
@@ -62,6 +66,17 @@ export function FilterRowsComponent({
           } rounded-[1.2rem] border border-[#efe9ff] bg-white p-4 shadow-[0_18px_36px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#171328]`}
         >
           <div className="space-y-4">
+            <div>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Search modes</p>
+                {duplicateTitleMode ? (
+                  <span className="text-xs font-semibold text-[#7c86a2] dark:text-white/50">1 active</span>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Pill onClick={onToggleDuplicateTitleMode} selected={duplicateTitleMode}>Duplicates</Pill>
+              </div>
+            </div>
             <div>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Status</p>

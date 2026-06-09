@@ -112,3 +112,18 @@ Optimize for safe work, low regression risk, clean organization, and design cons
 - After each completed implementation prompt, bump the visible app version and return numbered manual checks.
 - Do not create new documentation files unless explicitly asked.
 - Do not add long historical thread summaries to active repo docs.
+
+## Versioning
+
+- Use semantic-style app versions as `MAJOR.MINOR.PATCH`.
+- Treat `MAJOR` as a large app era or major architecture milestone.
+- Treat `MINOR` as a wishlist feature group or release theme.
+- Treat `PATCH` as one implementation step, bugfix, polish pass, or verification fix.
+- Keep `5.1.x` as the current Table/Search Productivity Polish release group unless a new release group is explicitly approved.
+- Do not bump version for planning-only Codex threads.
+- Do not bump version for diagnosis-only Codex threads unless code changes are made.
+- For code-changing implementation tickets, bump package and visible app version to the next patch version within the current minor release.
+- Do not jump minor versions unless the user explicitly says a new release group is starting.
+- Do not jump major versions unless the user explicitly approves a major app-era change.
+- If version drift exists between package version and visible app version, report it before changing unless the task explicitly includes version sync.
+- Each implementation final response should confirm the new version or confirm no version bump was made because no code changed.
