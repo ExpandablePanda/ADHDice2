@@ -293,8 +293,37 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.2.2";
+const HUD_VERSION = "5.2.4";
 const HUD_LOADING_SHELL_HEIGHT = 96;
+
+function isKeyboardEventFromEditableTarget(
+  target: EventTarget | null,
+  options?: { isTextEditingActive?: boolean },
+) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable || target.closest('[contenteditable=""], [contenteditable="true"]')) {
+    return true;
+  }
+
+  const editableRoleSelector = '[role="textbox"], [role="searchbox"], [role="combobox"], [role="spinbutton"], [aria-multiline="true"]';
+  if (target.matches(editableRoleSelector) || target.closest(editableRoleSelector)) {
+    return true;
+  }
+
+  const formFieldSelector = "input, textarea, select";
+  if (target.matches(formFieldSelector) || target.closest(formFieldSelector)) {
+    return true;
+  }
+
+  if (options?.isTextEditingActive && (target.tagName === "BUTTON" || Boolean(target.closest("button")))) {
+    return true;
+  }
+
+  return false;
+}
 
 declare global {
   interface Window {
@@ -808,6 +837,7 @@ export function TaskApp() {
   const [taskActualTimeEntryTaskId, setTaskActualTimeEntryTaskId] = useState<string | null>(null);
   const [taskActualTimeEntryPrefill, setTaskActualTimeEntryPrefill] = useState<{ durationSeconds: number; title: string } | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
+  const [suppressDetachedListNoticeTaskId, setSuppressDetachedListNoticeTaskId] = useState<string | null>(null);
   const [activeTaskTimerIndex, setActiveTaskTimerIndex] = useState(0);
   const [logicalDayNow, setLogicalDayNow] = useState(() => Date.now());
   const [notePageOpenNoteId, setNotePageOpenNoteId] = useState<string | null>(null);
@@ -1819,6 +1849,7 @@ export function TaskApp() {
       ...prev,
       selectedBucket: destination.id,
     }));
+    setSuppressDetachedListNoticeTaskId(null);
     setRequestedListOverlayTaskId(taskId);
   }, [getFollowTaskDestination, setTaskUiState]);
   const dismissDetachedTask = useCallback((taskId: string) => {
@@ -2076,6 +2107,7 @@ export function TaskApp() {
   });
 
   const openBlankTaskEditor = useCallback(() => {
+    setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorInitialDraft(null);
     openNewTaskEditor();
   }, [openNewTaskEditor]);
@@ -2119,10 +2151,12 @@ export function TaskApp() {
       routeTask(createdTask.id, taskUiState.selectedBucket);
     }
 
+    setSuppressDetachedListNoticeTaskId(createdTask.id);
     setRequestedListOverlayTaskId(createdTask.id);
   }, [addTask, routeTask, taskUiState.selectedBucket]);
 
   const openExistingTaskEditor = useCallback((task: Task) => {
+    setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorInitialDraft(null);
     openEditTaskEditor(task);
   }, [openEditTaskEditor]);
@@ -2233,14 +2267,6 @@ export function TaskApp() {
       ? tasks.find((task) => task.id === primarySelectedTaskId) ?? null
       : null;
 
-    const isTextInput = (target: EventTarget | null) => {
-      if (!(target instanceof HTMLElement)) {
-        return false;
-      }
-
-      return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
-    };
-
     const isInsideDialog = (target: EventTarget | null) => {
       if (!(target instanceof HTMLElement)) {
         return false;
@@ -2250,7 +2276,11 @@ export function TaskApp() {
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isTextInput(event.target) || isInsideDialog(event.target)) {
+      if (
+        event.defaultPrevented
+        || isKeyboardEventFromEditableTarget(event.target)
+        || isInsideDialog(event.target)
+      ) {
         return;
       }
 
@@ -2262,7 +2292,7 @@ export function TaskApp() {
 
       if (event.key.toLowerCase() === "a" || event.key.toLowerCase() === "n") {
         event.preventDefault();
-        openBlankTaskEditor();
+        void openInlineNewListTaskComposer();
         return;
       }
 
@@ -2317,7 +2347,7 @@ export function TaskApp() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activePage, deferTask, focusTask, lastSelectedListTaskId, openBlankTaskEditor, openExistingTaskEditor, openFocusPlanner, planTasksForToday, selectedListTaskIds, sendTaskToWaiting, tasks, updateTask]);
+  }, [activePage, deferTask, focusTask, lastSelectedListTaskId, openExistingTaskEditor, openFocusPlanner, openInlineNewListTaskComposer, planTasksForToday, selectedListTaskIds, sendTaskToWaiting, tasks, updateTask]);
 
   const shellZoomStyle = useMemo<CSSProperties | undefined>(() => {
     if (mobileZoom === 1) {
@@ -2623,6 +2653,9 @@ export function TaskApp() {
       tasks={selectedBucketTasks}
     />
   );
+  const requestedOpenListTask = requestedListOverlayTaskId
+    ? tasks.find((task) => task.id === requestedListOverlayTaskId) ?? null
+    : null;
   const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
   const toggleDuplicateTitleMode = () => {
     setTaskUiState((prev) => {
@@ -3195,7 +3228,7 @@ export function TaskApp() {
     hideSearch: taskUiState.view === "list" || duplicateTitleModeActive,
     metric: momentumMetric,
     onCycleMomentum: () => setMomentumView(getNextMomentumView(momentumView)),
-    onOpenComposer: openBlankTaskEditor,
+    onOpenComposer: openInlineNewListTaskComposer,
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenMomentumDetails: openMomentumDetails,
@@ -3305,7 +3338,7 @@ export function TaskApp() {
                       hudUiState={hudUiState}
                       urgentTaskCount={filteredUrgentTasks.length}
                       onOpenAccount={() => setIsAccountOpen(true)}
-                      onOpenComposer={openBlankTaskEditor}
+                      onOpenComposer={openInlineNewListTaskComposer}
                       onOpenFocusPlanner={openFocusPlanner}
                       onOpenQuickCapture={() => { void openTaskImportPanel(); }}
                       onNextTaskTimer={() => cycleHudTaskTimer("next")}
@@ -3537,7 +3570,9 @@ export function TaskApp() {
                   onSetTitle: (taskId, title) => { void updateTask(taskId, { title }); },
                   onToggleTaskSelection: toggleListTaskSelection,
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
+                  requestedOpenTask: requestedOpenListTask,
                   requestedOpenTaskId: requestedListOverlayTaskId,
+                  suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
                   tasks: selectedBucketTasks,

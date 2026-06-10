@@ -70,6 +70,8 @@ type TasksTableSourceProps = {
   taskActualTimeEntriesByTaskId?: Record<string, TaskActualTimeEntry[]>;
   runningTaskTimers?: RunningTaskTimer[];
   activeTaskTimerIndex?: number;
+  requestedOpenTask?: Task | null;
+  suppressDetachedNoticeTaskId?: string | null;
   tasks: Task[];
   rowContext: {
     focusedTaskIdSet: Set<string>;
@@ -150,6 +152,20 @@ export function TasksListAdapter({
     () => tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? [],
     [tableProps.allNoteOptions],
   );
+  const requestedOpenTaskRow = useMemo(
+    () => tableProps.requestedOpenTask
+      ? buildTaskTableRow(tableProps.requestedOpenTask, {
+        focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
+        linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        listDefinitions: tableProps.rowContext.listDefinitions,
+        listMemberships: tableProps.rowContext.listMembershipsByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        todayDateKey: tableProps.rowContext.todayDateKey,
+      })
+      : null,
+    [tableProps.requestedOpenTask, tableProps.rowContext],
+  );
 
   return (
     <TasksListViewPanel
@@ -213,6 +229,8 @@ export function TasksListAdapter({
           rows={rows}
           runningTaskTimers={tableProps.runningTaskTimers}
           requestedOpenTaskId={tableProps.requestedOpenTaskId}
+          requestedOpenTask={requestedOpenTaskRow}
+          suppressDetachedNoticeTaskId={tableProps.suppressDetachedNoticeTaskId}
           secondaryBadgeLabel="List view"
           selectedTaskIds={tableProps.selectedTaskIds}
           showHeader={false}

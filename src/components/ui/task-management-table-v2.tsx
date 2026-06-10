@@ -776,6 +776,35 @@ type TaskFollowDestination = {
   label: string;
 };
 
+function isKeyboardEventFromEditableTarget(
+  target: EventTarget | null,
+  options?: { isTextEditingActive?: boolean },
+) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable || target.closest('[contenteditable=""], [contenteditable="true"]')) {
+    return true;
+  }
+
+  const editableRoleSelector = '[role="textbox"], [role="searchbox"], [role="combobox"], [role="spinbutton"], [aria-multiline="true"]';
+  if (target.matches(editableRoleSelector) || target.closest(editableRoleSelector)) {
+    return true;
+  }
+
+  const formFieldSelector = "input, textarea, select";
+  if (target.matches(formFieldSelector) || target.closest(formFieldSelector)) {
+    return true;
+  }
+
+  if (options?.isTextEditingActive && (target.tagName === "BUTTON" || Boolean(target.closest("button")))) {
+    return true;
+  }
+
+  return false;
+}
+
 type TaskManagementTableV2Props = {
   allowInlineInspector?: boolean;
   allListOptions?: Array<{ id: string; label: string }>;
@@ -836,6 +865,8 @@ type TaskManagementTableV2Props = {
   rows?: PrototypeTaskRow[];
   runningTaskTimers?: RunningTaskTimer[];
   requestedOpenTaskId?: string | null;
+  requestedOpenTask?: PrototypeTaskRow | null;
+  suppressDetachedNoticeTaskId?: string | null;
   selectedTaskIds?: string[];
   secondaryBadgeLabel?: string;
   taskTimerNow?: number;
@@ -1602,6 +1633,8 @@ export function TaskManagementTableV2({
   rows = DEFAULT_ROWS,
   runningTaskTimers,
   requestedOpenTaskId = null,
+  requestedOpenTask = null,
+  suppressDetachedNoticeTaskId = null,
   selectedTaskIds = [],
   secondaryBadgeLabel = "Test page only",
   showHeader = true,
@@ -1858,18 +1891,41 @@ export function TaskManagementTableV2({
   }, [displayedTasks.length, hasMoreRows, onLoadMoreRows, remainingRenderedTaskCount]);
 
   useEffect(() => {
-    if (!requestedOpenTaskId || !tasks.some((task) => task.id === requestedOpenTaskId)) {
+    if (!requestedOpenTaskId) {
       return;
     }
 
-    if (selectedTaskId === requestedOpenTaskId && selectedTaskFromRows?.id === requestedOpenTaskId) {
+    const requestedVisibleTask = tasks.find((task) => task.id === requestedOpenTaskId) ?? null;
+    const requestedRetainedTask = requestedOpenTask?.id === requestedOpenTaskId ? requestedOpenTask : null;
+    const requestedTask = requestedVisibleTask ?? requestedRetainedTask;
+
+    if (!requestedTask) {
+      return;
+    }
+
+    if (selectedTaskId === requestedOpenTaskId && selectedTask?.id === requestedOpenTaskId) {
       onRequestedOpenTaskHandled?.(requestedOpenTaskId);
       return;
     }
 
-    openInspector(requestedOpenTaskId, "full", shellRef.current);
+    if (requestedVisibleTask) {
+      openInspector(requestedOpenTaskId, "full");
+      onRequestedOpenTaskHandled?.(requestedOpenTaskId);
+      return;
+    }
+
+    setEditingTaskTitleId(null);
+    setEditingSubtaskId(null);
+    hasSeenSelectedTaskInCurrentListRef.current = false;
+    setRetainedSelectedTask(clonePrototypeTaskRow(requestedTask));
+    setSelectedTaskLeftCurrentList(true);
+    setQuickEditTargetTaskIds(null);
+    setSelectedTaskId(requestedOpenTaskId);
+    setOverlayMode("full");
+    setOpenColumnMenuId(null);
+    setOverlayAnchor(null);
     onRequestedOpenTaskHandled?.(requestedOpenTaskId);
-  }, [onRequestedOpenTaskHandled, requestedOpenTaskId, selectedTaskFromRows, selectedTaskId, tasks]);
+  }, [onRequestedOpenTaskHandled, requestedOpenTask, requestedOpenTaskId, selectedTask, selectedTaskId, tasks]);
   const mergedListOptions = useMemo(() => {
     const byLabel = new Map<string, { id: string; label: string }>();
     for (const option of allListOptions) {
@@ -2876,6 +2932,10 @@ export function TaskManagementTableV2({
     setSelectedTaskId(taskId);
     setOverlayMode(mode);
     setOpenColumnMenuId(null);
+    if (mode === "full") {
+      setOverlayAnchor(null);
+      return;
+    }
     if (allowInlineInspector && isInlineAccordionMode(mode)) {
       setOverlayAnchor(null);
       return;
@@ -4559,6 +4619,10 @@ export function TaskManagementTableV2({
                       openRowContextMenu(task.id, event.clientX, event.clientY);
                     }}
                     onKeyDown={(event) => {
+                      if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                        return;
+                      }
+
                       if (event.key !== "Enter" && event.key !== " ") {
                         return;
                       }
@@ -5251,7 +5315,8 @@ export function TaskManagementTableV2({
                     )}
                   </div>
                 ) : null;
-                const detachedTaskNotice = selectedTaskIsDetached ? (
+                const shouldShowDetachedTaskNotice = selectedTaskIsDetached && suppressDetachedNoticeTaskId !== selectedTask.id;
+                const detachedTaskNotice = shouldShowDetachedTaskNotice ? (
                   <div className="rounded-[1rem] border border-[#ffe2af] bg-[#fff8ea] px-4 py-3 text-[#7b5b12] dark:border-[#5c4920] dark:bg-[#362814] dark:text-[#f3d38a]">
                     <p className="text-[11px] font-medium uppercase tracking-[0.18em]">Left current list</p>
                     <p className="mt-1 text-sm leading-6">
@@ -5289,10 +5354,92 @@ export function TaskManagementTableV2({
                     </div>
                   </div>
                 ) : null;
+                const fullDesktopEditorContent = (
+                  <div className="grid gap-3 lg:grid-cols-[1.05fr_0.95fr]">
+                    <div className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
+                        {batchQuickEditLabel ? (
+                          <p className="mt-1 text-[11px] leading-5 text-[#7f6af7] dark:text-[#cabfff]">{batchQuickEditLabel}</p>
+                        ) : null}
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          aria-label="Edit status"
+                          className="inline-flex flex-none items-center justify-center rounded-full p-0.5 transition hover:scale-105"
+                          onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "status" }))}
+                          type="button"
+                        >
+                          {renderTaskStatusCircle(selectedTask.status, "md")}
+                        </button>
+                        <label className="block min-w-0 flex-1">
+                          <span className="sr-only">Rename task</span>
+                          <TaskTitleDraftInput
+                            className={`${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] text-[18px]`}
+                            initialValue={titleDraft}
+                            onCommit={commitTaskTitle}
+                            onDraftChange={setTitleDraft}
+                            taskId={selectedTask.id}
+                          />
+                        </label>
+                      </div>
+                      <label className="mt-2 block">
+                        <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">
+                          Description
+                        </span>
+                        <textarea
+                          className={`${OVERLAY_INPUT_CLASS} min-h-[88px] resize-none py-3 text-sm leading-6`}
+                          onBlur={() => commitTaskNotes(selectedTask.id)}
+                          onChange={(event) => setNotesDrafts((current) => ({
+                            ...current,
+                            [selectedTask.id]: event.target.value,
+                          }))}
+                          placeholder="Add a short description"
+                          value={notesDraft}
+                        />
+                      </label>
+                      {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
+                      {stepsEditorNode}
+                    </div>
+                    <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
+                      <div>
+                        <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">Meta Data</p>
+                        <p className="mt-1 text-sm text-[#7d7597] dark:text-white/50">Choose a field to edit.</p>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-y-1.5 text-sm">
+                        {metadataPanelOptions.map((option, index) => (
+                          <div className="flex items-center" key={`${option.id || "metadata-panel"}-${index}`}>
+                            {index > 0 ? <span className="px-2 text-[#c9c0e2] dark:text-white/18">|</span> : null}
+                            <button
+                              className={`inline-flex items-center gap-1.5 transition ${
+                                activeMetadataPanel === option.id
+                                  ? "text-[#6f57f6] dark:text-[#cabfff]"
+                                  : "text-[#8d87a7] hover:text-[#6f57f6] dark:text-white/45 dark:hover:text-[#cabfff]"
+                              }`}
+                              onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: option.id }))}
+                              type="button"
+                            >
+                              <span>{option.label}</span>
+                              {metadataFieldHasValue(option.id) ? (
+                                <span className={`h-1.5 w-1.5 rounded-full ${activeMetadataPanel === option.id ? "bg-[#6f57f6] dark:bg-[#cabfff]" : "bg-[#a99de4] dark:bg-white/45"}`} />
+                              ) : null}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div className="mb-3 text-xs font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">
+                          {activeMetadataPanelLabel}
+                        </div>
+                        {metadataPanelContent}
+                      </div>
+                    </section>
+                  </div>
+                );
 
                 return (
                   <>
-              {isFocusedOverlay ? null : (
+              {isFocusedOverlay || overlayMode === "full" ? null : (
               <div className="border-b border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530]" onClick={(event) => event.stopPropagation()}>
                 <div className="min-w-0 flex-1">
                   <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
@@ -5341,7 +5488,7 @@ export function TaskManagementTableV2({
               )}
 
               <div
-                className={`${isFocusedOverlay ? "relative flex-1 px-5 py-5" : "grid flex-1 gap-3 overflow-y-auto px-5 py-4 lg:grid-cols-[1.1fr_0.9fr]"}`}
+                className={`${isFocusedOverlay ? "relative flex-1 px-5 py-5" : "grid flex-1 gap-3 overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:grid-cols-[1.1fr_0.9fr]"}`}
                 onClick={isFocusedOverlay ? undefined : (event) => event.stopPropagation()}
               >
                 {isFocusedOverlay ? (
@@ -5362,86 +5509,7 @@ export function TaskManagementTableV2({
                     <div className="grid gap-3">
                       {overlayMode === "full" ? null : detachedTaskNotice}
                       {overlayMode === "full" ? (
-                        <div className="grid gap-3 lg:grid-cols-[1.05fr_0.95fr]">
-                          <div className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
-                              {batchQuickEditLabel ? (
-                                <p className="mt-1 text-[11px] leading-5 text-[#7f6af7] dark:text-[#cabfff]">{batchQuickEditLabel}</p>
-                              ) : null}
-                            </div>
-                            <div className="mt-2 flex items-center gap-2">
-                              <button
-                                aria-label="Edit status"
-                                className="inline-flex flex-none items-center justify-center rounded-full p-0.5 transition hover:scale-105"
-                                onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "status" }))}
-                                type="button"
-                              >
-                                {renderTaskStatusCircle(selectedTask.status, "md")}
-                              </button>
-                              <label className="block min-w-0 flex-1">
-                                <span className="sr-only">Rename task</span>
-                                <TaskTitleDraftInput
-                                  className={`${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] text-[18px]`}
-                                  initialValue={titleDraft}
-                                  onCommit={commitTaskTitle}
-                                  onDraftChange={setTitleDraft}
-                                  taskId={selectedTask.id}
-                                />
-                              </label>
-                            </div>
-                            <label className="mt-2 block">
-                              <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">
-                                Description
-                              </span>
-                              <textarea
-                                className={`${OVERLAY_INPUT_CLASS} min-h-[88px] resize-none py-3 text-sm leading-6`}
-                                onBlur={() => commitTaskNotes(selectedTask.id)}
-                                onChange={(event) => setNotesDrafts((current) => ({
-                                  ...current,
-                                  [selectedTask.id]: event.target.value,
-                                }))}
-                                placeholder="Add a short description"
-                                value={notesDraft}
-                              />
-                            </label>
-                            {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
-                            {stepsEditorNode}
-                          </div>
-                          <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
-                            <div>
-                              <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">Meta Data</p>
-                              <p className="mt-1 text-sm text-[#7d7597] dark:text-white/50">Choose a field to edit.</p>
-                            </div>
-                            <div className="mt-3 flex flex-wrap items-center gap-y-1.5 text-sm">
-                              {metadataPanelOptions.map((option, index) => (
-                                <div className="flex items-center" key={`${option.id || "metadata-panel"}-${index}`}>
-                                  {index > 0 ? <span className="px-2 text-[#c9c0e2] dark:text-white/18">|</span> : null}
-                                  <button
-                                    className={`inline-flex items-center gap-1.5 transition ${
-                                      activeMetadataPanel === option.id
-                                        ? "text-[#6f57f6] dark:text-[#cabfff]"
-                                        : "text-[#8d87a7] hover:text-[#6f57f6] dark:text-white/45 dark:hover:text-[#cabfff]"
-                                    }`}
-                                    onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: option.id }))}
-                                    type="button"
-                                  >
-                                    <span>{option.label}</span>
-                                    {metadataFieldHasValue(option.id) ? (
-                                      <span className={`h-1.5 w-1.5 rounded-full ${activeMetadataPanel === option.id ? "bg-[#6f57f6] dark:bg-[#cabfff]" : "bg-[#a99de4] dark:bg-white/45"}`} />
-                                    ) : null}
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
-                              <div className="mb-3 text-xs font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">
-                                {activeMetadataPanelLabel}
-                              </div>
-                              {metadataPanelContent}
-                            </div>
-                          </section>
-                        </div>
+                        fullDesktopEditorContent
                       ) : (
                         <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
                           <div>
@@ -5455,6 +5523,8 @@ export function TaskManagementTableV2({
                       )}
                     </div>
                   </div>
+                ) : overlayMode === "full" ? (
+                  fullDesktopEditorContent
                 ) : (
                 <>
                 <div className="space-y-3">
