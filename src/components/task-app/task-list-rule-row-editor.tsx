@@ -3,6 +3,7 @@
 import { Trash2 } from "lucide-react";
 import { TaskTableChipButton, TASK_TABLE_INACTIVE_CHIP_CLASS, TASK_TABLE_TAG_CHIP_CLASS } from "@/components/ui/task-table-primitives";
 import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
+import { TASK_HISTORY_STREAK_PRESETS, TASK_HISTORY_WINDOW_PRESETS } from "@/lib/task-history";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import {
   formatTaskListRule,
@@ -85,6 +86,16 @@ export function TaskListRuleRowEditor({
         label: formatOptionLabel(option),
         value: option,
       }))
+      : rule.field === "completed_history" || rule.field === "missed_history"
+        ? TASK_HISTORY_WINDOW_PRESETS.map((preset) => ({
+          label: `${preset} day${preset === "1" ? "" : "s"}`,
+          value: preset,
+        }))
+        : rule.field === "completed_streak" || rule.field === "missed_streak"
+          ? TASK_HISTORY_STREAK_PRESETS.map((preset) => ({
+            label: preset,
+            value: preset,
+          }))
       : [
         { label: "0", value: "0" },
         { label: "Over 0", value: "over_0" },
@@ -113,7 +124,16 @@ export function TaskListRuleRowEditor({
               multiSelect={isMultiSelectValueRule}
               onSelect={(value) => onChange(updateTaskListRuleValue(rule, value))}
               options={valueOptions}
-              selectedValue={rule.field === "streak" || rule.field === "list" ? rule.value : undefined}
+              selectedValue={
+                rule.field === "streak"
+                  || rule.field === "list"
+                  || rule.field === "completed_history"
+                  || rule.field === "missed_history"
+                  || rule.field === "completed_streak"
+                  || rule.field === "missed_streak"
+                  ? rule.value
+                  : undefined
+              }
               selectedValues={isMultiSelectValueRule ? normalizeTaskListRuleValues(rule.value) : undefined}
             />
           ) : (

@@ -22,6 +22,7 @@ import {
   reorderTaskGridItems,
   shiftDateKey,
 } from "../src/lib/task-grid-layout.ts";
+import { parseImportedTaskLines } from "../src/lib/task-input-parsing.ts";
 import { buildTaskCollections } from "../src/lib/task-selectors.ts";
 import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
 import { buildTaskListCounts, getBuiltInTaskLists } from "../src/lib/task-lists.ts";
@@ -191,4 +192,51 @@ test("task list counts preserve built-in bucket memberships", () => {
 
   assert.equal(counts.inbox, 1);
   assert.equal(counts.today, 1);
+});
+
+test("import parser captures parent metadata and nested steps", () => {
+  const parsed = parseImportedTaskLines([
+    "Clean Ears #hygiene *due-Today *repeat-Daily",
+    "Moisturize",
+    "-AM",
+    "--Face",
+    "--Feet",
+    "-PM",
+  ], { todayDateKey: "2026-06-10" });
+
+  assert.equal(parsed.tasks.length, 2);
+  assert.equal(parsed.tasks[0]?.title, "Clean Ears");
+  assert.deepEqual(parsed.tasks[0]?.tags, ["hygiene"]);
+  assert.equal(parsed.tasks[0]?.dueOn, "2026-06-10");
+  assert.equal(parsed.tasks[0]?.repeatFrequency, "daily");
+  assert.equal(parsed.tasks[1]?.subtasks[0]?.title, "AM");
+  assert.equal(parsed.tasks[1]?.subtasks[0]?.children[0]?.title, "Face");
+  assert.equal(parsed.tasks[1]?.subtasks[0]?.children[1]?.title, "Feet");
+  assert.equal(parsed.tasks[1]?.subtasks[1]?.title, "PM");
+});
+
+test("import parser preserves step status and warns on unsupported step metadata", () => {
+  const parsed = parseImportedTaskLines([
+    "Clean Bathroom #home *due-Today",
+    "-Sink #cleaning *estimate-5m *status-InProgress",
+    "-Floor *due-Tomorrow",
+  ], { todayDateKey: "2026-06-10" });
+
+  assert.equal(parsed.tasks.length, 1);
+  assert.equal(parsed.tasks[0]?.subtasks[0]?.title, "Sink");
+  assert.equal(parsed.tasks[0]?.subtasks[0]?.status, "in_progress");
+  assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /do not currently persist tags/i);
+  assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /do not currently persist estimated time/i);
+  assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /do not currently persist due dates/i);
+});
+
+test("import parser warns on orphan steps and unknown metadata", () => {
+  const parsed = parseImportedTaskLines([
+    "-Orphan step",
+    "Task title *mood-Happy",
+  ], { todayDateKey: "2026-06-10" });
+
+  assert.equal(parsed.tasks.length, 1);
+  assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /no parent task above it/i);
+  assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /unknown metadata field "mood"/i);
 });

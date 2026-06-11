@@ -103,6 +103,7 @@ type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link"
 type MetadataPanelId = "actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type ColumnAlignment = "center" | "left" | "right";
 type RowContextMenuState = { left: number; taskId: string; top: number };
+type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
 export type RunningTaskTimer = { baseSeconds: number; pausedAt?: number | null; startedActualSeconds: number; startedAt: number; taskId: string; title: string };
 export type PrototypeTaskSubtask = {
   children: PrototypeTaskSubtask[];
@@ -1675,6 +1676,7 @@ export function TaskManagementTableV2({
   const [pendingSubtaskAutoExpandByTaskId, setPendingSubtaskAutoExpandByTaskId] = useState<Record<string, boolean>>({});
   const [hiddenSubtaskIds, setHiddenSubtaskIds] = useState<Record<string, boolean>>({});
   const [openColumnMenuId, setOpenColumnMenuId] = useState<SortColumnId | null>(null);
+  const [columnMenuPosition, setColumnMenuPosition] = useState<ColumnMenuPosition | null>(null);
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [sortState, setSortState] = useState<{ columnId: SortColumnId; optionId: SortOptionId } | null>(() => getInitialSortState());
   const [textFilters, setTextFilters] = useState<Partial<Record<TextFilterColumnId, string>>>({});
@@ -1749,6 +1751,10 @@ export function TaskManagementTableV2({
       .map((columnId) => HEADER_COLUMNS.find((column) => column.id === columnId))
       .filter((column): column is HeaderColumn => Boolean(column));
   }, [columnOrder, visibleColumns]);
+  const openColumnMenuColumn = useMemo(
+    () => (openColumnMenuId ? visibleHeaderColumns.find((column) => column.id === openColumnMenuId) ?? null : null),
+    [openColumnMenuId, visibleHeaderColumns],
+  );
   const effectiveColumnWidths = useMemo(
     () => visibleHeaderColumns.reduce<Record<TaskManagementTableColumnId, number>>((accumulator, column) => {
       accumulator[column.id] = Math.max(columnWidths[column.id], requiredColumnWidths[column.id] ?? MIN_COLUMN_WIDTHS[column.id]);
@@ -2212,6 +2218,12 @@ export function TaskManagementTableV2({
       return Math.max(0, Math.min(current, effectiveRunningTimers.length - 1));
     });
   }, [activeTaskTimerIndex, effectiveRunningTimers.length]);
+
+  useEffect(() => {
+    if (!openColumnMenuId) {
+      setColumnMenuPosition(null);
+    }
+  }, [openColumnMenuId]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -3588,6 +3600,229 @@ export function TaskManagementTableV2({
     setRowContextMenu({ left, taskId, top });
   }
 
+  function toggleColumnMenu(columnId: SortColumnId, triggerElement: HTMLElement) {
+    if (!shellRef.current) {
+      return;
+    }
+
+    if (openColumnMenuId === columnId) {
+      setOpenColumnMenuId(null);
+      return;
+    }
+
+    const shellRect = shellRef.current.getBoundingClientRect();
+    const triggerRect = triggerElement.getBoundingClientRect();
+    const gutter = 16;
+    const estimatedMenuWidth = 224;
+    const minMenuHeight = 180;
+    const preferredMenuHeight = 420;
+    const availableBelow = Math.max(0, window.innerHeight - triggerRect.bottom - gutter);
+    const availableAbove = Math.max(0, triggerRect.top - gutter);
+    const placement = availableBelow < minMenuHeight && availableAbove > availableBelow ? "up" : "down";
+    const maxHeight = Math.min(
+      preferredMenuHeight,
+      Math.max(minMenuHeight, placement === "down" ? availableBelow : availableAbove),
+      Math.max(minMenuHeight, window.innerHeight - gutter * 2),
+    );
+    const centeredLeft = triggerRect.left + (triggerRect.width / 2) - shellRect.left - (estimatedMenuWidth / 2);
+    const leftAligned = triggerRect.left - shellRect.left;
+    const desiredLeft = columnId === "status_icon" ? leftAligned : centeredLeft;
+    const maxLeft = Math.max(gutter, shellRect.width - estimatedMenuWidth - gutter);
+    const left = Math.min(Math.max(gutter, desiredLeft), maxLeft);
+    const top = placement === "down"
+      ? triggerRect.bottom - shellRect.top + 8
+      : triggerRect.top - shellRect.top - 8;
+
+    setRowContextMenu(null);
+    setColumnMenuPosition({ left, maxHeight, placement, top });
+    setOpenColumnMenuId(columnId);
+  }
+
+  function renderColumnMenuContent(column: HeaderColumn) {
+    return (
+      <>
+        <p className={`px-2 pb-1 ${HEADER_TEXT_CLASS}`}>
+          {column.menuLabel}
+        </p>
+        {isTextFilterColumn(column.id) ? (
+          <div className="mb-2 space-y-2 px-1">
+            <input
+              className={`${CONTROL_FONT_CLASS} ${UNIFIED_TABLE_TEXT_CLASS} w-full rounded-[0.9rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:border-white/10 dark:bg-white/[0.05] dark:text-white dark:placeholder:text-white/35`}
+              onChange={(event) => setTextFilters((current) => ({ ...current, [column.id]: event.target.value }))}
+              placeholder={column.filterPlaceholder}
+              type="text"
+              value={textFilters[column.id] ?? ""}
+            />
+          </div>
+        ) : null}
+        {column.id === "status_icon" || column.id === "status" ? (
+          <div className="mb-2 flex flex-wrap gap-2 px-1">
+            {STATUS_OPTIONS.map((option, optionIndex) => {
+              const selected = structuredFilters.status.includes(option.value);
+              return (
+                <button
+                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selected ? statusTone(option.value) : LIST_CHIP_CLASS}`}
+                  key={`${option.value || "status-filter"}-${optionIndex}`}
+                  onClick={() => toggleStructuredFilter("status", option.value)}
+                  type="button"
+                >
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-current/20 text-current">
+                    {renderTaskStatusGlyph(option.value, "sm")}
+                  </span>
+                  <span>{formatTaskStatusLabel(option.value)}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {column.id === "priority" ? (
+          <div className="mb-2 flex flex-wrap gap-2 px-1">
+            {PRIORITY_OPTIONS.map((option, optionIndex) => {
+              const selected = structuredFilters.priority.includes(option.value);
+              return (
+                <button
+                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? priorityTone(option.value) : LIST_CHIP_CLASS}`}
+                  key={`${option.value || "priority-filter"}-${optionIndex}`}
+                  onClick={() => toggleStructuredFilter("priority", option.value)}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {column.id === "energy" ? (
+          <div className="mb-2 flex flex-wrap gap-2 px-1">
+            {ENERGY_OPTIONS.map((option, optionIndex) => {
+              const selected = structuredFilters.energy.includes(option.value);
+              return (
+                <button
+                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? energyTone(option.value) : LIST_CHIP_CLASS}`}
+                  key={`${option.value || "energy-filter"}-${optionIndex}`}
+                  onClick={() => toggleStructuredFilter("energy", option.value)}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {column.id === "repeat" ? (
+          <div className="mb-2 flex flex-wrap gap-2 px-1">
+            {REPEAT_OPTIONS.map((option, optionIndex) => {
+              const selected = structuredFilters.repeat.includes(option.value);
+              return (
+                <button
+                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? repeatTone(option.value) : LIST_CHIP_CLASS}`}
+                  key={`${option.value || "repeat-filter"}-${optionIndex}`}
+                  onClick={() => toggleStructuredFilter("repeat", option.value)}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        <div className="mb-2 mt-1 border-t border-[#f0ebfb] px-1 pt-2 dark:border-white/10">
+          <p className={`px-2 pb-2 ${HEADER_TEXT_CLASS}`}>Column layout</p>
+          <div className="flex flex-wrap gap-2">
+            {column.id === "status_icon" ? (
+              <>
+                {(["circle", "chip"] as const).map((mode, modeIndex) => (
+                  <button
+                    className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${statusDisplayMode === mode ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}`}
+                    key={`${mode || "status-display"}-${modeIndex}`}
+                    onClick={() => {
+                      setStatusDisplayMode(mode);
+                      if (mode === "chip") {
+                        setColumnWidths((current) => ({
+                          ...current,
+                          status_icon: Math.max(current.status_icon, 150),
+                        }));
+                      }
+                    }}
+                    type="button"
+                  >
+                    {mode === "circle" ? "Circle view" : "Chip view"}
+                  </button>
+                ))}
+              </>
+            ) : null}
+            {(["left", "center", "right"] as ColumnAlignment[]).map((alignment, alignmentIndex) => (
+              <button
+                className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${(columnAlignments[column.id] ?? "center") === alignment ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}`}
+                key={`${alignment || "alignment"}-${alignmentIndex}`}
+                onClick={() => setColumnAlignment(column.id, alignment)}
+                type="button"
+              >
+                {alignment === "center" ? "Middle" : alignment === "left" ? "Left" : "Right"}
+              </button>
+            ))}
+            <button
+              className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} gap-2`}
+              onClick={() => {
+                autoShrinkColumn(column.id);
+                setOpenColumnMenuId(null);
+              }}
+              type="button"
+            >
+              Auto shrink
+            </button>
+            <button
+              className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} gap-2`}
+              onClick={() => moveColumnToFront(column.id)}
+              type="button"
+            >
+              <MoveLeft className="h-3.5 w-3.5" />
+              Move to front
+            </button>
+          </div>
+        </div>
+        <div className="space-y-1">
+          {column.options.map((option, optionIndex) => {
+            const isActive = sortState?.columnId === column.id && sortState.optionId === option.id;
+
+            return (
+              <button
+                className={`${CONTROL_FONT_CLASS} ${UNIFIED_TABLE_TEXT_CLASS} flex w-full items-center justify-between rounded-[0.9rem] px-3 py-2 transition ${isActive ? "bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" : "text-[#5f6983] hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:text-white/70 dark:hover:bg-white/8 dark:hover:text-[#cabfff]"}`}
+                key={`${option.id || "column-option"}-${optionIndex}`}
+                onClick={() => {
+                  setSortState({ columnId: column.id, optionId: option.id });
+                  setOpenColumnMenuId(null);
+                }}
+                type="button"
+              >
+                <span>{option.label}</span>
+                {isActive ? <span>On</span> : null}
+              </button>
+            );
+          })}
+          <button
+            className={`${CONTROL_FONT_CLASS} ${UNIFIED_TABLE_TEXT_CLASS} flex w-full items-center justify-between rounded-[0.9rem] px-3 py-2 text-[#5f6983] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:text-white/70 dark:hover:bg-white/8 dark:hover:text-[#cabfff]`}
+            onClick={() => {
+              if (sortState?.columnId === column.id) {
+                setSortState(null);
+              }
+              if (isTextFilterColumn(column.id)) {
+                setTextFilters((current) => ({ ...current, [column.id]: "" }));
+              }
+              if (isStructuredFilterColumn(column.id)) {
+                setStructuredFilters((current) => ({ ...current, [column.id]: [] }));
+              }
+              setOpenColumnMenuId(null);
+            }}
+            type="button"
+          >
+            <span>{isTextFilterColumn(column.id) || isStructuredFilterColumn(column.id) ? "Clear column" : "Clear sort"}</span>
+          </button>
+        </div>
+      </>
+    );
+  }
+
   function openTaskOverlayFromContextMenu(taskId: string, mode: OverlayMode, sourceElement?: HTMLElement | null) {
     setRowContextMenu(null);
     openInspector(taskId, mode, sourceElement, modeSupportsBatchQuickEdit(mode) ? getContextMenuQuickEditTargetTaskIds(taskId) : null);
@@ -4296,7 +4531,7 @@ export function TaskManagementTableV2({
                     <button
                       aria-expanded={isOpen}
                       className={`${CONTROL_FONT_CLASS} inline-flex min-w-0 ${getColumnAlignmentClass(column.id)} gap-0 rounded-full px-1 py-0.5 ${column.id === "status_icon" ? "px-0.5 py-0.5" : "pr-1"} ${HEADER_TEXT_CLASS} transition ${isSorted || isFiltered || activeStructuredCount > 0 ? "bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" : "hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:hover:bg-white/8 dark:hover:text-[#cabfff]"}`}
-                      onClick={() => setOpenColumnMenuId((current) => current === column.id ? null : column.id)}
+                      onClick={(event) => toggleColumnMenu(column.id, event.currentTarget)}
                       type="button"
                     >
                       {column.id === "status_icon" ? (
@@ -4329,188 +4564,6 @@ export function TaskManagementTableV2({
                     >
                       <span className="h-8 w-[3px] rounded-full bg-transparent opacity-0" />
                     </span>
-                    {isOpen ? (
-                      <div className={`absolute top-[calc(100%+0.55rem)] z-30 w-56 rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95 ${column.id === "status_icon" ? "left-0" : "left-1/2 -translate-x-1/2"}`}>
-                        <p className={`px-2 pb-1 ${HEADER_TEXT_CLASS}`}>
-                          {column.menuLabel}
-                        </p>
-                        {isTextFilterColumn(column.id) ? (
-                          <div className="mb-2 space-y-2 px-1">
-                            <input
-                              className={`${CONTROL_FONT_CLASS} ${UNIFIED_TABLE_TEXT_CLASS} w-full rounded-[0.9rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:border-white/10 dark:bg-white/[0.05] dark:text-white dark:placeholder:text-white/35`}
-                              onChange={(event) => setTextFilters((current) => ({ ...current, [column.id]: event.target.value }))}
-                              placeholder={column.filterPlaceholder}
-                              type="text"
-                              value={textFilters[column.id] ?? ""}
-                            />
-                          </div>
-                        ) : null}
-                        {column.id === "status_icon" || column.id === "status" ? (
-                          <div className="mb-2 flex flex-wrap gap-2 px-1">
-                            {STATUS_OPTIONS.map((option, optionIndex) => {
-                              const selected = structuredFilters.status.includes(option.value);
-                              return (
-                                <button
-                                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selected ? statusTone(option.value) : LIST_CHIP_CLASS}`}
-                                  key={`${option.value || "status-filter"}-${optionIndex}`}
-                                  onClick={() => toggleStructuredFilter("status", option.value)}
-                                  type="button"
-                                >
-                                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-current/20 text-current">
-                                    {renderTaskStatusGlyph(option.value, "sm")}
-                                  </span>
-                                  <span>{formatTaskStatusLabel(option.value)}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                        {column.id === "priority" ? (
-                          <div className="mb-2 flex flex-wrap gap-2 px-1">
-                            {PRIORITY_OPTIONS.map((option, optionIndex) => {
-                              const selected = structuredFilters.priority.includes(option.value);
-                              return (
-                                <button
-                                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? priorityTone(option.value) : LIST_CHIP_CLASS}`}
-                                  key={`${option.value || "priority-filter"}-${optionIndex}`}
-                                  onClick={() => toggleStructuredFilter("priority", option.value)}
-                                  type="button"
-                                >
-                                  {option.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                        {column.id === "energy" ? (
-                          <div className="mb-2 flex flex-wrap gap-2 px-1">
-                            {ENERGY_OPTIONS.map((option, optionIndex) => {
-                              const selected = structuredFilters.energy.includes(option.value);
-                              return (
-                                <button
-                                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? energyTone(option.value) : LIST_CHIP_CLASS}`}
-                                  key={`${option.value || "energy-filter"}-${optionIndex}`}
-                                  onClick={() => toggleStructuredFilter("energy", option.value)}
-                                  type="button"
-                                >
-                                  {option.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                        {column.id === "repeat" ? (
-                          <div className="mb-2 flex flex-wrap gap-2 px-1">
-                            {REPEAT_OPTIONS.map((option, optionIndex) => {
-                              const selected = structuredFilters.repeat.includes(option.value);
-                              return (
-                                <button
-                                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? repeatTone(option.value) : LIST_CHIP_CLASS}`}
-                                  key={`${option.value || "repeat-filter"}-${optionIndex}`}
-                                  onClick={() => toggleStructuredFilter("repeat", option.value)}
-                                  type="button"
-                                >
-                                  {option.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                        <div className="mb-2 mt-1 border-t border-[#f0ebfb] px-1 pt-2 dark:border-white/10">
-                          <p className={`px-2 pb-2 ${HEADER_TEXT_CLASS}`}>Column layout</p>
-                          <div className="flex flex-wrap gap-2">
-                            {column.id === "status_icon" ? (
-                              <>
-                                {(["circle", "chip"] as const).map((mode, modeIndex) => (
-                                  <button
-                                    className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${statusDisplayMode === mode ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}`}
-                                    key={`${mode || "status-display"}-${modeIndex}`}
-                                    onClick={() => {
-                                      setStatusDisplayMode(mode);
-                                      if (mode === "chip") {
-                                        setColumnWidths((current) => ({
-                                          ...current,
-                                          status_icon: Math.max(current.status_icon, 150),
-                                        }));
-                                      }
-                                    }}
-                                    type="button"
-                                  >
-                                    {mode === "circle" ? "Circle view" : "Chip view"}
-                                  </button>
-                                ))}
-                              </>
-                            ) : null}
-                            {(["left", "center", "right"] as ColumnAlignment[]).map((alignment, alignmentIndex) => (
-                              <button
-                                className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${(columnAlignments[column.id] ?? "center") === alignment ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}`}
-                                key={`${alignment || "alignment"}-${alignmentIndex}`}
-                                onClick={() => setColumnAlignment(column.id, alignment)}
-                                type="button"
-                              >
-                                {alignment === "center" ? "Middle" : alignment === "left" ? "Left" : "Right"}
-                              </button>
-                            ))}
-                            <button
-                              className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} gap-2`}
-                              onClick={() => {
-                                autoShrinkColumn(column.id);
-                                setOpenColumnMenuId(null);
-                              }}
-                              type="button"
-                            >
-                              Auto shrink
-                            </button>
-                            <button
-                              className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} gap-2`}
-                              onClick={() => moveColumnToFront(column.id)}
-                              type="button"
-                            >
-                              <MoveLeft className="h-3.5 w-3.5" />
-                              Move to front
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          {column.options.map((option, optionIndex) => {
-                            const isActive = sortState?.columnId === column.id && sortState.optionId === option.id;
-
-                            return (
-                              <button
-                                className={`${CONTROL_FONT_CLASS} ${UNIFIED_TABLE_TEXT_CLASS} flex w-full items-center justify-between rounded-[0.9rem] px-3 py-2 transition ${isActive ? "bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" : "text-[#5f6983] hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:text-white/70 dark:hover:bg-white/8 dark:hover:text-[#cabfff]"}`}
-                                key={`${option.id || "column-option"}-${optionIndex}`}
-                                onClick={() => {
-                                  setSortState({ columnId: column.id, optionId: option.id });
-                                  setOpenColumnMenuId(null);
-                                }}
-                                type="button"
-                              >
-                                <span>{option.label}</span>
-                                {isActive ? <span>On</span> : null}
-                              </button>
-                            );
-                          })}
-                          <button
-                            className={`${CONTROL_FONT_CLASS} ${UNIFIED_TABLE_TEXT_CLASS} flex w-full items-center justify-between rounded-[0.9rem] px-3 py-2 text-[#5f6983] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:text-white/70 dark:hover:bg-white/8 dark:hover:text-[#cabfff]`}
-                            onClick={() => {
-                              if (sortState?.columnId === column.id) {
-                                setSortState(null);
-                              }
-                              if (isTextFilterColumn(column.id)) {
-                                setTextFilters((current) => ({ ...current, [column.id]: "" }));
-                              }
-                              if (isStructuredFilterColumn(column.id)) {
-                                setStructuredFilters((current) => ({ ...current, [column.id]: [] }));
-                              }
-                              setOpenColumnMenuId(null);
-                            }}
-                            type="button"
-                          >
-                            <span>{isTextFilterColumn(column.id) || isStructuredFilterColumn(column.id) ? "Clear column" : "Clear sort"}</span>
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
                 );
               })}
@@ -4734,6 +4787,22 @@ export function TaskManagementTableV2({
           >
             <ArrowUp className="h-4 w-4" />
           </ScrollUpButton>
+        ) : null}
+
+        {openColumnMenuColumn && columnMenuPosition ? (
+          <div className="pointer-events-none absolute inset-0 z-40">
+            <div
+              className={`adhdice-scrollbar pointer-events-auto absolute w-56 overflow-y-auto rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95 ${columnMenuPosition.placement === "up" ? "-translate-y-full" : ""}`}
+              ref={columnMenuRef}
+              style={{
+                left: columnMenuPosition.left,
+                maxHeight: columnMenuPosition.maxHeight,
+                top: columnMenuPosition.top,
+              }}
+            >
+              {renderColumnMenuContent(openColumnMenuColumn)}
+            </div>
+          </div>
         ) : null}
 
         {rowContextMenu && rowContextMenuTask ? (

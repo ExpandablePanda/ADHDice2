@@ -1,4 +1,5 @@
 import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import { buildEmptyTaskHistoryFacts, type TaskHistoryFacts, type TaskHistoryStreakPreset, type TaskHistoryWindowPreset } from "@/lib/task-history";
 
 export type BuiltInTaskListId =
   | "inbox"
@@ -27,8 +28,12 @@ export type TaskListRule =
   | { field: "repeat"; op: "is" | "is_not"; value: boolean }
   | { field: "energy"; op: "is" | "is_not"; value: TaskEnergy | TaskEnergy[] }
   | { field: "streak"; op: "is" | "is_not"; value: "0" | "over_0" | "over_7" | "over_14" | "over_30" }
-  | { field: "due"; op: "is_empty" | "is_overdue" | "is_today" | "is_future" | "is_not_today" | "is_not_overdue" }
-  | { field: "date_added"; op: "is_today" | "is_not_today" };
+  | { field: "due"; op: "is_empty" | "is_overdue" | "is_today" | "is_tomorrow" | "is_future" | "is_not_today" | "is_not_overdue" }
+  | { field: "date_added"; op: "is_today" | "is_not_today" }
+  | { field: "completed_history"; op: "is_today" | "within_last" | "last_within_last" | "has_ever"; value?: TaskHistoryWindowPreset }
+  | { field: "missed_history"; op: "is_today" | "within_last" | "last_within_last" | "has_ever"; value?: TaskHistoryWindowPreset }
+  | { field: "completed_streak"; op: "equals" | "at_least" | "less_than"; value: TaskHistoryStreakPreset }
+  | { field: "missed_streak"; op: "equals" | "at_least" | "less_than"; value: TaskHistoryStreakPreset };
 
 export type TaskListRuleConnector = "and" | "or";
 export type TaskListRuleRow = {
@@ -74,9 +79,11 @@ export type TaskListEvaluationContext = {
   focusedTaskIds: Set<string>;
   hasStepsByTaskId: Record<string, boolean>;
   isDueToday: (date: string | null) => boolean;
+  isDueTomorrow: (date: string | null) => boolean;
   isLater: (date: string | null) => boolean;
   isOpen: (task: Task) => boolean;
   isOverdue: (date: string | null) => boolean;
+  historyFactsByTaskId: Record<string, TaskHistoryFacts>;
   manualMembershipsByTaskId: Record<string, TaskListId[]>;
 };
 
@@ -496,6 +503,17 @@ function matchesTaskListRule(
     if (value === "over_14") return currentStreak > 14;
     return currentStreak > 30;
   };
+  const historyFacts = context.historyFactsByTaskId[task.id] ?? buildEmptyTaskHistoryFacts();
+  const matchesPresetStreak = (
+    currentValue: number,
+    op: Extract<TaskListRule, { field: "completed_streak" | "missed_streak" }>["op"],
+    value: TaskHistoryStreakPreset,
+  ) => {
+    const threshold = Number.parseInt(value, 10);
+    if (op === "equals") return currentValue === threshold;
+    if (op === "at_least") return currentValue >= threshold;
+    return currentValue < threshold;
+  };
 
   switch (rule.field) {
     case "status": {
@@ -531,6 +549,7 @@ function matchesTaskListRule(
     case "due":
       if (rule.op === "is_empty") return !task.due_on;
       if (rule.op === "is_today") return context.isDueToday(task.due_on);
+      if (rule.op === "is_tomorrow") return context.isDueTomorrow(task.due_on);
       if (rule.op === "is_not_today") return !context.isDueToday(task.due_on);
       if (rule.op === "is_overdue") return context.isOverdue(task.due_on);
       if (rule.op === "is_not_overdue") return !context.isOverdue(task.due_on);
@@ -540,6 +559,24 @@ function matchesTaskListRule(
       if (rule.op === "is_today") return context.isDueToday(createdDate);
       return !context.isDueToday(createdDate);
     }
+    case "completed_history":
+      if (rule.op === "is_today") return historyFacts.completedToday;
+      if (rule.op === "has_ever") return historyFacts.hasEverCompleted;
+      if (!rule.value) return false;
+      return rule.op === "within_last"
+        ? historyFacts.completedWithinLast[rule.value]
+        : historyFacts.lastCompletedWithinLast[rule.value];
+    case "missed_history":
+      if (rule.op === "is_today") return historyFacts.missedToday;
+      if (rule.op === "has_ever") return historyFacts.hasEverMissed;
+      if (!rule.value) return false;
+      return rule.op === "within_last"
+        ? historyFacts.missedWithinLast[rule.value]
+        : historyFacts.lastMissedWithinLast[rule.value];
+    case "completed_streak":
+      return matchesPresetStreak(historyFacts.currentCompletedStreak, rule.op, rule.value);
+    case "missed_streak":
+      return matchesPresetStreak(historyFacts.currentMissedStreak, rule.op, rule.value);
     default:
       return false;
   }
@@ -582,12 +619,36 @@ function isTaskListRule(value: unknown): value is TaskListRule {
     return candidate.op === "is_empty"
       || candidate.op === "is_overdue"
       || candidate.op === "is_today"
+      || candidate.op === "is_tomorrow"
       || candidate.op === "is_future"
       || candidate.op === "is_not_today"
       || candidate.op === "is_not_overdue";
   }
   if (candidate.field === "date_added") {
     return candidate.op === "is_today" || candidate.op === "is_not_today";
+  }
+  if (candidate.field === "completed_history" || candidate.field === "missed_history") {
+    return candidate.op === "is_today"
+      || candidate.op === "has_ever"
+      || ((candidate.op === "within_last" || candidate.op === "last_within_last")
+        && (
+          candidate.value === "1"
+          || candidate.value === "3"
+          || candidate.value === "7"
+          || candidate.value === "14"
+          || candidate.value === "30"
+        ));
+  }
+  if (candidate.field === "completed_streak" || candidate.field === "missed_streak") {
+    return (candidate.op === "equals" || candidate.op === "at_least" || candidate.op === "less_than")
+      && (
+        candidate.value === "0"
+        || candidate.value === "1"
+        || candidate.value === "3"
+        || candidate.value === "7"
+        || candidate.value === "14"
+        || candidate.value === "30"
+      );
   }
   return false;
 }
@@ -634,7 +695,7 @@ function matchesSpecificListRuleMembership(
     evaluationCache.set(cacheKey, false);
     return false;
   }
-  if (!context.isOpen(task) && list.id !== "done") {
+  if (!context.isOpen(task) && list.id !== "done" && !ruleGroupUsesSavedHistory(list.rules)) {
     evaluationCache.set(cacheKey, false);
     return false;
   }
@@ -724,4 +785,13 @@ function buildTaskListLookup(lists: TaskListDefinition[]): TaskListLookup {
     nonInboxRuleLists,
     ruleLists,
   };
+}
+
+function ruleGroupUsesSavedHistory(group: TaskListRuleGroup) {
+  return group.rules.some((entry) =>
+    entry.rule.field === "completed_history"
+    || entry.rule.field === "missed_history"
+    || entry.rule.field === "completed_streak"
+    || entry.rule.field === "missed_streak",
+  );
 }

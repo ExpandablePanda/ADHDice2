@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { buildTaskHistoryFacts } from "../src/lib/task-history.ts";
 import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, parseTaskListRules } from "../src/lib/task-lists.ts";
 import { createTask, getTaskBucket } from "../src/lib/task-buckets.ts";
 
@@ -45,8 +46,12 @@ test("task list evaluation honors manual memberships and date-added rules", () =
     },
   ]);
   const memberships = evaluateTaskListMemberships(task, lists, {
+    currentStreakByTaskId: {},
     focusedTaskIds: new Set<string>(),
+    hasStepsByTaskId: {},
+    historyFactsByTaskId: {},
     isDueToday: (date) => date === new Date().toISOString().slice(0, 10),
+    isDueTomorrow: (date) => date === "2999-01-01",
     isLater: (date) => Boolean(date && date > new Date().toISOString().slice(0, 10)),
     isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived",
     isOverdue: (date) => Boolean(date && date < new Date().toISOString().slice(0, 10)),
@@ -60,8 +65,7 @@ test("task list evaluation honors manual memberships and date-added rules", () =
     rules: [{ field: "date_added", op: "is_today" }],
   });
   assert.deepEqual(parsed, {
-    combinator: "all",
-    rules: [{ field: "date_added", op: "is_today" }],
+    rules: [{ connector: undefined, rule: { field: "date_added", op: "is_today" } }],
   });
 });
 
@@ -88,8 +92,12 @@ test("task list evaluation keeps manual memberships while applying rule membersh
   ]);
 
   const memberships = evaluateTaskListMemberships(task, lists, {
+    currentStreakByTaskId: {},
     focusedTaskIds: new Set<string>(),
+    hasStepsByTaskId: {},
+    historyFactsByTaskId: {},
     isDueToday: (date) => date === "2026-05-20",
+    isDueTomorrow: (date) => date === "2026-05-21",
     isLater: (date) => Boolean(date && date > "2026-05-20"),
     isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived",
     isOverdue: (date) => Boolean(date && date < "2026-05-20"),
@@ -108,4 +116,148 @@ test("manual membership compatibility routing does not add inbox entries", () =>
 
   assert.deepEqual(map["task-a"], undefined);
   assert.deepEqual(map["task-b"], ["today"]);
+});
+
+test("task list evaluation matches saved-row history rules and due tomorrow", () => {
+  const task = createTask({
+    created_at: "2026-06-01T09:00:00.000Z",
+    due_on: "2026-06-13",
+    id: "task-history-rule",
+    sort_order: 1,
+    status: "pending",
+    title: "History rule task",
+  });
+  const lists = [
+    ...getBuiltInTaskLists(),
+    {
+      description: "",
+      id: "list:history-window",
+      isDeletable: true,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: "rules" as const,
+      name: "History Window",
+      rules: {
+        rules: [
+          { rule: { field: "completed_history", op: "within_last", value: "3" } },
+          { connector: "and", rule: { field: "completed_streak", op: "at_least", value: "1" } },
+          { connector: "and", rule: { field: "due", op: "is_tomorrow" } },
+        ],
+      },
+      sortOrder: 99,
+      type: "custom" as const,
+    },
+    {
+      description: "",
+      id: "list:missed-window",
+      isDeletable: true,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: "rules" as const,
+      name: "Missed Window",
+      rules: {
+        rules: [
+          { rule: { field: "missed_history", op: "last_within_last", value: "3" } },
+          { connector: "and", rule: { field: "missed_streak", op: "equals", value: "1" } },
+        ],
+      },
+      sortOrder: 100,
+      type: "custom" as const,
+    },
+  ];
+  const historyFactsByTaskId = {
+    [task.id]: buildTaskHistoryFacts([
+      {
+        created_at: "2026-06-10T09:00:00.000Z",
+        entry_date: "2026-06-10",
+        id: "history-1",
+        status: "did_my_best",
+        task_id: task.id,
+        updated_at: "2026-06-10T09:00:00.000Z",
+        user_id: "test-user",
+        was_completed: true,
+      },
+      {
+        created_at: "2026-06-12T09:00:00.000Z",
+        entry_date: "2026-06-12",
+        id: "history-2",
+        status: "missed",
+        task_id: task.id,
+        updated_at: "2026-06-12T09:00:00.000Z",
+        user_id: "test-user",
+        was_completed: false,
+      },
+    ], "2026-06-12"),
+  };
+
+  const memberships = evaluateTaskListMemberships(task, lists, {
+    currentStreakByTaskId: {},
+    focusedTaskIds: new Set<string>(),
+    hasStepsByTaskId: {},
+    historyFactsByTaskId,
+    isDueToday: (date) => date === "2026-06-12",
+    isDueTomorrow: (date) => date === "2026-06-13",
+    isLater: (date) => Boolean(date && date > "2026-06-12"),
+    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived",
+    isOverdue: (date) => Boolean(date && date < "2026-06-12"),
+    manualMembershipsByTaskId: {},
+  });
+
+  assert.equal(memberships.some((membership) => membership.id === "list:history-window"), false);
+  assert.equal(memberships.some((membership) => membership.id === "list:missed-window"), true);
+});
+
+test("completed-history smart lists can include closed tasks from saved rows", () => {
+  const task = createTask({
+    created_at: "2026-06-01T09:00:00.000Z",
+    id: "task-closed-history-rule",
+    sort_order: 1,
+    status: "done",
+    title: "Closed history task",
+  });
+  const lists = [
+    ...getBuiltInTaskLists(),
+    {
+      description: "",
+      id: "list:completed-today",
+      isDeletable: true,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: "rules" as const,
+      name: "Completed Today",
+      rules: {
+        rules: [{ rule: { field: "completed_history", op: "is_today" } }],
+      },
+      sortOrder: 101,
+      type: "custom" as const,
+    },
+  ];
+
+  const memberships = evaluateTaskListMemberships(task, lists, {
+    currentStreakByTaskId: {},
+    focusedTaskIds: new Set<string>(),
+    hasStepsByTaskId: {},
+    historyFactsByTaskId: {
+      [task.id]: buildTaskHistoryFacts([
+        {
+          created_at: "2026-06-12T09:00:00.000Z",
+          entry_date: "2026-06-12",
+          id: "history-closed-1",
+          status: "done",
+          task_id: task.id,
+          updated_at: "2026-06-12T09:00:00.000Z",
+          user_id: "test-user",
+          was_completed: true,
+        },
+      ], "2026-06-12"),
+    },
+    isDueToday: (date) => date === "2026-06-12",
+    isDueTomorrow: () => false,
+    isLater: (date) => Boolean(date && date > "2026-06-12"),
+    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived",
+    isOverdue: (date) => Boolean(date && date < "2026-06-12"),
+    manualMembershipsByTaskId: {},
+  });
+
+  assert.equal(memberships.some((membership) => membership.id === "list:completed-today"), true);
 });

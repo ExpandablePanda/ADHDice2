@@ -12,6 +12,7 @@ import {
   sanitizeFocusLabel,
   sanitizeOptionalFocusLabel,
 } from "@/lib/focus-utils";
+import { getLogicalDayKey } from "@/lib/logical-day";
 import { todayISO } from "@/lib/utils";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -190,7 +191,7 @@ export function useFocus(
 
   async function handleFinishTimer(
     categoryId: string,
-    data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string },
+    data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string },
   ) {
     if (!client || !userId) return;
 
@@ -215,7 +216,7 @@ export function useFocus(
       focus_type_snapshot: sanitizeFocusLabel(data?.focusType ?? category.focusType, "Work"),
       focus_subtype_snapshot: sanitizeOptionalFocusLabel(data?.focusSubtype ?? category.focusSubtype),
       focus_subtype_2_snapshot: sanitizeOptionalFocusLabel(data?.focusSubtype2 ?? category.focusSubtype2),
-      session_date: todayISO(),
+      session_date: data?.date ?? (activeSession.startTime ? getLogicalDayKey(new Date(activeSession.startTime)) : todayISO()),
       duration_seconds: totalSeconds,
       notes: data?.notes || null,
       started_at: activeSession.startTime ? new Date(activeSession.startTime).toISOString() : null,

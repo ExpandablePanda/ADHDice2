@@ -176,6 +176,7 @@ import { calcNextDueDateFromDate } from "@/lib/task-repeat";
 import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
 import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
 import {
+  buildTaskHistoryFacts,
   computeTaskHistoryStats,
   computeTaskSpecificHistoryStats,
   isTaskCompletedForHistory,
@@ -293,7 +294,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.2.4";
+const HUD_VERSION = "5.4.0";
 const HUD_LOADING_SHELL_HEIGHT = 96;
 
 function isKeyboardEventFromEditableTarget(
@@ -589,7 +590,10 @@ const TASK_LIST_RULE_FIELD_OPTIONS: Array<{ label: string; value: TaskListRuleFi
   { label: "Status", value: "status" },
   { label: "List", value: "list" },
   { label: "Steps", value: "steps" },
-  { label: "Streak", value: "streak" },
+  { label: "Completed", value: "completed_history" },
+  { label: "Missed", value: "missed_history" },
+  { label: "Completed Streak", value: "completed_streak" },
+  { label: "Missed Streak", value: "missed_streak" },
   { label: "Date Added", value: "date_added" },
   { label: "Due", value: "due" },
   { label: "Energy", value: "energy" },
@@ -613,11 +617,34 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
   ],
   due: [
     { label: "is today", value: "is_today" },
+    { label: "is tomorrow", value: "is_tomorrow" },
     { label: "isn't today", value: "is_not_today" },
     { label: "is overdue", value: "is_overdue" },
     { label: "isn't overdue", value: "is_not_overdue" },
     { label: "has no date", value: "is_empty" },
     { label: "has a later date", value: "is_future" },
+  ],
+  completed_history: [
+    { label: "is today", value: "is_today" },
+    { label: "within last", value: "within_last" },
+    { label: "last within last", value: "last_within_last" },
+    { label: "has ever", value: "has_ever" },
+  ],
+  missed_history: [
+    { label: "is today", value: "is_today" },
+    { label: "within last", value: "within_last" },
+    { label: "last within last", value: "last_within_last" },
+    { label: "has ever", value: "has_ever" },
+  ],
+  completed_streak: [
+    { label: "equals", value: "equals" },
+    { label: "at least", value: "at_least" },
+    { label: "less than", value: "less_than" },
+  ],
+  missed_streak: [
+    { label: "equals", value: "equals" },
+    { label: "at least", value: "at_least" },
+    { label: "less than", value: "less_than" },
   ],
   energy: [
     { label: "is", value: "is" },
@@ -1590,6 +1617,15 @@ export function TaskApp() {
     }, {}),
     [taskHistory],
   );
+  const taskHistoryFactsByTaskId = useMemo(
+    () => Object.fromEntries(
+      tasks.map((task) => [
+        task.id,
+        buildTaskHistoryFacts(taskHistoryByTaskId[task.id] ?? [], todayKey),
+      ]),
+    ),
+    [taskHistoryByTaskId, tasks, todayKey],
+  );
   const currentStreakByTaskId = useMemo(
     () => Object.fromEntries(
       tasks.map((task) => [
@@ -1631,11 +1667,13 @@ export function TaskApp() {
     focusedTaskIds: focusedTaskIdSet,
     hasStepsByTaskId,
     isDueToday,
+    isDueTomorrow: (date) => date === shiftDateKey(todayKey, 1),
     isLater,
     isOpen: isTaskOpen,
     isOverdue,
+    historyFactsByTaskId: taskHistoryFactsByTaskId,
     manualMembershipsByTaskId,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -3271,9 +3309,9 @@ export function TaskApp() {
         />
       ) : null}
       {isImportWidgetMenuOpen ? (
-        <ModalShell className="w-full max-w-2xl rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Import list" onClose={() => setIsImportWidgetMenuOpen(false)}>
-          <div className="space-y-5">
-            <div className="flex items-start justify-between gap-4">
+        <ModalShell className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Import list" onClose={() => setIsImportWidgetMenuOpen(false)}>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Import</p>
                 <h2 className="mt-2 text-2xl font-black text-[#1f2642] dark:text-white">Import list</h2>
@@ -3290,13 +3328,18 @@ export function TaskApp() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <ImportWidgetCard
-              message={message}
-              onImport={async (lines) => {
-                await importTasks(lines);
-                setIsImportWidgetMenuOpen(false);
-              }}
-            />
+            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
+              <ImportWidgetCard
+                embeddedInModal
+                message={message}
+                onImport={async (lines) => {
+                  const result = await importTasks(lines);
+                  if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
+                    setIsImportWidgetMenuOpen(false);
+                  }
+                }}
+              />
+            </div>
           </div>
         </ModalShell>
       ) : null}

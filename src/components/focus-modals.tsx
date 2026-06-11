@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { type FocusCategory, type FocusType, type FocusSubtype, type FocusLabelOptions } from "@/lib/types";
+import { getLogicalDayKey } from "@/lib/logical-day";
 import { CategoryIcon } from "./task-app";
 import { ModalShell } from "./modal-shell";
 
@@ -203,11 +204,15 @@ function ManualPillSelect({
 }
 
 function todayLocalISO() {
-  const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return getLogicalDayKey();
+}
+
+function resolveSessionLogDate(sessionStartTime: number | null) {
+  if (sessionStartTime) {
+    return getLogicalDayKey(new Date(sessionStartTime));
+  }
+
+  return getLogicalDayKey();
 }
 
 export function SessionFinishModal({
@@ -216,18 +221,21 @@ export function SessionFinishModal({
   labelOptions,
   onConfirm,
   onCancel,
+  sessionStartTime,
 }: {
   category: FocusCategory;
   durationSeconds: number;
   labelOptions: FocusLabelOptions;
-  onConfirm: (data: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string }) => void;
+  onConfirm: (data: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string }) => void;
   onCancel: () => void;
+  sessionStartTime: number | null;
 }) {
   const [title, setTitle] = useState(category.title);
   const [focusType, setFocusType] = useState<FocusType>(category.focusType);
   const [focusSubtype, setFocusSubtype] = useState<FocusSubtype>(category.focusSubtype ?? "");
   const [focusSubtype2, setFocusSubtype2] = useState(category.focusSubtype2 ?? "");
   const [notes, setNotes] = useState("");
+  const [date, setDate] = useState(resolveSessionLogDate(sessionStartTime));
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60);
@@ -236,8 +244,8 @@ export function SessionFinishModal({
   };
 
   return (
-    <ModalShell className="w-full max-w-lg max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-10 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
-        <div className="flex flex-col items-center text-center">
+    <ModalShell className="flex w-full max-w-lg max-h-[82vh] flex-col overflow-hidden rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
+        <div className="flex shrink-0 flex-col items-center text-center">
           <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-3xl" style={{ backgroundColor: category.color + "20", color: category.color }}>
             <CategoryIcon name={category.icon} className="h-10 w-10" />
           </div>
@@ -247,7 +255,8 @@ export function SessionFinishModal({
           </p>
         </div>
 
-        <div className="mt-10 space-y-6">
+        <div className="mt-8 min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="space-y-6">
           <label className="flex flex-col gap-2">
             <FieldLabel>Session Title</FieldLabel>
             <input
@@ -292,6 +301,16 @@ export function SessionFinishModal({
           </div>
 
           <label className="flex flex-col gap-2">
+            <FieldLabel>Completion Date</FieldLabel>
+            <input
+              className={`px-4 py-3 ui-input-light ${manualInputClassName}`}
+              onChange={(e) => setDate(e.target.value)}
+              type="date"
+              value={date}
+            />
+          </label>
+
+          <label className="flex flex-col gap-2">
             <FieldLabel>Subtype 2</FieldLabel>
             <input
               className={`px-4 py-2 ui-input-light ${manualInputClassName}`}
@@ -315,9 +334,10 @@ export function SessionFinishModal({
               value={notes}
             />
           </label>
+          </div>
         </div>
 
-        <div className="mt-10 flex gap-4">
+        <div className="mt-8 flex shrink-0 gap-4">
           <button
             className="ui-pill-button-light transition hover:bg-white/5 dark:bg-transparent dark:text-white dark:rounded-full"
             onClick={onCancel}
@@ -327,7 +347,7 @@ export function SessionFinishModal({
           </button>
           <button
             className="ui-pill-button-strong-light transition hover:scale-105 dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
-            onClick={() => onConfirm({ title, focusType, focusSubtype: focusSubtype.trim() || null, focusSubtype2: focusSubtype2.trim() || null, notes })}
+            onClick={() => onConfirm({ title, focusType, focusSubtype: focusSubtype.trim() || null, focusSubtype2: focusSubtype2.trim() || null, notes, date })}
             type="button"
           >
             Save Session

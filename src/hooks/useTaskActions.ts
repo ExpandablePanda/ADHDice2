@@ -13,7 +13,7 @@ import { useTaskListActions } from "@/hooks/useTaskListActions";
 import type { TaskStatus } from "@/lib/database.types";
 
 type UseTaskActionsOptions = {
-  crud: Parameters<typeof useTaskCrudActions>[0];
+  crud: Omit<Parameters<typeof useTaskCrudActions>[0], "replaceTaskSubtasks">;
   currentDayKey: string;
   create: Omit<Parameters<typeof useTaskCreateAction>[0], "routeTask">;
   editorSave: Omit<Parameters<typeof useTaskEditorSaveAction>[0], "replaceTaskSubtasks" | "syncTaskHistoryEntry" | "syncTaskNoteLinks">;
@@ -45,7 +45,10 @@ export function useTaskActions({
     historyActions.syncTaskHistoryEntry(taskId, status, currentDayKey);
   const noteLinkActions = useTaskNoteLinkActions(noteLinks);
   const subtaskActions = useTaskSubtaskActions(subtask);
-  const crudActions = useTaskCrudActions(crud);
+  const crudActions = useTaskCrudActions({
+    ...crud,
+    replaceTaskSubtasks: subtaskActions.replaceTaskSubtasks,
+  });
   const createAction = useTaskCreateAction({
     ...create,
     routeTask: routingActions.routeTask,

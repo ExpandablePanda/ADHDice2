@@ -21,8 +21,52 @@ export type TaskHistoryStats = {
   missedStreak: number;
 };
 
+export const TASK_HISTORY_WINDOW_PRESETS = ["1", "3", "7", "14", "30"] as const;
+export const TASK_HISTORY_STREAK_PRESETS = ["0", "1", "3", "7", "14", "30"] as const;
+
+export type TaskHistoryWindowPreset = typeof TASK_HISTORY_WINDOW_PRESETS[number];
+export type TaskHistoryStreakPreset = typeof TASK_HISTORY_STREAK_PRESETS[number];
+
+export type TaskHistoryFacts = {
+  completedToday: boolean;
+  completedWithinLast: Record<TaskHistoryWindowPreset, boolean>;
+  currentCompletedStreak: number;
+  currentMissedStreak: number;
+  hasEverCompleted: boolean;
+  hasEverMissed: boolean;
+  lastCompletedWithinLast: Record<TaskHistoryWindowPreset, boolean>;
+  lastMissedWithinLast: Record<TaskHistoryWindowPreset, boolean>;
+  missedToday: boolean;
+  missedWithinLast: Record<TaskHistoryWindowPreset, boolean>;
+};
+
 export function mapTaskHistoryRow(row: DbTaskHistory) {
   return row;
+}
+
+function createHistoryWindowFlags(initialValue = false): Record<TaskHistoryWindowPreset, boolean> {
+  return {
+    "1": initialValue,
+    "3": initialValue,
+    "7": initialValue,
+    "14": initialValue,
+    "30": initialValue,
+  };
+}
+
+export function buildEmptyTaskHistoryFacts(): TaskHistoryFacts {
+  return {
+    completedToday: false,
+    completedWithinLast: createHistoryWindowFlags(),
+    currentCompletedStreak: 0,
+    currentMissedStreak: 0,
+    hasEverCompleted: false,
+    hasEverMissed: false,
+    lastCompletedWithinLast: createHistoryWindowFlags(),
+    lastMissedWithinLast: createHistoryWindowFlags(),
+    missedToday: false,
+    missedWithinLast: createHistoryWindowFlags(),
+  };
 }
 
 type TaskHistoryLiveStatusContext = {
@@ -92,7 +136,8 @@ export function resolveLiveTaskStatusFromHistory(
 }
 
 export function computeTaskHistoryStats(history: DbTaskHistory[], todayDateKey: string): TaskHistoryStats {
-  const byDate = history.reduce<Map<string, { completed: boolean }>>((accumulator, entry) => {
+  const boundedHistory = history.filter((entry) => entry.entry_date <= todayDateKey);
+  const byDate = boundedHistory.reduce<Map<string, { completed: boolean }>>((accumulator, entry) => {
     const existing = accumulator.get(entry.entry_date);
     accumulator.set(entry.entry_date, {
       completed: (existing?.completed ?? false) || entry.was_completed,
@@ -101,16 +146,19 @@ export function computeTaskHistoryStats(history: DbTaskHistory[], todayDateKey: 
   }, new Map());
 
   const loggedDates = [...byDate.keys()].sort();
+  const loggedDateSet = new Set(loggedDates);
   const completedDates = loggedDates.filter((date) => byDate.get(date)?.completed);
   const loggedDays = loggedDates.length;
   const completedDays = completedDates.length;
   const missedDays = loggedDays - completedDays;
   const completionRate = loggedDays === 0 ? 0 : Math.round((completedDays / loggedDays) * 100);
   const doneRate = completionRate;
+  const latestLoggedDate = loggedDates.at(-1) ?? null;
+  const currentStreakStart = byDate.has(todayDateKey) ? todayDateKey : latestLoggedDate;
 
   let currentStreak = 0;
-  let cursor = todayDateKey;
-  while (completedDates.includes(cursor)) {
+  let cursor = currentStreakStart;
+  while (cursor && loggedDateSet.has(cursor) && byDate.get(cursor)?.completed) {
     currentStreak += 1;
     cursor = shiftDateKey(cursor, -1);
   }
@@ -129,11 +177,10 @@ export function computeTaskHistoryStats(history: DbTaskHistory[], todayDateKey: 
   }
 
   let missedStreak = 0;
-  const latestLoggedDate = loggedDates.at(-1) ?? null;
   let missedCursor = byDate.has(todayDateKey)
     ? todayDateKey
     : latestLoggedDate;
-  while (missedCursor && loggedDates.includes(missedCursor) && !byDate.get(missedCursor)?.completed) {
+  while (missedCursor && loggedDateSet.has(missedCursor) && !byDate.get(missedCursor)?.completed) {
     missedStreak += 1;
     missedCursor = shiftDateKey(missedCursor, -1);
   }
@@ -150,6 +197,93 @@ export function computeTaskHistoryStats(history: DbTaskHistory[], todayDateKey: 
   };
 }
 
+export function buildTaskHistoryFacts(history: DbTaskHistory[], todayDateKey: string): TaskHistoryFacts {
+  const boundedHistory = history
+    .filter((entry) => entry.entry_date <= todayDateKey)
+    .sort((left, right) => {
+      const dateOrder = compareDateKeys(left.entry_date, right.entry_date);
+      if (dateOrder !== 0) {
+        return dateOrder;
+      }
+      const leftTimestamp = left.updated_at || left.created_at;
+      const rightTimestamp = right.updated_at || right.created_at;
+      if (leftTimestamp === rightTimestamp) {
+        return left.id.localeCompare(right.id);
+      }
+      return leftTimestamp < rightTimestamp ? -1 : 1;
+    });
+  if (boundedHistory.length === 0) {
+    return buildEmptyTaskHistoryFacts();
+  }
+
+  const byDate = boundedHistory.reduce<Map<string, {
+    completed: boolean;
+    latestStatus: "completed" | "missed";
+    latestTimestamp: string;
+    missed: boolean;
+  }>>((accumulator, entry) => {
+    const existing = accumulator.get(entry.entry_date);
+    const entryStatus = entry.status === "missed" ? "missed" : "completed";
+    const entryTimestamp = entry.updated_at || entry.created_at;
+    accumulator.set(entry.entry_date, {
+      completed: (existing?.completed ?? false) || entry.was_completed,
+      latestStatus: !existing || entryTimestamp >= existing.latestTimestamp ? entryStatus : existing.latestStatus,
+      latestTimestamp: !existing || entryTimestamp >= existing.latestTimestamp ? entryTimestamp : existing.latestTimestamp,
+      missed: (existing?.missed ?? false) || entry.status === "missed",
+    });
+    return accumulator;
+  }, new Map());
+
+  const loggedDates = [...byDate.keys()].sort();
+  const latestLoggedDate = loggedDates.at(-1) ?? null;
+  const completedDates = loggedDates.filter((date) => byDate.get(date)?.completed);
+  const missedDates = loggedDates.filter((date) => byDate.get(date)?.missed);
+  const lastCompletedDate = completedDates.at(-1) ?? null;
+  const lastMissedDate = missedDates.at(-1) ?? null;
+  const currentCompletedStreakStart = byDate.has(todayDateKey) ? todayDateKey : latestLoggedDate;
+  const currentMissedStreakStart = byDate.has(todayDateKey) ? todayDateKey : latestLoggedDate;
+
+  let currentCompletedStreak = 0;
+  let completedCursor = currentCompletedStreakStart;
+  while (completedCursor && byDate.get(completedCursor)?.latestStatus === "completed") {
+    currentCompletedStreak += 1;
+    completedCursor = shiftDateKey(completedCursor, -1);
+  }
+
+  let currentMissedStreak = 0;
+  let missedCursor = currentMissedStreakStart;
+  while (missedCursor && byDate.get(missedCursor)?.latestStatus === "missed") {
+    currentMissedStreak += 1;
+    missedCursor = shiftDateKey(missedCursor, -1);
+  }
+
+  const completedWithinLast = createHistoryWindowFlags();
+  const missedWithinLast = createHistoryWindowFlags();
+  const lastCompletedWithinLast = createHistoryWindowFlags();
+  const lastMissedWithinLast = createHistoryWindowFlags();
+
+  for (const preset of TASK_HISTORY_WINDOW_PRESETS) {
+    const dayCount = Number.parseInt(preset, 10);
+    completedWithinLast[preset] = completedDates.some((date) => isWithinLastWindow(date, todayDateKey, dayCount));
+    missedWithinLast[preset] = missedDates.some((date) => isWithinLastWindow(date, todayDateKey, dayCount));
+    lastCompletedWithinLast[preset] = lastCompletedDate ? isWithinLastWindow(lastCompletedDate, todayDateKey, dayCount) : false;
+    lastMissedWithinLast[preset] = lastMissedDate ? isWithinLastWindow(lastMissedDate, todayDateKey, dayCount) : false;
+  }
+
+  return {
+    completedToday: byDate.get(todayDateKey)?.completed ?? false,
+    completedWithinLast,
+    currentCompletedStreak,
+    currentMissedStreak,
+    hasEverCompleted: completedDates.length > 0,
+    hasEverMissed: missedDates.length > 0,
+    lastCompletedWithinLast,
+    lastMissedWithinLast,
+    missedToday: byDate.get(todayDateKey)?.missed ?? false,
+    missedWithinLast,
+  };
+}
+
 function compareDateKeys(left: string, right: string) {
   if (left === right) return 0;
   return left < right ? -1 : 1;
@@ -162,6 +296,11 @@ function toDate(dateKey: string) {
 function daysBetween(startDateKey: string, endDateKey: string) {
   const diff = toDate(endDateKey).getTime() - toDate(startDateKey).getTime();
   return Math.round(diff / 86_400_000);
+}
+
+function isWithinLastWindow(dateKey: string, todayDateKey: string, dayCount: number) {
+  const distance = daysBetween(dateKey, todayDateKey);
+  return distance >= 0 && distance < dayCount;
 }
 
 function monthsBetween(startDateKey: string, endDateKey: string) {

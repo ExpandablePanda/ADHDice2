@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import { useState, type ComponentProps, type JSX, type ReactNode } from "react";
 import { ModalShell } from "../modal-shell";
 import { BottomDockComponent } from "./bottom-dock";
@@ -22,6 +23,7 @@ import { UrgentTasksPanelComponent } from "./task-grid-widgets";
 import type { TaskDraft } from "./task-editor-model";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 import type { AppPage } from "@/lib/task-ui-state";
+import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
 import type {
   Task,
   TaskHistory as DbTaskHistory,
@@ -132,56 +134,99 @@ export function TaskComposerCardAdapter({
 }
 
 export function ImportWidgetCardAdapter({
+  embeddedInModal = false,
   message,
   onImport,
 }: {
+  embeddedInModal?: boolean;
   message: Message | null;
-  onImport: (lines: string[]) => Promise<void>;
+  onImport: (lines: string[]) => Promise<ImportTasksResult | void>;
 }) {
   const [text, setText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const lines = text
-    .split("\n")
-    .map((line) => line.trim().replace(/^[-*]\s+/, ""))
-    .filter(Boolean);
+  const lines = text.split("\n");
+  const nonEmptyLineCount = lines.filter((line) => line.trim().length > 0).length;
+  const messageToneClassName = message?.tone === "warn"
+    ? "text-[#b44f32] dark:text-[#ffb49f]"
+    : message?.tone === "good"
+      ? "text-[#2c8b67] dark:text-[#8ce0bb]"
+      : "text-[#8c94ac] dark:text-white/45";
 
   return (
-    <section className="rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6">
-      <h2 className="text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white">
-        Import List
-      </h2>
-      <p className="mt-2 text-sm text-[#78829c] dark:text-white/55">
-        Paste a rough list and turn it into calm, structured tasks.
-      </p>
+    <section className={embeddedInModal
+      ? "min-h-0"
+      : "rounded-[2rem] border border-[#ece8f8] bg-white p-5 shadow-[0_18px_50px_rgba(81,61,168,0.07)] transition hover:-translate-y-0.5 dark:border-white/10 dark:bg-white/6"}
+    >
+      {embeddedInModal ? null : (
+        <>
+          <h2 className="text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white">
+            Import List
+          </h2>
+          <p className="mt-2 text-sm text-[#78829c] dark:text-white/55">
+            Paste a rough list and turn it into calm, structured tasks.
+          </p>
+        </>
+      )}
 
       <form
-        className="mt-4 space-y-3"
+        className={`${embeddedInModal ? "space-y-3" : "mt-4 space-y-3"}`}
         onSubmit={async (event) => {
           event.preventDefault();
           setIsSubmitting(true);
-          await onImport(lines);
-          setText("");
+          const result = await onImport(lines);
+          if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
+            setText("");
+          }
           setIsSubmitting(false);
         }}
       >
         <textarea
-          className="min-h-40 w-full resize-y rounded-[1.25rem] px-4 py-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30"
+          className={`w-full resize-y rounded-[1.25rem] px-4 py-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30 ${embeddedInModal ? "min-h-[10rem] max-h-[40vh]" : "min-h-40"}`}
           onChange={(event) => setText(event.target.value)}
-          placeholder={"Call dentist\nDrink water\nChoose dinner"}
+          placeholder={"Clean Ears #hygiene *due-Today *repeat-Daily\nMoisturize\n-AM\n--Face\n--Feet\n-PM"}
           value={text}
         />
+        <div className="rounded-[1.25rem] border border-[#ede7f7] bg-[#faf8ff] px-4 py-3 text-sm text-[#5d6784] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/65">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/35">Syntax Key</p>
+          <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+            <p><span className="font-semibold text-[#27304c] dark:text-white">Task title</span> = new task</p>
+            <p><span className="font-semibold text-[#27304c] dark:text-white">- Step</span> = step under previous task</p>
+            <p><span className="font-semibold text-[#27304c] dark:text-white">-- Substep</span> = nested substep</p>
+            <p><span className="font-semibold text-[#27304c] dark:text-white">#tag</span> = add/connect tag</p>
+            <p><span className="font-semibold text-[#27304c] dark:text-white">*field-value</span> = metadata</p>
+          </div>
+          <details className="group mt-3 rounded-[1rem] border border-[#e8e1f4] bg-white/75 px-3 py-2.5 dark:border-white/10 dark:bg-white/[0.04]">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[13px] font-semibold text-[#27304c] dark:text-white">
+              <span>Example + metadata tokens</span>
+              <ChevronDown className="h-4 w-4 shrink-0 text-[#8f7fe0] transition-transform duration-200 group-open:rotate-180 dark:text-[#cabfff]" />
+            </summary>
+            <div className="mt-3 grid gap-1.5 rounded-[0.9rem] bg-white/80 px-3 py-3 text-[13px] dark:bg-[#1a1431]">
+              <p>Clean Ears #hygiene *due-Today *repeat-Daily</p>
+              <p>Moisturize</p>
+              <p>-AM</p>
+              <p>--Face</p>
+              <p>--Feet</p>
+              <p>-PM</p>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-[13px]">
+              {["*due-Today", "*due-Tomorrow", "*due-6/15/2026", "*repeat-Daily", "*status-Pending", "*energy-Low", "*estimate-10m", "*actual-5m"].map((token) => (
+                <span className="rounded-full border border-[#e4deef] bg-white px-2.5 py-1 dark:border-white/10 dark:bg-white/8" key={token}>{token}</span>
+              ))}
+            </div>
+          </details>
+        </div>
         <button
           className="ui-pill-button-strong-light w-full"
-          disabled={lines.length === 0 || isSubmitting}
+          disabled={nonEmptyLineCount === 0 || isSubmitting}
           type="submit"
         >
-          Import {lines.length || ""}
+          Import {nonEmptyLineCount || ""}
         </button>
       </form>
 
-      <p className="mt-3 text-sm text-[#8c94ac] dark:text-white/45">
+      <div className={`mt-3 whitespace-pre-wrap text-sm ${messageToneClassName}`}>
         {message?.text}
-      </p>
+      </div>
     </section>
   );
 }
@@ -278,7 +323,7 @@ export function TaskGridViewAdapter<TWidgetType extends string>({
   onSetStatus: (task: Task, status: TaskStatus) => void;
   onSetSubtaskStatus: (subtaskId: string, status: TaskSubtaskStatus) => void;
   onAddWidget: (widgetType: TWidgetType) => void;
-  onImportTasks: (lines: string[]) => Promise<void>;
+  onImportTasks: (lines: string[]) => Promise<ImportTasksResult | void>;
   onMoveWidget: (widgetId: string, direction: "up" | "down") => void;
   onRemoveWidget: (widgetId: string) => void;
   onReorderWidget: (targetWidgetId: string) => void;

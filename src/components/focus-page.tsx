@@ -35,7 +35,7 @@ export function FocusPage({
   activeSessions: Record<string, ActiveFocusSession>;
   history: HistoricalFocusSession[];
   onToggleTimer: (catId: string) => void;
-  onFinishTimer: (catId: string, data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string }) => void;
+  onFinishTimer: (catId: string, data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string }) => void;
   onAdjustTimer: (catId: string, deltaSeconds: number) => void;
   onResetTimer: (catId: string) => void;
   onLogManual: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<boolean>;
@@ -59,7 +59,7 @@ export function FocusPage({
     setFinishingCatId(catId);
   };
 
-  const confirmFinish = (data: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string }) => {
+  const confirmFinish = (data: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string }) => {
     if (finishingCatId) {
       onFinishTimer(finishingCatId, data);
       setFinishingCatId(null);
@@ -165,6 +165,7 @@ export function FocusPage({
           labelOptions={labelOptions}
           onCancel={() => setFinishingCatId(null)}
           onConfirm={confirmFinish}
+          sessionStartTime={activeFinishingSession.startTime}
         />
       )}
 
