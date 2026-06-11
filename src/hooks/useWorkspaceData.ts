@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import type { User } from "@supabase/supabase-js";
+import type { RealtimeChannel, User } from "@supabase/supabase-js";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import type {
@@ -87,6 +87,9 @@ function shouldLoadSecondaryForPage(activePage: AppPage) {
   return activePage === "Stats" || activePage === "Notes" || activePage === "Focus";
 }
 
+const TASK_RESUME_SYNC_DEBOUNCE_MS = 450;
+const TASK_RESUME_SYNC_COOLDOWN_MS = 1500;
+
 export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   activePage,
   currentUser,
@@ -134,6 +137,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const secondaryLoadInFlightRef = useRef(false);
   const taskReloadInFlightRef = useRef(false);
   const queuedTaskReloadRef = useRef(false);
+  const taskChannelRef = useRef<RealtimeChannel | null>(null);
+  const taskChannelStatusRef = useRef<string>("CLOSED");
+  const taskResumeSyncTimeoutRef = useRef<number | null>(null);
+  const taskResumeSyncQueuedRef = useRef(false);
+  const lastTaskResumeSyncAtRef = useRef(0);
 
   useEffect(() => {
     if (!supabase || !currentUser) {
@@ -141,6 +149,14 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       secondaryLoadInFlightRef.current = false;
       taskReloadInFlightRef.current = false;
       queuedTaskReloadRef.current = false;
+      taskChannelRef.current = null;
+      taskChannelStatusRef.current = "CLOSED";
+      taskResumeSyncQueuedRef.current = false;
+      lastTaskResumeSyncAtRef.current = 0;
+      if (taskResumeSyncTimeoutRef.current !== null) {
+        window.clearTimeout(taskResumeSyncTimeoutRef.current);
+        taskResumeSyncTimeoutRef.current = null;
+      }
       return;
     }
 
@@ -148,6 +164,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     const user = currentUser;
     const userId = user.id;
     let isActive = true;
+    let taskChannel: RealtimeChannel | null = null;
 
     function createTaskRowsRequest() {
       return client
@@ -194,6 +211,95 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       } finally {
         taskReloadInFlightRef.current = false;
       }
+    }
+
+    function shouldReconnectTaskChannel() {
+      return (
+        taskChannelRef.current === null
+        || taskChannelStatusRef.current === "CLOSED"
+        || taskChannelStatusRef.current === "TIMED_OUT"
+        || taskChannelStatusRef.current === "CHANNEL_ERROR"
+      );
+    }
+
+    function subscribeTaskChannel() {
+      taskChannelStatusRef.current = "SUBSCRIBING";
+      const nextTaskChannel = client
+        .channel(`adhdice_tasks:${userId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "adhdice_clean_tasks",
+            filter: `user_id=eq.${userId}`,
+          },
+          (payload) => {
+            const taskId = ((payload.new as { id?: string } | null)?.id ?? (payload.old as { id?: string } | null)?.id ?? null);
+            if (shouldSkipTaskReload?.({ eventType: payload.eventType, taskId })) {
+              return;
+            }
+            void reloadTaskRows({ silent: true });
+          },
+        )
+        .subscribe((status) => {
+          taskChannelStatusRef.current = status;
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn(
+              "[workspace] Task realtime subscription failed. If cross-client task sync stays stale, confirm Realtime is enabled and `adhdice_clean_tasks` is included in the Supabase realtime publication.",
+            );
+          }
+        });
+
+      taskChannelRef.current = nextTaskChannel;
+      taskChannel = nextTaskChannel;
+    }
+
+    function ensureTaskChannelSubscribed() {
+      if (!shouldReconnectTaskChannel()) {
+        return;
+      }
+
+      const previousChannel = taskChannelRef.current;
+      taskChannelRef.current = null;
+      taskChannelStatusRef.current = "CLOSED";
+      if (previousChannel) {
+        void client.removeChannel(previousChannel);
+        if (taskChannel === previousChannel) {
+          taskChannel = null;
+        }
+      }
+      subscribeTaskChannel();
+    }
+
+    function scheduleTaskResumeSync() {
+      if (!isActive) {
+        return;
+      }
+
+      taskResumeSyncQueuedRef.current = true;
+      const now = Date.now();
+      const msSinceLastResumeSync = now - lastTaskResumeSyncAtRef.current;
+      const delay = msSinceLastResumeSync >= TASK_RESUME_SYNC_COOLDOWN_MS
+        ? TASK_RESUME_SYNC_DEBOUNCE_MS
+        : Math.max(TASK_RESUME_SYNC_DEBOUNCE_MS, TASK_RESUME_SYNC_COOLDOWN_MS - msSinceLastResumeSync);
+
+      if (taskResumeSyncTimeoutRef.current !== null) {
+        window.clearTimeout(taskResumeSyncTimeoutRef.current);
+      }
+
+      taskResumeSyncTimeoutRef.current = window.setTimeout(() => {
+        taskResumeSyncTimeoutRef.current = null;
+
+        if (!isActive || !taskResumeSyncQueuedRef.current) {
+          return;
+        }
+
+        taskResumeSyncQueuedRef.current = false;
+        lastTaskResumeSyncAtRef.current = Date.now();
+        ensureTaskChannelSubscribed();
+        void reloadTaskRows({ silent: true });
+      }, delay);
     }
 
     async function loadSecondaryWorkspaceData({ silent = false }: { silent?: boolean } = {}) {
@@ -472,32 +578,35 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     }
 
     void loadCoreWorkspaceData();
+    subscribeTaskChannel();
 
-    const taskChannel = client
-      .channel(`adhdice_tasks:${userId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "adhdice_clean_tasks",
-          filter: `user_id=eq.${userId}`,
-        },
-        (payload) => {
-          const taskId = ((payload.new as { id?: string } | null)?.id ?? (payload.old as { id?: string } | null)?.id ?? null);
-          if (shouldSkipTaskReload?.({ eventType: payload.eventType, taskId })) {
-            return;
-          }
-          void reloadTaskRows({ silent: true });
-        },
-      )
-      .subscribe((status) => {
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          console.warn(
-            "[workspace] Task realtime subscription failed. If cross-client task sync stays stale, confirm Realtime is enabled and `adhdice_clean_tasks` is included in the Supabase realtime publication.",
-          );
-        }
-      });
+    function handleDocumentVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        scheduleTaskResumeSync();
+      }
+    }
+
+    function handlePageShow() {
+      scheduleTaskResumeSync();
+    }
+
+    function handleWindowFocus() {
+      scheduleTaskResumeSync();
+    }
+
+    function handleWindowOnline() {
+      scheduleTaskResumeSync();
+    }
+
+    function handlePageHide() {
+      taskResumeSyncQueuedRef.current = true;
+    }
+
+    document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
+    window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("online", handleWindowOnline);
+    window.addEventListener("pagehide", handlePageHide);
 
     const workspaceChannel = client
       .channel(`adhdice_workspace:${userId}`)
@@ -633,8 +742,22 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
     return () => {
       isActive = false;
-      client.removeChannel(taskChannel);
-      client.removeChannel(workspaceChannel);
+      document.removeEventListener("visibilitychange", handleDocumentVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("focus", handleWindowFocus);
+      window.removeEventListener("online", handleWindowOnline);
+      window.removeEventListener("pagehide", handlePageHide);
+      if (taskResumeSyncTimeoutRef.current !== null) {
+        window.clearTimeout(taskResumeSyncTimeoutRef.current);
+        taskResumeSyncTimeoutRef.current = null;
+      }
+      taskResumeSyncQueuedRef.current = false;
+      taskChannelRef.current = null;
+      taskChannelStatusRef.current = "CLOSED";
+      if (taskChannel) {
+        void client.removeChannel(taskChannel);
+      }
+      void client.removeChannel(workspaceChannel);
     };
   }, [activePage, currentUser?.id, shouldSkipTaskReload, supabase, suppressCategoryReload]);
 
