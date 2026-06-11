@@ -122,12 +122,15 @@ export function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucke
 export function createTask(params: Partial<Task> & Pick<Task, "id" | "title" | "status" | "created_at" | "sort_order">): Task {
   return {
     user_id: "test-user",
+    parent_task_id: null,
+    revision: 1,
     notes: null,
     priority: "normal",
     energy: "medium" as TaskEnergy,
     is_urgent: false,
     is_important: false,
     due_on: null,
+    scheduled_on: null,
     due_time: null,
     estimated_minutes: null,
     tags: [],

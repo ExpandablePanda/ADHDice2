@@ -11,6 +11,7 @@ create table public.adhdice_clean_tasks (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   parent_task_id uuid references public.adhdice_clean_tasks(id) on delete cascade,
+  revision integer not null default 1,
   title text not null check (char_length(trim(title)) > 0),
   notes text,
   status public.adhdice_clean_task_status not null default 'pending',
@@ -705,6 +706,23 @@ begin
   return new;
 end;
 $$;
+
+create or replace function public.adhdice_clean_tasks_bump_revision()
+returns trigger
+language plpgsql
+as $$
+begin
+  if row(new.*) is distinct from row(old.*) then
+    new.revision = old.revision + 1;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger adhdice_clean_tasks_bump_revision
+  before update on public.adhdice_clean_tasks
+  for each row
+  execute function public.adhdice_clean_tasks_bump_revision();
 
 create trigger adhdice_clean_tasks_set_updated_at
   before update on public.adhdice_clean_tasks

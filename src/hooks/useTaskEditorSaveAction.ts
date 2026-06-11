@@ -3,6 +3,8 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskUpdate } from "@/lib/database.types";
 import type { TaskDraft, TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
+import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
+import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 
 type Message = {
@@ -16,13 +18,6 @@ type SaveTaskEditorOptions = {
   sortOrder?: number;
   subtasks?: TaskSubtaskDraft[];
   taskId?: string | null;
-};
-
-type UpdateTaskRowResult = {
-  data: Task | null;
-  error: { message: string } | null;
-  usedActualSecondsFallback: boolean;
-  usedEnergyFallback: boolean;
 };
 
 type InsertTaskRowResult = {
@@ -42,7 +37,7 @@ type UseTaskEditorSaveActionOptions = {
   syncTaskHistoryEntry: (taskId: string, status: Task["status"]) => Promise<boolean>;
   syncTaskNoteLinks: (taskId: string, linkedNoteIds: string[]) => Promise<boolean>;
   tasks: Task[];
-  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate) => Promise<UpdateTaskRowResult>;
+  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
   insertTaskRowWithLegacyEnergyFallback: (payload: TaskDraft & { user_id: string; sort_order: number }) => Promise<InsertTaskRowResult>;
   currentUserId: string;
 };
@@ -76,10 +71,24 @@ export function useTaskEditorSaveAction({
         ...values,
         id: undefined,
       };
-      const { data, error, usedEnergyFallback, usedActualSecondsFallback } = await updateTaskRowWithLegacyEnergyFallback(taskId, updateValues);
+      const {
+        conflict,
+        data,
+        error,
+        usedEnergyFallback,
+        usedActualSecondsFallback,
+      } = await updateTaskRowWithLegacyEnergyFallback(taskId, updateValues, { expectedTask: previousTask });
 
       if (error) {
         setMessage({ tone: "warn", text: error.message });
+        return null;
+      }
+
+      if (conflict) {
+        if (conflict.latestTask) {
+          setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? conflict.latestTask ?? task : task)));
+        }
+        setMessage({ tone: "warn", text: buildTaskUpdateConflictMessage(conflict) });
         return null;
       }
 

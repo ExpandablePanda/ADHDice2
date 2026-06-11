@@ -2,19 +2,14 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskUpdate } from "@/lib/database.types";
+import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
+import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 
 type Message = {
   text: string;
   tone: "neutral" | "good" | "warn";
-};
-
-type UpdateTaskRowResult = {
-  data: Task | null;
-  error: { message: string } | null;
-  usedActualSecondsFallback: boolean;
-  usedEnergyFallback: boolean;
 };
 
 type UseTaskUpdateActionOptions = {
@@ -27,7 +22,7 @@ type UseTaskUpdateActionOptions = {
   sortTasksForUi: (tasks: Task[]) => Task[];
   syncTaskHistoryEntry: (taskId: string, status: Task["status"]) => Promise<boolean>;
   tasks: Task[];
-  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate) => Promise<UpdateTaskRowResult>;
+  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
 };
 
 export function useTaskUpdateAction({
@@ -45,11 +40,29 @@ export function useTaskUpdateAction({
   async function updateTask(taskId: string, values: TaskUpdate) {
     markPendingTaskMutations?.([taskId]);
     const previousTask = tasks.find((task) => task.id === taskId) ?? null;
-    const { data, error, usedEnergyFallback, usedActualSecondsFallback } = await updateTaskRowWithLegacyEnergyFallback(taskId, values);
+    const {
+      conflict,
+      data,
+      error,
+      usedEnergyFallback,
+      usedActualSecondsFallback,
+    } = await updateTaskRowWithLegacyEnergyFallback(taskId, values, { expectedTask: previousTask });
 
     if (error) {
       clearPendingTaskMutations?.([taskId]);
       setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if (conflict) {
+      clearPendingTaskMutations?.([taskId]);
+      if (conflict.latestTask) {
+        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? conflict.latestTask ?? task : task)));
+        if (conflict.latestTask.status === "done" || conflict.latestTask.status === "did_my_best" || conflict.latestTask.status === "archived") {
+          routeTask(taskId, null);
+        }
+      }
+      setMessage({ tone: "warn", text: buildTaskUpdateConflictMessage(conflict) });
       return false;
     }
 

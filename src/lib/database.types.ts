@@ -123,6 +123,7 @@ export type Task = {
   id: string;
   user_id: string;
   parent_task_id: string | null;
+  revision: number;
   title: string;
   notes: string | null;
   status: TaskStatus;
@@ -154,6 +155,7 @@ export type TaskInsert = {
   id?: string;
   user_id: string;
   parent_task_id?: string | null;
+  revision?: number;
   title: string;
   notes?: string | null;
   status?: TaskStatus;
@@ -182,6 +184,7 @@ export type TaskInsert = {
 export type TaskUpdate = Partial<
   Pick<
     Task,
+    | "revision"
     | "title"
     | "notes"
     | "status"

@@ -56,6 +56,7 @@ test("action hooks expose expected callable actions", () => {
     syncTaskHistoryEntry: async () => true,
     tasks: [],
     updateTaskRowWithLegacyEnergyFallback: async () => ({
+      conflict: null,
       data: createTask({
         created_at: "2026-05-20T00:00:00.000Z",
         id: "task-update",
@@ -64,6 +65,7 @@ test("action hooks expose expected callable actions", () => {
         title: "Task",
       }),
       error: null,
+      reappliedOnLatestRevision: false,
       usedActualSecondsFallback: false,
       usedEnergyFallback: false,
     }),
@@ -83,7 +85,14 @@ test("action hooks expose expected callable actions", () => {
     syncTaskHistoryEntry: async () => true,
     syncTaskNoteLinks: async () => true,
     tasks: [],
-    updateTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedActualSecondsFallback: false, usedEnergyFallback: false }),
+    updateTaskRowWithLegacyEnergyFallback: async () => ({
+      conflict: null,
+      data: null,
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
   });
   assert.equal(typeof editor.saveTaskEditor, "function");
 
@@ -152,7 +161,14 @@ test("action hooks expose expected callable actions", () => {
       setTasks: () => {},
       sortTasksForUi: (tasks) => tasks,
       tasks: [],
-      updateTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedActualSecondsFallback: false, usedEnergyFallback: false }),
+      updateTaskRowWithLegacyEnergyFallback: async () => ({
+        conflict: null,
+        data: null,
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      }),
     },
     batchEdit: {
       clearListTaskSelection: () => {},
@@ -166,7 +182,14 @@ test("action hooks expose expected callable actions", () => {
       setTasks: () => {},
       sortTasksForUi: (tasks) => tasks,
       tasks: [],
-      updateTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedActualSecondsFallback: false, usedEnergyFallback: false }),
+      updateTaskRowWithLegacyEnergyFallback: async () => ({
+        conflict: null,
+        data: null,
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      }),
     },
     history: {
       client: {} as never,
@@ -211,7 +234,14 @@ test("action hooks expose expected callable actions", () => {
       setTasks: () => {},
       sortTasksForUi: (tasks) => tasks,
       tasks: [],
-      updateTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedActualSecondsFallback: false, usedEnergyFallback: false }),
+      updateTaskRowWithLegacyEnergyFallback: async () => ({
+        conflict: null,
+        data: null,
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      }),
     },
   });
   assert.equal(typeof actions.updateTask, "function");

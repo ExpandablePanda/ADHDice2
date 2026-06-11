@@ -25,6 +25,7 @@ import {
   shiftDateKey,
 } from "../src/lib/task-grid-layout.ts";
 import { parseImportedTaskLines } from "../src/lib/task-input-parsing.ts";
+import { analyzeTaskUpdateReapplySafety, buildTaskUpdateConflictMessage } from "../src/lib/task-db-mutations.ts";
 import { buildTaskCollections } from "../src/lib/task-selectors.ts";
 import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
 import { buildTaskListCounts, getBuiltInTaskLists } from "../src/lib/task-lists.ts";
@@ -314,4 +315,49 @@ test("import parser warns on orphan steps and unknown metadata", () => {
   assert.equal(parsed.tasks.length, 1);
   assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /no parent task above it/i);
   assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /unknown metadata field "mood"/i);
+});
+
+test("task update conflict helpers only auto-reapply low-risk untouched fields", () => {
+  const baseTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-conflict",
+    notes: "base notes",
+    revision: 3,
+    sort_order: 1,
+    status: "pending",
+    title: "Base title",
+  });
+  const latestTask = {
+    ...baseTask,
+    energy: "high" as const,
+    revision: 4,
+  };
+
+  const safePlan = analyzeTaskUpdateReapplySafety(baseTask, latestTask, { title: "Retitled" });
+  assert.equal(safePlan.canAutoReapply, true);
+  assert.deepEqual(safePlan.conflictingFields, []);
+
+  const sameFieldConflictPlan = analyzeTaskUpdateReapplySafety(
+    baseTask,
+    { ...latestTask, title: "Remote title" },
+    { title: "Local title" },
+  );
+  assert.equal(sameFieldConflictPlan.canAutoReapply, false);
+  assert.equal(sameFieldConflictPlan.reason, "same_field_changed_remotely");
+  assert.deepEqual(sameFieldConflictPlan.conflictingFields, ["title"]);
+
+  const highRiskPlan = analyzeTaskUpdateReapplySafety(baseTask, latestTask, { status: "done" });
+  assert.equal(highRiskPlan.canAutoReapply, false);
+  assert.equal(highRiskPlan.reason, "high_risk_patch");
+  assert.deepEqual(highRiskPlan.conflictingFields, ["status"]);
+
+  assert.match(
+    buildTaskUpdateConflictMessage({
+      attemptedReapply: false,
+      conflictingFields: ["status"],
+      latestTask,
+      reason: "high_risk_patch",
+    }),
+    /higher-risk fields/i,
+  );
 });

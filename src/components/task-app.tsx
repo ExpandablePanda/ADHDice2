@@ -294,7 +294,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.5.2";
+const HUD_VERSION = "5.5.3";
 const HUD_LOADING_SHELL_HEIGHT = 96;
 
 function isKeyboardEventFromEditableTarget(
@@ -2007,12 +2007,13 @@ export function TaskApp() {
       setTasks,
       sortTasksForUi,
       tasks,
-      updateTaskRowWithLegacyEnergyFallback: (taskId, values) => updateTaskRowWithLegacyEnergyFallback(
+      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
         client,
         taskId,
         values,
         isMissingTaskActualSecondsColumnError,
         isMissingTaskEnergyNoneEnumError,
+        options,
       ),
     },
     list: {
@@ -2042,12 +2043,13 @@ export function TaskApp() {
       setTasks,
       sortTasksForUi,
       tasks,
-      updateTaskRowWithLegacyEnergyFallback: (taskId, values) => updateTaskRowWithLegacyEnergyFallback(
+      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
         client,
         taskId,
         values,
         isMissingTaskActualSecondsColumnError,
         isMissingTaskEnergyNoneEnumError,
+        options,
       ),
     },
     history: {
@@ -2104,12 +2106,13 @@ export function TaskApp() {
       setTasks,
       sortTasksForUi,
       tasks,
-      updateTaskRowWithLegacyEnergyFallback: (taskId, values) => updateTaskRowWithLegacyEnergyFallback(
+      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
         client,
         taskId,
         values,
         isMissingTaskActualSecondsColumnError,
         isMissingTaskEnergyNoneEnumError,
+        options,
       ),
     },
   });
