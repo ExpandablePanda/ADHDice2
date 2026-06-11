@@ -132,11 +132,15 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const hasLoadedSecondaryDataRef = useRef(false);
   const secondaryLoadInFlightRef = useRef(false);
+  const taskReloadInFlightRef = useRef(false);
+  const queuedTaskReloadRef = useRef(false);
 
   useEffect(() => {
     if (!supabase || !currentUser) {
       hasLoadedSecondaryDataRef.current = false;
       secondaryLoadInFlightRef.current = false;
+      taskReloadInFlightRef.current = false;
+      queuedTaskReloadRef.current = false;
       return;
     }
 
@@ -144,6 +148,53 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     const user = currentUser;
     const userId = user.id;
     let isActive = true;
+
+    function createTaskRowsRequest() {
+      return client
+        .from("adhdice_clean_tasks")
+        .select("*")
+        .eq("user_id", userId)
+        .order("status", { ascending: true })
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: false });
+    }
+
+    async function reloadTaskRows({ silent = false }: { silent?: boolean } = {}) {
+      if (!isActive) {
+        return;
+      }
+
+      if (taskReloadInFlightRef.current) {
+        queuedTaskReloadRef.current = true;
+        return;
+      }
+
+      taskReloadInFlightRef.current = true;
+
+      try {
+        do {
+          queuedTaskReloadRef.current = false;
+          const taskResult = await createTaskRowsRequest();
+
+          if (!isActive) {
+            return;
+          }
+
+          if (taskResult.error) {
+            if (!silent) {
+              setMessage({ tone: "warn", text: taskResult.error.message ?? "Could not refresh your tasks." });
+            }
+            return;
+          }
+
+          startTransition(() => {
+            setTasks(taskResult.data ?? []);
+          });
+        } while (queuedTaskReloadRef.current && isActive);
+      } finally {
+        taskReloadInFlightRef.current = false;
+      }
+    }
 
     async function loadSecondaryWorkspaceData({ silent = false }: { silent?: boolean } = {}) {
       if (!isActive || secondaryLoadInFlightRef.current) {
@@ -205,13 +256,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       const loadStartedAt = performance.now();
-      const taskRequest = client
-        .from("adhdice_clean_tasks")
-        .select("*")
-        .eq("user_id", userId)
-        .order("status", { ascending: true })
-        .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: false });
+      const taskRequest = createTaskRowsRequest();
       const taskSubtasksRequest = client
         .from("adhdice_task_subtasks")
         .select("*")
@@ -428,8 +473,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
     void loadCoreWorkspaceData();
 
-    const workspaceChannel = client
-      .channel(`adhdice_workspace:${userId}`)
+    const taskChannel = client
+      .channel(`adhdice_tasks:${userId}`)
       .on(
         "postgres_changes",
         {
@@ -443,9 +488,19 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           if (shouldSkipTaskReload?.({ eventType: payload.eventType, taskId })) {
             return;
           }
-          void loadCoreWorkspaceData({ silent: true });
+          void reloadTaskRows({ silent: true });
         },
       )
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn(
+            "[workspace] Task realtime subscription failed. If cross-client task sync stays stale, confirm Realtime is enabled and `adhdice_clean_tasks` is included in the Supabase realtime publication.",
+          );
+        }
+      });
+
+    const workspaceChannel = client
+      .channel(`adhdice_workspace:${userId}`)
       .on(
         "postgres_changes",
         {
@@ -578,6 +633,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
     return () => {
       isActive = false;
+      client.removeChannel(taskChannel);
       client.removeChannel(workspaceChannel);
     };
   }, [activePage, currentUser?.id, shouldSkipTaskReload, supabase, suppressCategoryReload]);
