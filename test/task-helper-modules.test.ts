@@ -4,6 +4,8 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "../src/lib/task-filter-state.ts";
 import {
   formatDueTimeLabel,
+  getTaskDisplayStatus,
+  getTaskDueDateBucket,
   getListPriorityLabel,
   matchesTaskQuickFilter,
 } from "../src/lib/task-cockpit.ts";
@@ -136,6 +138,76 @@ test("cockpit helpers format metadata and evaluate quick filters", () => {
   assert.equal(getListPriorityLabel(task, new Set<string>()), "Urgent");
 });
 
+test("date bucket helpers classify due_on windows and normalize stale future statuses", () => {
+  const today = formatDateKey(new Date());
+  const tomorrow = shiftDateKey(today, 1);
+  const sevenDaysOut = shiftDateKey(today, 7);
+  const eightDaysOut = shiftDateKey(today, 8);
+  const yesterday = shiftDateKey(today, -1);
+
+  const todayTask = createTask({
+    created_at: `${today}T07:30:00.000Z`,
+    due_on: today,
+    id: "task-due-today",
+    sort_order: 11,
+    status: "not_due",
+    title: "Due today",
+  });
+  const tomorrowTask = createTask({
+    created_at: `${today}T07:31:00.000Z`,
+    due_on: tomorrow,
+    id: "task-due-tomorrow",
+    sort_order: 12,
+    status: "not_due",
+    title: "Due tomorrow",
+  });
+  const sevenDaysTask = createTask({
+    created_at: `${today}T07:32:00.000Z`,
+    due_on: sevenDaysOut,
+    id: "task-due-seven-days",
+    sort_order: 13,
+    status: "not_due",
+    title: "Due in seven days",
+  });
+  const eightDaysTask = createTask({
+    created_at: `${today}T07:33:00.000Z`,
+    due_on: eightDaysOut,
+    id: "task-due-eight-days",
+    sort_order: 14,
+    status: "upcoming",
+    title: "Due in eight days",
+  });
+  const overdueTask = createTask({
+    created_at: `${today}T07:34:00.000Z`,
+    due_on: yesterday,
+    id: "task-overdue",
+    sort_order: 15,
+    status: "not_due",
+    title: "Overdue task",
+  });
+  const noDueDateTask = createTask({
+    created_at: `${today}T07:35:00.000Z`,
+    id: "task-no-due-date",
+    sort_order: 16,
+    status: "upcoming",
+    title: "No due date task",
+  });
+
+  assert.equal(getTaskDueDateBucket(todayTask), "today");
+  assert.equal(getTaskDueDateBucket(tomorrowTask), "upcoming");
+  assert.equal(getTaskDueDateBucket(sevenDaysTask), "upcoming");
+  assert.equal(getTaskDueDateBucket(eightDaysTask), "not_due");
+  assert.equal(getTaskDueDateBucket(overdueTask), "overdue");
+  assert.equal(getTaskDueDateBucket(noDueDateTask), "none");
+
+  assert.equal(getTaskDisplayStatus(todayTask), "pending");
+  assert.equal(getTaskDisplayStatus(tomorrowTask), "upcoming");
+  assert.equal(getTaskDisplayStatus(sevenDaysTask), "upcoming");
+  assert.equal(getTaskDisplayStatus(eightDaysTask), "not_due");
+  assert.equal(getTaskDisplayStatus(overdueTask), "missed");
+  assert.equal(getTaskDisplayStatus(noDueDateTask), "not_due");
+});
+
 test("grid layout helpers normalize, reorder, move, and date utilities behave consistently", () => {
   const isWidgetType = (value: string): value is "urgent" | "import" => value === "urgent" || value === "import";
   const layout = normalizeTaskGridLayout([
@@ -182,7 +254,10 @@ test("task list counts preserve built-in bucket memberships", () => {
   });
 
   const counts = buildTaskListCounts([inboxTask, todayTask], getBuiltInTaskLists(), {
+    currentStreakByTaskId: {},
     focusedTaskIds: new Set<string>(),
+    hasStepsByTaskId: {},
+    historyFactsByTaskId: {},
     isDueToday: (date) => date === today,
     isLater: () => false,
     isOpen: (task) => task.status === "pending" || task.status === "in_progress",

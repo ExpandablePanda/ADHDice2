@@ -122,6 +122,7 @@ export type TaskListManualMembershipUpdate = Partial<
 export type Task = {
   id: string;
   user_id: string;
+  parent_task_id: string | null;
   title: string;
   notes: string | null;
   status: TaskStatus;
@@ -130,6 +131,7 @@ export type Task = {
   is_urgent: boolean;
   is_important: boolean;
   due_on: string | null;
+  scheduled_on: string | null;
   due_time: string | null;
   estimated_minutes: number | null;
   actual_seconds: number;
@@ -151,6 +153,7 @@ export type Task = {
 export type TaskInsert = {
   id?: string;
   user_id: string;
+  parent_task_id?: string | null;
   title: string;
   notes?: string | null;
   status?: TaskStatus;
@@ -159,6 +162,7 @@ export type TaskInsert = {
   is_urgent?: boolean;
   is_important?: boolean;
   due_on?: string | null;
+  scheduled_on?: string | null;
   due_time?: string | null;
   estimated_minutes?: number | null;
   actual_seconds?: number;
@@ -186,6 +190,7 @@ export type TaskUpdate = Partial<
     | "is_urgent"
     | "is_important"
     | "due_on"
+    | "scheduled_on"
     | "due_time"
     | "estimated_minutes"
     | "actual_seconds"
@@ -194,6 +199,7 @@ export type TaskUpdate = Partial<
     | "external_link_url"
     | "one_step_at_a_time"
     | "subtasks_auto_reset"
+    | "parent_task_id"
     | "repeat_frequency"
     | "repeat_interval"
     | "repeat_days_of_week"

@@ -6,6 +6,7 @@ import type { CommitTaskRewardOpts, CommitTaskRewardResult } from "@/hooks/useEc
 import type { Task, TaskHistory as DbTaskHistory, TaskSubtask as DbTaskSubtask } from "@/lib/database.types";
 import {
   buildBatchTaskReward,
+  getRecurringFinalizationTasksForRewardClaims,
   buildSingleTaskReward,
   isNewRewardCompletion,
   type PendingTaskReward,
@@ -313,8 +314,13 @@ export function useTaskRewardController({
 
   async function claimPendingReward(resolution: TaskRewardResolution) {
     try {
+      const recurringFinalizationTasks = getRecurringFinalizationTasksForRewardClaims(
+        resolution.tasks,
+        resolution.claimRefs,
+      );
+
       if (areRewardTablesUnavailable) {
-        await finalizeRecurringTasks(resolution.tasks);
+        await finalizeRecurringTasks(recurringFinalizationTasks);
         setPendingRewardQueue((current) => current.slice(1));
         showRewardMigrationMessage();
         return false;
@@ -342,7 +348,7 @@ export function useTaskRewardController({
 
       if (claimResult === "already_claimed") {
         setPendingRewardQueue((current) => current.slice(1));
-        await finalizeRecurringTasks(resolution.tasks);
+        await finalizeRecurringTasks(recurringFinalizationTasks);
         setMessage({
           tone: "neutral",
           text: "This reward was already claimed, so the duplicate claim window was cleared.",
@@ -356,7 +362,7 @@ export function useTaskRewardController({
       }
 
       setPendingRewardQueue((current) => current.slice(1));
-      await finalizeRecurringTasks(resolution.tasks);
+      await finalizeRecurringTasks(recurringFinalizationTasks);
       setMessage({
         tone: "good",
         text: `Reward claimed: +${resolution.finalPoints} points, +${resolution.xp} XP, +${resolution.awardedTokens} token${resolution.awardedTokens === 1 ? "" : "s"}.`,

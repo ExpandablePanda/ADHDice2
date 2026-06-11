@@ -10,6 +10,7 @@ create type public.adhdice_clean_focus_source as enum ('timer', 'manual', 'impor
 create table public.adhdice_clean_tasks (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
+  parent_task_id uuid references public.adhdice_clean_tasks(id) on delete cascade,
   title text not null check (char_length(trim(title)) > 0),
   notes text,
   status public.adhdice_clean_task_status not null default 'pending',
@@ -18,6 +19,7 @@ create table public.adhdice_clean_tasks (
   is_urgent boolean not null default false,
   is_important boolean not null default false,
   due_on date,
+  scheduled_on date,
   due_time time,
   estimated_minutes integer check (estimated_minutes is null or estimated_minutes > 0),
   actual_seconds integer not null default 0 check (actual_seconds >= 0),
@@ -33,7 +35,9 @@ create table public.adhdice_clean_tasks (
   sort_order bigint not null default 0,
   completed_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint adhdice_clean_tasks_parent_task_not_self
+    check (parent_task_id is null or parent_task_id <> id)
 );
 
 create table public.adhdice_user_profiles (
@@ -298,6 +302,8 @@ create index adhdice_clean_tasks_user_status_sort_idx
   on public.adhdice_clean_tasks (user_id, status, sort_order, created_at desc);
 create index adhdice_clean_tasks_user_due_idx
   on public.adhdice_clean_tasks (user_id, due_on, due_time);
+create index adhdice_clean_tasks_parent_task_idx
+  on public.adhdice_clean_tasks (parent_task_id);
 create index adhdice_user_profiles_updated_at_idx
   on public.adhdice_user_profiles (updated_at desc);
 create index adhdice_focus_categories_user_sort_idx

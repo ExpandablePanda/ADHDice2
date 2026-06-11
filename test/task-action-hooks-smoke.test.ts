@@ -218,3 +218,84 @@ test("action hooks expose expected callable actions", () => {
   assert.equal(typeof actions.saveTaskEditor, "function");
   assert.equal(typeof actions.applyBatchTaskEdit, "function");
 });
+
+test("subtask completion keeps reward claims scoped to the subtask", async () => {
+  const parentTask = createTask({
+    created_at: "2026-06-11T08:00:00.000Z",
+    due_on: "2026-06-11",
+    id: "task-parent",
+    repeat_frequency: "daily",
+    sort_order: 1,
+    status: "pending",
+    subtasks_auto_reset: true,
+    title: "Parent task",
+  });
+  const previousSubtask = {
+    id: "subtask-1",
+    parent_subtask_id: null,
+    sort_order: 0,
+    status: "pending" as const,
+    task_id: parentTask.id,
+    title: "Child step",
+    user_id: "u1",
+  };
+
+  let rewardCandidates: Array<{
+    claimRef: { subtaskId: string; taskId: string; title: string };
+    previousStatus: "pending" | "in_progress" | "done" | "missed" | "did_my_best" | "upcoming" | "not_due" | "archived" | null;
+    task: typeof parentTask;
+  }> = [];
+
+  const client = {
+    from() {
+      return {
+        update() {
+          return {
+            eq() {
+              return {
+                eq() {
+                  return {
+                    select() {
+                      return {
+                        single: async () => ({
+                          data: { ...previousSubtask, status: "done" as const },
+                          error: null,
+                        }),
+                      };
+                    },
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const subtasks = useTaskSubtaskActions({
+    client: client as never,
+    currentUserId: "u1",
+    isMissingParentSubtaskColumnError: () => false,
+    mapTaskSubtaskRow: (row) => row,
+    onSubtaskCompletedReward: async (candidates) => {
+      rewardCandidates = candidates;
+    },
+    setMessage: () => {},
+    setSupportsNestedSubtasks: () => {},
+    setTaskSubtasks: () => {},
+    supportsNestedSubtasks: true,
+    tasks: [parentTask],
+    taskSubtasks: [previousSubtask],
+  });
+
+  await subtasks.updateTaskSubtaskStatus(previousSubtask.id, "done");
+
+  assert.equal(rewardCandidates.length, 1);
+  assert.deepEqual(rewardCandidates[0]?.claimRef, {
+    subtaskId: previousSubtask.id,
+    taskId: parentTask.id,
+    title: previousSubtask.title,
+  });
+  assert.equal(rewardCandidates[0]?.task.id, parentTask.id);
+});

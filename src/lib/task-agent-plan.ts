@@ -7,7 +7,7 @@ import type {
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskBucketContext } from "@/lib/task-buckets";
 import { getTaskBucket, isTaskOpen } from "@/lib/task-buckets";
-import { formatTaskDueLabel, getListPriorityLabel, isOverdue } from "@/lib/task-cockpit";
+import { formatTaskDueLabel, getListPriorityLabel, getTaskDisplayStatus, isOverdue } from "@/lib/task-cockpit";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import { formatActualSecondsLabel, formatRepeatSummary } from "@/lib/task-formatting";
@@ -272,7 +272,7 @@ export function buildAgentPlanTaskItem(
     repeatDaysOfWeek: task.repeat_days_of_week ?? [],
     repeatDayOfMonth: task.repeat_day_of_month ?? null,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
-    status: toAgentPlanStatus(task.status),
+    status: toAgentPlanStatus(getTaskDisplayStatus(task)),
     subtasks: buildAgentPlanSubtaskItems(context.subtasks),
     tags: task.tags ?? [],
     title: task.title,

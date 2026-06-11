@@ -136,6 +136,23 @@ export function buildBatchTaskReward(tasks: Task[], rewardDate = todayISO()): Pe
   };
 }
 
+export function getRecurringFinalizationTasksForRewardClaims(
+  tasks: Task[],
+  claimRefs: Array<{ subtaskId: string | null; taskId: string }>,
+) {
+  const finalizableTaskIds = new Set(
+    claimRefs
+      .filter((claimRef) => !claimRef.subtaskId)
+      .map((claimRef) => claimRef.taskId),
+  );
+
+  if (finalizableTaskIds.size === 0) {
+    return [];
+  }
+
+  return tasks.filter((task) => finalizableTaskIds.has(task.id));
+}
+
 export function rollD6Dice(count: number) {
   return Array.from({ length: count }, () => Math.floor(Math.random() * 6) + 1);
 }

@@ -3,6 +3,7 @@ import {
   getTaskBucket,
   isTaskFinished,
   isTaskOpen,
+  isTaskOpenStatus,
   isTaskQuickWin,
   isTaskUrgent,
   type TaskBucket,
@@ -11,6 +12,8 @@ import {
 import type { TaskQuickFilter } from "@/lib/task-ui-state";
 import { todayISO } from "@/lib/utils";
 import { formatOptionLabel } from "@/lib/task-label-format";
+
+export type TaskDueDateBucket = "none" | "overdue" | "today" | "upcoming" | "not_due";
 
 export function daysUntil(date: string | null) {
   if (!date) return null;
@@ -31,6 +34,49 @@ export function isOverdue(date: string | null) {
 export function isLater(date: string | null) {
   const difference = daysUntil(date);
   return difference !== null && difference > 1;
+}
+
+export function getTaskDueDateBucket(task: Pick<Task, "due_on" | "status">): TaskDueDateBucket {
+  const difference = daysUntil(task.due_on);
+
+  if (difference === null) {
+    return "none";
+  }
+
+  if (difference < 0 && isTaskOpenStatus(task.status)) {
+    return "overdue";
+  }
+
+  if (difference === 0) {
+    return "today";
+  }
+
+  if (difference <= 7) {
+    return "upcoming";
+  }
+
+  return "not_due";
+}
+
+export function getTaskDisplayStatus(task: Task) {
+  if (task.status !== "upcoming" && task.status !== "not_due") {
+    return task.status;
+  }
+
+  const dueBucket = getTaskDueDateBucket(task);
+  if (dueBucket === "upcoming") {
+    return "upcoming";
+  }
+
+  if (dueBucket === "not_due" || dueBucket === "none") {
+    return "not_due";
+  }
+
+  if (dueBucket === "overdue") {
+    return "missed";
+  }
+
+  return "pending";
 }
 
 export function formatDueLabel(date: string | null) {
