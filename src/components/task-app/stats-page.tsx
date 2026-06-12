@@ -66,7 +66,7 @@ export function StatsPage({
   const { energyCounts, totalEnergy } = useMemo(() => {
     const counts: Record<TaskEnergy, number> = { none: 0, low: 0, medium: 0, high: 0 };
     for (const task of tasks) {
-      if (task.status !== "archived" && task.status !== "done") {
+      if (task.status !== "archived" && task.status !== "trashed" && task.status !== "done") {
         counts[task.energy]++;
       }
     }

@@ -17,7 +17,7 @@ type TaskEditFlowsProps = {
     count: number;
     onClose: () => void;
     onConfirm: () => void;
-    previewTitles: string[];
+    previewTasks: Array<{ id: string; title: string }>;
   } | null;
   batchEditFlow: ComponentProps<typeof TaskBatchEditModal> | null;
   focusPlannerFlow: ComponentProps<typeof FocusPlannerModal> | null;
@@ -59,11 +59,11 @@ export function TaskEditFlows({
             <div className="rounded-[1.2rem] border border-[#ece8f8] bg-[#faf8ff] p-4 dark:border-white/10 dark:bg-white/[0.03]">
               <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Preview</p>
               <ul className="mt-3 space-y-2 text-sm text-[#38415e] dark:text-white/75">
-                {batchDeleteFlow.previewTitles.slice(0, 5).map((title) => (
-                  <li key={title}>{title}</li>
+                {batchDeleteFlow.previewTasks.slice(0, 5).map((task) => (
+                  <li key={task.id}>{task.title}</li>
                 ))}
-                {batchDeleteFlow.previewTitles.length > 5 ? (
-                  <li className="text-[#7d88a1] dark:text-white/45">+{batchDeleteFlow.previewTitles.length - 5} more</li>
+                {batchDeleteFlow.previewTasks.length > 5 ? (
+                  <li className="text-[#7d88a1] dark:text-white/45">+{batchDeleteFlow.previewTasks.length - 5} more</li>
                 ) : null}
               </ul>
             </div>

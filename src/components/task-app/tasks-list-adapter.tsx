@@ -1,5 +1,4 @@
 "use client";
-
 import {
   TaskManagementTableV2,
   type PrototypeTaskRow,
@@ -49,7 +48,7 @@ type TasksTableSourceProps = {
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">) => void;
-  onSetStatus?: (taskId: string, status: TaskStatus) => void;
+  onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null) => void;
   onAddTaskSubtask?: (taskId: string) => string | null | Promise<string | null>;
   onAddChildTaskSubtask?: (subtaskId: string) => string | null | Promise<string | null>;
   onDeleteTaskSubtask?: (subtaskId: string) => void;
@@ -213,7 +212,14 @@ export function TasksListAdapter({
           onTaskNotesChange={tableProps.onSetNotes}
           onTaskPriorityChange={tableProps.onSetPriority}
           onTaskRepeatChange={tableProps.onSetRepeat}
-          onTaskStatusChange={tableProps.onSetStatus}
+          onTaskStatusChange={(taskId, status) => {
+            const expectedTask = tableProps.tasks.find((task) => task.id === taskId) ?? null;
+            tableProps.onSetStatus?.(
+              taskId,
+              status,
+              expectedTask,
+            );
+          }}
           onTaskSubtaskAdd={tableProps.onAddTaskSubtask}
           onTaskSubtaskAddChild={tableProps.onAddChildTaskSubtask}
           onTaskSubtasksAutoResetChange={tableProps.onSetTaskSubtasksAutoReset}

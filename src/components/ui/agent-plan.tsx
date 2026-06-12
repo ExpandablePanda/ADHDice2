@@ -28,7 +28,8 @@ export type AgentPlanStatus =
   | "did_my_best"
   | "upcoming"
   | "not_due"
-  | "archived";
+  | "archived"
+  | "trashed";
 
 export type AgentPlanMetaTone = "accent" | "danger" | "neutral" | "success" | "warning";
 
@@ -227,6 +228,7 @@ const STATUS_LABELS: Record<AgentPlanStatus, string> = {
   did_my_best: "Did My Best",
   upcoming: "Upcoming",
   not_due: "Not Due",
+  trashed: "Trash",
 };
 
 const STATUS_BADGE_STYLES: Record<AgentPlanStatus, string> = {
@@ -237,6 +239,8 @@ const STATUS_BADGE_STYLES: Record<AgentPlanStatus, string> = {
   did_my_best: "border border-[#f2d36f] bg-white text-[#b28700]",
   upcoming: "border border-[#cfd6e4] bg-white text-[#68738c]",
   not_due: "border border-[#a9daf7] bg-white text-[#3388c9]",
+  archived: "border border-[#b7becd] bg-white text-[#5e687d]",
+  trashed: "border border-[#f4afbc] bg-white text-[#d94e67]",
 };
 
 const META_PILL_STYLES: Record<AgentPlanMetaTone, string> = {

@@ -13,6 +13,7 @@ export type TaskBucket =
   | "later"
   | "done"
   | "missed"
+  | "archive"
   | "trash";
 
 export type TaskRoutingBucket = "inbox" | "today" | "quick_wins" | "waiting" | "later";
@@ -39,6 +40,10 @@ export function isTaskOpen(task: Task) {
 
 export function isTaskFinished(task: Task) {
   return isTaskFinishedStatusValue(task.status);
+}
+
+export function isTaskVisibleInPrimaryViews(task: Task) {
+  return task.status !== "archived" && task.status !== "trashed";
 }
 
 export function isTaskUrgent(task: Task) {
@@ -68,6 +73,10 @@ export function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucke
   const todayKey = todayISO();
 
   if (task.status === "archived") {
+    return "archive";
+  }
+
+  if (task.status === "trashed") {
     return "trash";
   }
 
@@ -143,6 +152,7 @@ export function createTask(params: Partial<Task> & Pick<Task, "id" | "title" | "
     repeat_day_of_month: null,
     subtasks_auto_reset: false,
     completed_at: null,
+    trashed_at: null,
     updated_at: params.created_at,
     actual_seconds: 0,
     ...params,

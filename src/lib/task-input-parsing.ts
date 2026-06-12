@@ -492,7 +492,7 @@ function parseRepeatValue(value: string) {
 function parseTaskStatusValue(value: string) {
   const normalized = normalizeOptionValue(value);
   const aliased = normalizeStatusAlias(normalized);
-  if (aliased === "pending" || aliased === "in_progress" || aliased === "done" || aliased === "missed" || aliased === "did_my_best" || aliased === "upcoming" || aliased === "not_due" || aliased === "archived") {
+  if (aliased === "pending" || aliased === "in_progress" || aliased === "done" || aliased === "missed" || aliased === "did_my_best" || aliased === "upcoming" || aliased === "not_due" || aliased === "archived" || aliased === "trashed") {
     return aliased as TaskStatus;
   }
   return null;

@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import type { TaskActualTimeEntry, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
+import { getTrashDaysRemaining } from "@/lib/task-trash";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
   TASK_TABLE_BODY_VALUE_CLASS as BODY_VALUE_CLASS,
@@ -180,6 +181,13 @@ function clonePrototypeSubtask(subtask: PrototypeTaskSubtask): PrototypeTaskSubt
     ...subtask,
     children: subtask.children.map(clonePrototypeSubtask),
   };
+}
+
+function getPrototypeTaskRowKey(task: PrototypeTaskRow) {
+  if (task.id) {
+    return task.id;
+  }
+  return `draft-task-${task.createdAt || "undated"}-${task.title || "untitled"}`;
 }
 
 function filterPrototypeSubtasks(
@@ -747,6 +755,7 @@ function TaskCellSubtaskTree({
 export type PrototypeTaskRow = {
   actualSeconds: number;
   createdAt: string;
+  trashedAt: string | null;
   updatedAt: string;
   dueOn: string;
   dueTime: string;
@@ -1103,6 +1112,7 @@ const STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
   { label: "Upcoming", value: "upcoming" },
   { label: "Not Due", value: "not_due" },
   { label: "Archived", value: "archived" },
+  { label: "Trash", value: "trashed" },
 ];
 
 const DUE_PRESETS = [
@@ -1204,6 +1214,7 @@ const STATUS_SORT_ORDER: TaskStatus[] = [
   "upcoming",
   "not_due",
   "archived",
+  "trashed",
 ];
 
 function offsetDate(days: number) {
@@ -1376,21 +1387,6 @@ function dueSortValue(task: PrototypeTaskRow) {
 function dateAddedSortValue(task: PrototypeTaskRow) {
   const timestamp = Date.parse(task.createdAt);
   return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function getTrashDaysRemaining(updatedAt: string) {
-  const updatedAtMs = Date.parse(updatedAt);
-  if (Number.isNaN(updatedAtMs)) {
-    return null;
-  }
-
-  const expiresAtMs = updatedAtMs + (30 * 24 * 60 * 60 * 1000);
-  const remainingMs = expiresAtMs - Date.now();
-  if (remainingMs <= 0) {
-    return 0;
-  }
-
-  return Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
 }
 
 function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLElement>) {
@@ -1695,6 +1691,7 @@ export function TaskManagementTableV2({
   const loadMoreTasksRef = useRef<HTMLDivElement | null>(null);
   const resizeStateRef = useRef<{ columnId: TaskManagementTableColumnId; startWidth: number; startX: number } | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const inspectorPanelRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const [showTableScrollUp, setShowTableScrollUp] = useState(false);
   const [quickEditTargetTaskIds, setQuickEditTargetTaskIds] = useState<string[] | null>(null);
@@ -2037,28 +2034,24 @@ export function TaskManagementTableV2({
   }, [pendingSubtaskAutoExpandByTaskId, tasks]);
 
   useEffect(() => {
-    if (!selectedTaskId || !(enableInspector || allowInlineInspector)) {
+    if (!selectedTaskId || !(enableInspector || allowInlineInspector) || (allowInlineInspector && isInlineAccordionMode(overlayMode))) {
       return;
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!shellRef.current) {
-        return;
-      }
-
       const target = event.target;
       if (!(target instanceof Node)) {
         return;
       }
 
-      if (!shellRef.current.contains(target)) {
+      if (!inspectorPanelRef.current?.contains(target)) {
         closeInspector();
       }
     };
 
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [allowInlineInspector, enableInspector, selectedTaskId, dueDrafts, estimatedMinutesDrafts, notesDrafts, linkDrafts]);
+  }, [allowInlineInspector, enableInspector, overlayMode, selectedTaskId, dueDrafts, estimatedMinutesDrafts, notesDrafts, linkDrafts]);
 
   useEffect(() => {
     if (!shellRef.current) {
@@ -2227,11 +2220,16 @@ export function TaskManagementTableV2({
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
-      if (!columnMenuRef.current?.contains(event.target as Node)) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (!columnMenuRef.current?.contains(target)) {
         setOpenColumnMenuId(null);
       }
 
-      if (!rowContextMenuRef.current?.contains(event.target as Node)) {
+      if (!rowContextMenuRef.current?.contains(target)) {
         setRowContextMenu(null);
       }
     };
@@ -2243,13 +2241,45 @@ export function TaskManagementTableV2({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (selectedTaskId && (enableInspector || allowInlineInspector)) {
+          closeInspector();
+        }
+        setOpenColumnMenuId(null);
         setRowContextMenu(null);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [allowInlineInspector, enableInspector, selectedTaskId, dueDrafts, estimatedMinutesDrafts, notesDrafts, linkDrafts]);
+
+  useEffect(() => {
+    if (!selectedTaskId || !allowInlineInspector || !isInlineAccordionMode(overlayMode)) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      const inlineEditor = target.closest("[data-task-table-inline-editor]");
+      if (inlineEditor?.getAttribute("data-task-table-inline-editor") === selectedTaskId) {
+        return;
+      }
+
+      const activeRow = target.closest("[data-task-table-row]");
+      if (activeRow?.getAttribute("data-task-table-row") === selectedTaskId) {
+        return;
+      }
+
+      closeInspector();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [allowInlineInspector, selectedTaskId, overlayMode, dueDrafts, estimatedMinutesDrafts, notesDrafts, linkDrafts]);
 
   useEffect(() => () => {
     if (pendingRowClickTimeoutRef.current !== null) {
@@ -2415,14 +2445,15 @@ export function TaskManagementTableV2({
       commitTaskTitle(selectedTaskId);
       commitTaskNotes(selectedTaskId);
       commitTaskLink(selectedTaskId);
+      const currentTask = getTaskById(selectedTaskId);
       const dueDraft = dueDrafts[selectedTaskId];
-      if (dueDraft) {
+      if (dueDraft && currentTask && (dueDraft.dueOn !== currentTask.dueOn || dueDraft.dueTime !== currentTask.dueTime)) {
         setTaskDue(selectedTaskId, dueDraft.dueOn, dueDraft.dueTime);
       }
       const estimatedDraft = estimatedMinutesDrafts[selectedTaskId];
-      if (estimatedDraft) {
+      if (estimatedDraft && currentTask) {
         const estimatedMinutes = Number.parseInt(estimatedDraft, 10);
-        if (Number.isFinite(estimatedMinutes)) {
+        if (Number.isFinite(estimatedMinutes) && estimatedMinutes !== currentTask.estimatedMinutes) {
           setTaskEstimatedMinutes(selectedTaskId, estimatedMinutes);
         }
       }
@@ -2446,6 +2477,11 @@ export function TaskManagementTableV2({
 
     const nextTitle = draft.trim();
     if (!nextTitle) {
+      return;
+    }
+
+    const currentTask = getTaskById(taskId);
+    if (currentTask && nextTitle === currentTask.title) {
       return;
     }
 
@@ -2473,6 +2509,14 @@ export function TaskManagementTableV2({
       label: draft.label.trim(),
       url: draft.url.trim(),
     };
+    const currentTask = getTaskById(taskId);
+    if (currentTask && nextLink.label === currentTask.linkLabel && nextLink.url === currentTask.linkUrl) {
+      if (options?.closeAfterSave) {
+        closeInspector();
+      }
+      return;
+    }
+
     patchTask(taskId, (task) => ({
       ...task,
       linkLabel: nextLink.label,
@@ -2490,11 +2534,20 @@ export function TaskManagementTableV2({
       return;
     }
 
+    const nextNotes = draft.trim();
+    const currentTask = getTaskById(taskId);
+    if (currentTask && nextNotes === currentTask.notes) {
+      if (options?.closeAfterSave) {
+        closeInspector();
+      }
+      return;
+    }
+
     patchTask(taskId, (task) => ({
       ...task,
-      notes: draft.trim(),
+      notes: nextNotes,
     }));
-    onTaskNotesChange?.(taskId, draft.trim());
+    onTaskNotesChange?.(taskId, nextNotes);
     if (options?.closeAfterSave) {
       closeInspector();
     }
@@ -4019,9 +4072,9 @@ export function TaskManagementTableV2({
             <span className={`flex min-w-0 items-start ${hasSecondaryContent ? "flex-col" : "min-h-[2.25rem] justify-center"}`}>
               <span className="inline-flex min-w-0 items-center gap-2">
                 <span className={`${VISIBLE_TITLE_TEXT_CLASS} whitespace-normal break-words`}>{task.title}</span>
-                {task.status === "archived" ? (
+                {task.status === "trashed" ? (
                   <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
-                    {`${getTrashDaysRemaining(task.updatedAt) ?? 30}d until auto delete`}
+                    {`${getTrashDaysRemaining(task.trashedAt) ?? 30}d until auto delete`}
                   </span>
                 ) : null}
               </span>
@@ -4060,12 +4113,12 @@ export function TaskManagementTableV2({
                   </p>
                 </button>
               )}
-              {task.status === "archived" ? (
+              {task.status === "trashed" ? (
                 <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
-                  {`${getTrashDaysRemaining(task.updatedAt) ?? 30}d until auto delete`}
+                  {`${getTrashDaysRemaining(task.trashedAt) ?? 30}d until auto delete`}
                 </span>
               ) : null}
-              {task.status === "archived" && onRestoreTask ? (
+              {(task.status === "archived" || task.status === "trashed") && onRestoreTask ? (
                 <button
                   aria-label="Restore task to inbox"
                   className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] transition hover:bg-[#ebe4ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
@@ -4109,7 +4162,7 @@ export function TaskManagementTableV2({
               ) : null}
               {onOpenDeleteTask ? (
                 <button
-                  aria-label={task.status === "archived" ? "Delete permanently" : "Move to trash"}
+                  aria-label={task.status === "trashed" ? "Delete permanently" : "Move to trash"}
                   className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe8ed] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
                   onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
@@ -4636,9 +4689,10 @@ export function TaskManagementTableV2({
               const hasInlineAccordionContent = Children.count(inlineAccordionContent) > 0;
 
               return (
-                <Fragment key={`${task.id || "task"}-${visibleSubtaskSignature}`}>
+                <Fragment key={getPrototypeTaskRowKey(task)}>
                   <motion.div
                     className={`${CONTROL_FONT_CLASS} block w-max min-w-full text-center focus:outline-none`}
+                    data-task-table-row={task.id}
                     initial={shouldAnimateRows ? undefined : false}
                     onClick={(event) => {
                       if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
@@ -4718,6 +4772,7 @@ export function TaskManagementTableV2({
                     <motion.div
                       animate={{ height: "auto", opacity: 1, y: 0 }}
                       className="ml-[10px] mt-2 w-max min-w-full overflow-hidden rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-2.5 shadow-[0_18px_45px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#1b1530]"
+                      data-task-table-inline-editor={task.id}
                       exit={{ height: 0, opacity: 0, y: -6 }}
                       initial={{ height: 0, opacity: 0, y: -6 }}
                       onClick={(event) => event.stopPropagation()}
@@ -4921,7 +4976,7 @@ export function TaskManagementTableV2({
                 ) : null}
                 {onOpenDeleteTask ? (
                   <>
-                    {rowContextMenuTask.status === "archived" && onRestoreTask ? (
+                    {(rowContextMenuTask.status === "archived" || rowContextMenuTask.status === "trashed") && onRestoreTask ? (
                       <TaskTableChipButton
                         className="w-full justify-between gap-2"
                         onClick={() => {
@@ -4941,7 +4996,7 @@ export function TaskManagementTableV2({
                       onOpenDeleteTask(rowContextMenuTask.id);
                     }}
                   >
-                    <span>{rowContextMenuTask.status === "archived" ? "Delete permanently" : "Move to trash"}</span>
+                    <span>{rowContextMenuTask.status === "trashed" ? "Delete permanently" : "Move to trash"}</span>
                     <Trash2 className="h-3.5 w-3.5" />
                   </TaskTableChipButton>
                   </>
@@ -5506,6 +5561,12 @@ export function TaskManagementTableV2({
                   </div>
                 );
 
+                const fullDesktopEditorNode = (
+                  <div className="mx-auto w-full max-w-[60rem]" ref={isFocusedOverlay ? undefined : inspectorPanelRef}>
+                    {fullDesktopEditorContent}
+                  </div>
+                );
+
                 return (
                   <>
               {isFocusedOverlay || overlayMode === "full" ? null : (
@@ -5564,6 +5625,7 @@ export function TaskManagementTableV2({
                   <div
                     className={`absolute w-full ${overlayMode === "full" ? "left-1/2 max-w-[60rem] -translate-x-1/2" : "max-w-[32rem]"}`}
                     onClick={(event) => event.stopPropagation()}
+                    ref={inspectorPanelRef}
                     style={
                       overlayMode === "full"
                         ? {
@@ -5578,7 +5640,7 @@ export function TaskManagementTableV2({
                     <div className="grid gap-3">
                       {overlayMode === "full" ? null : detachedTaskNotice}
                       {overlayMode === "full" ? (
-                        fullDesktopEditorContent
+                        fullDesktopEditorNode
                       ) : (
                         <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
                           <div>
@@ -5593,7 +5655,7 @@ export function TaskManagementTableV2({
                     </div>
                   </div>
                 ) : overlayMode === "full" ? (
-                  fullDesktopEditorContent
+                  fullDesktopEditorNode
                 ) : (
                 <>
                 <div className="space-y-3">

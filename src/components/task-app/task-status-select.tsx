@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpen, Clock, Ellipsis, Star, X } from "lucide-react";
+import { ArrowRight, BookOpen, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
 import type { TaskStatus } from "@/lib/database.types";
 import { formatOptionLabel } from "@/lib/task-label-format";
 
@@ -28,6 +28,8 @@ export function renderTaskStatusIcon(status: TaskStatus) {
       );
     case "archived":
       return <BookOpen className={iconClassName} />;
+    case "trashed":
+      return <Trash2 className={iconClassName} />;
     default:
       return <Ellipsis className={iconClassName} />;
   }

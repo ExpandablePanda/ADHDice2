@@ -2,7 +2,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus, TaskUpdate } from "@/lib/database.types";
+import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { resolveLiveTaskStatusFromHistory } from "@/lib/task-history";
 
 type Message = {
@@ -25,6 +26,7 @@ type UseTaskHistoryActionsOptions = {
   sortTasksForUi: (tasks: Task[]) => Task[];
   tasks: Task[];
   timezone: string;
+  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
 };
 
 export function useTaskHistoryActions({
@@ -42,6 +44,7 @@ export function useTaskHistoryActions({
   sortTasksForUi,
   tasks,
   timezone,
+  updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskHistoryActionsOptions) {
   async function syncLiveTaskStatus(taskId: string, nextHistory: DbTaskHistory[]) {
     const task = tasks.find((candidate) => candidate.id === taskId);
@@ -60,19 +63,30 @@ export function useTaskHistoryActions({
       return true;
     }
 
-    const { data, error } = await client
-      .from("adhdice_clean_tasks")
-      .update({
+    const { conflict, data, error } = await updateTaskRowWithLegacyEnergyFallback(
+      taskId,
+      {
         completed_at: nextTaskState.completedAt,
         status: nextTaskState.status,
-      })
-      .eq("id", taskId)
-      .eq("user_id", currentUserId)
-      .select("*")
-      .single();
+      },
+      { expectedTask: task },
+    );
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if (conflict) {
+      if (conflict.latestTask) {
+        setTasks((current) => sortTasksForUi(current.map((currentTask) => currentTask.id === taskId ? conflict.latestTask ?? currentTask : currentTask)));
+      } else {
+        setTasks((current) => current.filter((currentTask) => currentTask.id !== taskId));
+      }
+      setMessage({
+        tone: "warn",
+        text: `Task history saved, but the live task changed in the cloud first. ${buildTaskUpdateConflictMessage(conflict)}`,
+      });
       return false;
     }
 

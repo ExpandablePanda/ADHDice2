@@ -12,6 +12,10 @@ type Message = {
   tone: "neutral" | "good" | "warn";
 };
 
+type UpdateTaskActionOptions = {
+  expectedTask?: Task | null;
+};
+
 type UseTaskUpdateActionOptions = {
   clearPendingTaskMutations?: (taskIds: string[]) => void;
   markPendingTaskMutations?: (taskIds: string[]) => void;
@@ -37,16 +41,18 @@ export function useTaskUpdateAction({
   tasks,
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskUpdateActionOptions) {
-  async function updateTask(taskId: string, values: TaskUpdate) {
+  async function updateTask(taskId: string, values: TaskUpdate, options?: UpdateTaskActionOptions) {
     markPendingTaskMutations?.([taskId]);
-    const previousTask = tasks.find((task) => task.id === taskId) ?? null;
+    const previousTask = options?.expectedTask ?? tasks.find((task) => task.id === taskId) ?? null;
     const {
       conflict,
       data,
       error,
       usedEnergyFallback,
       usedActualSecondsFallback,
-    } = await updateTaskRowWithLegacyEnergyFallback(taskId, values, { expectedTask: previousTask });
+    } = await updateTaskRowWithLegacyEnergyFallback(taskId, values, {
+      expectedTask: previousTask,
+    });
 
     if (error) {
       clearPendingTaskMutations?.([taskId]);
@@ -58,7 +64,7 @@ export function useTaskUpdateAction({
       clearPendingTaskMutations?.([taskId]);
       if (conflict.latestTask) {
         setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? conflict.latestTask ?? task : task)));
-        if (conflict.latestTask.status === "done" || conflict.latestTask.status === "did_my_best" || conflict.latestTask.status === "archived") {
+        if (conflict.latestTask.status === "done" || conflict.latestTask.status === "did_my_best" || conflict.latestTask.status === "archived" || conflict.latestTask.status === "trashed") {
           routeTask(taskId, null);
         }
       }
@@ -72,7 +78,7 @@ export function useTaskUpdateAction({
         : data;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
-      if (data.status === "done" || data.status === "did_my_best" || data.status === "archived") {
+      if (data.status === "done" || data.status === "did_my_best" || data.status === "archived" || data.status === "trashed") {
         routeTask(taskId, null);
       }
       const historySaved = await syncTaskHistoryEntry(taskId, data.status);

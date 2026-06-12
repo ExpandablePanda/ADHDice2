@@ -168,7 +168,7 @@ export function useTaskBatchEditAction({
         fallbackCount += 1;
       }
 
-      if (data.status === "done" || data.status === "did_my_best" || data.status === "archived") {
+      if (data.status === "done" || data.status === "did_my_best" || data.status === "archived" || data.status === "trashed") {
         routeTask(task.id, null);
       }
 

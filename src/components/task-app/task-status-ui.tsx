@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, Clock, Ellipsis, Star, X } from "lucide-react";
+import { ArrowRight, BookOpen, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
 
 import type { TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 
@@ -11,9 +11,18 @@ export const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {
   upcoming: "border border-[#cfd6e4] bg-white text-[#68738c]",
   not_due: "border border-[#a9daf7] bg-white text-[#3388c9]",
   archived: "border border-[#b7becd] bg-white text-[#5e687d]",
+  trashed: "border border-[#f4afbc] bg-white text-[#d94e67]",
 };
 
 export function formatTaskStatusLabel(value: string) {
+  if (value === "archived") {
+    return "Archived";
+  }
+
+  if (value === "trashed") {
+    return "Trash";
+  }
+
   return value
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -57,6 +66,10 @@ export function renderTaskStatusGlyph(
         <span className={`block rounded-full bg-current ${size === "sm" ? "h-2.5 w-[2px]" : "h-3 w-[2px]"}`} />
       </span>
     );
+  }
+
+  if (status === "trashed") {
+    return <Trash2 className={iconSize} />;
   }
 
   return <BookOpen className={iconSize} />;
@@ -124,6 +137,14 @@ export function renderTaskStatusCircle(
   if (status === "not_due") {
     return (
       <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-dashed border-[#57a9de] text-[#57a9de]`}>
+        {renderTaskStatusGlyph(status, size)}
+      </span>
+    );
+  }
+
+  if (status === "trashed") {
+    return (
+      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#d94e67] text-[#d94e67]`}>
         {renderTaskStatusGlyph(status, size)}
       </span>
     );

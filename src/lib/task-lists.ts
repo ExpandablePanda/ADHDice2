@@ -471,7 +471,7 @@ function shouldAppearInInbox(
   memberships: Map<TaskListId, TaskListMembership>,
   context: TaskListEvaluationContext,
 ) {
-  if (!context.isOpen(task) || task.status === "archived") {
+  if (!context.isOpen(task) || task.status === "archived" || task.status === "trashed") {
     return false;
   }
 
@@ -730,7 +730,7 @@ function taskBelongsToSpecificList(
   }
 
   if (selectedListId === "inbox") {
-    if (!context.isOpen(task) || task.status === "archived") {
+    if (!context.isOpen(task) || task.status === "archived" || task.status === "trashed") {
       evaluationCache.set(cacheKey, false);
       return false;
     }

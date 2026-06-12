@@ -6,7 +6,8 @@ export type TaskStatus =
   | "did_my_best"
   | "upcoming"
   | "not_due"
-  | "archived";
+  | "archived"
+  | "trashed";
 export type TaskPriority = "low" | "normal" | "high";
 export type TaskEnergy = "none" | "low" | "medium" | "high";
 export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom";
@@ -147,6 +148,7 @@ export type Task = {
   repeat_day_of_month: number | null;
   sort_order: number;
   completed_at: string | null;
+  trashed_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -179,6 +181,7 @@ export type TaskInsert = {
   repeat_day_of_month?: number | null;
   sort_order?: number;
   completed_at?: string | null;
+  trashed_at?: string | null;
 };
 
 export type TaskUpdate = Partial<
@@ -209,6 +212,7 @@ export type TaskUpdate = Partial<
     | "repeat_day_of_month"
     | "sort_order"
     | "completed_at"
+    | "trashed_at"
   >
 >;
 

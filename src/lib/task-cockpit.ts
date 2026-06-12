@@ -123,6 +123,7 @@ export function buildTaskBucketCounts(tasks: Task[], context: TaskBucketContext)
     later: 0,
     done: 0,
     missed: 0,
+    archive: 0,
     trash: 0,
   });
 }
@@ -169,6 +170,7 @@ const TASK_BUCKET_BASE_SCORE: Record<TaskBucket, number> = {
   later: 70,
   inbox: 80,
   done: 90,
+  archive: 95,
   trash: 100,
 };
 
@@ -224,6 +226,10 @@ function getTaskCockpitBucket(
   },
 ): TaskBucket {
   if (task.status === "archived") {
+    return "archive";
+  }
+
+  if (task.status === "trashed") {
     return "trash";
   }
 

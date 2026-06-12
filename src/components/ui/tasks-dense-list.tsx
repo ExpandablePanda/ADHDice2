@@ -50,6 +50,7 @@ const STATUS_STYLES: Record<TaskStatus, string> = {
   missed: "border-[#f4afbc] bg-white text-[#d94e67] dark:border-[#60313d] dark:bg-[#44232f] dark:text-[#ff9eaf]",
   not_due: "border-[#a9daf7] bg-white text-[#3388c9] dark:border-[#27516b] dark:bg-[#162434] dark:text-[#8bc4ff]",
   pending: "border-[#f6be96] bg-white text-[#d96b1c] dark:border-[#6b4522] dark:bg-[#392818] dark:text-[#ffcb99]",
+  trashed: "border-[#f4afbc] bg-white text-[#d94e67] dark:border-[#60313d] dark:bg-[#44232f] dark:text-[#ff9eaf]",
   upcoming: "border-[#cfd6e4] bg-white text-[#68738c] dark:border-white/15 dark:bg-white/[0.04] dark:text-white/60",
 };
 

@@ -39,7 +39,7 @@ function isClosedSubtaskStatus(status: TaskSubtaskStatus) {
 }
 
 export function toAgentPlanStatus(status: TaskStatus | TaskSubtaskStatus): AgentPlanStatus {
-  if (status === "in_progress" || status === "done" || status === "missed" || status === "did_my_best" || status === "upcoming" || status === "not_due" || status === "archived") {
+  if (status === "in_progress" || status === "done" || status === "missed" || status === "did_my_best" || status === "upcoming" || status === "not_due" || status === "archived" || status === "trashed") {
     return status;
   }
 

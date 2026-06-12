@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { useTaskRoutingActions } from "../src/hooks/useTaskRoutingActions.ts";
-import { useTaskCrudActions } from "../src/hooks/useTaskCrudActions.ts";
+import { mergeTasksById, useTaskCrudActions } from "../src/hooks/useTaskCrudActions.ts";
 import { useTaskUpdateAction } from "../src/hooks/useTaskUpdateAction.ts";
 import { useTaskEditorSaveAction } from "../src/hooks/useTaskEditorSaveAction.ts";
 import { useTaskHistoryActions } from "../src/hooks/useTaskHistoryActions.ts";
@@ -38,11 +38,21 @@ test("action hooks expose expected callable actions", () => {
   const crud = useTaskCrudActions({
     client: {} as never,
     currentUserId: "u1",
+    deleteTaskRow: async () => ({ conflict: null, data: null, error: null }),
     setMessage: () => {},
     setTaskRouting: () => {},
     setTasks: () => {},
     shouldRouteTaskToInbox: () => false,
     sortTasksForUi: (tasks) => tasks,
+    tasks: [],
+    updateTaskRowWithLegacyEnergyFallback: async () => ({
+      conflict: null,
+      data: null,
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
   });
   assert.equal(typeof crud.importTasks, "function");
   assert.equal(typeof crud.deleteTasks, "function");
@@ -99,11 +109,26 @@ test("action hooks expose expected callable actions", () => {
   const history = useTaskHistoryActions({
     client: {} as never,
     currentUserId: "u1",
+    currentDayKey: "2026-06-11",
+    dayStartTime: "06:00",
     isTaskCompletedForHistory: () => false,
     isTaskHistoryStatus: () => false,
     mapTaskHistoryRow: (row) => row,
+    now: new Date("2026-06-11T12:00:00.000Z"),
     setMessage: () => {},
     setTaskHistory: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    tasks: [],
+    timezone: "America/New_York",
+    updateTaskRowWithLegacyEnergyFallback: async () => ({
+      conflict: null,
+      data: null,
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
   });
   assert.equal(typeof history.syncTaskHistoryEntry, "function");
 
@@ -137,11 +162,21 @@ test("action hooks expose expected callable actions", () => {
     crud: {
       client: {} as never,
       currentUserId: "u1",
+      deleteTaskRow: async () => ({ conflict: null, data: null, error: null }),
       setMessage: () => {},
       setTaskRouting: () => {},
       setTasks: () => {},
       shouldRouteTaskToInbox: () => false,
       sortTasksForUi: (tasks) => tasks,
+      tasks: [],
+      updateTaskRowWithLegacyEnergyFallback: async () => ({
+        conflict: null,
+        data: null,
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      }),
     },
     create: {
       client: {} as never,
@@ -194,11 +229,26 @@ test("action hooks expose expected callable actions", () => {
     history: {
       client: {} as never,
       currentUserId: "u1",
+      currentDayKey: "2026-06-11",
+      dayStartTime: "06:00",
       isTaskCompletedForHistory: () => false,
       isTaskHistoryStatus: () => false,
       mapTaskHistoryRow: (row) => row,
+      now: new Date("2026-06-11T12:00:00.000Z"),
       setMessage: () => {},
       setTaskHistory: () => {},
+      setTasks: () => {},
+      sortTasksForUi: (tasks) => tasks,
+      tasks: [],
+      timezone: "America/New_York",
+      updateTaskRowWithLegacyEnergyFallback: async () => ({
+        conflict: null,
+        data: null,
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      }),
     },
     noteLinks: {
       client: {} as never,
@@ -249,6 +299,35 @@ test("action hooks expose expected callable actions", () => {
   assert.equal(typeof actions.applyBatchTaskEdit, "function");
 });
 
+test("import task merge replaces existing rows by task id", () => {
+  const existingTask = createTask({
+    created_at: "2026-06-12T12:00:00.000Z",
+    id: "task-imported",
+    sort_order: 1,
+    status: "pending",
+    title: "Already refreshed",
+  });
+  const importedTask = {
+    ...existingTask,
+    title: "Imported server row",
+    updated_at: "2026-06-12T12:01:00.000Z",
+  };
+  const otherTask = createTask({
+    created_at: "2026-06-12T11:00:00.000Z",
+    id: "task-other",
+    sort_order: 2,
+    status: "pending",
+    title: "Other task",
+  });
+
+  const merged = mergeTasksById([existingTask, otherTask], [importedTask]);
+
+  assert.equal(merged.length, 2);
+  assert.equal(merged.filter((task) => task.id === "task-imported").length, 1);
+  assert.equal(merged.find((task) => task.id === "task-imported")?.title, "Imported server row");
+  assert.equal(merged.find((task) => task.id === "task-other")?.title, "Other task");
+});
+
 test("subtask completion keeps reward claims scoped to the subtask", async () => {
   const parentTask = createTask({
     created_at: "2026-06-11T08:00:00.000Z",
@@ -272,7 +351,7 @@ test("subtask completion keeps reward claims scoped to the subtask", async () =>
 
   let rewardCandidates: Array<{
     claimRef: { subtaskId: string; taskId: string; title: string };
-    previousStatus: "pending" | "in_progress" | "done" | "missed" | "did_my_best" | "upcoming" | "not_due" | "archived" | null;
+    previousStatus: "pending" | "in_progress" | "done" | "missed" | "did_my_best" | "upcoming" | "not_due" | "archived" | "trashed" | null;
     task: typeof parentTask;
   }> = [];
 
@@ -328,4 +407,96 @@ test("subtask completion keeps reward claims scoped to the subtask", async () =>
     title: previousSubtask.title,
   });
   assert.equal(rewardCandidates[0]?.task.id, parentTask.id);
+});
+
+test("updateTask forwards an explicit expected snapshot to guarded writes", async () => {
+  const expectedTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-update-expected",
+    revision: 7,
+    sort_order: 1,
+    status: "pending",
+    title: "Before optimistic archive",
+  });
+  const localTask = {
+    ...expectedTask,
+    revision: 8,
+    status: "archived" as const,
+    updated_at: "2026-06-11T12:05:00.000Z",
+  };
+  let receivedExpectedTask: typeof expectedTask | null | undefined;
+
+  const update = useTaskUpdateAction({
+    onTasksCompleted: async () => {},
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: [localTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, _values, options) => {
+      receivedExpectedTask = options?.expectedTask ?? null;
+      return {
+        conflict: null,
+        data: localTask,
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+
+  await update.updateTask("task-update-expected", { status: "archived" }, { expectedTask });
+  assert.equal(receivedExpectedTask?.revision, 7);
+  assert.equal(receivedExpectedTask?.status, "pending");
+});
+
+test("deleteTasks forwards explicit expected snapshots to guarded trash writes", async () => {
+  const expectedTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-delete-expected",
+    revision: 11,
+    sort_order: 1,
+    status: "archived",
+    title: "Delete me",
+  });
+  const localTask = {
+    ...expectedTask,
+    revision: 12,
+  };
+  let receivedExpectedTask: typeof expectedTask | null | undefined;
+  let receivedUpdateValues: Record<string, unknown> | null = null;
+
+  const crud = useTaskCrudActions({
+    client: {} as never,
+    currentUserId: "u1",
+    deleteTaskRow: async () => ({ conflict: null, data: null, error: null }),
+    setMessage: () => {},
+    setTaskRouting: () => {},
+    setTasks: () => {},
+    shouldRouteTaskToInbox: () => false,
+    sortTasksForUi: (tasks) => tasks,
+    tasks: [localTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values, options) => {
+      receivedExpectedTask = options?.expectedTask ?? null;
+      receivedUpdateValues = values as Record<string, unknown>;
+      return {
+        conflict: null,
+        data: { ...localTask, ...values, status: "trashed" as const },
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+
+  await crud.deleteTasks(["task-delete-expected"], {
+    expectedTasks: new Map([["task-delete-expected", expectedTask]]),
+  });
+  assert.equal(receivedExpectedTask?.revision, 11);
+  assert.equal(receivedExpectedTask?.status, "archived");
+  assert.equal(receivedUpdateValues?.status, "trashed");
+  assert.equal(typeof receivedUpdateValues?.trashed_at, "string");
 });

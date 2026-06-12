@@ -53,7 +53,7 @@ test("task list evaluation honors manual memberships and date-added rules", () =
     isDueToday: (date) => date === new Date().toISOString().slice(0, 10),
     isDueTomorrow: (date) => date === "2999-01-01",
     isLater: (date) => Boolean(date && date > new Date().toISOString().slice(0, 10)),
-    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived",
+    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived" && candidate.status !== "trashed",
     isOverdue: (date) => Boolean(date && date < new Date().toISOString().slice(0, 10)),
     manualMembershipsByTaskId,
   });
@@ -99,7 +99,7 @@ test("task list evaluation keeps manual memberships while applying rule membersh
     isDueToday: (date) => date === "2026-05-20",
     isDueTomorrow: (date) => date === "2026-05-21",
     isLater: (date) => Boolean(date && date > "2026-05-20"),
-    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived",
+    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived" && candidate.status !== "trashed",
     isOverdue: (date) => Boolean(date && date < "2026-05-20"),
     manualMembershipsByTaskId,
   });
@@ -198,7 +198,7 @@ test("task list evaluation matches saved-row history rules and due tomorrow", ()
     isDueToday: (date) => date === "2026-06-12",
     isDueTomorrow: (date) => date === "2026-06-13",
     isLater: (date) => Boolean(date && date > "2026-06-12"),
-    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived",
+    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived" && candidate.status !== "trashed",
     isOverdue: (date) => Boolean(date && date < "2026-06-12"),
     manualMembershipsByTaskId: {},
   });
@@ -254,7 +254,7 @@ test("completed-history smart lists can include closed tasks from saved rows", (
     isDueToday: (date) => date === "2026-06-12",
     isDueTomorrow: () => false,
     isLater: (date) => Boolean(date && date > "2026-06-12"),
-    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived",
+    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived" && candidate.status !== "trashed",
     isOverdue: (date) => Boolean(date && date < "2026-06-12"),
     manualMembershipsByTaskId: {},
   });

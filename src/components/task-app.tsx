@@ -165,6 +165,7 @@ import {
   isMissingTaskListsTableError,
 } from "@/lib/task-db-compat";
 import {
+  deleteTaskRow,
   insertTaskRowWithLegacyEnergyFallback,
   updateTaskRowWithLegacyEnergyFallback,
 } from "@/lib/task-db-mutations";
@@ -294,7 +295,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.5.5";
+const HUD_VERSION = "5.5.16";
 const HUD_LOADING_SHELL_HEIGHT = 96;
 
 function isKeyboardEventFromEditableTarget(
@@ -584,6 +585,7 @@ const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
   later: "Later",
   done: "Done",
   missed: "Missed",
+  archive: "Archive",
   trash: "Trash",
 };
 const TASK_LIST_RULE_FIELD_OPTIONS: Array<{ label: string; value: TaskListRuleField }> = [
@@ -677,7 +679,7 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
 };
 const priorityOptions: TaskPriority[] = ["normal", "high", "low"];
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
-const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "upcoming", "not_due", "archived"];
+const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "upcoming", "not_due", "archived", "trashed"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "weekly", "monthly", "custom"];
 const repeatWeekdayOptions = [
   { label: "Sun", value: 0 },
@@ -1758,6 +1760,7 @@ export function TaskApp() {
     duplicateTitleGroups,
     focusPlannerTasks,
     filteredTasksSorted,
+    archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     listColumnPickerColumns,
     listRailOptions,
@@ -1802,6 +1805,8 @@ export function TaskApp() {
     let nextTasks: typeof filteredTasksSorted;
     if (activePage !== "Tasks") {
       nextTasks = [];
+    } else if (taskUiState.selectedBucket === "archive") {
+      nextTasks = archiveFilteredTasksSorted;
     } else if (taskUiState.selectedBucket === "trash") {
       nextTasks = trashFilteredTasksSorted;
     } else if (taskUiState.selectedBucket === "all") {
@@ -1819,7 +1824,7 @@ export function TaskApp() {
     }
 
     return nextTasks;
-  }, [activePage, filteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
+  }, [activePage, archiveFilteredTasksSorted, filteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const listVisibleColumns = taskUiState.visibleColumnsByView.list;
   const listSelectionResetKey = JSON.stringify({
@@ -1926,6 +1931,14 @@ export function TaskApp() {
     setTasks,
     sortTasksForUi,
     timezone: userTimeZone,
+    updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
+      client,
+      taskId,
+      values,
+      isMissingTaskActualSecondsColumnError,
+      isMissingTaskEnergyNoneEnumError,
+      options,
+    ),
   });
   const hudNotificationBaseItems = useMemo<HudNotificationItem[]>(() => {
     const currentItems: HudNotificationItem[] = [];
@@ -1980,12 +1993,22 @@ export function TaskApp() {
       client,
       clearPendingTaskMutations,
       currentUserId: currentUserIdText,
+      deleteTaskRow: (taskId, expectedTask) => deleteTaskRow(client, taskId, { expectedTask }),
       markPendingTaskMutations,
       setMessage,
       setTaskRouting,
       setTasks,
       shouldRouteTaskToInbox,
       sortTasksForUi,
+      tasks,
+      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
+        client,
+        taskId,
+        values,
+        isMissingTaskActualSecondsColumnError,
+        isMissingTaskEnergyNoneEnumError,
+        options,
+      ),
     },
     create: {
       client,
@@ -2067,6 +2090,14 @@ export function TaskApp() {
       sortTasksForUi,
       tasks,
       timezone: userTimeZone,
+      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
+        client,
+        taskId,
+        values,
+        isMissingTaskActualSecondsColumnError,
+        isMissingTaskEnergyNoneEnumError,
+        options,
+      ),
     },
     noteLinks: {
       client,
@@ -2656,7 +2687,7 @@ export function TaskApp() {
       }}
       onEditTask={openExistingTaskEditor}
       onSelectWidget={setSelectedGridWidgetId}
-      onSetStatus={(task, status) => { void updateTask(task.id, { status }); }}
+      onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); }}
       onSetDraggedWidget={setDraggedGridWidgetId}
       overdueCount={filteredOverdueTasks.length}
@@ -2680,7 +2711,7 @@ export function TaskApp() {
   const matrixContentNode = (
     <TaskMatrixView
       onEditTask={openExistingTaskEditor}
-      onSetStatus={(task, status) => { void updateTask(task.id, { status }); }}
+      onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
       tasks={selectedBucketTasks.filter(isTaskOpen)}
     />
@@ -2689,7 +2720,7 @@ export function TaskApp() {
     <TaskCardGallery
       focusedTaskIds={focusedTaskIds}
       onEditTask={openExistingTaskEditor}
-      onSetStatus={(task, status) => { void updateTask(task.id, { status }); }}
+      onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
       subtasksByTaskId={taskSubtasksByTaskId}
       tasks={selectedBucketTasks}
     />
@@ -2980,11 +3011,52 @@ export function TaskApp() {
     });
   }
 
+  function buildTaskStatusUpdate(task: Task, status: TaskStatus) {
+    const now = new Date().toISOString();
+
+    if (status === "trashed") {
+      return {
+        completed_at: null,
+        status,
+        trashed_at: now,
+      };
+    }
+
+    if (status === "archived") {
+      return {
+        completed_at: null,
+        status,
+        trashed_at: null,
+      };
+    }
+
+    if (task.status === "archived" || task.status === "trashed") {
+      return {
+        completed_at: status === "done" || status === "did_my_best" ? task.completed_at : null,
+        status,
+        trashed_at: null,
+      };
+    }
+
+    return { status };
+  }
+
+  function updateTaskStatus(task: Task, status: TaskStatus) {
+    const values = buildTaskStatusUpdate(task, status);
+    return updateTask(
+      task.id,
+      values,
+      status === "archived" || status === "trashed"
+        ? { expectedTask: task }
+        : undefined,
+    );
+  }
+
   function optimisticallyMoveTaskToTrash(taskId: string) {
-    const nextUpdatedAt = new Date().toISOString();
+    const nextTrashedAt = new Date().toISOString();
     setTasks((current) => sortTasksForUi(current.map((task) => (
       task.id === taskId
-        ? { ...task, completed_at: null, status: "archived", updated_at: nextUpdatedAt }
+        ? { ...task, completed_at: null, status: "trashed", trashed_at: nextTrashedAt, updated_at: nextTrashedAt }
         : task
     ))));
     setTaskRouting((current) => {
@@ -2998,7 +3070,7 @@ export function TaskApp() {
     const nextUpdatedAt = new Date().toISOString();
     setTasks((current) => sortTasksForUi(current.map((task) => (
       task.id === taskId
-        ? { ...task, completed_at: null, status: "pending", updated_at: nextUpdatedAt }
+        ? { ...task, completed_at: null, status: "pending", trashed_at: null, updated_at: nextUpdatedAt }
         : task
     ))));
     setTaskRouting((current) => ({
@@ -3023,9 +3095,11 @@ export function TaskApp() {
     }
     const previousRoutingBucket = taskRouting[taskId];
 
-    if (task.status === "archived") {
+    if (task.status === "trashed") {
       optimisticallyRemoveTask(taskId);
-      const didDelete = await deleteTasks([taskId]);
+      const didDelete = await deleteTasks([taskId], {
+        expectedTasks: new Map([[taskId, task]]),
+      });
       if (!didDelete) {
         restoreTaskSnapshot(task, previousRoutingBucket);
       }
@@ -3037,11 +3111,8 @@ export function TaskApp() {
 
     optimisticallyMoveTaskToTrash(taskId);
 
-    const didArchive = await updateTask(taskId, {
-      completed_at: null,
-      status: "archived",
-    });
-    if (!didArchive) {
+    const didTrash = await updateTask(taskId, buildTaskStatusUpdate(task, "trashed"), { expectedTask: task });
+    if (!didTrash) {
       restoreTaskSnapshot(task, previousRoutingBucket);
       return;
     }
@@ -3063,10 +3134,7 @@ export function TaskApp() {
     const previousRoutingBucket = taskRouting[taskId];
     optimisticallyRestoreTaskToInbox(taskId);
     routeTask(taskId, "inbox");
-    const didRestore = await updateTask(taskId, {
-      completed_at: null,
-      status: "pending",
-    });
+    const didRestore = await updateTask(taskId, buildTaskStatusUpdate(task, "pending"), { expectedTask: task });
     if (!didRestore) {
       restoreTaskSnapshot(task, previousRoutingBucket);
       return;
@@ -3127,7 +3195,7 @@ export function TaskApp() {
     count: selectedListTaskIds.length,
     onClose: closeBatchDeleteModal,
     onConfirm: confirmBatchDelete,
-    previewTitles: selectedListTasks.map((task) => task.title),
+    previewTasks: selectedListTasks.map((task) => ({ id: task.id, title: task.title })),
   } : null;
 
   const batchEditFlow = isBatchEditModalOpen ? {
@@ -3248,12 +3316,14 @@ export function TaskApp() {
     onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
     onToggleListColumn: toggleListColumn,
     onToggleListColumnMenu: () => setIsListColumnMenuOpen((current) => !current),
+    onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onUpdateSearch: (search: string) => setTaskUiState((prev) => ({ ...prev, search })),
     search: taskUiState.search,
     selectedBucket: taskUiState.selectedBucket,
     shortcuts: TASK_KEYBOARD_SHORTCUTS,
-    trashCount: listRailOptions.find((list) => list.id === "trash")?.count ?? 0,
+    archiveCount: archiveFilteredTasksSorted.length,
+    trashCount: trashFilteredTasksSorted.length,
     view: taskUiState.view,
   };
   const openTaskEditorFromId = (taskId: string) => {
@@ -3273,12 +3343,14 @@ export function TaskApp() {
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenMomentumDetails: openMomentumDetails,
+    onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onSearchChange: (search: string) => setTaskUiState((prev) => ({ ...prev, search })),
     onViewChange: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
     search: taskUiState.search,
     selectedBucket: taskUiState.selectedBucket,
-    trashCount: listRailOptions.find((list) => list.id === "trash")?.count ?? 0,
+    archiveCount: archiveFilteredTasksSorted.length,
+    trashCount: trashFilteredTasksSorted.length,
     todayCount: filteredTodayTasks.length,
     view: taskUiState.view,
   };
@@ -3605,7 +3677,13 @@ export function TaskApp() {
                         : {}),
                     });
                   },
-                  onSetStatus: (taskId, status) => { void updateTask(taskId, { status }); },
+                  onSetStatus: (taskId, status, expectedTask) => {
+                    const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
+                    if (!task) {
+                      return;
+                    }
+                    void updateTaskStatus(task, status);
+                  },
                   onAddTaskSubtask: (taskId) => addTaskSubtask(taskId),
                   onAddChildTaskSubtask: (subtaskId) => addChildTaskSubtask(subtaskId),
                   onDeleteTaskSubtask: (subtaskId) => { void deleteTaskSubtask(subtaskId); },

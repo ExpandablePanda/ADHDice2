@@ -1,72 +1,86 @@
 # Current State
 
-Last reviewed: 2026-06-09
+Last reviewed: 2026-06-11
 
 Role: active working
 
 ## Current App Version
-- Current visible app/package version: the visible UI badge and `package.json` are aligned at `5.1.3`.
-- Where version is displayed/updated: displayed in the top-level `TaskApp` header badge; package version is updated in `package.json`.
-- Current release group: `5.1.x`, the Table/Search Productivity Polish release group.
+- Current visible app/package version: the visible UI badge and `package.json` are aligned at `5.5.11`.
+- Where version is displayed/updated: displayed in the top-level `TaskApp` HUD/app version surfaces; package version is updated in `package.json`.
+- Current release group: `5.5.x`, the task foundation and cleanup release group.
 
-## Release Roadmap
+## 5.5.11 Summary
+- Archive/Trash status changes from the live list table now pass the captured pre-transition task snapshot back into the guarded update path, which stops false same-device conflict warnings while keeping the revision guard intact.
+- Archive and Trash remain as dedicated top-toolbar buckets with working counts and routing, but their duplicate chips are now hidden from the list/chip rail.
 
-- `5.1.x`: Table/search productivity polish
-- `5.2.x`: Rollover, history, and streak correctness
-- `5.3.x`: Smart-list rule expansion
-- `5.4.x`: Cleanup, debug instrumentation removal, QA hardening
-- `5.5.x`: Import/inbox cleanup tools
-- `5.6.x`: Automation polish
+## 5.5.10 Summary
+- Runtime Archive vs Trash is now wired to the approved SQL split: genuine Archive uses `status: "archived"`, real Trash uses `status: "trashed"`, and active task views exclude both.
+- Move-to-trash actions now set `status: "trashed"` with `trashed_at`, while archive actions clear `trashed_at` and keep archived tasks out of the auto-delete path.
+- Restore flows from both Archive and Trash now return tasks to `pending` with `trashed_at: null`, and the guarded expected-task snapshot protections remain in place for single-task and batch delete/archive/restore paths.
+- Trash countdown copy now derives from `trashed_at`, the top toolbar Trash chip points at the real Trash bucket, and Archive now has its own runtime entry point and copy.
+
+## 5.5.7 Summary
+- Guarded permanent task delete now checks the local expected revision before removing cloud rows, removes locally only after confirmed delete or confirmed remote-missing state, and refreshes newer cloud rows instead of blindly deleting them.
+- Task-history live-status sync now uses the guarded task update path, so history edits still save, but stale live-task status/completed-at writes refresh the latest cloud row instead of overwriting it.
+- Recurring reward finalization now uses the guarded task update path before advancing `due_on` or resetting `completed_at`, so stale finalization writes refresh the latest cloud row instead of clobbering newer remote task data.
+- Batch edit was re-audited and remains on the guarded task update helper already.
+- Import was re-audited: the live import path is still insert-only and there is no current runtime "update existing ID" branch to harden in this phase.
+- Same-table hierarchy helpers remain shared-logic-only groundwork; no mini-task UI, drag/drop, or legacy migration work shipped in this pass.
 
 ## Current Product Shape
-Brief summary of current major surfaces:
-- Tasks: primary dashboard with `list`, `grid`, `cards`, and `matrix` views, shared task data, filters, routing buckets, history, and reward-aware task flows.
+- Tasks: primary dashboard with shared cloud-backed task rows, list/grid/cards/matrix views, filters, buckets, conflict-aware guarded updates/deletes/finalization sync, and legacy subtask support from `adhdice_task_subtasks`.
+- Archive vs Trash: fully split at runtime on top of the applied SQL. Archive is a stable non-active bucket, Trash is the 30-day auto-delete bucket keyed by `trashed_at`, and active views exclude both.
 - Focus: focus categories, timers, active sessions, history, and focus-day task selection.
-- Roll: live reward/economy surface with boards, prize baskets, free-roll banking, point spending, and history.
+- Roll: reward/economy surface with boards, prize baskets, free-roll banking, point spending, and history.
 - Achievements: dice-face unlock tracking, set progress, and celebration overlays.
 - Health: check-ins, meals, weight logging, imported metrics, Apple Health import flow, and care-oriented achievements.
 - Notes: note CRUD and task linking.
 - Stats: task, focus, and economy aggregates from current workspace state.
 - Settings: profile and app-level configuration, including theme, calm-mode preferences, and economy reset.
-- Test: isolated sandbox for prototypes that should not silently affect production pages.
+- Test: isolated sandbox for prototypes that must stay off the live Tasks surface.
 
-## Current Stabilization Priorities
-1. Continue safe `TaskApp` extraction without behavior drift.
-2. Protect task list semantics and routing invariants (`urgent`, `important`, `focus`, built-in buckets).
-3. Keep Tasks, Focus, Roll, Health, and Achievements visually and behaviorally cohesive.
-4. Preserve Supabase fallback, legacy snapshot migration, and realtime workspace loading behavior.
-5. Keep active-working docs aligned with implemented truth as version and performance work lands.
+## Done In 5.5.7
+1. Same-table task hierarchy helper foundation exists in memory-safe shared logic:
+   `isTopLevelTask`, `isChildTask`, `groupTasksByParentId`, `buildTaskTree`, `sortTaskSiblings`, `getTaskDescendants`, `getTaskAncestors`, and `detectTaskHierarchyIssues`.
+2. Guarded task mutation coverage now includes permanent delete, history-driven live-status sync, and recurring finalization on top of the existing guarded update paths.
+3. Batch edit remains on the guarded task update helper; import remains insert-only with no live update-existing-ID branch.
+4. Resume/refocus task sync hardening remains in place and verified for task-row refetch only.
 
-## Known Bugs / Regressions To Watch
-- Large refactor risk remains around `TaskApp` extraction boundaries and page wiring.
-- Test-page experiments must stay isolated; accidental promotion into live Tasks remains a regression risk.
-- Realtime/sync and legacy fallback behavior should be treated as sensitive whenever workspace loading code moves.
-
-## Known Performance Bottlenecks
-- Task list switching: improved after the `5.0.11` smart-list evaluation pass, but still a watch area because live task-table rendering and bucket selection remain sensitive.
-- Smart-list membership evaluation: improved in `5.0.11` through rule short-circuiting and per-pass list lookup indexing while preserving current smart-list behavior.
-- Search typing: still a watch area in large task views because Tasks is routed through a large orchestrator plus derived table state.
-- Edit overlay typing: still a watch area when modal/editor state touches shared task data and cross-surface callbacks.
-- Row delete/trash behavior: still a watch area around table mutation, reward flow side effects, and rerender cost.
-- App startup/loading: still sensitive because auth/config/workspace loading and route orchestration remain concentrated in `TaskApp`.
+## Deferred On Purpose
+- `scheduled_on` remains shadow-only and is not runtime-authoritative in this pass.
+- Legacy subtasks in `adhdice_task_subtasks` are unchanged.
+- Same-table child task rendering, drag/drop, cross-parent move/promote/demote behavior, and legacy-subtask migration remain deferred.
+- Runtime adoption of `scheduled_on`, any `next_scheduled_on` behavior, and reward-economy redesign remain deferred.
+- Import update-existing-ID behavior remains deferred because the current live import path does not expose that branch yet.
+- Snapshot/restore UX, schema, and SQL-backed restore execution remain deferred to a later phase.
 
 ## Fragile / High-Risk Areas
 - `src/components/task-app.tsx`
+- `src/hooks/useTaskCrudActions.ts`
+- `src/hooks/useTaskHistoryActions.ts`
+- `src/hooks/useTaskRewardController.ts`
+- `src/hooks/useWorkspaceData.ts`
 - `src/components/ui/task-management-table-v2.tsx`
-- task list / smart list evaluator
-- task reward/economy flow
-- Supabase workspace loading/realtime sync
+- task revision/conflict handling
+- same-table hierarchy rollout work that has not reached UI or persistence behavior yet
 
-## Areas Not To Touch Casually
-- Auth/session flow
-- Supabase schema/fallback handling
-- Task routing/list semantics
-- Reward/economy accounting
-- Shared chip/button primitives
-- TaskApp orchestration boundaries
+## Snapshot / Restore Planning Notes
+- Recommended snapshot scope for a future task-workspace restore is: `adhdice_clean_tasks`, `adhdice_task_history`, `adhdice_task_subtasks`, task-routing/manual list memberships, task-list definitions, task-note links, focused-task selections by logical day, task-grid/HUD layout state that affects task surfaces, and directly related user profile/settings rows that change task behavior.
+- Recommended snapshot task shape should preserve task rows as the primary source, include `parent_task_id` for same-table hierarchy, include legacy `adhdice_task_subtasks` alongside same-table tasks during the transition era, and keep task history separate from live task rows so restores can choose whether to restore live state only or live state plus history.
+- Recommended restore boundary for the future SQL/runtime phase is "task workspace data only" first. Focus sessions, economy ledgers/reward claims, health data, and broader app settings should stay outside the initial restore boundary unless product rules explicitly require a coupled restore.
+- Likely SQL-required future boundary: stable snapshot metadata/versioning tables, restore transaction semantics, and explicit overwrite/merge rules for shared keys such as task lists, manual memberships, and note links. No SQL was applied in `5.5.7`.
 
-## Next Recommended Work
-- Continue extracting pure logic and standalone UI out of `src/components/task-app.tsx` without changing routing or persistence semantics.
-- Audit high-traffic task-table interactions for rerender pressure during list switching, search, delete, and edit flows.
-- Keep shared chip/button language consistent across remaining surfaces and avoid one-off text-button drift.
-- Refresh active-working docs whenever implemented truth changes, especially around TaskApp boundaries and stabilization status.
+## Next Recommended Tickets
+1. Manually verify cross-surface Archive/Trash behavior after the SQL rollout, especially status edits, table actions, and batch delete flows against real cloud rows.
+2. Define the future snapshot payload contract and restore overwrite rules before adding any restore SQL or runtime restore entry points.
+3. Add non-destructive selectors/adapters that can consume the same-table hierarchy helpers without changing current visible task rendering.
+4. Plan the same-table child-task UI rollout separately from legacy subtask migration, with explicit rules for mixed data states.
+5. Decide when `scheduled_on` becomes authoritative and gate that behind a dedicated runtime/data contract ticket.
+
+## Manual QA Checks
+1. Trash an active task and confirm it leaves active views, appears under Trash, and shows a countdown based on `trashed_at`.
+2. Archive a task and confirm it appears under Archive, does not show the Trash countdown, and does not appear under Trash.
+3. Restore one task from Trash and one from Archive and confirm both return to `pending` without a countdown chip.
+4. Select multiple tasks from an active view, use the batch delete flow, and confirm they move to Trash rather than being permanently removed.
+5. Permanently delete a task from Trash after creating a remote revision conflict and confirm the latest cloud row is refreshed instead of being silently removed.
+6. Confirm the visible HUD/app version reads `5.5.11`.

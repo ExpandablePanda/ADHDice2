@@ -17,8 +17,9 @@ import type {
   TaskListEvaluationPerf,
 } from "./task-lists";
 import { evaluateTaskListMemberships } from "./task-lists";
-import { isTaskFinished, isTaskOpen, isTaskUrgent } from "./task-buckets";
+import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "./task-buckets";
 import { isDueToday, isOverdue } from "./task-cockpit";
+import { isTaskInRecentTrash } from "./task-trash";
 import { normalizeTitleForDuplicateDetection } from "./task-search";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
@@ -153,16 +154,9 @@ export function computeTaskAppDerivedData({
   const availableRuleCount = availableTaskLists.reduce((count, list) => count + (list.rules?.rules.length ?? 0), 0);
 
   const normalizationStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const recentTrashFloor = Date.now() - (30 * 24 * 60 * 60 * 1000);
-  const recentlyDeletedTasks = tasks.filter((task) => {
-    if (task.status !== "archived") {
-      return false;
-    }
-
-    const updatedAtMs = new Date(task.updated_at).getTime();
-    return Number.isFinite(updatedAtMs) && updatedAtMs >= recentTrashFloor;
-  });
-  const visibleTasks = tasks.filter((task) => task.status !== "archived");
+  const archiveTasks = tasks.filter((task) => task.status === "archived");
+  const recentlyDeletedTasks = tasks.filter((task) => isTaskInRecentTrash(task));
+  const visibleTasks = tasks.filter(isTaskVisibleInPrimaryViews);
   const taskLinkedNotesByTaskId = availableTaskNotes.reduce<Record<string, TaskEditorLinkedNote[]>>((accumulator, note) => {
     for (const taskId of note.linked_task_ids) {
       if (!accumulator[taskId]) {
@@ -200,6 +194,7 @@ export function computeTaskAppDerivedData({
     upcoming: 0,
     not_due: 0,
     archived: 0,
+    trashed: 0,
   });
   logTaskDeriveStep("base bucket and count aggregation", aggregateStartedAt, {
     activeTasks: activeTasks.length,
@@ -263,6 +258,24 @@ export function computeTaskAppDerivedData({
   logTaskDeriveStep("visible task sorting", visibleSortingStartedAt, {
     matchingTasks: filteredTasksSorted.length,
     tasks: filteredVisibleTasks.length,
+  });
+
+  const archiveFilteringStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
+  const filteredArchiveTasks = activePage === "Tasks"
+    ? archiveTasks.filter(matchesTaskFilters)
+    : EMPTY_TASKS;
+  logTaskDeriveStep("archive task filtering", archiveFilteringStartedAt, {
+    matchingTasks: filteredArchiveTasks.length,
+    tasks: archiveTasks.length,
+  });
+
+  const archiveSortingStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
+  const archiveFilteredTasksSorted = activePage === "Tasks"
+    ? sortTasksForCockpit(filteredArchiveTasks, bucketContext)
+    : EMPTY_TASKS;
+  logTaskDeriveStep("archive task sorting", archiveSortingStartedAt, {
+    matchingTasks: archiveFilteredTasksSorted.length,
+    tasks: filteredArchiveTasks.length,
   });
 
   const trashFilteringStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
@@ -422,12 +435,6 @@ export function computeTaskAppDerivedData({
         id: list.id,
         label: list.name,
       })),
-      {
-        count: trashFilteredTasksSorted.length,
-        description: "Tasks moved to trash in the last 30 days.",
-        id: "trash",
-        label: "Trash",
-      },
     ];
   const manualListOptions = activePage !== "Tasks"
     ? []
@@ -468,6 +475,7 @@ export function computeTaskAppDerivedData({
     overdueTasks,
     planningCandidates,
     filteredTasksSorted,
+    archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     selectedTaskForEditor,
     taskForActualTimeEntry,

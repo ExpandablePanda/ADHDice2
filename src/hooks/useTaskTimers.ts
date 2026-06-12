@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { ActiveTaskTimer as DbActiveTaskTimer } from "@/lib/database.types";
 import type { RunningTaskTimer } from "@/components/ui/task-management-table-v2";
@@ -42,16 +43,22 @@ export function useTaskTimers(
   setMessage: SetMessage,
 ) {
   const [runningTaskTimers, setRunningTaskTimers] = useState<RunningTaskTimer[]>([]);
+  const taskTimerChannelRef = useRef<RealtimeChannel | null>(null);
+  const taskTimerChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
+  const setMessageRef = useRef(setMessage);
 
   useEffect(() => {
-    if (!client || !userId) {
-      setRunningTaskTimers([]);
-      return;
-    }
+    setMessageRef.current = setMessage;
+  }, [setMessage]);
 
+  useEffect(() => {
     let isActive = true;
 
     async function loadTaskTimers({ silent = false }: { silent?: boolean } = {}) {
+      if (!client || !userId) {
+        return;
+      }
+
       const { data, error } = await client
         .from("adhdice_task_active_timers")
         .select("*")
@@ -64,7 +71,7 @@ export function useTaskTimers(
 
       if (error) {
         if (!silent) {
-          setMessage({ tone: "warn", text: formatTaskTimerPersistenceError(error.message) });
+          setMessageRef.current({ tone: "warn", text: formatTaskTimerPersistenceError(error.message) });
         }
         return;
       }
@@ -72,29 +79,65 @@ export function useTaskTimers(
       setRunningTaskTimers((data ?? []).map(mapTaskTimerRow));
     }
 
-    void loadTaskTimers();
+    async function removeTaskTimerChannel(channel: RealtimeChannel) {
+      try {
+        await client.removeChannel(channel);
+      } catch {
+        // Ignore cleanup races when dependencies change quickly.
+      }
+    }
 
-    const taskTimerChannel = client
-      .channel(`adhdice_task_timers:${userId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "adhdice_task_active_timers",
-          filter: `user_id=eq.${userId}`,
-        },
-        () => {
-          void loadTaskTimers({ silent: true });
-        },
-      )
-      .subscribe();
+    async function subscribeToTaskTimerChannel() {
+      const previousRemoval = taskTimerChannelRemovalPromiseRef.current ?? Promise.resolve();
+      const previousChannel = taskTimerChannelRef.current;
+      taskTimerChannelRef.current = null;
+
+      if (previousChannel) {
+        taskTimerChannelRemovalPromiseRef.current = removeTaskTimerChannel(previousChannel);
+      }
+
+      await previousRemoval;
+
+      if (!isActive || !client || !userId) {
+        if (!userId) {
+          setRunningTaskTimers([]);
+        }
+        return;
+      }
+
+      void loadTaskTimers();
+
+      const nextChannel = client
+        .channel(`adhdice_task_timers:${userId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "adhdice_task_active_timers",
+            filter: `user_id=eq.${userId}`,
+          },
+          () => {
+            void loadTaskTimers({ silent: true });
+          },
+        )
+        .subscribe();
+
+      taskTimerChannelRef.current = nextChannel;
+      taskTimerChannelRemovalPromiseRef.current = null;
+    }
+
+    void subscribeToTaskTimerChannel();
 
     return () => {
       isActive = false;
-      client.removeChannel(taskTimerChannel);
+      const currentChannel = taskTimerChannelRef.current;
+      taskTimerChannelRef.current = null;
+      if (currentChannel) {
+        taskTimerChannelRemovalPromiseRef.current = removeTaskTimerChannel(currentChannel);
+      }
     };
-  }, [client, setMessage, userId]);
+  }, [client, userId]);
 
   async function startTaskTimer(timer: RunningTaskTimer) {
     if (!client || !userId) {

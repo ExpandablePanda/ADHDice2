@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, Search, Trash2 } from "lucide-react";
+import { BookOpen, Check, ChevronDown, Search, Trash2 } from "lucide-react";
 import { startTransition, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { MouseEvent } from "react";
@@ -105,9 +105,11 @@ function TaskViewsMenu({
 export function TaskOperationsHeader({
   actionLabel,
   activeCount,
+  archiveCount,
   hideSearch,
   metric,
   onCycleMomentum,
+  onOpenArchive,
   onOpenComposer,
   onOpenFocusPlanner,
   onOpenImport,
@@ -123,6 +125,7 @@ export function TaskOperationsHeader({
 }: {
   actionLabel: string;
   activeCount: number;
+  archiveCount: number;
   hideSearch?: boolean;
   metric: {
     doneTasks: Task[];
@@ -133,6 +136,7 @@ export function TaskOperationsHeader({
     totalCount: number;
   };
   onCycleMomentum: () => void;
+  onOpenArchive: () => void;
   onOpenComposer: () => void;
   onOpenFocusPlanner: () => void;
   onOpenImport: () => void;
@@ -250,6 +254,13 @@ export function TaskOperationsHeader({
               <TaskChipButton onClick={onOpenComposer} tone="primary">
                 New Task
               </TaskChipButton>
+              <TaskChipButton active={selectedBucket === "archive"} onClick={() => startTransition(onOpenArchive)}>
+                <span className="inline-flex items-center gap-2">
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Archive
+                  <span className="opacity-70">{archiveCount}</span>
+                </span>
+              </TaskChipButton>
               <TaskChipButton active={selectedBucket === "trash"} onClick={() => startTransition(onOpenTrash)}>
                 <span className="inline-flex items-center gap-2">
                   <Trash2 className="h-3.5 w-3.5" />
@@ -271,6 +282,7 @@ export function TasksListViewPanel(props: {
   agentPlanNode: ReactNode;
   draggedListColumnId: AgentPlanColumnId | null;
   filterRowsNode: ReactNode;
+  archiveCount: number;
   isKeyboardShortcutsMenuOpen: boolean;
   isListColumnMenuOpen: boolean;
   keyboardShortcutsMenuRef: RefObject<HTMLDivElement | null>;
@@ -280,6 +292,7 @@ export function TasksListViewPanel(props: {
   lists: Array<{ count: number; description: string; id: string; label: string }>;
   listVisibleColumns: AgentPlanColumnId[];
   onOpenListSettings: () => void;
+  onOpenArchive: () => void;
   onOpenComposer: () => void;
   onOpenImport: () => void;
   onSelectBucket: (bucket: string) => void;
@@ -300,6 +313,7 @@ export function TasksListViewPanel(props: {
 }) {
   const {
     agentPlanNode,
+    archiveCount,
     filterRowsNode,
     isKeyboardShortcutsMenuOpen,
     isListColumnMenuOpen,
@@ -312,6 +326,7 @@ export function TasksListViewPanel(props: {
     onOpenComposer,
     onOpenImport,
     onOpenListSettings,
+    onOpenArchive,
     onSelectBucket,
     onShrinkAllColumns,
     onSetView,
@@ -356,6 +371,13 @@ export function TasksListViewPanel(props: {
           </TaskChipButton>
           <TaskChipButton onClick={onOpenComposer} tone="primary">
             New Task
+          </TaskChipButton>
+          <TaskChipButton active={selectedBucket === "archive"} onClick={() => startTransition(onOpenArchive)}>
+            <span className="inline-flex items-center gap-2">
+              <BookOpen className="h-3.5 w-3.5" />
+              Archive
+              <span className="opacity-70">{archiveCount}</span>
+            </span>
           </TaskChipButton>
           <TaskChipButton active={selectedBucket === "trash"} onClick={() => startTransition(onOpenTrash)}>
             <span className="inline-flex items-center gap-2">

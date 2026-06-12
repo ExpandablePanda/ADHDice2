@@ -7,6 +7,10 @@ export type TaskRowUpdateOptions = {
   expectedTask?: Task | null;
 };
 
+export type TaskRowDeleteOptions = {
+  expectedTask?: Task | null;
+};
+
 export type TaskRowUpdateConflictReason =
   | "high_risk_patch"
   | "same_field_changed_remotely"
@@ -27,6 +31,12 @@ export type UpdateTaskRowResult = {
   reappliedOnLatestRevision: boolean;
   usedActualSecondsFallback: boolean;
   usedEnergyFallback: boolean;
+};
+
+export type DeleteTaskRowResult = {
+  data: Task | null;
+  error: { message: string } | null;
+  conflict: TaskRowUpdateConflict | null;
 };
 
 const HIGH_RISK_TASK_UPDATE_FIELDS: TaskUpdateField[] = [
@@ -195,6 +205,85 @@ export async function updateTaskRowWithLegacyEnergyFallback(
     reappliedOnLatestRevision: false,
     usedActualSecondsFallback: initialResult.usedActualSecondsFallback || retryResult.usedActualSecondsFallback,
     usedEnergyFallback: initialResult.usedEnergyFallback || retryResult.usedEnergyFallback,
+  };
+}
+
+export async function deleteTaskRow(
+  client: SupabaseClient,
+  taskId: string,
+  options?: TaskRowDeleteOptions,
+): Promise<DeleteTaskRowResult> {
+  const expectedTask = options?.expectedTask ?? null;
+  const expectedRevision = typeof expectedTask?.revision === "number" ? expectedTask.revision : undefined;
+
+  let query = client
+    .from("adhdice_clean_tasks")
+    .delete()
+    .eq("id", taskId);
+
+  if (expectedRevision !== undefined) {
+    query = query.eq("revision", expectedRevision);
+  }
+
+  const deleteResult = await query
+    .select("*")
+    .maybeSingle();
+
+  if (deleteResult.error) {
+    return {
+      data: null,
+      error: deleteResult.error,
+      conflict: null,
+    };
+  }
+
+  if (deleteResult.data) {
+    return {
+      data: deleteResult.data,
+      error: null,
+      conflict: null,
+    };
+  }
+
+  if (expectedRevision === undefined) {
+    return {
+      data: null,
+      error: null,
+      conflict: null,
+    };
+  }
+
+  const latestTaskResult = await fetchLatestTaskRow(client, taskId);
+  if (latestTaskResult.error) {
+    return {
+      data: null,
+      error: latestTaskResult.error,
+      conflict: null,
+    };
+  }
+
+  if (!latestTaskResult.data) {
+    return {
+      data: null,
+      error: null,
+      conflict: {
+        attemptedReapply: false,
+        conflictingFields: [],
+        latestTask: null,
+        reason: "task_missing",
+      },
+    };
+  }
+
+  return {
+    data: null,
+    error: null,
+    conflict: {
+      attemptedReapply: false,
+      conflictingFields: [],
+      latestTask: latestTaskResult.data,
+      reason: "stale_revision_race",
+    },
   };
 }
 

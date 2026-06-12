@@ -25,7 +25,22 @@ import {
   shiftDateKey,
 } from "../src/lib/task-grid-layout.ts";
 import { parseImportedTaskLines } from "../src/lib/task-input-parsing.ts";
-import { analyzeTaskUpdateReapplySafety, buildTaskUpdateConflictMessage } from "../src/lib/task-db-mutations.ts";
+import {
+  analyzeTaskUpdateReapplySafety,
+  buildTaskUpdateConflictMessage,
+  deleteTaskRow,
+  updateTaskRowWithLegacyEnergyFallback,
+} from "../src/lib/task-db-mutations.ts";
+import {
+  buildTaskTree,
+  detectTaskHierarchyIssues,
+  getTaskAncestors,
+  getTaskDescendants,
+  groupTasksByParentId,
+  isChildTask,
+  isTopLevelTask,
+  sortTaskSiblings,
+} from "../src/lib/task-hierarchy.ts";
 import { buildTaskCollections } from "../src/lib/task-selectors.ts";
 import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
 import { buildTaskListCounts, getBuiltInTaskLists } from "../src/lib/task-lists.ts";
@@ -361,3 +376,425 @@ test("task update conflict helpers only auto-reapply low-risk untouched fields",
     /higher-risk fields/i,
   );
 });
+
+test("task hierarchy helpers identify roots, children, ancestry, descendants, and invalid links", () => {
+  const tasks = [
+    createTask({
+      created_at: "2026-06-11T08:00:00.000Z",
+      id: "root",
+      sort_order: 0,
+      status: "pending",
+      title: "Root",
+    }),
+    createTask({
+      created_at: "2026-06-11T08:05:00.000Z",
+      id: "child-b",
+      parent_task_id: "root",
+      sort_order: 2,
+      status: "pending",
+      title: "Child B",
+    }),
+    createTask({
+      created_at: "2026-06-11T08:04:00.000Z",
+      id: "child-a",
+      parent_task_id: "root",
+      sort_order: 1,
+      status: "pending",
+      title: "Child A",
+    }),
+    createTask({
+      created_at: "2026-06-11T08:06:00.000Z",
+      id: "grandchild",
+      parent_task_id: "child-b",
+      sort_order: 0,
+      status: "pending",
+      title: "Grandchild",
+    }),
+    createTask({
+      created_at: "2026-06-11T08:07:00.000Z",
+      id: "orphan",
+      parent_task_id: "missing-parent",
+      sort_order: 3,
+      status: "pending",
+      title: "Orphan",
+    }),
+    createTask({
+      created_at: "2026-06-11T08:08:00.000Z",
+      id: "self-loop",
+      parent_task_id: "self-loop",
+      sort_order: 4,
+      status: "pending",
+      title: "Self loop",
+    }),
+    createTask({
+      created_at: "2026-06-11T08:09:00.000Z",
+      id: "cycle-a",
+      parent_task_id: "cycle-b",
+      sort_order: 5,
+      status: "pending",
+      title: "Cycle A",
+    }),
+    createTask({
+      created_at: "2026-06-11T08:10:00.000Z",
+      id: "cycle-b",
+      parent_task_id: "cycle-a",
+      sort_order: 6,
+      status: "pending",
+      title: "Cycle B",
+    }),
+  ];
+
+  assert.equal(isTopLevelTask(tasks[0]!), true);
+  assert.equal(isChildTask(tasks[0]!), false);
+  assert.equal(isChildTask(tasks[1]!), true);
+
+  assert.deepEqual(
+    sortTaskSiblings(tasks.filter((task) => task.parent_task_id === "root")).map((task) => task.id),
+    ["child-a", "child-b"],
+  );
+
+  const grouped = groupTasksByParentId(tasks);
+  assert.deepEqual((grouped.get("root") ?? []).map((task) => task.id), ["child-a", "child-b"]);
+  assert.deepEqual((grouped.get(null) ?? []).map((task) => task.id), ["root"]);
+
+  assert.deepEqual(getTaskAncestors("grandchild", tasks).map((task) => task.id), ["child-b", "root"]);
+  assert.deepEqual(getTaskDescendants("root", tasks).map((task) => task.id), ["child-a", "child-b", "grandchild"]);
+
+  const tree = buildTaskTree(tasks);
+  const rootNode = tree.find((node) => node.task.id === "root");
+  assert.ok(rootNode);
+  assert.deepEqual(rootNode.children.map((node) => node.task.id), ["child-a", "child-b"]);
+  assert.deepEqual(rootNode.children[1]?.children.map((node) => node.task.id), ["grandchild"]);
+  assert.ok(tree.some((node) => node.task.id === "orphan"));
+  assert.ok(tree.some((node) => node.task.id === "self-loop"));
+  assert.ok(tree.some((node) => node.task.id === "cycle-a"));
+  assert.ok(tree.some((node) => node.task.id === "cycle-b"));
+
+  const issues = detectTaskHierarchyIssues(tasks);
+  assert.deepEqual(
+    issues.filter((issue) => issue.type === "missing_parent").map((issue) => issue.taskId),
+    ["orphan"],
+  );
+  assert.deepEqual(
+    issues.filter((issue) => issue.type === "self_parent").map((issue) => issue.taskId),
+    ["self-loop"],
+  );
+  assert.deepEqual(
+    issues.filter((issue) => issue.type === "circular_parent").map((issue) => issue.taskId),
+    ["cycle-a", "cycle-b"],
+  );
+});
+
+test("guarded task update succeeds when the expected revision still matches", async () => {
+  const task = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-guarded-success",
+    notes: "Before",
+    revision: 3,
+    sort_order: 1,
+    status: "pending",
+    title: "Before",
+  });
+  const client = createTaskUpdateTestClient(task);
+
+  const result = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    task.id,
+    { notes: "After" },
+    () => false,
+    () => false,
+    { expectedTask: task },
+  );
+
+  assert.equal(result.error, null);
+  assert.equal(result.conflict, null);
+  assert.equal(result.reappliedOnLatestRevision, false);
+  assert.equal(result.data?.notes, "After");
+  assert.equal(result.data?.revision, 4);
+  assert.equal(client.getUpdateAttemptCount(), 1);
+});
+
+test("guarded task update reports a same-field remote conflict without retrying the write", async () => {
+  const expectedTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-same-field-conflict",
+    notes: "Before",
+    revision: 3,
+    sort_order: 1,
+    status: "pending",
+    title: "Before",
+  });
+  const remoteTask = {
+    ...expectedTask,
+    revision: 4,
+    title: "Remote title",
+  };
+  const client = createTaskUpdateTestClient(remoteTask);
+
+  const result = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    expectedTask.id,
+    { title: "Local title" },
+    () => false,
+    () => false,
+    { expectedTask },
+  );
+
+  assert.equal(result.data, null);
+  assert.equal(result.error, null);
+  assert.equal(result.reappliedOnLatestRevision, false);
+  assert.equal(result.conflict?.reason, "same_field_changed_remotely");
+  assert.deepEqual(result.conflict?.conflictingFields, ["title"]);
+  assert.equal(result.conflict?.attemptedReapply, false);
+  assert.equal(result.conflict?.latestTask?.title, "Remote title");
+  assert.equal(client.getUpdateAttemptCount(), 1);
+});
+
+test("guarded task update safely reapplies a low-risk patch onto the latest revision", async () => {
+  const expectedTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-safe-reapply",
+    notes: "Before",
+    revision: 3,
+    sort_order: 1,
+    status: "pending",
+    title: "Before",
+  });
+  const remoteTask = {
+    ...expectedTask,
+    energy: "high" as const,
+    revision: 4,
+  };
+  const client = createTaskUpdateTestClient(remoteTask);
+
+  const result = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    expectedTask.id,
+    { title: "Local title" },
+    () => false,
+    () => false,
+    { expectedTask },
+  );
+
+  assert.equal(result.error, null);
+  assert.equal(result.conflict, null);
+  assert.equal(result.reappliedOnLatestRevision, true);
+  assert.equal(result.data?.title, "Local title");
+  assert.equal(result.data?.energy, "high");
+  assert.equal(result.data?.revision, 5);
+  assert.equal(client.getLatestTaskSnapshot().energy, "high");
+  assert.equal(client.getUpdateAttemptCount(), 2);
+});
+
+test("guarded task update does not reapply a stale high-risk patch", async () => {
+  const expectedTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-high-risk-conflict",
+    notes: "Before",
+    revision: 3,
+    sort_order: 1,
+    status: "pending",
+    title: "Before",
+  });
+  const remoteTask = {
+    ...expectedTask,
+    revision: 4,
+    status: "in_progress" as const,
+  };
+  const client = createTaskUpdateTestClient(remoteTask);
+
+  const result = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    expectedTask.id,
+    { status: "done" },
+    () => false,
+    () => false,
+    { expectedTask },
+  );
+
+  assert.equal(result.data, null);
+  assert.equal(result.error, null);
+  assert.equal(result.reappliedOnLatestRevision, false);
+  assert.equal(result.conflict?.reason, "high_risk_patch");
+  assert.deepEqual(result.conflict?.conflictingFields, ["status"]);
+  assert.equal(result.conflict?.attemptedReapply, false);
+  assert.equal(client.getUpdateAttemptCount(), 1);
+  assert.equal(client.getLatestTaskSnapshot().status, "in_progress");
+});
+
+test("guarded task delete succeeds when the expected revision still matches", async () => {
+  const task = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-delete-success",
+    revision: 6,
+    sort_order: 1,
+    status: "archived",
+    title: "Delete me",
+  });
+  const client = createTaskUpdateTestClient(task);
+
+  const result = await deleteTaskRow(
+    client as never,
+    task.id,
+    { expectedTask: task },
+  );
+
+  assert.equal(result.error, null);
+  assert.equal(result.conflict, null);
+  assert.equal(result.data?.id, task.id);
+  assert.equal(client.getLatestTaskSnapshot(), null);
+  assert.equal(client.getDeleteAttemptCount(), 1);
+});
+
+test("guarded task delete refreshes the latest row when the revision changed first", async () => {
+  const expectedTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-delete-conflict",
+    revision: 3,
+    sort_order: 1,
+    status: "archived",
+    title: "Delete me",
+  });
+  const remoteTask = {
+    ...expectedTask,
+    revision: 4,
+    title: "Changed remotely",
+  };
+  const client = createTaskUpdateTestClient(remoteTask);
+
+  const result = await deleteTaskRow(
+    client as never,
+    expectedTask.id,
+    { expectedTask },
+  );
+
+  assert.equal(result.data, null);
+  assert.equal(result.error, null);
+  assert.equal(result.conflict?.reason, "stale_revision_race");
+  assert.equal(result.conflict?.latestTask?.title, "Changed remotely");
+  assert.equal(client.getLatestTaskSnapshot()?.title, "Changed remotely");
+  assert.equal(client.getDeleteAttemptCount(), 1);
+});
+
+function createTaskUpdateTestClient(initialTask: ReturnType<typeof createTask>) {
+  let currentTask = { ...initialTask };
+  let pendingUpdateValues: Record<string, unknown> = {};
+  let pendingId: string | null = null;
+  let pendingRevision: number | undefined;
+  let updateAttemptCount = 0;
+  let deleteAttemptCount = 0;
+
+  return {
+    from() {
+      return {
+        delete() {
+          pendingId = null;
+          pendingRevision = undefined;
+
+          return {
+            eq(field: string, value: string | number) {
+              if (field === "id" && typeof value === "string") {
+                pendingId = value;
+              }
+              if (field === "revision" && typeof value === "number") {
+                pendingRevision = value;
+              }
+
+              return this;
+            },
+            select() {
+              return {
+                maybeSingle: async () => {
+                  deleteAttemptCount += 1;
+
+                  if (!currentTask || pendingId !== currentTask.id) {
+                    return { data: null, error: null };
+                  }
+
+                  if (pendingRevision !== undefined && currentTask.revision !== pendingRevision) {
+                    return { data: null, error: null };
+                  }
+
+                  const deletedTask = { ...currentTask };
+                  currentTask = null as unknown as typeof currentTask;
+                  return {
+                    data: deletedTask,
+                    error: null,
+                  };
+                },
+              };
+            },
+          };
+        },
+        select() {
+          return {
+            eq(field: string, value: string) {
+              if (field === "id") {
+                pendingId = value;
+              }
+
+              return {
+                maybeSingle: async () => ({
+                  data: currentTask && pendingId === currentTask.id ? { ...currentTask } : null,
+                  error: null,
+                }),
+              };
+            },
+          };
+        },
+        update(values: Record<string, unknown>) {
+          pendingUpdateValues = values;
+          pendingId = null;
+          pendingRevision = undefined;
+
+          return {
+            eq(field: string, value: string | number) {
+              if (field === "id" && typeof value === "string") {
+                pendingId = value;
+              }
+              if (field === "revision" && typeof value === "number") {
+                pendingRevision = value;
+              }
+
+              return this;
+            },
+            select() {
+              return {
+                maybeSingle: async () => {
+                  updateAttemptCount += 1;
+
+                  if (!currentTask || pendingId !== currentTask.id) {
+                    return { data: null, error: null };
+                  }
+
+                  if (pendingRevision !== undefined && currentTask.revision !== pendingRevision) {
+                    return { data: null, error: null };
+                  }
+
+                  currentTask = {
+                    ...currentTask,
+                    ...pendingUpdateValues,
+                  };
+
+                  return {
+                    data: { ...currentTask },
+                    error: null,
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    getLatestTaskSnapshot() {
+      return currentTask ? { ...currentTask } : null;
+    },
+    getDeleteAttemptCount() {
+      return deleteAttemptCount;
+    },
+    getUpdateAttemptCount() {
+      return updateAttemptCount;
+    },
+  };
+}

@@ -6,7 +6,7 @@ import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
 import { formatOptionLabel } from "@/lib/task-label-format";
 
 const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
-const TASK_STATUS_OPTIONS: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "upcoming", "not_due", "archived"];
+const TASK_STATUS_OPTIONS: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "upcoming", "not_due", "archived", "trashed"];
 const CHIP_BUTTON_CLASS = "shrink-0 appearance-none bg-transparent p-0 text-left";
 const CHIP_MUTED_CLASS = "inline-flex items-center rounded-full bg-[#f1ecff] px-3 py-1.5 text-xs font-semibold leading-none text-[#5f6983] dark:bg-[#22193f] dark:text-[#cabfff]";
 

@@ -3,7 +3,8 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CommitTaskRewardOpts, CommitTaskRewardResult } from "@/hooks/useEconomy";
-import type { Task, TaskHistory as DbTaskHistory, TaskSubtask as DbTaskSubtask } from "@/lib/database.types";
+import type { Task, TaskHistory as DbTaskHistory, TaskSubtask as DbTaskSubtask, TaskUpdate } from "@/lib/database.types";
+import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import {
   buildBatchTaskReward,
   getRecurringFinalizationTasksForRewardClaims,
@@ -38,6 +39,7 @@ type UseTaskRewardControllerOptions = {
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
   timezone: string;
+  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
 };
 
 export function useTaskRewardController({
@@ -53,6 +55,7 @@ export function useTaskRewardController({
   setTasks,
   sortTasksForUi,
   timezone,
+  updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskRewardControllerOptions) {
   const [pendingRewardQueue, setPendingRewardQueue] = useState<PendingTaskReward[]>([]);
   const [areRewardTablesUnavailable, setAreRewardTablesUnavailable] = useState(false);
@@ -120,16 +123,23 @@ export function useTaskRewardController({
         timezone,
       });
 
-      const { data, error } = await client
-        .from("adhdice_clean_tasks")
-        .update({ status: nextStatus, due_on: nextDue, completed_at: null })
-        .eq("id", task.id)
-        .select("*")
-        .single();
+      const { conflict, data, error } = await updateTaskRowWithLegacyEnergyFallback(
+        task.id,
+        { completed_at: null, due_on: nextDue, status: nextStatus },
+        { expectedTask: task },
+      );
 
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
+      }
+
+      if (conflict) {
+        setMessage({
+          tone: "warn",
+          text: `A recurring task changed in the cloud before ADHDice could finalize it. ${buildTaskUpdateConflictMessage(conflict)}`,
+        });
+        return { resetSubtasks: null as DbTaskSubtask[] | null, task: conflict.latestTask };
       }
 
       let resetSubtasks: DbTaskSubtask[] | null = null;

@@ -2,8 +2,9 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskInsert, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskInsert, TaskSubtaskStatus, TaskUpdate } from "@/lib/database.types";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
+import type { DeleteTaskRowResult, TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import type { ImportedTaskSubtask, ImportedTaskWarning } from "@/lib/task-input-parsing";
 import { parseImportedTaskLines } from "@/lib/task-input-parsing";
 import { isMissingTaskActualSecondsColumnError, isMissingTaskEnergyNoneEnumError } from "@/lib/task-db-compat";
@@ -19,6 +20,10 @@ export type ImportTasksResult = {
   warningCount: number;
 };
 
+type DeleteTasksOptions = {
+  expectedTasks?: Map<string, Task | null>;
+};
+
 type UseTaskCrudActionsOptions = {
   client: SupabaseClient;
   clearPendingTaskMutations?: (taskIds: string[]) => void;
@@ -29,7 +34,10 @@ type UseTaskCrudActionsOptions = {
   setTasks: Dispatch<SetStateAction<Task[]>>;
   shouldRouteTaskToInbox: (task: Task) => boolean;
   sortTasksForUi: (tasks: Task[]) => Task[];
+  tasks: Task[];
   replaceTaskSubtasks: (taskId: string, subtasks: Array<{ children: ImportedTaskSubtask[]; id: string; status: TaskSubtaskStatus; title: string }>) => Promise<{ saved: boolean; usedNestedFallback: boolean }>;
+  deleteTaskRow: (taskId: string, expectedTask?: Task | null) => Promise<DeleteTaskRowResult>;
+  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
 };
 
 export function useTaskCrudActions({
@@ -42,7 +50,10 @@ export function useTaskCrudActions({
   setTasks,
   shouldRouteTaskToInbox,
   sortTasksForUi,
+  tasks,
   replaceTaskSubtasks,
+  deleteTaskRow,
+  updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskCrudActionsOptions) {
   async function importTasks(lines: string[]) {
     if (lines.every((line) => !line.trim())) {
@@ -129,7 +140,7 @@ export function useTaskCrudActions({
     }
 
     if (importedTasks.length > 0) {
-      setTasks((current) => sortTasksForUi([...current, ...importedTasks]));
+      setTasks((current) => sortTasksForUi(mergeTasksById(current, importedTasks)));
       setTaskRouting((current) => {
         const next = { ...current };
         for (const task of importedTasks) {
@@ -155,29 +166,140 @@ export function useTaskCrudActions({
     return result;
   }
 
-  async function deleteTasks(taskIds: string[]) {
+  async function deleteTasks(taskIds: string[], options?: DeleteTasksOptions) {
     markPendingTaskMutations?.(taskIds);
-    const { error } = await client
-      .from("adhdice_clean_tasks")
-      .delete()
-      .in("id", taskIds)
-      .eq("user_id", currentUserId);
+    const taskIdSet = new Set(taskIds);
+    const taskSnapshots = new Map(
+      tasks
+        .filter((task) => taskIdSet.has(task.id))
+        .map((task) => [task.id, task] as const),
+    );
+    if (options?.expectedTasks) {
+      for (const [taskId, task] of options.expectedTasks.entries()) {
+        taskSnapshots.set(taskId, task);
+      }
+    }
+    const movedToTrashTasks: Task[] = [];
+    const deletedTaskIds: string[] = [];
+    const missingTaskIds: string[] = [];
+    const conflictedTasks: Task[] = [];
+    let firstErrorMessage: string | null = null;
 
-    if (error) {
-      clearPendingTaskMutations?.(taskIds);
-      setMessage({ tone: "warn", text: error.message });
+    for (const taskId of taskIds) {
+      const expectedTask = taskSnapshots.get(taskId) ?? null;
+
+      if (expectedTask && expectedTask.status !== "trashed") {
+        const result = await updateTaskRowWithLegacyEnergyFallback(taskId, {
+          completed_at: null,
+          status: "trashed",
+          trashed_at: new Date().toISOString(),
+        }, { expectedTask });
+
+        if (result.error) {
+          firstErrorMessage ??= result.error.message;
+          continue;
+        }
+
+        if (result.conflict?.latestTask) {
+          conflictedTasks.push(result.conflict.latestTask);
+          continue;
+        }
+
+        if (result.conflict?.reason === "task_missing") {
+          missingTaskIds.push(taskId);
+          continue;
+        }
+
+        if (result.data) {
+          movedToTrashTasks.push(result.data);
+        }
+        continue;
+      }
+
+      const result = await deleteTaskRow(taskId, expectedTask);
+
+      if (result.error) {
+        firstErrorMessage ??= result.error.message;
+        continue;
+      }
+
+      if (result.conflict?.latestTask) {
+        conflictedTasks.push(result.conflict.latestTask);
+        continue;
+      }
+
+      if (result.conflict?.reason === "task_missing") {
+        missingTaskIds.push(taskId);
+        continue;
+      }
+
+      deletedTaskIds.push(taskId);
+    }
+
+    const removedTaskIds = new Set([...deletedTaskIds, ...missingTaskIds]);
+    const replacementTasks = new Map(
+      [...movedToTrashTasks, ...conflictedTasks].map((task) => [task.id, task] as const),
+    );
+    if (removedTaskIds.size > 0 || replacementTasks.size > 0) {
+      setTasks((current) => {
+        const nextTasks = current
+          .filter((task) => !removedTaskIds.has(task.id))
+          .map((task) => replacementTasks.get(task.id) ?? task);
+        return sortTasksForUi(nextTasks);
+      });
+    }
+
+    if (removedTaskIds.size > 0 || movedToTrashTasks.length > 0 || conflictedTasks.length > 0) {
+      setTaskRouting((current) => {
+        const next = { ...current };
+        for (const taskId of removedTaskIds) {
+          delete next[taskId];
+        }
+        for (const task of [...movedToTrashTasks, ...conflictedTasks]) {
+          if (task.status === "archived" || task.status === "trashed" || task.status === "done" || task.status === "did_my_best") {
+            delete next[task.id];
+          }
+        }
+        return next;
+      });
+    }
+
+    clearPendingTaskMutations?.(taskIds);
+
+    const deletedCount = deletedTaskIds.length + missingTaskIds.length;
+    const trashedCount = movedToTrashTasks.length;
+    const successfulCount = deletedCount + trashedCount;
+    if (successfulCount === 0) {
+      setMessage({
+        tone: "warn",
+        text: firstErrorMessage ?? "No tasks were deleted because newer cloud changes were found first.",
+      });
       return false;
     }
 
-    setTasks((current) => current.filter((task) => !taskIds.includes(task.id)));
-    setTaskRouting((current) => {
-      const next = { ...current };
-      for (const taskId of taskIds) {
-        delete next[taskId];
-      }
-      return next;
-    });
-    setMessage({ tone: "good", text: `Deleted ${taskIds.length} task${taskIds.length === 1 ? "" : "s"}.` });
+    const successFragments = [
+      trashedCount > 0 ? `Moved ${trashedCount} task${trashedCount === 1 ? "" : "s"} to trash.` : null,
+      deletedCount > 0 ? `Deleted ${deletedCount} task${deletedCount === 1 ? "" : "s"} permanently.` : null,
+    ].filter(Boolean);
+    const successText = successFragments.join(" ");
+
+    if (firstErrorMessage) {
+      setMessage({
+        tone: "warn",
+        text: `${successText} Some delete actions failed. ${firstErrorMessage}`,
+      });
+      return true;
+    }
+
+    if (conflictedTasks.length > 0) {
+      setMessage({
+        tone: "warn",
+        text: `${successText} ${conflictedTasks.length} task${conflictedTasks.length === 1 ? "" : "s"} changed in the cloud first and were refreshed instead of being updated.`,
+      });
+      return true;
+    }
+
+    setMessage({ tone: "good", text: successText });
     return true;
   }
 
@@ -185,6 +307,18 @@ export function useTaskCrudActions({
     deleteTasks,
     importTasks,
   };
+}
+
+export function mergeTasksById(currentTasks: Task[], incomingTasks: Task[]) {
+  if (incomingTasks.length === 0) {
+    return currentTasks;
+  }
+
+  const tasksById = new Map(currentTasks.map((task) => [task.id, task]));
+  for (const task of incomingTasks) {
+    tasksById.set(task.id, task);
+  }
+  return Array.from(tasksById.values());
 }
 
 function containsNestedSubtasks(subtasks: ImportedTaskSubtask[]): boolean {
