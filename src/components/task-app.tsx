@@ -296,7 +296,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "6.0.6";
+const HUD_VERSION = "6.0.7";
 const HUD_LOADING_SHELL_HEIGHT = 96;
 
 function formatPendingDiceChipLabel(diceCount: number) {
@@ -4820,9 +4820,9 @@ function CommandCenterHeader({
         <div className="adhdice-scrollbar w-full overflow-x-auto overflow-y-hidden">
           <div className="flex min-w-max items-center gap-2 rounded-[1.15rem] border border-white/70 bg-white/[0.34] px-2 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] dark:border-white/10 dark:bg-white/[0.03]">
             <button
-              aria-label="Expand HUD from logo"
+              aria-label={isHudCollapsed ? "Expand HUD from logo" : "Collapse HUD from logo"}
               className="shrink-0 flex items-center gap-1.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
-              onClick={() => setHudCollapsed(false)}
+              onClick={() => setHudCollapsed(!isHudCollapsed)}
               type="button"
             >
               <BrandMark compact profile={profile} />
