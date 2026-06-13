@@ -5,11 +5,11 @@ Last reviewed: 2026-06-13
 Role: active working
 
 ## Current App Version
-- Current visible app/package version: the visible UI badge, `public/app-version.json`, and `package.json` are aligned at `6.0.8`.
+- Current visible app/package version: the visible UI badge, `public/app-version.json`, and `package.json` are aligned at `6.0.9`.
 - Where version is displayed/updated: displayed in the top-level `TaskApp` HUD/app version surfaces; package version is updated in `package.json`.
-- Current release: `6.0.8`, the narrow HUD/PWA follow-up focused on the brand tap target and user-triggered bundle refresh checks.
+- Current release: `6.0.9`, the narrow HUD/PWA follow-up focused on the brand tap target and user-triggered bundle refresh checks.
 
-## 6.0.8 Summary
+## 6.0.9 Summary
 - The collapsed HUD brand area is now a larger explicit button inside the compact rail, so tapping the ADHDice logo/version reliably expands the HUD in browser and PWA paths without removing horizontal scrolling from the rest of the lane.
 - The open HUD brand area now mirrors that behavior as a button that collapses the HUD while the existing separate Collapse chip remains available.
 - The Refresh chip still performs the soft workspace/data refresh path when already current, but now first checks `public/app-version.json` with a cache-busting fetch and reloads into a newer deployed bundle when a version mismatch is found.
@@ -85,4 +85,4 @@ Role: active working
 3. Restore one task from Trash and one from Archive and confirm both return to `pending` without a countdown chip.
 4. Select multiple tasks from an active view, use the batch delete flow, and confirm they move to Trash rather than being permanently removed.
 5. Permanently delete a task from Trash after creating a remote revision conflict and confirm the latest cloud row is refreshed instead of being silently removed.
-6. Confirm the visible HUD/app version reads `6.0.8`.
+6. Confirm the visible HUD/app version reads `6.0.9`.

@@ -296,7 +296,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.0.8";
+const APP_VERSION = "6.0.9";
 const HUD_VERSION = APP_VERSION;
 const HUD_LOADING_SHELL_HEIGHT = 96;
 const APP_VERSION_ENDPOINT = "/app-version.json";
