@@ -24,7 +24,7 @@ type RewardStage = "intro" | "batch_wait" | "batch_rolling" | "batch_revealed" |
 
 const BATCH_START_DELAY_MS = 1000;
 const BASE_ROLL_DURATION_MS = 1500;
-const REVEAL_STEP_DURATION_MS = 1000;
+const BATCH_AUTO_ADVANCE_DELAY_MS = 2000;
 
 function formatPendingDiceLabel(diceCount: number) {
   return `${diceCount} ${diceCount === 1 ? "die" : "dice"} ready`;
@@ -99,14 +99,14 @@ export function TaskRewardModal({
           return;
         }
         setStage("result");
-      }, REVEAL_STEP_DURATION_MS);
+      }, BATCH_AUTO_ADVANCE_DELAY_MS);
       return () => window.clearTimeout(timeoutId);
     }
 
     if (stage === "result" && !isClaiming) {
       const timeoutId = window.setTimeout(() => {
         void handleClaim();
-      }, REVEAL_STEP_DURATION_MS);
+      }, BATCH_AUTO_ADVANCE_DELAY_MS);
       return () => window.clearTimeout(timeoutId);
     }
   }, [batchCount, batchIndex, isAutoAdvancePaused, isClaiming, stage]);

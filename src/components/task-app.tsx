@@ -296,7 +296,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "6.0.4";
+const HUD_VERSION = "6.0.5";
 const HUD_LOADING_SHELL_HEIGHT = 96;
 
 function formatPendingDiceChipLabel(diceCount: number) {
@@ -4816,68 +4816,66 @@ function CommandCenterHeader({
 
   if (isHudCollapsed) {
     return (
-      <header className="flex items-center gap-2 px-3">
-        <div className="min-w-0 flex flex-1 items-center gap-2 rounded-[1.15rem] border border-white/70 bg-white/[0.34] px-2 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] dark:border-white/10 dark:bg-white/[0.03]">
-          <div className="shrink-0 flex items-center gap-1.5">
-            <BrandMark compact profile={profile} />
-            <span className="rounded-full bg-[#f1ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
-              {HUD_VERSION}
-            </span>
-          </div>
-          <div className="adhdice-scrollbar min-w-0 flex-1 overflow-x-auto overflow-y-hidden">
-            <div className="flex min-w-max items-center gap-1.5 pr-1">
-              <span className="hidden shrink-0 rounded-full bg-[#f1ecff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] sm:inline-flex dark:bg-white/10 dark:text-[#c5b8ff]">
-                {activeHudPageTitle}
+      <header className="px-3">
+        <div className="adhdice-scrollbar w-full overflow-x-auto overflow-y-hidden">
+          <div className="flex min-w-max items-center gap-2 rounded-[1.15rem] border border-white/70 bg-white/[0.34] px-2 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] dark:border-white/10 dark:bg-white/[0.03]">
+            <div className="shrink-0 flex items-center gap-1.5">
+              <BrandMark compact profile={profile} />
+              <span className="rounded-full bg-[#f1ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
+                {HUD_VERSION}
               </span>
-              {activeHudTaskTimer ? (
-                <div className="hidden min-w-0 shrink-0 items-center gap-2 rounded-full bg-[#f5f1ff] px-2.5 py-1 text-[#5f4ac9] sm:flex dark:bg-[#241c42] dark:text-[#d6cdff]">
-                  <Clock className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate text-[11px] font-semibold">{activeHudTaskTimer.title}</span>
-                  <span className="shrink-0 text-[10px] font-black uppercase tracking-[0.16em]">
-                    {formatActualSecondsLabel(timerSeconds)}
-                  </span>
-                </div>
-              ) : null}
-              <div className="shrink-0 rounded-full bg-[#faf7ff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7c73a0] dark:bg-white/[0.05] dark:text-white/55">
-                Today {todayTaskCount}
-              </div>
-              <div className="shrink-0 rounded-full bg-[#fff5eb] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#c06b1c] dark:bg-[#3b2714] dark:text-[#ffbe87]">
-                Urgent {urgentTaskCount}
-              </div>
-              {pendingRewardDiceCount > 0 ? (
-                <TaskTableChipButton
-                  aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}
-                  className="shrink-0 gap-1.5 text-[#119a69] dark:text-[#8ff0cc]"
-                  onClick={onOpenPendingRewardBank}
-                  toneClassName="border-[#cfeedd] bg-[#ecfbf3] dark:border-[#1e5a42] dark:bg-[#103726]"
-                >
-                  <Dice5 className="h-3.5 w-3.5" />
-                  {formatPendingDiceChipLabel(pendingRewardDiceCount)}
-                </TaskTableChipButton>
-              ) : null}
-              <TaskTableChipButton
-                aria-label="Refresh workspace"
-                className="shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72"
-                disabled={isWorkspaceRefreshing}
-                onClick={onRefreshWorkspace}
-                toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
-              >
-                <Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />
-                {isWorkspaceRefreshing ? "Syncing" : "Refresh"}
-              </TaskTableChipButton>
-              <TaskTableChipButton
-                aria-label="Expand HUD"
-                className="shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
-                onClick={() => setHudCollapsed(false)}
-                toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
-              >
-                <ChevronUp className="h-3.5 w-3.5" />
-                Open
-              </TaskTableChipButton>
             </div>
+            <span className="hidden shrink-0 rounded-full bg-[#f1ecff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] sm:inline-flex dark:bg-white/10 dark:text-[#c5b8ff]">
+              {activeHudPageTitle}
+            </span>
+            {activeHudTaskTimer ? (
+              <div className="hidden min-w-0 shrink-0 items-center gap-2 rounded-full bg-[#f5f1ff] px-2.5 py-1 text-[#5f4ac9] sm:flex dark:bg-[#241c42] dark:text-[#d6cdff]">
+                <Clock className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate text-[11px] font-semibold">{activeHudTaskTimer.title}</span>
+                <span className="shrink-0 text-[10px] font-black uppercase tracking-[0.16em]">
+                  {formatActualSecondsLabel(timerSeconds)}
+                </span>
+              </div>
+            ) : null}
+            <div className="shrink-0 rounded-full bg-[#faf7ff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7c73a0] dark:bg-white/[0.05] dark:text-white/55">
+              Today {todayTaskCount}
+            </div>
+            <div className="shrink-0 rounded-full bg-[#fff5eb] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#c06b1c] dark:bg-[#3b2714] dark:text-[#ffbe87]">
+              Urgent {urgentTaskCount}
+            </div>
+            {pendingRewardDiceCount > 0 ? (
+              <TaskTableChipButton
+                aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}
+                className="shrink-0 gap-1.5 text-[#119a69] dark:text-[#8ff0cc]"
+                onClick={onOpenPendingRewardBank}
+                toneClassName="border-[#cfeedd] bg-[#ecfbf3] dark:border-[#1e5a42] dark:bg-[#103726]"
+              >
+                <Dice5 className="h-3.5 w-3.5" />
+                {formatPendingDiceChipLabel(pendingRewardDiceCount)}
+              </TaskTableChipButton>
+            ) : null}
+            <TaskTableChipButton
+              aria-label="Refresh workspace"
+              className="shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72"
+              disabled={isWorkspaceRefreshing}
+              onClick={onRefreshWorkspace}
+              toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
+            >
+              <Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />
+              {isWorkspaceRefreshing ? "Syncing" : "Refresh"}
+            </TaskTableChipButton>
+            <TaskTableChipButton
+              aria-label="Expand HUD"
+              className="shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
+              onClick={() => setHudCollapsed(false)}
+              toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+            >
+              <ChevronUp className="h-3.5 w-3.5" />
+              Open
+            </TaskTableChipButton>
+            <div className="shrink-0">{accountButton}</div>
           </div>
         </div>
-        <div className="shrink-0">{accountButton}</div>
       </header>
     );
   }

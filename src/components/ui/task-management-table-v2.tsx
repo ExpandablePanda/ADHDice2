@@ -46,6 +46,7 @@ import {
   ScrollUpButton,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
+import { mergeMeasuredColumnWidths } from "@/lib/task-table-measurements";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = "focus" | "important" | "urgent";
@@ -2062,16 +2063,19 @@ export function TaskManagementTableV2({
     const frameId = window.requestAnimationFrame(() => {
       const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
       setRequiredColumnWidths((current) => {
-        const nextRequiredWidths = visibleHeaderColumns.reduce<Record<TaskManagementTableColumnId, number>>((accumulator, column) => {
+        const nextMeasuredWidths = visibleHeaderColumns.reduce<Partial<Record<TaskManagementTableColumnId, number>>>((accumulator, column) => {
           const headerWidths = getMeasuredColumnWidths(`[data-column-header-measure="${column.id}"]`);
           const rowContentWidths = getMeasuredColumnWidths(`[data-column-content-measure="${column.id}"]`, 12);
           const widestHeader = headerWidths.length > 0 ? Math.max(...headerWidths) : 0;
           const widestRowContent = rowContentWidths.length > 0 ? Math.max(...rowContentWidths) : 0;
           accumulator[column.id] = Math.max(MIN_COLUMN_WIDTHS[column.id], widestHeader, widestRowContent) + COLUMN_WIDTH_BUFFER[column.id];
           return accumulator;
-        }, { ...current });
-        const hasChanges = visibleHeaderColumns.some((column) => current[column.id] !== nextRequiredWidths[column.id]);
-        return hasChanges ? nextRequiredWidths : current;
+        }, {});
+        return mergeMeasuredColumnWidths(
+          current,
+          nextMeasuredWidths,
+          visibleHeaderColumns.map((column) => column.id),
+        );
       });
 
       if (process.env.NODE_ENV !== "production") {
