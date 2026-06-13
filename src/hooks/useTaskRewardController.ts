@@ -6,8 +6,8 @@ import type { CommitTaskRewardOpts, CommitTaskRewardResult } from "@/hooks/useEc
 import type { Task, TaskHistory as DbTaskHistory, TaskSubtask as DbTaskSubtask, TaskUpdate } from "@/lib/database.types";
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import {
-  buildBatchTaskReward,
   getRecurringFinalizationTasksForRewardClaims,
+  getPendingRewardDiceCount,
   buildSingleTaskReward,
   isNewRewardCompletion,
   type PendingTaskReward,
@@ -243,39 +243,38 @@ export function useTaskRewardController({
     };
   }
 
-  async function buildPendingReward(candidates: TaskRewardCandidate[], rewardDate: string) {
+  async function buildPendingRewards(candidates: TaskRewardCandidate[], rewardDate: string) {
     if (!client || !currentUserId || candidates.length === 0) {
-      return null;
+      return [] as PendingTaskReward[];
     }
 
-    if (candidates.length === 1) {
-      const { data, error } = await client
-        .from("adhdice_task_history")
-        .select("*")
-        .eq("user_id", currentUserId)
-        .order("entry_date", { ascending: true });
+    const { data, error } = await client
+      .from("adhdice_task_history")
+      .select("*")
+      .eq("user_id", currentUserId)
+      .order("entry_date", { ascending: true });
 
-      if (error) {
-        if (isMissingTaskRewardRollsTableError(error.message) || isMissingTaskRewardClaimsTableError(error.message)) {
-          showRewardMigrationMessage();
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-        }
-        return null;
+    if (error) {
+      if (isMissingTaskRewardRollsTableError(error.message) || isMissingTaskRewardClaimsTableError(error.message)) {
+        showRewardMigrationMessage();
+      } else {
+        setMessage({ tone: "warn", text: error.message });
       }
+      return [];
+    }
 
-      const pendingReward = buildSingleTaskReward(candidates.map((candidate) => candidate.task), (data ?? []) as DbTaskHistory[], rewardDate);
+    const history = (data ?? []) as DbTaskHistory[];
+    return candidates.flatMap((candidate) => {
+      const pendingReward = buildSingleTaskReward([candidate.task], history, rewardDate);
       if (!pendingReward) {
-        return null;
+        return [];
       }
 
-      const claimRef = candidates[0]?.claimRef;
-      return claimRef
-        ? { ...pendingReward, claimRefs: [claimRef] }
-        : pendingReward;
-    }
-
-    return buildBatchTaskReward(candidates.map((candidate) => candidate.task), rewardDate);
+      return [{
+        ...pendingReward,
+        claimRefs: [candidate.claimRef ?? pendingReward.claimRefs[0]!],
+      }];
+    });
   }
 
   async function queueTaskRewards(candidates: TaskRewardCandidate[]) {
@@ -304,18 +303,17 @@ export function useTaskRewardController({
       return;
     }
 
-    const pendingReward = await buildPendingReward(eligible, rewardDate);
-    if (!pendingReward) {
+    const pendingRewards = await buildPendingRewards(eligible, rewardDate);
+    if (pendingRewards.length === 0) {
       await finalizeRecurringTasks(getRecurringFinalizationCandidates(eligible));
       return;
     }
 
-    const pendingRewardKey = getPendingRewardQueueKey(pendingReward);
-    setPendingRewardQueue((current) =>
-      current.some((entry) => getPendingRewardQueueKey(entry) === pendingRewardKey)
-        ? current
-        : [...current, pendingReward],
-    );
+    setPendingRewardQueue((current) => {
+      const existingKeys = new Set(current.map((entry) => getPendingRewardQueueKey(entry)));
+      const nextRewards = pendingRewards.filter((entry) => !existingKeys.has(getPendingRewardQueueKey(entry)));
+      return nextRewards.length > 0 ? [...current, ...nextRewards] : current;
+    });
 
     if (recurringTasksToFinalize.length > 0) {
       await finalizeRecurringTasks(recurringTasksToFinalize);
@@ -391,11 +389,21 @@ export function useTaskRewardController({
     }
   }
 
-  const activePendingReward = pendingRewardQueue[0] ?? null;
+  async function claimPendingRewardBank(resolutions: TaskRewardResolution[]) {
+    for (const resolution of resolutions) {
+      const claimed = await claimPendingReward(resolution);
+      if (!claimed) {
+        return false;
+      }
+    }
+
+    return true;
+  }
 
   return {
-    activePendingReward,
-    claimPendingReward,
+    claimPendingRewardBank,
+    pendingRewardDiceCount: getPendingRewardDiceCount(pendingRewardQueue),
+    pendingRewardQueue,
     queueTaskRewards,
   };
 }

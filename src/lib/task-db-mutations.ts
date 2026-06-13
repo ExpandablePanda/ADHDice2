@@ -145,6 +145,17 @@ export async function updateTaskRowWithLegacyEnergyFallback(
     };
   }
 
+  if (taskUpdateAlreadyApplied(latestTask, values)) {
+    return {
+      data: latestTask,
+      error: null,
+      conflict: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: initialResult.usedActualSecondsFallback,
+      usedEnergyFallback: initialResult.usedEnergyFallback,
+    };
+  }
+
   const reapplyPlan = analyzeTaskUpdateReapplySafety(expectedTask, latestTask, values);
   if (!reapplyPlan.canAutoReapply) {
     return {
@@ -429,6 +440,11 @@ function stripUndefinedEntries<T extends Record<string, unknown>>(value: T): T {
 function getTaskUpdateFields(values: TaskUpdate): TaskUpdateField[] {
   return Object.keys(values)
     .filter((field): field is TaskUpdateField => field !== "revision" && values[field as keyof TaskUpdate] !== undefined);
+}
+
+function taskUpdateAlreadyApplied(latestTask: Task, values: TaskUpdate) {
+  return getTaskUpdateFields(values)
+    .every((field) => taskFieldValueEquals(latestTask[field], values[field] as Task[TaskUpdateField]));
 }
 
 function taskFieldValueEquals(left: Task[TaskUpdateField], right: Task[TaskUpdateField]) {

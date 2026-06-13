@@ -38,6 +38,16 @@ export type TaskRewardResolution = {
   xp: number;
 };
 
+export type TaskRewardBankSession = {
+  baseRollBatches: number[][];
+  diceCount: number;
+  resolutions: TaskRewardResolution[];
+  totalBasePoints: number;
+  totalFinalPoints: number;
+  totalTokens: number;
+  totalXp: number;
+};
+
 export type TaskRewardRollRecord = {
   awarded_tokens: number;
   awarded_xp: number;
@@ -136,6 +146,10 @@ export function buildBatchTaskReward(tasks: Task[], rewardDate = todayISO()): Pe
   };
 }
 
+export function getPendingRewardDiceCount(pendingRewards: PendingTaskReward[]) {
+  return pendingRewards.reduce((sum, reward) => sum + reward.diceCount, 0);
+}
+
 export function getRecurringFinalizationTasksForRewardClaims(
   tasks: Task[],
   claimRefs: Array<{ subtaskId: string | null; taskId: string }>,
@@ -157,10 +171,25 @@ export function rollD6Dice(count: number) {
   return Array.from({ length: count }, () => Math.floor(Math.random() * 6) + 1);
 }
 
-export function buildTaskRewardResolution(pendingReward: PendingTaskReward): TaskRewardResolution {
-  const baseRolls = rollD6Dice(pendingReward.diceCount);
+export function chunkDiceRolls(rolls: number[], batchSize = 6) {
+  if (batchSize <= 0) {
+    return [rolls];
+  }
+
+  const batches: number[][] = [];
+  for (let index = 0; index < rolls.length; index += batchSize) {
+    batches.push(rolls.slice(index, index + batchSize));
+  }
+  return batches;
+}
+
+export function buildTaskRewardResolution(
+  pendingReward: PendingTaskReward,
+  rollDice: (count: number) => number[] = rollD6Dice,
+): TaskRewardResolution {
+  const baseRolls = rollDice(pendingReward.diceCount);
   const basePoints = baseRolls.reduce((sum, roll) => sum + roll, 0);
-  const multiplierRoll = rollD6Dice(1)[0] ?? 1;
+  const multiplierRoll = rollDice(1)[0] ?? 1;
   const finalPoints = basePoints * multiplierRoll;
   const xp = Math.ceil(finalPoints / 2);
 
@@ -177,5 +206,23 @@ export function buildTaskRewardResolution(pendingReward: PendingTaskReward): Tas
     tasks: pendingReward.tasks,
     tier: pendingReward.tier,
     xp,
+  };
+}
+
+export function buildTaskRewardBankSession(
+  pendingRewards: PendingTaskReward[],
+  rollDice: (count: number) => number[] = rollD6Dice,
+): TaskRewardBankSession {
+  const resolutions = pendingRewards.map((pendingReward) => buildTaskRewardResolution(pendingReward, rollDice));
+  const allBaseRolls = resolutions.flatMap((resolution) => resolution.baseRolls);
+
+  return {
+    baseRollBatches: chunkDiceRolls(allBaseRolls, 6),
+    diceCount: allBaseRolls.length,
+    resolutions,
+    totalBasePoints: resolutions.reduce((sum, resolution) => sum + resolution.basePoints, 0),
+    totalFinalPoints: resolutions.reduce((sum, resolution) => sum + resolution.finalPoints, 0),
+    totalTokens: resolutions.reduce((sum, resolution) => sum + resolution.awardedTokens, 0),
+    totalXp: resolutions.reduce((sum, resolution) => sum + resolution.xp, 0),
   };
 }

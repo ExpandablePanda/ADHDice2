@@ -1,11 +1,11 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { ErrorBoundary } from "../error-boundary";
 import type { DicePhase } from "../dice-3d";
 import {
-  buildTaskRewardResolution,
-  TASK_REWARD_TIERS,
+  buildTaskRewardBankSession,
   type PendingTaskReward,
   type TaskRewardResolution,
 } from "@/lib/task-rewards";
@@ -14,130 +14,121 @@ const RewardDice3DCanvas = lazy(() => import("../dice-3d").then((module) => ({ d
 
 type TaskRewardModalProps = {
   isDark: boolean;
-  onClaim: (resolution: TaskRewardResolution) => Promise<boolean>;
-  pendingReward: PendingTaskReward;
+  onClaim: (resolutions: TaskRewardResolution[]) => Promise<boolean>;
+  onClose: () => void;
+  pendingRewards: PendingTaskReward[];
   variant?: "global" | "table";
 };
 
-type RewardStage = "intro" | "base_rolling" | "base_revealed" | "multiplier_rolling" | "multiplier_revealed" | "result";
+type RewardStage = "intro" | "batch_wait" | "batch_rolling" | "batch_revealed" | "result";
+
+const BATCH_START_DELAY_MS = 1000;
 const BASE_ROLL_DURATION_MS = 1500;
-const MULTIPLIER_ROLL_DURATION_MS = 1750;
-const REVEAL_STEP_DURATION_MS = 2000;
-const REWARD_STEP_COUNT = 4;
+const REVEAL_STEP_DURATION_MS = 1000;
 
-function rewardTierClass(selected: boolean, disabled: boolean) {
-  if (selected) {
-    return "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
-  }
-
-  if (disabled) {
-    return "border-[#ece7f5] bg-[#f7f5fb] text-[#9a93b4] opacity-60 dark:border-white/8 dark:bg-white/[0.045] dark:text-white/34";
-  }
-
-  return "border-[#ece7f5] bg-[#f7f5fb] text-[#7a7592] dark:border-white/8 dark:bg-white/[0.045] dark:text-white/58";
-}
-
-function getRewardStepIndex(stage: RewardStage) {
-  if (stage === "intro") {
-    return 0;
-  }
-  if (stage === "base_rolling" || stage === "base_revealed") {
-    return 1;
-  }
-  if (stage === "multiplier_rolling" || stage === "multiplier_revealed") {
-    return 2;
-  }
-  return 3;
+function formatPendingDiceLabel(diceCount: number) {
+  return `${diceCount} ${diceCount === 1 ? "die" : "dice"} ready`;
 }
 
 export function TaskRewardModal({
   isDark,
   onClaim,
-  pendingReward,
+  onClose,
+  pendingRewards,
   variant = "global",
 }: TaskRewardModalProps) {
-  const [resolution, setResolution] = useState<TaskRewardResolution | null>(null);
   const [stage, setStage] = useState<RewardStage>("intro");
+  const [batchIndex, setBatchIndex] = useState(0);
   const [isClaiming, setIsClaiming] = useState(false);
   const [isAutoAdvancePaused, setIsAutoAdvancePaused] = useState(false);
+  const sessionRef = useRef(buildTaskRewardBankSession(pendingRewards));
+  const session = sessionRef.current;
 
-  const basePhase: DicePhase = stage === "base_rolling" ? "rolling" : stage === "base_revealed" || stage === "multiplier_rolling" || stage === "multiplier_revealed" || stage === "result" ? "settling" : "idle";
-  const multiplierPhase: DicePhase = stage === "multiplier_rolling" ? "rolling" : stage === "multiplier_revealed" || stage === "result" ? "settling" : "idle";
-  const tier = pendingReward.tier;
-  const selectedTierId = tier?.id ?? null;
-  const baseRolls = resolution?.baseRolls ?? [];
-  const multiplierRolls = resolution ? [resolution.multiplierRoll] : [];
-  const baseRollSummary = useMemo(() => baseRolls.join(" + "), [baseRolls]);
-  const activeStepIndex = getRewardStepIndex(stage);
+  const baseRollBatches = session.baseRollBatches;
+  const batchCount = baseRollBatches.length;
+  const activeBatch = baseRollBatches[batchIndex] ?? [];
+  const activeBatchNumber = batchCount === 0 ? 0 : batchIndex + 1;
+  const breakdownEntries = useMemo(() =>
+    session.resolutions.map((resolution) => ({
+      baseExpression: resolution.baseRolls.join(" + "),
+      claimTitle: resolution.claimRefs[0]?.title ?? resolution.tasks[0]?.title ?? "Completed task",
+      finalPoints: resolution.finalPoints,
+      multiplierRoll: resolution.multiplierRoll,
+    })),
+  [session.resolutions]);
+  const activeBatchSummary = useMemo(() => activeBatch.join(" + "), [activeBatch]);
+  const totalDiceLabel = formatPendingDiceLabel(session.diceCount);
+  const batchPhase: DicePhase = stage === "batch_rolling" ? "rolling" : stage === "batch_revealed" || stage === "result" ? "settling" : "idle";
 
   useEffect(() => {
-    setResolution(null);
+    sessionRef.current = buildTaskRewardBankSession(pendingRewards);
     setStage("intro");
+    setBatchIndex(0);
     setIsClaiming(false);
     setIsAutoAdvancePaused(false);
-  }, [pendingReward.createdAt]);
+  }, [pendingRewards]);
 
   useEffect(() => {
-    if (stage !== "base_rolling" && stage !== "multiplier_rolling") {
+    if (stage !== "batch_wait") {
       return;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      setStage((current) => {
-        if (current === "base_rolling") {
-          return "base_revealed";
-        }
-        if (current === "multiplier_rolling") {
-          return "multiplier_revealed";
-        }
-        return current;
-      });
-    }, stage === "base_rolling" ? BASE_ROLL_DURATION_MS : MULTIPLIER_ROLL_DURATION_MS);
-
+    const timeoutId = window.setTimeout(() => setStage("batch_rolling"), BATCH_START_DELAY_MS);
     return () => window.clearTimeout(timeoutId);
   }, [stage]);
 
   useEffect(() => {
-    if (isAutoAdvancePaused || stage === "intro" || stage === "base_rolling" || stage === "multiplier_rolling") {
+    if (stage !== "batch_rolling") {
       return;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      if (stage === "base_revealed") {
-        setStage("multiplier_rolling");
-        return;
-      }
-
-      if (stage === "multiplier_revealed") {
-        setStage("result");
-        return;
-      }
-
-      if (stage === "result" && resolution && !isClaiming) {
-        void handleClaim();
-      }
-    }, REVEAL_STEP_DURATION_MS);
-
+    const timeoutId = window.setTimeout(() => setStage("batch_revealed"), BASE_ROLL_DURATION_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [isAutoAdvancePaused, isClaiming, resolution, stage]);
+  }, [stage]);
+
+  useEffect(() => {
+    if (isAutoAdvancePaused) {
+      return;
+    }
+
+    if (stage === "batch_revealed") {
+      const timeoutId = window.setTimeout(() => {
+        if (batchIndex + 1 < batchCount) {
+          setBatchIndex((current) => current + 1);
+          setStage("batch_wait");
+          return;
+        }
+        setStage("result");
+      }, REVEAL_STEP_DURATION_MS);
+      return () => window.clearTimeout(timeoutId);
+    }
+
+    if (stage === "result" && !isClaiming) {
+      const timeoutId = window.setTimeout(() => {
+        void handleClaim();
+      }, REVEAL_STEP_DURATION_MS);
+      return () => window.clearTimeout(timeoutId);
+    }
+  }, [batchCount, batchIndex, isAutoAdvancePaused, isClaiming, stage]);
 
   function startRewardRoll() {
-    const nextResolution = buildTaskRewardResolution(pendingReward);
+    setBatchIndex(0);
     setIsAutoAdvancePaused(false);
-    setResolution(nextResolution);
-    setStage("base_rolling");
+    setStage("batch_wait");
   }
 
   async function handleClaim() {
-    if (!resolution || isClaiming) {
+    if (isClaiming) {
       return;
     }
 
     setIsClaiming(true);
     try {
-      const claimed = await onClaim(resolution);
+      const claimed = await onClaim(session.resolutions);
+      setIsClaiming(false);
+      onClose();
       if (!claimed) {
-        setIsClaiming(false);
+        return;
       }
     } catch (error) {
       setIsClaiming(false);
@@ -169,243 +160,184 @@ export function TaskRewardModal({
         className="relative flex h-full w-full flex-col overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white/90 shadow-[0_30px_80px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#171328]/94"
         role="dialog"
       >
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <div
-            className="flex h-full transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
-            style={{ transform: `translateX(-${activeStepIndex * (100 / REWARD_STEP_COUNT)}%)`, width: `${REWARD_STEP_COUNT * 100}%` }}
+        <div className="flex items-start justify-between gap-4 border-b border-[#ece8f8] px-6 py-5 dark:border-white/10">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8e88a9] dark:text-white/35">Pending roll bank</p>
+            <h2 className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{totalDiceLabel}</h2>
+            <p className="mt-2 text-sm text-[#7d7698] dark:text-white/50">
+              {pendingRewards.length} reward{pendingRewards.length === 1 ? "" : "s"} queued from completed tasks. Rolls animate in batches of up to 6 dice.
+            </p>
+          </div>
+          <button
+            aria-label="Close"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white"
+            onClick={onClose}
+            type="button"
           >
-            <section className="h-full w-full shrink-0 overflow-y-auto px-6 py-6" style={{ width: `${100 / REWARD_STEP_COUNT}%` }}>
-              {pendingReward.mode === "single" ? (
-                <div>
-                  <div className="mb-4 flex items-start justify-between gap-4">
-                    <h2 className="text-3xl font-black text-[#17203a] dark:text-white">
-                      Task Completion Reward Roll
-                    </h2>
-                    <div className="flex items-center gap-2 pt-1">
-                      {Array.from({ length: REWARD_STEP_COUNT }, (_, index) => (
-                        <div
-                          className={`h-2.5 w-10 rounded-full transition-colors ${index <= activeStepIndex ? "bg-[#7a63f7] dark:bg-[#cabfff]" : "bg-[#e8e2fb] dark:bg-white/12"}`}
-                          key={index}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  <div className="-mx-1 flex items-stretch gap-2 overflow-x-auto px-1 pb-1">
-                    {TASK_REWARD_TIERS.map((candidateTier) => {
-                      const selected = candidateTier.id === selectedTierId;
-                      return (
-                        <div
-                          className={`min-w-[9.5rem] shrink-0 rounded-[1rem] border px-4 py-3 text-sm font-semibold ${rewardTierClass(selected, !selected)}`}
-                          key={candidateTier.id}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <span>{candidateTier.label}</span>
-                            <span>{candidateTier.diceCount}d6</span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <button
-                      className="ui-pill-button-strong-light shrink-0"
-                      onClick={startRewardRoll}
-                      type="button"
-                    >
-                      Roll For Points
-                    </button>
-                  </div>
-                  <p className="mt-4 text-xs text-[#8e88a9] dark:text-white/40">
-                    Current streak: {pendingReward.streakLength} day{pendingReward.streakLength === 1 ? "" : "s"}
-                  </p>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8e88a9] dark:text-white/35">Batch reward</p>
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
-                    <div>
-                      <p className="text-sm text-[#7d7698] dark:text-white/50">Newly completed tasks</p>
-                      <p className="mt-1 text-4xl font-black text-[#17203a] dark:text-white">{pendingReward.tasks.length}</p>
-                    </div>
-                    <div className="rounded-full bg-[#f1ecff] px-5 py-3 text-sm font-bold text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]">
-                      Roll {pendingReward.diceCount}d6, then 1 multiplier d6
-                    </div>
-                  </div>
-                </div>
-              )}
-            </section>
+            <X className="h-4 w-4" />
+          </button>
+        </div>
 
-            <section className="h-full w-full shrink-0 overflow-y-auto px-6 py-6" style={{ width: `${100 / REWARD_STEP_COUNT}%` }}>
-              <div>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8e88a9] dark:text-white/35">Base die</p>
-                    <h3 className="mt-2 text-2xl font-black text-[#17203a] dark:text-white">
-                      {stage === "base_rolling" ? "Rolling for points..." : "Base points locked in"}
-                    </h3>
-                  </div>
-                  <div className="flex items-center gap-2 pt-1">
-                    {Array.from({ length: REWARD_STEP_COUNT }, (_, index) => (
-                      <div
-                        className={`h-2.5 w-10 rounded-full transition-colors ${index <= activeStepIndex ? "bg-[#7a63f7] dark:bg-[#cabfff]" : "bg-[#e8e2fb] dark:bg-white/12"}`}
-                        key={index}
-                      />
-                    ))}
-                  </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+          {stage === "intro" ? (
+            <div className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Pending dice</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session.diceCount}</p>
                 </div>
-                <div className="mt-5 flex justify-center">
-                  <div className="w-full max-w-[44rem] overflow-hidden rounded-[1.5rem] bg-[#f5f1ff] p-4 dark:bg-white/[0.02]">
-                    <ErrorBoundary fallback={<div className="h-[220px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
-                      <Suspense fallback={<div className="h-[220px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
-                        <RewardDice3DCanvas
-                          dark={isDark}
-                          height={220}
-                          onSettled={() => {}}
-                          phase={basePhase}
-                          results={baseRolls}
-                          speedScale={0.94}
-                        />
-                      </Suspense>
-                    </ErrorBoundary>
-                    <div className="mt-4 flex flex-wrap items-end justify-center gap-5">
-                      <div className="flex items-end justify-center gap-6 text-center">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Base die</p>
-                          <p className="mt-2 text-2xl font-black text-[#17203a] dark:text-white">
-                            {stage === "base_rolling" ? "Rolling..." : baseRollSummary}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Base points</p>
-                          <p className="mt-2 text-2xl font-black text-[#17203a] dark:text-white">
-                            {resolution?.basePoints ?? "?"}
-                          </p>
-                        </div>
-                      </div>
-                      {stage === "base_revealed" && resolution ? (
-                        <button
-                          className="ui-pill-button-strong-light"
-                          onClick={() => setStage("multiplier_rolling")}
-                          type="button"
-                        >
-                          {isAutoAdvancePaused ? "Roll Multiplier" : "Continue now"}
-                        </button>
-                      ) : (
-                        <div className="rounded-[1.2rem] border border-[#e1daf8] px-5 py-3 text-sm font-semibold text-[#9a90c2] dark:border-white/10 dark:text-white/35">
-                          {isAutoAdvancePaused ? "Auto-advance paused while you inspect the roll." : "Multiplier unlocks after the base roll settles"}
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Visual batches</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{batchCount}</p>
+                </div>
+                <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Queued rewards</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{pendingRewards.length}</p>
                 </div>
               </div>
-            </section>
 
-            <section className="h-full w-full shrink-0 overflow-y-auto px-6 py-6" style={{ width: `${100 / REWARD_STEP_COUNT}%` }}>
-              <div>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8e88a9] dark:text-white/35">Multiplier die</p>
-                    <h3 className="mt-2 text-2xl font-black text-[#17203a] dark:text-white">
-                      {stage === "multiplier_rolling" ? "Rolling multiplier..." : "Multiplier locked in"}
-                    </h3>
-                  </div>
-                  <div className="flex items-center gap-2 pt-1">
-                    {Array.from({ length: REWARD_STEP_COUNT }, (_, index) => (
-                      <div
-                        className={`h-2.5 w-10 rounded-full transition-colors ${index <= activeStepIndex ? "bg-[#7a63f7] dark:bg-[#cabfff]" : "bg-[#e8e2fb] dark:bg-white/12"}`}
-                        key={index}
-                      />
-                    ))}
-                  </div>
-                </div>
-                <div className="mt-5 flex justify-center">
-                  <div className="w-full max-w-[44rem] overflow-hidden rounded-[1.5rem] bg-[#f5f1ff] p-4 dark:bg-white/[0.02]">
-                    <ErrorBoundary fallback={<div className="h-[220px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
-                      <Suspense fallback={<div className="h-[220px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
-                        <RewardDice3DCanvas
-                          dark={isDark}
-                          height={220}
-                          onSettled={() => {}}
-                          phase={multiplierPhase}
-                          results={multiplierRolls}
-                          speedScale={0.78}
-                        />
-                      </Suspense>
-                    </ErrorBoundary>
-                    <div className="mt-4 flex flex-wrap items-end justify-center gap-5">
-                      <div className="flex items-end justify-center gap-6 text-center">
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Multiplier die</p>
-                          <p className="mt-2 text-2xl font-black text-[#17203a] dark:text-white">
-                            {stage === "multiplier_rolling" ? "Rolling..." : `x${resolution?.multiplierRoll ?? "?"}`}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Base points</p>
-                          <p className="mt-2 text-2xl font-black text-[#17203a] dark:text-white">
-                            {resolution?.basePoints ?? "?"}
-                          </p>
-                        </div>
-                      </div>
-                      {stage === "multiplier_revealed" ? (
-                        <button
-                          className="ui-pill-button-strong-light"
-                          onClick={() => setStage("result")}
-                          type="button"
-                        >
-                          {isAutoAdvancePaused ? "Continue To Final Points" : "Show final points now"}
-                        </button>
-                      ) : (
-                        <div className="rounded-[1.2rem] border border-[#e1daf8] px-5 py-3 text-sm font-semibold text-[#9a90c2] dark:border-white/10 dark:text-white/35">
-                          {isAutoAdvancePaused ? "Auto-advance paused while you inspect the roll." : "Final points appear after the multiplier lands"}
-                        </div>
-                      )}
+              <div className="rounded-[1.25rem] border border-[#ece7f5] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">What will roll</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {pendingRewards.map((reward) => (
+                    <div className="rounded-full bg-[#f1ecff] px-3 py-1 text-xs font-semibold text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" key={`${reward.rewardDate}:${reward.claimRefs[0]?.taskId ?? reward.createdAt}:${reward.createdAt}`}>
+                      {reward.claimRefs[0]?.title ?? reward.tasks[0]?.title ?? "Completed task"} · {reward.diceCount}d6
                     </div>
-                  </div>
+                  ))}
                 </div>
               </div>
-            </section>
 
-            <section className="h-full w-full shrink-0 overflow-y-auto px-6 py-6" style={{ width: `${100 / REWARD_STEP_COUNT}%` }}>
-              {stage === "result" && resolution ? (
-                <div className="space-y-5">
-                  <div className="text-center">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8e88a9] dark:text-white/35">Final reward</p>
-                    <h3 className="mt-2 text-4xl font-black text-[#6f57f6] dark:text-[#cabfff]">{resolution.finalPoints} points</h3>
-                    <p className="mt-2 text-sm text-[#7d7698] dark:text-white/50">
-                      {resolution.basePoints} base points x {resolution.multiplierRoll} multiplier
+              <div className="flex justify-center">
+                <button
+                  className="ui-pill-button-strong-light"
+                  onClick={startRewardRoll}
+                  type="button"
+                >
+                  Roll banked dice
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {stage === "batch_wait" || stage === "batch_rolling" || stage === "batch_revealed" ? (
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8e88a9] dark:text-white/35">Batch {activeBatchNumber} of {batchCount}</p>
+                  <h3 className="mt-2 text-2xl font-black text-[#17203a] dark:text-white">
+                    {stage === "batch_wait"
+                      ? "Get ready..."
+                      : stage === "batch_rolling"
+                        ? "Rolling batch..."
+                        : "Batch settled"}
+                  </h3>
+                </div>
+                <div className="rounded-full bg-[#f1ecff] px-4 py-2 text-sm font-bold text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]">
+                  {activeBatch.length} {activeBatch.length === 1 ? "die" : "dice"} on screen
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-[1.5rem] bg-[#f5f1ff] p-4 dark:bg-white/[0.02]">
+                <ErrorBoundary fallback={<div className="h-[220px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
+                  <Suspense fallback={<div className="h-[220px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
+                    <RewardDice3DCanvas
+                      dark={isDark}
+                      height={220}
+                      onSettled={() => {}}
+                      phase={batchPhase}
+                      results={activeBatch}
+                      speedScale={0.94}
+                    />
+                  </Suspense>
+                </ErrorBoundary>
+                <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Batch dice</p>
+                    <p className="mt-2 text-2xl font-black text-[#17203a] dark:text-white">
+                      {stage === "batch_wait" || stage === "batch_rolling" ? "Rolling..." : activeBatchSummary}
                     </p>
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Base dice</p>
-                      <p className="mt-2 text-xl font-black text-[#17203a] dark:text-white">{resolution.baseRolls.join(" + ")}</p>
-                    </div>
-                    <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">XP</p>
-                      <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{resolution.xp}</p>
-                    </div>
-                    <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
-                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Tokens</p>
-                      <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{resolution.awardedTokens}</p>
-                    </div>
-                  </div>
-                  <div className="flex justify-center">
+                  {stage === "batch_revealed" ? (
                     <button
-                      className="ui-pill-button-strong-light disabled:opacity-60"
-                      disabled={isClaiming}
-                      onClick={() => { void handleClaim(); }}
+                      className="ui-pill-button-strong-light"
+                      onClick={() => {
+                        if (batchIndex + 1 < batchCount) {
+                          setBatchIndex((current) => current + 1);
+                          setStage("batch_wait");
+                          return;
+                        }
+                        setStage("result");
+                      }}
                       type="button"
                     >
-                      {isClaiming ? "Claiming reward..." : isAutoAdvancePaused ? "Claim Reward" : "Claim reward now"}
+                      {batchIndex + 1 < batchCount ? "Next batch now" : "Show totals now"}
                     </button>
-                  </div>
-                  {!isAutoAdvancePaused ? (
-                    <p className="text-center text-xs text-[#8e88a9] dark:text-white/35">Closing automatically in about 2 seconds.</p>
-                  ) : null}
+                  ) : (
+                    <div className="rounded-[1.2rem] border border-[#e1daf8] px-5 py-3 text-sm font-semibold text-[#9a90c2] dark:border-white/10 dark:text-white/35">
+                      {isAutoAdvancePaused ? "Auto-advance paused while you inspect the roll." : "Next step starts automatically after the batch settles"}
+                    </div>
+                  )}
                 </div>
-              ) : null}
-            </section>
-          </div>
+              </div>
+            </div>
+          ) : null}
+
+          {stage === "result" ? (
+            <div className="space-y-5">
+              <div className="text-center">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8e88a9] dark:text-white/35">Final reward</p>
+                <h3 className="mt-2 text-4xl font-black text-[#6f57f6] dark:text-[#cabfff]">{session.totalFinalPoints} points</h3>
+                <p className="mt-2 text-sm text-[#7d7698] dark:text-white/50">
+                  {session.totalBasePoints} base points across {session.diceCount} dice, with existing reward multipliers preserved per completed task.
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Base total</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session.totalBasePoints}</p>
+                </div>
+                <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">XP</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session.totalXp}</p>
+                </div>
+                <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Tokens</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session.totalTokens}</p>
+                </div>
+              </div>
+
+              <div className="rounded-[1.25rem] border border-[#ece7f5] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Reward breakdown</p>
+                <div className="mt-3 space-y-2">
+                  {breakdownEntries.map((entry, index) => (
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1rem] bg-white/80 px-3 py-3 dark:bg-white/[0.05]" key={`${entry.claimTitle}-${index}`}>
+                      <div>
+                        <p className="text-sm font-bold text-[#17203a] dark:text-white">{entry.claimTitle}</p>
+                        <p className="mt-1 text-xs text-[#7d7698] dark:text-white/50">
+                          {entry.baseExpression} x {entry.multiplierRoll}
+                        </p>
+                      </div>
+                      <div className="text-sm font-black text-[#6f57f6] dark:text-[#cabfff]">
+                        {entry.finalPoints} pts
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-center">
+                <button
+                  className="ui-pill-button-strong-light disabled:opacity-60"
+                  disabled={isClaiming}
+                  onClick={() => { void handleClaim(); }}
+                  type="button"
+                >
+                  {isClaiming ? "Claiming reward..." : isAutoAdvancePaused ? "Claim Reward" : "Claim reward now"}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

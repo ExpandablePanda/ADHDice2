@@ -44,6 +44,12 @@ import {
 import { buildTaskCollections } from "../src/lib/task-selectors.ts";
 import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
 import { buildTaskListCounts, getBuiltInTaskLists } from "../src/lib/task-lists.ts";
+import {
+  buildSingleTaskReward,
+  buildTaskRewardBankSession,
+  getPendingRewardDiceCount,
+  resolveTaskRewardTier,
+} from "../src/lib/task-rewards.ts";
 
 test("filter state helpers detect active filters and preserve key UI state on reset", () => {
   const activeState = {
@@ -548,6 +554,135 @@ test("guarded task update reports a same-field remote conflict without retrying 
   assert.equal(result.conflict?.attemptedReapply, false);
   assert.equal(result.conflict?.latestTask?.title, "Remote title");
   assert.equal(client.getUpdateAttemptCount(), 1);
+});
+
+test("guarded task update treats an already-applied same-field write as success", async () => {
+  const expectedTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-already-applied",
+    notes: "Before",
+    revision: 3,
+    sort_order: 1,
+    status: "pending",
+    title: "Before",
+  });
+  const remoteTask = {
+    ...expectedTask,
+    notes: "After",
+    revision: 4,
+  };
+  const client = createTaskUpdateTestClient(remoteTask);
+
+  const result = await updateTaskRowWithLegacyEnergyFallback(
+    client as never,
+    expectedTask.id,
+    { notes: "After" },
+    () => false,
+    () => false,
+    { expectedTask },
+  );
+
+  assert.equal(result.error, null);
+  assert.equal(result.conflict, null);
+  assert.equal(result.reappliedOnLatestRevision, false);
+  assert.equal(result.data?.notes, "After");
+  assert.equal(result.data?.revision, 4);
+  assert.equal(client.getUpdateAttemptCount(), 1);
+});
+
+test("single-task rewards preserve the shared streak-tier dice mapping", () => {
+  const task = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-on-time",
+    sort_order: 1,
+    status: "done",
+    title: "On-time task",
+  });
+
+  const reward = buildSingleTaskReward([task], [] as never, "2026-06-12");
+  assert.equal(reward?.tier?.id, "on_time");
+  assert.equal(reward?.diceCount, 1);
+  assert.equal(resolveTaskRewardTier(14).diceCount, 5);
+  assert.equal(resolveTaskRewardTier(30).diceCount, 6);
+});
+
+test("banked rewards sum pending dice across individual streak-based rewards", () => {
+  const firstTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    id: "task-three-dice",
+    sort_order: 1,
+    status: "done",
+    title: "Three dice task",
+  });
+  const secondTask = createTask({
+    created_at: "2026-06-11T12:01:00.000Z",
+    id: "task-five-dice",
+    sort_order: 2,
+    status: "done",
+    title: "Five dice task",
+  });
+
+  const firstReward = {
+    ...buildSingleTaskReward([firstTask], [] as never, "2026-06-12")!,
+    diceCount: 3,
+  };
+  const secondReward = {
+    ...buildSingleTaskReward([secondTask], [] as never, "2026-06-12")!,
+    diceCount: 5,
+  };
+
+  assert.equal(getPendingRewardDiceCount([firstReward, secondReward]), 8);
+});
+
+test("banked reward sessions chunk visual dice batches at six without losing totals", () => {
+  const makeReward = (taskId: string, title: string, diceCount: number) => ({
+    claimRefs: [{ subtaskId: null, taskId, title }],
+    createdAt: "2026-06-12T12:00:00.000Z",
+    diceCount,
+    mode: "single" as const,
+    rewardDate: "2026-06-12",
+    streakLength: diceCount,
+    tasks: [createTask({
+      created_at: "2026-06-11T12:00:00.000Z",
+      id: taskId,
+      sort_order: 1,
+      status: "done",
+      title,
+    })],
+    tier: null,
+  });
+  let callIndex = 0;
+  const scriptedRolls = [
+    [1, 2, 3],
+    [2],
+    [4, 5, 6, 1, 2],
+    [3],
+    [6, 5, 4, 3, 2, 1, 6],
+    [4],
+  ];
+  const rollDice = (count: number) => {
+    const next = scriptedRolls[callIndex] ?? [];
+    callIndex += 1;
+    assert.equal(next.length, count);
+    return next;
+  };
+
+  const session = buildTaskRewardBankSession([
+    makeReward("task-a", "Task A", 3),
+    makeReward("task-b", "Task B", 5),
+    makeReward("task-c", "Task C", 7),
+  ], rollDice);
+
+  assert.deepEqual(session.baseRollBatches, [
+    [1, 2, 3, 4, 5, 6],
+    [1, 2, 6, 5, 4, 3],
+    [2, 1, 6],
+  ]);
+  assert.equal(session.diceCount, 15);
+  assert.equal(session.totalBasePoints, 51);
+  assert.equal(session.totalFinalPoints, 174);
+  assert.equal(session.totalXp, 87);
+  assert.equal(session.totalTokens, 3);
 });
 
 test("guarded task update safely reapplies a low-risk patch onto the latest revision", async () => {

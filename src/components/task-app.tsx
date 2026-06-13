@@ -296,8 +296,12 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "6.0.0";
+const HUD_VERSION = "6.0.4";
 const HUD_LOADING_SHELL_HEIGHT = 96;
+
+function formatPendingDiceChipLabel(diceCount: number) {
+  return `${diceCount} ${diceCount === 1 ? "die" : "dice"} ready`;
+}
 
 function isKeyboardEventFromEditableTarget(
   target: EventTarget | null,
@@ -754,6 +758,7 @@ export function TaskApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [message, setMessage] = useState<Message | null>(null);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
+  const [activeRewardBankSession, setActiveRewardBankSession] = useState<import("@/lib/task-rewards").PendingTaskReward[] | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("light");
   const [lowStim, setLowStim] = useState(false);
@@ -1953,8 +1958,9 @@ export function TaskApp() {
   });
   const selectedListTasks = tasks.filter((task) => selectedListTaskIds.includes(task.id));
   const {
-    activePendingReward,
-    claimPendingReward,
+    claimPendingRewardBank,
+    pendingRewardDiceCount,
+    pendingRewardQueue,
     queueTaskRewards,
   } = useTaskRewardController({
     calcNextDueDateFromDate,
@@ -1971,13 +1977,20 @@ export function TaskApp() {
     timezone: userTimeZone,
     updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
   });
+  const openPendingRewardBank = useCallback(() => {
+    if (pendingRewardQueue.length === 0) {
+      return;
+    }
+
+    setActiveRewardBankSession([...pendingRewardQueue]);
+  }, [pendingRewardQueue]);
   const hudNotificationBaseItems = useMemo<HudNotificationItem[]>(() => {
     const currentItems: HudNotificationItem[] = [];
-    if (activePendingReward) {
+    if (pendingRewardDiceCount > 0) {
       currentItems.push({
-        detail: "A completed task or subtask has points waiting to claim.",
+        detail: `${formatPendingDiceChipLabel(pendingRewardDiceCount)}. Tap the pending-roll chip when you're ready.`,
         id: "pending-reward",
-        title: "Reward waiting",
+        title: "Pending rolls",
         tone: "success",
       });
     }
@@ -1998,7 +2011,7 @@ export function TaskApp() {
       });
     }
     return currentItems;
-  }, [activePendingReward, filteredTodayTasks.length, missedTasks.length]);
+  }, [filteredTodayTasks.length, missedTasks.length, pendingRewardDiceCount]);
   const {
     addTask,
     addChildTaskSubtask,
@@ -3414,11 +3427,12 @@ export function TaskApp() {
           </div>
         </ModalShell>
       ) : null}
-      {activePendingReward && (activePage !== "Tasks" || taskUiState.view !== "list") ? (
+      {activeRewardBankSession && (activePage !== "Tasks" || taskUiState.view !== "list") ? (
         <TaskRewardModal
           isDark={theme === "dark"}
-          onClaim={claimPendingReward}
-          pendingReward={activePendingReward}
+          onClaim={claimPendingRewardBank}
+          onClose={() => setActiveRewardBankSession(null)}
+          pendingRewards={activeRewardBankSession}
         />
       ) : null}
       <div className="fixed inset-x-0 top-0 z-30 border-b border-[#ece8f8]/70 bg-[linear-gradient(180deg,rgba(244,240,255,0.96),rgba(239,244,255,0.9))] shadow-[0_14px_34px_rgba(81,61,168,0.07)] backdrop-blur-xl dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(19,16,33,0.94),rgba(14,12,27,0.9))]" ref={hudShellRef}>
@@ -3494,6 +3508,8 @@ export function TaskApp() {
                       isWorkspaceRefreshing={isSoftWorkspaceRefreshing}
                       canDecreaseMobileZoom={canDecreaseMobileZoom}
                       canIncreaseMobileZoom={canIncreaseMobileZoom}
+                      onOpenPendingRewardBank={openPendingRewardBank}
+                      pendingRewardDiceCount={pendingRewardDiceCount}
                     />
                   );
                 }}
@@ -3597,11 +3613,12 @@ export function TaskApp() {
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
-                  overlayNode: activePendingReward ? (
+                  overlayNode: activeRewardBankSession ? (
                     <TaskRewardModal
                       isDark={theme === "dark"}
-                      onClaim={claimPendingReward}
-                      pendingReward={activePendingReward}
+                      onClaim={claimPendingRewardBank}
+                      onClose={() => setActiveRewardBankSession(null)}
+                      pendingRewards={activeRewardBankSession}
                       variant="table"
                     />
                   ) : null,
@@ -4526,6 +4543,8 @@ function CommandCenterHeader({
   isWorkspaceRefreshing,
   canDecreaseMobileZoom,
   canIncreaseMobileZoom,
+  onOpenPendingRewardBank,
+  pendingRewardDiceCount,
 }: {
   activeHudTaskTimer: RunningTaskTimer | null;
   activeTaskCount: number;
@@ -4566,6 +4585,8 @@ function CommandCenterHeader({
   isWorkspaceRefreshing: boolean;
   canDecreaseMobileZoom: boolean;
   canIncreaseMobileZoom: boolean;
+  onOpenPendingRewardBank: () => void;
+  pendingRewardDiceCount: number;
 }) {
   const isHudCollapsed = hudUiState.isHudCollapsed;
   const accountButton = (
@@ -4797,50 +4818,63 @@ function CommandCenterHeader({
     return (
       <header className="flex items-center gap-2 px-3">
         <div className="min-w-0 flex flex-1 items-center gap-2 rounded-[1.15rem] border border-white/70 bg-white/[0.34] px-2 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] dark:border-white/10 dark:bg-white/[0.03]">
-          <div className="flex min-w-0 items-center gap-1.5">
+          <div className="shrink-0 flex items-center gap-1.5">
             <BrandMark compact profile={profile} />
             <span className="rounded-full bg-[#f1ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
               {HUD_VERSION}
             </span>
           </div>
-          <span className="hidden rounded-full bg-[#f1ecff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] sm:inline-flex dark:bg-white/10 dark:text-[#c5b8ff]">
-            {activeHudPageTitle}
-          </span>
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
-            {activeHudTaskTimer ? (
-              <div className="hidden min-w-0 items-center gap-2 rounded-full bg-[#f5f1ff] px-2.5 py-1 text-[#5f4ac9] sm:flex dark:bg-[#241c42] dark:text-[#d6cdff]">
-                <Clock className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate text-[11px] font-semibold">{activeHudTaskTimer.title}</span>
-                <span className="shrink-0 text-[10px] font-black uppercase tracking-[0.16em]">
-                  {formatActualSecondsLabel(timerSeconds)}
-                </span>
+          <div className="adhdice-scrollbar min-w-0 flex-1 overflow-x-auto overflow-y-hidden">
+            <div className="flex min-w-max items-center gap-1.5 pr-1">
+              <span className="hidden shrink-0 rounded-full bg-[#f1ecff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] sm:inline-flex dark:bg-white/10 dark:text-[#c5b8ff]">
+                {activeHudPageTitle}
+              </span>
+              {activeHudTaskTimer ? (
+                <div className="hidden min-w-0 shrink-0 items-center gap-2 rounded-full bg-[#f5f1ff] px-2.5 py-1 text-[#5f4ac9] sm:flex dark:bg-[#241c42] dark:text-[#d6cdff]">
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate text-[11px] font-semibold">{activeHudTaskTimer.title}</span>
+                  <span className="shrink-0 text-[10px] font-black uppercase tracking-[0.16em]">
+                    {formatActualSecondsLabel(timerSeconds)}
+                  </span>
+                </div>
+              ) : null}
+              <div className="shrink-0 rounded-full bg-[#faf7ff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7c73a0] dark:bg-white/[0.05] dark:text-white/55">
+                Today {todayTaskCount}
               </div>
-            ) : null}
-            <div className="rounded-full bg-[#faf7ff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7c73a0] dark:bg-white/[0.05] dark:text-white/55">
-              Today {todayTaskCount}
+              <div className="shrink-0 rounded-full bg-[#fff5eb] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#c06b1c] dark:bg-[#3b2714] dark:text-[#ffbe87]">
+                Urgent {urgentTaskCount}
+              </div>
+              {pendingRewardDiceCount > 0 ? (
+                <TaskTableChipButton
+                  aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}
+                  className="shrink-0 gap-1.5 text-[#119a69] dark:text-[#8ff0cc]"
+                  onClick={onOpenPendingRewardBank}
+                  toneClassName="border-[#cfeedd] bg-[#ecfbf3] dark:border-[#1e5a42] dark:bg-[#103726]"
+                >
+                  <Dice5 className="h-3.5 w-3.5" />
+                  {formatPendingDiceChipLabel(pendingRewardDiceCount)}
+                </TaskTableChipButton>
+              ) : null}
+              <TaskTableChipButton
+                aria-label="Refresh workspace"
+                className="shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72"
+                disabled={isWorkspaceRefreshing}
+                onClick={onRefreshWorkspace}
+                toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
+              >
+                <Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />
+                {isWorkspaceRefreshing ? "Syncing" : "Refresh"}
+              </TaskTableChipButton>
+              <TaskTableChipButton
+                aria-label="Expand HUD"
+                className="shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
+                onClick={() => setHudCollapsed(false)}
+                toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+              >
+                <ChevronUp className="h-3.5 w-3.5" />
+                Open
+              </TaskTableChipButton>
             </div>
-            <div className="rounded-full bg-[#fff5eb] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#c06b1c] dark:bg-[#3b2714] dark:text-[#ffbe87]">
-              Urgent {urgentTaskCount}
-            </div>
-            <TaskTableChipButton
-              aria-label="Refresh workspace"
-              className="gap-1.5 text-[#5f56a6] dark:text-white/72"
-              disabled={isWorkspaceRefreshing}
-              onClick={onRefreshWorkspace}
-              toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
-            >
-              <Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />
-              {isWorkspaceRefreshing ? "Syncing" : "Refresh"}
-            </TaskTableChipButton>
-            <TaskTableChipButton
-              aria-label="Expand HUD"
-              className="gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
-              onClick={() => setHudCollapsed(false)}
-              toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
-            >
-              <ChevronUp className="h-3.5 w-3.5" />
-              Open
-            </TaskTableChipButton>
           </div>
         </div>
         <div className="shrink-0">{accountButton}</div>
@@ -4865,6 +4899,17 @@ function CommandCenterHeader({
         setHudUiState={setHudUiState}
       />
       <div className="flex items-center justify-end gap-2 lg:shrink-0">
+        {pendingRewardDiceCount > 0 ? (
+          <TaskTableChipButton
+            aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}
+            className="gap-1.5 text-[#119a69] dark:text-[#8ff0cc]"
+            onClick={onOpenPendingRewardBank}
+            toneClassName="border-[#cfeedd] bg-[#ecfbf3] dark:border-[#1e5a42] dark:bg-[#103726]"
+          >
+            <Dice5 className="h-3.5 w-3.5" />
+            {formatPendingDiceChipLabel(pendingRewardDiceCount)}
+          </TaskTableChipButton>
+        ) : null}
         <TaskTableChipButton
           aria-label="Collapse HUD"
           className="gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"

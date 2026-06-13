@@ -1699,6 +1699,7 @@ export function TaskManagementTableV2({
   const lastShrinkAllColumnsTokenRef = useRef(0);
   const lastRowsSignatureRef = useRef(buildPrototypeRowsSignature(rows));
   const pendingRowClickTimeoutRef = useRef<number | null>(null);
+  const recentInlineCommitRef = useRef<Map<string, { expiresAt: number; value: string }>>(new Map());
   const effectiveRunningTimers = runningTaskTimers ?? localRunningTimers;
   const effectiveActiveTimerIndex = activeTaskTimerIndex ?? localActiveTimerIndex;
   const effectiveTimerNow = taskTimerNow ?? localTimerNow;
@@ -2440,11 +2441,21 @@ export function TaskManagementTableV2({
     }
   }
 
-  function closeInspector() {
+  function closeInspector(options?: {
+    skipLinkCommit?: boolean;
+    skipNotesCommit?: boolean;
+    skipTitleCommit?: boolean;
+  }) {
     if (selectedTaskId) {
-      commitTaskTitle(selectedTaskId);
-      commitTaskNotes(selectedTaskId);
-      commitTaskLink(selectedTaskId);
+      if (!options?.skipTitleCommit) {
+        commitTaskTitle(selectedTaskId);
+      }
+      if (!options?.skipNotesCommit) {
+        commitTaskNotes(selectedTaskId);
+      }
+      if (!options?.skipLinkCommit) {
+        commitTaskLink(selectedTaskId);
+      }
       const currentTask = getTaskById(selectedTaskId);
       const dueDraft = dueDrafts[selectedTaskId];
       if (dueDraft && currentTask && (dueDraft.dueOn !== currentTask.dueOn || dueDraft.dueTime !== currentTask.dueTime)) {
@@ -2469,6 +2480,20 @@ export function TaskManagementTableV2({
     setOverlayAnchor(null);
   }
 
+  function shouldSkipRecentInlineCommit(taskId: string, field: "link" | "notes" | "title", value: string) {
+    const key = `${taskId}:${field}`;
+    const existing = recentInlineCommitRef.current.get(key);
+    const now = Date.now();
+    if (existing && existing.expiresAt >= now && existing.value === value) {
+      return true;
+    }
+    recentInlineCommitRef.current.set(key, {
+      expiresAt: now + 500,
+      value,
+    });
+    return false;
+  }
+
   function commitTaskTitle(taskId: string) {
     const draft = titleDraftsRef.current[taskId];
     if (typeof draft !== "string") {
@@ -2482,6 +2507,9 @@ export function TaskManagementTableV2({
 
     const currentTask = getTaskById(taskId);
     if (currentTask && nextTitle === currentTask.title) {
+      return;
+    }
+    if (shouldSkipRecentInlineCommit(taskId, "title", nextTitle)) {
       return;
     }
 
@@ -2512,7 +2540,14 @@ export function TaskManagementTableV2({
     const currentTask = getTaskById(taskId);
     if (currentTask && nextLink.label === currentTask.linkLabel && nextLink.url === currentTask.linkUrl) {
       if (options?.closeAfterSave) {
-        closeInspector();
+        closeInspector({ skipLinkCommit: true });
+      }
+      return;
+    }
+    const nextLinkFingerprint = `${nextLink.label}\u0000${nextLink.url}`;
+    if (shouldSkipRecentInlineCommit(taskId, "link", nextLinkFingerprint)) {
+      if (options?.closeAfterSave) {
+        closeInspector({ skipLinkCommit: true });
       }
       return;
     }
@@ -2524,7 +2559,7 @@ export function TaskManagementTableV2({
     }));
     onTaskLinkChange?.(taskId, nextLink);
     if (options?.closeAfterSave) {
-      closeInspector();
+      closeInspector({ skipLinkCommit: true });
     }
   }
 
@@ -2538,7 +2573,13 @@ export function TaskManagementTableV2({
     const currentTask = getTaskById(taskId);
     if (currentTask && nextNotes === currentTask.notes) {
       if (options?.closeAfterSave) {
-        closeInspector();
+        closeInspector({ skipNotesCommit: true });
+      }
+      return;
+    }
+    if (shouldSkipRecentInlineCommit(taskId, "notes", nextNotes)) {
+      if (options?.closeAfterSave) {
+        closeInspector({ skipNotesCommit: true });
       }
       return;
     }
@@ -2549,7 +2590,7 @@ export function TaskManagementTableV2({
     }));
     onTaskNotesChange?.(taskId, nextNotes);
     if (options?.closeAfterSave) {
-      closeInspector();
+      closeInspector({ skipNotesCommit: true });
     }
   }
 
@@ -3468,7 +3509,7 @@ export function TaskManagementTableV2({
               <button className={inlineAccordionButtonClass()} onClick={() => clearTaskLink(task.id)} type="button">
                 <span className={inlineAccordionChipContentClass(INACTIVE_CHIP_CLASS)}>Clear link</span>
               </button>
-              <button className={inlineAccordionButtonClass()} onClick={() => { commitTaskLink(task.id); closeInspector(); }} type="button">
+              <button className={inlineAccordionButtonClass()} onClick={() => commitTaskLink(task.id, { closeAfterSave: true })} type="button">
                 <span className={inlineAccordionChipContentClass("border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]")}>Save link</span>
               </button>
             </div>
@@ -3514,7 +3555,7 @@ export function TaskManagementTableV2({
               <button className={inlineAccordionButtonClass()} onClick={() => clearTaskNotes(task.id)} type="button">
                 <span className={inlineAccordionChipContentClass(INACTIVE_CHIP_CLASS)}>Clear notes</span>
               </button>
-              <button className={inlineAccordionButtonClass()} onClick={() => { commitTaskNotes(task.id); closeInspector(); }} type="button">
+              <button className={inlineAccordionButtonClass()} onClick={() => commitTaskNotes(task.id, { closeAfterSave: true })} type="button">
                 <span className={inlineAccordionChipContentClass("border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]")}>Save notes</span>
               </button>
             </div>
@@ -5562,10 +5603,15 @@ export function TaskManagementTableV2({
                 );
 
                 const fullDesktopEditorNode = (
-                  <div className="mx-auto w-full max-w-[60rem]" ref={isFocusedOverlay ? undefined : inspectorPanelRef}>
+                  <div className="w-full max-w-[60rem]" ref={isFocusedOverlay ? undefined : inspectorPanelRef}>
                     {fullDesktopEditorContent}
                   </div>
                 );
+                const overlayContentClass = isFocusedOverlay
+                  ? "relative flex-1 px-5 py-5"
+                  : overlayMode === "full"
+                    ? "flex flex-1 items-start justify-center overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
+                    : "grid flex-1 gap-3 overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:grid-cols-[1.1fr_0.9fr]";
 
                 return (
                   <>
@@ -5618,7 +5664,7 @@ export function TaskManagementTableV2({
               )}
 
               <div
-                className={`${isFocusedOverlay ? "relative flex-1 px-5 py-5" : "grid flex-1 gap-3 overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:grid-cols-[1.1fr_0.9fr]"}`}
+                className={overlayContentClass}
                 onClick={isFocusedOverlay ? undefined : (event) => event.stopPropagation()}
               >
                 {isFocusedOverlay ? (
