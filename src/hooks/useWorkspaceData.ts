@@ -133,6 +133,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   taskGridStarterLayout,
 }: UseWorkspaceDataOptions<TTaskGridItem>) {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
+  const [isSoftWorkspaceRefreshing, setIsSoftWorkspaceRefreshing] = useState(false);
+  const [isTaskResumeSyncPending, setIsTaskResumeSyncPending] = useState(false);
   const hasLoadedSecondaryDataRef = useRef(false);
   const secondaryLoadInFlightRef = useRef(false);
   const taskReloadInFlightRef = useRef(false);
@@ -142,6 +144,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const taskResumeSyncTimeoutRef = useRef<number | null>(null);
   const taskResumeSyncQueuedRef = useRef(false);
   const lastTaskResumeSyncAtRef = useRef(0);
+  const taskResumeSyncInFlightRef = useRef(false);
+  const softWorkspaceRefreshRef = useRef<(() => Promise<void>) | null>(null);
+  const prepareTaskMutationRef = useRef<(() => Promise<boolean>) | null>(null);
 
   useEffect(() => {
     if (!supabase || !currentUser) {
@@ -153,6 +158,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       taskChannelStatusRef.current = "CLOSED";
       taskResumeSyncQueuedRef.current = false;
       lastTaskResumeSyncAtRef.current = 0;
+      taskResumeSyncInFlightRef.current = false;
+      softWorkspaceRefreshRef.current = null;
+      prepareTaskMutationRef.current = null;
       if (taskResumeSyncTimeoutRef.current !== null) {
         window.clearTimeout(taskResumeSyncTimeoutRef.current);
         taskResumeSyncTimeoutRef.current = null;
@@ -278,6 +286,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       taskResumeSyncQueuedRef.current = true;
+      setIsTaskResumeSyncPending(true);
       const now = Date.now();
       const msSinceLastResumeSync = now - lastTaskResumeSyncAtRef.current;
       const delay = msSinceLastResumeSync >= TASK_RESUME_SYNC_COOLDOWN_MS
@@ -297,8 +306,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
         taskResumeSyncQueuedRef.current = false;
         lastTaskResumeSyncAtRef.current = Date.now();
-        ensureTaskChannelSubscribed();
-        void reloadTaskRows({ silent: true });
+        void runSoftWorkspaceRefresh({ includeSecondaryIfLoaded: true, source: "resume" });
       }, delay);
     }
 
@@ -577,6 +585,63 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
     }
 
+    async function runSoftWorkspaceRefresh({
+      includeSecondaryIfLoaded = false,
+      source,
+    }: {
+      includeSecondaryIfLoaded?: boolean;
+      source: "manual" | "mutation" | "resume";
+    }) {
+      if (!isActive || taskResumeSyncInFlightRef.current) {
+        return;
+      }
+
+      taskResumeSyncInFlightRef.current = true;
+      setIsSoftWorkspaceRefreshing(true);
+      if (source === "resume" || source === "mutation") {
+        setIsTaskResumeSyncPending(true);
+      }
+
+      try {
+        ensureTaskChannelSubscribed();
+        await loadCoreWorkspaceData({ silent: true });
+
+        if (includeSecondaryIfLoaded && (hasLoadedSecondaryDataRef.current || shouldLoadSecondaryForPage(activePage))) {
+          await loadSecondaryWorkspaceData({ silent: true });
+        }
+      } finally {
+        taskResumeSyncInFlightRef.current = false;
+        taskResumeSyncQueuedRef.current = false;
+        setIsSoftWorkspaceRefreshing(false);
+        setIsTaskResumeSyncPending(false);
+      }
+    }
+
+    softWorkspaceRefreshRef.current = () => runSoftWorkspaceRefresh({
+      includeSecondaryIfLoaded: true,
+      source: "manual",
+    });
+
+    prepareTaskMutationRef.current = async () => {
+      if (
+        !taskResumeSyncQueuedRef.current
+        && taskResumeSyncTimeoutRef.current === null
+        && !taskResumeSyncInFlightRef.current
+      ) {
+        return false;
+      }
+
+      if (taskResumeSyncTimeoutRef.current !== null) {
+        window.clearTimeout(taskResumeSyncTimeoutRef.current);
+        taskResumeSyncTimeoutRef.current = null;
+      }
+
+      taskResumeSyncQueuedRef.current = false;
+      lastTaskResumeSyncAtRef.current = Date.now();
+      await runSoftWorkspaceRefresh({ includeSecondaryIfLoaded: false, source: "mutation" });
+      return true;
+    };
+
     void loadCoreWorkspaceData();
     subscribeTaskChannel();
 
@@ -600,6 +665,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
     function handlePageHide() {
       taskResumeSyncQueuedRef.current = true;
+      setIsTaskResumeSyncPending(true);
     }
 
     document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
@@ -752,6 +818,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         taskResumeSyncTimeoutRef.current = null;
       }
       taskResumeSyncQueuedRef.current = false;
+      taskResumeSyncInFlightRef.current = false;
+      softWorkspaceRefreshRef.current = null;
+      prepareTaskMutationRef.current = null;
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
       if (taskChannel) {
@@ -781,5 +850,19 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     taskGridStarterLayout,
   ]);
 
-  return { isWorkspaceLoading };
+  async function softRefreshWorkspace() {
+    await softWorkspaceRefreshRef.current?.();
+  }
+
+  async function prepareTaskMutation() {
+    return await prepareTaskMutationRef.current?.() ?? false;
+  }
+
+  return {
+    isSoftWorkspaceRefreshing,
+    isTaskResumeSyncPending,
+    isWorkspaceLoading,
+    prepareTaskMutation,
+    softRefreshWorkspace,
+  };
 }

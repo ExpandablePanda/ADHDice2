@@ -1,17 +1,18 @@
 # Current State
 
-Last reviewed: 2026-06-11
+Last reviewed: 2026-06-12
 
 Role: active working
 
 ## Current App Version
-- Current visible app/package version: the visible UI badge and `package.json` are aligned at `5.5.11`.
+- Current visible app/package version: the visible UI badge and `package.json` are aligned at `6.0.0`.
 - Where version is displayed/updated: displayed in the top-level `TaskApp` HUD/app version surfaces; package version is updated in `package.json`.
-- Current release group: `5.5.x`, the task foundation and cleanup release group.
+- Current release: `6.0.0`, the stabilization pass focused on stale-resume recovery and HUD refresh affordances.
 
-## 5.5.11 Summary
-- Archive/Trash status changes from the live list table now pass the captured pre-transition task snapshot back into the guarded update path, which stops false same-device conflict warnings while keeping the revision guard intact.
-- Archive and Trash remain as dedicated top-toolbar buckets with working counts and routing, but their duplicate chips are now hidden from the list/chip rail.
+## 6.0.0 Summary
+- Resume-triggered workspace reconciliation now refreshes the live task/profile workspace before stale post-resume task edits continue, which narrows the iOS Home Screen/PWA false conflict path without weakening revision guards.
+- The collapsed HUD now includes a compact refresh chip that performs a soft workspace reconnect/reload path instead of relying on a full-page refresh.
+- HUD layout/settings sync remains local-storage backed in runtime; there is still no typed existing cloud-backed HUD layout field in the current `adhdice_user_profiles` surface.
 
 ## 5.5.10 Summary
 - Runtime Archive vs Trash is now wired to the approved SQL split: genuine Archive uses `status: "archived"`, real Trash uses `status: "trashed"`, and active task views exclude both.
@@ -83,4 +84,4 @@ Role: active working
 3. Restore one task from Trash and one from Archive and confirm both return to `pending` without a countdown chip.
 4. Select multiple tasks from an active view, use the batch delete flow, and confirm they move to Trash rather than being permanently removed.
 5. Permanently delete a task from Trash after creating a remote revision conflict and confirm the latest cloud row is refreshed instead of being silently removed.
-6. Confirm the visible HUD/app version reads `5.5.11`.
+6. Confirm the visible HUD/app version reads `6.0.0`.

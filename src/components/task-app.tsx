@@ -168,6 +168,7 @@ import {
   deleteTaskRow,
   insertTaskRowWithLegacyEnergyFallback,
   updateTaskRowWithLegacyEnergyFallback,
+  type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { buildFocusLabelOptions, getDefaultFocusCategories } from "@/lib/task-focus-labels";
@@ -295,7 +296,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "5.5.16";
+const HUD_VERSION = "6.0.0";
 const HUD_LOADING_SHELL_HEIGHT = 96;
 
 function isKeyboardEventFromEditableTarget(
@@ -1023,7 +1024,13 @@ export function TaskApp() {
       TASK_GRID_MAX_DISPLAY_ROWS,
     );
 
-  const { isWorkspaceLoading } = useWorkspaceData({
+  const {
+    isSoftWorkspaceRefreshing,
+    isTaskResumeSyncPending,
+    isWorkspaceLoading,
+    prepareTaskMutation,
+    softRefreshWorkspace,
+  } = useWorkspaceData({
     activePage,
     currentUser: session?.user,
     isMissingTaskListManualMembershipsTableError,
@@ -1098,7 +1105,6 @@ export function TaskApp() {
     supabase,
     taskGridStarterLayout: TASK_GRID_STARTER_LAYOUT,
   });
-
   useEffect(() => {
     if (!supabase) {
       return;
@@ -1642,6 +1648,38 @@ export function TaskApp() {
     [taskHistoryByTaskId, tasks, todayKey],
   );
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
+  const runGuardedTaskRowUpdate = useCallback(async (
+    taskId: string,
+    values: TaskUpdate,
+    options?: TaskRowUpdateOptions,
+  ) => {
+    const refreshedBeforeMutation = await prepareTaskMutation();
+    let nextOptions = options;
+
+    if (refreshedBeforeMutation) {
+      const latestTaskResult = await client
+        .from("adhdice_clean_tasks")
+        .select("*")
+        .eq("id", taskId)
+        .maybeSingle();
+
+      if (!latestTaskResult.error) {
+        nextOptions = {
+          ...options,
+          expectedTask: latestTaskResult.data ?? null,
+        };
+      }
+    }
+
+    return updateTaskRowWithLegacyEnergyFallback(
+      client,
+      taskId,
+      values,
+      isMissingTaskActualSecondsColumnError,
+      isMissingTaskEnergyNoneEnumError,
+      nextOptions,
+    );
+  }, [client, prepareTaskMutation]);
   const currentUserIdText = session?.user?.id ?? "";
   const {
     handleAddGridWidget,
@@ -1931,14 +1969,7 @@ export function TaskApp() {
     setTasks,
     sortTasksForUi,
     timezone: userTimeZone,
-    updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
-      client,
-      taskId,
-      values,
-      isMissingTaskActualSecondsColumnError,
-      isMissingTaskEnergyNoneEnumError,
-      options,
-    ),
+    updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
   });
   const hudNotificationBaseItems = useMemo<HudNotificationItem[]>(() => {
     const currentItems: HudNotificationItem[] = [];
@@ -2001,14 +2032,7 @@ export function TaskApp() {
       shouldRouteTaskToInbox,
       sortTasksForUi,
       tasks,
-      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
-        client,
-        taskId,
-        values,
-        isMissingTaskActualSecondsColumnError,
-        isMissingTaskEnergyNoneEnumError,
-        options,
-      ),
+      updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     create: {
       client,
@@ -2030,14 +2054,7 @@ export function TaskApp() {
       setTasks,
       sortTasksForUi,
       tasks,
-      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
-        client,
-        taskId,
-        values,
-        isMissingTaskActualSecondsColumnError,
-        isMissingTaskEnergyNoneEnumError,
-        options,
-      ),
+      updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     list: {
       availableTaskLists,
@@ -2066,14 +2083,7 @@ export function TaskApp() {
       setTasks,
       sortTasksForUi,
       tasks,
-      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
-        client,
-        taskId,
-        values,
-        isMissingTaskActualSecondsColumnError,
-        isMissingTaskEnergyNoneEnumError,
-        options,
-      ),
+      updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     history: {
       client,
@@ -2090,14 +2100,7 @@ export function TaskApp() {
       sortTasksForUi,
       tasks,
       timezone: userTimeZone,
-      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
-        client,
-        taskId,
-        values,
-        isMissingTaskActualSecondsColumnError,
-        isMissingTaskEnergyNoneEnumError,
-        options,
-      ),
+      updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     noteLinks: {
       client,
@@ -2137,14 +2140,7 @@ export function TaskApp() {
       setTasks,
       sortTasksForUi,
       tasks,
-      updateTaskRowWithLegacyEnergyFallback: (taskId, values, options) => updateTaskRowWithLegacyEnergyFallback(
-        client,
-        taskId,
-        values,
-        isMissingTaskActualSecondsColumnError,
-        isMissingTaskEnergyNoneEnumError,
-        options,
-      ),
+      updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
   const {
@@ -2574,7 +2570,7 @@ export function TaskApp() {
 
   const currentUser = session.user;
   const shouldDeferPageRender = isRestoringPersistedUiState;
-  const shouldShowHudLoadingShell = !isHudAppearanceReady || isWorkspaceLoading || shouldDeferPageRender;
+  const shouldShowHudLoadingShell = !isHudAppearanceReady || isWorkspaceLoading || isTaskResumeSyncPending || shouldDeferPageRender;
 
   async function handleSaveProfile(profileDraft: UserProfile) {
     const nextProfile = {
@@ -3492,8 +3488,10 @@ export function TaskApp() {
                         }
                       }}
                       mobileZoom={mobileZoom}
+                      onRefreshWorkspace={() => { void softRefreshWorkspace(); }}
                       onDecreaseMobileZoom={decreaseMobileZoom}
                       onIncreaseMobileZoom={increaseMobileZoom}
+                      isWorkspaceRefreshing={isSoftWorkspaceRefreshing}
                       canDecreaseMobileZoom={canDecreaseMobileZoom}
                       canIncreaseMobileZoom={canIncreaseMobileZoom}
                     />
@@ -4522,8 +4520,10 @@ function CommandCenterHeader({
   onIncreaseFocusAlarmInterval,
   onToggleFocusAlarmEnabled,
   mobileZoom,
+  onRefreshWorkspace,
   onDecreaseMobileZoom,
   onIncreaseMobileZoom,
+  isWorkspaceRefreshing,
   canDecreaseMobileZoom,
   canIncreaseMobileZoom,
 }: {
@@ -4560,8 +4560,10 @@ function CommandCenterHeader({
   onIncreaseFocusAlarmInterval: () => void;
   onToggleFocusAlarmEnabled: () => void;
   mobileZoom: number;
+  onRefreshWorkspace: () => void;
   onDecreaseMobileZoom: () => void;
   onIncreaseMobileZoom: () => void;
+  isWorkspaceRefreshing: boolean;
   canDecreaseMobileZoom: boolean;
   canIncreaseMobileZoom: boolean;
 }) {
@@ -4820,6 +4822,16 @@ function CommandCenterHeader({
             <div className="rounded-full bg-[#fff5eb] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#c06b1c] dark:bg-[#3b2714] dark:text-[#ffbe87]">
               Urgent {urgentTaskCount}
             </div>
+            <TaskTableChipButton
+              aria-label="Refresh workspace"
+              className="gap-1.5 text-[#5f56a6] dark:text-white/72"
+              disabled={isWorkspaceRefreshing}
+              onClick={onRefreshWorkspace}
+              toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
+            >
+              <Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />
+              {isWorkspaceRefreshing ? "Syncing" : "Refresh"}
+            </TaskTableChipButton>
             <TaskTableChipButton
               aria-label="Expand HUD"
               className="gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
