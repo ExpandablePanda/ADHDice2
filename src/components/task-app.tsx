@@ -296,7 +296,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "6.0.5";
+const HUD_VERSION = "6.0.6";
 const HUD_LOADING_SHELL_HEIGHT = 96;
 
 function formatPendingDiceChipLabel(diceCount: number) {
@@ -4819,12 +4819,17 @@ function CommandCenterHeader({
       <header className="px-3">
         <div className="adhdice-scrollbar w-full overflow-x-auto overflow-y-hidden">
           <div className="flex min-w-max items-center gap-2 rounded-[1.15rem] border border-white/70 bg-white/[0.34] px-2 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] dark:border-white/10 dark:bg-white/[0.03]">
-            <div className="shrink-0 flex items-center gap-1.5">
+            <button
+              aria-label="Expand HUD from logo"
+              className="shrink-0 flex items-center gap-1.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
+              onClick={() => setHudCollapsed(false)}
+              type="button"
+            >
               <BrandMark compact profile={profile} />
               <span className="rounded-full bg-[#f1ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
                 {HUD_VERSION}
               </span>
-            </div>
+            </button>
             <span className="hidden shrink-0 rounded-full bg-[#f1ecff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] sm:inline-flex dark:bg-white/10 dark:text-[#c5b8ff]">
               {activeHudPageTitle}
             </span>
