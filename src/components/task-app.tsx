@@ -296,11 +296,66 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const HUD_VERSION = "6.0.7";
+const APP_VERSION = "6.0.8";
+const HUD_VERSION = APP_VERSION;
 const HUD_LOADING_SHELL_HEIGHT = 96;
+const APP_VERSION_ENDPOINT = "/app-version.json";
+const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
+const APP_UPDATE_ATTEMPT_TTL_MS = 45_000;
+
+type AppUpdateAttempt = {
+  attemptedAt: number;
+  version: string;
+};
+
+type RefreshStatus = "idle" | "syncing" | "updating";
 
 function formatPendingDiceChipLabel(diceCount: number) {
   return `${diceCount} ${diceCount === 1 ? "die" : "dice"} ready`;
+}
+
+function readAppUpdateAttempt(): AppUpdateAttempt | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.sessionStorage.getItem(APP_UPDATE_ATTEMPT_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<AppUpdateAttempt>;
+    if (typeof parsed.version !== "string" || typeof parsed.attemptedAt !== "number") {
+      return null;
+    }
+    return {
+      attemptedAt: parsed.attemptedAt,
+      version: parsed.version,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function clearAppUpdateAttempt() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.removeItem(APP_UPDATE_ATTEMPT_STORAGE_KEY);
+}
+
+function shouldAttemptAppUpdate(version: string, now = Date.now()) {
+  const priorAttempt = readAppUpdateAttempt();
+  if (priorAttempt && priorAttempt.version === version && now - priorAttempt.attemptedAt < APP_UPDATE_ATTEMPT_TTL_MS) {
+    return false;
+  }
+
+  if (typeof window !== "undefined") {
+    const nextAttempt: AppUpdateAttempt = { attemptedAt: now, version };
+    window.sessionStorage.setItem(APP_UPDATE_ATTEMPT_STORAGE_KEY, JSON.stringify(nextAttempt));
+  }
+  return true;
 }
 
 function isKeyboardEventFromEditableTarget(
@@ -865,6 +920,7 @@ export function TaskApp() {
   const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
   const [isTaskListSettingsOpen, setIsTaskListSettingsOpen] = useState(false);
   const [isImportWidgetMenuOpen, setIsImportWidgetMenuOpen] = useState(false);
+  const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>("idle");
   const [draggedListColumnId, setDraggedListColumnId] = useState<AgentPlanColumnId | null>(null);
   const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
@@ -1012,6 +1068,13 @@ export function TaskApp() {
   }, []);
 
   useEffect(() => {
+    const pendingAttempt = readAppUpdateAttempt();
+    if (pendingAttempt?.version === APP_VERSION) {
+      clearAppUpdateAttempt();
+    }
+  }, []);
+
+  useEffect(() => {
     setIsHudAppearanceReady(false);
   }, [session?.user?.id]);
 
@@ -1110,6 +1173,80 @@ export function TaskApp() {
     supabase,
     taskGridStarterLayout: TASK_GRID_STARTER_LAYOUT,
   });
+
+  const isRefreshBusy = refreshStatus === "updating" || isSoftWorkspaceRefreshing;
+
+  async function fetchDeployedAppVersion() {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    try {
+      const versionUrl = new URL(withBasePath(APP_VERSION_ENDPOINT), window.location.origin);
+      versionUrl.searchParams.set("t", String(Date.now()));
+      const response = await fetch(versionUrl.toString(), {
+        cache: "no-store",
+        headers: {
+          "cache-control": "no-cache",
+          pragma: "no-cache",
+        },
+      });
+      if (!response.ok) {
+        return null;
+      }
+      const payload = await response.json() as Partial<{ version: unknown }>;
+      return typeof payload.version === "string" && payload.version.trim().length > 0
+        ? payload.version.trim()
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function updateActiveServiceWorkers() {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+      return;
+    }
+
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.update().catch(() => undefined)));
+    } catch {
+      // Ignore service-worker update failures and fall back to a normal reload path.
+    }
+  }
+
+  async function handleHudRefresh() {
+    if (isRefreshBusy) {
+      return;
+    }
+
+    setRefreshStatus("syncing");
+    try {
+      const deployedVersion = await fetchDeployedAppVersion();
+      if (deployedVersion && deployedVersion !== APP_VERSION) {
+        if (!shouldAttemptAppUpdate(deployedVersion)) {
+          setMessage({
+            tone: "neutral",
+            text: `ADHDice ${deployedVersion} update was already attempted recently, so Refresh skipped another reload to avoid a loop.`,
+          });
+          await softRefreshWorkspace();
+          return;
+        }
+
+        setRefreshStatus("updating");
+        setMessage({ tone: "neutral", text: `Updating ADHDice to ${deployedVersion}...` });
+        await updateActiveServiceWorkers();
+        window.location.reload();
+        return;
+      }
+
+      await softRefreshWorkspace();
+    } finally {
+      setRefreshStatus("idle");
+    }
+  }
+
   useEffect(() => {
     if (!supabase) {
       return;
@@ -3502,10 +3639,10 @@ export function TaskApp() {
                         }
                       }}
                       mobileZoom={mobileZoom}
-                      onRefreshWorkspace={() => { void softRefreshWorkspace(); }}
+                      onRefreshWorkspace={() => { void handleHudRefresh(); }}
                       onDecreaseMobileZoom={decreaseMobileZoom}
                       onIncreaseMobileZoom={increaseMobileZoom}
-                      isWorkspaceRefreshing={isSoftWorkspaceRefreshing}
+                      refreshStatus={refreshStatus === "updating" ? "updating" : (isSoftWorkspaceRefreshing || refreshStatus === "syncing") ? "syncing" : "idle"}
                       canDecreaseMobileZoom={canDecreaseMobileZoom}
                       canIncreaseMobileZoom={canIncreaseMobileZoom}
                       onOpenPendingRewardBank={openPendingRewardBank}
@@ -4540,7 +4677,7 @@ function CommandCenterHeader({
   onRefreshWorkspace,
   onDecreaseMobileZoom,
   onIncreaseMobileZoom,
-  isWorkspaceRefreshing,
+  refreshStatus,
   canDecreaseMobileZoom,
   canIncreaseMobileZoom,
   onOpenPendingRewardBank,
@@ -4582,13 +4719,14 @@ function CommandCenterHeader({
   onRefreshWorkspace: () => void;
   onDecreaseMobileZoom: () => void;
   onIncreaseMobileZoom: () => void;
-  isWorkspaceRefreshing: boolean;
+  refreshStatus: RefreshStatus;
   canDecreaseMobileZoom: boolean;
   canIncreaseMobileZoom: boolean;
   onOpenPendingRewardBank: () => void;
   pendingRewardDiceCount: number;
 }) {
   const isHudCollapsed = hudUiState.isHudCollapsed;
+  const isWorkspaceRefreshing = refreshStatus !== "idle";
   const accountButton = (
     <button className="relative mr-[3px] rounded-full transition-transform hover:scale-[1.02]" onClick={onOpenAccount} type="button">
       <Image
@@ -4817,16 +4955,18 @@ function CommandCenterHeader({
   if (isHudCollapsed) {
     return (
       <header className="px-3">
-        <div className="adhdice-scrollbar w-full overflow-x-auto overflow-y-hidden">
+        <div className="adhdice-scrollbar w-full overflow-x-auto overflow-y-hidden touch-pan-x">
           <div className="flex min-w-max items-center gap-2 rounded-[1.15rem] border border-white/70 bg-white/[0.34] px-2 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] dark:border-white/10 dark:bg-white/[0.03]">
             <button
-              aria-label={isHudCollapsed ? "Expand HUD from logo" : "Collapse HUD from logo"}
-              className="shrink-0 flex items-center gap-1.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
+              aria-label="Expand HUD"
+              className="shrink-0 flex min-h-11 items-center gap-2 rounded-full bg-white/[0.32] px-2.5 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45 dark:bg-white/[0.04]"
               onClick={() => setHudCollapsed(!isHudCollapsed)}
               type="button"
             >
-              <BrandMark compact profile={profile} />
-              <span className="rounded-full bg-[#f1ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
+              <span className="pointer-events-none flex items-center">
+                <BrandMark compact profile={profile} />
+              </span>
+              <span className="pointer-events-none rounded-full bg-[#f1ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
                 {HUD_VERSION}
               </span>
             </button>
@@ -4867,7 +5007,7 @@ function CommandCenterHeader({
               toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
             >
               <Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />
-              {isWorkspaceRefreshing ? "Syncing" : "Refresh"}
+              {refreshStatus === "updating" ? "Updating" : isWorkspaceRefreshing ? "Syncing" : "Refresh"}
             </TaskTableChipButton>
             <TaskTableChipButton
               aria-label="Expand HUD"
@@ -4888,12 +5028,19 @@ function CommandCenterHeader({
   return (
     <header className="flex flex-col gap-2 px-3 lg:flex-row lg:items-center lg:justify-between">
       <div className="flex items-center justify-between gap-3 lg:mr-[5px] lg:shrink-0 lg:justify-start">
-        <div className="flex items-center gap-1">
-          <BrandMark profile={profile} />
-          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
+        <button
+          aria-label="Collapse HUD"
+          className="flex min-h-12 items-center gap-1 rounded-full bg-white/[0.26] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45 dark:bg-white/[0.03]"
+          onClick={() => setHudCollapsed(true)}
+          type="button"
+        >
+          <span className="pointer-events-none flex items-center">
+            <BrandMark profile={profile} />
+          </span>
+          <span className={`pointer-events-none rounded-full px-2 py-0.5 text-[11px] font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
             {HUD_VERSION}
           </span>
-        </div>
+        </button>
         <div className="lg:hidden">{accountButton}</div>
       </div>
       <HudCommandCenter
