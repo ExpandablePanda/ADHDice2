@@ -1,13 +1,87 @@
 # Current State
 
-Last reviewed: 2026-06-13
+Last reviewed: 2026-06-14
 
 Role: active working
 
 ## Current App Version
-- Current visible app/package version: the visible UI badge, `public/app-version.json`, and `package.json` are aligned at `6.0.9`.
+- Current visible app/package version: the visible UI badge, `public/app-version.json`, and `package.json` are aligned at `6.1.13`.
 - Where version is displayed/updated: displayed in the top-level `TaskApp` HUD/app version surfaces; package version is updated in `package.json`.
-- Current release: `6.0.9`, the narrow HUD/PWA follow-up focused on the brand tap target and user-triggered bundle refresh checks.
+- Current release: `6.1.13`, the HUD sandbox frame/viewport/canvas width unification pass.
+
+## 6.1.13 Summary
+
+- The HUD workspace frame that owns the resize handles is now the authoritative sandbox width, measured from the available command-center region and capped by that region.
+- The scroll viewport fills that frame with `width: 100%`, and the drawable canvas fills the viewport while using shared content dimensions only as minimum overflow bounds.
+- Horizontal scrollbar chrome and the right resize handle now share the same frame basis, so packed widget content cannot shorten the visible sandbox.
+
+## 6.1.12 Summary
+
+- Default and stale 880px HUD workspaces now fill the available command-center region instead of hard-capping the scroll viewport before the right-side controls.
+- Workspace width drag-resizes are marked as intentional and continue to honor their saved width; legacy non-default widths are also treated as intentional during normalization.
+- Auto-width workspaces use the measured viewport region for canvas overflow math without moving or repacking widgets.
+
+## 6.1.11 Summary
+
+- The Calm HUD widget now has a 54px minimum and default height so its fixed 40px chip fits inside the padded, clipped widget shell.
+- Persisted Calm widgets saved below 54px are repaired during HUD state normalization while preserving the 104px width contract from 6.1.10.
+- Shared widget overflow, shell padding, canvas bounds, and viewport width behavior remain unchanged.
+
+## 6.1.10 Summary
+
+- The Calm HUD widget now has a 104px minimum and default width so its no-wrap icon-and-label chip fits inside the clipped widget shell.
+- Persisted Calm widgets saved at the previous 88px minimum are repaired to the new content-safe width during HUD state normalization.
+- The 6.1.8 shared canvas bounds helper and 6.1.9 viewport/canvas width basis remain unchanged.
+
+## 6.1.9 Summary
+
+- The HUD workspace width now belongs entirely to the scroll viewport and drawable canvas instead of being partially consumed by viewport padding.
+- The command-center viewport no longer narrows the visible sandbox interior relative to the saved workspace width, so right-edge widgets can render against the same width basis the layout math uses.
+- The 6.1.8 shared content-dimension helper and focused HUD layout tests remain in place unchanged.
+
+## 6.1.8 Summary
+
+- HUD workspace canvas sizing now derives from the actual visible widget bounds instead of always adding a synthetic trailing gutter, so the sandbox no longer pretends it needs extra empty space when widgets still fit.
+- When widgets truly overflow the saved sandbox size, the HUD now adds a deliberate right/bottom reachability gutter so the last widget edge and bottom-right resize affordance remain scrollable instead of clipping early.
+- The canvas extent calculation now lives in the shared HUD layout module, which keeps edit-mode drag/reorder, resize, and scroll behavior aligned on the same bounds math.
+
+## 6.1.7 Summary
+
+- HUD edit mode no longer renders per-widget drag or hide controls outside the selected widget shell, so top-row widgets no longer clip edit chrome past the HUD sandbox boundary.
+- Selected widgets now drag directly from the widget body in edit mode, with a small pointer-movement threshold to avoid accidental reorder starts from simple taps.
+- Hide/remove for the active selection now lives in the HUD edit toolbar, while the selected widget keeps an internal resize handle and subtle outline without changing layout packing, lane insertion, or persisted minimum-size behavior.
+
+## 6.1.6 Summary
+
+- Focus Alarm now clamps to a larger content-safe minimum size so its title, interval, status, and interval controls do not clip after persisted layout normalization or resize.
+- HUD widget shell padding is tighter in edit mode at about 5px per side, with normal-mode shell padding reduced conservatively so widgets feel less bloated without changing external edit chrome.
+- Focus Alarm uses the compact HUD rendering path consistently in the command HUD.
+
+## 6.1.5 Summary
+
+- HUD edit chrome now appears on the selected widget only, with drag and remove grouped in a compact external toolbar and the resize handle kept below the content box instead of protruding horizontally into adjacent widgets.
+- HUD edit mode now uses slightly tighter widget shell padding while preserving normal/non-edit widget padding.
+- The 6.1.4 per-widget minimum resize bounds remain active and unchanged.
+
+## 6.1.4 Summary
+
+- HUD edit controls now sit farther outside the measured widget content box, so the drag grip, remove button, and resize handle read as external edit chrome without changing widget alignment, lane packing, or row height.
+- HUD widget resize now clamps each widget type to usable minimum dimensions, with chip-style command widgets kept wide enough for their labels.
+- Persisted local HUD widgets that were previously resized below the new usable minimums are repaired during HUD state normalization before layout placement.
+
+## 6.1.3 Summary
+
+- HUD layout/edit mode now restacks sortable lanes by each lane's tallest widget, vertically centers shorter widgets inside the lane, and keeps row gaps consistent as taller widgets move between lanes.
+- HUD widget edit controls now sit in external chrome around the widget shell, so drag, remove, and resize affordances remain available without covering widget content or affecting layout sizing.
+- HUD layout/edit mode now sorts widgets as independent horizontal lanes: pointer y chooses the lane, pointer x chooses the insertion slot, and lane contents shift right without auto-wrapping displaced widgets into another row.
+- The HUD layout/edit sandbox can be resized locally with right-edge, bottom-edge, and bottom-right handles; dimensions persist through the existing local HUD UI state.
+- HUD widget dragging now clears through shared release cleanup for pointer up, pointer cancel, lost pointer capture, Escape, and window blur so the HUD does not stay in drag mode after release.
+- Refocus, New Task, and Quick Capture now render as compact task-table-style chips while preserving their existing actions.
+
+## 6.0.10 Summary
+
+- HUD layout/edit mode now treats visible widgets as a sortable row-flow grid while dragging, so dropping between nearby widgets repacks the visible HUD widgets and persists the resulting order through the existing local HUD UI state.
+- The edit-mode drag preview now uses a dashed insertion tile instead of only crosshair guide lines, while resize and remove controls stay on the existing widget shell.
 
 ## 6.0.9 Summary
 - The collapsed HUD brand area is now a larger explicit button inside the compact rail, so tapping the ADHDice logo/version reliably expands the HUD in browser and PWA paths without removing horizontal scrolling from the rest of the lane.
@@ -80,9 +154,24 @@ Role: active working
 5. Decide when `scheduled_on` becomes authoritative and gate that behind a dedicated runtime/data contract ticket.
 
 ## Manual QA Checks
-1. Trash an active task and confirm it leaves active views, appears under Trash, and shows a countdown based on `trashed_at`.
-2. Archive a task and confirm it appears under Archive, does not show the Trash countdown, and does not appear under Trash.
-3. Restore one task from Trash and one from Archive and confirm both return to `pending` without a countdown chip.
-4. Select multiple tasks from an active view, use the batch delete flow, and confirm they move to Trash rather than being permanently removed.
-5. Permanently delete a task from Trash after creating a remote revision conflict and confirm the latest cloud row is refreshed instead of being silently removed.
-6. Confirm the visible HUD/app version reads `6.0.9`.
+1. Enter HUD layout/edit mode.
+2. Put a tall widget and shorter widgets in the same row.
+3. Confirm the tallest widget determines that row's height.
+4. Confirm shorter widgets vertically center within that row.
+5. Move the tall widget to another row and confirm the original row shrinks.
+6. Confirm rows have consistent spacing and do not create awkward giant gaps.
+7. Confirm the selected widget only shows a subtle outline plus an internal resize handle, with no drag/delete chrome protruding outside the HUD sandbox.
+8. Confirm dragging a widget body in edit mode reorders it directly without triggering normal widget actions.
+9. Confirm `Hide selected` only appears enabled when a widget is selected and still hides the selected widget correctly.
+10. Confirm lane insertion still works.
+11. Confirm sandbox resizing still works.
+12. Confirm horizontal scrolling still works when a row is wider than the sandbox.
+13. Refresh and confirm layout/sandbox dimensions persist.
+14. Confirm `New Task`, `Refocus`, and `Quick Capture` cannot be resized below their readable chip widths.
+15. Refresh after attempting a too-small resize and confirm the repaired layout persists cleanly.
+16. Confirm Focus Alarm cannot be resized below a readable content-safe size and does not cut off `FOCUS ALARM`, `Every 5m`, `Off`, or its interval controls.
+17. Confirm HUD widgets have tighter internal spacing in edit mode without making labels/icons unreadable.
+18. Confirm the Calm widget cannot be resized below 104px wide or 54px tall and its icon, label, and pill edges remain fully visible after refresh.
+19. Confirm the default HUD viewport extends through the available command-center region toward the Collapse controls.
+20. Resize the HUD narrower, refresh, and confirm the intentional width persists.
+21. Confirm the visible HUD/app version reads `6.1.13`.

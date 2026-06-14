@@ -296,7 +296,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.0.9";
+const APP_VERSION = "6.1.13";
 const HUD_VERSION = APP_VERSION;
 const HUD_LOADING_SHELL_HEIGHT = 96;
 const APP_VERSION_ENDPOINT = "/app-version.json";
@@ -4412,7 +4412,7 @@ function TopHeader({
 
     if (widgetType === "sync_status") {
       return (
-        <div className="flex h-full flex-col justify-center rounded-[1.2rem] bg-[#e7faf4] px-4 text-[#0e9b74] dark:bg-[#103c33] dark:text-[#6ef0c4]">
+        <div className="flex h-full flex-col justify-center rounded-[1.2rem] bg-[#e7faf4] px-2 text-[#0e9b74] dark:bg-[#103c33] dark:text-[#6ef0c4]">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">Status</p>
           <p className="mt-1 text-2xl font-black">Synced</p>
         </div>
@@ -4429,7 +4429,7 @@ function TopHeader({
 
     if (widgetType === "streak") {
       return (
-        <div className="flex h-full flex-col justify-center rounded-[1.2rem] bg-[#fff3e0] px-4 text-[#d97706] dark:bg-[#3d2a00] dark:text-[#fbbf24]">
+        <div className="flex h-full flex-col justify-center rounded-[1.2rem] bg-[#fff3e0] px-2 text-[#d97706] dark:bg-[#3d2a00] dark:text-[#fbbf24]">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">Streak</p>
           <p className="mt-1 text-2xl font-black">{currentStreak > 0 ? `${currentStreak}d` : "0d"}</p>
         </div>
@@ -4439,6 +4439,7 @@ function TopHeader({
     if (widgetType === "focus_alarm") {
       return (
         <FocusAlarmWidget
+          compact
           enabled={focusAlarmEnabled}
           intervalMinutes={focusAlarmIntervalMinutes}
           onDecreaseInterval={onDecreaseFocusAlarmInterval}
@@ -4469,10 +4470,16 @@ function TopHeader({
           ? { label: "Refocus", onClick: onOpenFocusPlanner }
           : { label: "Quick Capture", onClick: onOpenQuickCapture };
       return (
-        <button className="flex h-full w-full flex-col items-start justify-center rounded-[1.15rem] bg-[#f5f1ff] px-4 text-[#6f57f6] transition hover:bg-[#eee8ff] dark:bg-[#22193f] dark:text-[#cabfff]" onClick={action.onClick} type="button">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em]">{action.label}</p>
-          <p className="mt-1 text-lg font-black">{action.label}</p>
-        </button>
+        <div className="flex h-full w-full items-center justify-center">
+          <TaskTableChipButton
+            aria-label={action.label}
+            className="max-w-full text-[#6f57f6] dark:text-[#cabfff]"
+            onClick={action.onClick}
+            toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+          >
+            <span className="truncate">{action.label}</span>
+          </TaskTableChipButton>
+        </div>
       );
     }
 
@@ -4865,9 +4872,16 @@ function CommandCenterHeader({
           ? { label: "Refocus", onClick: onOpenFocusPlanner }
           : { label: "Quick Capture", onClick: onOpenQuickCapture };
       return (
-        <button className="flex h-full w-full items-center justify-center rounded-[0.9rem] bg-transparent px-3 text-sm font-bold text-[#6f57f6] transition hover:bg-white/[0.18] dark:bg-transparent dark:text-[#cabfff] dark:hover:bg-white/[0.06]" onClick={action.onClick} type="button">
-          <span className="truncate">{action.label}</span>
-        </button>
+        <div className="flex h-full w-full items-center justify-center">
+          <TaskTableChipButton
+            aria-label={action.label}
+            className="max-w-full text-[#6f57f6] dark:text-[#cabfff]"
+            onClick={action.onClick}
+            toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+          >
+            <span className="truncate">{action.label}</span>
+          </TaskTableChipButton>
+        </div>
       );
     }
     if (widgetType === "task_counts") {

@@ -1,15 +1,21 @@
 "use client";
 
-import { GripVertical, Plus, RotateCcw, Settings2, Trash2 } from "lucide-react";
+import { Plus, RotateCcw, Settings2, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 import {
   DEFAULT_HUD_UI_STATE,
   HUD_WIDGET_LABELS,
   HUD_WIDGET_TYPES,
   HUD_WORKSPACE_SNAP_PX,
+  clampHudWidgetDimensions,
+  getHudWorkspaceContentDimensions,
+  getHudWorkspaceViewportWidth,
+  getHudSortableTarget,
+  type HudSortableTarget,
   type HudUiState,
   type HudWorkspaceWidget,
   type HudWidgetType,
+  reorderHudWorkspaceWidgets,
   updateHudWorkspaceWidgetLayout,
 } from "@/lib/task-hud-layout";
 
@@ -49,19 +55,19 @@ export function HudRuntimeClock({
   return children(now);
 }
 
-const FREEFORM_WIDGET_LIMITS = {
-  maxHeight: 220,
-  maxWidth: 640,
-  minHeight: 36,
-  minWidth: 44,
-};
-const WORKSPACE_CANVAS_PADDING_PX = HUD_WORKSPACE_SNAP_PX * 2;
 const CUSTOM_SCROLLBAR_MIN_THUMB_PX = 28;
 const CUSTOM_SCROLLBAR_TRACK_INSET_PX = 10;
 const CUSTOM_SCROLLBAR_TRACK_GAP_PX = CUSTOM_SCROLLBAR_TRACK_INSET_PX * 2;
 const CUSTOM_SCROLLBAR_INITIAL_VISIBLE_MS = 5000;
 const CUSTOM_SCROLLBAR_IDLE_HIDE_MS = 850;
 const CUSTOM_SCROLLBAR_LEAVE_HIDE_MS = 350;
+const WIDGET_DRAG_THRESHOLD_PX = 6;
+const WORKSPACE_DIMENSION_LIMITS = {
+  maxHeight: 720,
+  maxWidth: 2400,
+  minHeight: 108,
+  minWidth: 320,
+} as const;
 
 function clampWidgetDimension(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, Math.round(value)));
@@ -99,6 +105,7 @@ export function HudCommandCenter({
   renderWidget,
   setHudUiState,
 }: HudCommandCenterProps) {
+  const workspaceRegionRef = useRef<HTMLDivElement | null>(null);
   const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
   const customScrollbarHideTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const customScrollbarDragRef = useRef<{
@@ -107,7 +114,7 @@ export function HudCommandCenter({
     startClientPosition: number;
     startScrollPosition: number;
   } | null>(null);
-  const resizeDragRef = useRef<{
+  const widgetResizeDragRef = useRef<{
     pointerId: number;
     startHeight: number;
     startWidth: number;
@@ -115,19 +122,31 @@ export function HudCommandCenter({
     startY: number;
     widgetId: string;
   } | null>(null);
-  const dragMoveRef = useRef<{
+  const workspaceResizeDragRef = useRef<{
+    axis: "both" | "height" | "width";
     pointerId: number;
-    startClientX: number;
-    startClientY: number;
+    releaseElement: HTMLButtonElement | null;
+    startHeight: number;
+    startWidth: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
+  const dragMoveRef = useRef<{
+    hasExceededDragThreshold: boolean;
+    lastTarget: HudSortableTarget;
+    pointerId: number;
+    releaseElement: HTMLDivElement | null;
     startX: number;
     startY: number;
     widgetId: string;
   } | null>(null);
   const [isHiddenWidgetTrayOpen, setIsHiddenWidgetTrayOpen] = useState(false);
   const [activeDragGuide, setActiveDragGuide] = useState<{ heightPx: number; widthPx: number; x: number; y: number } | null>(null);
+  const [availableWorkspaceWidth, setAvailableWorkspaceWidth] = useState(0);
   const [workspaceScrollMetrics, setWorkspaceScrollMetrics] = useState(getInitialScrollMetrics);
   const [isCustomScrollbarVisible, setIsCustomScrollbarVisible] = useState(true);
   const [isCustomScrollbarDragging, setIsCustomScrollbarDragging] = useState(false);
+  const workspaceAvailableRef = useRef<HTMLDivElement | null>(null);
 
   const selectedWidget = useMemo(
     () => hudUiState.hudWorkspace.widgets.find((widget) => widget.id === hudUiState.selectedHudWidgetId) ?? null,
@@ -141,20 +160,23 @@ export function HudCommandCenter({
     () => sortWorkspaceWidgets(hudUiState.hudWorkspace.widgets.filter((widget) => widget.isVisible)),
     [hudUiState.hudWorkspace.widgets],
   );
-  const workspaceContentWidth = useMemo(() => {
-    const farRight = visibleHudWidgets.reduce(
-      (maxRight, widget) => Math.max(maxRight, widget.x + widget.widthPx),
-      hudUiState.hudWorkspace.widthPx,
-    );
-    return Math.max(hudUiState.hudWorkspace.widthPx, farRight + WORKSPACE_CANVAS_PADDING_PX);
-  }, [hudUiState.hudWorkspace.widthPx, visibleHudWidgets]);
-  const workspaceContentHeight = useMemo(() => {
-    const farBottom = visibleHudWidgets.reduce(
-      (maxBottom, widget) => Math.max(maxBottom, widget.y + widget.heightPx),
-      hudUiState.hudWorkspace.heightPx,
-    );
-    return Math.max(hudUiState.hudWorkspace.heightPx, farBottom + WORKSPACE_CANVAS_PADDING_PX);
-  }, [hudUiState.hudWorkspace.heightPx, visibleHudWidgets]);
+  const workspaceViewportWidth = getHudWorkspaceViewportWidth(
+    hudUiState.hudWorkspace,
+    availableWorkspaceWidth,
+  );
+  const effectiveWorkspace = useMemo(
+    () => ({
+      ...hudUiState.hudWorkspace,
+      widthPx: workspaceViewportWidth,
+    }),
+    [hudUiState.hudWorkspace, workspaceViewportWidth],
+  );
+  const workspaceContentDimensions = useMemo(
+    () => getHudWorkspaceContentDimensions(visibleHudWidgets, effectiveWorkspace),
+    [effectiveWorkspace, visibleHudWidgets],
+  );
+  const workspaceContentWidth = workspaceContentDimensions.widthPx;
+  const workspaceContentHeight = workspaceContentDimensions.heightPx;
   const canScrollVertically = workspaceScrollMetrics.scrollHeight > workspaceScrollMetrics.clientHeight + 1;
   const canScrollHorizontally = workspaceScrollMetrics.scrollWidth > workspaceScrollMetrics.clientWidth + 1;
   const verticalTrackHeight = Math.max(0, workspaceScrollMetrics.clientHeight - CUSTOM_SCROLLBAR_TRACK_GAP_PX);
@@ -202,6 +224,24 @@ export function HudCommandCenter({
   }, [clearCustomScrollbarHideTimer, scheduleCustomScrollbarHide]);
 
   useEffect(() => {
+    const region = workspaceAvailableRef.current;
+    if (!region) {
+      return;
+    }
+
+    function updateAvailableWorkspaceWidth() {
+      setAvailableWorkspaceWidth(region.clientWidth);
+    }
+
+    updateAvailableWorkspaceWidth();
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updateAvailableWorkspaceWidth);
+    resizeObserver?.observe(region);
+    return () => resizeObserver?.disconnect();
+  }, []);
+
+  useEffect(() => {
     const viewport = workspaceScrollRef.current;
     if (!viewport) {
       return;
@@ -243,6 +283,62 @@ export function HudCommandCenter({
     return clearCustomScrollbarHideTimer;
   }, [clearCustomScrollbarHideTimer, scheduleCustomScrollbarHide]);
 
+  const clearWidgetDrag = useCallback((pointerId?: number) => {
+    const dragState = dragMoveRef.current;
+    if (!dragState || (pointerId !== undefined && dragState.pointerId !== pointerId)) {
+      return;
+    }
+
+    if (dragState.releaseElement?.hasPointerCapture(dragState.pointerId)) {
+      dragState.releaseElement.releasePointerCapture(dragState.pointerId);
+    }
+    dragMoveRef.current = null;
+    setActiveDragGuide(null);
+  }, []);
+
+  const clearWorkspaceResize = useCallback((pointerId?: number) => {
+    const resizeState = workspaceResizeDragRef.current;
+    if (!resizeState || (pointerId !== undefined && resizeState.pointerId !== pointerId)) {
+      return;
+    }
+
+    if (resizeState.releaseElement?.hasPointerCapture(resizeState.pointerId)) {
+      resizeState.releaseElement.releasePointerCapture(resizeState.pointerId);
+    }
+    workspaceResizeDragRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    function handleWindowPointerEnd(event: PointerEvent) {
+      clearWidgetDrag(event.pointerId);
+      clearWorkspaceResize(event.pointerId);
+    }
+
+    function handleWindowBlur() {
+      clearWidgetDrag();
+      clearWorkspaceResize();
+    }
+
+    function handleWindowKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        clearWidgetDrag();
+        clearWorkspaceResize();
+      }
+    }
+
+    window.addEventListener("pointerup", handleWindowPointerEnd);
+    window.addEventListener("pointercancel", handleWindowPointerEnd);
+    window.addEventListener("blur", handleWindowBlur);
+    window.addEventListener("keydown", handleWindowKeyDown);
+
+    return () => {
+      window.removeEventListener("pointerup", handleWindowPointerEnd);
+      window.removeEventListener("pointercancel", handleWindowPointerEnd);
+      window.removeEventListener("blur", handleWindowBlur);
+      window.removeEventListener("keydown", handleWindowKeyDown);
+    };
+  }, [clearWidgetDrag, clearWorkspaceResize]);
+
   function updateHudState(updater: (current: HudUiState) => HudUiState) {
     setHudUiState((current) => updater(current));
   }
@@ -270,6 +366,9 @@ export function HudCommandCenter({
   }
 
   function removeWidget(widgetId: string) {
+    clearWidgetDrag();
+    widgetResizeDragRef.current = null;
+    setActiveDragGuide(null);
     updateHudState((current) => ({
       ...current,
       hudWorkspace: {
@@ -291,7 +390,7 @@ export function HudCommandCenter({
         nextSelectedWidgetId = existingWidget.id;
         return updateHudWorkspaceWidgetLayout(
           widgets,
-          hudUiState.hudWorkspace,
+          effectiveWorkspace,
           existingWidget.id,
           { isVisible: true },
         );
@@ -302,7 +401,7 @@ export function HudCommandCenter({
       nextSelectedWidgetId = defaultWorkspaceWidget.id;
       return updateHudWorkspaceWidgetLayout(
         [...widgets, { ...defaultWorkspaceWidget, isVisible: true }],
-        hudUiState.hudWorkspace,
+        effectiveWorkspace,
         defaultWorkspaceWidget.id,
         { isVisible: true },
       );
@@ -312,21 +411,70 @@ export function HudCommandCenter({
   }
 
   function resizeWidget(widgetId: string, widthPx: number, heightPx: number) {
+    const widgetType = hudUiState.hudWorkspace.widgets.find((widget) => widget.id === widgetId)?.type;
+    if (!widgetType) {
+      return;
+    }
+    const dimensions = clampHudWidgetDimensions(widgetType, widthPx, heightPx);
     updateWorkspaceWidgets((widgets) => updateHudWorkspaceWidgetLayout(
       widgets,
       hudUiState.hudWorkspace,
       widgetId,
-      {
-        heightPx: clampWidgetDimension(heightPx, FREEFORM_WIDGET_LIMITS.minHeight, FREEFORM_WIDGET_LIMITS.maxHeight),
-        widthPx: clampWidgetDimension(widthPx, FREEFORM_WIDGET_LIMITS.minWidth, FREEFORM_WIDGET_LIMITS.maxWidth),
-      },
+      dimensions,
     ));
+  }
+
+  function resizeWorkspace(widthPx: number, heightPx: number, isWidthUserSized: boolean) {
+    updateHudState((current) => ({
+      ...current,
+      hudWorkspace: {
+        ...current.hudWorkspace,
+        heightPx: clampWidgetDimension(heightPx, WORKSPACE_DIMENSION_LIMITS.minHeight, WORKSPACE_DIMENSION_LIMITS.maxHeight),
+        isWidthUserSized: isWidthUserSized || current.hudWorkspace.isWidthUserSized,
+        widthPx: isWidthUserSized
+          ? clampWidgetDimension(widthPx, WORKSPACE_DIMENSION_LIMITS.minWidth, WORKSPACE_DIMENSION_LIMITS.maxWidth)
+          : current.hudWorkspace.widthPx,
+      },
+    }));
+    revealCustomScrollbar(CUSTOM_SCROLLBAR_IDLE_HIDE_MS);
+  }
+
+  function getSortableTarget(widgetId: string, clientX: number, clientY: number) {
+    const viewport = workspaceScrollRef.current;
+    if (!viewport) {
+      return null;
+    }
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const pointerX = clientX - viewportRect.left + viewport.scrollLeft;
+    const pointerY = clientY - viewportRect.top + viewport.scrollTop;
+    return getHudSortableTarget(visibleHudWidgets, widgetId, { x: pointerX, y: pointerY });
+  }
+
+  function reorderWidget(widgetId: string, target: HudSortableTarget) {
+    let nextGuide: { heightPx: number; widthPx: number; x: number; y: number } | null = null;
+    updateWorkspaceWidgets((widgets) => {
+      const nextWidgets = reorderHudWorkspaceWidgets(
+        widgets,
+        widgetId,
+        target,
+      );
+      const draggedWidget = nextWidgets.find((widget) => widget.id === widgetId) ?? null;
+      nextGuide = draggedWidget ? {
+        heightPx: draggedWidget.heightPx,
+        widthPx: draggedWidget.widthPx,
+        x: draggedWidget.x,
+        y: draggedWidget.y,
+      } : null;
+      return nextWidgets;
+    });
+    setActiveDragGuide(nextGuide);
   }
 
   function handleResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>, widget: HudWorkspaceWidget) {
     event.preventDefault();
     event.stopPropagation();
-    resizeDragRef.current = {
+    widgetResizeDragRef.current = {
       pointerId: event.pointerId,
       startHeight: widget.heightPx,
       startWidth: widget.widthPx,
@@ -338,63 +486,70 @@ export function HudCommandCenter({
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
-  function moveWidget(widgetId: string, x: number, y: number) {
-    let nextGuide: { heightPx: number; widthPx: number; x: number; y: number } | null = null;
-    updateWorkspaceWidgets((widgets) => {
-      const nextWidgets = updateHudWorkspaceWidgetLayout(
-        widgets,
-        hudUiState.hudWorkspace,
-        widgetId,
-        { x, y },
-      );
-      const movedWidget = nextWidgets.find((widget) => widget.id === widgetId) ?? null;
-      nextGuide = movedWidget ? {
-        heightPx: movedWidget.heightPx,
-        widthPx: movedWidget.widthPx,
-        x: movedWidget.x,
-        y: movedWidget.y,
-      } : null;
-      return nextWidgets;
-    });
-    setActiveDragGuide(nextGuide);
-  }
-
   function handleWidgetPointerDown(event: ReactPointerEvent<HTMLDivElement>, widget: HudWorkspaceWidget) {
-    if (!hudUiState.isHudEditMode || resizeDragRef.current !== null || event.button !== 0) {
+    if (!hudUiState.isHudEditMode || widgetResizeDragRef.current !== null || workspaceResizeDragRef.current !== null || event.button !== 0) {
       return;
     }
 
     event.preventDefault();
+    const target = getSortableTarget(widget.id, event.clientX, event.clientY)
+      ?? {
+        laneIndex: 0,
+        laneY: widget.y,
+        slotIndex: Math.max(0, visibleHudWidgets.findIndex((visibleWidget) => visibleWidget.id === widget.id)),
+      };
     dragMoveRef.current = {
+      hasExceededDragThreshold: false,
+      lastTarget: target,
       pointerId: event.pointerId,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startX: widget.x,
-      startY: widget.y,
+      releaseElement: event.currentTarget,
+      startX: event.clientX,
+      startY: event.clientY,
       widgetId: widget.id,
     };
     selectWidget(widget.id);
-    setActiveDragGuide({
-      heightPx: widget.heightPx,
-      widthPx: widget.widthPx,
-      x: widget.x,
-      y: widget.y,
-    });
-    event.currentTarget.setPointerCapture(event.pointerId);
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
   }
 
   function handleWidgetPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     const dragState = dragMoveRef.current;
-    if (!dragState || dragState.pointerId !== event.pointerId || resizeDragRef.current !== null) {
+    if (!dragState || dragState.pointerId !== event.pointerId || widgetResizeDragRef.current !== null || workspaceResizeDragRef.current !== null) {
       return;
     }
 
     event.preventDefault();
-    moveWidget(
-      dragState.widgetId,
-      dragState.startX + event.clientX - dragState.startClientX,
-      dragState.startY + event.clientY - dragState.startClientY,
-    );
+    if (!dragState.hasExceededDragThreshold) {
+      const pointerDistance = Math.hypot(event.clientX - dragState.startX, event.clientY - dragState.startY);
+      if (pointerDistance < WIDGET_DRAG_THRESHOLD_PX) {
+        return;
+      }
+      dragState.hasExceededDragThreshold = true;
+      const draggedWidget = visibleHudWidgets.find((widget) => widget.id === dragState.widgetId);
+      if (draggedWidget) {
+        setActiveDragGuide({
+          heightPx: draggedWidget.heightPx,
+          widthPx: draggedWidget.widthPx,
+          x: draggedWidget.x,
+          y: draggedWidget.y,
+        });
+      }
+    }
+    const target = getSortableTarget(dragState.widgetId, event.clientX, event.clientY);
+    if (
+      target === null
+      || (
+        target.laneIndex === dragState.lastTarget.laneIndex
+        && target.laneY === dragState.lastTarget.laneY
+        && target.slotIndex === dragState.lastTarget.slotIndex
+      )
+    ) {
+      return;
+    }
+
+    dragState.lastTarget = target;
+    reorderWidget(dragState.widgetId, target);
   }
 
   function handleWidgetPointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
@@ -404,15 +559,11 @@ export function HudCommandCenter({
     }
 
     event.preventDefault();
-    dragMoveRef.current = null;
-    setActiveDragGuide(null);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+    clearWidgetDrag(event.pointerId);
   }
 
   function handleResizePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
-    const dragState = resizeDragRef.current;
+    const dragState = widgetResizeDragRef.current;
     if (!dragState || dragState.pointerId !== event.pointerId) {
       return;
     }
@@ -423,17 +574,62 @@ export function HudCommandCenter({
   }
 
   function handleResizePointerEnd(event: ReactPointerEvent<HTMLButtonElement>) {
-    const dragState = resizeDragRef.current;
+    const dragState = widgetResizeDragRef.current;
     if (!dragState || dragState.pointerId !== event.pointerId) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
-    resizeDragRef.current = null;
+    widgetResizeDragRef.current = null;
     setActiveDragGuide(null);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+  }
+
+  function handleWorkspaceResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>, axis: "both" | "height" | "width") {
+    event.preventDefault();
+    event.stopPropagation();
+    clearWidgetDrag();
+    workspaceResizeDragRef.current = {
+      axis,
+      pointerId: event.pointerId,
+      releaseElement: event.currentTarget,
+      startHeight: hudUiState.hudWorkspace.heightPx,
+      startWidth: workspaceViewportWidth,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    revealCustomScrollbar();
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleWorkspaceResizePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    const resizeState = workspaceResizeDragRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const nextWidth = resizeState.axis === "height"
+      ? resizeState.startWidth
+      : resizeState.startWidth + event.clientX - resizeState.startX;
+    const nextHeight = resizeState.axis === "width"
+      ? resizeState.startHeight
+      : resizeState.startHeight + event.clientY - resizeState.startY;
+    resizeWorkspace(nextWidth, nextHeight, resizeState.axis !== "height");
+  }
+
+  function handleWorkspaceResizePointerEnd(event: ReactPointerEvent<HTMLButtonElement>) {
+    const resizeState = workspaceResizeDragRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    clearWorkspaceResize(event.pointerId);
   }
 
   function resetHudLayout() {
@@ -505,7 +701,7 @@ export function HudCommandCenter({
 
   function renderWidgetTile(widget: HudWorkspaceWidget) {
     const isSelected = hudUiState.isHudEditMode && selectedWidget?.id === widget.id;
-    const isDragging = dragMoveRef.current?.widgetId === widget.id;
+    const isDragging = isSelected && dragMoveRef.current?.widgetId === widget.id && dragMoveRef.current?.hasExceededDragThreshold === true && activeDragGuide !== null;
     const overflowClass = widget.type === "notification_inbox" ? "overflow-visible z-20" : "overflow-hidden";
     const tileStyle: CSSProperties = {
       height: widget.heightPx,
@@ -516,7 +712,7 @@ export function HudCommandCenter({
 
     return (
       <div
-        className={`absolute min-h-0 min-w-0 rounded-[1rem] border border-white/35 bg-transparent px-2.5 py-2 text-left backdrop-blur-[10px] dark:border-white/10 dark:bg-transparent ${overflowClass} ${isSelected ? "ring-2 ring-[#6f57f6]" : ""} ${hudUiState.isHudEditMode ? "touch-none cursor-grab select-none" : ""} ${isDragging ? "cursor-grabbing shadow-[0_16px_34px_rgba(81,61,168,0.18)]" : ""}`}
+        className={`absolute min-h-0 min-w-0 overflow-visible rounded-[1rem] text-left transition-[left,top,box-shadow,transform] duration-150 motion-reduce:transition-none ${isSelected ? "ring-2 ring-[#6f57f6]/75" : ""} ${hudUiState.isHudEditMode ? "touch-none cursor-grab select-none" : ""} ${isDragging ? "scale-[0.98] cursor-grabbing shadow-[0_16px_34px_rgba(81,61,168,0.18)]" : ""}`}
         key={widget.id}
         style={tileStyle}
         onClick={() => {
@@ -535,32 +731,22 @@ export function HudCommandCenter({
         }}
         onPointerCancel={handleWidgetPointerEnd}
         onPointerDown={(event) => handleWidgetPointerDown(event, widget)}
+        onLostPointerCapture={() => clearWidgetDrag()}
         onPointerMove={handleWidgetPointerMove}
         onPointerUp={handleWidgetPointerEnd}
         role={hudUiState.isHudEditMode ? "button" : undefined}
         tabIndex={hudUiState.isHudEditMode ? 0 : undefined}
       >
-        {hudUiState.isHudEditMode ? (
-          <>
-            <div className="absolute left-1 top-1 rounded-full bg-white/85 p-0.5 text-[#7a63f7] shadow-[0_6px_18px_rgba(81,61,168,0.08)] dark:bg-[#171328] dark:text-[#cabfff]">
-              <GripVertical className="h-3 w-3" />
-            </div>
-            <button
-              aria-label={`Remove ${HUD_WIDGET_LABELS[widget.type]}`}
-              className="absolute right-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-[#fff1f3]/90 text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]"
-              onClick={(event) => {
-                event.stopPropagation();
-                removeWidget(widget.id);
-              }}
-              onPointerDown={(event) => event.stopPropagation()}
-              type="button"
-            >
-              <Trash2 className="h-3 w-3" />
-            </button>
+        {isSelected ? (
+          <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden rounded-[1rem]">
             <button
               aria-label={`Drag to resize ${HUD_WIDGET_LABELS[widget.type]}`}
-              className="absolute bottom-1 right-1 z-10 flex h-5 w-5 cursor-se-resize items-center justify-center rounded-full border border-[#ddd6fb] bg-white/90 text-[#7a63f7] shadow-[0_8px_18px_rgba(81,61,168,0.1)] touch-none dark:border-white/10 dark:bg-[#171328] dark:text-[#cabfff]"
+              className="pointer-events-auto absolute bottom-1 right-1 flex h-5 w-5 cursor-se-resize items-center justify-center rounded-full border border-[#ddd6fb] bg-white/95 text-[#7a63f7] shadow-[0_8px_18px_rgba(81,61,168,0.1)] touch-none dark:border-white/10 dark:bg-[#171328] dark:text-[#cabfff]"
               onClick={(event) => event.stopPropagation()}
+              onLostPointerCapture={() => {
+                widgetResizeDragRef.current = null;
+                setActiveDragGuide(null);
+              }}
               onPointerCancel={handleResizePointerEnd}
               onPointerDown={(event) => handleResizePointerDown(event, widget)}
               onPointerMove={handleResizePointerMove}
@@ -569,9 +755,9 @@ export function HudCommandCenter({
             >
               <span aria-hidden="true" className="h-2.5 w-2.5 rounded-br-[0.35rem] border-b-2 border-r-2 border-current" />
             </button>
-          </>
+          </div>
         ) : null}
-        <div className="h-full">
+        <div className={`h-full rounded-[1rem] border border-white/35 bg-transparent backdrop-blur-[10px] dark:border-white/10 dark:bg-transparent ${hudUiState.isHudEditMode ? "px-[5px] py-[5px]" : "px-1.5 py-1.5"} ${overflowClass} ${hudUiState.isHudEditMode ? "pointer-events-none" : ""}`}>
           {renderWidget(widget.type)}
         </div>
       </div>
@@ -582,92 +768,138 @@ export function HudCommandCenter({
     <div className="min-w-0 flex-1">
       <div>
         <div className="flex min-w-0 items-start gap-2">
-          <div
-            className="relative min-w-0 flex-1"
-            onBlur={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                scheduleCustomScrollbarHide(CUSTOM_SCROLLBAR_LEAVE_HIDE_MS);
-              }
-            }}
-            onFocus={() => revealCustomScrollbar()}
-            onPointerEnter={() => revealCustomScrollbar()}
-            onPointerLeave={() => {
-              if (!isCustomScrollbarDragging) {
-                scheduleCustomScrollbarHide(CUSTOM_SCROLLBAR_LEAVE_HIDE_MS);
-              }
-            }}
-          >
+          <div className="min-w-0 flex-1" ref={workspaceAvailableRef}>
             <div
-              className="adhdice-hud-workspace-scrollbar min-w-0 overflow-auto rounded-[1.2rem] border border-white/35 bg-white/[0.2] px-2 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] dark:border-white/10 dark:bg-white/[0.03]"
-              ref={workspaceScrollRef}
-              style={{ height: hudUiState.hudWorkspace.heightPx }}
+              className="relative min-w-0"
+              ref={workspaceRegionRef}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  scheduleCustomScrollbarHide(CUSTOM_SCROLLBAR_LEAVE_HIDE_MS);
+                }
+              }}
+              onFocus={() => revealCustomScrollbar()}
+              onPointerEnter={() => revealCustomScrollbar()}
+              onPointerLeave={() => {
+                if (!isCustomScrollbarDragging) {
+                  scheduleCustomScrollbarHide(CUSTOM_SCROLLBAR_LEAVE_HIDE_MS);
+                }
+              }}
+              style={{
+                maxWidth: "100%",
+                width: workspaceViewportWidth,
+              }}
             >
               <div
-                className="relative min-w-full"
+                className="adhdice-hud-workspace-scrollbar w-full min-w-0 overflow-auto rounded-[1.2rem] border border-white/35 bg-white/[0.2] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] dark:border-white/10 dark:bg-white/[0.03]"
+                ref={workspaceScrollRef}
                 style={{
-                  height: workspaceContentHeight,
-                  width: workspaceContentWidth,
+                  height: hudUiState.hudWorkspace.heightPx,
                 }}
               >
-                {hudUiState.isHudEditMode && activeDragGuide ? (
-                  <>
+                <div
+                  className="relative h-full w-full"
+                  style={{
+                    minHeight: workspaceContentHeight,
+                    minWidth: workspaceContentWidth,
+                  }}
+                >
+                  {hudUiState.isHudEditMode && activeDragGuide ? (
                     <div
                       aria-hidden="true"
-                      className="pointer-events-none absolute bottom-0 top-0 w-px bg-[#6f57f6]/35 dark:bg-[#cabfff]/35"
-                      style={{ left: activeDragGuide.x }}
+                      className="pointer-events-none absolute rounded-[1rem] border-2 border-dashed border-[#6f57f6]/55 bg-[#6f57f6]/8 shadow-[0_0_0_4px_rgba(111,87,246,0.08)] transition-[left,top,width,height] duration-150 motion-reduce:transition-none dark:border-[#cabfff]/55 dark:bg-[#cabfff]/10"
+                      style={{
+                        height: activeDragGuide.heightPx,
+                        left: activeDragGuide.x,
+                        top: activeDragGuide.y,
+                        width: activeDragGuide.widthPx,
+                      }}
                     />
-                    <div
-                      aria-hidden="true"
-                      className="pointer-events-none absolute left-0 right-0 h-px bg-[#6f57f6]/35 dark:bg-[#cabfff]/35"
-                      style={{ top: activeDragGuide.y }}
-                    />
-                  </>
-                ) : null}
-                {visibleHudWidgets.map((widget) => renderWidgetTile(widget))}
+                  ) : null}
+                  {visibleHudWidgets.map((widget) => renderWidgetTile(widget))}
+                </div>
               </div>
+              {hudUiState.isHudEditMode ? (
+                <>
+                  <button
+                    aria-label="Resize HUD sandbox width"
+                    className="absolute right-[-3px] top-4 z-30 h-[calc(100%-2rem)] w-2 cursor-ew-resize rounded-full border border-[#ddd6fb] bg-white/75 text-[#7a63f7] opacity-70 shadow-[0_8px_18px_rgba(81,61,168,0.1)] touch-none hover:opacity-100 dark:border-white/10 dark:bg-[#171328]/85 dark:text-[#cabfff]"
+                    onClick={(event) => event.stopPropagation()}
+                    onLostPointerCapture={() => clearWorkspaceResize()}
+                    onPointerCancel={handleWorkspaceResizePointerEnd}
+                    onPointerDown={(event) => handleWorkspaceResizePointerDown(event, "width")}
+                    onPointerMove={handleWorkspaceResizePointerMove}
+                    onPointerUp={handleWorkspaceResizePointerEnd}
+                    type="button"
+                  />
+                  <button
+                    aria-label="Resize HUD sandbox height"
+                    className="absolute bottom-[-3px] left-4 z-30 h-2 w-[calc(100%-2rem)] cursor-ns-resize rounded-full border border-[#ddd6fb] bg-white/75 text-[#7a63f7] opacity-70 shadow-[0_8px_18px_rgba(81,61,168,0.1)] touch-none hover:opacity-100 dark:border-white/10 dark:bg-[#171328]/85 dark:text-[#cabfff]"
+                    onClick={(event) => event.stopPropagation()}
+                    onLostPointerCapture={() => clearWorkspaceResize()}
+                    onPointerCancel={handleWorkspaceResizePointerEnd}
+                    onPointerDown={(event) => handleWorkspaceResizePointerDown(event, "height")}
+                    onPointerMove={handleWorkspaceResizePointerMove}
+                    onPointerUp={handleWorkspaceResizePointerEnd}
+                    type="button"
+                  />
+                  <button
+                    aria-label="Resize HUD sandbox"
+                    className="absolute bottom-[-5px] right-[-5px] z-40 flex h-5 w-5 cursor-se-resize items-center justify-center rounded-full border border-[#ddd6fb] bg-white/90 text-[#7a63f7] shadow-[0_8px_18px_rgba(81,61,168,0.1)] touch-none dark:border-white/10 dark:bg-[#171328] dark:text-[#cabfff]"
+                    onClick={(event) => event.stopPropagation()}
+                    onLostPointerCapture={() => clearWorkspaceResize()}
+                    onPointerCancel={handleWorkspaceResizePointerEnd}
+                    onPointerDown={(event) => handleWorkspaceResizePointerDown(event, "both")}
+                    onPointerMove={handleWorkspaceResizePointerMove}
+                    onPointerUp={handleWorkspaceResizePointerEnd}
+                    type="button"
+                  >
+                    <span aria-hidden="true" className="h-2.5 w-2.5 rounded-br-[0.35rem] border-b-2 border-r-2 border-current" />
+                  </button>
+                </>
+              ) : null}
+              {canScrollVertically ? (
+                <div
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute bottom-[10px] right-[5px] top-[10px] w-1.5 rounded-full bg-[#ede9fe]/40 transition-opacity duration-200 motion-reduce:transition-none dark:bg-[#4f3f91]/20 ${customScrollbarVisibilityClass}`}
+                >
+                  <button
+                    aria-label="Drag HUD vertical scrollbar"
+                    className="pointer-events-auto absolute left-0 w-1.5 cursor-grab rounded-full bg-[#b9a7ff]/80 shadow-[0_0_0_1px_rgba(255,255,255,0.4)] active:cursor-grabbing dark:bg-[#cabfff]/75"
+                    onPointerCancel={handleCustomScrollbarPointerEnd}
+                    onPointerDown={(event) => handleCustomScrollbarPointerDown(event, "vertical")}
+                    onPointerMove={handleCustomScrollbarPointerMove}
+                    onPointerUp={handleCustomScrollbarPointerEnd}
+                    style={{
+                      height: verticalThumbHeight,
+                      top: verticalThumbTop,
+                    }}
+                    tabIndex={-1}
+                    type="button"
+                  />
+                </div>
+              ) : null}
+              {canScrollHorizontally ? (
+                <div
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute bottom-[5px] left-[10px] right-[10px] h-1.5 rounded-full bg-[#ede9fe]/40 transition-opacity duration-200 motion-reduce:transition-none dark:bg-[#4f3f91]/20 ${customScrollbarVisibilityClass}`}
+                >
+                  <button
+                    aria-label="Drag HUD horizontal scrollbar"
+                    className="pointer-events-auto absolute top-0 h-1.5 cursor-grab rounded-full bg-[#b9a7ff]/80 shadow-[0_0_0_1px_rgba(255,255,255,0.4)] active:cursor-grabbing dark:bg-[#cabfff]/75"
+                    onPointerCancel={handleCustomScrollbarPointerEnd}
+                    onPointerDown={(event) => handleCustomScrollbarPointerDown(event, "horizontal")}
+                    onPointerMove={handleCustomScrollbarPointerMove}
+                    onPointerUp={handleCustomScrollbarPointerEnd}
+                    style={{
+                      left: horizontalThumbLeft,
+                      width: horizontalThumbWidth,
+                    }}
+                    tabIndex={-1}
+                    type="button"
+                  />
+                </div>
+              ) : null}
             </div>
-            {canScrollVertically ? (
-              <div
-                aria-hidden="true"
-                className={`pointer-events-none absolute bottom-[10px] right-[5px] top-[10px] w-1.5 rounded-full bg-[#ede9fe]/40 transition-opacity duration-200 motion-reduce:transition-none dark:bg-[#4f3f91]/20 ${customScrollbarVisibilityClass}`}
-              >
-                <button
-                  aria-label="Drag HUD vertical scrollbar"
-                  className="pointer-events-auto absolute left-0 w-1.5 cursor-grab rounded-full bg-[#b9a7ff]/80 shadow-[0_0_0_1px_rgba(255,255,255,0.4)] active:cursor-grabbing dark:bg-[#cabfff]/75"
-                  onPointerCancel={handleCustomScrollbarPointerEnd}
-                  onPointerDown={(event) => handleCustomScrollbarPointerDown(event, "vertical")}
-                  onPointerMove={handleCustomScrollbarPointerMove}
-                  onPointerUp={handleCustomScrollbarPointerEnd}
-                  style={{
-                    height: verticalThumbHeight,
-                    top: verticalThumbTop,
-                  }}
-                  tabIndex={-1}
-                  type="button"
-                />
-              </div>
-            ) : null}
-            {canScrollHorizontally ? (
-              <div
-                aria-hidden="true"
-                className={`pointer-events-none absolute bottom-[5px] left-[10px] right-[10px] h-1.5 rounded-full bg-[#ede9fe]/40 transition-opacity duration-200 motion-reduce:transition-none dark:bg-[#4f3f91]/20 ${customScrollbarVisibilityClass}`}
-              >
-                <button
-                  aria-label="Drag HUD horizontal scrollbar"
-                  className="pointer-events-auto absolute top-0 h-1.5 cursor-grab rounded-full bg-[#b9a7ff]/80 shadow-[0_0_0_1px_rgba(255,255,255,0.4)] active:cursor-grabbing dark:bg-[#cabfff]/75"
-                  onPointerCancel={handleCustomScrollbarPointerEnd}
-                  onPointerDown={(event) => handleCustomScrollbarPointerDown(event, "horizontal")}
-                  onPointerMove={handleCustomScrollbarPointerMove}
-                  onPointerUp={handleCustomScrollbarPointerEnd}
-                  style={{
-                    left: horizontalThumbLeft,
-                    width: horizontalThumbWidth,
-                  }}
-                  tabIndex={-1}
-                  type="button"
-                />
-              </div>
-            ) : null}
           </div>
           <button
             aria-label={hudUiState.isHudEditMode ? "Finish editing HUD" : "Edit HUD"}
@@ -686,6 +918,19 @@ export function HudCommandCenter({
               <RotateCcw className="mr-1 inline h-3.5 w-3.5" />
               Reset
             </button>
+            <button
+              className="ui-pill-button-danger-light disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={!selectedWidget}
+              onClick={() => {
+                if (selectedWidget) {
+                  removeWidget(selectedWidget.id);
+                }
+              }}
+              type="button"
+            >
+              <Trash2 className="mr-1 inline h-3.5 w-3.5" />
+              Hide selected
+            </button>
 
             {selectedWidget ? (
               <>
@@ -693,7 +938,7 @@ export function HudCommandCenter({
                   {HUD_WIDGET_LABELS[selectedWidget.type]}
                 </span>
                 <span className="rounded-full bg-white/[0.62] px-3 py-1.5 text-xs font-semibold text-[#655f84] dark:bg-white/[0.04] dark:text-white/65">
-                  Drag to place. Resize with the corner handle.
+                  Drag the selected widget directly. Resize from the inside corner handle.
                 </span>
               </>
             ) : (
@@ -707,7 +952,7 @@ export function HudCommandCenter({
               {isHiddenWidgetTrayOpen ? "Hide" : hiddenWidgetCount > 0 ? `Add (${hiddenWidgetCount})` : "All shown"}
             </button>
             <span className="rounded-full bg-white/[0.62] px-3 py-1.5 text-xs font-semibold text-[#655f84] dark:bg-white/[0.04] dark:text-white/65">
-              Snap {HUD_WORKSPACE_SNAP_PX}px
+              Sortable lanes
             </span>
           </div>
         ) : null}

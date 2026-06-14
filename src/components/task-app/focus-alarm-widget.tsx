@@ -46,14 +46,14 @@ export function FocusAlarmWidget({
       </button>
 
       <div className="min-w-0 flex-1">
-        <p className={`${compact ? "text-[10px]" : "text-[11px]"} truncate font-semibold uppercase tracking-[0.16em] text-[#8a84a3] dark:text-white/40`}>
+        <p className={`${compact ? "text-[10px]" : "text-[11px]"} whitespace-nowrap font-semibold uppercase tracking-[0.16em] text-[#8a84a3] dark:text-white/40`}>
           Focus Alarm
         </p>
-        <div className="mt-1 flex items-baseline gap-2">
-          <p className={`${compact ? "text-sm" : "text-lg"} font-bold text-[#202743] dark:text-white`}>
+        <div className="mt-1 flex items-baseline gap-1.5">
+          <p className={`${compact ? "text-sm" : "text-lg"} whitespace-nowrap font-bold text-[#202743] dark:text-white`}>
             Every {intervalMinutes}m
           </p>
-          <p className={`${compact ? "text-[11px]" : "text-xs"} font-medium text-[#7d88a1] dark:text-white/45`}>
+          <p className={`${compact ? "text-[11px]" : "text-xs"} whitespace-nowrap font-medium text-[#7d88a1] dark:text-white/45`}>
             {enabled ? `Next ${formatRemainingTime(remainingMs)}` : "Off"}
           </p>
         </div>
