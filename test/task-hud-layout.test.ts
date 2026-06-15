@@ -1,6 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getHudSortableTarget, getHudSortableTargetIndex, getHudWorkspaceContentDimensions, getHudWorkspaceViewportWidth, normalizeHudUiState, reorderHudWorkspaceWidgets, updateHudWorkspaceWidgetLayout, type HudWorkspaceWidget } from "../src/lib/task-hud-layout.ts";
+import {
+  addHudSnapshot,
+  createDefaultHudUiState,
+  cycleHudSnapshot,
+  getHudSortableTarget,
+  getHudSortableTargetIndex,
+  getHudWorkspaceContentDimensions,
+  getHudWorkspaceMinimumHeight,
+  getHudWorkspaceViewportWidth,
+  normalizeHudUiState,
+  resetActiveHudSnapshot,
+  reorderHudWorkspaceWidgets,
+  saveActiveHudSnapshot,
+  updateActiveHudWorkspace,
+  updateHudWorkspaceWidgetLayout,
+  type HudWorkspaceWidget,
+} from "../src/lib/task-hud-layout.ts";
 
 function widget(id: string, x: number, y: number, widthPx = 50, heightPx = 40): HudWorkspaceWidget {
   return {
@@ -330,6 +346,20 @@ test("hud workspace content dimensions add reachable gutter after true horizonta
   );
 });
 
+test("hud workspace minimum height follows visible widget bounds plus a small gutter", () => {
+  const widgets = [
+    widget("dark_mode", 0, 0, 90, 40),
+    widget("focus_alarm", 0, 48, 224, 56),
+    {
+      ...widget("tokens", 0, 0, 90, 40),
+      isVisible: false,
+    },
+  ];
+
+  assert.equal(getHudWorkspaceMinimumHeight(widgets), 116);
+  assert.equal(getHudWorkspaceMinimumHeight([]), 108);
+});
+
 test("hud workspace viewport expands stale default width but preserves intentional width", () => {
   assert.equal(
     getHudWorkspaceViewportWidth(
@@ -370,4 +400,143 @@ test("hud workspace normalization preserves legacy non-default width as intentio
 
   assert.equal(normalized.hudWorkspace.isWidthUserSized, true);
   assert.equal(normalized.hudWorkspace.widthPx, 720);
+});
+
+test("createDefaultHudUiState returns a fresh default layout snapshot", () => {
+  const first = createDefaultHudUiState();
+  const second = createDefaultHudUiState();
+
+  assert.notEqual(first, second);
+  assert.notEqual(first.hudWorkspace, second.hudWorkspace);
+  assert.notEqual(first.hudSnapshots[0]?.workspace, second.hudSnapshots[0]?.workspace);
+  assert.equal(first.activeSnapshotId, 1);
+  assert.equal(first.hudWorkspace.isWidthUserSized, false);
+  assert.deepEqual(first.hudSnapshots.map((snapshot) => snapshot.id), [1]);
+  assert.equal(first.hudWorkspace.widthPx, 880);
+});
+
+test("legacy single-layout HUD state migrates into snapshot 1", () => {
+  const normalized = normalizeHudUiState({
+    hudUiVersion: 5,
+    hudWorkspace: {
+      heightPx: 160,
+      isWidthUserSized: true,
+      version: 2,
+      widgets: [
+        {
+          heightPx: 54,
+          id: "hud-calm",
+          isVisible: true,
+          type: "calm",
+          widthPx: 144,
+          x: 24,
+          y: 16,
+        },
+      ],
+      widthPx: 720,
+    },
+  });
+
+  assert.equal(normalized.activeSnapshotId, 1);
+  assert.deepEqual(normalized.hudSnapshots.map((snapshot) => snapshot.id), [1]);
+  assert.equal(normalized.hudSnapshots[0]?.workspace.widthPx, 720);
+  assert.equal(normalized.hudSnapshots[0]?.workspace.isWidthUserSized, true);
+  assert.equal(normalized.hudSnapshots[0]?.workspace.widgets.find((widget) => widget.type === "calm")?.widthPx, 144);
+  assert.equal(normalized.hudWorkspace.widthPx, 720);
+});
+
+test("add snapshot creates the next snapshot and switches active snapshot", () => {
+  const state = updateActiveHudWorkspace(createDefaultHudUiState(), (workspace) => ({
+    ...workspace,
+    widthPx: 944,
+  }));
+
+  const next = addHudSnapshot(state);
+
+  assert.equal(next.activeSnapshotId, 2);
+  assert.deepEqual(next.hudSnapshots.map((snapshot) => snapshot.id), [1, 2]);
+  assert.equal(next.hudWorkspace.widthPx, 944);
+  assert.equal(next.hudSnapshots[1]?.workspace.widthPx, 944);
+});
+
+test("save snapshot overwrites the active snapshot layout", () => {
+  let state = createDefaultHudUiState();
+  state = addHudSnapshot(state);
+  state = updateActiveHudWorkspace(state, (workspace) => ({
+    ...workspace,
+    widthPx: 1008,
+  }));
+  state = cycleHudSnapshot(state);
+  state = cycleHudSnapshot(state);
+
+  const saved = saveActiveHudSnapshot(state);
+  const activeSnapshot = saved.hudSnapshots.find((snapshot) => snapshot.id === saved.activeSnapshotId);
+
+  assert.equal(saved.activeSnapshotId, 2);
+  assert.equal(saved.hudWorkspace.widthPx, 1008);
+  assert.equal(activeSnapshot?.workspace.widthPx, 1008);
+});
+
+test("single committed reorder updates only the active snapshot workspace", () => {
+  let state = createDefaultHudUiState();
+  state = addHudSnapshot(state);
+  const snapshotOneBefore = state.hudSnapshots.find((snapshot) => snapshot.id === 1);
+  const reorderedWidgets = reorderHudWorkspaceWidgets(
+    state.hudWorkspace.widgets,
+    "hud-xp",
+    { laneIndex: 0, laneY: 0, slotIndex: 1 },
+  );
+
+  state = updateActiveHudWorkspace(state, (workspace) => ({
+    ...workspace,
+    widgets: reorderedWidgets,
+  }));
+
+  const activeSnapshot = state.hudSnapshots.find((snapshot) => snapshot.id === state.activeSnapshotId);
+  assert.equal(state.activeSnapshotId, 2);
+  assert.deepEqual(
+    activeSnapshot?.workspace.widgets.filter((item) => item.isVisible).slice(0, 4).map((item) => item.id),
+    ["hud-dark_mode", "hud-xp", "hud-calm", "hud-sync_status"],
+  );
+  assert.deepEqual(
+    snapshotOneBefore?.workspace.widgets.filter((item) => item.isVisible).slice(0, 4).map((item) => item.id),
+    ["hud-dark_mode", "hud-calm", "hud-sync_status", "hud-xp"],
+  );
+  assert.deepEqual(
+    state.hudSnapshots.find((snapshot) => snapshot.id === 1)?.workspace.widgets.filter((item) => item.isVisible).slice(0, 4).map((item) => item.id),
+    snapshotOneBefore?.workspace.widgets.filter((item) => item.isVisible).slice(0, 4).map((item) => item.id),
+  );
+});
+
+test("snapshot count caps at 5", () => {
+  let state = createDefaultHudUiState();
+
+  for (let index = 0; index < 6; index += 1) {
+    state = addHudSnapshot(state);
+  }
+
+  assert.deepEqual(state.hudSnapshots.map((snapshot) => snapshot.id), [1, 2, 3, 4, 5]);
+  assert.equal(state.activeSnapshotId, 5);
+});
+
+test("reset affects only the current snapshot", () => {
+  let state = createDefaultHudUiState();
+  state = updateActiveHudWorkspace(state, (workspace) => ({
+    ...workspace,
+    widthPx: 960,
+  }));
+  state = addHudSnapshot(state);
+  state = updateActiveHudWorkspace(state, (workspace) => ({
+    ...workspace,
+    widthPx: 1040,
+  }));
+
+  const reset = resetActiveHudSnapshot(state);
+  const firstSnapshot = reset.hudSnapshots.find((snapshot) => snapshot.id === 1);
+  const secondSnapshot = reset.hudSnapshots.find((snapshot) => snapshot.id === 2);
+
+  assert.equal(reset.activeSnapshotId, 2);
+  assert.equal(reset.hudWorkspace.widthPx, 880);
+  assert.equal(secondSnapshot?.workspace.widthPx, 880);
+  assert.equal(firstSnapshot?.workspace.widthPx, 960);
 });

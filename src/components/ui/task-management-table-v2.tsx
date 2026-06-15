@@ -825,6 +825,8 @@ type TaskManagementTableV2Props = {
   currentListLabel?: string | null;
   enableInspector?: boolean;
   overlayNode?: ReactNode;
+  onInspectorClose?: () => void;
+  shellClassName?: string;
   showHeader?: boolean;
   onClearSelection?: () => void;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
@@ -1582,6 +1584,7 @@ export function TaskManagementTableV2({
   currentListLabel = null,
   enableInspector = true,
   overlayNode,
+  onInspectorClose,
   onClearSelection,
   onCreateTaskList,
   onOpenBatchDelete,
@@ -1627,6 +1630,7 @@ export function TaskManagementTableV2({
   onTaskTitleChange,
   onToggleTaskSelection,
   onToggleTaskList,
+  shellClassName = "",
   primaryBadgeLabel = "Inspired by server table UI",
   rows = DEFAULT_ROWS,
   runningTaskTimers,
@@ -2482,6 +2486,7 @@ export function TaskManagementTableV2({
     setQuickEditTargetTaskIds(null);
     setOverlayMode("full");
     setOverlayAnchor(null);
+    onInspectorClose?.();
   }
 
   function shouldSkipRecentInlineCommit(taskId: string, field: "link" | "notes" | "title", value: string) {
@@ -4536,7 +4541,7 @@ export function TaskManagementTableV2({
 
   return (
     <div className={`mx-auto mt-3 h-fit w-full max-w-[88rem] ${className}`} style={TABLE_FONT_STYLE}>
-      <div className="relative overflow-visible rounded-[2rem] border border-[#ece7f8] bg-white px-0 pt-1 pb-6 shadow-[0_26px_80px_rgba(90,67,171,0.10)] dark:border-white/10 dark:bg-[#140f26]" ref={shellRef}>
+      <div className={`relative overflow-visible rounded-[2rem] border border-[#ece7f8] bg-white px-0 pt-1 pb-6 shadow-[0_26px_80px_rgba(90,67,171,0.10)] dark:border-white/10 dark:bg-[#140f26] ${shellClassName}`} ref={shellRef}>
         {showHeader ? (
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#f0ebfb] pb-5 dark:border-white/10">
             <div className="flex items-center gap-4">

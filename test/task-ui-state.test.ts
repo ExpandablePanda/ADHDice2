@@ -7,13 +7,14 @@ test("task ui state migration repairs missing newer columns", () => {
     ...DEFAULT_TASK_UI_STATE,
     visibleColumnsByView: {
       list: ["bucket", "due"],
+      table: ["bucket", "due"],
       cards: ["bucket"],
       matrix: ["bucket"],
       grid: ["bucket"],
     },
   });
 
-  for (const view of ["list", "cards", "matrix", "grid"] as const) {
+  for (const view of ["table", "list", "cards", "matrix", "grid"] as const) {
     assert.equal(migrated.visibleColumnsByView[view].includes("estimated_time"), true);
     assert.equal(migrated.visibleColumnsByView[view].includes("actual_time"), true);
     assert.equal(migrated.visibleColumnsByView[view].includes("tags"), true);
@@ -32,6 +33,7 @@ test("task ui state migration drops invalid columns and repairs bucket/view/stat
     statusFilters: "pending",
     visibleColumnsByView: {
       list: ["bucket", "fake_column", "bucket", "due"],
+      table: ["bucket", "fake_column_table", "due"],
       cards: ["fake_column_2"],
       matrix: ["notes", "fake_column_3"],
       grid: ["signal", "signal", "fake_column_4"],
@@ -41,11 +43,27 @@ test("task ui state migration drops invalid columns and repairs bucket/view/stat
   assert.equal(migrated.selectedBucket, DEFAULT_TASK_UI_STATE.selectedBucket);
   assert.equal(migrated.view, DEFAULT_TASK_UI_STATE.view);
   assert.deepEqual(migrated.statusFilters, []);
+  assert.equal(migrated.visibleColumnsByView.table.includes("fake_column_table" as never), false);
   assert.equal(migrated.visibleColumnsByView.list.includes("fake_column" as never), false);
   assert.equal(migrated.visibleColumnsByView.cards.includes("fake_column_2" as never), false);
   assert.equal(migrated.visibleColumnsByView.matrix.includes("fake_column_3" as never), false);
   assert.equal(migrated.visibleColumnsByView.grid.includes("fake_column_4" as never), false);
   assert.equal(new Set(migrated.visibleColumnsByView.grid).size, migrated.visibleColumnsByView.grid.length);
+});
+
+test("task ui state migration maps legacy list columns onto table view", () => {
+  const migrated = migrateLegacyTaskUiState({
+    ...DEFAULT_TASK_UI_STATE,
+    visibleColumnsByView: {
+      list: ["bucket", "due"],
+      cards: ["bucket"],
+      matrix: ["bucket"],
+      grid: ["bucket"],
+    } as unknown as typeof DEFAULT_TASK_UI_STATE.visibleColumnsByView,
+  });
+
+  assert.equal(migrated.visibleColumnsByView.table.includes("bucket"), true);
+  assert.equal(migrated.visibleColumnsByView.table.includes("due"), true);
 });
 
 test("persisted editor state normalization rejects invalid data", () => {

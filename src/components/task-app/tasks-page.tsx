@@ -5,16 +5,19 @@ import { startTransition, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { MouseEvent } from "react";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
+import {
+  TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
+  TASK_TABLE_LIST_CHIP_CLASS,
+  TaskTableChipButton,
+} from "@/components/ui/task-table-primitives";
 
 import type { Task } from "@/lib/database.types";
 import type { TaskViewMode } from "@/lib/task-ui-state";
 
-const CHIP_BUTTON_CLASS = "shrink-0 appearance-none bg-transparent p-0 text-left";
-const CHIP_SIZE_CLASS = "inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold leading-none";
-const CHIP_PURPLE_CLASS = `${CHIP_SIZE_CLASS} bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]`;
-const CHIP_MUTED_CLASS = `${CHIP_SIZE_CLASS} bg-[#f1ecff] text-[#5f6983] dark:bg-[#22193f] dark:text-[#cabfff]`;
-const CHIP_ACTIVE_CLASS = `${CHIP_SIZE_CLASS} bg-[#ede8ff] text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]`;
-const CHIP_PRIMARY_CLASS = `${CHIP_SIZE_CLASS} bg-[#6f57f6] text-white dark:bg-[#c9bbff] dark:text-[#1a1431]`;
+const SHARED_CHIP_MUTED_CLASS = TASK_TABLE_LIST_CHIP_CLASS;
+const SHARED_CHIP_ACTIVE_CLASS = TASK_TABLE_ACTIVE_LIST_CHIP_CLASS;
+const SHARED_CHIP_PRIMARY_CLASS = "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]";
+const SHARED_CHIP_SOFT_PURPLE_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
 
 function TaskChipButton({
   active,
@@ -27,25 +30,18 @@ function TaskChipButton({
   onClick: () => void;
   tone?: "muted" | "primary" | "purple";
 }) {
-  const chipClass = active
-    ? CHIP_ACTIVE_CLASS
+  const toneClassName = active
+    ? SHARED_CHIP_ACTIVE_CLASS
     : tone === "primary"
-      ? CHIP_PRIMARY_CLASS
+      ? SHARED_CHIP_PRIMARY_CLASS
       : tone === "purple"
-        ? CHIP_PURPLE_CLASS
-        : CHIP_MUTED_CLASS;
+        ? SHARED_CHIP_SOFT_PURPLE_CLASS
+        : SHARED_CHIP_MUTED_CLASS;
 
   return (
-    <button
-      aria-pressed={active}
-      className={CHIP_BUTTON_CLASS}
-      onClick={onClick}
-      type="button"
-    >
-      <span className={chipClass}>
-        {children}
-      </span>
-    </button>
+    <TaskTableChipButton aria-pressed={active} onClick={onClick} toneClassName={toneClassName}>
+      {children}
+    </TaskTableChipButton>
   );
 }
 
@@ -58,6 +54,7 @@ function TaskViewsMenu({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const viewOptions: Array<{ label: string; value: TaskViewMode }> = [
+    { label: "Table View", value: "table" },
     { label: "List View", value: "list" },
     { label: "Cards", value: "cards" },
     { label: "Matrix", value: "matrix" },
@@ -66,34 +63,29 @@ function TaskViewsMenu({
 
   return (
     <div className="relative">
-      <button
+      <TaskTableChipButton
         aria-expanded={isOpen}
-        className={CHIP_BUTTON_CLASS}
+        className="gap-2"
         onClick={() => setIsOpen((current) => !current)}
-        type="button"
+        toneClassName={SHARED_CHIP_MUTED_CLASS}
       >
-        <span className={`${CHIP_MUTED_CLASS} gap-2`}>
-          Views
-          <ChevronDown className={`h-4 w-4 transition ${isOpen ? "rotate-180" : ""}`} />
-        </span>
-      </button>
+        Views
+        <ChevronDown className={`h-4 w-4 transition ${isOpen ? "rotate-180" : ""}`} />
+      </TaskTableChipButton>
       {isOpen ? (
         <div className="absolute left-0 top-[calc(100%+0.55rem)] z-30 min-w-40 rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95">
           <div className="flex flex-col gap-1">
             {viewOptions.map((option) => (
-              <button
-                className="appearance-none bg-transparent p-0 text-left"
+              <TaskTableChipButton
                 key={option.value}
                 onClick={() => {
                   onViewChange(option.value);
                   setIsOpen(false);
                 }}
-                type="button"
+                toneClassName={view === option.value ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
               >
-                <span className={view === option.value ? CHIP_ACTIVE_CLASS : CHIP_MUTED_CLASS}>
-                  {option.label}
-                </span>
-              </button>
+                {option.label}
+              </TaskTableChipButton>
             ))}
           </div>
         </div>
@@ -106,19 +98,35 @@ export function TaskOperationsHeader({
   actionLabel,
   activeCount,
   archiveCount,
+  filterRowsNode,
   hideSearch,
+  isKeyboardShortcutsMenuOpen,
+  isListColumnMenuOpen,
+  keyboardShortcutsMenuRef,
+  listColumnLabels,
+  listColumnMenuRef,
+  listColumnPickerColumns,
+  listVisibleColumns,
+  lists,
   metric,
   onCycleMomentum,
   onOpenArchive,
   onOpenComposer,
   onOpenFocusPlanner,
   onOpenImport,
+  onOpenListSettings,
   onOpenMomentumDetails,
   onOpenTrash,
+  onSelectBucket,
+  onShrinkAllColumns,
   onSearchChange,
   onViewChange,
+  onToggleKeyboardShortcutsMenu,
+  onToggleListColumn,
+  onToggleListColumnMenu,
   search,
   selectedBucket,
+  shortcuts,
   trashCount,
   todayCount,
   view,
@@ -126,7 +134,16 @@ export function TaskOperationsHeader({
   actionLabel: string;
   activeCount: number;
   archiveCount: number;
+  filterRowsNode: ReactNode;
   hideSearch?: boolean;
+  isKeyboardShortcutsMenuOpen: boolean;
+  isListColumnMenuOpen: boolean;
+  keyboardShortcutsMenuRef: RefObject<HTMLDivElement | null>;
+  listColumnLabels: Record<AgentPlanColumnId, string>;
+  listColumnMenuRef: RefObject<HTMLDivElement | null>;
+  listColumnPickerColumns: AgentPlanColumnId[];
+  listVisibleColumns: AgentPlanColumnId[];
+  lists: Array<{ count: number; description: string; id: string; label: string }>;
   metric: {
     doneTasks: Task[];
     label: string;
@@ -140,12 +157,19 @@ export function TaskOperationsHeader({
   onOpenComposer: () => void;
   onOpenFocusPlanner: () => void;
   onOpenImport: () => void;
+  onOpenListSettings: () => void;
   onOpenMomentumDetails: () => void;
   onOpenTrash: () => void;
+  onSelectBucket: (bucket: string) => void;
+  onShrinkAllColumns: () => void;
   onSearchChange: (search: string) => void;
   onViewChange: (view: TaskViewMode) => void;
+  onToggleKeyboardShortcutsMenu: () => void;
+  onToggleListColumn: (columnId: AgentPlanColumnId) => void;
+  onToggleListColumnMenu: () => void;
   search: string;
   selectedBucket: string;
+  shortcuts: Array<{ action: string; alternateKeys?: string[]; keys: string[] }>;
   trashCount: number;
   todayCount: number;
   view: TaskViewMode;
@@ -199,16 +223,10 @@ export function TaskOperationsHeader({
         </div>
         <div className="flex justify-center">
           <div className="flex w-full max-w-[42rem] items-center gap-3">
-            <button
-              className={CHIP_BUTTON_CLASS}
-              onClick={handleFocusChipClick}
-              type="button"
-            >
-              <span className={CHIP_PURPLE_CLASS}>
-                {actionLabel}
-              </span>
-            </button>
-            <span className={`${CHIP_SIZE_CLASS} bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]`}>
+            <TaskTableChipButton onClick={handleFocusChipClick} toneClassName={SHARED_CHIP_SOFT_PURPLE_CLASS}>
+              {actionLabel}
+            </TaskTableChipButton>
+            <span className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold leading-none bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]">
               {metric.label}
             </span>
             <button
@@ -227,9 +245,10 @@ export function TaskOperationsHeader({
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-          {!hideSearch ? (
-            <label className="flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-[0.9rem] border border-[#efe9ff] bg-[#fbfaff] px-3.5 py-1 dark:border-white/10 dark:bg-white/[0.04]">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {!hideSearch ? (
+            <label className="flex h-10 min-w-0 w-full items-center gap-2.5 rounded-[0.9rem] border border-[#efe9ff] bg-[#fbfaff] px-3.5 py-1 md:w-[24rem] md:max-w-[24rem] md:flex-none xl:w-[26rem] xl:max-w-[26rem] 2xl:w-[28rem] 2xl:max-w-[28rem] dark:border-white/10 dark:bg-white/[0.04]">
               <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
               <input
                 className="min-w-0 flex-1 bg-transparent text-[13px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
@@ -245,9 +264,8 @@ export function TaskOperationsHeader({
                 value={searchDraft}
               />
             </label>
-          ) : null}
-          {!hideSearch ? (
-            <div className="flex flex-wrap items-center gap-3">
+            ) : null}
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
               <TaskChipButton onClick={onOpenImport}>
                 Import
               </TaskChipButton>
@@ -269,8 +287,102 @@ export function TaskOperationsHeader({
                 </span>
               </TaskChipButton>
               <TaskViewsMenu onViewChange={onViewChange} view={view} />
+              <div className="relative" ref={listColumnMenuRef}>
+                <TaskTableChipButton
+                  className="gap-2"
+                  data-list-columns-menu
+                  onClick={onToggleListColumnMenu}
+                  toneClassName={SHARED_CHIP_MUTED_CLASS}
+                >
+                  Columns
+                  <ChevronDown className={`h-4 w-4 transition ${isListColumnMenuOpen ? "rotate-180" : ""}`} />
+                </TaskTableChipButton>
+                {isListColumnMenuOpen ? (
+                  <div className="absolute left-0 top-[calc(100%+0.55rem)] z-30 w-72 rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95">
+                    <div className="border-b border-[#f0ebfb] px-3 pb-2 dark:border-white/10">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#938ab8] dark:text-white/42">Visible columns</p>
+                      <p className="mt-1 text-sm text-[#7d7597] dark:text-white/55">Status and Task stay pinned. Everything else can be shown or hidden here.</p>
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {listColumnPickerColumns.map((columnId) => {
+                        const isVisible = listVisibleColumns.includes(columnId);
+
+                        return (
+                          <button
+                            className="flex w-full items-center justify-between rounded-[0.95rem] px-3 py-2 text-sm font-medium text-[#5f6983] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:text-white/70 dark:hover:bg-white/8 dark:hover:text-[#cabfff]"
+                            key={columnId}
+                            onClick={() => onToggleListColumn(columnId)}
+                            type="button"
+                          >
+                            <span>{listColumnLabels[columnId]}</span>
+                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${isVisible ? "border-[#d8cdfc] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : "border-[#e6e0f5] bg-white text-transparent dark:border-white/12 dark:bg-white/[0.05]"}`}>
+                              <Check className="h-3.5 w-3.5" />
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              <TaskChipButton onClick={onShrinkAllColumns}>
+                Shrink all
+              </TaskChipButton>
+              <div className="relative" ref={keyboardShortcutsMenuRef}>
+                <TaskTableChipButton
+                  className="gap-2"
+                  data-keyboard-shortcuts-menu
+                  onClick={onToggleKeyboardShortcutsMenu}
+                  toneClassName={SHARED_CHIP_MUTED_CLASS}
+                >
+                  Shortcuts
+                  <ChevronDown className={`h-4 w-4 transition ${isKeyboardShortcutsMenuOpen ? "rotate-180" : ""}`} />
+                </TaskTableChipButton>
+                {isKeyboardShortcutsMenuOpen ? (
+                  <div className="absolute left-0 top-[calc(100%+0.55rem)] z-30 w-72 rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95">
+                    <div className="border-b border-[#f0ebfb] px-3 pb-2 dark:border-white/10">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#938ab8] dark:text-white/42">Table controls</p>
+                      <p className="mt-1 text-sm text-[#7d7597] dark:text-white/55">These are the interactions that are actually live on the new table.</p>
+                    </div>
+                    <div className="mt-2 space-y-1 px-1">
+                      {[
+                        { action: "Search tasks", detail: "Use the search bar above" },
+                        { action: "Open a task", detail: "Click any row" },
+                        { action: "Sort a column", detail: "Click a column title" },
+                        { action: "Filter a column", detail: "Use the search field or chips in that menu" },
+                        { action: "Reset filters", detail: "Use Clear all filters in the table header" },
+                      ].map((item) => (
+                        <div className="flex items-start justify-between gap-3 rounded-[0.95rem] px-2 py-2" key={item.action}>
+                          <span className="text-sm font-medium text-[#352e55] dark:text-white/82">{item.action}</span>
+                          <span className="text-right text-sm text-[#7d7597] dark:text-white/55">{item.detail}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              <TaskChipButton onClick={onOpenListSettings}>
+                List settings
+              </TaskChipButton>
+              {filterRowsNode}
             </div>
-          ) : null}
+          </div>
+          <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-0.5">
+            {lists.map((list) => (
+              <TaskTableChipButton
+                aria-pressed={list.id === selectedBucket}
+                key={list.id}
+                onClick={() => {
+                  startTransition(() => {
+                    onSelectBucket(list.id);
+                  });
+                }}
+                toneClassName={list.id === selectedBucket ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
+              >
+                {list.label} <span className="ml-1 opacity-70">{list.count}</span>
+              </TaskTableChipButton>
+            ))}
+          </div>
         </div>
 
       </div>
@@ -296,7 +408,6 @@ export function TasksListViewPanel(props: {
   onOpenComposer: () => void;
   onOpenImport: () => void;
   onSelectBucket: (bucket: string) => void;
-  onShrinkAllColumns: () => void;
   onReorderListColumns: (columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) => void;
   onSetDraggedListColumnId: (columnId: AgentPlanColumnId | null) => void;
   onSetView: (view: TaskViewMode) => void;
@@ -307,189 +418,15 @@ export function TasksListViewPanel(props: {
   onUpdateSearch: (search: string) => void;
   search: string;
   selectedBucket: string;
+  shrinkAllColumnsToken: number;
   shortcuts: Array<{ action: string; alternateKeys?: string[]; keys: string[] }>;
   trashCount: number;
   view: TaskViewMode;
 }) {
-  const {
-    agentPlanNode,
-    archiveCount,
-    filterRowsNode,
-    isKeyboardShortcutsMenuOpen,
-    isListColumnMenuOpen,
-    keyboardShortcutsMenuRef,
-    listColumnLabels,
-    listColumnMenuRef,
-    listColumnPickerColumns,
-    lists,
-    listVisibleColumns,
-    onOpenComposer,
-    onOpenImport,
-    onOpenListSettings,
-    onOpenArchive,
-    onSelectBucket,
-    onShrinkAllColumns,
-    onSetView,
-    onToggleKeyboardShortcutsMenu,
-    onToggleListColumn,
-    onToggleListColumnMenu,
-    onOpenTrash,
-    onUpdateSearch,
-    search,
-    selectedBucket,
-    trashCount,
-    view,
-  } = props;
-  const [searchDraft, setSearchDraft] = useState(search);
-
-  useEffect(() => {
-    setSearchDraft(search);
-  }, [search]);
+  const { agentPlanNode } = props;
 
   return (
     <section className="mt-4">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start">
-        <label className="flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-[0.9rem] border border-[#efe9ff] bg-[#fbfaff] px-3.5 py-1 dark:border-white/10 dark:bg-white/[0.04]">
-          <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
-          <input
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
-            id="task-search-input"
-            onChange={(event) => {
-              const nextValue = event.target.value;
-              setSearchDraft(nextValue);
-              startTransition(() => {
-                onUpdateSearch(nextValue);
-              });
-            }}
-            placeholder="Search tasks, or type duplicate:title"
-            value={searchDraft}
-          />
-        </label>
-        <div className="flex flex-wrap items-start justify-end gap-3">
-          <TaskChipButton onClick={onOpenImport}>
-            Import
-          </TaskChipButton>
-          <TaskChipButton onClick={onOpenComposer} tone="primary">
-            New Task
-          </TaskChipButton>
-          <TaskChipButton active={selectedBucket === "archive"} onClick={() => startTransition(onOpenArchive)}>
-            <span className="inline-flex items-center gap-2">
-              <BookOpen className="h-3.5 w-3.5" />
-              Archive
-              <span className="opacity-70">{archiveCount}</span>
-            </span>
-          </TaskChipButton>
-          <TaskChipButton active={selectedBucket === "trash"} onClick={() => startTransition(onOpenTrash)}>
-            <span className="inline-flex items-center gap-2">
-              <Trash2 className="h-3.5 w-3.5" />
-              Trash
-              <span className="opacity-70">{trashCount}</span>
-            </span>
-          </TaskChipButton>
-          <TaskViewsMenu onViewChange={onSetView} view={view} />
-          <div className="relative" ref={listColumnMenuRef}>
-            <button
-              className={CHIP_BUTTON_CLASS}
-              data-list-columns-menu
-              onClick={onToggleListColumnMenu}
-              type="button"
-            >
-              <span className={`${CHIP_MUTED_CLASS} gap-2`}>
-                Columns
-                <ChevronDown className={`h-4 w-4 transition ${isListColumnMenuOpen ? "rotate-180" : ""}`} />
-              </span>
-            </button>
-            {isListColumnMenuOpen ? (
-              <div className="absolute right-0 top-[calc(100%+0.55rem)] z-30 w-72 rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95">
-                <div className="border-b border-[#f0ebfb] px-3 pb-2 dark:border-white/10">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#938ab8] dark:text-white/42">Visible columns</p>
-                  <p className="mt-1 text-sm text-[#7d7597] dark:text-white/55">Status and Task stay pinned. Everything else can be shown or hidden here.</p>
-                </div>
-                <div className="mt-2 space-y-1">
-                  {listColumnPickerColumns.map((columnId) => {
-                    const isVisible = listVisibleColumns.includes(columnId);
-
-                    return (
-                      <button
-                        className="flex w-full items-center justify-between rounded-[0.95rem] px-3 py-2 text-sm font-medium text-[#5f6983] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:text-white/70 dark:hover:bg-white/8 dark:hover:text-[#cabfff]"
-                        key={columnId}
-                        onClick={() => onToggleListColumn(columnId)}
-                        type="button"
-                      >
-                        <span>{listColumnLabels[columnId]}</span>
-                        <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${isVisible ? "border-[#d8cdfc] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : "border-[#e6e0f5] bg-white text-transparent dark:border-white/12 dark:bg-white/[0.05]"}`}>
-                          <Check className="h-3.5 w-3.5" />
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-          </div>
-          <TaskChipButton onClick={onShrinkAllColumns}>
-            Shrink all
-          </TaskChipButton>
-          <div className="relative" ref={keyboardShortcutsMenuRef}>
-            <button
-              className={CHIP_BUTTON_CLASS}
-              data-keyboard-shortcuts-menu
-              onClick={onToggleKeyboardShortcutsMenu}
-              type="button"
-            >
-              <span className={`${CHIP_MUTED_CLASS} gap-2`}>
-                Shortcuts
-                <ChevronDown className={`h-4 w-4 transition ${isKeyboardShortcutsMenuOpen ? "rotate-180" : ""}`} />
-              </span>
-            </button>
-            {isKeyboardShortcutsMenuOpen ? (
-              <div className="absolute right-0 top-[calc(100%+0.55rem)] z-30 w-72 rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95">
-                <div className="border-b border-[#f0ebfb] px-3 pb-2 dark:border-white/10">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#938ab8] dark:text-white/42">Table controls</p>
-                  <p className="mt-1 text-sm text-[#7d7597] dark:text-white/55">These are the interactions that are actually live on the new table.</p>
-                </div>
-                <div className="mt-2 space-y-1 px-1">
-                  {[
-                    { action: "Search tasks", detail: "Use the search bar above" },
-                    { action: "Open a task", detail: "Click any row" },
-                    { action: "Sort a column", detail: "Click a column title" },
-                    { action: "Filter a column", detail: "Use the search field or chips in that menu" },
-                    { action: "Reset filters", detail: "Use Clear all filters in the table header" },
-                  ].map((item) => (
-                    <div className="flex items-start justify-between gap-3 rounded-[0.95rem] px-2 py-2" key={item.action}>
-                      <span className="text-sm font-medium text-[#352e55] dark:text-white/82">{item.action}</span>
-                      <span className="text-right text-sm text-[#7d7597] dark:text-white/55">{item.detail}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-          <TaskChipButton onClick={onOpenListSettings}>
-            List settings
-          </TaskChipButton>
-          {filterRowsNode}
-        </div>
-      </div>
-      <div className="adhdice-scrollbar mb-4 flex gap-2 overflow-x-auto pb-1">
-        {lists.map((list) => (
-          <button
-            aria-pressed={list.id === selectedBucket}
-            className={CHIP_BUTTON_CLASS}
-            key={list.id}
-            onClick={() => {
-              startTransition(() => {
-                onSelectBucket(list.id);
-              });
-            }}
-            type="button"
-          >
-            <span className={list.id === selectedBucket ? CHIP_ACTIVE_CLASS : CHIP_MUTED_CLASS}>
-              {list.label} <span className="ml-1 opacity-70">{list.count}</span>
-            </span>
-          </button>
-        ))}
-      </div>
       {agentPlanNode}
     </section>
   );
@@ -570,23 +507,20 @@ function TaskBucketRail({
           })}
         </div>
       </aside>
-      <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-1 xl:hidden">
+      <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-0.5 xl:hidden">
         {lists.map((list) => (
-          <button
+          <TaskTableChipButton
             aria-pressed={list.id === selectedBucket}
-            className={CHIP_BUTTON_CLASS}
             key={list.id}
             onClick={() => {
               startTransition(() => {
                 onSelectBucket(list.id);
               });
             }}
-            type="button"
+            toneClassName={list.id === selectedBucket ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
           >
-            <span className={list.id === selectedBucket ? CHIP_ACTIVE_CLASS : CHIP_MUTED_CLASS}>
-              {list.label} <span className="ml-1 opacity-70">{list.count}</span>
-            </span>
-          </button>
+            {list.label} <span className="ml-1 opacity-70">{list.count}</span>
+          </TaskTableChipButton>
         ))}
       </div>
     </>

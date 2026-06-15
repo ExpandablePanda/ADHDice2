@@ -3,12 +3,19 @@
 import { Plus, RotateCcw, Settings2, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type PointerEvent as ReactPointerEvent, type ReactNode, type SetStateAction } from "react";
 import {
-  DEFAULT_HUD_UI_STATE,
+  HUD_LAYOUT_SNAPSHOT_LIMIT,
   HUD_WIDGET_LABELS,
   HUD_WIDGET_TYPES,
   HUD_WORKSPACE_SNAP_PX,
+  addHudSnapshot,
   clampHudWidgetDimensions,
+  cycleHudSnapshot,
+  createDefaultHudUiState,
+  getHudSnapshotIds,
+  resetActiveHudSnapshot,
+  saveActiveHudSnapshot,
   getHudWorkspaceContentDimensions,
+  getHudWorkspaceMinimumHeight,
   getHudWorkspaceViewportWidth,
   getHudSortableTarget,
   type HudSortableTarget,
@@ -16,6 +23,7 @@ import {
   type HudWorkspaceWidget,
   type HudWidgetType,
   reorderHudWorkspaceWidgets,
+  updateActiveHudWorkspace,
   updateHudWorkspaceWidgetLayout,
 } from "@/lib/task-hud-layout";
 
@@ -65,7 +73,6 @@ const WIDGET_DRAG_THRESHOLD_PX = 6;
 const WORKSPACE_DIMENSION_LIMITS = {
   maxHeight: 720,
   maxWidth: 2400,
-  minHeight: 108,
   minWidth: 320,
 } as const;
 
@@ -143,23 +150,30 @@ export function HudCommandCenter({
   const [isHiddenWidgetTrayOpen, setIsHiddenWidgetTrayOpen] = useState(false);
   const [activeDragGuide, setActiveDragGuide] = useState<{ heightPx: number; widthPx: number; x: number; y: number } | null>(null);
   const [availableWorkspaceWidth, setAvailableWorkspaceWidth] = useState(0);
+  const [dragPreviewWidgets, setDragPreviewWidgets] = useState<HudWorkspaceWidget[] | null>(null);
   const [workspaceScrollMetrics, setWorkspaceScrollMetrics] = useState(getInitialScrollMetrics);
   const [isCustomScrollbarVisible, setIsCustomScrollbarVisible] = useState(true);
   const [isCustomScrollbarDragging, setIsCustomScrollbarDragging] = useState(false);
+  const [snapshotFlashLabel, setSnapshotFlashLabel] = useState<string | null>(null);
+  const snapshotFlashTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const workspaceAvailableRef = useRef<HTMLDivElement | null>(null);
+  const dragPreviewWidgetsRef = useRef<HudWorkspaceWidget[] | null>(null);
+  const workspaceWidgets = dragPreviewWidgets ?? hudUiState.hudWorkspace.widgets;
 
   const selectedWidget = useMemo(
-    () => hudUiState.hudWorkspace.widgets.find((widget) => widget.id === hudUiState.selectedHudWidgetId) ?? null,
-    [hudUiState.hudWorkspace.widgets, hudUiState.selectedHudWidgetId],
+    () => workspaceWidgets.find((widget) => widget.id === hudUiState.selectedHudWidgetId) ?? null,
+    [hudUiState.selectedHudWidgetId, workspaceWidgets],
   );
   const hiddenWidgetTypes = HUD_WIDGET_TYPES.filter((widgetType) =>
-    !hudUiState.hudWorkspace.widgets.some((widget) => widget.type === widgetType && widget.isVisible),
+    !workspaceWidgets.some((widget) => widget.type === widgetType && widget.isVisible),
   );
   const hiddenWidgetCount = hiddenWidgetTypes.length;
   const visibleHudWidgets = useMemo(
-    () => sortWorkspaceWidgets(hudUiState.hudWorkspace.widgets.filter((widget) => widget.isVisible)),
-    [hudUiState.hudWorkspace.widgets],
+    () => sortWorkspaceWidgets(workspaceWidgets.filter((widget) => widget.isVisible)),
+    [workspaceWidgets],
   );
+  const snapshotIds = useMemo(() => getHudSnapshotIds(hudUiState), [hudUiState]);
+  const canAddSnapshot = hudUiState.hudSnapshots.length < HUD_LAYOUT_SNAPSHOT_LIMIT;
   const workspaceViewportWidth = getHudWorkspaceViewportWidth(
     hudUiState.hudWorkspace,
     availableWorkspaceWidth,
@@ -202,6 +216,19 @@ export function HudCommandCenter({
   const customScrollbarVisibilityClass = isCustomScrollbarVisible || isCustomScrollbarDragging
     ? "opacity-100"
     : "opacity-0";
+
+  useEffect(() => {
+    dragPreviewWidgetsRef.current = dragPreviewWidgets;
+  }, [dragPreviewWidgets]);
+
+  useEffect(() => {
+    if (!hudUiState.isHudEditMode && dragPreviewWidgetsRef.current !== null) {
+      dragPreviewWidgetsRef.current = null;
+      setDragPreviewWidgets(null);
+      setActiveDragGuide(null);
+    }
+  }, [hudUiState.isHudEditMode]);
+
   const clearCustomScrollbarHideTimer = useCallback(() => {
     if (customScrollbarHideTimeoutRef.current) {
       window.clearTimeout(customScrollbarHideTimeoutRef.current);
@@ -283,6 +310,15 @@ export function HudCommandCenter({
     return clearCustomScrollbarHideTimer;
   }, [clearCustomScrollbarHideTimer, scheduleCustomScrollbarHide]);
 
+  useEffect(() => {
+    return () => {
+      if (snapshotFlashTimeoutRef.current) {
+        window.clearTimeout(snapshotFlashTimeoutRef.current);
+        snapshotFlashTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   const clearWidgetDrag = useCallback((pointerId?: number) => {
     const dragState = dragMoveRef.current;
     if (!dragState || (pointerId !== undefined && dragState.pointerId !== pointerId)) {
@@ -293,6 +329,28 @@ export function HudCommandCenter({
       dragState.releaseElement.releasePointerCapture(dragState.pointerId);
     }
     dragMoveRef.current = null;
+    dragPreviewWidgetsRef.current = null;
+    setDragPreviewWidgets(null);
+    setActiveDragGuide(null);
+  }, []);
+
+  const commitWidgetDrag = useCallback((pointerId?: number) => {
+    const dragState = dragMoveRef.current;
+    if (!dragState || (pointerId !== undefined && dragState.pointerId !== pointerId)) {
+      return;
+    }
+
+    const previewWidgets = dragPreviewWidgetsRef.current;
+    if (dragState.hasExceededDragThreshold && previewWidgets) {
+      updateWorkspaceWidgets(() => previewWidgets);
+    }
+
+    if (dragState.releaseElement?.hasPointerCapture(dragState.pointerId)) {
+      dragState.releaseElement.releasePointerCapture(dragState.pointerId);
+    }
+    dragMoveRef.current = null;
+    dragPreviewWidgetsRef.current = null;
+    setDragPreviewWidgets(null);
     setActiveDragGuide(null);
   }, []);
 
@@ -310,12 +368,12 @@ export function HudCommandCenter({
 
   useEffect(() => {
     function handleWindowPointerEnd(event: PointerEvent) {
-      clearWidgetDrag(event.pointerId);
+      commitWidgetDrag(event.pointerId);
       clearWorkspaceResize(event.pointerId);
     }
 
     function handleWindowBlur() {
-      clearWidgetDrag();
+      commitWidgetDrag();
       clearWorkspaceResize();
     }
 
@@ -337,20 +395,17 @@ export function HudCommandCenter({
       window.removeEventListener("blur", handleWindowBlur);
       window.removeEventListener("keydown", handleWindowKeyDown);
     };
-  }, [clearWidgetDrag, clearWorkspaceResize]);
+  }, [clearWidgetDrag, clearWorkspaceResize, commitWidgetDrag]);
 
   function updateHudState(updater: (current: HudUiState) => HudUiState) {
     setHudUiState((current) => updater(current));
   }
 
   function updateWorkspaceWidgets(updater: (widgets: HudWorkspaceWidget[]) => HudWorkspaceWidget[]) {
-    updateHudState((current) => ({
-      ...current,
-      hudWorkspace: {
-        ...current.hudWorkspace,
-        widgets: updater(current.hudWorkspace.widgets),
-      },
-    }));
+    updateHudState((current) => updateActiveHudWorkspace(current, (workspace) => ({
+      ...workspace,
+      widgets: updater(workspace.widgets),
+    })));
   }
 
   function toggleEditMode() {
@@ -382,7 +437,7 @@ export function HudCommandCenter({
   }
 
   function addWidget(widgetType: HudWidgetType) {
-    const defaultWorkspaceWidget = DEFAULT_HUD_UI_STATE.hudWorkspace.widgets.find((widget) => widget.type === widgetType);
+    const defaultWorkspaceWidget = createDefaultHudUiState().hudWorkspace.widgets.find((widget) => widget.type === widgetType);
     let nextSelectedWidgetId: string | null = null;
     updateWorkspaceWidgets((widgets) => {
       const existingWidget = widgets.find((widget) => widget.type === widgetType);
@@ -425,18 +480,30 @@ export function HudCommandCenter({
   }
 
   function resizeWorkspace(widthPx: number, heightPx: number, isWidthUserSized: boolean) {
-    updateHudState((current) => ({
-      ...current,
-      hudWorkspace: {
-        ...current.hudWorkspace,
-        heightPx: clampWidgetDimension(heightPx, WORKSPACE_DIMENSION_LIMITS.minHeight, WORKSPACE_DIMENSION_LIMITS.maxHeight),
-        isWidthUserSized: isWidthUserSized || current.hudWorkspace.isWidthUserSized,
-        widthPx: isWidthUserSized
-          ? clampWidgetDimension(widthPx, WORKSPACE_DIMENSION_LIMITS.minWidth, WORKSPACE_DIMENSION_LIMITS.maxWidth)
-          : current.hudWorkspace.widthPx,
-      },
-    }));
+    updateHudState((current) => updateActiveHudWorkspace(current, (workspace) => ({
+      ...workspace,
+      heightPx: clampWidgetDimension(
+        heightPx,
+        getHudWorkspaceMinimumHeight(workspace.widgets),
+        WORKSPACE_DIMENSION_LIMITS.maxHeight,
+      ),
+      isWidthUserSized: isWidthUserSized || workspace.isWidthUserSized,
+      widthPx: isWidthUserSized
+        ? clampWidgetDimension(widthPx, WORKSPACE_DIMENSION_LIMITS.minWidth, WORKSPACE_DIMENSION_LIMITS.maxWidth)
+        : workspace.widthPx,
+    })));
     revealCustomScrollbar(CUSTOM_SCROLLBAR_IDLE_HIDE_MS);
+  }
+
+  function flashSnapshotLabel(label: string) {
+    if (snapshotFlashTimeoutRef.current) {
+      window.clearTimeout(snapshotFlashTimeoutRef.current);
+    }
+    setSnapshotFlashLabel(label);
+    snapshotFlashTimeoutRef.current = window.setTimeout(() => {
+      setSnapshotFlashLabel(null);
+      snapshotFlashTimeoutRef.current = null;
+    }, 1400);
   }
 
   function getSortableTarget(widgetId: string, clientX: number, clientY: number) {
@@ -453,21 +520,21 @@ export function HudCommandCenter({
 
   function reorderWidget(widgetId: string, target: HudSortableTarget) {
     let nextGuide: { heightPx: number; widthPx: number; x: number; y: number } | null = null;
-    updateWorkspaceWidgets((widgets) => {
-      const nextWidgets = reorderHudWorkspaceWidgets(
-        widgets,
-        widgetId,
-        target,
-      );
-      const draggedWidget = nextWidgets.find((widget) => widget.id === widgetId) ?? null;
-      nextGuide = draggedWidget ? {
-        heightPx: draggedWidget.heightPx,
-        widthPx: draggedWidget.widthPx,
-        x: draggedWidget.x,
-        y: draggedWidget.y,
-      } : null;
-      return nextWidgets;
-    });
+    const sourceWidgets = dragPreviewWidgetsRef.current ?? hudUiState.hudWorkspace.widgets;
+    const nextWidgets = reorderHudWorkspaceWidgets(
+      sourceWidgets,
+      widgetId,
+      target,
+    );
+    const draggedWidget = nextWidgets.find((widget) => widget.id === widgetId) ?? null;
+    nextGuide = draggedWidget ? {
+      heightPx: draggedWidget.heightPx,
+      widthPx: draggedWidget.widthPx,
+      x: draggedWidget.x,
+      y: draggedWidget.y,
+    } : null;
+    dragPreviewWidgetsRef.current = nextWidgets;
+    setDragPreviewWidgets(nextWidgets);
     setActiveDragGuide(nextGuide);
   }
 
@@ -559,7 +626,7 @@ export function HudCommandCenter({
     }
 
     event.preventDefault();
-    clearWidgetDrag(event.pointerId);
+    commitWidgetDrag(event.pointerId);
   }
 
   function handleResizePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -633,8 +700,38 @@ export function HudCommandCenter({
   }
 
   function resetHudLayout() {
-    setHudUiState(DEFAULT_HUD_UI_STATE);
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(`Reset HUD Layout? This restores the default HUD layout, widget visibility, and sandbox size for snapshot ${hudUiState.activeSnapshotId} on your current account.`);
+      if (!confirmed) {
+        return;
+      }
+    }
+    setHudUiState((current) => resetActiveHudSnapshot(current));
     setIsHiddenWidgetTrayOpen(false);
+    flashSnapshotLabel(`Snapshot ${hudUiState.activeSnapshotId} reset`);
+  }
+
+  function handleCycleSnapshot() {
+    if (snapshotIds.length <= 1) {
+      flashSnapshotLabel(`Snapshot ${hudUiState.activeSnapshotId}`);
+      return;
+    }
+    setHudUiState((current) => cycleHudSnapshot(current));
+  }
+
+  function handleSaveSnapshot() {
+    setHudUiState((current) => saveActiveHudSnapshot(current));
+    flashSnapshotLabel(`Snapshot ${hudUiState.activeSnapshotId} saved`);
+  }
+
+  function handleAddSnapshot() {
+    if (!canAddSnapshot) {
+      flashSnapshotLabel("Max 5 snapshots");
+      return;
+    }
+    const nextSnapshotId = Math.max(0, ...snapshotIds) + 1;
+    setHudUiState((current) => addHudSnapshot(current));
+    flashSnapshotLabel(`Snapshot ${nextSnapshotId}`);
   }
 
   function handleCustomScrollbarPointerDown(event: ReactPointerEvent<HTMLButtonElement>, axis: "horizontal" | "vertical") {
@@ -901,22 +998,48 @@ export function HudCommandCenter({
               ) : null}
             </div>
           </div>
-          <button
-            aria-label={hudUiState.isHudEditMode ? "Finish editing HUD" : "Edit HUD"}
-            aria-pressed={hudUiState.isHudEditMode}
-            className={`mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition ${hudUiState.isHudEditMode ? "bg-[#6f57f6] text-white shadow-[0_10px_22px_rgba(111,87,246,0.18)] dark:bg-[#cabfff] dark:text-[#1a1431]" : "border border-white/70 bg-white/[0.62] text-[#6f57f6] hover:bg-white/[0.82] dark:border-white/10 dark:bg-white/[0.05] dark:text-[#cabfff]"}`}
-            onClick={toggleEditMode}
-            type="button"
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-          </button>
+          <div className="relative mt-1 flex shrink-0 flex-col items-center gap-2">
+            <button
+              aria-label={hudUiState.isHudEditMode ? "Finish editing HUD" : "Edit HUD"}
+              aria-pressed={hudUiState.isHudEditMode}
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition ${hudUiState.isHudEditMode ? "bg-[#6f57f6] text-white shadow-[0_10px_22px_rgba(111,87,246,0.18)] dark:bg-[#cabfff] dark:text-[#1a1431]" : "border border-white/70 bg-white/[0.62] text-[#6f57f6] hover:bg-white/[0.82] dark:border-white/10 dark:bg-white/[0.05] dark:text-[#cabfff]"}`}
+              onClick={toggleEditMode}
+              type="button"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              aria-label={`Cycle HUD snapshot. Active snapshot ${hudUiState.activeSnapshotId}.`}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/70 bg-white/[0.62] text-[12px] font-semibold text-[#6f57f6] shadow-[0_10px_22px_rgba(111,87,246,0.12)] transition hover:bg-white/[0.82] dark:border-white/10 dark:bg-white/[0.05] dark:text-[#cabfff]"
+              onClick={handleCycleSnapshot}
+              type="button"
+            >
+              {hudUiState.activeSnapshotId}
+            </button>
+            {snapshotFlashLabel ? (
+              <div className="absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#2b2445] px-2.5 py-1 text-[11px] font-semibold text-white shadow-[0_10px_20px_rgba(22,18,37,0.22)] dark:bg-[#f4f0ff] dark:text-[#2b2445]">
+                {snapshotFlashLabel}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {hudUiState.isHudEditMode ? (
           <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button className="ui-pill-button-strong-light" onClick={handleSaveSnapshot} type="button">
+              Save Snapshot
+            </button>
+            <button
+              className="ui-pill-button-light disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={!canAddSnapshot}
+              onClick={handleAddSnapshot}
+              type="button"
+            >
+              {canAddSnapshot ? "Add Snapshot" : "Max 5"}
+            </button>
             <button className="ui-pill-button-danger-light" onClick={resetHudLayout} type="button">
               <RotateCcw className="mr-1 inline h-3.5 w-3.5" />
-              Reset
+              Reset HUD Layout
             </button>
             <button
               className="ui-pill-button-danger-light disabled:cursor-not-allowed disabled:opacity-60"
@@ -953,6 +1076,9 @@ export function HudCommandCenter({
             </button>
             <span className="rounded-full bg-white/[0.62] px-3 py-1.5 text-xs font-semibold text-[#655f84] dark:bg-white/[0.04] dark:text-white/65">
               Sortable lanes
+            </span>
+            <span className="rounded-full bg-white/[0.62] px-3 py-1.5 text-xs font-semibold text-[#655f84] dark:bg-white/[0.04] dark:text-white/65">
+              Snapshots {snapshotIds.join(", ")}
             </span>
           </div>
         ) : null}

@@ -53,6 +53,24 @@ export type TaskGridLayoutUpdate = Partial<
   Pick<TaskGridLayout, "layout_json">
 >;
 
+export type HudUiSettings = {
+  user_id: string;
+  hud_state: Record<string, unknown> | null;
+  client_updated_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HudUiSettingsInsert = {
+  user_id: string;
+  hud_state?: Record<string, unknown> | null;
+  client_updated_at?: string | null;
+};
+
+export type HudUiSettingsUpdate = Partial<
+  Pick<HudUiSettings, "hud_state" | "client_updated_at">
+>;
+
 export type TaskListKind = "system" | "smart" | "custom";
 export type TaskListMembershipMode = "manual" | "rules" | "hybrid";
 
@@ -1170,6 +1188,12 @@ export type Database = {
         Row: TaskGridLayout;
         Insert: TaskGridLayoutInsert;
         Update: TaskGridLayoutUpdate;
+        Relationships: [];
+      };
+      adhdice_hud_ui_settings: {
+        Row: HudUiSettings;
+        Insert: HudUiSettingsInsert;
+        Update: HudUiSettingsUpdate;
         Relationships: [];
       };
       adhdice_focus_active_sessions: {

@@ -119,7 +119,7 @@ Optimize for safe work, low regression risk, clean organization, and design cons
 - Treat `MAJOR` as a large app era or major architecture milestone.
 - Treat `MINOR` as a wishlist feature group or release theme.
 - Treat `PATCH` as one implementation step, bugfix, polish pass, or verification fix.
-- Keep `5.1.x` as the current Table/Search Productivity Polish release group unless a new release group is explicitly approved.
+- Use the current app version and active release group declared in `docs/CURRENT_STATE.md`; do not assume an older minor release group is still active.
 - Do not bump version for planning-only Codex threads.
 - Do not bump version for diagnosis-only Codex threads unless code changes are made.
 - For code-changing implementation tickets, bump package and visible app version to the next patch version within the current minor release.

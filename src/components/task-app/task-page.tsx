@@ -4,25 +4,31 @@ import type { ReactNode } from "react";
 import type { TaskViewMode } from "@/lib/task-ui-state";
 
 type TaskPageProps = {
+  alternateViewPanel: ReactNode;
   flows: ReactNode;
-  nonListViewPanel: ReactNode;
+  listViewPanel: ReactNode;
   operationsHeader: ReactNode;
   view: TaskViewMode;
-  listViewPanel: ReactNode;
+  tableViewPanel: ReactNode;
 };
 
 export function TaskPage({
+  alternateViewPanel,
   flows,
   listViewPanel,
-  nonListViewPanel,
   operationsHeader,
+  tableViewPanel,
   view,
 }: TaskPageProps) {
   return (
     <>
       {flows}
       {operationsHeader}
-      {view === "list" ? listViewPanel : nonListViewPanel}
+      {view === "table"
+        ? tableViewPanel
+        : view === "list"
+          ? listViewPanel
+          : alternateViewPanel}
     </>
   );
 }

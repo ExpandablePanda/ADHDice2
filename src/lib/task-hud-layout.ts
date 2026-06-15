@@ -43,6 +43,11 @@ export type HudWorkspace = {
   widthPx: number;
 };
 
+export type HudLayoutSnapshot = {
+  id: number;
+  workspace: HudWorkspace;
+};
+
 export type HudSortablePointer = {
   x: number;
   y: number;
@@ -62,7 +67,9 @@ export type HudPage = {
 
 export type HudUiState = {
   activeHudPageId: HudPage["id"];
+  activeSnapshotId: number;
   hudWorkspace: HudWorkspace;
+  hudSnapshots: HudLayoutSnapshot[];
   hudPages: HudPage[];
   isHudCollapsed: boolean;
   hudUiVersion: number;
@@ -70,9 +77,11 @@ export type HudUiState = {
   selectedHudWidgetId: string | null;
 };
 
-export const HUD_UI_SCHEMA_VERSION = 5;
+export const HUD_UI_SCHEMA_VERSION = 6;
 export const HUD_WORKSPACE_SCHEMA_VERSION = 2;
 export const HUD_WORKSPACE_SNAP_PX = 8;
+export const HUD_LAYOUT_SNAPSHOT_LIMIT = 5;
+export const HUD_WORKSPACE_BOTTOM_GUTTER_PX = 12;
 export const HUD_PAGE_IDS: HudPage["id"][] = ["overview", "command"];
 export const HUD_WIDGET_TYPES: HudWidgetType[] = [
   "dark_mode",
@@ -224,6 +233,20 @@ export function getHudWorkspaceContentDimensions(
     heightPx: workspace.heightPx + (heightOverflow > 0 ? heightOverflow + HUD_WORKSPACE_CANVAS_PADDING_PX : 0),
     widthPx: workspace.widthPx + (widthOverflow > 0 ? widthOverflow + HUD_WORKSPACE_CANVAS_PADDING_PX : 0),
   };
+}
+
+export function getHudWorkspaceMinimumHeight(widgets: HudWorkspaceWidget[]) {
+  const visibleWidgets = widgets.filter((widget) => widget.isVisible);
+  if (visibleWidgets.length === 0) {
+    return HUD_WORKSPACE_DIMENSION_LIMITS.minHeight;
+  }
+
+  const farBottom = visibleWidgets.reduce((maxBottom, widget) => Math.max(maxBottom, getWidgetBottom(widget)), 0);
+  return clampDimension(
+    farBottom + HUD_WORKSPACE_BOTTOM_GUTTER_PX,
+    1,
+    HUD_WORKSPACE_DIMENSION_LIMITS.maxHeight,
+  );
 }
 
 export function getHudWorkspaceViewportWidth(
@@ -415,10 +438,18 @@ function getDefaultWidgetDimensions(widget: Pick<HudWidgetLayoutItem, "size" | "
   };
 }
 
-function getWorkspaceDimensions(widthPx: unknown, heightPx: unknown) {
+function getWorkspaceDimensions(
+  widthPx: unknown,
+  heightPx: unknown,
+  options?: { allowDynamicMinimumHeight?: boolean },
+) {
   return {
     heightPx: typeof heightPx === "number" && Number.isFinite(heightPx)
-      ? clampDimension(heightPx, HUD_WORKSPACE_DIMENSION_LIMITS.minHeight, HUD_WORKSPACE_DIMENSION_LIMITS.maxHeight)
+      ? clampDimension(
+        heightPx,
+        options?.allowDynamicMinimumHeight ? 1 : HUD_WORKSPACE_DIMENSION_LIMITS.minHeight,
+        HUD_WORKSPACE_DIMENSION_LIMITS.maxHeight,
+      )
       : HUD_WORKSPACE_DEFAULT_DIMENSIONS.heightPx,
     widthPx: typeof widthPx === "number" && Number.isFinite(widthPx)
       ? clampDimension(widthPx, HUD_WORKSPACE_DIMENSION_LIMITS.minWidth, HUD_WORKSPACE_DIMENSION_LIMITS.maxWidth)
@@ -773,10 +804,26 @@ function buildWorkspaceFromPages(
   };
 }
 
+function cloneHudWorkspace(workspace: HudWorkspace): HudWorkspace {
+  return {
+    ...workspace,
+    widgets: workspace.widgets.map((widget) => ({ ...widget })),
+  };
+}
+
+function createHudSnapshot(id: number, workspace: HudWorkspace): HudLayoutSnapshot {
+  return {
+    id,
+    workspace: cloneHudWorkspace(workspace),
+  };
+}
+
 export const DEFAULT_HUD_UI_STATE: HudUiState = {
   activeHudPageId: "overview",
+  activeSnapshotId: 1,
   hudPages: DEFAULT_HUD_PAGES,
   hudWorkspace: buildWorkspaceFromPages(DEFAULT_HUD_PAGES),
+  hudSnapshots: [createHudSnapshot(1, buildWorkspaceFromPages(DEFAULT_HUD_PAGES))],
   isHudCollapsed: false,
   hudUiVersion: HUD_UI_SCHEMA_VERSION,
   isHudEditMode: false,
@@ -914,7 +961,11 @@ function normalizeHudWorkspace(
   includeMissingDefaults: boolean,
 ): HudWorkspace {
   const candidate = value && typeof value === "object" ? value as Partial<HudWorkspace> : null;
-  const workspaceDimensions = getWorkspaceDimensions(candidate?.widthPx, candidate?.heightPx);
+  const workspaceDimensions = getWorkspaceDimensions(
+    candidate?.widthPx,
+    candidate?.heightPx,
+    { allowDynamicMinimumHeight: true },
+  );
   const fallbackWorkspace = buildWorkspaceFromPages(fallbackPages, workspaceDimensions);
 
   if (!candidate) {
@@ -952,8 +1003,13 @@ function normalizeHudWorkspace(
     }
   }
 
+  const stabilizedWidgets = stabilizeWorkspaceWidgets(deduped, workspaceDimensions);
   return {
-    heightPx: workspaceDimensions.heightPx,
+    heightPx: clampDimension(
+      workspaceDimensions.heightPx,
+      getHudWorkspaceMinimumHeight(stabilizedWidgets),
+      HUD_WORKSPACE_DIMENSION_LIMITS.maxHeight,
+    ),
     isWidthUserSized: typeof candidate.isWidthUserSized === "boolean"
       ? candidate.isWidthUserSized
       : candidate.version === HUD_WORKSPACE_SCHEMA_VERSION
@@ -962,9 +1018,64 @@ function normalizeHudWorkspace(
     version: typeof candidate.version === "number" && Number.isFinite(candidate.version)
       ? Math.max(HUD_WORKSPACE_SCHEMA_VERSION, Math.round(candidate.version))
       : HUD_WORKSPACE_SCHEMA_VERSION,
-    widgets: stabilizeWorkspaceWidgets(deduped, workspaceDimensions),
+    widgets: stabilizedWidgets,
     widthPx: workspaceDimensions.widthPx,
   };
+}
+
+function normalizeSnapshotId(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  const rounded = Math.round(value);
+  if (rounded < 1 || rounded > HUD_LAYOUT_SNAPSHOT_LIMIT) {
+    return null;
+  }
+  return rounded;
+}
+
+function normalizeHudSnapshots(
+  value: unknown,
+  fallbackPages: HudPage[],
+): HudLayoutSnapshot[] {
+  const candidateSnapshots = Array.isArray(value) ? value : [];
+  const normalizedSnapshots: HudLayoutSnapshot[] = [];
+  const seenIds = new Set<number>();
+
+  for (const snapshot of candidateSnapshots) {
+    if (!snapshot || typeof snapshot !== "object") {
+      continue;
+    }
+    const candidate = snapshot as Partial<HudLayoutSnapshot> & { workspace?: unknown };
+    const snapshotId = normalizeSnapshotId(candidate.id);
+    if (snapshotId === null || seenIds.has(snapshotId)) {
+      continue;
+    }
+    normalizedSnapshots.push(createHudSnapshot(
+      snapshotId,
+      normalizeHudWorkspace(candidate.workspace, fallbackPages, true),
+    ));
+    seenIds.add(snapshotId);
+    if (normalizedSnapshots.length >= HUD_LAYOUT_SNAPSHOT_LIMIT) {
+      break;
+    }
+  }
+
+  if (normalizedSnapshots.length === 0) {
+    return [createHudSnapshot(1, buildWorkspaceFromPages(fallbackPages))];
+  }
+
+  normalizedSnapshots.sort((left, right) => left.id - right.id);
+  return normalizedSnapshots;
+}
+
+function resolveActiveSnapshotId(value: unknown, snapshots: HudLayoutSnapshot[]) {
+  const preferredId = normalizeSnapshotId(value);
+  if (preferredId !== null && snapshots.some((snapshot) => snapshot.id === preferredId)) {
+    return preferredId;
+  }
+  return snapshots[0]?.id ?? 1;
 }
 
 export function normalizeHudUiState(value: unknown): HudUiState {
@@ -987,13 +1098,103 @@ export function normalizeHudUiState(value: unknown): HudUiState {
     };
   });
 
+  const normalizedWorkspace = normalizeHudWorkspace((candidate as Partial<HudUiState> & { hudWorkspace?: unknown }).hudWorkspace, hudPages, includeMissingDefaults);
+  const normalizedSnapshots = normalizeHudSnapshots(
+    (candidate as Partial<HudUiState> & { hudSnapshots?: unknown }).hudSnapshots,
+    hudPages,
+  );
+  const hasSnapshotPayload = Array.isArray((candidate as Partial<HudUiState> & { hudSnapshots?: unknown }).hudSnapshots);
+  const migratedSnapshots = hasSnapshotPayload
+    ? normalizedSnapshots
+    : [createHudSnapshot(1, normalizedWorkspace)];
+  const activeSnapshotId = resolveActiveSnapshotId(candidate.activeSnapshotId, migratedSnapshots);
+  const activeSnapshot = migratedSnapshots.find((snapshot) => snapshot.id === activeSnapshotId) ?? migratedSnapshots[0];
+
   return {
     activeHudPageId: isHudPageId(candidate.activeHudPageId) ? candidate.activeHudPageId : DEFAULT_HUD_UI_STATE.activeHudPageId,
-    hudWorkspace: normalizeHudWorkspace((candidate as Partial<HudUiState> & { hudWorkspace?: unknown }).hudWorkspace, hudPages, includeMissingDefaults),
+    activeSnapshotId,
+    hudWorkspace: activeSnapshot ? cloneHudWorkspace(activeSnapshot.workspace) : cloneHudWorkspace(DEFAULT_HUD_UI_STATE.hudWorkspace),
+    hudSnapshots: migratedSnapshots.map((snapshot) => createHudSnapshot(snapshot.id, snapshot.workspace)),
     hudPages,
     isHudCollapsed: candidate.isHudCollapsed === true,
     hudUiVersion: HUD_UI_SCHEMA_VERSION,
     isHudEditMode: candidate.isHudEditMode === true,
     selectedHudWidgetId: typeof candidate.selectedHudWidgetId === "string" ? candidate.selectedHudWidgetId : null,
   };
+}
+
+export function createDefaultHudUiState(): HudUiState {
+  return normalizeHudUiState(DEFAULT_HUD_UI_STATE);
+}
+
+export function getHudSnapshotIds(state: Pick<HudUiState, "hudSnapshots">) {
+  return state.hudSnapshots.map((snapshot) => snapshot.id);
+}
+
+export function updateActiveHudWorkspace(
+  state: HudUiState,
+  updater: (workspace: HudWorkspace) => HudWorkspace,
+): HudUiState {
+  const nextWorkspace = cloneHudWorkspace(updater(cloneHudWorkspace(state.hudWorkspace)));
+  return {
+    ...state,
+    hudWorkspace: nextWorkspace,
+    hudSnapshots: state.hudSnapshots.map((snapshot) => snapshot.id === state.activeSnapshotId
+      ? createHudSnapshot(snapshot.id, nextWorkspace)
+      : createHudSnapshot(snapshot.id, snapshot.workspace)),
+  };
+}
+
+export function saveActiveHudSnapshot(state: HudUiState): HudUiState {
+  return updateActiveHudWorkspace(state, (workspace) => workspace);
+}
+
+export function addHudSnapshot(state: HudUiState): HudUiState {
+  if (state.hudSnapshots.length >= HUD_LAYOUT_SNAPSHOT_LIMIT) {
+    return state;
+  }
+
+  const nextSnapshotId = Math.max(0, ...state.hudSnapshots.map((snapshot) => snapshot.id)) + 1;
+  if (nextSnapshotId > HUD_LAYOUT_SNAPSHOT_LIMIT) {
+    return state;
+  }
+
+  const nextWorkspace = cloneHudWorkspace(state.hudWorkspace);
+  return {
+    ...state,
+    activeSnapshotId: nextSnapshotId,
+    hudWorkspace: nextWorkspace,
+    hudSnapshots: [
+      ...state.hudSnapshots.map((snapshot) => createHudSnapshot(snapshot.id, snapshot.workspace)),
+      createHudSnapshot(nextSnapshotId, nextWorkspace),
+    ],
+  };
+}
+
+export function cycleHudSnapshot(state: HudUiState): HudUiState {
+  if (state.hudSnapshots.length <= 1) {
+    return state;
+  }
+
+  const snapshotIds = getHudSnapshotIds(state);
+  const currentIndex = snapshotIds.indexOf(state.activeSnapshotId);
+  const nextSnapshotId = snapshotIds[(currentIndex + 1) % snapshotIds.length] ?? snapshotIds[0];
+  const nextSnapshot = state.hudSnapshots.find((snapshot) => snapshot.id === nextSnapshotId);
+  if (!nextSnapshot) {
+    return state;
+  }
+
+  return {
+    ...state,
+    activeSnapshotId: nextSnapshotId,
+    hudWorkspace: cloneHudWorkspace(nextSnapshot.workspace),
+    hudSnapshots: state.hudSnapshots.map((snapshot) => createHudSnapshot(snapshot.id, snapshot.workspace)),
+    selectedHudWidgetId: state.selectedHudWidgetId && nextSnapshot.workspace.widgets.some((widget) => widget.id === state.selectedHudWidgetId)
+      ? state.selectedHudWidgetId
+      : null,
+  };
+}
+
+export function resetActiveHudSnapshot(state: HudUiState): HudUiState {
+  return updateActiveHudWorkspace(state, () => DEFAULT_HUD_UI_STATE.hudWorkspace);
 }

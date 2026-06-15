@@ -6,26 +6,29 @@ import { TaskOperationsHeader } from "./tasks-page";
 import type { TaskViewMode } from "@/lib/task-ui-state";
 
 type TasksPageOrchestratorProps = {
+  alternateViewPanel: ReactNode;
   flows: ReactNode;
   listViewPanel: ReactNode;
-  nonListViewPanel: ReactNode;
   operationsHeaderProps: ComponentProps<typeof TaskOperationsHeader>;
+  tableViewPanel: ReactNode;
   view: TaskViewMode;
 };
 
 export function TasksWorkspace({
+  alternateViewPanel,
   flows,
   listViewPanel,
-  nonListViewPanel,
   operationsHeaderProps,
+  tableViewPanel,
   view,
 }: TasksPageOrchestratorProps) {
   return (
     <TaskPage
+      alternateViewPanel={alternateViewPanel}
       flows={flows}
       listViewPanel={listViewPanel}
-      nonListViewPanel={nonListViewPanel}
       operationsHeader={<TaskOperationsHeader {...operationsHeaderProps} />}
+      tableViewPanel={tableViewPanel}
       view={view}
     />
   );

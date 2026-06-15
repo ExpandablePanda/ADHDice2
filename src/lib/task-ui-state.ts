@@ -3,7 +3,7 @@ import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
 import type { HudUiState } from "@/lib/task-hud-layout";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 
-export type TaskViewMode = "list" | "cards" | "matrix" | "grid";
+export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "grid";
 export type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
 export type AppPage =
   | "Home"
@@ -45,8 +45,8 @@ export const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
 export const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
 export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
-export const TASK_UI_SCHEMA_VERSION = 3;
-export const VALID_TASK_VIEWS: TaskViewMode[] = ["list", "cards", "matrix", "grid"];
+export const TASK_UI_SCHEMA_VERSION = 4;
+export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
   "date_added",
@@ -62,12 +62,13 @@ export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "signal",
 ];
 
-export const DEFAULT_LIST_VISIBLE_COLUMNS: AgentPlanColumnId[] = [...VALID_LIST_COLUMN_IDS];
+export const DEFAULT_TASK_TABLE_VISIBLE_COLUMNS: AgentPlanColumnId[] = [...VALID_LIST_COLUMN_IDS];
 export const DEFAULT_VISIBLE_COLUMNS_BY_VIEW: Record<TaskViewMode, AgentPlanColumnId[]> = {
-  list: [...DEFAULT_LIST_VISIBLE_COLUMNS],
-  cards: [...DEFAULT_LIST_VISIBLE_COLUMNS],
-  matrix: [...DEFAULT_LIST_VISIBLE_COLUMNS],
-  grid: [...DEFAULT_LIST_VISIBLE_COLUMNS],
+  table: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
+  list: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
+  cards: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
+  matrix: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
+  grid: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
 };
 export const DEFAULT_TASK_UI_STATE: TaskUiState = {
   duplicateTitleMode: false,
@@ -77,7 +78,7 @@ export const DEFAULT_TASK_UI_STATE: TaskUiState = {
   selectedBucket: "today",
   statusFilters: [],
   uiStateVersion: TASK_UI_SCHEMA_VERSION,
-  view: "list",
+  view: "table",
   energyFilters: [],
   visibleColumnsByView: DEFAULT_VISIBLE_COLUMNS_BY_VIEW,
 };
@@ -146,7 +147,9 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     ? state.selectedBucket
     : DEFAULT_TASK_UI_STATE.selectedBucket;
   const nextVisibleColumnsByView = VALID_TASK_VIEWS.reduce<Record<TaskViewMode, AgentPlanColumnId[]>>((accumulator, view) => {
-    const candidate = state.visibleColumnsByView?.[view];
+    const candidate = view === "table"
+      ? state.visibleColumnsByView?.table ?? state.visibleColumnsByView?.list
+      : state.visibleColumnsByView?.[view];
     const normalized = Array.isArray(candidate)
       ? candidate.filter((columnId): columnId is AgentPlanColumnId => VALID_LIST_COLUMN_IDS.includes(columnId as AgentPlanColumnId))
       : [];
@@ -159,6 +162,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     accumulator[view] = withLink.includes("notes") ? withLink : [...withLink, "notes"];
     return accumulator;
   }, {
+    table: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.table],
     list: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.list],
     cards: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.cards],
     matrix: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.matrix],

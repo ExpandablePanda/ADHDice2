@@ -79,7 +79,7 @@ import { TaskEditFlows } from "./task-app/task-edit-flows";
 import { TaskListSettingsModal } from "./task-app/task-list-settings-modal";
 import { TaskListRuleRowEditor } from "./task-app/task-list-rule-row-editor";
 import { TaskRewardModal } from "./task-app/task-reward-modal";
-import { DuplicateTaskGroupsAdapter, TasksListAdapter } from "./task-app/tasks-list-adapter";
+import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
@@ -296,7 +296,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.1.13";
+const APP_VERSION = "6.2.9";
 const HUD_VERSION = APP_VERSION;
 const HUD_LOADING_SHELL_HEIGHT = 96;
 const APP_VERSION_ENDPOINT = "/app-version.json";
@@ -823,6 +823,7 @@ export function TaskApp() {
   const [focusAlarmNextRingAt, setFocusAlarmNextRingAt] = useState<number | null>(null);
   const [mobileZoom, setMobileZoom] = useState<(typeof MOBILE_ZOOM_LEVELS)[number]>(1);
   const [isHudAppearanceReady, setIsHudAppearanceReady] = useState(false);
+  const [hasCompletedInitialAppBoot, setHasCompletedInitialAppBoot] = useState(false);
   const { economy, setEconomy, appendEconomyEvent, commitTaskReward, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
     focusCategories, setFocusCategories,
@@ -887,6 +888,7 @@ export function TaskApp() {
   } = useTaskUiState({
     isTaskEditorOpen,
     normalizeTaskGridLayout: normalizePersistedTaskGridLayout,
+    supabase,
     taskGridStarterLayout: TASK_GRID_STARTER_LAYOUT,
     taskEditorMode,
     taskEditorTaskId,
@@ -922,6 +924,7 @@ export function TaskApp() {
   const [isImportWidgetMenuOpen, setIsImportWidgetMenuOpen] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>("idle");
   const [draggedListColumnId, setDraggedListColumnId] = useState<AgentPlanColumnId | null>(null);
+  const [shrinkAllColumnsToken, setShrinkAllColumnsToken] = useState(0);
   const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
@@ -1076,6 +1079,7 @@ export function TaskApp() {
 
   useEffect(() => {
     setIsHudAppearanceReady(false);
+    setHasCompletedInitialAppBoot(false);
   }, [session?.user?.id]);
 
   useEffect(() => {
@@ -1890,7 +1894,7 @@ export function TaskApp() {
       deferredSearchQuery,
       focusedTaskIds,
       listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
-      listVisibleColumns: taskUiState.visibleColumnsByView.list,
+      listVisibleColumns: taskUiState.visibleColumnsByView.table,
       taskActualTimeEntryTaskId,
       taskEditorTaskId,
       taskGridLayout,
@@ -2006,7 +2010,7 @@ export function TaskApp() {
     return nextTasks;
   }, [activePage, archiveFilteredTasksSorted, filteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
-  const listVisibleColumns = taskUiState.visibleColumnsByView.list;
+  const listVisibleColumns = taskUiState.visibleColumnsByView.table;
   const listSelectionResetKey = JSON.stringify({
     duplicateTitleMode: duplicateTitleModeActive,
     energyFilters: taskUiState.energyFilters,
@@ -2672,6 +2676,21 @@ export function TaskApp() {
     });
   }, [runningTaskTimers.length]);
 
+  const shouldDeferPageRender = isRestoringPersistedUiState;
+  const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
+  const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
+  const shouldShowHudLoadingShell = shouldBlockAuthenticatedAppBody || isTaskResumeSyncPending;
+
+  useEffect(() => {
+    if (!session?.user) {
+      return;
+    }
+
+    if (isAuthenticatedAppBootReady) {
+      setHasCompletedInitialAppBoot(true);
+    }
+  }, [isAuthenticatedAppBootReady, session?.user]);
+
   if (!supabase) {
     return <ConfigSplash />;
   }
@@ -2719,8 +2738,6 @@ export function TaskApp() {
   }
 
   const currentUser = session.user;
-  const shouldDeferPageRender = isRestoringPersistedUiState;
-  const shouldShowHudLoadingShell = !isHudAppearanceReady || isWorkspaceLoading || isTaskResumeSyncPending || shouldDeferPageRender;
 
   async function handleSaveProfile(profileDraft: UserProfile) {
     const nextProfile = {
@@ -3467,6 +3484,7 @@ export function TaskApp() {
     onUpdateSearch: (search: string) => setTaskUiState((prev) => ({ ...prev, search })),
     search: taskUiState.search,
     selectedBucket: taskUiState.selectedBucket,
+    shrinkAllColumnsToken,
     shortcuts: TASK_KEYBOARD_SHORTCUTS,
     archiveCount: archiveFilteredTasksSorted.length,
     trashCount: trashFilteredTasksSorted.length,
@@ -3482,19 +3500,35 @@ export function TaskApp() {
   const taskOperationsHeaderProps = {
     actionLabel: hasFocusedToday ? "Refocus" : "Focus",
     activeCount: filteredActiveTasks.length,
-    hideSearch: taskUiState.view === "list" || duplicateTitleModeActive,
+    filterRowsNode: taskFilterRowsNode,
+    hideSearch: duplicateTitleModeActive,
+    isKeyboardShortcutsMenuOpen,
+    isListColumnMenuOpen,
+    keyboardShortcutsMenuRef,
+    listColumnLabels: LIST_COLUMN_LABELS,
+    listColumnMenuRef,
+    listColumnPickerColumns: listColumnPickerColumns as AgentPlanColumnId[],
+    listVisibleColumns,
+    lists: listRailOptions,
     metric: momentumMetric,
     onCycleMomentum: () => setMomentumView(getNextMomentumView(momentumView)),
     onOpenComposer: openInlineNewListTaskComposer,
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
+    onOpenListSettings: () => setIsTaskListSettingsOpen(true),
     onOpenMomentumDetails: openMomentumDetails,
     onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
+    onSelectBucket: setSelectedBucket,
+    onShrinkAllColumns: () => setShrinkAllColumnsToken((current) => current + 1),
     onSearchChange: (search: string) => setTaskUiState((prev) => ({ ...prev, search })),
     onViewChange: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
+    onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
+    onToggleListColumn: toggleListColumn,
+    onToggleListColumnMenu: () => setIsListColumnMenuOpen((current) => !current),
     search: taskUiState.search,
     selectedBucket: taskUiState.selectedBucket,
+    shortcuts: TASK_KEYBOARD_SHORTCUTS,
     archiveCount: archiveFilteredTasksSorted.length,
     trashCount: trashFilteredTasksSorted.length,
     todayCount: filteredTodayTasks.length,
@@ -3503,7 +3537,7 @@ export function TaskApp() {
 
   return (
     <main
-      data-theme={theme}
+      data-theme={shouldBlockAuthenticatedAppBody ? undefined : theme}
       data-lowstim={lowStim ? "" : undefined}
       className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
     >
@@ -3564,7 +3598,7 @@ export function TaskApp() {
           </div>
         </ModalShell>
       ) : null}
-      {activeRewardBankSession && (activePage !== "Tasks" || taskUiState.view !== "list") ? (
+      {activeRewardBankSession && (activePage !== "Tasks" || taskUiState.view !== "table") ? (
         <TaskRewardModal
           isDark={theme === "dark"}
           onClaim={claimPendingRewardBank}
@@ -3675,7 +3709,11 @@ export function TaskApp() {
           key={shouldDeferPageRender ? "restoring-page" : activePage}
           fallback={<div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">This workspace could not load. Switch pages and try again.</div>}
         >
-        {shouldDeferPageRender ? (
+        {shouldBlockAuthenticatedAppBody ? (
+          <div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1]">
+            Loading your workspace...
+          </div>
+        ) : shouldDeferPageRender ? (
           <div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">
             Restoring your last page...
           </div>
@@ -3723,8 +3761,8 @@ export function TaskApp() {
               />
             )}
             operationsHeaderProps={taskOperationsHeaderProps}
-            view={duplicateTitleModeActive ? "list" : taskUiState.view}
-            listViewPanel={(
+            view={duplicateTitleModeActive ? "table" : taskUiState.view}
+            tableViewPanel={(
               duplicateTitleModeActive ? (
                 <DuplicateTaskGroupsAdapter
                   duplicateGroups={duplicateTitleGroups}
@@ -3742,7 +3780,7 @@ export function TaskApp() {
                   selectedTaskIds={selectedListTaskIds}
                 />
               ) : (
-                <TasksListAdapter
+                <TasksTableAdapter
                 tableProps={{
                   allListOptions: availableTaskLists.map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
@@ -3867,12 +3905,140 @@ export function TaskApp() {
               />
               )
             )}
-            nonListViewPanel={(
+            listViewPanel={(
+              <TasksListAdapter
+                currentListLabel={selectedBucketLabel}
+                filterRowsNode={taskFilterRowsNode}
+                panelProps={listPanelProps}
+                selectedBucket={taskUiState.selectedBucket}
+                tableProps={{
+                  allListOptions: availableTaskLists.map((list) => ({ id: list.id, label: list.name })),
+                  allNoteOptions: availableTaskNotes,
+                  allTagOptions: allTaskTags,
+                  activeTaskTimerIndex,
+                  currentListLabel: selectedBucketLabel,
+                  getFollowTaskDestination,
+                  overlayNode: activeRewardBankSession ? (
+                    <TaskRewardModal
+                      isDark={theme === "dark"}
+                      onClaim={claimPendingRewardBank}
+                      onClose={() => setActiveRewardBankSession(null)}
+                      pendingRewards={activeRewardBankSession}
+                      variant="table"
+                    />
+                  ) : null,
+                  onCreateTaskList: async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null }),
+                  onClearSelection: clearListTaskSelection,
+                  onNextTaskTimer: () => cycleHudTaskTimer("next"),
+                  onDeleteTaskActualTimeEntry: (entryId) => { void deleteTaskActualTimeEntry(entryId); },
+                  onOpenBatchDelete: openBatchDeleteModal,
+                  onOpenBatchEdit: openBatchEditModal,
+                  onOpenDeleteTask: (taskId) => { void openSingleTaskDeleteModal(taskId); },
+                  onRestoreTask: (taskId) => { void restoreTaskFromTrash(taskId); },
+                  onOpenTaskHistory: openTaskHistoryForTask,
+                  onPauseTaskTimer: pauseHudTaskTimer,
+                  onPreviousTaskTimer: () => cycleHudTaskTimer("previous"),
+                  onResumeTaskTimer: resumeHudTaskTimer,
+                  onSelectAllVisible: selectAllVisibleListTasks,
+                  onStartTaskTimer: startHudTaskTimer,
+                  onStopTaskTimer: stopHudTaskTimer,
+                  onOpenTaskActualTime: (taskId, options) => {
+                    setTaskActualTimeEntryPrefill(options?.durationSeconds && options.durationSeconds > 0
+                      ? {
+                          durationSeconds: options.durationSeconds,
+                          title: options.title ?? tasks.find((entry) => entry.id === taskId)?.title ?? "",
+                        }
+                      : null);
+                    setTaskActualTimeEntryTaskId(taskId);
+                  },
+                  onOpenNote: (noteId) => {
+                    setNotePageOpenNoteId(noteId);
+                    setActivePage("Notes");
+                  },
+                  onSetDue: (taskId, schedule) => { void updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }); },
+                  onSetEnergy: (taskId, energy) => { void updateTask(taskId, { energy }); },
+                  onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
+                  onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
+                  taskActualTimeEntriesByTaskId,
+                  onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
+                  onOpenTaskEditor: openTaskEditorFromId,
+                  onFollowDetachedTask: followDetachedTask,
+                  onDismissDetachedTask: dismissDetachedTask,
+                  onDuplicateTask: (taskId) => {
+                    const task = tasks.find((entry) => entry.id === taskId);
+                    if (task) {
+                      void duplicateTaskInPlace(task);
+                    }
+                  },
+                  onRequestedOpenTaskHandled: (taskId) => {
+                    setRequestedListOverlayTaskId((current) => (current === taskId ? null : current));
+                  },
+                  onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
+                  onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
+                  onSetPriority: (taskId, priorities) => {
+                    void updateTask(taskId, {
+                      is_important: priorities.includes("important"),
+                      is_urgent: priorities.includes("urgent"),
+                    });
+                    const nextFocusedTaskIds = priorities.includes("focus")
+                      ? Array.from(new Set([...focusedTaskIds, taskId]))
+                      : focusedTaskIds.filter((id) => id !== taskId);
+                    void saveFocusSelection(nextFocusedTaskIds);
+                  },
+                  onSetRepeat: (taskId, repeat, cadence) => {
+                    void updateTask(taskId, {
+                      repeat_frequency: repeat,
+                      ...(cadence
+                        ? {
+                          repeat_day_of_month: cadence.repeatDayOfMonth,
+                          repeat_days_of_week: repeat === "weekly" || repeat === "custom" ? cadence.repeatDaysOfWeek : [],
+                          repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence.repeatInterval),
+                        }
+                        : {}),
+                    });
+                  },
+                  onSetStatus: (taskId, status, expectedTask) => {
+                    const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
+                    if (!task) {
+                      return;
+                    }
+                    void updateTaskStatus(task, status);
+                  },
+                  onAddTaskSubtask: (taskId) => addTaskSubtask(taskId),
+                  onAddChildTaskSubtask: (subtaskId) => addChildTaskSubtask(subtaskId),
+                  onDeleteTaskSubtask: (subtaskId) => { void deleteTaskSubtask(subtaskId); },
+                  onRenameTaskSubtask: (subtaskId, title) => { void renameTaskSubtask(subtaskId, title); },
+                  onSetTaskSubtaskStatus: (subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); },
+                  onSetTaskSubtasksAutoReset: (taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); },
+                  onSetTags: (taskId, tags) => { void updateTask(taskId, { tags }); },
+                  onSetTitle: (taskId, title) => { void updateTask(taskId, { title }); },
+                  onToggleTaskSelection: toggleListTaskSelection,
+                  onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
+                  requestedOpenTask: requestedOpenListTask,
+                  requestedOpenTaskId: requestedListOverlayTaskId,
+                  suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
+                  runningTaskTimers,
+                  selectedTaskIds: selectedListTaskIds,
+                  tasks: selectedBucketTasks,
+                  rowContext: {
+                    focusedTaskIdSet,
+                    linkedNotesByTaskId: taskLinkedNotesByTaskId,
+                    listDefinitions: availableTaskLists,
+                    listMembershipsByTaskId: taskListMembershipsByTaskId,
+                    subtasksByTaskId: taskSubtasksByTaskId,
+                    taskHistoryByTaskId,
+                    todayDateKey: todayKey,
+                  },
+                }}
+              />
+            )}
+            alternateViewPanel={(
               <TasksNonListShell
                 cardsNode={cardsContentNode}
                 dailyPlanningNode={nonListDailyPlanningNode}
                 filterRowsNode={nonListFilterRowsNode}
                 gridNode={gridContentNode}
+                listNode={null}
                 lists={listRailOptions}
                 matrixNode={matrixContentNode}
                 onSelectBucket={setSelectedBucket}

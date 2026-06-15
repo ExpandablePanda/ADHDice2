@@ -14,7 +14,7 @@
 //   3. Bump CURRENT_VERSION to match.
 
 const VERSION_KEY = "adhdice-storage-version";
-const CURRENT_VERSION = 3;
+const CURRENT_VERSION = 4;
 
 type Migration = {
   version: number;
@@ -68,6 +68,27 @@ const MIGRATIONS: Migration[] = [
           const parsed = JSON.parse(raw) as { view?: string };
           if (parsed.view === "grid") {
             parsed.view = "list";
+            localStorage.setItem(key, JSON.stringify(parsed));
+          }
+        } catch {
+          // Corrupt entry — leave it alone; parseStoredJson will clear it on next read.
+        }
+      }
+    },
+  },
+  {
+    version: 4,
+    description: "Rename persisted task view 'list' → 'table' in stored UI state",
+    run: () => {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key?.startsWith("adhdice-task-ui:")) continue;
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) continue;
+          const parsed = JSON.parse(raw) as { view?: string };
+          if (parsed.view === "list") {
+            parsed.view = "table";
             localStorage.setItem(key, JSON.stringify(parsed));
           }
         } catch {

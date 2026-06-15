@@ -41,3 +41,12 @@ export function isMissingTaskRewardClaimSubtaskColumnError(message: string) {
     && message.includes("adhdice_task_reward_claims")
     && message.includes("schema cache");
 }
+
+export function isMissingHudUiSettingsTableError(message: string) {
+  return message.includes("adhdice_hud_ui_settings")
+    && (
+      message.includes("schema cache")
+      || message.includes("Could not find the table")
+      || message.includes("does not exist")
+    );
+}

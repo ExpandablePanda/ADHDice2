@@ -18,7 +18,7 @@ export function useTaskListViewStateController({
 
   function toggleListColumn(columnId: AgentPlanColumnId) {
     setTaskUiState((prev) => {
-      const currentColumns = prev.visibleColumnsByView.list;
+      const currentColumns = prev.visibleColumnsByView.table;
       const nextColumns = currentColumns.includes(columnId)
         ? currentColumns.filter((column) => column !== columnId)
         : [...currentColumns, columnId];
@@ -27,7 +27,7 @@ export function useTaskListViewStateController({
         ...prev,
         visibleColumnsByView: {
           ...prev.visibleColumnsByView,
-          list: nextColumns,
+          table: nextColumns,
         },
       };
     });
@@ -39,7 +39,7 @@ export function useTaskListViewStateController({
     }
 
     setTaskUiState((prev) => {
-      const currentColumns = prev.visibleColumnsByView.list;
+      const currentColumns = prev.visibleColumnsByView.table;
       const nextColumns = [...currentColumns];
       const fromIndex = nextColumns.indexOf(columnId);
       const toIndex = nextColumns.indexOf(targetColumnId);
@@ -55,7 +55,7 @@ export function useTaskListViewStateController({
         ...prev,
         visibleColumnsByView: {
           ...prev.visibleColumnsByView,
-          list: nextColumns,
+          table: nextColumns,
         },
       };
     });

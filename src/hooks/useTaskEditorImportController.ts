@@ -106,7 +106,7 @@ export function useTaskEditorImportController({
   }
 
   async function openTaskImportPanel() {
-    if (taskUiView === "list") {
+    if (taskUiView === "table" || taskUiView === "list") {
       setIsImportWidgetMenuOpen(true);
       return;
     }
