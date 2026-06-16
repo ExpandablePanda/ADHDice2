@@ -1,8 +1,11 @@
 "use client";
 import { Ellipsis, Tag, X } from "lucide-react";
 import {
+  buildTaskRowContextMenuState,
   TaskManagementTableV2,
+  TaskRowContextMenu,
   type PrototypeTaskRow,
+  type RowContextMenuState,
   type TaskManagementTableColumnId,
   type RunningTaskTimer,
 } from "@/components/ui/task-management-table-v2";
@@ -13,7 +16,7 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import { buildTaskTableRow } from "@/lib/task-table-row";
-import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { getTaskDisplayStatus, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen } from "@/lib/task-buckets";
@@ -762,11 +765,14 @@ function TasksSimpleList({
   selectedBucket,
   tableProps,
 }: TasksListAdapterProps) {
-  const [openMenuTaskId, setOpenMenuTaskId] = useState<string | null>(null);
+  const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [inlineInspectorTaskId, setInlineInspectorTaskId] = useState<string | null>(null);
+  const listShellRef = useRef<HTMLDivElement | null>(null);
   const tasks = tableProps.tasks;
   const rowContext = tableProps.rowContext;
+  const visibleTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
+  const selectedTaskIdSet = useMemo(() => new Set(tableProps.selectedTaskIds), [tableProps.selectedTaskIds]);
   const noteOptions = useMemo(
     () => tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? [],
     [tableProps.allNoteOptions],
@@ -802,10 +808,24 @@ function TasksSimpleList({
   );
   const closeQuickPanel = () => setActiveQuickPanel(null);
   const openQuickPanel = (taskId: string, mode: ListQuickPanelMode) => {
-    setOpenMenuTaskId(null);
+    setRowContextMenu(null);
     setInlineInspectorTaskId(null);
     setActiveQuickPanel((current) => current?.taskId === taskId && current.mode === mode ? null : { mode, taskId });
   };
+  const rowContextMenuTask = useMemo(
+    () => rowContextMenu ? tasks.find((task) => task.id === rowContextMenu.taskId) ?? null : null,
+    [rowContextMenu, tasks],
+  );
+
+  function openRowContextMenu(taskId: string, clientX: number, clientY: number) {
+    const nextMenu = buildTaskRowContextMenuState(listShellRef.current, taskId, clientX, clientY);
+    if (!nextMenu) {
+      return false;
+    }
+
+    setRowContextMenu(nextMenu);
+    return true;
+  }
 
   if (tasks.length === 0) {
     return (
@@ -826,7 +846,7 @@ function TasksSimpleList({
       {...panelProps}
       filterRowsNode={filterRowsNode}
       agentPlanNode={(
-        <div className="space-y-3">
+        <div className="relative space-y-3" ref={listShellRef}>
           {tasks.map((task) => {
         const displayStatus = getTaskDisplayStatus(task);
         const dueLabel = formatDueLabel(task.due_on);
@@ -857,6 +877,12 @@ function TasksSimpleList({
                   ? "border-[#cfc2ff] bg-[#fcfbff] dark:border-[#4f3d86] dark:bg-[#18112d]"
                   : "border-[#ece8f8] hover:border-[#ddd2fb] hover:bg-white dark:border-white/10 dark:hover:border-white/15"
               }`}
+              onContextMenu={(event) => {
+                if (openRowContextMenu(task.id, event.clientX, event.clientY)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }
+              }}
             >
             <div className="flex items-start gap-3">
               <div className="shrink-0">
@@ -866,6 +892,7 @@ function TasksSimpleList({
                   className="mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[1rem] text-[#8d97b0] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45 dark:hover:bg-white/[0.06] dark:hover:text-[#cabfff]"
                   onClick={(event) => {
                     event.stopPropagation();
+                    setRowContextMenu(null);
                     openQuickPanel(task.id, "status");
                   }}
                   type="button"
@@ -877,14 +904,14 @@ function TasksSimpleList({
               <div
                 className="min-w-0 flex-1 cursor-pointer"
                 onClick={() => {
-                  setOpenMenuTaskId(null);
+                  setRowContextMenu(null);
                   closeQuickPanel();
                   setInlineInspectorTaskId(task.id);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    setOpenMenuTaskId(null);
+                    setRowContextMenu(null);
                     closeQuickPanel();
                     setInlineInspectorTaskId(task.id);
                   }
@@ -954,36 +981,22 @@ function TasksSimpleList({
 
                   <div className="relative shrink-0">
                     <button
-                      aria-expanded={openMenuTaskId === task.id}
+                      aria-expanded={rowContextMenu?.taskId === task.id}
                       aria-label={`More actions for ${task.title}`}
                       className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ece8f8] bg-white text-[#66718c] transition hover:border-[#d9cffb] hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
                       onClick={(event) => {
                         event.stopPropagation();
+                        if (rowContextMenu?.taskId === task.id) {
+                          setRowContextMenu(null);
+                          return;
+                        }
                         closeQuickPanel();
-                        setOpenMenuTaskId((current) => current === task.id ? null : task.id);
+                        openRowContextMenu(task.id, event.clientX, event.clientY);
                       }}
                       type="button"
                     >
                       <Ellipsis className="h-5 w-5" />
                     </button>
-                    {openMenuTaskId === task.id ? (
-                      <div
-                        className="absolute right-0 top-12 z-30 min-w-[10rem] rounded-[1rem] border border-[#ece8f8] bg-white p-2 shadow-[0_18px_36px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1a1230]"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        <button
-                          className="flex w-full items-center rounded-[0.9rem] px-3 py-2 text-left text-sm font-medium text-[#27304c] transition hover:bg-[#f7f3ff] dark:text-white dark:hover:bg-white/[0.08]"
-                          onClick={() => {
-                            setOpenMenuTaskId(null);
-                            closeQuickPanel();
-                            setInlineInspectorTaskId(task.id);
-                          }}
-                          type="button"
-                        >
-                          Edit task
-                        </button>
-                      </div>
-                    ) : null}
                   </div>
                 </div>
               </div>
@@ -1129,6 +1142,88 @@ function TasksSimpleList({
           </div>
         );
       })}
+          {rowContextMenu && rowContextMenuTask ? (
+            <TaskRowContextMenu
+              allowInlineInspector
+              enableInspector
+              hasBatchQuickEdit={selectedTaskIdSet.has(rowContextMenuTask.id) && tableProps.selectedTaskIds.length > 1}
+              isTaskSelected={selectedTaskIdSet.has(rowContextMenuTask.id)}
+              menu={rowContextMenu}
+              onClearSelection={tableProps.onClearSelection ? () => {
+                tableProps.onClearSelection();
+                setRowContextMenu(null);
+              } : undefined}
+              onDeleteTask={tableProps.onOpenDeleteTask ? () => {
+                tableProps.onOpenDeleteTask?.(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
+              onDismiss={() => setRowContextMenu(null)}
+              onDuplicateTask={tableProps.onDuplicateTask ? () => {
+                tableProps.onDuplicateTask?.(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
+              onEditTask={tableProps.onOpenTaskEditor ? () => {
+                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
+              onOpenDetails={() => {
+                setRowContextMenu(null);
+                closeQuickPanel();
+                setInlineInspectorTaskId(rowContextMenuTask.id);
+              }}
+              onOpenHistory={tableProps.onOpenTaskHistory ? () => {
+                tableProps.onOpenTaskHistory?.(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
+              onOpenQuickEdit={(mode) => {
+                const listModeMap: Partial<Record<"actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags", ListQuickPanelMode>> = {
+                  due: "due",
+                  lists: "list",
+                  priority: "priority",
+                  repeat: "repeat",
+                  status: "status",
+                  tags: "tags",
+                };
+                const mappedMode = listModeMap[mode];
+                setRowContextMenu(null);
+                if (mappedMode) {
+                  openQuickPanel(rowContextMenuTask.id, mappedMode);
+                  return;
+                }
+                setInlineInspectorTaskId(rowContextMenuTask.id);
+              }}
+              onOpenTimeLog={tableProps.onOpenTaskActualTime ? () => {
+                tableProps.onOpenTaskActualTime?.(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
+              onRestoreTask={tableProps.onRestoreTask ? () => {
+                tableProps.onRestoreTask?.(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
+              onSelectAllVisible={tableProps.onSelectAllVisible ? () => {
+                tableProps.onSelectAllVisible?.(visibleTaskIds);
+                setRowContextMenu(null);
+              } : undefined}
+              onToggleTaskSelection={tableProps.onToggleTaskSelection ? () => {
+                tableProps.onToggleTaskSelection?.(rowContextMenuTask.id, {
+                  additive: true,
+                  visibleTaskIds,
+                });
+                setRowContextMenu(null);
+              } : undefined}
+              quickEditItems={[
+                { label: "Status", mode: "status" },
+                { label: "Due", mode: "due" },
+                { label: "Priority", mode: "priority" },
+                { label: "Repeat", mode: "repeat" },
+                { label: "Lists", mode: "lists" },
+                { label: "Tags", mode: "tags" },
+              ]}
+              quickEditTitle={selectedTaskIdSet.has(rowContextMenuTask.id) && tableProps.selectedTaskIds.length > 1 ? `Quick edit ${tableProps.selectedTaskIds.length} selected tasks` : "Quick edit"}
+              selectedTaskCount={tableProps.selectedTaskIds.length}
+              task={rowContextMenuTask}
+            />
+          ) : null}
         </div>
       )}
     />

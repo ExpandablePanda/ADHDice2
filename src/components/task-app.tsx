@@ -296,9 +296,8 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.2.9";
+const APP_VERSION = "6.2.21";
 const HUD_VERSION = APP_VERSION;
-const HUD_LOADING_SHELL_HEIGHT = 96;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
 const APP_UPDATE_ATTEMPT_TTL_MS = 45_000;
@@ -806,7 +805,6 @@ function isSupabaseLoadFailure(error: unknown) {
 
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
-  const hudShellRef = useRef<HTMLDivElement | null>(null);
   const profileSettingsHydratedRef = useRef(false);
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthResolved, setIsAuthResolved] = useState(false);
@@ -915,7 +913,6 @@ export function TaskApp() {
   const [momentumView, setMomentumView] = useState<MomentumView>("urgent");
   const [isMomentumListOpen, setIsMomentumListOpen] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
-  const [hudHeight, setHudHeight] = useState(140);
   const profile = useProfileStore();
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
@@ -2585,39 +2582,6 @@ export function TaskApp() {
     };
   }, [mobileZoom]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const headerNode = hudShellRef.current;
-    if (!headerNode) {
-      return;
-    }
-
-    const updateHudHeight = () => {
-      setHudHeight(Math.ceil(headerNode.getBoundingClientRect().height));
-    };
-
-    updateHudHeight();
-
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", updateHudHeight);
-      return () => window.removeEventListener("resize", updateHudHeight);
-    }
-
-    const observer = new ResizeObserver(() => {
-      updateHudHeight();
-    });
-    observer.observe(headerNode);
-    window.addEventListener("resize", updateHudHeight);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updateHudHeight);
-    };
-  }, [hudUiState.activeHudPageId, hudUiState.isHudCollapsed, lowStim, mobileZoom, theme]);
-
   const mobileChromeZoomStyle = useMemo<CSSProperties | undefined>(() => {
     if (mobileZoom === 1) {
       return undefined;
@@ -2679,7 +2643,7 @@ export function TaskApp() {
   const shouldDeferPageRender = isRestoringPersistedUiState;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
-  const shouldShowHudLoadingShell = shouldBlockAuthenticatedAppBody || isTaskResumeSyncPending;
+  const shouldShowInitialHudLoadingShell = shouldBlockAuthenticatedAppBody;
 
   useEffect(() => {
     if (!session?.user) {
@@ -3606,12 +3570,12 @@ export function TaskApp() {
           pendingRewards={activeRewardBankSession}
         />
       ) : null}
-      <div className="fixed inset-x-0 top-0 z-30 border-b border-[#ece8f8]/70 bg-[linear-gradient(180deg,rgba(244,240,255,0.96),rgba(239,244,255,0.9))] shadow-[0_14px_34px_rgba(81,61,168,0.07)] backdrop-blur-xl dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(19,16,33,0.94),rgba(14,12,27,0.9))]" ref={hudShellRef}>
+      <div className="sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]">
         <div className="w-full">
-          {shouldShowHudLoadingShell ? (
+          {shouldShowInitialHudLoadingShell ? (
             <HudLoadingShell />
           ) : (
-            <div className={`w-full border-white/70 bg-white/[0.46] px-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] backdrop-blur-[12px] dark:border-white/10 dark:bg-white/[0.05] ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
+            <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
               <HudRuntimeClock active={runningTaskTimers.length > 0 || (focusAlarmEnabled && focusAlarmNextRingAt !== null)}>
                 {(hudNow) => {
                   const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
@@ -3689,7 +3653,6 @@ export function TaskApp() {
           )}
         </div>
       </div>
-      <div aria-hidden="true" className="w-full" style={{ height: shouldShowHudLoadingShell ? HUD_LOADING_SHELL_HEIGHT : hudHeight }} />
       <div className="mx-auto w-full" style={shellZoomStyle}>
         <section className="w-full pb-28">
 
@@ -4534,14 +4497,15 @@ function TopHeader({
 }) {
   const accountButton = (
     <button
-      className="relative mr-[3px] rounded-full transition-transform hover:scale-[1.02]"
+      className="relative mr-[3px] rounded-full bg-[var(--hud-surface)] transition-transform hover:scale-[1.02]"
       onClick={onOpenAccount}
       type="button"
     >
       <Image
         alt="Profile avatar"
-        className="h-11 w-11 rounded-full object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
+        className="h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
         height={44}
+        priority
         src={profile.avatarSrc}
         unoptimized={profile.avatarSrc.startsWith("data:")}
         width={44}
@@ -4901,11 +4865,12 @@ function CommandCenterHeader({
   const isHudCollapsed = hudUiState.isHudCollapsed;
   const isWorkspaceRefreshing = refreshStatus !== "idle";
   const accountButton = (
-    <button className="relative mr-[3px] rounded-full transition-transform hover:scale-[1.02]" onClick={onOpenAccount} type="button">
+    <button className="relative mr-[3px] rounded-full bg-[var(--hud-surface)] transition-transform hover:scale-[1.02]" onClick={onOpenAccount} type="button">
       <Image
         alt="Profile avatar"
-        className="h-11 w-11 rounded-full object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
+        className="h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
         height={44}
+        priority
         src={profile.avatarSrc}
         unoptimized={profile.avatarSrc.startsWith("data:")}
         width={44}
@@ -5136,17 +5101,17 @@ function CommandCenterHeader({
     return (
       <header className="px-3">
         <div className="adhdice-scrollbar w-full overflow-x-auto overflow-y-hidden touch-pan-x">
-          <div className="flex min-w-max items-center gap-2 rounded-[1.15rem] border border-white/70 bg-white/[0.34] px-2 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] dark:border-white/10 dark:bg-white/[0.03]">
+          <div className="flex min-w-max items-center gap-2 rounded-[1.15rem] border border-[#ece8f8] bg-[var(--hud-surface)] px-2 py-1 dark:border-white/10">
             <button
               aria-label="Expand HUD"
-              className="shrink-0 flex min-h-11 items-center gap-2 rounded-full bg-white/[0.32] px-2.5 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45 dark:bg-white/[0.04]"
+              className="shrink-0 flex min-h-11 items-center gap-2 rounded-full bg-[var(--hud-surface)] px-2.5 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
               onClick={() => setHudCollapsed(!isHudCollapsed)}
               type="button"
             >
               <span className="pointer-events-none flex items-center">
                 <BrandMark compact profile={profile} />
               </span>
-              <span className="pointer-events-none rounded-full bg-[#f1ecff] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]">
+              <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]">
                 {HUD_VERSION}
               </span>
             </button>
@@ -5210,14 +5175,14 @@ function CommandCenterHeader({
       <div className="flex items-center justify-between gap-3 lg:mr-[5px] lg:shrink-0 lg:justify-start">
         <button
           aria-label="Collapse HUD"
-          className="flex min-h-12 items-center gap-1 rounded-full bg-white/[0.26] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45 dark:bg-white/[0.03]"
+          className="flex min-h-12 items-center gap-1 rounded-full bg-[var(--hud-surface)] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
           onClick={() => setHudCollapsed(true)}
           type="button"
         >
           <span className="pointer-events-none flex items-center">
             <BrandMark profile={profile} />
           </span>
-          <span className={`pointer-events-none rounded-full px-2 py-0.5 text-[11px] font-semibold bg-[#f1ecff] text-[#7f6af7] dark:bg-white/10 dark:text-[#c5b8ff]`}>
+          <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[11px] font-semibold text-[#7f6af7] dark:text-[#c5b8ff]">
             {HUD_VERSION}
           </span>
         </button>
@@ -5273,6 +5238,7 @@ function BrandMark({
         : "h-[50px] w-auto max-w-none object-contain object-left pl-[3px]"}
       height={compact ? 36 : 56}
       onError={() => setErrored(true)}
+      priority
       src={withBasePath(logoSrc)}
       unoptimized={logoSrc.startsWith("data:")}
       width={compact ? 122 : 190}
@@ -5730,7 +5696,7 @@ function ProgressStat({
 }) {
   return (
     <div className={`flex h-full w-full items-center gap-2 rounded-full ${compact ? "bg-transparent px-1 py-0 dark:bg-transparent" : "bg-[#f6f2ff] px-3 py-2 dark:bg-white/10"}`}>
-      <span className={`rounded-full ${compact ? "px-2.5 py-1 text-[11px]" : "px-3 py-1 text-sm"} font-bold bg-[#6f57f6] text-white dark:bg-[#c8baff] dark:text-[#191229]`}>
+      <span className={`shrink-0 whitespace-nowrap rounded-full leading-none ${compact ? "px-2.5 py-1 text-[11px]" : "px-3 py-1 text-sm"} font-bold bg-[#6f57f6] text-white dark:bg-[#c8baff] dark:text-[#191229]`}>
         {label}
       </span>
       <div className="min-w-0 flex-1">

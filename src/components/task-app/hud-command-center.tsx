@@ -854,7 +854,7 @@ export function HudCommandCenter({
             </button>
           </div>
         ) : null}
-        <div className={`h-full rounded-[1rem] border border-white/35 bg-transparent backdrop-blur-[10px] dark:border-white/10 dark:bg-transparent ${hudUiState.isHudEditMode ? "px-[5px] py-[5px]" : "px-1.5 py-1.5"} ${overflowClass} ${hudUiState.isHudEditMode ? "pointer-events-none" : ""}`}>
+        <div className={`h-full rounded-[1rem] border border-[#ece8f8] bg-[var(--hud-surface)] dark:border-white/10 ${hudUiState.isHudEditMode ? "px-[5px] py-[5px]" : "px-1.5 py-1.5"} ${overflowClass} ${hudUiState.isHudEditMode ? "pointer-events-none" : ""}`}>
           {renderWidget(widget.type)}
         </div>
       </div>
@@ -887,7 +887,7 @@ export function HudCommandCenter({
               }}
             >
               <div
-                className="adhdice-hud-workspace-scrollbar w-full min-w-0 overflow-auto rounded-[1.2rem] border border-white/35 bg-white/[0.2] shadow-[inset_0_1px_0_rgba(255,255,255,0.35)] dark:border-white/10 dark:bg-white/[0.03]"
+                className="adhdice-hud-workspace-scrollbar w-full min-w-0 overflow-auto rounded-[1.2rem] border border-[#ece8f8] bg-[var(--hud-surface)] dark:border-white/10"
                 ref={workspaceScrollRef}
                 style={{
                   height: hudUiState.hudWorkspace.heightPx,

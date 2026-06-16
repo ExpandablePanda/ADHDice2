@@ -104,9 +104,14 @@ type OverlayMode = "actual" | "due" | "energy" | "estimated" | "full" | "link" |
 type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "tags";
 type MetadataPanelId = "actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type ColumnAlignment = "center" | "left" | "right";
-type RowContextMenuState = { left: number; taskId: string; top: number };
+export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
 export type RunningTaskTimer = { baseSeconds: number; pausedAt?: number | null; startedActualSeconds: number; startedAt: number; taskId: string; title: string };
+export type TaskRowContextMenuQuickEditMode = "actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
+export type TaskRowContextMenuQuickEditItem = {
+  label: string;
+  mode: TaskRowContextMenuQuickEditMode;
+};
 export type PrototypeTaskSubtask = {
   children: PrototypeTaskSubtask[];
   id: string;
@@ -189,6 +194,218 @@ function getPrototypeTaskRowKey(task: PrototypeTaskRow) {
     return task.id;
   }
   return `draft-task-${task.createdAt || "undated"}-${task.title || "untitled"}`;
+}
+
+export function buildTaskRowContextMenuState(
+  containerElement: HTMLElement | null,
+  taskId: string,
+  clientX: number,
+  clientY: number,
+): RowContextMenuState | null {
+  if (!containerElement) {
+    return null;
+  }
+
+  const shellRect = containerElement.getBoundingClientRect();
+  const estimatedMenuWidth = 272;
+  const estimatedMenuHeight = 360;
+  const gutter = 18;
+  const left = Math.min(
+    Math.max(gutter, clientX - shellRect.left),
+    Math.max(gutter, shellRect.width - estimatedMenuWidth - gutter),
+  );
+  const top = Math.min(
+    Math.max(gutter, clientY - shellRect.top),
+    Math.max(gutter, shellRect.height - estimatedMenuHeight - gutter),
+  );
+
+  return { left, taskId, top };
+}
+
+type TaskRowContextMenuProps = {
+  allowInlineInspector?: boolean;
+  enableInspector?: boolean;
+  hasBatchQuickEdit?: boolean;
+  isTaskSelected?: boolean;
+  menu: RowContextMenuState;
+  onClearSelection?: () => void;
+  onDeleteTask?: () => void;
+  onDismiss: () => void;
+  onDuplicateTask?: () => void;
+  onEditTask?: () => void;
+  onOpenDetails?: (sourceElement?: HTMLElement | null) => void;
+  onOpenHistory?: () => void;
+  onOpenQuickEdit?: (mode: TaskRowContextMenuQuickEditMode, sourceElement?: HTMLElement | null) => void;
+  onOpenTimeLog?: () => void;
+  onRestoreTask?: () => void;
+  onSelectAllVisible?: () => void;
+  onToggleTaskSelection?: () => void;
+  quickEditItems?: TaskRowContextMenuQuickEditItem[];
+  quickEditTitle?: string;
+  selectedTaskCount: number;
+  task: Pick<PrototypeTaskRow, "id" | "status" | "title">;
+};
+
+export function TaskRowContextMenu({
+  allowInlineInspector,
+  enableInspector,
+  hasBatchQuickEdit = false,
+  isTaskSelected = false,
+  menu,
+  onClearSelection,
+  onDeleteTask,
+  onDismiss,
+  onDuplicateTask,
+  onEditTask,
+  onOpenDetails,
+  onOpenHistory,
+  onOpenQuickEdit,
+  onOpenTimeLog,
+  onRestoreTask,
+  onSelectAllVisible,
+  onToggleTaskSelection,
+  quickEditItems = [],
+  quickEditTitle = "Quick edit",
+  selectedTaskCount,
+  task,
+}: TaskRowContextMenuProps) {
+  return (
+    <div
+      className="absolute inset-0 z-40"
+      onClick={onDismiss}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <div
+        className="absolute w-[17rem] rounded-[1.35rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_24px_70px_rgba(111,87,246,0.18)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95"
+        onClick={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.preventDefault()}
+        style={{ left: menu.left, top: menu.top }}
+      >
+        <div className="border-b border-[#f0ebfb] px-2 pb-2 dark:border-white/10">
+          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
+            Task actions
+          </p>
+          <p className={`${UNIFIED_TABLE_TEXT_CLASS} mt-1 truncate text-[#2f294a] dark:text-white`}>
+            {task.title}
+          </p>
+        </div>
+
+        <div className="space-y-1 px-1 py-2">
+          {(enableInspector || onOpenDetails) ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={(event) => onOpenDetails?.(event.currentTarget)}
+            >
+              <span>Open details</span>
+            </TaskTableChipButton>
+          ) : null}
+          {onEditTask ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onEditTask()}
+            >
+              <span>Edit task</span>
+            </TaskTableChipButton>
+          ) : null}
+          {onDuplicateTask ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onDuplicateTask()}
+            >
+              <span>Duplicate task</span>
+              <Copy className="h-3.5 w-3.5" />
+            </TaskTableChipButton>
+          ) : null}
+          {onOpenHistory ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onOpenHistory()}
+            >
+              <span>Open history</span>
+              <CalendarDays className="h-3.5 w-3.5" />
+            </TaskTableChipButton>
+          ) : null}
+          {onOpenTimeLog ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onOpenTimeLog()}
+            >
+              <span>Open time log</span>
+              <Clock3 className="h-3.5 w-3.5" />
+            </TaskTableChipButton>
+          ) : null}
+          {onToggleTaskSelection ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onToggleTaskSelection()}
+            >
+              <span>{isTaskSelected ? "Deselect task" : "Select task"}</span>
+            </TaskTableChipButton>
+          ) : null}
+          {onSelectAllVisible ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onSelectAllVisible()}
+            >
+              <span>Select all visible</span>
+            </TaskTableChipButton>
+          ) : null}
+          {selectedTaskCount > 0 && onClearSelection ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onClearSelection()}
+            >
+              <span>Clear selection</span>
+            </TaskTableChipButton>
+          ) : null}
+          {onDeleteTask ? (
+            <>
+              {(task.status === "archived" || task.status === "trashed") && onRestoreTask ? (
+                <TaskTableChipButton
+                  className="w-full justify-between gap-2"
+                  onClick={() => onRestoreTask()}
+                >
+                  <span>Restore to inbox</span>
+                  <MoveLeft className="h-3.5 w-3.5" />
+                </TaskTableChipButton>
+              ) : null}
+              <TaskTableChipButton
+                className="w-full justify-between gap-2"
+                toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+                onClick={() => onDeleteTask()}
+              >
+                <span>{task.status === "trashed" ? "Delete permanently" : "Move to trash"}</span>
+                <Trash2 className="h-3.5 w-3.5" />
+              </TaskTableChipButton>
+            </>
+          ) : null}
+        </div>
+
+        {(enableInspector || allowInlineInspector) && onOpenQuickEdit && quickEditItems.length > 0 ? (
+          <div className="border-t border-[#f0ebfb] px-1 pt-2 dark:border-white/10">
+            <p className="px-2 pb-2 text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
+              {quickEditTitle}
+            </p>
+            {hasBatchQuickEdit ? (
+              <p className="px-2 pb-2 text-[11px] leading-5 text-[#8d87a7] dark:text-white/45">
+                Status, due, estimate, priority, energy, repeat, lists, and tags apply to all selected. Actual, link, and notes stay single-task.
+              </p>
+            ) : null}
+            <div className="flex flex-wrap gap-2 px-1 pb-1">
+              {quickEditItems.map((item) => (
+                <TaskTableChipButton
+                  key={item.mode}
+                  onClick={(event) => onOpenQuickEdit(item.mode, event.currentTarget)}
+                >
+                  {item.label}
+                </TaskTableChipButton>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function filterPrototypeSubtasks(
@@ -3682,25 +3899,12 @@ export function TaskManagementTableV2({
   }
 
   function openRowContextMenu(taskId: string, clientX: number, clientY: number) {
-    if (!shellRef.current) {
+    const nextMenu = buildTaskRowContextMenuState(shellRef.current, taskId, clientX, clientY);
+    if (!nextMenu) {
       return;
     }
-
-    const shellRect = shellRef.current.getBoundingClientRect();
-    const estimatedMenuWidth = 272;
-    const estimatedMenuHeight = 360;
-    const gutter = 18;
-    const left = Math.min(
-      Math.max(gutter, clientX - shellRect.left),
-      Math.max(gutter, shellRect.width - estimatedMenuWidth - gutter),
-    );
-    const top = Math.min(
-      Math.max(gutter, clientY - shellRect.top),
-      Math.max(gutter, shellRect.height - estimatedMenuHeight - gutter),
-    );
-
     setOpenColumnMenuId(null);
-    setRowContextMenu({ left, taskId, top });
+    setRowContextMenu(nextMenu);
   }
 
   function toggleColumnMenu(columnId: SortColumnId, triggerElement: HTMLElement) {
@@ -4911,183 +5115,72 @@ export function TaskManagementTableV2({
         ) : null}
 
         {rowContextMenu && rowContextMenuTask ? (
-          <div
-            className="absolute inset-0 z-40"
-            onClick={() => setRowContextMenu(null)}
-            onContextMenu={(event) => event.preventDefault()}
-          >
-            <div
-              className="absolute w-[17rem] rounded-[1.35rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_24px_70px_rgba(111,87,246,0.18)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95"
-              onClick={(event) => event.stopPropagation()}
-              onContextMenu={(event) => event.preventDefault()}
-              ref={rowContextMenuRef}
-              style={{ left: rowContextMenu.left, top: rowContextMenu.top }}
-            >
-              <div className="border-b border-[#f0ebfb] px-2 pb-2 dark:border-white/10">
-                <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-                  Task actions
-                </p>
-                <p className={`${UNIFIED_TABLE_TEXT_CLASS} mt-1 truncate text-[#2f294a] dark:text-white`}>
-                  {rowContextMenuTask.title}
-                </p>
-              </div>
-
-              <div className="space-y-1 px-1 py-2">
-                {(enableInspector || onRowClick) ? (
-                  <TaskTableChipButton
-                    className="w-full justify-between gap-2"
-                    onClick={(event) => openTaskDetailsFromContextMenu(rowContextMenuTask.id, event.currentTarget)}
-                  >
-                    <span>Open details</span>
-                  </TaskTableChipButton>
-                ) : null}
-                {onOpenTaskEditor ? (
-                  <TaskTableChipButton
-                    className="w-full justify-between gap-2"
-                    onClick={() => {
-                      setRowContextMenu(null);
-                      onOpenTaskEditor(rowContextMenuTask.id);
-                    }}
-                  >
-                    <span>Edit task</span>
-                  </TaskTableChipButton>
-                ) : null}
-                {onDuplicateTask ? (
-                  <TaskTableChipButton
-                    className="w-full justify-between gap-2"
-                    onClick={() => {
-                      setRowContextMenu(null);
-                      onDuplicateTask(rowContextMenuTask.id);
-                    }}
-                  >
-                    <span>Duplicate task</span>
-                    <Copy className="h-3.5 w-3.5" />
-                  </TaskTableChipButton>
-                ) : null}
-                {onOpenTaskHistory ? (
-                  <TaskTableChipButton
-                    className="w-full justify-between gap-2"
-                    onClick={() => {
-                      setRowContextMenu(null);
-                      onOpenTaskHistory(rowContextMenuTask.id);
-                    }}
-                  >
-                    <span>Open history</span>
-                    <CalendarDays className="h-3.5 w-3.5" />
-                  </TaskTableChipButton>
-                ) : null}
-                {onOpenTaskActualTime ? (
-                  <TaskTableChipButton
-                    className="w-full justify-between gap-2"
-                    onClick={() => {
-                      setRowContextMenu(null);
-                      openActualTimeEntryForTask(rowContextMenuTask.id);
-                    }}
-                  >
-                    <span>Open time log</span>
-                    <Clock3 className="h-3.5 w-3.5" />
-                  </TaskTableChipButton>
-                ) : null}
-                {onToggleTaskSelection ? (
-                  <TaskTableChipButton
-                    className="w-full justify-between gap-2"
-                    onClick={() => {
-                      onToggleTaskSelection(rowContextMenuTask.id, {
-                        additive: true,
-                        visibleTaskIds,
-                      });
-                      setRowContextMenu(null);
-                    }}
-                  >
-                    <span>{selectedTaskIdSet.has(rowContextMenuTask.id) ? "Deselect task" : "Select task"}</span>
-                  </TaskTableChipButton>
-                ) : null}
-                {onSelectAllVisible ? (
-                  <TaskTableChipButton
-                    className="w-full justify-between gap-2"
-                    onClick={() => {
-                      onSelectAllVisible(visibleTaskIds);
-                      setRowContextMenu(null);
-                    }}
-                  >
-                    <span>Select all visible</span>
-                  </TaskTableChipButton>
-                ) : null}
-                {selectedTaskIds.length > 0 && onClearSelection ? (
-                  <TaskTableChipButton
-                    className="w-full justify-between gap-2"
-                    onClick={() => {
-                      onClearSelection();
-                      setRowContextMenu(null);
-                    }}
-                  >
-                    <span>Clear selection</span>
-                  </TaskTableChipButton>
-                ) : null}
-                {onOpenDeleteTask ? (
-                  <>
-                    {(rowContextMenuTask.status === "archived" || rowContextMenuTask.status === "trashed") && onRestoreTask ? (
-                      <TaskTableChipButton
-                        className="w-full justify-between gap-2"
-                        onClick={() => {
-                          setRowContextMenu(null);
-                          onRestoreTask(rowContextMenuTask.id);
-                        }}
-                      >
-                        <span>Restore to inbox</span>
-                        <MoveLeft className="h-3.5 w-3.5" />
-                      </TaskTableChipButton>
-                    ) : null}
-                  <TaskTableChipButton
-                    className="w-full justify-between gap-2"
-                    toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
-                    onClick={() => {
-                      setRowContextMenu(null);
-                      onOpenDeleteTask(rowContextMenuTask.id);
-                    }}
-                  >
-                    <span>{rowContextMenuTask.status === "trashed" ? "Delete permanently" : "Move to trash"}</span>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </TaskTableChipButton>
-                  </>
-                ) : null}
-              </div>
-
-              {(enableInspector || allowInlineInspector) ? (
-                <div className="border-t border-[#f0ebfb] px-1 pt-2 dark:border-white/10">
-                  <p className="px-2 pb-2 text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-                    {rowContextMenuHasBatchQuickEdit ? `Quick edit ${rowContextMenuQuickEditTargetIds.length} selected tasks` : "Quick edit"}
-                  </p>
-                  {rowContextMenuHasBatchQuickEdit ? (
-                    <p className="px-2 pb-2 text-[11px] leading-5 text-[#8d87a7] dark:text-white/45">
-                      Status, due, estimate, priority, energy, repeat, lists, and tags apply to all selected. Actual, link, and notes stay single-task.
-                    </p>
-                  ) : null}
-                  <div className="flex flex-wrap gap-2 px-1 pb-1">
-                    {[
-                      { label: "Status", mode: "status" },
-                      { label: "Due", mode: "due" },
-                      { label: "Estimate", mode: "estimated" },
-                      { label: "Actual", mode: "actual" },
-                      { label: "Priority", mode: "priority" },
-                      { label: "Energy", mode: "energy" },
-                      { label: "Repeat", mode: "repeat" },
-                      { label: "Lists", mode: "lists" },
-                      { label: "Tags", mode: "tags" },
-                      { label: "Link", mode: "link" },
-                      { label: "Notes", mode: "notes" },
-                    ].map((item) => (
-                      <TaskTableChipButton
-                        key={item.mode}
-                        onClick={(event) => openTaskOverlayFromContextMenu(rowContextMenuTask.id, item.mode as OverlayMode, event.currentTarget)}
-                      >
-                        {item.label}
-                      </TaskTableChipButton>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
+          <div ref={rowContextMenuRef}>
+            <TaskRowContextMenu
+              allowInlineInspector={allowInlineInspector}
+              enableInspector={enableInspector}
+              hasBatchQuickEdit={rowContextMenuHasBatchQuickEdit}
+              isTaskSelected={selectedTaskIdSet.has(rowContextMenuTask.id)}
+              menu={rowContextMenu}
+              onClearSelection={onClearSelection ? () => {
+                onClearSelection();
+                setRowContextMenu(null);
+              } : undefined}
+              onDeleteTask={onOpenDeleteTask ? () => {
+                setRowContextMenu(null);
+                onOpenDeleteTask(rowContextMenuTask.id);
+              } : undefined}
+              onDismiss={() => setRowContextMenu(null)}
+              onDuplicateTask={onDuplicateTask ? () => {
+                setRowContextMenu(null);
+                onDuplicateTask(rowContextMenuTask.id);
+              } : undefined}
+              onEditTask={onOpenTaskEditor ? () => {
+                setRowContextMenu(null);
+                onOpenTaskEditor(rowContextMenuTask.id);
+              } : undefined}
+              onOpenDetails={(sourceElement) => openTaskDetailsFromContextMenu(rowContextMenuTask.id, sourceElement)}
+              onOpenHistory={onOpenTaskHistory ? () => {
+                setRowContextMenu(null);
+                onOpenTaskHistory(rowContextMenuTask.id);
+              } : undefined}
+              onOpenQuickEdit={(mode, sourceElement) => openTaskOverlayFromContextMenu(rowContextMenuTask.id, mode as OverlayMode, sourceElement)}
+              onOpenTimeLog={onOpenTaskActualTime ? () => {
+                setRowContextMenu(null);
+                openActualTimeEntryForTask(rowContextMenuTask.id);
+              } : undefined}
+              onRestoreTask={onRestoreTask ? () => {
+                setRowContextMenu(null);
+                onRestoreTask(rowContextMenuTask.id);
+              } : undefined}
+              onSelectAllVisible={onSelectAllVisible ? () => {
+                onSelectAllVisible(visibleTaskIds);
+                setRowContextMenu(null);
+              } : undefined}
+              onToggleTaskSelection={onToggleTaskSelection ? () => {
+                onToggleTaskSelection(rowContextMenuTask.id, {
+                  additive: true,
+                  visibleTaskIds,
+                });
+                setRowContextMenu(null);
+              } : undefined}
+              quickEditItems={[
+                { label: "Status", mode: "status" },
+                { label: "Due", mode: "due" },
+                { label: "Estimate", mode: "estimated" },
+                { label: "Actual", mode: "actual" },
+                { label: "Priority", mode: "priority" },
+                { label: "Energy", mode: "energy" },
+                { label: "Repeat", mode: "repeat" },
+                { label: "Lists", mode: "lists" },
+                { label: "Tags", mode: "tags" },
+                { label: "Link", mode: "link" },
+                { label: "Notes", mode: "notes" },
+              ]}
+              quickEditTitle={rowContextMenuHasBatchQuickEdit ? `Quick edit ${rowContextMenuQuickEditTargetIds.length} selected tasks` : "Quick edit"}
+              selectedTaskCount={selectedTaskIds.length}
+              task={rowContextMenuTask}
+            />
           </div>
         ) : null}
 

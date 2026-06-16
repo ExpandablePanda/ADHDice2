@@ -85,6 +85,7 @@ export function useProfileStore() {
 
 export function saveProfile(profile: UserProfile) {
   if (typeof window === "undefined") return;
+  if (profilesEqual(cachedProfileSnapshot, profile)) return;
   cachedProfileSnapshot = profile;
   window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
   window.dispatchEvent(new Event(PROFILE_STORAGE_KEY));

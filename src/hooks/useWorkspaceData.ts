@@ -90,6 +90,10 @@ function shouldLoadSecondaryForPage(activePage: AppPage) {
 const TASK_RESUME_SYNC_DEBOUNCE_MS = 450;
 const TASK_RESUME_SYNC_COOLDOWN_MS = 1500;
 
+function keepCurrentIfStructurallyEqual<T>(current: T, next: T) {
+  return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+}
+
 export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   activePage,
   currentUser,
@@ -213,7 +217,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           }
 
           startTransition(() => {
-            setTasks(taskResult.data ?? []);
+            const nextTasks = taskResult.data ?? [];
+            setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
           });
         } while (queuedTaskReloadRef.current && isActive);
       } finally {
@@ -356,10 +361,13 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       const nextFocusHistory = mergeStoredFocusHistory((historyResult.data ?? []).map((row) => mapFocusSessionRow(row)));
-      setTaskHistory((taskHistoryResult.data ?? []).map(mapTaskHistoryRow));
-      setTaskActualTimeEntries(taskActualTimeEntriesResult.data ?? []);
-      setAvailableTaskNotes((noteResult.data ?? []) as TaskEditorLinkedNote[]);
-      setFocusHistory(nextFocusHistory);
+      const nextTaskHistory = (taskHistoryResult.data ?? []).map(mapTaskHistoryRow);
+      const nextTaskActualTimeEntries = taskActualTimeEntriesResult.data ?? [];
+      const nextAvailableTaskNotes = (noteResult.data ?? []) as TaskEditorLinkedNote[];
+      setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, nextTaskHistory));
+      setTaskActualTimeEntries((current) => keepCurrentIfStructurallyEqual(current, nextTaskActualTimeEntries));
+      setAvailableTaskNotes((current) => keepCurrentIfStructurallyEqual(current, nextAvailableTaskNotes));
+      setFocusHistory((current) => keepCurrentIfStructurallyEqual(current, nextFocusHistory));
       saveFocusHistory(nextFocusHistory);
       hasLoadedSecondaryDataRef.current = true;
     }
@@ -446,19 +454,21 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
-      setIsWorkspaceLoading(false);
       startTransition(() => {
-        setTasks(taskResult.data ?? []);
-        setTaskSubtasks(nextTaskSubtasks);
+        const nextTasks = taskResult.data ?? [];
+        setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
+        setTaskSubtasks((current) => keepCurrentIfStructurallyEqual(current, nextTaskSubtasks));
         onProfileLoaded(profileResult.data ?? null, user);
         if (profileResult.data) {
-          setEconomy({
+          const nextEconomy = {
             level: profileResult.data.level ?? 1,
             xp: profileResult.data.xp ?? 0,
             points: profileResult.data.points ?? 0,
             tokens: profileResult.data.tokens ?? 0,
-          });
+          };
+          setEconomy((current) => keepCurrentIfStructurallyEqual(current, nextEconomy));
         }
+        setIsWorkspaceLoading(false);
       });
 
       if (process.env.NODE_ENV !== "production") {
@@ -562,13 +572,13 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         }
       }
 
-      setFocusCategories(nextCategories);
-      setActiveSessions(nextActiveSessions);
-      setFocusHistory(nextFocusHistory);
-      setFocusedTaskIdsByDate(nextFocusedTaskIdsByDate);
-      setTaskLists(nextTaskLists);
-      setTaskListManualMemberships(nextTaskListManualMemberships);
-      setTaskGridLayout(nextTaskGridLayout);
+      setFocusCategories((current) => keepCurrentIfStructurallyEqual(current, nextCategories));
+      setActiveSessions((current) => keepCurrentIfStructurallyEqual(current, nextActiveSessions));
+      setFocusHistory((current) => keepCurrentIfStructurallyEqual(current, nextFocusHistory));
+      setFocusedTaskIdsByDate((current) => keepCurrentIfStructurallyEqual(current, nextFocusedTaskIdsByDate));
+      setTaskLists((current) => keepCurrentIfStructurallyEqual(current, nextTaskLists));
+      setTaskListManualMemberships((current) => keepCurrentIfStructurallyEqual(current, nextTaskListManualMemberships));
+      setTaskGridLayout((current) => keepCurrentIfStructurallyEqual(current, nextTaskGridLayout));
       saveFocusCategories(nextCategories);
       saveFocusHistory(nextFocusHistory);
 
@@ -597,8 +607,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       taskResumeSyncInFlightRef.current = true;
-      setIsSoftWorkspaceRefreshing(true);
-      if (source === "resume" || source === "mutation") {
+      const shouldExposeRefreshState = source !== "resume";
+      if (shouldExposeRefreshState) {
+        setIsSoftWorkspaceRefreshing(true);
+      }
+      if (source === "mutation") {
         setIsTaskResumeSyncPending(true);
       }
 
@@ -612,7 +625,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       } finally {
         taskResumeSyncInFlightRef.current = false;
         taskResumeSyncQueuedRef.current = false;
-        setIsSoftWorkspaceRefreshing(false);
+        if (shouldExposeRefreshState) {
+          setIsSoftWorkspaceRefreshing(false);
+        }
         setIsTaskResumeSyncPending(false);
       }
     }
@@ -663,16 +678,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       scheduleTaskResumeSync();
     }
 
-    function handlePageHide() {
-      taskResumeSyncQueuedRef.current = true;
-      setIsTaskResumeSyncPending(true);
-    }
-
     document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
     window.addEventListener("pageshow", handlePageShow);
     window.addEventListener("focus", handleWindowFocus);
     window.addEventListener("online", handleWindowOnline);
-    window.addEventListener("pagehide", handlePageHide);
 
     const workspaceChannel = client
       .channel(`adhdice_workspace:${userId}`)
@@ -812,7 +821,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       window.removeEventListener("pageshow", handlePageShow);
       window.removeEventListener("focus", handleWindowFocus);
       window.removeEventListener("online", handleWindowOnline);
-      window.removeEventListener("pagehide", handlePageHide);
       if (taskResumeSyncTimeoutRef.current !== null) {
         window.clearTimeout(taskResumeSyncTimeoutRef.current);
         taskResumeSyncTimeoutRef.current = null;
