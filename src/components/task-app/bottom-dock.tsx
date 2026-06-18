@@ -100,6 +100,8 @@ export function BottomDockComponent<TPage extends string>({
     return clampBubblePos(rect.left + rect.width / 2 - 32, rect.top + rect.height / 2 - 32);
   };
 
+  const renderedDockPlacement: DockPlacement = dockPlacement;
+
   const openPlacementMenu = () => {
     const fallback = { left: 16, top: 16 };
     if (!collapseButtonRef.current || typeof window === "undefined") {
@@ -113,12 +115,12 @@ export function BottomDockComponent<TPage extends string>({
     const menuHeight = 150;
     const gap = 12;
     const left =
-      dockPlacement === "left"
+      renderedDockPlacement === "left"
         ? rect.right + gap
-        : dockPlacement === "right"
+        : renderedDockPlacement === "right"
           ? rect.left - menuWidth - gap
           : rect.right - menuWidth;
-    const top = dockPlacement === "bottom" ? rect.top - menuHeight - gap : rect.top;
+    const top = renderedDockPlacement === "bottom" ? rect.top - menuHeight - gap : rect.top;
 
     setPlacementMenuPos({
       left: Math.min(window.innerWidth - menuWidth - 12, Math.max(12, left)),
@@ -219,20 +221,20 @@ export function BottomDockComponent<TPage extends string>({
     );
   }
 
-  const isVertical = dockPlacement !== "bottom";
-  const dockPositionClass = dockPlacement === "bottom"
+  const isVertical = renderedDockPlacement !== "bottom";
+  const dockPositionClass = renderedDockPlacement === "bottom"
     ? "fixed inset-x-0 z-10 px-4"
-    : dockPlacement === "left"
+    : renderedDockPlacement === "left"
       ? "fixed left-4 top-4 bottom-4 z-10 flex items-center"
       : "fixed right-4 top-4 bottom-4 z-10 flex items-center";
-  const dockPositionStyle = dockPlacement === "bottom"
+  const dockPositionStyle = renderedDockPlacement === "bottom"
     ? { bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }
     : undefined;
-  const dockShapeClass = dockPlacement === "bottom"
+  const dockShapeClass = renderedDockPlacement === "bottom"
     ? "adhdice-scrollbar mx-auto flex w-fit max-w-full items-center gap-[3px] rounded-[1.75rem] px-[3px] py-1 overflow-x-auto sm:overflow-x-visible touch-pan-x"
     : "adhdice-scrollbar flex max-h-full w-[5rem] flex-col items-center gap-1 overflow-y-auto rounded-[2rem] px-2 py-3";
   const collapsingStyle = isDockCollapsing
-    ? dockPlacement === "bottom"
+    ? renderedDockPlacement === "bottom"
       ? { maxWidth: "4rem", width: "4rem", height: "4rem", borderRadius: "9999px", padding: "0" }
       : { width: "4rem", height: "4rem", borderRadius: "9999px", padding: "0" }
     : undefined;
