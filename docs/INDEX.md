@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last reviewed: 2026-06-04
+Last reviewed: 2026-06-18
 
 This file is the documentation map for the ADHDice repo. Use it to decide which markdown files are current source of truth, which are working context, and which are supporting or historical only.
 
@@ -27,6 +27,7 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - `docs/ADHDICE_BUILD_BRIEF.md` - Active product-direction brief and target feature map.
 - `docs/CURRENT_STATE.md` - Current stabilization state, known bugs, fragile areas, performance watchpoints, and next priorities.
 - `docs/MANUAL_QA_CHECKLIST.md` - Repeatable manual browser smoke-test checklist for post-change QA and pre-deploy checks.
+- `docs/task-hierarchy-plan.md` - Active decision record and rollout plan for same-table child-task hierarchy and legacy subtask bridge work.
 
 ## Tooling/generated docs
 

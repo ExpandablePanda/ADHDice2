@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTask } from "../src/lib/task-buckets.ts";
+import { buildChildTaskCreationDraft } from "../src/lib/task-child-creation.ts";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "../src/lib/task-filter-state.ts";
 import {
   formatDueTimeLabel,
@@ -32,6 +33,7 @@ import {
   updateTaskRowWithLegacyEnergyFallback,
 } from "../src/lib/task-db-mutations.ts";
 import {
+  buildTaskHierarchyAdapter,
   buildTaskTree,
   detectTaskHierarchyIssues,
   getTaskAncestors,
@@ -41,6 +43,12 @@ import {
   isTopLevelTask,
   sortTaskSiblings,
 } from "../src/lib/task-hierarchy.ts";
+import {
+  buildChildTaskPreviewLookup,
+  buildTaskPrimaryVisibility,
+  buildTaskHierarchyDiagnostics,
+  computeTaskAppDerivedData,
+} from "../src/lib/task-app-derived.ts";
 import { buildTaskCollections } from "../src/lib/task-selectors.ts";
 import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
 import { buildTaskListCounts, getBuiltInTaskLists } from "../src/lib/task-lists.ts";
@@ -50,6 +58,48 @@ import {
   getPendingRewardDiceCount,
   resolveTaskRewardTier,
 } from "../src/lib/task-rewards.ts";
+
+function computeDerivedForHierarchyDiagnostics(
+  tasks: ReturnType<typeof createTask>[],
+  overrides: Partial<{
+    deferredSearchQuery: string;
+    taskActualTimeEntryTaskId: string | null;
+    taskEditorTaskId: string | null;
+  }> = {},
+) {
+  return computeTaskAppDerivedData({
+    activePage: "Tasks",
+    availableTaskLists: getBuiltInTaskLists(),
+    availableTaskNotes: [],
+    bucketContext: {
+      focusedTaskIds: new Set<string>(),
+      routing: {},
+    },
+    deferredSearchQuery: overrides.deferredSearchQuery ?? "",
+    focusedTaskIds: [],
+    listColumnPickerOrder: [],
+    listVisibleColumns: [],
+    taskActualTimeEntryTaskId: overrides.taskActualTimeEntryTaskId ?? null,
+    taskEditorTaskId: overrides.taskEditorTaskId ?? null,
+    taskGridLayout: [],
+    taskGridWidgetTypes: [],
+    taskListEvaluationContext: {
+      currentStreakByTaskId: {},
+      focusedTaskIds: new Set<string>(),
+      hasStepsByTaskId: {},
+      historyFactsByTaskId: {},
+      isDueToday: (date) => date === "2026-06-18",
+      isDueTomorrow: () => false,
+      isLater: () => false,
+      isOpen: (task) => task.status === "pending" || task.status === "in_progress",
+      isOverdue: () => false,
+      manualMembershipsByTaskId: {},
+    },
+    taskSubtasksByTaskId: {},
+    taskUiState: DEFAULT_TASK_UI_STATE,
+    tasks,
+  });
+}
 
 test("filter state helpers detect active filters and preserve key UI state on reset", () => {
   const activeState = {
@@ -489,6 +539,846 @@ test("task hierarchy helpers identify roots, children, ancestry, descendants, an
     issues.filter((issue) => issue.type === "circular_parent").map((issue) => issue.taskId),
     ["cycle-a", "cycle-b"],
   );
+});
+
+test("read-only task hierarchy adapter classifies flat tasks as top-level without mutating input", () => {
+  const tasks = [
+    createTask({
+      created_at: "2026-06-18T08:00:00.000Z",
+      id: "flat-b",
+      sort_order: 2,
+      status: "pending",
+      title: "Flat B",
+    }),
+    createTask({
+      created_at: "2026-06-18T08:01:00.000Z",
+      id: "flat-a",
+      sort_order: 1,
+      status: "pending",
+      title: "Flat A",
+    }),
+  ];
+  const originalOrder = tasks.map((task) => task.id);
+  const originalReferences = [...tasks];
+
+  const adapter = buildTaskHierarchyAdapter(tasks);
+
+  assert.deepEqual(adapter.topLevelTaskIds, ["flat-a", "flat-b"]);
+  assert.deepEqual(adapter.childTaskIds, []);
+  assert.deepEqual(adapter.rootNodes.map((node) => node.task.id), ["flat-a", "flat-b"]);
+  assert.deepEqual(adapter.issues, []);
+  assert.deepEqual(tasks.map((task) => task.id), originalOrder);
+  assert.equal(tasks[0], originalReferences[0]);
+  assert.equal(tasks[1], originalReferences[1]);
+});
+
+test("read-only task hierarchy adapter detects children, grandchildren, depth, chains, descendants, and sorted siblings", () => {
+  const tasks = [
+    createTask({
+      created_at: "2026-06-18T08:00:00.000Z",
+      id: "root",
+      sort_order: 0,
+      status: "pending",
+      title: "Root",
+    }),
+    createTask({
+      created_at: "2026-06-18T08:05:00.000Z",
+      id: "child-b",
+      parent_task_id: "root",
+      sort_order: 20,
+      status: "pending",
+      title: "Child B",
+    }),
+    createTask({
+      created_at: "2026-06-18T08:04:00.000Z",
+      id: "child-a",
+      parent_task_id: "root",
+      sort_order: 10,
+      status: "pending",
+      title: "Child A",
+    }),
+    createTask({
+      created_at: "2026-06-18T08:06:00.000Z",
+      id: "grandchild",
+      parent_task_id: "child-b",
+      sort_order: 1,
+      status: "pending",
+      title: "Grandchild",
+    }),
+  ];
+
+  const adapter = buildTaskHierarchyAdapter(tasks);
+
+  assert.deepEqual(adapter.topLevelTaskIds, ["root"]);
+  assert.deepEqual(adapter.childTaskIds, ["grandchild", "child-a", "child-b"]);
+  assert.deepEqual(adapter.validChildTaskIds, ["grandchild", "child-a", "child-b"]);
+  assert.deepEqual(adapter.getChildren("root").map((task) => task.id), ["child-a", "child-b"]);
+  assert.deepEqual((adapter.childrenByParentId.get("root") ?? []).map((task) => task.id), ["child-a", "child-b"]);
+  assert.deepEqual(adapter.getDescendants("root").map((task) => task.id), ["child-a", "child-b", "grandchild"]);
+  assert.deepEqual(adapter.getParentChain("grandchild").map((task) => task.id), ["child-b", "root"]);
+  assert.equal(adapter.getParent("grandchild")?.id, "child-b");
+  assert.equal(adapter.getDepth("root"), 0);
+  assert.equal(adapter.getDepth("child-b"), 1);
+  assert.equal(adapter.getDepth("grandchild"), 2);
+  assert.equal(adapter.getNode("grandchild")?.depth, 2);
+  assert.deepEqual(adapter.rootNodes.map((node) => node.task.id), ["root"]);
+  assert.deepEqual(adapter.rootNodes[0]?.children.map((node) => node.task.id), ["child-a", "child-b"]);
+});
+
+test("read-only task hierarchy adapter classifies missing parents as orphans instead of normal children", () => {
+  const orphan = createTask({
+    created_at: "2026-06-18T08:00:00.000Z",
+    id: "orphan",
+    parent_task_id: "missing-parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Orphan",
+  });
+
+  const adapter = buildTaskHierarchyAdapter([orphan]);
+
+  assert.deepEqual(adapter.topLevelTaskIds, []);
+  assert.deepEqual(adapter.childTaskIds, ["orphan"]);
+  assert.deepEqual(adapter.validChildTaskIds, []);
+  assert.deepEqual(adapter.orphanTaskIds, ["orphan"]);
+  assert.deepEqual(adapter.orphans.map((entry) => entry.missingParentTaskId), ["missing-parent"]);
+  assert.equal(adapter.getParent("orphan"), null);
+  assert.equal(adapter.getDepth("orphan"), null);
+  assert.deepEqual(adapter.rootNodes.map((node) => node.task.id), ["orphan"]);
+  assert.deepEqual(adapter.rootNodes[0]?.issueTypes, ["missing_parent"]);
+  assert.deepEqual((adapter.rawChildrenByParentId.get("missing-parent") ?? []).map((task) => task.id), ["orphan"]);
+  assert.equal(adapter.childrenByParentId.has("missing-parent"), false);
+});
+
+test("read-only task hierarchy adapter detects simple and longer cycles without infinite traversal", () => {
+  const simpleCycleA = createTask({
+    created_at: "2026-06-18T08:00:00.000Z",
+    id: "simple-a",
+    parent_task_id: "simple-b",
+    sort_order: 1,
+    status: "pending",
+    title: "Simple A",
+  });
+  const simpleCycleB = createTask({
+    created_at: "2026-06-18T08:01:00.000Z",
+    id: "simple-b",
+    parent_task_id: "simple-a",
+    sort_order: 2,
+    status: "pending",
+    title: "Simple B",
+  });
+  const longCycleA = createTask({
+    created_at: "2026-06-18T08:02:00.000Z",
+    id: "long-a",
+    parent_task_id: "long-c",
+    sort_order: 3,
+    status: "pending",
+    title: "Long A",
+  });
+  const longCycleB = createTask({
+    created_at: "2026-06-18T08:03:00.000Z",
+    id: "long-b",
+    parent_task_id: "long-a",
+    sort_order: 4,
+    status: "pending",
+    title: "Long B",
+  });
+  const longCycleC = createTask({
+    created_at: "2026-06-18T08:04:00.000Z",
+    id: "long-c",
+    parent_task_id: "long-b",
+    sort_order: 5,
+    status: "pending",
+    title: "Long C",
+  });
+
+  const adapter = buildTaskHierarchyAdapter([
+    simpleCycleA,
+    simpleCycleB,
+    longCycleA,
+    longCycleB,
+    longCycleC,
+  ]);
+
+  assert.deepEqual(
+    adapter.cycles.map((cycle) => cycle.taskId),
+    ["simple-a", "simple-b", "long-a", "long-b", "long-c"],
+  );
+  assert.deepEqual(
+    adapter.cycles.find((cycle) => cycle.taskId === "simple-a")?.taskIds,
+    ["simple-a", "simple-b", "simple-a"],
+  );
+  assert.deepEqual(
+    adapter.cycles.find((cycle) => cycle.taskId === "long-a")?.taskIds,
+    ["long-a", "long-c", "long-b", "long-a"],
+  );
+  assert.equal(adapter.getDepth("simple-a"), null);
+  assert.equal(adapter.getDepth("long-c"), null);
+  assert.deepEqual(adapter.getDescendants("simple-a"), []);
+  assert.deepEqual(adapter.rootNodes.map((node) => node.task.id), ["simple-a", "simple-b", "long-a", "long-b", "long-c"]);
+});
+
+test("read-only task hierarchy adapter does not duplicate valid children as root nodes", () => {
+  const root = createTask({
+    created_at: "2026-06-18T08:00:00.000Z",
+    id: "root",
+    sort_order: 1,
+    status: "pending",
+    title: "Root",
+  });
+  const child = createTask({
+    created_at: "2026-06-18T08:01:00.000Z",
+    id: "child",
+    parent_task_id: root.id,
+    sort_order: 1,
+    status: "pending",
+    title: "Child",
+  });
+  const orphan = createTask({
+    created_at: "2026-06-18T08:02:00.000Z",
+    id: "orphan",
+    parent_task_id: "missing-parent",
+    sort_order: 2,
+    status: "pending",
+    title: "Orphan",
+  });
+
+  const adapter = buildTaskHierarchyAdapter([root, child, orphan]);
+
+  assert.deepEqual(adapter.topLevelTaskIds, ["root"]);
+  assert.deepEqual(adapter.rootNodes.map((node) => node.task.id), ["root", "orphan"]);
+  assert.deepEqual(adapter.rootNodes[0]?.children.map((node) => node.task.id), ["child"]);
+  assert.equal(adapter.rootNodes.some((node) => node.task.id === "child"), false);
+});
+
+test("hierarchy diagnostics classify flat derived tasks as roots without children or invalid links", () => {
+  const tasks = [
+    createTask({
+      created_at: "2026-06-18T08:00:00.000Z",
+      id: "flat-b",
+      sort_order: 2,
+      status: "pending",
+      title: "Flat B",
+    }),
+    createTask({
+      created_at: "2026-06-18T08:01:00.000Z",
+      id: "flat-a",
+      sort_order: 1,
+      status: "pending",
+      title: "Flat A",
+    }),
+  ];
+
+  const diagnostics = buildTaskHierarchyDiagnostics(tasks);
+
+  assert.equal(diagnostics.totalTaskCount, 2);
+  assert.deepEqual(diagnostics.topLevelTaskIds, ["flat-a", "flat-b"]);
+  assert.deepEqual(diagnostics.childTaskIds, []);
+  assert.deepEqual(diagnostics.validChildTaskIds, []);
+  assert.deepEqual(diagnostics.orphanTaskIds, []);
+  assert.deepEqual(diagnostics.cycleTaskIds, []);
+  assert.deepEqual(diagnostics.invalidTaskIds, []);
+  assert.equal(diagnostics.maxDepth, 0);
+  assert.deepEqual(diagnostics.childTaskIdsByParentTaskId, {});
+  assert.deepEqual(diagnostics.rawChildTaskIdsByParentTaskId, {});
+  assert.deepEqual(diagnostics.depthByTaskId, {
+    "flat-a": 0,
+    "flat-b": 0,
+  });
+});
+
+test("primary task visibility keeps roots visible and hides valid descendants", () => {
+  const root = createTask({ id: "root", sort_order: 1, status: "pending", title: "Root" });
+  const child = createTask({
+    id: "child",
+    parent_task_id: "root",
+    sort_order: 1,
+    status: "pending",
+    title: "Child",
+  });
+  const grandchild = createTask({
+    id: "grandchild",
+    parent_task_id: "child",
+    sort_order: 1,
+    status: "pending",
+    title: "Grandchild",
+  });
+
+  const visibility = buildTaskPrimaryVisibility([root, child, grandchild]);
+
+  assert.deepEqual(visibility.primaryVisibleTaskIds, ["root"]);
+  assert.deepEqual(visibility.primaryHiddenChildTaskIds, ["child", "grandchild"]);
+  assert.deepEqual(visibility.orphanTaskIds, []);
+  assert.deepEqual(visibility.cycleTaskIds, []);
+  assert.deepEqual(visibility.invalidTaskIds, []);
+});
+
+test("primary task visibility keeps orphans and invalid cycles findable as primary rows", () => {
+  const root = createTask({ id: "root", sort_order: 1, status: "pending", title: "Root" });
+  const orphan = createTask({
+    id: "orphan",
+    parent_task_id: "missing-parent",
+    sort_order: 2,
+    status: "pending",
+    title: "Orphan",
+  });
+  const cycleA = createTask({
+    id: "cycle-a",
+    parent_task_id: "cycle-b",
+    sort_order: 3,
+    status: "pending",
+    title: "Cycle A",
+  });
+  const cycleB = createTask({
+    id: "cycle-b",
+    parent_task_id: "cycle-a",
+    sort_order: 4,
+    status: "pending",
+    title: "Cycle B",
+  });
+  const selfParent = createTask({
+    id: "self-parent",
+    parent_task_id: "self-parent",
+    sort_order: 5,
+    status: "pending",
+    title: "Self parent",
+  });
+
+  const visibility = buildTaskPrimaryVisibility([root, orphan, cycleA, cycleB, selfParent]);
+
+  assert.deepEqual(visibility.primaryVisibleTaskIds, ["root", "orphan", "cycle-a", "cycle-b", "self-parent"]);
+  assert.deepEqual(visibility.primaryHiddenChildTaskIds, []);
+  assert.deepEqual(visibility.orphanTaskIds, ["orphan"]);
+  assert.deepEqual(visibility.cycleTaskIds, ["cycle-a", "cycle-b"]);
+  assert.deepEqual(visibility.invalidTaskIds, ["orphan", "cycle-a", "cycle-b", "self-parent"]);
+});
+
+test("primary task visibility does not mutate the input task array or task references", () => {
+  const tasks = [
+    createTask({ id: "root", sort_order: 1, status: "pending", title: "Root" }),
+    createTask({
+      id: "child",
+      parent_task_id: "root",
+      sort_order: 1,
+      status: "pending",
+      title: "Child",
+    }),
+  ];
+  const originalTaskSnapshots = tasks.map((task) => ({ ...task }));
+  const originalReferences = [...tasks];
+
+  buildTaskPrimaryVisibility(tasks);
+
+  assert.deepEqual(tasks.map((task) => ({ ...task })), originalTaskSnapshots);
+  assert.equal(tasks[0], originalReferences[0]);
+  assert.equal(tasks[1], originalReferences[1]);
+});
+
+test("hierarchy diagnostics expose child and grandchild depth while primary arrays hide valid descendants", () => {
+  const tasks = [
+    createTask({
+      created_at: "2026-06-18T08:00:00.000Z",
+      id: "root",
+      sort_order: 1,
+      status: "pending",
+      title: "Root",
+    }),
+    createTask({
+      created_at: "2026-06-18T08:01:00.000Z",
+      id: "child",
+      parent_task_id: "root",
+      sort_order: 1,
+      status: "pending",
+      title: "Child",
+    }),
+    createTask({
+      created_at: "2026-06-18T08:02:00.000Z",
+      id: "grandchild",
+      parent_task_id: "child",
+      sort_order: 1,
+      status: "pending",
+      title: "Grandchild",
+    }),
+  ];
+  const derived = computeDerivedForHierarchyDiagnostics(tasks);
+
+  assert.deepEqual(derived.taskHierarchyDiagnostics.topLevelTaskIds, ["root"]);
+  assert.deepEqual(derived.taskHierarchyDiagnostics.childTaskIds, ["child", "grandchild"]);
+  assert.deepEqual(derived.taskHierarchyDiagnostics.validChildTaskIds, ["child", "grandchild"]);
+  assert.deepEqual(derived.taskHierarchyDiagnostics.childTaskIdsByParentTaskId, {
+    child: ["grandchild"],
+    root: ["child"],
+  });
+  assert.equal(derived.taskHierarchyDiagnostics.depthByTaskId.root, 0);
+  assert.equal(derived.taskHierarchyDiagnostics.depthByTaskId.child, 1);
+  assert.equal(derived.taskHierarchyDiagnostics.depthByTaskId.grandchild, 2);
+  assert.equal(derived.taskHierarchyDiagnostics.maxDepth, 2);
+  assert.deepEqual(derived.taskPrimaryVisibility.primaryVisibleTaskIds, ["root"]);
+  assert.deepEqual(derived.taskPrimaryVisibility.primaryHiddenChildTaskIds, ["child", "grandchild"]);
+  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), ["root"]);
+  assert.deepEqual(derived.activeTasks.map((task) => task.id), ["root"]);
+  assert.deepEqual(derived.todayTasks.map((task) => task.id), []);
+  assert.deepEqual(derived.overdueTasks.map((task) => task.id), []);
+  assert.deepEqual(derived.archiveFilteredTasksSorted.map((task) => task.id), []);
+  assert.deepEqual(derived.trashFilteredTasksSorted.map((task) => task.id), []);
+  assert.equal(derived.taskStatusCounts.pending, 1);
+  assert.equal(derived.visibleListCounts.all, undefined);
+  assert.deepEqual(derived.childTaskPreviewByParentTaskId.root.items.map((item) => item.id), ["child", "grandchild"]);
+});
+
+test("hierarchy diagnostics report missing parents while keeping normal derived arrays flat", () => {
+  const root = createTask({
+    created_at: "2026-06-18T08:00:00.000Z",
+    id: "root",
+    sort_order: 1,
+    status: "pending",
+    title: "Root",
+  });
+  const orphan = createTask({
+    created_at: "2026-06-18T08:01:00.000Z",
+    id: "orphan",
+    parent_task_id: "missing-parent",
+    sort_order: 2,
+    status: "pending",
+    title: "Orphan",
+  });
+
+  const derived = computeDerivedForHierarchyDiagnostics([root, orphan]);
+
+  assert.deepEqual(derived.taskHierarchyDiagnostics.orphanTaskIds, ["orphan"]);
+  assert.deepEqual(derived.taskHierarchyDiagnostics.childTaskIds, ["orphan"]);
+  assert.deepEqual(derived.taskHierarchyDiagnostics.validChildTaskIds, []);
+  assert.deepEqual(derived.taskHierarchyDiagnostics.invalidTaskIds, ["orphan"]);
+  assert.deepEqual(derived.taskHierarchyDiagnostics.depthByTaskId, {
+    orphan: null,
+    root: 0,
+  });
+  assert.deepEqual(
+    [...derived.filteredTasksSorted.map((task) => task.id)].sort(),
+    ["orphan", "root"],
+  );
+  assert.deepEqual(
+    [...derived.activeTasks.map((task) => task.id)].sort(),
+    ["orphan", "root"],
+  );
+});
+
+test("primary derived search does not return valid child tasks as standalone rows", () => {
+  const parent = createTask({
+    id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Parent",
+  });
+  const child = createTask({
+    id: "child",
+    parent_task_id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Needle child",
+  });
+
+  const derived = computeDerivedForHierarchyDiagnostics([parent, child], {
+    deferredSearchQuery: "needle",
+  });
+
+  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), []);
+  assert.deepEqual(derived.childTaskPreviewByParentTaskId.parent.items.map((item) => item.id), ["child"]);
+});
+
+test("task editor and actual-time lookup still find primary-hidden child tasks from full task data", () => {
+  const parent = createTask({
+    id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Parent",
+  });
+  const child = createTask({
+    id: "child",
+    parent_task_id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Child",
+  });
+
+  const derived = computeDerivedForHierarchyDiagnostics([parent, child], {
+    taskActualTimeEntryTaskId: "child",
+    taskEditorTaskId: "child",
+  });
+
+  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), ["parent"]);
+  assert.equal(derived.selectedTaskForEditor?.id, "child");
+  assert.equal(derived.taskForActualTimeEntry?.id, "child");
+});
+
+test("archive and trash primary arrays hide valid child tasks while keeping invalid rows findable", () => {
+  const parent = createTask({
+    id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Parent",
+  });
+  const archivedChild = createTask({
+    id: "archived-child",
+    parent_task_id: "parent",
+    sort_order: 1,
+    status: "archived",
+    title: "Archived child",
+  });
+  const trashedChild = createTask({
+    id: "trashed-child",
+    parent_task_id: "parent",
+    sort_order: 2,
+    status: "trashed",
+    title: "Trashed child",
+    trashed_at: new Date().toISOString(),
+  });
+  const archivedOrphan = createTask({
+    id: "archived-orphan",
+    parent_task_id: "missing-parent",
+    sort_order: 3,
+    status: "archived",
+    title: "Archived orphan",
+  });
+  const trashedOrphan = createTask({
+    id: "trashed-orphan",
+    parent_task_id: "missing-parent",
+    sort_order: 4,
+    status: "trashed",
+    title: "Trashed orphan",
+    trashed_at: new Date().toISOString(),
+  });
+
+  const derived = computeDerivedForHierarchyDiagnostics([
+    parent,
+    archivedChild,
+    trashedChild,
+    archivedOrphan,
+    trashedOrphan,
+  ]);
+
+  assert.deepEqual(derived.archiveFilteredTasksSorted.map((task) => task.id), ["archived-orphan"]);
+  assert.deepEqual(derived.trashFilteredTasksSorted.map((task) => task.id), ["trashed-orphan"]);
+  assert.equal(derived.taskStatusCounts.archived, 1);
+  assert.equal(derived.taskStatusCounts.trashed, 1);
+  assert.deepEqual(
+    derived.childTaskPreviewByParentTaskId.parent.items.map((item) => item.id),
+    ["archived-child", "trashed-child"],
+  );
+});
+
+test("hierarchy diagnostics report simple cycles without infinite loops", () => {
+  const cycleA = createTask({
+    created_at: "2026-06-18T08:00:00.000Z",
+    id: "cycle-a",
+    parent_task_id: "cycle-b",
+    sort_order: 1,
+    status: "pending",
+    title: "Cycle A",
+  });
+  const cycleB = createTask({
+    created_at: "2026-06-18T08:01:00.000Z",
+    id: "cycle-b",
+    parent_task_id: "cycle-a",
+    sort_order: 2,
+    status: "pending",
+    title: "Cycle B",
+  });
+
+  const diagnostics = buildTaskHierarchyDiagnostics([cycleA, cycleB]);
+
+  assert.deepEqual(diagnostics.topLevelTaskIds, []);
+  assert.deepEqual(diagnostics.childTaskIds, ["cycle-a", "cycle-b"]);
+  assert.deepEqual(diagnostics.validChildTaskIds, []);
+  assert.deepEqual(diagnostics.cycleTaskIds, ["cycle-a", "cycle-b"]);
+  assert.deepEqual(diagnostics.invalidTaskIds, ["cycle-a", "cycle-b"]);
+  assert.equal(diagnostics.maxDepth, 0);
+  assert.deepEqual(diagnostics.depthByTaskId, {
+    "cycle-a": null,
+    "cycle-b": null,
+  });
+  assert.deepEqual(
+    diagnostics.cycleSummaries.map((cycle) => cycle.taskIds),
+    [
+      ["cycle-a", "cycle-b", "cycle-a"],
+      ["cycle-b", "cycle-a", "cycle-b"],
+    ],
+  );
+});
+
+test("hierarchy diagnostics do not mutate the input task array or task references", () => {
+  const tasks = [
+    createTask({
+      created_at: "2026-06-18T08:00:00.000Z",
+      id: "root",
+      sort_order: 2,
+      status: "pending",
+      title: "Root",
+    }),
+    createTask({
+      created_at: "2026-06-18T08:01:00.000Z",
+      id: "child",
+      parent_task_id: "root",
+      sort_order: 1,
+      status: "pending",
+      title: "Child",
+    }),
+  ];
+  const originalTaskSnapshots = tasks.map((task) => ({ ...task }));
+  const originalReferences = [...tasks];
+
+  buildTaskHierarchyDiagnostics(tasks);
+
+  assert.deepEqual(tasks.map((task) => ({ ...task })), originalTaskSnapshots);
+  assert.equal(tasks[0], originalReferences[0]);
+  assert.equal(tasks[1], originalReferences[1]);
+});
+
+test("child task preview lookup exposes direct same-table children", () => {
+  const parent = createTask({
+    created_at: "2026-06-18T08:00:00.000Z",
+    id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Parent",
+  });
+  const child = createTask({
+    created_at: "2026-06-18T08:01:00.000Z",
+    due_on: "2026-06-19",
+    due_time: "09:30",
+    id: "child",
+    is_important: true,
+    parent_task_id: "parent",
+    sort_order: 1,
+    status: "in_progress",
+    title: "Child",
+  });
+
+  const preview = buildChildTaskPreviewLookup([parent, child]);
+
+  assert.deepEqual(Object.keys(preview), ["parent"]);
+  assert.equal(preview.parent.summary.directChildCount, 1);
+  assert.equal(preview.parent.summary.descendantCount, 1);
+  assert.equal(preview.parent.summary.hasInvalidDescendants, false);
+  assert.deepEqual(preview.parent.items, [{
+    depth: 1,
+    dueOn: "2026-06-19",
+    dueTime: "09:30",
+    id: "child",
+    issueTypes: [],
+    parentTaskId: "parent",
+    priorityFlags: ["important"],
+    status: "in_progress",
+    title: "Child",
+  }]);
+});
+
+test("child task preview lookup is depth-aware for grandchildren", () => {
+  const parent = createTask({ id: "parent", sort_order: 1, status: "pending", title: "Parent" });
+  const child = createTask({
+    id: "child",
+    parent_task_id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Child",
+  });
+  const grandchild = createTask({
+    id: "grandchild",
+    parent_task_id: "child",
+    sort_order: 1,
+    status: "done",
+    title: "Grandchild",
+  });
+
+  const preview = buildChildTaskPreviewLookup([parent, child, grandchild], ["grandchild"]);
+
+  assert.deepEqual(preview.parent.items.map((item) => item.id), ["child", "grandchild"]);
+  assert.deepEqual(preview.parent.items.map((item) => item.depth), [1, 2]);
+  assert.deepEqual(preview.parent.items[1]?.priorityFlags, ["focus"]);
+  assert.equal(preview.child.summary.directChildCount, 1);
+  assert.deepEqual(preview.child.items.map((item) => item.id), ["grandchild"]);
+  assert.deepEqual(preview.child.items.map((item) => item.depth), [1]);
+});
+
+test("child task preview lookup is built from the full task list", () => {
+  const parent = createTask({
+    due_on: "2026-06-18",
+    id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Parent",
+  });
+  const child = createTask({
+    due_on: "2026-06-21",
+    id: "child",
+    parent_task_id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Child outside current bucket",
+  });
+
+  const previewFromVisibleSubset = buildChildTaskPreviewLookup([parent]);
+  const previewFromFullTasks = buildChildTaskPreviewLookup([parent, child]);
+
+  assert.equal(previewFromVisibleSubset.parent, undefined);
+  assert.deepEqual(previewFromFullTasks.parent.items.map((item) => item.id), ["child"]);
+});
+
+test("child task preview lookup keeps sibling and descendant order stable by sort order", () => {
+  const parent = createTask({ id: "parent", sort_order: 1, status: "pending", title: "Parent" });
+  const secondChild = createTask({
+    created_at: "2026-06-18T08:01:00.000Z",
+    id: "second-child",
+    parent_task_id: "parent",
+    sort_order: 2,
+    status: "pending",
+    title: "Second child",
+  });
+  const firstChild = createTask({
+    created_at: "2026-06-18T08:02:00.000Z",
+    id: "first-child",
+    parent_task_id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "First child",
+  });
+  const grandchild = createTask({
+    id: "grandchild",
+    parent_task_id: "first-child",
+    sort_order: 1,
+    status: "pending",
+    title: "Grandchild",
+  });
+
+  const preview = buildChildTaskPreviewLookup([parent, secondChild, firstChild, grandchild]);
+
+  assert.deepEqual(preview.parent.items.map((item) => item.id), ["first-child", "grandchild", "second-child"]);
+});
+
+test("child task preview lookup does not recurse through cycles", () => {
+  const cycleA = createTask({
+    id: "cycle-a",
+    parent_task_id: "cycle-b",
+    sort_order: 1,
+    status: "pending",
+    title: "Cycle A",
+  });
+  const cycleB = createTask({
+    id: "cycle-b",
+    parent_task_id: "cycle-a",
+    sort_order: 2,
+    status: "pending",
+    title: "Cycle B",
+  });
+
+  const preview = buildChildTaskPreviewLookup([cycleA, cycleB]);
+
+  assert.deepEqual(preview["cycle-a"]?.items, []);
+  assert.deepEqual(preview["cycle-b"]?.items, []);
+  assert.equal(preview["cycle-a"]?.summary.hasInvalidDescendants, true);
+  assert.equal(preview["cycle-b"]?.summary.hasInvalidDescendants, true);
+  assert.equal(preview["cycle-a"]?.summary.invalidChildLinkCount, 1);
+  assert.equal(preview["cycle-b"]?.summary.invalidChildLinkCount, 1);
+});
+
+test("child task preview lookup does not attach orphans under missing parents", () => {
+  const orphan = createTask({
+    id: "orphan",
+    parent_task_id: "missing-parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Orphan",
+  });
+
+  const preview = buildChildTaskPreviewLookup([orphan]);
+
+  assert.equal(preview["missing-parent"], undefined);
+  assert.equal(preview.orphan, undefined);
+});
+
+test("child task preview lookup does not mutate the input task array or task references", () => {
+  const tasks = [
+    createTask({
+      id: "parent",
+      sort_order: 2,
+      status: "pending",
+      title: "Parent",
+    }),
+    createTask({
+      id: "child",
+      parent_task_id: "parent",
+      sort_order: 1,
+      status: "pending",
+      title: "Child",
+    }),
+  ];
+  const originalTaskSnapshots = tasks.map((task) => ({ ...task }));
+  const originalReferences = [...tasks];
+
+  buildChildTaskPreviewLookup(tasks);
+
+  assert.deepEqual(tasks.map((task) => ({ ...task })), originalTaskSnapshots);
+  assert.equal(tasks[0], originalReferences[0]);
+  assert.equal(tasks[1], originalReferences[1]);
+});
+
+test("child task creation draft includes parent_task_id and default task fields", () => {
+  const result = buildChildTaskCreationDraft({
+    parentTaskId: "parent",
+    title: "Child task",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.error, null);
+  assert.equal(result.draft?.parent_task_id, "parent");
+  assert.equal(result.draft?.title, "Child task");
+  assert.equal(result.draft?.status, "pending");
+  assert.equal(result.draft?.priority, "normal");
+  assert.equal(result.draft?.energy, "none");
+  assert.deepEqual(result.draft?.tags, []);
+  assert.deepEqual(result.draft?.repeat_days_of_week, []);
+  assert.equal(result.draft?.repeat_frequency, "none");
+  assert.equal(result.draft?.repeat_interval, 1);
+});
+
+test("child task creation draft rejects blank titles", () => {
+  const result = buildChildTaskCreationDraft({
+    parentTaskId: "parent",
+    title: "   ",
+  });
+
+  assert.deepEqual(result, { draft: null, error: "empty_title", ok: false });
+});
+
+test("child task creation draft trims whitespace", () => {
+  const result = buildChildTaskCreationDraft({
+    parentTaskId: "parent",
+    title: "  Trimmed child  ",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.draft?.title, "Trimmed child");
+});
+
+test("child task creation draft allows grandchildren under child task ids", () => {
+  const result = buildChildTaskCreationDraft({
+    parentTaskId: "child",
+    title: "Grandchild",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.draft?.parent_task_id, "child");
+  assert.equal(result.draft?.title, "Grandchild");
+});
+
+test("child task creation draft blocks cycle participants", () => {
+  const result = buildChildTaskCreationDraft({
+    blockedParentTaskIds: ["cycle-parent"],
+    parentTaskId: "cycle-parent",
+    title: "Blocked child",
+  });
+
+  assert.deepEqual(result, { draft: null, error: "blocked_parent", ok: false });
 });
 
 test("guarded task update succeeds when the expected revision still matches", async () => {

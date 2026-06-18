@@ -1,12 +1,12 @@
 # Current State
 
-Last reviewed: 2026-06-17
+Last reviewed: 2026-06-18
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.3.40`.
-- Current release group: `6.3.x` Focus History search and editing.
+- Current working app version: `6.4.9`.
+- Current release group: `6.4.x` children/substeps metadata architecture.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
@@ -80,6 +80,14 @@ Role: active working
 - In `6.3.39`, Focus Activity Daily Overall bars use each session category's daily goal, and Weekly Overall day bars derive goals only from categories logged on that day instead of repeating the full app-wide daily goal total.
 - In `6.3.40`, the Focus page adds a second Activity-style card below the main Focus Activity card with a native SVG line graph whose series colors come from the logged focus categories.
 
+## 6.4 Checkpoint
+- In `6.4.2`, the architecture decision for children/substeps metadata was locked in `docs/task-hierarchy-plan.md`: same-table child tasks through `parent_task_id`, hybrid bridge/migration from legacy subtasks, and no expansion of `adhdice_task_subtasks` into a duplicate task model.
+- In `6.4.3`, `src/lib/task-hierarchy.ts` gains a read-only same-table hierarchy adapter that identifies top-level tasks, children, grandchildren, deeper descendants, orphans, cycles, depth, sibling order, and parent/child lookup maps without changing visible rendering, persistence, schema, rewards, recurrence, archive/trash, or editing UI.
+- In `6.4.5`, `computeTaskAppDerivedData` returns a hidden `taskHierarchyDiagnostics` object built from the current flat task array with `buildTaskHierarchyAdapter`, without changing task rendering, filters, counts, persistence, rewards, recurrence, archive/trash, or editing behavior.
+- In `6.4.7`, `computeTaskAppDerivedData` also returns a read-only `childTaskPreviewByParentTaskId` lookup from the full flat task array, and the shared `TaskManagementTableV2` full overlay renders a source-distinct `Child tasks` preview for the selected task without changing Table/List top-level rows, filters, counts, sorting, persistence, legacy Steps, rewards, recurrence, archive/trash, or schema.
+- In `6.4.8`, the `Child tasks` preview can create real same-table child task rows through the existing normal task creation path with `parent_task_id` set, and child preview rows can open through the existing shared full-overlay inspector path for normal task editing and grandchild creation without changing schema, rewards, recurrence, archive/trash, legacy Steps, or flat-view filtering rules.
+- In `6.4.9`, valid same-table child tasks and grandchildren are hidden from primary top-level Table/List row arrays, search results, list counts, and status counts, while orphans/cycles remain visible as ordinary rows and full task data still backs the `Child tasks` preview plus child open/edit flows.
+
 ## Current Product Shape
 - Tasks: primary dashboard with guarded cloud-backed task rows, shared shell controls, Table View, List View, cards, matrix, filters, buckets, and legacy subtask support from `adhdice_task_subtasks`.
 - Archive vs Trash: fully split at runtime. Archive is a stable non-active bucket, Trash is the 30-day auto-delete bucket keyed by `trashed_at`, and active task views exclude both.
@@ -105,13 +113,14 @@ Role: active working
 - `src/hooks/useWorkspaceData.ts`
 - `src/components/ui/task-management-table-v2.tsx`
 - task revision/conflict handling
-- same-table hierarchy rollout work that has not reached UI or persistence behavior yet
+- same-table hierarchy rollout work beyond the read-only inspector preview, especially editing, nested row rendering, and persistence behavior
 
 ## Important Deferred Work
 - `scheduled_on` remains shadow-only and is not runtime-authoritative yet.
 - Legacy subtasks in `adhdice_task_subtasks` are unchanged.
-- Same-table child-task rendering, drag/drop, cross-parent move/promote/demote behavior, and legacy-subtask migration remain deferred.
-- Runtime adoption of `scheduled_on`, any `next_scheduled_on` behavior, and reward-economy redesign remain deferred.
+- Custom child-task metadata editors, drag/drop, cross-parent move/promote/demote behavior, nested Table/List row rendering, child reward rules, and legacy-subtask migration remain deferred.
+- `6.4.2` locks the future task hierarchy architecture in `docs/task-hierarchy-plan.md`: child tasks and grandchildren should become same-table `adhdice_clean_tasks` rows through `parent_task_id`, with a hybrid bridge/migration from legacy subtasks and no expansion of `adhdice_task_subtasks` into a duplicate task model.
+- Runtime adoption of `scheduled_on`, any `next_scheduled_on` behavior, nested same-table child-task row UI, and reward-economy redesign remain deferred.
 - Import update-existing-ID behavior remains deferred because the current live import path does not expose that branch yet.
 - Snapshot/restore UX, schema, and SQL-backed restore execution remain deferred to a later phase.
 
@@ -128,11 +137,13 @@ Role: active working
   - `isChildTask`
   - `groupTasksByParentId`
   - `buildTaskTree`
+  - `buildTaskHierarchyAdapter`
   - `sortTaskSiblings`
   - `getTaskDescendants`
   - `getTaskAncestors`
   - `detectTaskHierarchyIssues`
-- This groundwork has not yet shipped as visible child-task UI or migration behavior.
+- This groundwork has shipped as hidden diagnostics, a same-table inspector preview, child creation, and opening through the existing shared inspector path; nested Table/List row rendering and migration behavior remain deferred.
+- `6.4.2` decision: same-table child tasks should render nested under their parent by default, completion should remain independent at first, child reward/XP behavior remains undecided, child recurrence UI should not ship until rules are approved, and parent archive/trash should later hide descendants while preserving rows unless a different cascade rule is explicitly approved.
 
 ### HUD / Workspace History
 - The 6.1.x line was heavily HUD-focused: lane-preserving widget reorder, edit-mode chrome cleanup, workspace sizing/clipping fixes, snapshot-based HUD layout persistence, and reset-snapshot controls are all part of the current baseline.
@@ -147,6 +158,6 @@ Role: active working
 ## Next Recommended Tickets
 1. Diagnose the black/glitched HUD/UI reload seam as an isolated ticket before any other UI work in that area.
 2. Define the future snapshot payload contract and restore overwrite rules before adding any restore SQL or runtime restore entry points.
-3. Add non-destructive selectors/adapters that can consume the same-table hierarchy helpers without changing current visible task rendering.
+3. `6.4.10 Legacy Step Promotion To Child Task Diagnosis`: if child visibility holds up in manual QA, diagnose the safest promotion/migration path from legacy Steps to same-table child task rows.
 4. Plan the same-table child-task UI rollout separately from legacy subtask migration, with explicit rules for mixed data states.
 5. Decide when `scheduled_on` becomes authoritative and gate that behind a dedicated runtime/data contract ticket.

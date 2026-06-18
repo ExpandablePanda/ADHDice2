@@ -100,6 +100,7 @@ import { TaskManagementTableV2, type RunningTaskTimer } from "@/components/ui/ta
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
 import { ScrollUpButton, TaskTableChipButton } from "@/components/ui/task-table-primitives";
+import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievements } from "@/hooks/useAchievements";
 import { useFocus, mapFocusCategoryRow, mapActiveSessions, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
@@ -296,7 +297,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.3.40";
+const APP_VERSION = "6.4.9";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -1925,6 +1926,7 @@ export function TaskApp() {
   const {
     activeTasks,
     allTaskTags,
+    childTaskPreviewByParentTaskId,
     collections: {
       filteredActiveTasks,
       filteredDoneTasks,
@@ -1952,6 +1954,7 @@ export function TaskApp() {
     planningCandidates,
     selectedTaskForEditor,
     taskForActualTimeEntry,
+    taskHierarchyDiagnostics,
     taskLinkedNotesByTaskId,
     taskListMembershipsByTaskId,
     taskStatusCounts,
@@ -2644,6 +2647,33 @@ export function TaskApp() {
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
   const shouldShowInitialHudLoadingShell = shouldBlockAuthenticatedAppBody;
+  const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
+  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string) => {
+    const result = buildChildTaskCreationDraft({
+      blockedParentTaskIds: childTaskCreationBlockedTaskIds,
+      parentTaskId,
+      title,
+    });
+
+    if (!result.ok) {
+      const text = result.error === "empty_title"
+        ? "Enter a child task title."
+        : result.error === "blocked_parent"
+          ? "Child task creation is blocked for this task until its hierarchy issue is fixed."
+          : "Choose a parent task before adding a child.";
+      setMessage({ tone: "warn", text });
+      return { error: text, taskId: null };
+    }
+
+    const createdTask = await addTask(result.draft);
+    return createdTask
+      ? { error: null, taskId: createdTask.id }
+      : { error: "Child task was not created.", taskId: null };
+  }, [addTask, childTaskCreationBlockedTaskIds, setMessage]);
+  const openChildTaskFromPreview = useCallback((taskId: string) => {
+    setSuppressDetachedListNoticeTaskId(null);
+    setRequestedListOverlayTaskId(taskId);
+  }, []);
 
   useEffect(() => {
     if (!session?.user) {
@@ -3748,6 +3778,9 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
+                  allTasks: tasks,
+                  childTaskPreviewByParentTaskId,
+                  childTaskCreationBlockedTaskIds,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
@@ -3761,6 +3794,7 @@ export function TaskApp() {
                     />
                   ) : null,
                   onCreateTaskList: async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null }),
+                  onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
                   onDeleteTaskActualTimeEntry: (entryId) => { void deleteTaskActualTimeEntry(entryId); },
@@ -3795,6 +3829,7 @@ export function TaskApp() {
                   taskActualTimeEntriesByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: openTaskEditorFromId,
+                  onOpenChildTask: openChildTaskFromPreview,
                   onFollowDetachedTask: followDetachedTask,
                   onDismissDetachedTask: dismissDetachedTask,
                   onDuplicateTask: (taskId) => {
@@ -3878,6 +3913,9 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
+                  allTasks: tasks,
+                  childTaskPreviewByParentTaskId,
+                  childTaskCreationBlockedTaskIds,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
@@ -3891,6 +3929,7 @@ export function TaskApp() {
                     />
                   ) : null,
                   onCreateTaskList: async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null }),
+                  onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
                   onDeleteTaskActualTimeEntry: (entryId) => { void deleteTaskActualTimeEntry(entryId); },
@@ -3925,6 +3964,7 @@ export function TaskApp() {
                   taskActualTimeEntriesByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: openTaskEditorFromId,
+                  onOpenChildTask: openChildTaskFromPreview,
                   onFollowDetachedTask: followDetachedTask,
                   onDismissDetachedTask: dismissDetachedTask,
                   onDuplicateTask: (taskId) => {

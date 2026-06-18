@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/task-management-table-v2";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
-import type { DuplicateTitleGroup } from "@/lib/task-app-derived";
+import type { ChildTaskPreviewLookup, DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskListDefinition } from "@/lib/task-lists";
@@ -78,9 +78,13 @@ type TasksTableSourceProps = {
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: TaskEditorLinkedNote[];
   allTagOptions?: string[];
+  allTasks?: Task[];
+  childTaskCreationBlockedTaskIds?: string[];
+  childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
   currentListLabel?: string | null;
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
   overlayNode?: ReactNode;
+  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenFocusTimer?: (taskId: string) => void;
   onOpenNote?: (noteId: string) => void;
@@ -92,6 +96,7 @@ type TasksTableSourceProps = {
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
+  onOpenChildTask?: (taskId: string) => void;
   onFollowDetachedTask?: (taskId: string) => void;
   onDismissDetachedTask?: (taskId: string) => void;
   onNextTaskTimer?: () => void;
@@ -233,6 +238,8 @@ export function TasksTableAdapter({
           allListOptions={tableProps.allListOptions}
           allNoteOptions={noteOptions}
           allTagOptions={tableProps.allTagOptions}
+          childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
+          childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
           className="max-w-none p-0"
           currentListLabel={tableProps.currentListLabel}
           enableInspector
@@ -240,6 +247,7 @@ export function TasksTableAdapter({
           onClearSelection={tableProps.onClearSelection}
           overlayNode={tableProps.overlayNode}
           onCreateTaskList={tableProps.onCreateTaskList}
+          onCreateChildTask={tableProps.onCreateChildTask}
           onOpenBatchDelete={tableProps.onOpenBatchDelete}
           onOpenBatchEdit={tableProps.onOpenBatchEdit}
           onOpenDeleteTask={tableProps.onOpenDeleteTask}
@@ -250,6 +258,7 @@ export function TasksTableAdapter({
           onOpenNote={tableProps.onOpenNote}
           onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
+          onOpenChildTask={tableProps.onOpenChildTask}
           onFollowDetachedTask={tableProps.onFollowDetachedTask}
           onDismissDetachedTask={tableProps.onDismissDetachedTask}
           onNextTaskTimer={tableProps.onNextTaskTimer}
@@ -790,7 +799,9 @@ function TasksSimpleList({
     [tableProps.rowContext, tableProps.tasks],
   );
   const requestedInspectorTask = inlineInspectorTaskId
-    ? tableProps.tasks.find((task) => task.id === inlineInspectorTaskId) ?? null
+    ? tableProps.tasks.find((task) => task.id === inlineInspectorTaskId)
+      ?? tableProps.allTasks?.find((task) => task.id === inlineInspectorTaskId)
+      ?? null
     : null;
   const requestedInspectorTaskRow = useMemo(
     () => requestedInspectorTask
@@ -1072,6 +1083,8 @@ function TasksSimpleList({
                 allListOptions={tableProps.allListOptions}
                 allNoteOptions={noteOptions}
                 allTagOptions={tableProps.allTagOptions}
+                childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
+                childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
                 className="mt-0 max-w-none"
                 currentListLabel={tableProps.currentListLabel}
                 enableInspector
@@ -1079,6 +1092,7 @@ function TasksSimpleList({
                 onClearSelection={tableProps.onClearSelection}
                 overlayNode={tableProps.overlayNode}
                 onCreateTaskList={tableProps.onCreateTaskList}
+                onCreateChildTask={tableProps.onCreateChildTask}
                 onOpenBatchDelete={tableProps.onOpenBatchDelete}
                 onOpenBatchEdit={tableProps.onOpenBatchEdit}
                 onOpenDeleteTask={tableProps.onOpenDeleteTask}
@@ -1089,6 +1103,7 @@ function TasksSimpleList({
                 onOpenNote={tableProps.onOpenNote}
                 onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
                 onOpenTaskEditor={tableProps.onOpenTaskEditor}
+                onOpenChildTask={(taskId) => setInlineInspectorTaskId(taskId)}
                 onFollowDetachedTask={tableProps.onFollowDetachedTask}
                 onDismissDetachedTask={tableProps.onDismissDetachedTask}
                 onNextTaskTimer={tableProps.onNextTaskTimer}

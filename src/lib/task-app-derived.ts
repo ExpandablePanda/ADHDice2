@@ -1,26 +1,27 @@
-import { buildTaskCollections } from "./task-selectors";
-import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "./task-grid-layout";
-import { sortTasksForCockpit, matchesTaskQuickFilter } from "./task-cockpit";
+import { buildTaskCollections } from "@/lib/task-selectors";
+import { buildTaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
+import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
+import { sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
 import type {
   Task,
   TaskStatus,
   TaskSubtask as DbTaskSubtask,
-} from "./database.types";
-import type { TaskEditorLinkedNote } from "./task-notes";
+} from "@/lib/database.types";
+import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
   TaskBucketContext,
-} from "./task-buckets";
-import type { TaskUiState } from "./task-ui-state";
+} from "@/lib/task-buckets";
+import type { TaskUiState } from "@/lib/task-ui-state";
 import type {
   TaskListDefinition,
   TaskListEvaluationContext,
   TaskListEvaluationPerf,
-} from "./task-lists";
-import { evaluateTaskListMemberships } from "./task-lists";
-import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "./task-buckets";
-import { isDueToday, isOverdue } from "./task-cockpit";
-import { isTaskInRecentTrash } from "./task-trash";
-import { normalizeTitleForDuplicateDetection } from "./task-search";
+} from "@/lib/task-lists";
+import { evaluateTaskListMemberships } from "@/lib/task-lists";
+import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
+import { isDueToday, isOverdue } from "@/lib/task-cockpit";
+import { isTaskInRecentTrash } from "@/lib/task-trash";
+import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
 type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "matchAny" | "quickFilters" | "statusFilters">;
@@ -31,6 +32,61 @@ export type DuplicateTitleGroup = {
   normalizedTitle: string;
   tasks: Task[];
 };
+
+export type TaskHierarchyDiagnostics = {
+  childTaskIds: string[];
+  childTaskIdsByParentTaskId: Record<string, string[]>;
+  cycleSummaries: Array<{
+    parentTaskId: string;
+    taskId: string;
+    taskIds: string[];
+  }>;
+  cycleTaskIds: string[];
+  depthByTaskId: Record<string, number | null>;
+  invalidTaskIds: string[];
+  maxDepth: number;
+  orphanTaskIds: string[];
+  rawChildTaskIdsByParentTaskId: Record<string, string[]>;
+  topLevelTaskIds: string[];
+  totalTaskCount: number;
+  validChildTaskIds: string[];
+};
+
+export type TaskPrimaryVisibility = {
+  cycleTaskIds: string[];
+  invalidTaskIds: string[];
+  orphanTaskIds: string[];
+  primaryHiddenChildTaskIds: string[];
+  primaryVisibleTaskIds: string[];
+};
+
+export type ChildTaskPreviewPriority = "focus" | "important" | "urgent";
+
+export type ChildTaskPreview = {
+  depth: number;
+  dueOn: string | null;
+  dueTime: string | null;
+  id: string;
+  issueTypes: Array<TaskHierarchyIssue["type"]>;
+  parentTaskId: string | null;
+  priorityFlags: ChildTaskPreviewPriority[];
+  status: TaskStatus;
+  title: string;
+};
+
+export type ChildTaskPreviewSummary = {
+  descendantCount: number;
+  directChildCount: number;
+  hasInvalidDescendants: boolean;
+  invalidChildLinkCount: number;
+};
+
+export type ChildTaskPreviewGroup = {
+  items: ChildTaskPreview[];
+  summary: ChildTaskPreviewSummary;
+};
+
+export type ChildTaskPreviewLookup = Record<string, ChildTaskPreviewGroup>;
 
 const EMPTY_TASKS: Task[] = [];
 const isDevelopment = process.env.NODE_ENV !== "production";
@@ -113,6 +169,126 @@ function buildDuplicateTitleGroups(tasks: Task[]) {
     });
 }
 
+function mapTaskIdsByParentTaskId(groupedTasks: Map<string, Task[]>) {
+  return Object.fromEntries(
+    Array.from(groupedTasks.entries()).map(([parentTaskId, children]) => [
+      parentTaskId,
+      children.map((child) => child.id),
+    ]),
+  );
+}
+
+export function buildTaskHierarchyDiagnostics(tasks: Task[]): TaskHierarchyDiagnostics {
+  const adapter = buildTaskHierarchyAdapter(tasks);
+  const depthByTaskId = Object.fromEntries(adapter.depthByTaskId.entries());
+  const maxDepth = Object.values(depthByTaskId).reduce(
+    (currentMax, depth) => (typeof depth === "number" ? Math.max(currentMax, depth) : currentMax),
+    0,
+  );
+
+  return {
+    childTaskIds: adapter.childTaskIds,
+    childTaskIdsByParentTaskId: mapTaskIdsByParentTaskId(adapter.childrenByParentId),
+    cycleSummaries: adapter.cycles.map((cycle) => ({
+      parentTaskId: cycle.parentTaskId,
+      taskId: cycle.taskId,
+      taskIds: cycle.taskIds,
+    })),
+    cycleTaskIds: Array.from(adapter.cycleTaskIds),
+    depthByTaskId,
+    invalidTaskIds: Array.from(adapter.invalidTaskIds),
+    maxDepth,
+    orphanTaskIds: adapter.orphanTaskIds,
+    rawChildTaskIdsByParentTaskId: mapTaskIdsByParentTaskId(adapter.rawChildrenByParentId),
+    topLevelTaskIds: adapter.topLevelTaskIds,
+    totalTaskCount: tasks.length,
+    validChildTaskIds: adapter.validChildTaskIds,
+  };
+}
+
+export function buildTaskPrimaryVisibility(tasks: Task[]): TaskPrimaryVisibility {
+  const adapter = buildTaskHierarchyAdapter(tasks);
+  const hiddenChildTaskIds = new Set(adapter.validChildTaskIds);
+
+  return {
+    cycleTaskIds: Array.from(adapter.cycleTaskIds),
+    invalidTaskIds: Array.from(adapter.invalidTaskIds),
+    orphanTaskIds: adapter.orphanTaskIds,
+    primaryHiddenChildTaskIds: adapter.validChildTaskIds,
+    primaryVisibleTaskIds: tasks
+      .filter((task) => !hiddenChildTaskIds.has(task.id))
+      .map((task) => task.id),
+  };
+}
+
+function getChildTaskPriorityFlags(task: Task, focusedTaskIdSet: Set<string>): ChildTaskPreviewPriority[] {
+  const priorityFlags: ChildTaskPreviewPriority[] = [];
+
+  if (focusedTaskIdSet.has(task.id)) {
+    priorityFlags.push("focus");
+  }
+  if (task.is_important) {
+    priorityFlags.push("important");
+  }
+  if (task.is_urgent) {
+    priorityFlags.push("urgent");
+  }
+
+  return priorityFlags;
+}
+
+export function buildChildTaskPreviewLookup(
+  tasks: Task[],
+  focusedTaskIds: readonly string[] = [],
+): ChildTaskPreviewLookup {
+  const adapter = buildTaskHierarchyAdapter(tasks);
+  const focusedTaskIdSet = new Set(focusedTaskIds);
+  const previewByParentTaskId: ChildTaskPreviewLookup = {};
+
+  for (const task of tasks) {
+    const descendants = adapter.getDescendants(task.id);
+    const directChildren = adapter.getChildren(task.id);
+    const invalidDirectChildren = (adapter.rawChildrenByParentId.get(task.id) ?? [])
+      .filter((child) => adapter.invalidTaskIds.has(child.id));
+
+    if (descendants.length === 0 && invalidDirectChildren.length === 0) {
+      continue;
+    }
+
+    const parentDepth = adapter.getDepth(task.id);
+    const parentBaseDepth = typeof parentDepth === "number" ? parentDepth : 0;
+
+    previewByParentTaskId[task.id] = {
+      items: descendants.map((descendant) => {
+        const descendantDepth = adapter.getDepth(descendant.id);
+        const relativeDepth = typeof descendantDepth === "number"
+          ? Math.max(1, descendantDepth - parentBaseDepth)
+          : 1;
+
+        return {
+          depth: relativeDepth,
+          dueOn: descendant.due_on,
+          dueTime: descendant.due_time,
+          id: descendant.id,
+          issueTypes: adapter.getNode(descendant.id)?.issueTypes ?? [],
+          parentTaskId: descendant.parent_task_id,
+          priorityFlags: getChildTaskPriorityFlags(descendant, focusedTaskIdSet),
+          status: descendant.status,
+          title: descendant.title,
+        };
+      }),
+      summary: {
+        descendantCount: descendants.length,
+        directChildCount: directChildren.length,
+        hasInvalidDescendants: invalidDirectChildren.length > 0,
+        invalidChildLinkCount: invalidDirectChildren.length,
+      },
+    };
+  }
+
+  return previewByParentTaskId;
+}
+
 type ComputeTaskAppDerivedDataInput = {
   activePage: string;
   availableTaskLists: TaskListDefinition[];
@@ -153,10 +329,25 @@ export function computeTaskAppDerivedData({
   const totalStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const availableRuleCount = availableTaskLists.reduce((count, list) => count + (list.rules?.rules.length ?? 0), 0);
 
+  const hierarchyDiagnosticsStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
+  const taskHierarchyDiagnostics = buildTaskHierarchyDiagnostics(tasks);
+  const childTaskPreviewByParentTaskId = buildChildTaskPreviewLookup(tasks, focusedTaskIds);
+  const taskPrimaryVisibility = buildTaskPrimaryVisibility(tasks);
+  const primaryHiddenChildTaskIds = new Set(taskPrimaryVisibility.primaryHiddenChildTaskIds);
+  logTaskDeriveStep("hierarchy diagnostics", hierarchyDiagnosticsStartedAt, {
+    childTasks: taskHierarchyDiagnostics.childTaskIds.length,
+    childTaskPreviewParents: Object.keys(childTaskPreviewByParentTaskId).length,
+    invalidTasks: taskHierarchyDiagnostics.invalidTaskIds.length,
+    maxDepth: taskHierarchyDiagnostics.maxDepth,
+    primaryHiddenChildren: taskPrimaryVisibility.primaryHiddenChildTaskIds.length,
+    tasks: taskHierarchyDiagnostics.totalTaskCount,
+  });
+
   const normalizationStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const archiveTasks = tasks.filter((task) => task.status === "archived");
-  const recentlyDeletedTasks = tasks.filter((task) => isTaskInRecentTrash(task));
-  const visibleTasks = tasks.filter(isTaskVisibleInPrimaryViews);
+  const primaryTasks = tasks.filter((task) => !primaryHiddenChildTaskIds.has(task.id));
+  const archiveTasks = primaryTasks.filter((task) => task.status === "archived");
+  const recentlyDeletedTasks = primaryTasks.filter((task) => isTaskInRecentTrash(task));
+  const visibleTasks = primaryTasks.filter(isTaskVisibleInPrimaryViews);
   const taskLinkedNotesByTaskId = availableTaskNotes.reduce<Record<string, TaskEditorLinkedNote[]>>((accumulator, note) => {
     for (const taskId of note.linked_task_ids) {
       if (!accumulator[taskId]) {
@@ -168,6 +359,7 @@ export function computeTaskAppDerivedData({
   }, {});
   logTaskDeriveStep("input normalization", normalizationStartedAt, {
     notes: availableTaskNotes.length,
+    primaryTasks: primaryTasks.length,
     recentlyDeletedTasks: recentlyDeletedTasks.length,
     tasks: tasks.length,
     visibleTasks: visibleTasks.length,
@@ -182,7 +374,7 @@ export function computeTaskAppDerivedData({
   const urgentFlaggedTasks = activeTasks.filter(isTaskUrgent);
   const lowEnergyTasks = activeTasks.filter((task) => task.energy === "low").slice(0, 4);
   const urgentTasks = urgentFlaggedTasks.slice(0, 6);
-  const taskStatusCounts = tasks.reduce<Record<TaskStatus, number>>((accumulator, task) => {
+  const taskStatusCounts = primaryTasks.reduce<Record<TaskStatus, number>>((accumulator, task) => {
     accumulator[task.status] += 1;
     return accumulator;
   }, {
@@ -201,7 +393,7 @@ export function computeTaskAppDerivedData({
     doneTasks: doneTasks.length,
     statusBuckets: Object.keys(taskStatusCounts).length,
     tags: allTaskTags.length,
-    tasks: tasks.length,
+    tasks: primaryTasks.length,
   });
 
   const matchesTaskFilters = (task: Task) => {
@@ -462,6 +654,7 @@ export function computeTaskAppDerivedData({
   return {
     activeTasks,
     allTaskTags,
+    childTaskPreviewByParentTaskId,
     collections,
     duplicateTitleGroups,
     doneTasks,
@@ -479,6 +672,8 @@ export function computeTaskAppDerivedData({
     trashFilteredTasksSorted,
     selectedTaskForEditor,
     taskForActualTimeEntry,
+    taskHierarchyDiagnostics,
+    taskPrimaryVisibility,
     taskLinkedNotesByTaskId,
     taskListMembershipsByTaskId,
     taskStatusCounts,

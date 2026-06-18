@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import type { TaskActualTimeEntry, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import type { ChildTaskPreviewGroup, ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import {
@@ -1038,6 +1039,8 @@ type TaskManagementTableV2Props = {
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
+  childTaskCreationBlockedTaskIds?: string[];
+  childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
   className?: string;
   currentListLabel?: string | null;
   enableInspector?: boolean;
@@ -1046,6 +1049,7 @@ type TaskManagementTableV2Props = {
   shellClassName?: string;
   showHeader?: boolean;
   onClearSelection?: () => void;
+  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenBatchDelete?: () => void;
   onOpenBatchEdit?: () => void;
@@ -1057,6 +1061,7 @@ type TaskManagementTableV2Props = {
   onOpenNote?: (noteId: string) => void;
   onOpenTaskActualTime?: (taskId: string, options?: { durationSeconds?: number; title?: string }) => void;
   onOpenTaskEditor?: (taskId: string) => void;
+  onOpenChildTask?: (taskId: string) => void;
   onLoadMoreRows?: () => void;
   onRequestedOpenTaskHandled?: (taskId: string) => void;
   onFollowDetachedTask?: (taskId: string) => void;
@@ -1540,6 +1545,214 @@ function formatDue(dueOn: string, dueTime: string) {
   return dueTime ? `${dateLabel} · ${formatClockTime(dueTime)}` : dateLabel;
 }
 
+const CHILD_TASK_PREVIEW_ITEM_LIMIT = 12;
+const EMPTY_CHILD_TASK_PREVIEW_GROUP: ChildTaskPreviewGroup = {
+  items: [],
+  summary: {
+    descendantCount: 0,
+    directChildCount: 0,
+    hasInvalidDescendants: false,
+    invalidChildLinkCount: 0,
+  },
+};
+
+function formatChildTaskPreviewSummary(summary: ChildTaskPreviewGroup["summary"]) {
+  const directLabel = summary.directChildCount === 1 ? "1 direct child" : `${summary.directChildCount} direct children`;
+  const descendantLabel = summary.descendantCount === 1 ? "1 total descendant" : `${summary.descendantCount} total descendants`;
+
+  return `${directLabel} · ${descendantLabel}`;
+}
+
+function formatInvalidChildLinkCount(count: number) {
+  return count === 1 ? "1 invalid child link" : `${count} invalid child links`;
+}
+
+function ChildTaskPreviewSection({
+  creationBlocked,
+  group,
+  onCreateChildTask,
+  onOpenChildTask,
+  parentTaskId,
+}: {
+  creationBlocked?: boolean;
+  group?: ChildTaskPreviewGroup;
+  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onOpenChildTask?: (taskId: string) => void;
+  parentTaskId: string;
+}) {
+  const previewGroup = group ?? EMPTY_CHILD_TASK_PREVIEW_GROUP;
+  const [isCreating, setIsCreating] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [creationError, setCreationError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const canCreateChildTask = Boolean(onCreateChildTask) && !creationBlocked;
+  const showCreationBlockedMessage = Boolean(onCreateChildTask) && creationBlocked;
+  const visibleItems = previewGroup.items.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT);
+  const hiddenItemCount = Math.max(0, previewGroup.items.length - visibleItems.length);
+
+  useEffect(() => {
+    if (isCreating) {
+      inputRef.current?.focus();
+    }
+  }, [isCreating]);
+
+  async function handleCreateChildTask() {
+    const nextTitle = titleDraft.trim();
+    if (!nextTitle) {
+      setCreationError("Enter a child task title.");
+      return;
+    }
+    if (!onCreateChildTask || creationBlocked) {
+      setCreationError("Child task creation is blocked for this task.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setCreationError(null);
+    const result = await onCreateChildTask(parentTaskId, nextTitle);
+    setIsSubmitting(false);
+
+    if (result.error || !result.taskId) {
+      setCreationError(result.error ?? "Child task was not created.");
+      return;
+    }
+
+    setTitleDraft("");
+    setIsCreating(false);
+  }
+
+  function cancelCreateChildTask() {
+    setTitleDraft("");
+    setCreationError(null);
+    setIsCreating(false);
+  }
+
+  if (visibleItems.length === 0 && !previewGroup.summary.hasInvalidDescendants && !onCreateChildTask) {
+    return null;
+  }
+
+  return (
+    <section className="mt-3 rounded-[1rem] border border-[#ede7f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Child tasks</p>
+          <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatChildTaskPreviewSummary(previewGroup.summary)}</p>
+          <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">Child tasks are nested under this task and hidden from top-level views.</p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <span className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS}`}>Task rows</span>
+          {canCreateChildTask && !isCreating ? (
+            <TaskTableChipButton
+              onClick={() => {
+                setCreationError(null);
+                setIsCreating(true);
+              }}
+              toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+            >
+              Add child task
+            </TaskTableChipButton>
+          ) : null}
+        </div>
+      </div>
+      {showCreationBlockedMessage ? (
+        <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">Child creation is blocked until the hierarchy issue is fixed.</p>
+      ) : null}
+      {previewGroup.summary.hasInvalidDescendants ? (
+        <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">{formatInvalidChildLinkCount(previewGroup.summary.invalidChildLinkCount)}</p>
+      ) : null}
+      {isCreating ? (
+        <form
+          className="mt-3 rounded-[0.85rem] border border-[#e5dcfb] bg-white p-2 dark:border-white/10 dark:bg-[#1b1530]/80"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleCreateChildTask();
+          }}
+        >
+          <label className="block">
+            <span className="sr-only">Child task title</span>
+            <input
+              className={`${OVERLAY_INPUT_CLASS} h-10 rounded-[0.8rem] text-sm`}
+              disabled={isSubmitting}
+              onChange={(event) => {
+                setTitleDraft(event.target.value);
+                if (creationError) {
+                  setCreationError(null);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelCreateChildTask();
+                }
+              }}
+              placeholder="Child task title"
+              ref={inputRef}
+              value={titleDraft}
+            />
+          </label>
+          {creationError ? <p className="mt-2 text-xs text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p> : null}
+          <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+            <TaskTableChipButton onClick={cancelCreateChildTask} toneClassName={INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
+            <TaskTableChipButton
+              disabled={isSubmitting}
+              type="submit"
+              toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+            >
+              {isSubmitting ? "Adding..." : "Add"}
+            </TaskTableChipButton>
+          </div>
+        </form>
+      ) : null}
+      {visibleItems.length > 0 ? (
+        <ul className="mt-3 space-y-2">
+          {visibleItems.map((item) => {
+            const dueLabel = item.dueOn || item.dueTime ? formatDue(item.dueOn ?? "", item.dueTime ?? "") : "";
+            const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.85;
+
+            return (
+              <li
+                className="rounded-[0.85rem] border border-[#ede7f7] bg-white px-3 py-2 dark:border-white/10 dark:bg-[#1b1530]/80"
+                key={item.id}
+                style={{ marginLeft: `${depthIndent}rem` }}
+              >
+                <div className="flex min-w-0 items-start gap-2">
+                  <span className="mt-0.5 flex-none">{renderTaskStatusCircle(item.status, "sm")}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-start justify-between gap-2">
+                      <p className="truncate text-sm font-medium text-[#27304c] dark:text-white">{item.title || "Untitled child task"}</p>
+                      {onOpenChildTask ? (
+                        <TaskTableChipButton onClick={() => onOpenChildTask(item.id)} toneClassName={INACTIVE_CHIP_CLASS}>Open</TaskTableChipButton>
+                      ) : null}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#8d87a7] dark:text-white/45">
+                      <span>{formatTaskStatusLabel(item.status)}</span>
+                      {dueLabel ? <span aria-hidden="true">·</span> : null}
+                      {dueLabel ? <span>{dueLabel}</span> : null}
+                    </div>
+                    {item.priorityFlags.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {item.priorityFlags.map((priority) => (
+                          <span className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${priorityTone(priority)}`} key={`${item.id}-${priority}`}>
+                            {priority === "focus" ? "Focus" : priority === "important" ? "Important" : "Urgent"}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {hiddenItemCount > 0 ? (
+        <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{`${hiddenItemCount} more child ${hiddenItemCount === 1 ? "task" : "tasks"} hidden in preview.`}</p>
+      ) : null}
+    </section>
+  );
+}
+
 function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? "bg-[#f4f5f8] border border-[#e4deef] text-[#6b7285] dark:bg-white/8 dark:border-white/10 dark:text-white/60";
 }
@@ -1797,12 +2010,15 @@ export function TaskManagementTableV2({
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
+  childTaskCreationBlockedTaskIds = [],
+  childTaskPreviewByParentTaskId = {},
   className = "",
   currentListLabel = null,
   enableInspector = true,
   overlayNode,
   onInspectorClose,
   onClearSelection,
+  onCreateChildTask,
   onCreateTaskList,
   onOpenBatchDelete,
   onOpenBatchEdit,
@@ -1813,6 +2029,7 @@ export function TaskManagementTableV2({
   onOpenNote,
   onOpenTaskActualTime,
   onOpenTaskEditor,
+  onOpenChildTask,
   onLoadMoreRows,
   onRequestedOpenTaskHandled,
   onFollowDetachedTask,
@@ -5582,6 +5799,16 @@ export function TaskManagementTableV2({
                     )}
                   </div>
                 ) : null;
+                const childTaskPreviewGroup = overlayMode === "full" ? childTaskPreviewByParentTaskId[selectedTask.id] : undefined;
+                const childTaskPreviewNode = overlayMode === "full" ? (
+                  <ChildTaskPreviewSection
+                    creationBlocked={childTaskCreationBlockedTaskIds.includes(selectedTask.id)}
+                    group={childTaskPreviewGroup}
+                    onCreateChildTask={onCreateChildTask}
+                    onOpenChildTask={onOpenChildTask}
+                    parentTaskId={selectedTask.id}
+                  />
+                ) : null;
                 const shouldShowDetachedTaskNotice = selectedTaskIsDetached && suppressDetachedNoticeTaskId !== selectedTask.id;
                 const detachedTaskNotice = shouldShowDetachedTaskNotice ? (
                   <div className="rounded-[1rem] border border-[#ffe2af] bg-[#fff8ea] px-4 py-3 text-[#7b5b12] dark:border-[#5c4920] dark:bg-[#362814] dark:text-[#f3d38a]">
@@ -5667,6 +5894,7 @@ export function TaskManagementTableV2({
                       </label>
                       {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
                       {stepsEditorNode}
+                      {childTaskPreviewNode}
                     </div>
                     <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
                       <div>
