@@ -4,9 +4,11 @@ import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/ta
 import { sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
 import type {
   Task,
+  TaskHistory,
   TaskStatus,
   TaskSubtask as DbTaskSubtask,
 } from "@/lib/database.types";
+import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
   TaskBucketContext,
@@ -64,6 +66,8 @@ export type ChildTaskPreviewPriority = "focus" | "important" | "urgent";
 
 export type ChildTaskPreview = {
   actualSeconds: number;
+  createdAt: string;
+  currentStreak: number;
   depth: number;
   dueOn: string | null;
   dueTime: string | null;
@@ -73,6 +77,7 @@ export type ChildTaskPreview = {
   issueTypes: Array<TaskHierarchyIssue["type"]>;
   linkLabel: string;
   linkUrl: string;
+  missedStreak: number;
   notes: string;
   parentTaskId: string | null;
   priorityFlags: ChildTaskPreviewPriority[];
@@ -84,6 +89,7 @@ export type ChildTaskPreview = {
   status: TaskStatus;
   tags: string[];
   title: string;
+  updatedAt: string;
 };
 
 export type ChildTaskPreviewSummary = {
@@ -256,6 +262,8 @@ function getChildTaskPriorityFlags(task: Task, focusedTaskIdSet: Set<string>): C
 export function buildChildTaskPreviewLookup(
   tasks: Task[],
   focusedTaskIds: readonly string[] = [],
+  taskHistoryByTaskId: Record<string, TaskHistory[]> = {},
+  todayDateKey = "",
 ): ChildTaskPreviewLookup {
   const adapter = buildTaskHierarchyAdapter(tasks);
   const focusedTaskIdSet = new Set(focusedTaskIds);
@@ -280,9 +288,16 @@ export function buildChildTaskPreviewLookup(
         const relativeDepth = typeof descendantDepth === "number"
           ? Math.max(1, descendantDepth - parentBaseDepth)
           : 1;
+        const historyStats = computeTaskSpecificHistoryStats(
+          descendant,
+          taskHistoryByTaskId[descendant.id] ?? [],
+          todayDateKey,
+        );
 
         return {
           actualSeconds: descendant.actual_seconds,
+          createdAt: descendant.created_at,
+          currentStreak: historyStats.currentStreak,
           depth: relativeDepth,
           dueOn: descendant.due_on,
           dueTime: descendant.due_time,
@@ -292,6 +307,7 @@ export function buildChildTaskPreviewLookup(
           issueTypes: adapter.getNode(descendant.id)?.issueTypes ?? [],
           linkLabel: descendant.external_link_label ?? "",
           linkUrl: descendant.external_link_url ?? "",
+          missedStreak: historyStats.missedStreak,
           notes: descendant.notes ?? "",
           parentTaskId: descendant.parent_task_id,
           priorityFlags: getChildTaskPriorityFlags(descendant, focusedTaskIdSet),
@@ -303,6 +319,7 @@ export function buildChildTaskPreviewLookup(
           status: descendant.status,
           tags: descendant.tags ?? [],
           title: descendant.title,
+          updatedAt: descendant.updated_at,
         };
       }),
       summary: {
@@ -330,6 +347,8 @@ type ComputeTaskAppDerivedDataInput = {
   taskEditorTaskId: string | null;
   taskGridLayout: TaskGridItem[];
   taskGridWidgetTypes: string[];
+  taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  todayDateKey: string;
   taskListEvaluationContext: TaskListEvaluationContext;
   taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
   taskUiState: TaskDerivedFilterState;
@@ -349,6 +368,8 @@ export function computeTaskAppDerivedData({
   taskEditorTaskId,
   taskGridLayout,
   taskGridWidgetTypes,
+  taskHistoryByTaskId,
+  todayDateKey,
   taskListEvaluationContext,
   taskSubtasksByTaskId,
   taskUiState,
@@ -359,9 +380,11 @@ export function computeTaskAppDerivedData({
 
   const hierarchyDiagnosticsStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const taskHierarchyDiagnostics = buildTaskHierarchyDiagnostics(tasks);
-  const childTaskPreviewByParentTaskId = buildChildTaskPreviewLookup(tasks, focusedTaskIds);
+  const childTaskPreviewByParentTaskId = buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey);
   const taskPrimaryVisibility = buildTaskPrimaryVisibility(tasks);
   const primaryHiddenChildTaskIds = new Set(taskPrimaryVisibility.primaryHiddenChildTaskIds);
+  const normalizedSearchQuery = deferredSearchQuery.toLowerCase();
+  const searchMatchedStepParentTaskIds = new Set<string>();
   logTaskDeriveStep("hierarchy diagnostics", hierarchyDiagnosticsStartedAt, {
     childTasks: taskHierarchyDiagnostics.childTaskIds.length,
     childTaskPreviewParents: Object.keys(childTaskPreviewByParentTaskId).length,
@@ -442,10 +465,27 @@ export function computeTaskAppDerivedData({
       task.title,
       task.notes ?? "",
       task.external_link_label ?? "",
+      task.external_link_url ?? "",
       ...subtaskTitles,
       ...(task.tags ?? []),
     ].map((value) => value.toLowerCase());
-    return deferredSearchQuery.length === 0 || haystacks.some((value) => value.includes(deferredSearchQuery));
+    if (normalizedSearchQuery.length === 0 || haystacks.some((value) => value.includes(normalizedSearchQuery))) {
+      return true;
+    }
+
+    const matchingChildSearch = childTaskPreviewByParentTaskId[task.id]?.items.some((item) => [
+      item.title,
+      item.notes,
+      item.linkLabel,
+      item.linkUrl,
+      ...item.tags,
+    ].some((value) => value.toLowerCase().includes(normalizedSearchQuery))) ?? false;
+    if (matchingChildSearch) {
+      searchMatchedStepParentTaskIds.add(task.id);
+      return true;
+    }
+
+    return false;
   };
 
   const matchesTaskStructuredFilters = (task: Task) => {
@@ -696,6 +736,7 @@ export function computeTaskAppDerivedData({
     overdueTasks,
     planningCandidates,
     filteredTasksSorted,
+    searchMatchedStepParentTaskIds: Array.from(searchMatchedStepParentTaskIds),
     archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     selectedTaskForEditor,

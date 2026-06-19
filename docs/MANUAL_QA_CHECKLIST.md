@@ -49,7 +49,21 @@ Use this as a repeatable browser smoke test after a Codex implementation pass. K
 - [ ] In Table View, clicking a same-table Step row opens an inline action row directly under that Step instead of the full Edit Task UI.
 - [ ] In Table View, clicking a same-table Step metadata chip opens the matching inline action row directly under that Step.
 - [ ] In Table View, clicking a same-table Step title opens a compact in-row rename input without enlarging the Step row typography.
+- [ ] In Table View, clicking the same already-open parent or Step metadata chip closes that inline action row.
+- [ ] Table View Step rows sit close under the parent Steps toggle, show the Step icon, history access, delete access, Date Added metadata, and streak/missed-streak chips where applicable.
+- [ ] Table View parent and Step row action icons render as bare icons until hover/focus, while status circles and metadata chips keep their normal chip styling.
+- [ ] Table View Step shoeprints icon appears beside history/delete and opens an inline substep draft directly under that Step.
+- [ ] Same-table Step due chips say `Today`, not `Due Today`.
+- [ ] Same-table Step history entries produce visible streak/missed-streak chips in Table/List/Edit wherever the same parent task streak chip would appear.
+- [ ] List View parent and same-table Step titles match the Table View task/Step typography.
+- [ ] List View parent and same-table Step title clicks open in-row rename inputs and save through Enter/blur without opening the full editor.
+- [ ] List View same-table Step rows expose clickable metadata chips for status, due, priority, repeat, list, tags, estimate, actual time, energy, link, and notes where applicable.
+- [ ] List View parent and Step metadata overflow rows scroll horizontally so every chip remains reachable.
+- [ ] List View Step shoeprints icon appears beside history/delete and opens an inline substep draft under that Step.
+- [ ] List View same-table Step title click opens in-row rename and the rename persists after Enter/blur and refresh.
 - [ ] In the full Edit Task UI, clicking a same-table Step title lets the title be renamed and saved through the normal task title path.
+- [ ] In the full Edit Task UI, Step metadata chips scroll horizontally so Focus, Important, Urgent, Repeat, Due, and other chips remain reachable.
+- [ ] Edit Task UI Add Step uses the circular Step icon, same-table Step rows do not show a redundant status chip next to due metadata, and the right Meta Data column remains visible while scrolling lower Steps on desktop.
 - [ ] Table/List normal UI labels say `Steps` without `direct steps` or `total step rows` count copy.
 - [ ] A parent with only new same-table Steps appears in the existing Steps smart list/filter.
 - [ ] Old source-only rows remain visible for manual cleanup when they have not been replaced/promoted.
@@ -62,6 +76,8 @@ Use this as a repeatable browser smoke test after a Codex implementation pass. K
 ## Search
 
 - [ ] Searching returns expected matching tasks or items.
+- [ ] Searching for a same-table Step/Substep by title, notes, tag, or link returns the top-level parent, not a standalone child row.
+- [ ] Search-matched parents auto-show all sibling Steps/Substeps under that parent.
 - [ ] Clearing search restores the unfiltered state.
 - [ ] Search does not trap the UI in an empty or stale results view.
 
@@ -116,6 +132,7 @@ Use this as a repeatable browser smoke test after a Codex implementation pass. K
 ## Steps Migration
 
 - [ ] Legacy Step Promotion dry run shows counts and sample rows without changing data.
+- [ ] Settings Step migration dry run remains read-only unless manual promotion is explicitly reviewed and armed.
 - [ ] Manual promotion is unavailable until the dry run is reviewed and armed.
 - [ ] After manual promotion, real same-table Steps are visible and mapped migration-source rows are hidden.
 - [ ] Unmapped migration-source rows still appear under the normal Steps label where task UI surfaces them.

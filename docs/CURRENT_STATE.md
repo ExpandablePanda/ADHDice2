@@ -1,12 +1,12 @@
 # Current State
 
-Last reviewed: 2026-06-18
+Last reviewed: 2026-06-19
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.4.31`.
-- Current release group: `6.4.x` children/substeps metadata architecture.
+- Current working app version: `6.5.1`.
+- Current release group: `6.5.x` Steps cleanup, List/Table parity, and metadata parity.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
@@ -110,6 +110,16 @@ Role: active working
 - In `6.4.30`, Table View inline action rows now render directly under the row they edit: parent metadata actions appear before expanded Steps, and same-table Step row clicks/metadata chips open an inline action row under that Step instead of opening the full Edit Task UI.
 - In `6.4.31`, Table View Step inline action rows render from Step preview metadata even when the same-table Step is hidden from the top-level row array. Step metadata chips can open action rows directly under the Step, and Step title clicks switch to a compact in-row rename input that uses the existing task title update path.
 
+## 6.5 Checkpoint
+- In `6.5.0`, the same-table Steps cleanup pass brings List View previews closer to Table View behavior: Step titles can be renamed in-row, Step metadata uses the shared chip quick-panel pattern for the List-supported status, due, priority, repeat, list, and tag fields, and List parent/Step titles use the shared table title typography.
+- Table View Step rows now preserve richer preview metadata for hidden child task rows, including Date Added and task-history streak stats, and the mini-row surface includes the Step icon, history access, delete access, date-added cells, and streak/missed-streak chips where applicable.
+- Table View Step due chips use the same concise due copy as parent rows (`Today`, not `Due Today`), expanded Step rows sit closer to the parent Steps toggle area, and clicking an already-open Step metadata chip follows the same close-on-repeat inline action behavior as parent chips.
+- The Edit Task Steps area keeps one user-facing Steps section, uses the circular Step icon on Add Step controls, removes the redundant status chip from same-table Step rows, and makes the desktop Meta Data column sticky so it stays available while scrolling the left Steps list.
+- In `6.5.1`, the follow-up parity pass restyles parent and Step row action icons as bare icons with hover/focus circles, moves Step shoeprints actions beside history/delete, and uses the shoeprints action to open inline substep drafts under the clicked Step.
+- List View parent titles now rename inline, List parent/Step metadata rows expose the remaining editable metadata chips through horizontal scrollers, and Step history streak chips render from the same preview metadata used by Table/Edit.
+- Task search now keeps valid child rows hidden as standalone rows while allowing Step/Substep title, notes, tag, or link matches to surface the top-level parent and expand its sibling Steps.
+- Edit Task Step chip rows scroll horizontally so all Step metadata chips remain reachable, and Step title rename controls stop row-selection propagation more reliably.
+
 ## Current Product Shape
 - Tasks: primary dashboard with guarded cloud-backed task rows, shared shell controls, Table View, List View, cards, matrix, filters, buckets, same-table Steps mini rows/previews, and migration-source `adhdice_task_subtasks` rows surfaced under the unified Steps concept while promotion remains gated.
 - Archive vs Trash: fully split at runtime. Archive is a stable non-active bucket, Trash is the 30-day auto-delete bucket keyed by `trashed_at`, and active task views exclude both.
@@ -180,6 +190,6 @@ Role: active working
 ## Next Recommended Tickets
 1. Diagnose the black/glitched HUD/UI reload seam as an isolated ticket before any other UI work in that area.
 2. Define the future snapshot payload contract and restore overwrite rules before adding any restore SQL or runtime restore entry points.
-3. `6.4.32 Steps Movement And Ordering Rules`: decide and implement the smallest safe move/reorder/promote/demote behavior for same-table Steps, starting with product rules before UI.
+3. `6.5.2 Steps Movement And Ordering Rules`: decide and implement the smallest safe move/reorder/promote/demote behavior for same-table Steps, starting with product rules before UI.
 4. Run the gated legacy Step promotion only after manual dry-run review, then verify duplicate suppression against real promoted rows.
 5. Decide when `scheduled_on` becomes authoritative and gate that behind a dedicated runtime/data contract ticket.

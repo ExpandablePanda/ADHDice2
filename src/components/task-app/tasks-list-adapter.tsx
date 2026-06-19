@@ -1,5 +1,5 @@
 "use client";
-import { Ellipsis, Tag, Trash2, X } from "lucide-react";
+import { CalendarDays, Clock3, Ellipsis, ExternalLink, Flame, Footprints, Skull, Tag, Trash2, X } from "lucide-react";
 import {
   buildTaskRowContextMenuState,
   TaskManagementTableV2,
@@ -28,10 +28,11 @@ import {
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
   TASK_TABLE_TAG_CHIP_CLASS,
+  TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 
-type ListQuickPanelMode = "due" | "list" | "priority" | "repeat" | "status" | "tags";
+type ListQuickPanelMode = "actual" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
 const QUICK_PANEL_SHELL_CLASS = "rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] px-4 py-3 shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-[#41306c] dark:bg-[#18112d]";
 const QUICK_PANEL_TEXT_INPUT_CLASS = "h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]";
@@ -76,6 +77,13 @@ function repeatTone(repeat: PrototypeTaskRow["repeat"]) {
   return repeat === "none" ? TASK_TABLE_INACTIVE_CHIP_CLASS : QUICK_PANEL_PRIMARY_CHIP_CLASS;
 }
 
+function energyTone(energy: PrototypeTaskRow["energy"]) {
+  if (energy === "high") return "border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]";
+  if (energy === "medium") return "border-[#f2df9b] bg-[#fff6df] text-[#b77900] dark:border-[#6b5317] dark:bg-[#44350d] dark:text-[#ffd56b]";
+  if (energy === "low") return "border-[#c7eedc] bg-[#e8fbf2] text-[#119a69] dark:border-[#275443] dark:bg-[#16352c] dark:text-[#7de4b8]";
+  return TASK_TABLE_INACTIVE_CHIP_CLASS;
+}
+
 function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
 }
@@ -87,6 +95,7 @@ type TasksTableSourceProps = {
   allTasks?: Task[];
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
+  searchMatchedStepParentTaskIds?: string[];
   currentListLabel?: string | null;
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
   overlayNode?: ReactNode;
@@ -246,6 +255,7 @@ export function TasksTableAdapter({
           allTagOptions={tableProps.allTagOptions}
           childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
+          searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
           className="max-w-none p-0"
           currentListLabel={tableProps.currentListLabel}
           enableInspector
@@ -396,7 +406,7 @@ function formatStepPreviewSchedule(item: ChildTaskPreview) {
   if (item.dueOn || item.dueTime) {
     const dueLabel = formatDueLabel(item.dueOn);
     const dueTimeLabel = formatDueTimeLabel(item.dueTime);
-    return dueTimeLabel ? `Due ${dueLabel} · ${dueTimeLabel}` : `Due ${dueLabel}`;
+    return dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;
   }
   if (item.scheduledOn) {
     return `Scheduled ${formatDueLabel(item.scheduledOn)}`;
@@ -404,33 +414,126 @@ function formatStepPreviewSchedule(item: ChildTaskPreview) {
   return "";
 }
 
-function formatStepPreviewEstimate(minutes: number | null) {
-  if (!minutes || minutes <= 0) {
-    return "";
-  }
-  if (minutes < 60) {
-    return `${minutes}m`;
-  }
+function formatListDuration(minutes: number | null) {
+  if (!minutes || minutes <= 0) return "No est";
+  if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  const remainder = minutes % 60;
+  return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
+}
+
+function formatListActual(seconds: number) {
+  if (!seconds || seconds <= 0) return "0m";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
+}
+
+function formatDateAddedChip(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatEnergyChipLabel(energy: PrototypeTaskRow["energy"]) {
+  return energy === "none" ? "No energy" : `${energy.charAt(0).toUpperCase()}${energy.slice(1)} energy`;
 }
 
 function StepsCardPreview({
+  activeQuickPanel,
+  allTagOptions,
+  childTasksById,
+  closeQuickPanel,
+  currentListLabel,
   group,
+  listDefinitions,
+  listMembershipsByTaskId,
+  onCreateChildTask,
   onDeleteStep,
+  onOpenHistory,
   onOpenStep,
+  onOpenQuickPanel,
+  onRenameStep,
+  onOpenActualTime,
+  onSetActualSeconds,
+  onSetDue,
+  onSetEnergy,
+  onSetEstimatedMinutes,
+  onSetLink,
+  onSetNotes,
+  onSetPriority,
+  onSetRepeat,
+  onSetStatus,
+  onSetTags,
+  onToggleTaskList,
+  selectedBucket,
+  showAllSteps = false,
 }: {
+  activeQuickPanel: { mode: ListQuickPanelMode; taskId: string } | null;
+  allTagOptions: string[];
+  childTasksById: Map<string, Task>;
+  closeQuickPanel: () => void;
+  currentListLabel?: string | null;
   group: ChildTaskPreviewGroup;
+  listDefinitions: TaskListDefinition[];
+  listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
+  onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
   onDeleteStep?: (taskId: string) => void;
+  onOpenHistory?: (taskId: string) => void;
   onOpenStep: (taskId: string) => void;
+  onOpenQuickPanel: (taskId: string, mode: ListQuickPanelMode) => void;
+  onRenameStep?: (taskId: string, title: string) => void;
+  onOpenActualTime?: (taskId: string) => void;
+  onSetActualSeconds?: (taskId: string, seconds: number) => void;
+  onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }) => void;
+  onSetEnergy?: (taskId: string, energy: PrototypeTaskRow["energy"]) => void;
+  onSetEstimatedMinutes?: (taskId: string, minutes: number | null) => void;
+  onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;
+  onSetNotes?: (taskId: string, notes: string) => void;
+  onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
+  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">) => void;
+  onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null) => void;
+  onSetTags?: (taskId: string, tags: string[]) => void;
+  onToggleTaskList?: (taskId: string, listId: string) => void;
+  selectedBucket: string;
+  showAllSteps?: boolean;
 }) {
-  const visibleItems = group.items.slice(0, 4);
+  const [editingStepTitleId, setEditingStepTitleId] = useState<string | null>(null);
+  const [stepTitleDrafts, setStepTitleDrafts] = useState<Record<string, string>>({});
+  const [substepDraftParentId, setSubstepDraftParentId] = useState<string | null>(null);
+  const [substepTitleDrafts, setSubstepTitleDrafts] = useState<Record<string, string>>({});
+  const [substepCreationErrors, setSubstepCreationErrors] = useState<Record<string, string | null>>({});
+  const visibleItems = showAllSteps ? group.items : group.items.slice(0, 4);
   const hiddenItemCount = Math.max(0, group.items.length - visibleItems.length);
 
   if (visibleItems.length === 0 && !group.summary.hasInvalidDescendants) {
     return null;
   }
+
+  const commitSubstepDraft = async (parentTaskId: string) => {
+    const title = (substepTitleDrafts[parentTaskId] ?? "").trim();
+    if (!title) {
+      setSubstepDraftParentId(null);
+      return;
+    }
+
+    const result = await onCreateChildTask?.(parentTaskId, title);
+    if (result?.error) {
+      setSubstepCreationErrors((current) => ({ ...current, [parentTaskId]: result.error }));
+      return;
+    }
+    setSubstepTitleDrafts((current) => ({ ...current, [parentTaskId]: "" }));
+    setSubstepCreationErrors((current) => ({ ...current, [parentTaskId]: null }));
+    setSubstepDraftParentId(null);
+  };
 
   return (
     <section className="mt-3 border-t border-[#f0ebfb] pt-3 dark:border-white/10">
@@ -445,9 +548,34 @@ function StepsCardPreview({
       {visibleItems.length > 0 ? (
         <ul className="mt-2">
           {visibleItems.map((item) => {
+            const childTask = childTasksById.get(item.id) ?? null;
             const scheduleLabel = formatStepPreviewSchedule(item);
-            const estimateLabel = formatStepPreviewEstimate(item.estimatedMinutes);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
+            const activePanelMode = activeQuickPanel?.taskId === item.id ? activeQuickPanel.mode : null;
+            const displayStatus = childTask ? getTaskDisplayStatus(childTask) : item.status;
+            const activePriorities = childTask ? buildTaskPrioritySelection(childTask, new Set(item.priorityFlags.includes("focus") ? [item.id] : [])) : item.priorityFlags;
+            const categoryLabel = resolveTaskCategoryLabel({
+              currentListLabel,
+              listDefinitions,
+              listMemberships: listMembershipsByTaskId[item.id] ?? [],
+              selectedBucket,
+            });
+            const repeatSummary = childTask
+              ? formatRepeatSummary(childTask)
+              : item.repeat !== "none"
+                ? item.repeatInterval > 1 ? `${item.repeat} · ${item.repeatInterval}` : item.repeat
+                : "";
+            const visibleTags = item.tags.slice(0, 3);
+            const extraTagCount = Math.max(0, item.tags.length - visibleTags.length);
+            const isRenaming = editingStepTitleId === item.id;
+            const titleDraft = stepTitleDrafts[item.id] ?? item.title;
+            const commitTitle = () => {
+              const nextTitle = titleDraft.trim();
+              if (nextTitle && nextTitle !== item.title) {
+                onRenameStep?.(item.id, nextTitle);
+              }
+              setEditingStepTitleId((current) => (current === item.id ? null : current));
+            };
 
             return (
               <li
@@ -473,9 +601,75 @@ function StepsCardPreview({
                   <span className="mt-0.5 flex-none">{renderTaskStatusCircle(item.status, "sm")}</span>
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-start justify-between gap-2">
-                      <p className="min-w-0 truncate text-sm font-semibold text-[#1f2642] dark:text-white">
-                        {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
-                      </p>
+                      <div className="flex min-w-0 items-start gap-1.5">
+                        {isRenaming ? (
+                          <input
+                            autoFocus
+                            className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                            onBlur={commitTitle}
+                            onChange={(event) => setStepTitleDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => {
+                              event.stopPropagation();
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                commitTitle();
+                              }
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                setStepTitleDrafts((current) => ({ ...current, [item.id]: item.title }));
+                                setEditingStepTitleId(null);
+                              }
+                            }}
+                            value={titleDraft}
+                          />
+                        ) : (
+                          <button
+                            className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setEditingStepTitleId(item.id);
+                              setStepTitleDrafts((current) => ({ ...current, [item.id]: item.title }));
+                            }}
+                            type="button"
+                          >
+                            <p className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
+                              {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                            </p>
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex flex-none items-center gap-1">
+                        {onCreateChildTask ? (
+                          <button
+                            aria-label={`Add substep to ${item.title || "Untitled step"}`}
+                            className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#6f57f6] opacity-78 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                            data-same-table-step-add={item.id}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
+                              setSubstepDraftParentId(item.id);
+                            }}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            type="button"
+                          >
+                            <Footprints className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
+                        {onOpenHistory ? (
+                          <button
+                            aria-label={`Open history for step ${item.title || "Untitled step"}`}
+                            className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#6f57f6] opacity-75 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onOpenHistory(item.id);
+                            }}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            type="button"
+                          >
+                            <CalendarDays className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
                       {onDeleteStep ? (
                         <button
                           aria-label={`Move step ${item.title || "Untitled step"} to trash`}
@@ -491,30 +685,224 @@ function StepsCardPreview({
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
                       ) : null}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#8d87a7] dark:text-white/45">
-                      <span>{formatChildTaskPreviewDepthLabel(item.depth)}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{formatTaskStatusLabel(item.status)}</span>
-                      {scheduleLabel ? <span aria-hidden="true">·</span> : null}
-                      {scheduleLabel ? <span>{scheduleLabel}</span> : null}
-                      {estimateLabel ? <span aria-hidden="true">·</span> : null}
-                      {estimateLabel ? <span>{estimateLabel}</span> : null}
-                    </div>
-                    {item.priorityFlags.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {item.priorityFlags.map((priority) => (
-                          <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${priorityTone(priority)}`}
-                            key={`${item.id}-${priority}`}
-                          >
-                            {formatPreviewPriorityLabel(priority)}
-                          </span>
-                        ))}
                       </div>
-                    ) : null}
+                    </div>
+                    <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
+                      {formatChildTaskPreviewDepthLabel(item.depth)}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <MetadataChipButton
+                        active={activePanelMode === "status"}
+                        onClick={() => onOpenQuickPanel(item.id, "status")}
+                        toneClassName={SIMPLE_STATUS_STYLES[displayStatus]}
+                      >
+                        {formatTaskStatusLabel(displayStatus)}
+                      </MetadataChipButton>
+                      <MetadataChipButton active={activePanelMode === "due"} onClick={() => onOpenQuickPanel(item.id, "due")}>
+                        {scheduleLabel || "No date"}
+                      </MetadataChipButton>
+                      {item.currentStreak > 0 ? (
+                        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
+                          <Flame className="h-3 w-3" />
+                          {item.currentStreak}
+                        </span>
+                      ) : null}
+                      {item.missedStreak > 0 ? (
+                        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>
+                          <Skull className="h-3 w-3" />
+                          {item.missedStreak}
+                        </span>
+                      ) : null}
+                      <MetadataChipButton active={activePanelMode === "priority"} onClick={() => onOpenQuickPanel(item.id, "priority")}>
+                        {childTask ? formatPriorityChipLabel(childTask, new Set(activePriorities.includes("focus") ? [item.id] : [])) : activePriorities[0] ? formatPreviewPriorityLabel(activePriorities[0]) : "Normal priority"}
+                      </MetadataChipButton>
+                      {repeatSummary ? (
+                        <MetadataChipButton active={activePanelMode === "repeat"} onClick={() => onOpenQuickPanel(item.id, "repeat")}>
+                          {repeatSummary}
+                        </MetadataChipButton>
+                      ) : null}
+                      <MetadataChipButton active={activePanelMode === "list"} onClick={() => onOpenQuickPanel(item.id, "list")}>
+                        {categoryLabel}
+                      </MetadataChipButton>
+                      {visibleTags.map((tag) => (
+                        <MetadataChipButton active={activePanelMode === "tags"} key={tag} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
+                          #{tag}
+                        </MetadataChipButton>
+                      ))}
+                      {extraTagCount > 0 ? (
+                        <MetadataChipButton active={activePanelMode === "tags"} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
+                          +{extraTagCount} tag{extraTagCount === 1 ? "" : "s"}
+                        </MetadataChipButton>
+                      ) : null}
+                      {item.tags.length === 0 ? (
+                        <MetadataChipButton active={activePanelMode === "tags"} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
+                          <span className="inline-flex items-center gap-1">
+                            <Tag className="h-3 w-3" />
+                            Add tags
+                          </span>
+                        </MetadataChipButton>
+                      ) : null}
+                    </div>
+                    <div className="mt-2 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
+                      <span className={`${TASK_TABLE_INACTIVE_CHIP_CLASS} inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[12px] font-medium`}>
+                        Added {formatDateAddedChip(item.createdAt)}
+                      </span>
+                      <MetadataChipButton active={activePanelMode === "estimated"} onClick={() => onOpenQuickPanel(item.id, "estimated")}>
+                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListDuration(item.estimatedMinutes)}</span>
+                      </MetadataChipButton>
+                      <MetadataChipButton active={activePanelMode === "actual"} onClick={() => onOpenQuickPanel(item.id, "actual")}>
+                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListActual(item.actualSeconds)}</span>
+                      </MetadataChipButton>
+                      <MetadataChipButton active={activePanelMode === "energy"} onClick={() => onOpenQuickPanel(item.id, "energy")} toneClassName={energyTone(item.energy)}>
+                        {formatEnergyChipLabel(item.energy)}
+                      </MetadataChipButton>
+                      <MetadataChipButton active={activePanelMode === "link"} onClick={() => onOpenQuickPanel(item.id, "link")}>
+                        {item.linkLabel || item.linkUrl ? item.linkLabel || "Link" : "No link"}
+                      </MetadataChipButton>
+                      <MetadataChipButton active={activePanelMode === "notes"} onClick={() => onOpenQuickPanel(item.id, "notes")}>
+                        {item.notes.trim() ? "Notes" : "No notes"}
+                      </MetadataChipButton>
+                    </div>
                   </div>
                 </div>
+                {substepDraftParentId === item.id ? (
+                  <form
+                    className="mt-2 flex flex-col gap-2 pl-8 sm:flex-row"
+                    onClick={(event) => event.stopPropagation()}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void commitSubstepDraft(item.id);
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
+                      onBlur={() => {
+                        if ((substepTitleDrafts[item.id] ?? "").trim()) {
+                          void commitSubstepDraft(item.id);
+                          return;
+                        }
+                        setSubstepDraftParentId(null);
+                      }}
+                      onChange={(event) => {
+                        setSubstepTitleDrafts((current) => ({ ...current, [item.id]: event.target.value }));
+                        setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
+                      }}
+                      onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          setSubstepDraftParentId(null);
+                        }
+                      }}
+                      placeholder="Substep title..."
+                      value={substepTitleDrafts[item.id] ?? ""}
+                    />
+                    <TaskTableChipButton toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">Add</TaskTableChipButton>
+                    {substepCreationErrors[item.id] ? <p className="text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">{substepCreationErrors[item.id]}</p> : null}
+                  </form>
+                ) : null}
+                {activePanelMode === "status" ? (
+                  <QuickPanelShell onClose={closeQuickPanel} title={`Status · ${item.title || "Step"}`}>
+                    <div className="flex flex-wrap gap-2">
+                      {STATUS_OPTIONS.map((status) => (
+                        <TaskTableChipButton
+                          className="gap-2"
+                          key={status}
+                          onClick={() => {
+                            closeQuickPanel();
+                            onSetStatus?.(item.id, status, childTask);
+                          }}
+                          toneClassName={`${statusTone(status)}${status === displayStatus ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"}`}
+                        >
+                          {renderTaskStatusCircle(status, "sm")}
+                          <span>{formatTaskStatusLabel(status)}</span>
+                        </TaskTableChipButton>
+                      ))}
+                    </div>
+                  </QuickPanelShell>
+                ) : null}
+                {activePanelMode === "tags" ? (
+                  <TagsQuickPanel
+                    allTagOptions={allTagOptions}
+                    onClose={closeQuickPanel}
+                    onSave={(tags) => onSetTags?.(item.id, tags)}
+                    tags={item.tags}
+                  />
+                ) : null}
+                {activePanelMode === "due" ? (
+                  <DueQuickPanel
+                    dueOn={item.dueOn}
+                    dueTime={item.dueTime}
+                    onClose={closeQuickPanel}
+                    onSave={(schedule) => {
+                      onSetDue?.(item.id, schedule);
+                      closeQuickPanel();
+                    }}
+                  />
+                ) : null}
+                {activePanelMode === "priority" ? (
+                  <PriorityQuickPanel
+                    activePriorities={activePriorities}
+                    onClose={closeQuickPanel}
+                    onSave={(priorities) => onSetPriority?.(item.id, priorities)}
+                  />
+                ) : null}
+                {activePanelMode === "repeat" ? (
+                  <RepeatQuickPanel
+                    onClose={closeQuickPanel}
+                    onSave={(repeat, cadence) => onSetRepeat?.(item.id, repeat, cadence)}
+                    repeatDayOfMonth={item.repeatDayOfMonth}
+                    repeatDaysOfWeek={item.repeatDaysOfWeek}
+                    repeatFrequency={item.repeat}
+                    repeatInterval={Math.max(1, item.repeatInterval)}
+                  />
+                ) : null}
+                {activePanelMode === "list" ? (
+                  <ListQuickPanel
+                    listDefinitions={listDefinitions}
+                    listMemberships={listMembershipsByTaskId[item.id] ?? []}
+                    onClose={closeQuickPanel}
+                    onToggleList={(listId) => onToggleTaskList?.(item.id, listId)}
+                  />
+                ) : null}
+                {activePanelMode === "estimated" ? (
+                  <EstimatedQuickPanel
+                    minutes={item.estimatedMinutes}
+                    onClose={closeQuickPanel}
+                    onSave={(minutes) => onSetEstimatedMinutes?.(item.id, minutes)}
+                  />
+                ) : null}
+                {activePanelMode === "actual" ? (
+                  <ActualQuickPanel
+                    onClose={closeQuickPanel}
+                    onOpenManual={onOpenActualTime ? () => onOpenActualTime(item.id) : undefined}
+                    onSave={(seconds) => onSetActualSeconds?.(item.id, seconds)}
+                    seconds={item.actualSeconds}
+                  />
+                ) : null}
+                {activePanelMode === "energy" ? (
+                  <EnergyQuickPanel
+                    energy={item.energy}
+                    onClose={closeQuickPanel}
+                    onSave={(energy) => onSetEnergy?.(item.id, energy)}
+                  />
+                ) : null}
+                {activePanelMode === "link" ? (
+                  <LinkQuickPanel
+                    label={item.linkLabel}
+                    onClose={closeQuickPanel}
+                    onSave={(nextLink) => onSetLink?.(item.id, nextLink)}
+                    url={item.linkUrl}
+                  />
+                ) : null}
+                {activePanelMode === "notes" ? (
+                  <NotesQuickPanel
+                    notes={item.notes}
+                    onClose={closeQuickPanel}
+                    onSave={(notes) => onSetNotes?.(item.id, notes)}
+                  />
+                ) : null}
               </li>
             );
           })}
@@ -567,7 +955,7 @@ function QuickPanelShell({
   title: string;
 }) {
   return (
-    <div className={QUICK_PANEL_SHELL_CLASS}>
+    <div className={QUICK_PANEL_SHELL_CLASS} onClick={(event) => event.stopPropagation()}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d82b6] dark:text-white/45">
           {title}
@@ -908,6 +1296,175 @@ function ListQuickPanel({
   );
 }
 
+function EstimatedQuickPanel({
+  minutes,
+  onClose,
+  onSave,
+}: {
+  minutes: number | null;
+  onClose: () => void;
+  onSave: (minutes: number | null) => void;
+}) {
+  const [draft, setDraft] = useState(minutes ? String(minutes) : "");
+
+  const saveDraft = () => {
+    const parsed = Number.parseInt(draft, 10);
+    onSave(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+  };
+
+  return (
+    <QuickPanelShell onClose={onClose} title="Estimated Time">
+      <div className="flex flex-wrap gap-2">
+        {[5, 10, 15, 20, 30, 45, 60].map((option) => (
+          <QuickChipOption active={minutes === option} key={option} onClick={() => onSave(option)}>
+            {formatListDuration(option)}
+          </QuickChipOption>
+        ))}
+        <QuickChipOption active={!minutes} onClick={() => onSave(null)}>
+          Clear
+        </QuickChipOption>
+      </div>
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <input
+          className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
+          min={0}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              saveDraft();
+            }
+          }}
+          placeholder="Minutes"
+          type="number"
+          value={draft}
+        />
+        <TaskTableChipButton onClick={saveDraft} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
+      </div>
+    </QuickPanelShell>
+  );
+}
+
+function ActualQuickPanel({
+  seconds,
+  onClose,
+  onOpenManual,
+  onSave,
+}: {
+  seconds: number;
+  onClose: () => void;
+  onOpenManual?: () => void;
+  onSave?: (seconds: number) => void;
+}) {
+  const [draft, setDraft] = useState(seconds > 0 ? String(Math.round(seconds / 60)) : "");
+
+  const saveDraft = () => {
+    const parsed = Number.parseInt(draft, 10);
+    onSave?.(Number.isFinite(parsed) && parsed > 0 ? parsed * 60 : 0);
+  };
+
+  return (
+    <QuickPanelShell onClose={onClose} title="Actual Time">
+      <p className="mb-3 text-sm text-[#7d7597] dark:text-white/55">Current time: {formatListActual(seconds)}</p>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <input
+          className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
+          min={0}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              saveDraft();
+            }
+          }}
+          placeholder="Minutes"
+          type="number"
+          value={draft}
+        />
+        <TaskTableChipButton onClick={saveDraft} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save</TaskTableChipButton>
+        {onOpenManual ? <TaskTableChipButton onClick={onOpenManual} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Manual entry</TaskTableChipButton> : null}
+      </div>
+    </QuickPanelShell>
+  );
+}
+
+function EnergyQuickPanel({
+  energy,
+  onClose,
+  onSave,
+}: {
+  energy: PrototypeTaskRow["energy"];
+  onClose: () => void;
+  onSave: (energy: PrototypeTaskRow["energy"]) => void;
+}) {
+  const options: PrototypeTaskRow["energy"][] = ["none", "low", "medium", "high"];
+  return (
+    <QuickPanelShell onClose={onClose} title="Energy">
+      <div className="flex flex-wrap gap-2">
+        {options.map((option) => (
+          <QuickChipOption active={energy === option} activeToneClassName={energyTone(option)} key={option} onClick={() => onSave(option)}>
+            {formatEnergyChipLabel(option)}
+          </QuickChipOption>
+        ))}
+      </div>
+    </QuickPanelShell>
+  );
+}
+
+function LinkQuickPanel({
+  label,
+  onClose,
+  onSave,
+  url,
+}: {
+  label: string;
+  onClose: () => void;
+  onSave: (nextLink: { label: string; url: string }) => void;
+  url: string;
+}) {
+  const [labelDraft, setLabelDraft] = useState(label);
+  const [urlDraft, setUrlDraft] = useState(url);
+
+  return (
+    <QuickPanelShell onClose={onClose} title="Link">
+      <div className="grid gap-2">
+        <input className={QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setLabelDraft(event.target.value)} placeholder="Label" value={labelDraft} />
+        <input className={QUICK_PANEL_TEXT_INPUT_CLASS} onChange={(event) => setUrlDraft(event.target.value)} placeholder="https://..." value={urlDraft} />
+      </div>
+      <div className="mt-3 flex justify-end gap-2">
+        <TaskTableChipButton onClick={() => onSave({ label: "", url: "" })} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Clear link</TaskTableChipButton>
+        <TaskTableChipButton onClick={() => onSave({ label: labelDraft.trim(), url: urlDraft.trim() })} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save link</TaskTableChipButton>
+      </div>
+    </QuickPanelShell>
+  );
+}
+
+function NotesQuickPanel({
+  notes,
+  onClose,
+  onSave,
+}: {
+  notes: string;
+  onClose: () => void;
+  onSave: (notes: string) => void;
+}) {
+  const [draft, setDraft] = useState(notes);
+  return (
+    <QuickPanelShell onClose={onClose} title="Notes">
+      <textarea
+        className={`${QUICK_PANEL_TEXT_INPUT_CLASS} min-h-[7rem] w-full resize-none py-3`}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder="Add notes"
+        value={draft}
+      />
+      <div className="mt-3 flex justify-end gap-2">
+        <TaskTableChipButton onClick={() => onSave("")} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Clear notes</TaskTableChipButton>
+        <TaskTableChipButton onClick={() => onSave(draft)} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save notes</TaskTableChipButton>
+      </div>
+    </QuickPanelShell>
+  );
+}
+
 function TasksSimpleList({
   currentListLabel,
   filterRowsNode,
@@ -918,11 +1475,21 @@ function TasksSimpleList({
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [inlineInspectorTaskId, setInlineInspectorTaskId] = useState<string | null>(null);
+  const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
+  const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
   const listShellRef = useRef<HTMLDivElement | null>(null);
   const tasks = tableProps.tasks;
   const rowContext = tableProps.rowContext;
   const visibleTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
   const selectedTaskIdSet = useMemo(() => new Set(tableProps.selectedTaskIds), [tableProps.selectedTaskIds]);
+  const searchMatchedStepParentTaskIdSet = useMemo(
+    () => new Set(tableProps.searchMatchedStepParentTaskIds ?? []),
+    [tableProps.searchMatchedStepParentTaskIds],
+  );
+  const taskById = useMemo(
+    () => new Map([...(tableProps.allTasks ?? tasks), ...tasks].map((task) => [task.id, task])),
+    [tableProps.allTasks, tasks],
+  );
   const noteOptions = useMemo(
     () => tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? [],
     [tableProps.allNoteOptions],
@@ -1014,6 +1581,15 @@ function TasksSimpleList({
         const activePriorities = buildTaskPrioritySelection(task, rowContext.focusedTaskIdSet);
         const visibleTags = (task.tags ?? []).slice(0, 3);
         const extraTagCount = Math.max(0, (task.tags ?? []).length - visibleTags.length);
+        const isRenamingTaskTitle = editingTaskTitleId === task.id;
+        const taskTitleDraft = taskTitleDrafts[task.id] ?? task.title;
+        const commitTaskTitle = () => {
+          const nextTitle = taskTitleDraft.trim();
+          if (nextTitle && nextTitle !== task.title) {
+            tableProps.onSetTitle?.(task.id, nextTitle);
+          }
+          setEditingTaskTitleId((current) => (current === task.id ? null : current));
+        };
         const isOpenTask = isTaskOpen(task);
         const isInspectorOpen = inlineInspectorTaskId === task.id;
         const activePanelMode = activeQuickPanel?.taskId === task.id ? activeQuickPanel.mode : null;
@@ -1076,9 +1652,42 @@ function TasksSimpleList({
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className={`text-[15px] font-semibold leading-6 text-[#1f2642] dark:text-white ${!isOpenTask ? "line-through text-[#8d97b0] dark:text-white/45" : ""}`}>
-                        {task.title}
-                      </h3>
+                      {isRenamingTaskTitle ? (
+                        <input
+                          autoFocus
+                          className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                          onBlur={commitTaskTitle}
+                          onChange={(event) => setTaskTitleDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => {
+                            event.stopPropagation();
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              commitTaskTitle();
+                            }
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              setTaskTitleDrafts((current) => ({ ...current, [task.id]: task.title }));
+                              setEditingTaskTitleId(null);
+                            }
+                          }}
+                          value={taskTitleDraft}
+                        />
+                      ) : (
+                        <button
+                          className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setEditingTaskTitleId(task.id);
+                            setTaskTitleDrafts((current) => ({ ...current, [task.id]: task.title }));
+                          }}
+                          type="button"
+                        >
+                          <p className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} leading-6 ${!isOpenTask ? "line-through text-[#8d97b0] dark:text-white/45" : ""}`}>
+                            {task.title}
+                          </p>
+                        </button>
+                      )}
                       {task.is_urgent ? (
                         <span className="rounded-full bg-[#fff1f3] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#d94e67] dark:bg-[#44232f] dark:text-[#ff9eaf]">
                           Urgent
@@ -1131,6 +1740,37 @@ function TasksSimpleList({
                         </MetadataChipButton>
                       ) : null}
                     </div>
+                    <div className="mt-2 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
+                      <span className={`${TASK_TABLE_INACTIVE_CHIP_CLASS} inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[12px] font-medium`}>
+                        Added {formatDateAddedChip(task.created_at)}
+                      </span>
+                      <MetadataChipButton active={activePanelMode === "estimated"} onClick={() => openQuickPanel(task.id, "estimated")}>
+                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListDuration(task.estimated_minutes)}</span>
+                      </MetadataChipButton>
+                      <MetadataChipButton active={activePanelMode === "actual"} onClick={() => openQuickPanel(task.id, "actual")}>
+                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListActual(task.actual_seconds)}</span>
+                      </MetadataChipButton>
+                      <MetadataChipButton active={activePanelMode === "energy"} onClick={() => openQuickPanel(task.id, "energy")} toneClassName={energyTone(task.energy)}>
+                        {formatEnergyChipLabel(task.energy)}
+                      </MetadataChipButton>
+                      <MetadataChipButton active={activePanelMode === "link"} onClick={() => openQuickPanel(task.id, "link")}>
+                        {task.external_link_label || task.external_link_url ? task.external_link_label || "Link" : "No link"}
+                      </MetadataChipButton>
+                      {task.external_link_url ? (
+                        <TaskTableChipButton
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            window.open(task.external_link_url ?? "", "_blank", "noopener,noreferrer");
+                          }}
+                          toneClassName={TASK_TABLE_LIST_CHIP_CLASS}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </TaskTableChipButton>
+                      ) : null}
+                      <MetadataChipButton active={activePanelMode === "notes"} onClick={() => openQuickPanel(task.id, "notes")}>
+                        {task.notes?.trim() ? "Notes" : "No notes"}
+                      </MetadataChipButton>
+                    </div>
                   </div>
 
                   <div className="relative shrink-0">
@@ -1157,13 +1797,38 @@ function TasksSimpleList({
             </div>
             {hasStepPreview && stepPreviewGroup ? (
               <StepsCardPreview
+                activeQuickPanel={activeQuickPanel}
+                allTagOptions={tableProps.allTagOptions ?? []}
+                childTasksById={taskById}
+                closeQuickPanel={closeQuickPanel}
+                currentListLabel={currentListLabel}
                 group={stepPreviewGroup}
+                listDefinitions={rowContext.listDefinitions}
+                listMembershipsByTaskId={rowContext.listMembershipsByTaskId}
+                onCreateChildTask={tableProps.onCreateChildTask}
                 onDeleteStep={tableProps.onOpenDeleteTask}
+                onOpenHistory={tableProps.onOpenTaskHistory}
+                onOpenActualTime={tableProps.onOpenTaskActualTime}
                 onOpenStep={(taskId) => {
                   setRowContextMenu(null);
                   closeQuickPanel();
                   setInlineInspectorTaskId(taskId);
                 }}
+                onOpenQuickPanel={openQuickPanel}
+                onRenameStep={tableProps.onSetTitle}
+                onSetActualSeconds={tableProps.onSetActualSeconds}
+                onSetDue={tableProps.onSetDue}
+                onSetEnergy={tableProps.onSetEnergy}
+                onSetEstimatedMinutes={tableProps.onSetEstimatedMinutes}
+                onSetLink={tableProps.onSetLink}
+                onSetNotes={tableProps.onSetNotes}
+                onSetPriority={tableProps.onSetPriority}
+                onSetRepeat={tableProps.onSetRepeat}
+                onSetStatus={tableProps.onSetStatus}
+                onSetTags={tableProps.onSetTags}
+                onToggleTaskList={tableProps.onToggleTaskList}
+                selectedBucket={selectedBucket}
+                showAllSteps={searchMatchedStepParentTaskIdSet.has(task.id)}
               />
             ) : null}
             </article>
@@ -1231,6 +1896,43 @@ function TasksSimpleList({
                 onToggleList={(listId) => tableProps.onToggleTaskList?.(task.id, listId)}
               />
             ) : null}
+            {activePanelMode === "estimated" ? (
+              <EstimatedQuickPanel
+                minutes={task.estimated_minutes}
+                onClose={closeQuickPanel}
+                onSave={(minutes) => tableProps.onSetEstimatedMinutes?.(task.id, minutes)}
+              />
+            ) : null}
+            {activePanelMode === "actual" ? (
+              <ActualQuickPanel
+                onClose={closeQuickPanel}
+                onOpenManual={tableProps.onOpenTaskActualTime ? () => tableProps.onOpenTaskActualTime?.(task.id) : undefined}
+                onSave={(seconds) => tableProps.onSetActualSeconds?.(task.id, seconds)}
+                seconds={task.actual_seconds}
+              />
+            ) : null}
+            {activePanelMode === "energy" ? (
+              <EnergyQuickPanel
+                energy={task.energy}
+                onClose={closeQuickPanel}
+                onSave={(energy) => tableProps.onSetEnergy?.(task.id, energy)}
+              />
+            ) : null}
+            {activePanelMode === "link" ? (
+              <LinkQuickPanel
+                label={task.external_link_label ?? ""}
+                onClose={closeQuickPanel}
+                onSave={(nextLink) => tableProps.onSetLink?.(task.id, nextLink)}
+                url={task.external_link_url ?? ""}
+              />
+            ) : null}
+            {activePanelMode === "notes" ? (
+              <NotesQuickPanel
+                notes={task.notes ?? ""}
+                onClose={closeQuickPanel}
+                onSave={(notes) => tableProps.onSetNotes?.(task.id, notes)}
+              />
+            ) : null}
             {isInspectorOpen ? (
               <TaskManagementTableV2
                 allowInlineInspector
@@ -1239,6 +1941,7 @@ function TasksSimpleList({
                 allTagOptions={tableProps.allTagOptions}
                 childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
                 childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
+                searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
                 className="mt-0 max-w-none"
                 currentListLabel={tableProps.currentListLabel}
                 enableInspector
@@ -1346,8 +2049,13 @@ function TasksSimpleList({
               } : undefined}
               onOpenQuickEdit={(mode) => {
                 const listModeMap: Partial<Record<"actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags", ListQuickPanelMode>> = {
+                  actual: "actual",
                   due: "due",
+                  energy: "energy",
+                  estimated: "estimated",
+                  link: "link",
                   lists: "list",
+                  notes: "notes",
                   priority: "priority",
                   repeat: "repeat",
                   status: "status",
@@ -1383,10 +2091,15 @@ function TasksSimpleList({
               quickEditItems={[
                 { label: "Status", mode: "status" },
                 { label: "Due", mode: "due" },
+                { label: "Estimate", mode: "estimated" },
+                { label: "Actual", mode: "actual" },
+                { label: "Energy", mode: "energy" },
                 { label: "Priority", mode: "priority" },
                 { label: "Repeat", mode: "repeat" },
                 { label: "Lists", mode: "lists" },
                 { label: "Tags", mode: "tags" },
+                { label: "Link", mode: "link" },
+                { label: "Notes", mode: "notes" },
               ]}
               quickEditTitle={selectedTaskIdSet.has(rowContextMenuTask.id) && tableProps.selectedTaskIds.length > 1 ? `Quick edit ${tableProps.selectedTaskIds.length} selected tasks` : "Quick edit"}
               selectedTaskCount={tableProps.selectedTaskIds.length}

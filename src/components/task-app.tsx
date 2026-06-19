@@ -300,7 +300,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.4.31";
+const APP_VERSION = "6.5.1";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -1912,6 +1912,8 @@ export function TaskApp() {
       taskEditorTaskId,
       taskGridLayout,
       taskGridWidgetTypes: Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[],
+      taskHistoryByTaskId,
+      todayDateKey: todayKey,
       taskListEvaluationContext,
       taskSubtasksByTaskId,
       taskUiState: taskUiStateForDerivedData,
@@ -1932,9 +1934,11 @@ export function TaskApp() {
       taskActualTimeEntryTaskId,
       taskEditorTaskId,
       taskGridLayout,
+      taskHistoryByTaskId,
       taskListEvaluationContext,
       taskSubtasksByTaskId,
       taskUiStateForDerivedData,
+      todayKey,
       tasks,
     ],
   );
@@ -1967,6 +1971,7 @@ export function TaskApp() {
     momentumPercent,
     overdueTasks,
     planningCandidates,
+    searchMatchedStepParentTaskIds,
     selectedTaskForEditor,
     taskForActualTimeEntry,
     taskHierarchyDiagnostics,
@@ -3796,6 +3801,7 @@ export function TaskApp() {
                   allTasks: tasks,
                   childTaskPreviewByParentTaskId,
                   childTaskCreationBlockedTaskIds,
+                  searchMatchedStepParentTaskIds,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
@@ -3931,6 +3937,7 @@ export function TaskApp() {
                   allTasks: tasks,
                   childTaskPreviewByParentTaskId,
                   childTaskCreationBlockedTaskIds,
+                  searchMatchedStepParentTaskIds,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,

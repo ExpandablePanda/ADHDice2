@@ -816,6 +816,7 @@ type TaskManagementTableV2Props = {
   allTagOptions?: string[];
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
+  searchMatchedStepParentTaskIds?: string[];
   className?: string;
   currentListLabel?: string | null;
   enableInspector?: boolean;
@@ -1324,7 +1325,7 @@ const CHILD_TASK_PREVIEW_ITEM_LIMIT = 12;
 
 function formatChildTaskPreviewSchedule(item: ChildTaskPreview) {
   if (item.dueOn || item.dueTime) {
-    return `Due ${formatDue(item.dueOn ?? "", item.dueTime ?? "")}`;
+    return formatDue(item.dueOn ?? "", item.dueTime ?? "");
   }
   if (item.scheduledOn) {
     return `Scheduled ${formatDue(item.scheduledOn, "")}`;
@@ -1447,6 +1448,9 @@ function SameTableStepCreationControl({
         }}
         toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
       >
+        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" aria-hidden="true">
+          <Footprints className="h-3 w-3" />
+        </span>
         Add Step
       </TaskTableChipButton>
     );
@@ -1532,6 +1536,9 @@ function inlineAccordionButtonClass() {
 function inlineAccordionChipContentClass(tone: string) {
   return `${CHIP_BASE} ${tone}`;
 }
+
+const ROW_ACTION_ICON_BUTTON_CLASS = "inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#6f57f6] opacity-78 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f] dark:focus-visible:ring-[#3b2f68]/90";
+const ROW_ACTION_DANGER_ICON_BUTTON_CLASS = "inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#d94e67] opacity-72 transition hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffd6de]/80 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f] dark:focus-visible:ring-[#5b2e3b]/90";
 
 function inlineAccordionInputCardClass(widthClass = "w-[15rem]") {
   return `shrink-0 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-2.5 dark:border-white/10 dark:bg-white/[0.04] ${widthClass}`;
@@ -1817,6 +1824,7 @@ export function TaskManagementTableV2({
   primaryBadgeLabel = "Inspired by server table UI",
   rows = DEFAULT_ROWS,
   runningTaskTimers,
+  searchMatchedStepParentTaskIds = [],
   requestedOpenTaskId = null,
   requestedOpenTask = null,
   suppressDetachedNoticeTaskId = null,
@@ -2040,6 +2048,10 @@ export function TaskManagementTableV2({
   const visibleTaskIds = useMemo(
     () => displayedTasks.map((task) => task.id),
     [displayedTasks],
+  );
+  const searchMatchedStepParentTaskIdSet = useMemo(
+    () => new Set(searchMatchedStepParentTaskIds),
+    [searchMatchedStepParentTaskIds],
   );
   const renderedTasks = useMemo(
     () => displayedTasks.slice(0, renderedTaskCount),
@@ -3350,6 +3362,15 @@ export function TaskManagementTableV2({
     setOverlayAnchor({ left: nextLeft, top: nextTop });
   }
 
+  function toggleInlineActionRow(taskId: string, mode: OverlayMode, sourceElement?: HTMLElement | null, nextQuickEditTargetTaskIds: string[] | null = null) {
+    if (allowInlineInspector && isInlineAccordionMode(mode) && selectedTaskId === taskId && overlayMode === mode) {
+      closeInspector();
+      return;
+    }
+
+    openInspector(taskId, mode, sourceElement, nextQuickEditTargetTaskIds);
+  }
+
   function openTaskInCurrentEditor(taskId: string) {
     if (getTaskById(taskId)) {
       openInspector(taskId, "full");
@@ -3361,7 +3382,7 @@ export function TaskManagementTableV2({
 
   function openTableStepActions(taskId: string, mode: OverlayMode = "status") {
     if (allowInlineInspector && isInlineAccordionMode(mode)) {
-      openInspector(taskId, mode);
+      toggleInlineActionRow(taskId, mode);
       return;
     }
 
@@ -3376,7 +3397,7 @@ export function TaskManagementTableV2({
 
     return {
       actualSeconds: item.actualSeconds,
-      createdAt: "",
+      createdAt: item.createdAt,
       dueOn: item.dueOn ?? item.scheduledOn ?? "",
       dueTime: item.dueTime ?? "",
       energy: item.energy,
@@ -3386,8 +3407,8 @@ export function TaskManagementTableV2({
       linkUrl: item.linkUrl,
       linkedNotes: [],
       lists: [],
-      currentStreak: 0,
-      missedStreak: 0,
+      currentStreak: item.currentStreak,
+      missedStreak: item.missedStreak,
       notes: item.notes,
       priorities: [...item.priorityFlags],
       repeat: item.repeat,
@@ -3400,7 +3421,7 @@ export function TaskManagementTableV2({
       tags: [...item.tags],
       title: item.title,
       trashedAt: null,
-      updatedAt: "",
+      updatedAt: item.updatedAt,
     };
   }
 
@@ -4530,7 +4551,7 @@ export function TaskManagementTableV2({
           className={`${CONTROL_FONT_CLASS} inline-flex min-w-0 max-w-full items-center justify-center overflow-hidden rounded-[0.95rem] py-1 transition`}
           onClick={(event) => {
             event.stopPropagation();
-            openInspector(task.id, mode, event.currentTarget);
+            toggleInlineActionRow(task.id, mode, event.currentTarget);
           }}
           type="button"
         >
@@ -4555,7 +4576,7 @@ export function TaskManagementTableV2({
             className={`${CONTROL_FONT_CLASS} rounded-full p-0 transition`}
             onClick={(event) => {
               event.stopPropagation();
-              openInspector(task.id, "status", event.currentTarget);
+              toggleInlineActionRow(task.id, "status", event.currentTarget);
             }}
             type="button"
           >
@@ -4572,7 +4593,7 @@ export function TaskManagementTableV2({
       const hasSubtasks = visibleSubtasks.length > 0;
       const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
       const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-      const stepsExpanded = expandedStepsByTaskId[task.id] ?? false;
+      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || searchMatchedStepParentTaskIdSet.has(task.id);
       const subtasksExpanded = expandedSubtasksByTaskId[task.id] ?? false;
       const hasUnifiedSteps = hasStepPreview || hasSubtasks;
       const unifiedStepsExpanded = hasStepPreview ? stepsExpanded : subtasksExpanded;
@@ -4639,7 +4660,7 @@ export function TaskManagementTableV2({
               {(task.status === "archived" || task.status === "trashed") && onRestoreTask ? (
                 <button
                   aria-label="Restore task to inbox"
-                  className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] transition hover:bg-[#ebe4ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  className={ROW_ACTION_ICON_BUTTON_CLASS}
                   onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -4647,13 +4668,13 @@ export function TaskManagementTableV2({
                   }}
                   type="button"
                 >
-                  <MoveLeft className="h-3 w-3" />
+                  <MoveLeft className="h-3.5 w-3.5" />
                 </button>
               ) : null}
               {onCreateChildTask ? (
                 <button
                   aria-label="Add Step"
-                  className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  className={ROW_ACTION_ICON_BUTTON_CLASS}
                   onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -4661,13 +4682,13 @@ export function TaskManagementTableV2({
                   }}
                   type="button"
                 >
-                  <Footprints className="h-3 w-3" />
+                  <Footprints className="h-3.5 w-3.5" />
                 </button>
               ) : null}
               {onOpenTaskHistory ? (
                 <button
                   aria-label="Open task history"
-                  className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] transition hover:bg-[#ebe4ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  className={ROW_ACTION_ICON_BUTTON_CLASS}
                   onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -4675,13 +4696,13 @@ export function TaskManagementTableV2({
                   }}
                   type="button"
                 >
-                  <CalendarDays className="h-3 w-3" />
+                  <CalendarDays className="h-3.5 w-3.5" />
                 </button>
               ) : null}
               {onOpenDeleteTask ? (
                 <button
                   aria-label={task.status === "trashed" ? "Delete permanently" : "Move to trash"}
-                  className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe8ed] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+                  className={ROW_ACTION_DANGER_ICON_BUTTON_CLASS}
                   onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -4689,7 +4710,7 @@ export function TaskManagementTableV2({
                   }}
                   type="button"
                 >
-                  <Trash2 className="h-3 w-3" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
               ) : null}
               {task.currentStreak > 0 ? (
@@ -4862,7 +4883,7 @@ export function TaskManagementTableV2({
             className={`${CONTROL_FONT_CLASS} rounded-[0.95rem] px-2 py-1 transition`}
             onClick={(event) => {
               event.stopPropagation();
-              openInspector(task.id, "link", event.currentTarget);
+              toggleInlineActionRow(task.id, "link", event.currentTarget);
             }}
             type="button"
           >
@@ -4913,7 +4934,7 @@ export function TaskManagementTableV2({
               className={`${CONTROL_FONT_CLASS} rounded-[0.95rem] px-2 py-1 transition`}
               onClick={(event) => {
                 event.stopPropagation();
-                openInspector(task.id, "notes", event.currentTarget);
+                toggleInlineActionRow(task.id, "notes", event.currentTarget);
               }}
               type="button"
             >
@@ -5038,15 +5059,17 @@ export function TaskManagementTableV2({
                 <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     {isRenamingStepTitle ? (
-                      <TaskTitleDraftInput
-                        autoFocus
-                        className="min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-1 text-sm font-semibold text-[#27304c] outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
-                        initialValue={item.title}
-                        onCommit={commitTaskTitle}
-                        onDone={() => setEditingTaskTitleId((current) => (current === item.id ? null : current))}
-                        onDraftChange={setTitleDraft}
-                        taskId={item.id}
-                      />
+                      <span onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
+                        <TaskTitleDraftInput
+                          autoFocus
+                          className="min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-1 text-sm font-semibold text-[#27304c] outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+                          initialValue={item.title}
+                          onCommit={commitTaskTitle}
+                          onDone={() => setEditingTaskTitleId((current) => (current === item.id ? null : current))}
+                          onDraftChange={setTitleDraft}
+                          taskId={item.id}
+                        />
+                      </span>
                     ) : (
                       <button
                         className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
@@ -5056,9 +5079,10 @@ export function TaskManagementTableV2({
                           setEditingTaskTitleId(item.id);
                           setTitleDraft(item.id, item.title);
                         }}
+                        onPointerDown={stopRowActionPointerEvent}
                         type="button"
                       >
-                        <p className="min-w-0 truncate text-sm font-semibold text-[#27304c] dark:text-white">
+                        <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
                           {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                         </p>
                       </button>
@@ -5067,24 +5091,39 @@ export function TaskManagementTableV2({
                       {formatChildTaskPreviewDepthLabel(item.depth)}
                     </p>
                   </div>
-                  {canDeleteChildTask && !isMetadataTarget ? (
-                    <button
-                      aria-label={`Move step ${item.title || "Untitled step"} to trash`}
-                      className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#d94e67] opacity-70 transition hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f]"
-                      data-same-table-step-delete={item.id}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onOpenDeleteTask?.(item.id);
-                      }}
-                      onPointerDown={stopRowActionPointerEvent}
-                      type="button"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  ) : null}
+                  <div className="flex flex-none items-center gap-1">
+                    {onOpenTaskHistory ? (
+                      <button
+                        aria-label={`Open history for step ${item.title || "Untitled step"}`}
+                        className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#6f57f6] opacity-75 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenTaskHistory(item.id);
+                        }}
+                        onPointerDown={stopRowActionPointerEvent}
+                        type="button"
+                      >
+                        <CalendarDays className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                    {canDeleteChildTask && !isMetadataTarget ? (
+                      <button
+                        aria-label={`Move step ${item.title || "Untitled step"} to trash`}
+                        className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#d94e67] opacity-70 transition hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f]"
+                        data-same-table-step-delete={item.id}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenDeleteTask?.(item.id);
+                        }}
+                        onPointerDown={stopRowActionPointerEvent}
+                        type="button"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <span className={`${CHIP_BASE} ${statusTone(item.status)}`}>{formatStatusLabel(item.status)}</span>
+                <div className="mt-2 flex max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:thin]">
                   {scheduleLabel ? <span className={`${CHIP_BASE} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>{scheduleLabel}</span> : null}
                   {estimateLabel ? (
                     <span className={`${CHIP_BASE} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] gap-1.5`}>
@@ -5105,6 +5144,18 @@ export function TaskManagementTableV2({
                   ))}
                   {item.energy !== "none" ? <span className={`${CHIP_BASE} ${energyTone(item.energy)}`}>{formatEnergyLabel(item.energy)}</span> : null}
                   {item.repeat !== "none" ? <span className={`${CHIP_BASE} ${repeatTone(item.repeat)}`}>{formatChildTaskPreviewRepeat(item)}</span> : null}
+                  {item.currentStreak > 0 ? (
+                    <span className={`${CHIP_BASE} border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e] gap-1 px-2`}>
+                      <Flame className="h-3 w-3" />
+                      {item.currentStreak}
+                    </span>
+                  ) : null}
+                  {item.missedStreak > 0 ? (
+                    <span className={`${CHIP_BASE} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] gap-1 px-2`}>
+                      <Skull className="h-3 w-3" />
+                      {item.missedStreak}
+                    </span>
+                  ) : null}
                   {visibleTags.map((tag) => (
                     <span className={`${CHIP_BASE} ${TAG_CHIP_CLASS}`} key={`${item.id}-editor-tag-${tag}`}>
                       #{tag}
@@ -5178,6 +5229,7 @@ export function TaskManagementTableV2({
     if (columnId === "estimated") return "estimated";
     if (columnId === "actual") return "actual";
     if (columnId === "tags") return "tags";
+    if (columnId === "link") return "link";
     if (columnId === "notes") return "notes";
     if (columnId === "priority") return "priority";
     if (columnId === "energy") return "energy";
@@ -5245,7 +5297,7 @@ export function TaskManagementTableV2({
                 }}
                 type="button"
               >
-                <p className="min-w-0 truncate text-[13px] font-medium text-[#27304c] dark:text-white">
+                <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
                   {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                 </p>
               </button>
@@ -5254,10 +5306,39 @@ export function TaskManagementTableV2({
               {formatChildTaskPreviewDepthLabel(item.depth)}
             </p>
           </div>
+          {onCreateChildTask ? (
+            <button
+              aria-label={`Add substep to ${item.title || "Untitled step"}`}
+              className={ROW_ACTION_ICON_BUTTON_CLASS}
+              data-same-table-step-add={item.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                beginTableStepDraft(item.id);
+              }}
+              onPointerDown={stopRowActionPointerEvent}
+              type="button"
+            >
+              <Footprints className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          {onOpenTaskHistory ? (
+            <button
+              aria-label={`Open history for step ${item.title || "Untitled step"}`}
+              className={ROW_ACTION_ICON_BUTTON_CLASS}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenTaskHistory(item.id);
+              }}
+              onPointerDown={stopRowActionPointerEvent}
+              type="button"
+            >
+              <CalendarDays className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
           {onOpenDeleteTask ? (
             <button
               aria-label={`Move step ${item.title || "Untitled step"} to trash`}
-              className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#d94e67] opacity-70 transition hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f]"
+              className={ROW_ACTION_DANGER_ICON_BUTTON_CLASS}
               data-same-table-step-delete={item.id}
               onClick={(event) => {
                 event.stopPropagation();
@@ -5281,6 +5362,16 @@ export function TaskManagementTableV2({
           </span>
         </div>
       ));
+    }
+
+    if (columnId === "date_added") {
+      return (
+        <div>
+          <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
+            {formatEntryTimestamp(item.createdAt)}
+          </span>
+        </div>
+      );
     }
 
     if (columnId === "estimated") {
@@ -5321,10 +5412,19 @@ export function TaskManagementTableV2({
     }
 
     if (columnId === "link") {
-      const linkContent = (
-        <div className="flex min-w-0 flex-nowrap items-center gap-2">
-          <span className={`${CHIP_BASE} ${item.linkLabel ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>{item.linkLabel || "No link"}</span>
-          {item.linkUrl ? (
+      if (item.linkUrl) {
+        return (
+          <div className="flex min-w-0 flex-nowrap items-center gap-2">
+            <button
+              className={`${CONTROL_FONT_CLASS} inline-flex min-w-0 max-w-full items-center justify-center overflow-hidden rounded-[0.95rem] py-1 transition`}
+              onClick={(event) => {
+                event.stopPropagation();
+                openTableStepActions(item.id, "link");
+              }}
+              type="button"
+            >
+              <span className={`${CHIP_BASE} ${item.linkLabel ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>{item.linkLabel || "Link"}</span>
+            </button>
             <button
               className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${LIST_CHIP_CLASS} px-2`}
               onClick={(event) => {
@@ -5335,10 +5435,15 @@ export function TaskManagementTableV2({
             >
               <ExternalLink className="h-3.5 w-3.5" />
             </button>
-          ) : null}
+          </div>
+        );
+      }
+
+      return wrapStepMiniCellAction(item, columnId, (
+        <div className="flex min-w-0 flex-nowrap items-center gap-2">
+          <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No link</span>
         </div>
-      );
-      return item.linkUrl ? linkContent : wrapStepMiniCellAction(item, columnId, linkContent);
+      ));
     }
 
     if (columnId === "notes") {
@@ -5382,8 +5487,20 @@ export function TaskManagementTableV2({
 
     if (columnId === "status") {
       return wrapStepMiniCellAction(item, columnId, (
-        <div>
+        <div className="flex min-w-0 flex-nowrap items-center gap-2">
           <span className={`${CHIP_BASE} ${statusTone(item.status)}`}>{formatStatusLabel(item.status)}</span>
+          {item.currentStreak > 0 ? (
+            <span className={`${CHIP_BASE} border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e] gap-1 px-2`}>
+              <Flame className="h-3 w-3" />
+              {item.currentStreak}
+            </span>
+          ) : null}
+          {item.missedStreak > 0 ? (
+            <span className={`${CHIP_BASE} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] gap-1 px-2`}>
+              <Skull className="h-3 w-3" />
+              {item.missedStreak}
+            </span>
+          ) : null}
         </div>
       ));
     }
@@ -5501,17 +5618,19 @@ export function TaskManagementTableV2({
   };
 
   const renderChildTaskMiniRows = (task: PrototypeTaskRow, group: ChildTaskPreviewGroup | undefined) => {
-    const visibleItems = group?.items.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT) ?? [];
+    const showAllStepItems = searchMatchedStepParentTaskIdSet.has(task.id);
+    const visibleItems = showAllStepItems ? group?.items ?? [] : group?.items.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT) ?? [];
     const hiddenItemCount = Math.max(0, (group?.items.length ?? 0) - visibleItems.length);
     const canOpenStepActions = allowInlineInspector || Boolean(onOpenChildTask);
     const isDraftingStepForTask = tableStepDraftParentId === task.id;
+    const isDraftingSubstepForVisibleItem = Boolean(tableStepDraftParentId && visibleItems.some((item) => item.id === tableStepDraftParentId));
 
-    if (visibleItems.length === 0 && !group?.summary.hasInvalidDescendants && !isDraftingStepForTask) {
+    if (visibleItems.length === 0 && !group?.summary.hasInvalidDescendants && !isDraftingStepForTask && !isDraftingSubstepForVisibleItem) {
       return null;
     }
 
     return (
-      <div className="ml-[10px] w-max min-w-full" data-task-table-step-rows={task.id}>
+      <div className="-mt-1 ml-[10px] w-max min-w-full" data-task-table-step-rows={task.id}>
         {group?.summary.hasInvalidDescendants ? (
           <div className="rounded-[0.95rem] border border-[#f1dfaa] bg-[#fff9e8] px-3 py-2 text-left text-xs font-medium text-[#9a7a24] dark:border-[#6b5317] dark:bg-[#44350d]/55 dark:text-[#f3d38a]">
             {formatInvalidChildLinkCount(group?.summary.invalidChildLinkCount ?? 0)}
@@ -5519,7 +5638,7 @@ export function TaskManagementTableV2({
         ) : null}
         {isDraftingStepForTask ? (
           <form
-            className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-3 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+            className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-2 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
             data-table-step-draft-row={task.id}
             onClick={(event) => event.stopPropagation()}
             onSubmit={(event) => {
@@ -5541,7 +5660,7 @@ export function TaskManagementTableV2({
           return (
             <Fragment key={item.id}>
               <div
-                className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-3 pl-[3px] pr-0 text-center transition dark:bg-[#181226] ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""}`}
+                className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-2 pl-[3px] pr-0 text-center transition dark:bg-[#181226] ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""}`}
                 data-same-table-step-row={item.id}
                 onClick={canOpenStepActions ? (event) => {
                   event.stopPropagation();
@@ -5565,6 +5684,24 @@ export function TaskManagementTableV2({
                 ))}
               </div>
               {renderInlineActionRow(inlineStepTask)}
+              {tableStepDraftParentId === item.id ? (
+                <form
+                  className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-2 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+                  data-table-step-draft-row={item.id}
+                  onClick={(event) => event.stopPropagation()}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void commitTableStepDraft(item.id);
+                  }}
+                  style={{ gridTemplateColumns }}
+                >
+                  {visibleHeaderColumns.map((column) => (
+                    <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${item.id}-draft-${column.id}`}>
+                      {renderTableStepDraftCell(item.id, column.id)}
+                    </div>
+                  ))}
+                </form>
+              ) : null}
             </Fragment>
           );
         })}
@@ -5833,7 +5970,7 @@ export function TaskManagementTableV2({
               const hasSourceStepRows = visibleSubtasks.length > 0;
               const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
               const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-              const stepsExpanded = expandedStepsByTaskId[task.id] ?? false;
+              const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || searchMatchedStepParentTaskIdSet.has(task.id);
               const hasTableStepDraft = tableStepDraftParentId === task.id;
               const sourceStepsExpanded = hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false);
               const showInlineAccordion = allowInlineInspector
@@ -6569,7 +6706,7 @@ export function TaskManagementTableV2({
                       {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
                       {stepsEditorNode}
                     </div>
-                    <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
+                    <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start">
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">Meta Data</p>
                         <div className="mt-1 flex flex-wrap items-center gap-2">

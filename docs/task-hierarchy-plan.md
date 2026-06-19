@@ -191,9 +191,17 @@ Table View inline action rows now render directly under the row they edit. Paren
 
 Table View Step inline action rows now render from Step preview metadata even when the same-table Step is hidden from the top-level row array. Step metadata chips can open action rows directly under the Step, and Step title clicks switch to a compact in-row rename input that uses the existing task title update path.
 
+## 6.5.0 Implementation Note
+
+Steps remain same-table `adhdice_clean_tasks` rows through `parent_task_id`; legacy `adhdice_task_subtasks` rows remain migration/source rows only. This cleanup pass improves parity without implementing movement or reorder: List View Step previews now use shared metadata chips and quick panels for the same metadata fields available on parent List rows, Step titles can be renamed in-row, and List typography uses the same title primitive as Table View. Table View Step previews carry Date Added and history-derived streak metadata even when child rows are hidden from the top-level task array, include Step/history/delete/streak affordances, use concise parent-style due labels, and sit closer to the parent Steps toggle area. The Edit Task UI keeps one user-facing Steps section, removes the redundant Step status chip beside the status circle, uses the circular Step icon for Add Step controls, and keeps the desktop Meta Data column sticky while scrolling the left Steps list.
+
+## 6.5.1 Implementation Note
+
+This follow-up keeps Steps as same-table task rows and fixes active parity gaps without adding movement/reorder. Parent and Step row actions now use bare icons with hover/focus circles, Step shoeprints actions live with row actions and create inline substep drafts, repeated metadata-chip clicks toggle inline action rows closed, List View parent titles rename inline, and List parent/Step cards expose empty and filled metadata chips for status, due, priority, repeat, lists, tags, estimate, actual time, energy, link, and notes while Date Added stays read-only. Search child matches surface the top-level parent and show sibling Steps; Step streak chips continue to come from child task history preview stats.
+
 ## Next Ticket
 
-`6.4.32 Steps Movement And Ordering Rules`
+`6.5.2 Steps Movement And Ordering Rules`
 
 Goal: define and implement the smallest safe movement/order behavior for same-table Steps, beginning with product rules for sibling reorder, move-to-parent, promote, demote, and drag/drop interaction boundaries.
 

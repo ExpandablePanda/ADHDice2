@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import type { TaskHistory } from "../src/lib/database.types.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import { buildChildTaskCreationDraft } from "../src/lib/task-child-creation.ts";
 import {
@@ -31,6 +32,7 @@ import {
   reorderTaskGridItems,
   shiftDateKey,
 } from "../src/lib/task-grid-layout.ts";
+import { todayISO } from "../src/lib/utils.ts";
 import { parseImportedTaskLines } from "../src/lib/task-input-parsing.ts";
 import {
   analyzeTaskUpdateReapplySafety,
@@ -70,6 +72,7 @@ function computeDerivedForHierarchyDiagnostics(
   tasks: ReturnType<typeof createTask>[],
   overrides: Partial<{
     deferredSearchQuery: string;
+    taskHistoryByTaskId: Record<string, TaskHistory[]>;
     taskActualTimeEntryTaskId: string | null;
     taskEditorTaskId: string | null;
   }> = {},
@@ -90,6 +93,7 @@ function computeDerivedForHierarchyDiagnostics(
     taskEditorTaskId: overrides.taskEditorTaskId ?? null,
     taskGridLayout: [],
     taskGridWidgetTypes: [],
+    taskHistoryByTaskId: overrides.taskHistoryByTaskId ?? {},
     taskListEvaluationContext: {
       currentStreakByTaskId: {},
       focusedTaskIds: new Set<string>(),
@@ -104,6 +108,7 @@ function computeDerivedForHierarchyDiagnostics(
     },
     taskSubtasksByTaskId: {},
     taskUiState: DEFAULT_TASK_UI_STATE,
+    todayDateKey: "2026-06-18",
     tasks,
   });
 }
@@ -148,6 +153,11 @@ test("normal task UI keeps Steps unified without migration-source labels", async
   assert.equal(tableSource.includes("data-step-row-status-icons"), true);
   assert.equal(tableSource.includes("data-step-row-delete"), true);
   assert.equal(tableSource.includes("beginTableStepDraft(task.id)"), true);
+  assert.equal(tableSource.includes("beginTableStepDraft(item.id)"), true);
+  assert.equal(tableSource.includes("toggleInlineActionRow(task.id, mode"), true);
+  assert.equal(tableSource.includes("toggleInlineActionRow(taskId, mode)"), true);
+  assert.equal(tableSource.includes("data-same-table-step-add"), true);
+  assert.equal(listSource.includes("data-same-table-step-add"), true);
   assert.equal(tableSource.includes("data-table-step-draft-row"), true);
   assert.equal(tableSource.includes("setEditingTaskTitleId(item.id)"), true);
   assert.equal(tableSource.includes("openTableStepActions(item.id, \"status\")"), true);
@@ -204,7 +214,7 @@ test("filter state helpers detect active filters and preserve key UI state on re
 });
 
 test("task selectors build expected filtered collections and list memberships", () => {
-  const today = formatDateKey(new Date());
+  const today = todayISO();
   const openTask = createTask({
     created_at: `${today}T09:00:00.000Z`,
     due_on: today,
@@ -393,7 +403,7 @@ test("promoted step task insert maps status, parent, and sort without completion
 });
 
 test("momentum helpers cycle view, update day buckets, and compute metrics", () => {
-  const today = formatDateKey(new Date());
+  const today = todayISO();
   const doneFocused = createTask({
     created_at: `${today}T08:00:00.000Z`,
     due_on: today,
@@ -431,7 +441,7 @@ test("momentum helpers cycle view, update day buckets, and compute metrics", () 
 });
 
 test("cockpit helpers format metadata and evaluate quick filters", () => {
-  const today = formatDateKey(new Date());
+  const today = todayISO();
   const task = createTask({
     created_at: `${today}T07:00:00.000Z`,
     due_on: today,
@@ -449,7 +459,7 @@ test("cockpit helpers format metadata and evaluate quick filters", () => {
 });
 
 test("date bucket helpers classify due_on windows and normalize stale future statuses", () => {
-  const today = formatDateKey(new Date());
+  const today = todayISO();
   const tomorrow = shiftDateKey(today, 1);
   const sevenDaysOut = shiftDateKey(today, 7);
   const eightDaysOut = shiftDateKey(today, 8);
@@ -1201,7 +1211,7 @@ test("hierarchy diagnostics report missing parents while keeping normal derived 
   );
 });
 
-test("primary derived search does not return valid child tasks as standalone rows", () => {
+test("primary derived search returns the parent when only a child task matches", () => {
   const parent = createTask({
     id: "parent",
     sort_order: 1,
@@ -1215,13 +1225,21 @@ test("primary derived search does not return valid child tasks as standalone row
     status: "pending",
     title: "Needle child",
   });
+  const sibling = createTask({
+    id: "sibling",
+    parent_task_id: "parent",
+    sort_order: 2,
+    status: "pending",
+    title: "Sibling step",
+  });
 
-  const derived = computeDerivedForHierarchyDiagnostics([parent, child], {
+  const derived = computeDerivedForHierarchyDiagnostics([parent, child, sibling], {
     deferredSearchQuery: "needle",
   });
 
-  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), []);
-  assert.deepEqual(derived.childTaskPreviewByParentTaskId.parent.items.map((item) => item.id), ["child"]);
+  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), ["parent"]);
+  assert.deepEqual(derived.searchMatchedStepParentTaskIds, ["parent"]);
+  assert.deepEqual(derived.childTaskPreviewByParentTaskId.parent.items.map((item) => item.id), ["child", "sibling"]);
 });
 
 test("task editor and actual-time lookup still find primary-hidden child tasks from full task data", () => {
@@ -1411,6 +1429,8 @@ test("child task preview lookup exposes direct same-table children", () => {
   assert.equal(preview.parent.summary.hasInvalidDescendants, false);
   assert.deepEqual(preview.parent.items, [{
     actualSeconds: 900,
+    createdAt: "2026-06-18T08:01:00.000Z",
+    currentStreak: 0,
     depth: 1,
     dueOn: "2026-06-19",
     dueTime: "09:30",
@@ -1420,6 +1440,7 @@ test("child task preview lookup exposes direct same-table children", () => {
     issueTypes: [],
     linkLabel: "Brief",
     linkUrl: "https://example.com/brief",
+    missedStreak: 0,
     notes: "Bring the small pieces together.",
     parentTaskId: "parent",
     priorityFlags: ["important"],
@@ -1431,7 +1452,54 @@ test("child task preview lookup exposes direct same-table children", () => {
     status: "in_progress",
     tags: ["setup", "draft"],
     title: "Child",
+    updatedAt: "2026-06-18T08:01:00.000Z",
   }]);
+});
+
+test("child task preview lookup computes child task streak stats from child history", () => {
+  const parent = createTask({
+    created_at: "2026-06-18T08:00:00.000Z",
+    id: "parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Parent",
+  });
+  const child = createTask({
+    created_at: "2026-06-18T08:01:00.000Z",
+    id: "child",
+    parent_task_id: "parent",
+    repeat_frequency: "daily",
+    sort_order: 1,
+    status: "pending",
+    title: "Child",
+  });
+  const history: TaskHistory[] = [
+    {
+      created_at: "2026-06-16T12:00:00.000Z",
+      entry_date: "2026-06-16",
+      id: "history-1",
+      status: "did_my_best",
+      task_id: "child",
+      updated_at: "2026-06-16T12:00:00.000Z",
+      user_id: "test-user",
+      was_completed: true,
+    },
+    {
+      created_at: "2026-06-17T12:00:00.000Z",
+      entry_date: "2026-06-17",
+      id: "history-2",
+      status: "did_my_best",
+      task_id: "child",
+      updated_at: "2026-06-17T12:00:00.000Z",
+      user_id: "test-user",
+      was_completed: true,
+    },
+  ];
+
+  const preview = buildChildTaskPreviewLookup([parent, child], [], { child: history }, "2026-06-18");
+
+  assert.equal(preview.parent.items[0].currentStreak, 2);
+  assert.equal(preview.parent.items[0].missedStreak, 0);
 });
 
 test("child task preview lookup is depth-aware for grandchildren", () => {
