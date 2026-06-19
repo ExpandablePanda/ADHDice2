@@ -4,6 +4,7 @@ import { Children, Fragment, startTransition, useEffect, useMemo, useRef, useSta
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowUp,
+  ArrowDown,
   CalendarDays,
   ChevronDown,
   Clock3,
@@ -28,6 +29,7 @@ import {
 } from "lucide-react";
 import type { TaskActualTimeEntry, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
+import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import {
@@ -838,6 +840,7 @@ type TaskManagementTableV2Props = {
   onOpenTaskActualTime?: (taskId: string, options?: { durationSeconds?: number; title?: string }) => void;
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
+  onReorderChildTask?: (taskId: string, direction: "down" | "up") => void;
   onLoadMoreRows?: () => void;
   onRequestedOpenTaskHandled?: (taskId: string) => void;
   onFollowDetachedTask?: (taskId: string) => void;
@@ -1786,6 +1789,7 @@ export function TaskManagementTableV2({
   onOpenTaskActualTime,
   onOpenTaskEditor,
   onOpenChildTask,
+  onReorderChildTask,
   onLoadMoreRows,
   onRequestedOpenTaskHandled,
   onFollowDetachedTask,
@@ -1868,6 +1872,7 @@ export function TaskManagementTableV2({
   const [notePickerOpenByTaskId, setNotePickerOpenByTaskId] = useState<Record<string, boolean>>({});
   const [expandedSubtasksByTaskId, setExpandedSubtasksByTaskId] = useState<Record<string, boolean>>({});
   const [expandedStepsByTaskId, setExpandedStepsByTaskId] = useState<Record<string, boolean>>({});
+  const [collapsedChildTaskIds, setCollapsedChildTaskIds] = useState<Record<string, boolean>>({});
   const [tableStepDraftParentId, setTableStepDraftParentId] = useState<string | null>(null);
   const [tableStepTitleDrafts, setTableStepTitleDrafts] = useState<Record<string, string>>({});
   const [tableStepCreationErrorByParentId, setTableStepCreationErrorByParentId] = useState<Record<string, string | null>>({});
@@ -2052,6 +2057,10 @@ export function TaskManagementTableV2({
   const searchMatchedStepParentTaskIdSet = useMemo(
     () => new Set(searchMatchedStepParentTaskIds),
     [searchMatchedStepParentTaskIds],
+  );
+  const collapsedChildTaskIdSet = useMemo(
+    () => new Set(Object.entries(collapsedChildTaskIds).flatMap(([taskId, isCollapsed]) => (isCollapsed ? [taskId] : []))),
+    [collapsedChildTaskIds],
   );
   const renderedTasks = useMemo(
     () => displayedTasks.slice(0, renderedTaskCount),
@@ -4733,29 +4742,31 @@ export function TaskManagementTableV2({
             ) : null}
             {hasUnifiedSteps ? (
               <div className="w-full min-w-0">
-                <button
-                  aria-expanded={unifiedStepsExpanded}
-                  className="inline-flex items-center gap-1 text-left transition hover:opacity-85"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (hasStepPreview) {
-                      setExpandedStepsByTaskId((current) => ({
-                        ...current,
-                        [task.id]: !stepsExpanded,
-                      }));
-                    }
-                    if (hasSubtasks) {
-                      setExpandedSubtasksByTaskId((current) => ({
-                        ...current,
-                        [task.id]: !unifiedStepsExpanded,
-                      }));
-                    }
-                  }}
-                  type="button"
-                >
+                <div className="inline-flex items-center gap-1.5">
                   <span className={TITLE_CELL_CLASS}>Steps</span>
-                  <ChevronDown className={`h-3.5 w-3.5 text-[#9b92be] transition-transform dark:text-white/35 ${unifiedStepsExpanded ? "rotate-180" : ""}`} />
-                </button>
+                  <button
+                    aria-expanded={unifiedStepsExpanded}
+                    className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#9b92be] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:border-[#42306f] dark:hover:bg-[#22193f] dark:focus-visible:ring-[#3b2f68]/90"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (hasStepPreview) {
+                        setExpandedStepsByTaskId((current) => ({
+                          ...current,
+                          [task.id]: !stepsExpanded,
+                        }));
+                      }
+                      if (hasSubtasks) {
+                        setExpandedSubtasksByTaskId((current) => ({
+                          ...current,
+                          [task.id]: !unifiedStepsExpanded,
+                        }));
+                      }
+                    }}
+                    type="button"
+                  >
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${unifiedStepsExpanded ? "rotate-180" : ""}`} />
+                  </button>
+                </div>
               </div>
             ) : null}
           </div>
@@ -5007,8 +5018,9 @@ export function TaskManagementTableV2({
   }
 
   const renderEditorChildTaskRows = (group: ChildTaskPreviewGroup | undefined) => {
-    const visibleItems = group?.items.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT) ?? [];
-    const hiddenItemCount = Math.max(0, (group?.items.length ?? 0) - visibleItems.length);
+    const { collapsibleTaskIds, visibleItems: expandedItems } = buildChildTaskPreviewVisibility(group?.items ?? [], collapsedChildTaskIdSet);
+    const visibleItems = expandedItems.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT);
+    const hiddenItemCount = Math.max(0, expandedItems.length - visibleItems.length);
     const canSelectChildTask = Boolean(onOpenChildTask);
     const canDeleteChildTask = Boolean(onOpenDeleteTask);
 
@@ -5022,6 +5034,8 @@ export function TaskManagementTableV2({
           <p className="text-xs text-[#9a7a24] dark:text-[#f3d38a]">{formatInvalidChildLinkCount(group.summary.invalidChildLinkCount)}</p>
         ) : null}
         {visibleItems.map((item) => {
+          const siblingItems = group?.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth) ?? [];
+          const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
           const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.85;
           const scheduleLabel = formatChildTaskPreviewSchedule(item);
           const estimateLabel = formatChildTaskPreviewEstimate(item.estimatedMinutes);
@@ -5030,6 +5044,8 @@ export function TaskManagementTableV2({
           const hasNotes = item.notes.trim().length > 0;
           const isMetadataTarget = metadataTargetTaskId === item.id;
           const isRenamingStepTitle = editingTaskTitleId === item.id;
+          const canCollapse = collapsibleTaskIds.has(item.id);
+          const isCollapsed = canCollapse && collapsedChildTaskIds[item.id] === true;
 
           return (
             <div
@@ -5071,27 +5087,63 @@ export function TaskManagementTableV2({
                         />
                       </span>
                     ) : (
-                      <button
-                        className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          selectEditorMetadataTask(item.id);
-                          setEditingTaskTitleId(item.id);
-                          setTitleDraft(item.id, item.title);
-                        }}
-                        onPointerDown={stopRowActionPointerEvent}
-                        type="button"
-                      >
-                        <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
-                          {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
-                        </p>
-                      </button>
+                      <div className="flex min-w-0 items-center gap-1">
+                        <button
+                          className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            selectEditorMetadataTask(item.id);
+                            setEditingTaskTitleId(item.id);
+                            setTitleDraft(item.id, item.title);
+                          }}
+                          onPointerDown={stopRowActionPointerEvent}
+                          type="button"
+                        >
+                          <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
+                            {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                          </p>
+                        </button>
+                        {canCollapse ? (
+                          <button
+                            aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                            className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#8a79d6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setCollapsedChildTaskIds((current) => ({ ...current, [item.id]: !isCollapsed }));
+                            }}
+                            onPointerDown={stopRowActionPointerEvent}
+                            type="button"
+                          >
+                            {isCollapsed ? <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg]" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                          </button>
+                        ) : null}
+                      </div>
                     )}
                     <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
                       {formatChildTaskPreviewDepthLabel(item.depth)}
                     </p>
                   </div>
                   <div className="flex flex-none items-center gap-1">
+                    {onReorderChildTask ? (
+                      <>
+                        <button
+                          aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`}
+                          className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#6f57f6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                          disabled={siblingIndex <= 0}
+                          onClick={(event) => { event.stopPropagation(); onReorderChildTask(item.id, "up"); }}
+                          onPointerDown={stopRowActionPointerEvent}
+                          type="button"
+                        ><ArrowUp className="h-3.5 w-3.5" /></button>
+                        <button
+                          aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`}
+                          className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#6f57f6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                          disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1}
+                          onClick={(event) => { event.stopPropagation(); onReorderChildTask(item.id, "down"); }}
+                          onPointerDown={stopRowActionPointerEvent}
+                          type="button"
+                        ><ArrowDown className="h-3.5 w-3.5" /></button>
+                      </>
+                    ) : null}
                     {onOpenTaskHistory ? (
                       <button
                         aria-label={`Open history for step ${item.title || "Untitled step"}`}
@@ -5257,7 +5309,7 @@ export function TaskManagementTableV2({
     );
   };
 
-  const renderChildTaskMiniCell = (item: ChildTaskPreview, columnId: TaskManagementTableColumnId) => {
+  const renderChildTaskMiniCell = (item: ChildTaskPreview, columnId: TaskManagementTableColumnId, childTaskPreviewVisibility?: ChildTaskPreviewVisibility) => {
     const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.55;
     const scheduleLabel = formatChildTaskPreviewSchedule(item) || "No date";
     const estimateLabel = formatChildTaskPreviewEstimate(item.estimatedMinutes) || "No est";
@@ -5271,6 +5323,8 @@ export function TaskManagementTableV2({
 
     if (columnId === "title") {
       const isRenamingStepTitle = editingTaskTitleId === item.id;
+      const canCollapse = childTaskPreviewVisibility?.collapsibleTaskIds.has(item.id) ?? false;
+      const isCollapsed = canCollapse && collapsedChildTaskIds[item.id] === true;
       return (
         <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: `${0.2 + depthIndent}rem` }}>
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
@@ -5288,19 +5342,35 @@ export function TaskManagementTableV2({
                 />
               </span>
             ) : (
-              <button
-                className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setEditingTaskTitleId(item.id);
-                  setTitleDraft(item.id, item.title);
-                }}
-                type="button"
-              >
-                <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
-                  {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
-                </p>
-              </button>
+              <div className="flex min-w-0 items-center gap-1">
+                <button
+                  className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setEditingTaskTitleId(item.id);
+                    setTitleDraft(item.id, item.title);
+                  }}
+                  type="button"
+                >
+                  <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
+                    {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                  </p>
+                </button>
+                {canCollapse ? (
+                  <button
+                    aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                    className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#8a79d6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setCollapsedChildTaskIds((current) => ({ ...current, [item.id]: !isCollapsed }));
+                    }}
+                    onPointerDown={stopRowActionPointerEvent}
+                    type="button"
+                  >
+                    {isCollapsed ? <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg]" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  </button>
+                ) : null}
+              </div>
             )}
             <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
               {formatChildTaskPreviewDepthLabel(item.depth)}
@@ -5619,8 +5689,10 @@ export function TaskManagementTableV2({
 
   const renderChildTaskMiniRows = (task: PrototypeTaskRow, group: ChildTaskPreviewGroup | undefined) => {
     const showAllStepItems = searchMatchedStepParentTaskIdSet.has(task.id);
-    const visibleItems = showAllStepItems ? group?.items ?? [] : group?.items.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT) ?? [];
-    const hiddenItemCount = Math.max(0, (group?.items.length ?? 0) - visibleItems.length);
+    const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(group?.items ?? [], collapsedChildTaskIdSet);
+    const previewItems = childTaskPreviewVisibility.visibleItems;
+    const visibleItems = showAllStepItems ? previewItems : previewItems.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT);
+    const hiddenItemCount = Math.max(0, previewItems.length - visibleItems.length);
     const canOpenStepActions = allowInlineInspector || Boolean(onOpenChildTask);
     const isDraftingStepForTask = tableStepDraftParentId === task.id;
     const isDraftingSubstepForVisibleItem = Boolean(tableStepDraftParentId && visibleItems.some((item) => item.id === tableStepDraftParentId));
@@ -5656,6 +5728,8 @@ export function TaskManagementTableV2({
         ) : null}
         {visibleItems.map((item) => {
           const inlineStepTask = childPreviewToPrototypeTaskRow(item);
+          const siblingItems = group?.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth) ?? [];
+          const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
 
           return (
             <Fragment key={item.id}>
@@ -5679,7 +5753,17 @@ export function TaskManagementTableV2({
               >
                 {visibleHeaderColumns.map((column) => (
                   <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${item.id}-${column.id}`}>
-                    {renderChildTaskMiniCell(item, column.id)}
+                    {column.id === "title" ? (
+                      <div className="flex min-w-0 flex-1 items-center gap-1">
+                        {renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
+                        {onReorderChildTask ? (
+                          <span className="ml-auto flex shrink-0 items-center" onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
+                            <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex <= 0} onClick={() => onReorderChildTask(item.id, "up")} type="button"><ArrowUp className="h-3.5 w-3.5" /></button>
+                            <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1} onClick={() => onReorderChildTask(item.id, "down")} type="button"><ArrowDown className="h-3.5 w-3.5" /></button>
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
                   </div>
                 ))}
               </div>

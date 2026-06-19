@@ -221,8 +221,9 @@ body {
 html::-webkit-scrollbar,
 body::-webkit-scrollbar,
 .adhdice-scrollbar::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  display: none;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 html::-webkit-scrollbar-track,

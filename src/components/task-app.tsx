@@ -175,6 +175,7 @@ import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/li
 import { buildFocusLabelOptions, getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { buildTaskSiblingReorderPlan, type TaskSiblingReorderDirection } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import { calcNextDueDateFromDate } from "@/lib/task-repeat";
 import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
@@ -300,7 +301,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.5.1";
+const APP_VERSION = "6.6.3";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -2317,6 +2318,22 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
+  async function reorderChildTask(taskId: string, direction: TaskSiblingReorderDirection) {
+    const plan = buildTaskSiblingReorderPlan(tasks, taskId, direction);
+    if (!plan.ok) {
+      if (plan.reason !== "boundary") {
+        setMessage({ tone: "warn", text: "This Step could not be reordered because its hierarchy is no longer valid." });
+      }
+      return;
+    }
+
+    for (const siblingUpdate of plan.updates) {
+      const saved = await updateTask(siblingUpdate.id, { sort_order: siblingUpdate.sortOrder });
+      if (!saved) {
+        return;
+      }
+    }
+  }
   const {
     closeTaskEditor,
     deleteSelectedListTasks,
@@ -3851,6 +3868,7 @@ export function TaskApp() {
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: openTaskEditorFromId,
                   onOpenChildTask: openChildTaskFromPreview,
+                  onReorderChildTask: (taskId, direction) => { void reorderChildTask(taskId, direction); },
                   onFollowDetachedTask: followDetachedTask,
                   onDismissDetachedTask: dismissDetachedTask,
                   onDuplicateTask: (taskId) => {
@@ -3987,6 +4005,7 @@ export function TaskApp() {
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: openTaskEditorFromId,
                   onOpenChildTask: openChildTaskFromPreview,
+                  onReorderChildTask: (taskId, direction) => { void reorderChildTask(taskId, direction); },
                   onFollowDetachedTask: followDetachedTask,
                   onDismissDetachedTask: dismissDetachedTask,
                   onDuplicateTask: (taskId) => {

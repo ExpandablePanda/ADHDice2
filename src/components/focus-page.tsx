@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import {
   type FocusCategory,
   type ActiveFocusSession,
@@ -16,6 +16,118 @@ import { CategoryManager } from "./category-manager";
 import { DailyHistoryGallery } from "./focus-history";
 import { SessionFinishModal, ManualEntryModal } from "./focus-modals";
 import { ModalShell } from "./modal-shell";
+
+function FocusTimerPicker({
+  categories,
+  activeSessions,
+  onSelect,
+}: {
+  categories: FocusCategory[];
+  activeSessions: Record<string, ActiveFocusSession>;
+  onSelect: (categoryId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const listboxId = useId();
+  const normalizedQuery = query.trim().toLowerCase();
+  const options = categories
+    .filter((category) => !activeSessions[category.id])
+    .filter((category) => !normalizedQuery || category.title.toLowerCase().includes(normalizedQuery))
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+  const safeHighlightedIndex = Math.min(highlightedIndex, Math.max(0, options.length - 1));
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  const selectCategory = (category: FocusCategory) => {
+    onSelect(category.id);
+    setQuery("");
+    setHighlightedIndex(0);
+    setIsOpen(false);
+  };
+
+  return (
+    <div className="relative mt-4 w-[min(14rem,calc(100vw-2rem))] text-left" ref={rootRef}>
+      <label className="sr-only" htmlFor={`${listboxId}-input`}>Add a focus timer</label>
+      <div className="relative">
+        <input
+          aria-activedescendant={isOpen && options[safeHighlightedIndex] ? `${listboxId}-option-${options[safeHighlightedIndex].id}` : undefined}
+          aria-autocomplete="list"
+          aria-controls={listboxId}
+          aria-expanded={isOpen}
+          className="h-9 w-full rounded-full border border-[#e5def8] bg-white px-4 pr-9 text-sm font-medium text-[#2f294a] shadow-[0_8px_22px_rgba(81,61,168,0.08)] outline-none transition placeholder:text-[#938ab8] focus:border-[#b9a9fb] focus:ring-2 focus:ring-[#dcd3ff] dark:border-white/10 dark:bg-white/[0.06] dark:text-white dark:placeholder:text-white/38 dark:focus:border-[#7f67ff] dark:focus:ring-[#7f67ff]/25"
+          id={`${listboxId}-input`}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setHighlightedIndex(0);
+            setIsOpen(true);
+          }}
+          onFocus={() => setIsOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setIsOpen(true);
+              setHighlightedIndex((current) => options.length ? (current + 1) % options.length : 0);
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setIsOpen(true);
+              setHighlightedIndex((current) => options.length ? (current - 1 + options.length) % options.length : 0);
+            } else if (event.key === "Enter" && isOpen && options[safeHighlightedIndex]) {
+              event.preventDefault();
+              selectCategory(options[safeHighlightedIndex]);
+            } else if (event.key === "Escape") {
+              setIsOpen(false);
+            }
+          }}
+          placeholder="Add focus timer..."
+          role="combobox"
+          type="text"
+          value={query}
+        />
+        <svg aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8d82b2]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+          <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+
+      {isOpen ? (
+        <div
+          className="adhdice-scrollbar absolute left-0 right-0 z-40 mt-2 max-h-64 overflow-y-auto rounded-2xl border border-[#e7e0f7] bg-white p-2 shadow-[0_18px_45px_rgba(70,50,145,0.16)] dark:border-white/10 dark:bg-[#1b1630] dark:shadow-[0_18px_45px_rgba(0,0,0,0.35)]"
+          id={listboxId}
+          role="listbox"
+        >
+          {options.length ? options.map((category, index) => (
+            <div
+              aria-selected={index === safeHighlightedIndex}
+              className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${index === safeHighlightedIndex ? "bg-[#f1ecff] text-[#6249e8] dark:bg-[#2b214d] dark:text-[#cabfff]" : "text-[#5f5879] hover:bg-[#f8f6fd] dark:text-white/70 dark:hover:bg-white/[0.06]"}`}
+              id={`${listboxId}-option-${category.id}`}
+              key={category.id}
+              onClick={() => selectCategory(category)}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setHighlightedIndex(index)}
+              role="option"
+            >
+              <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
+              <span className="truncate">{category.title}</span>
+            </div>
+          )) : (
+            <p className="px-3 py-3 text-center text-sm text-[var(--text-muted)]">
+              {normalizedQuery ? "No matching timers" : "All timers are active"}
+            </p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function FocusPage({
   categories,
@@ -69,6 +181,7 @@ export function FocusPage({
   const activeFinishingSession = finishingCatId ? activeSessions[finishingCatId] : null;
   const activeFinishingCategory = finishingCatId ? categories.find(c => c.id === finishingCatId) : null;
   const labelOptions = buildFocusLabelOptions(categories, history);
+  const activeCategories = categories.filter((category) => Boolean(activeSessions[category.id]));
 
   return (
     <>
@@ -93,12 +206,18 @@ export function FocusPage({
             Manual Entry
           </button>
         </div>
-      </section>
 
-      <div className="mt-4 sm:mt-16">
-        <FocusClockRow
+        <FocusTimerPicker
           activeSessions={activeSessions}
           categories={categories}
+          onSelect={onToggleTimer}
+        />
+      </section>
+
+      {activeCategories.length ? <div className="mt-5">
+        <FocusClockRow
+          activeSessions={activeSessions}
+          categories={activeCategories}
           onAdjust={onAdjustTimer}
           onFinish={handleFinishClick}
           onReset={onResetTimer}
@@ -106,13 +225,13 @@ export function FocusPage({
         />
         <FocusClockRowDesktop
           activeSessions={activeSessions}
-          categories={categories}
+          categories={activeCategories}
           onAdjust={onAdjustTimer}
           onFinish={handleFinishClick}
           onReset={onResetTimer}
           onToggle={onToggleTimer}
         />
-      </div>
+      </div> : null}
 
       <div className="mt-6 w-full pb-40 sm:mt-10 sm:pb-44 lg:pb-28">
         <DailyHistoryGallery
@@ -317,7 +436,7 @@ function CategoryGoalsModal({
   });
 
   return (
-    <ModalShell className="w-full max-w-4xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
+    <ModalShell className="w-full max-w-4xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]" onClose={onClose}>
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Category Goals</p>

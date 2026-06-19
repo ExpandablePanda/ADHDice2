@@ -21,11 +21,14 @@ export function FocusClock({
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [showAdjustMenu, setShowAdjustMenu] = useState(false);
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [quickAdjustSign, setQuickAdjustSign] = useState<1 | -1 | null>(null);
   const [adjustSign, setAdjustSign] = useState<1 | -1>(1);
   const [adjustMinutes, setAdjustMinutes] = useState("5");
   const isRunning = activeSession?.isRunning ?? false;
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const adjustMenuRef = useRef<HTMLDivElement | null>(null);
+  const clockFaceRef = useRef<HTMLDivElement | null>(null);
+  const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const displaySeconds = getDisplaySeconds(activeSession, nowMs);
 
   useEffect(() => {
@@ -57,17 +60,32 @@ export function FocusClock({
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (adjustMenuRef.current && !adjustMenuRef.current.contains(event.target as Node)) {
+      if (clockFaceRef.current && !clockFaceRef.current.contains(event.target as Node)) {
         setShowAdjustMenu(false);
+      }
+      if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target as Node)) {
+        setShowSettingsMenu(false);
+        setQuickAdjustSign(null);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowAdjustMenu(false);
+        setShowSettingsMenu(false);
+        setQuickAdjustSign(null);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, []);
 
   return (
-    <div className={`group relative flex flex-col items-center gap-3 transition-all duration-500 hover:-translate-y-2 ${showAdjustMenu ? "z-30" : "z-0"}`}>
-      <div className="relative flex h-68 w-68 items-center justify-center transition-transform duration-500 group-hover:scale-[1.02]">
+    <div className={`group relative flex flex-col items-center gap-3 transition-all duration-500 hover:-translate-y-2 ${showAdjustMenu || showSettingsMenu ? "z-30" : "z-0"}`}>
+      <div className="relative flex h-68 w-68 items-center justify-center transition-transform duration-500 group-hover:scale-[1.02]" ref={clockFaceRef}>
         {/* Outer Ring Background */}
         <svg
           className="absolute inset-0 h-full w-full -rotate-90 scale-[1.01] transition-all duration-1000"
@@ -103,7 +121,12 @@ export function FocusClock({
         {/* Inner Content Card (Glassmorphism) */}
         <button
           className="relative z-10 flex h-60 w-60 flex-col items-center justify-center rounded-full border px-5 text-center transition-all duration-500 border-white/40 bg-white/45 shadow-[0_8px_32px_rgba(31,38,135,0.07)] backdrop-blur-[8px] dark:border-white/5 dark:bg-white/[0.02] dark:shadow-[0_24px_48px_rgba(0,0,0,0.2)] dark:backdrop-blur-[12px] group-hover:shadow-[0_32px_64px_rgba(0,0,0,0.4)]"
-          onClick={() => setShowAdjustMenu((prev) => !prev)}
+          aria-label={`Adjust ${category.title} timer`}
+          onClick={() => {
+            setShowSettingsMenu(false);
+            setQuickAdjustSign(null);
+            setShowAdjustMenu((prev) => !prev);
+          }}
           type="button"
         >
           {!showAdjustMenu ? (
@@ -126,19 +149,41 @@ export function FocusClock({
 
         {showAdjustMenu ? (
           <div
-            ref={adjustMenuRef}
             className="absolute inset-4 z-20 flex flex-col items-center justify-center gap-4 overflow-hidden rounded-full border border-white/40 bg-white/92 shadow-[0_20px_40px_rgba(81,61,168,0.14)] backdrop-blur-[10px] dark:border-white/10 dark:bg-[#171329]/95 dark:shadow-[0_20px_40px_rgba(0,0,0,0.35)] dark:backdrop-blur-[12px]"
           >
-            <input
-              className="w-20 rounded-2xl border-2 px-1 py-5 text-center font-black tabular-nums tracking-tight outline-none border-[#ece8f8] bg-white text-[#1f2746] dark:border-white/10 dark:bg-white/10 dark:text-white"
-              style={{ fontSize: "2.6rem", fontWeight: 900, letterSpacing: "-0.025em" }}
-              min="1"
-              onChange={(e) => setAdjustMinutes(e.target.value)}
-              type="number"
-              value={adjustMinutes}
-            />
+            <div className="flex items-center gap-2">
+              <label className="sr-only" htmlFor={`focus-adjust-${category.id}`}>Adjustment minutes</label>
+              <input
+                className="w-28 rounded-2xl border-2 px-3 py-4 text-center font-black tabular-nums tracking-tight outline-none border-[#ece8f8] bg-white text-[#1f2746] dark:border-white/10 dark:bg-white/10 dark:text-white"
+                id={`focus-adjust-${category.id}`}
+                inputMode="numeric"
+                onChange={(event) => setAdjustMinutes(event.target.value.replace(/[^0-9]/g, ""))}
+                style={{ fontSize: "2.6rem", fontWeight: 900, letterSpacing: "-0.025em" }}
+                type="text"
+                value={adjustMinutes}
+              />
+              <div className="flex flex-col gap-1">
+                <button
+                  aria-label="Increase adjustment by 5 minutes"
+                  className="flex h-8 w-9 items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f5f1ff] text-[#6f57f6] transition hover:scale-105 dark:border-white/10 dark:bg-white/10 dark:text-[#cabfff]"
+                  onClick={() => setAdjustMinutes((value) => String((parseInt(value) || 0) + 5))}
+                  type="button"
+                >
+                  <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </button>
+                <button
+                  aria-label="Decrease adjustment by 5 minutes"
+                  className="flex h-8 w-9 items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f5f1ff] text-[#6f57f6] transition hover:scale-105 dark:border-white/10 dark:bg-white/10 dark:text-[#cabfff]"
+                  onClick={() => setAdjustMinutes((value) => String(Math.max(5, (parseInt(value) || 5) - 5)))}
+                  type="button"
+                >
+                  <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </button>
+              </div>
+            </div>
             <div className="flex items-center gap-4 pt-2">
               <button
+                aria-label={adjustSign === 1 ? "Switch to subtract time" : "Switch to add time"}
                 className={`flex h-14 w-14 items-center justify-center rounded-full transition ${
                   adjustSign === -1
                     ? "bg-[#fff3f5] text-[#d64b5f] dark:bg-[#311b23] dark:text-[#ff9fbc]"
@@ -158,6 +203,7 @@ export function FocusClock({
                 )}
               </button>
               <button
+                aria-label={`Apply ${adjustMinutes || 1} minute adjustment`}
                 className="flex h-14 w-14 items-center justify-center rounded-full transition bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
                 onClick={() => handleAdjustClick(adjustSign * (parseInt(adjustMinutes) || 1) * 60)}
                 type="button"
@@ -171,8 +217,9 @@ export function FocusClock({
         ) : null}
       </div>
 
-      <div className="flex gap-4">
+      <div className="relative flex gap-4">
         <button
+          aria-label={isRunning ? `Pause ${category.title} timer` : `Resume ${category.title} timer`}
           className={`group flex h-14 w-14 items-center justify-center rounded-full border-2 transition-all duration-300 hover:scale-110 ${
             isRunning
               ? "border-[#f05566]/20 bg-[#fff0f1] text-[#f05566] shadow-[0_8px_20px_rgba(240,85,102,0.15)] dark:border-[#ff9eaf]/20 dark:bg-[#2d1a1c] dark:text-[#ff9eaf] dark:shadow-[0_8px_20px_rgba(255,158,175,0.1)]"
@@ -192,29 +239,74 @@ export function FocusClock({
             </svg>
           )}
         </button>
-        {displaySeconds > 0 && (
+        <div className="relative" ref={settingsMenuRef}>
           <button
+            aria-expanded={showSettingsMenu}
+            aria-label={`Open ${category.title} timer settings`}
             className="flex h-14 w-14 items-center justify-center rounded-full border transition-all duration-300 hover:scale-110 border-[#ece8f8] bg-white text-[#6a738d] shadow-[0_8px_20px_rgba(0,0,0,0.05)] dark:border-white/10 dark:bg-white/5 dark:text-white dark:shadow-[0_8px_20px_rgba(0,0,0,0.2)]"
-            onClick={() => onFinish(category.id)}
+            onClick={() => {
+              setShowAdjustMenu(false);
+              setShowSettingsMenu((current) => !current);
+              setQuickAdjustSign(null);
+            }}
             type="button"
           >
-            <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
-              <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+            <svg aria-hidden="true" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.97 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.52-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.97a1.7 1.7 0 0 0-.34-1.88L4.2 7.03 7.03 4.2l.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.08V3h4v.08a1.7 1.7 0 0 0 1.03 1.52 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
-        )}
-        {displaySeconds > 0 && (
-          <button
-            className="flex h-14 w-14 items-center justify-center rounded-full border transition-all duration-300 hover:scale-110 border-[#f8d9dc] bg-[#fff1f2] text-[#d64b5f] shadow-[0_8px_20px_rgba(214,75,95,0.12)] dark:border-[#5a2432] dark:bg-[#2e1820] dark:text-[#ff9fbc] dark:shadow-[0_8px_20px_rgba(0,0,0,0.2)]"
-            onClick={() => onReset(category.id)}
-            type="button"
-          >
-            <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path d="M3 4v6h6M21 20v-6h-6" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M20 9a8 8 0 00-13.66-3.66L3 10M4 15a8 8 0 0013.66 3.66L21 14" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-        )}
+
+          {showSettingsMenu ? (
+            <div className="absolute bottom-16 left-1/2 z-40 flex w-[17rem] -translate-x-[64%] flex-wrap items-center justify-center gap-2 rounded-[1.5rem] border border-[#e8e1f7] bg-white/95 p-3 shadow-[0_18px_42px_rgba(70,50,145,0.18)] backdrop-blur dark:border-white/10 dark:bg-[#1b1630]/95 dark:shadow-[0_18px_42px_rgba(0,0,0,0.38)]">
+              <button
+                aria-label={`Submit ${category.title} timer`}
+                className="flex h-12 w-12 items-center justify-center rounded-full border border-[#ece8f8] bg-white text-[#6a738d] transition hover:scale-110 disabled:cursor-not-allowed disabled:opacity-35 dark:border-white/10 dark:bg-white/5 dark:text-white"
+                disabled={displaySeconds < 1}
+                onClick={() => {
+                  setShowSettingsMenu(false);
+                  onFinish(category.id);
+                }}
+                type="button"
+              >
+                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+              <button
+                aria-label={`Reset ${category.title} timer`}
+                className="flex h-12 w-12 items-center justify-center rounded-full border border-[#f8d9dc] bg-[#fff1f2] text-[#d64b5f] transition hover:scale-110 dark:border-[#5a2432] dark:bg-[#2e1820] dark:text-[#ff9fbc]"
+                onClick={() => {
+                  setShowSettingsMenu(false);
+                  onReset(category.id);
+                }}
+                type="button"
+              >
+                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 4v6h6M21 20v-6h-6" strokeLinecap="round" strokeLinejoin="round" /><path d="M20 9a8 8 0 00-13.66-3.66L3 10M4 15a8 8 0 0013.66 3.66L21 14" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              </button>
+              {([1, -1] as const).map((sign) => (
+                <button
+                  aria-label={`${sign === 1 ? "Add" : "Subtract"} time`}
+                  className={`flex h-12 w-12 items-center justify-center rounded-full border transition hover:scale-110 ${quickAdjustSign === sign ? (sign === 1 ? "border-[#bcebd8] bg-[#e9f8f2] text-[#12a876] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8]" : "border-[#f8d9dc] bg-[#fff1f2] text-[#d64b5f] dark:border-[#5a2432] dark:bg-[#2e1820] dark:text-[#ff9fbc]") : "border-[#ece8f8] bg-white text-[#6a738d] dark:border-white/10 dark:bg-white/5 dark:text-white"}`}
+                  key={sign}
+                  onClick={() => setQuickAdjustSign((current) => current === sign ? null : sign)}
+                  type="button"
+                >
+                  <svg aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2.7" viewBox="0 0 24 24"><path d={sign === 1 ? "M12 5v14M5 12h14" : "M5 12h14"} strokeLinecap="round" /></svg>
+                </button>
+              ))}
+              {quickAdjustSign ? [5, 10].map((minutes) => (
+                <button
+                  aria-label={`${quickAdjustSign === 1 ? "Add" : "Subtract"} ${minutes} minutes`}
+                  className={`flex h-12 w-12 items-center justify-center rounded-full border text-xl font-black tabular-nums transition hover:scale-110 ${quickAdjustSign === 1 ? "border-[#bcebd8] bg-[#eef9f4] text-[#12a876] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8]" : "border-[#f8d9dc] bg-[#fff1f2] text-[#d64b5f] dark:border-[#5a2432] dark:bg-[#2e1820] dark:text-[#ff9fbc]"}`}
+                  key={minutes}
+                  onClick={() => onAdjust(category.id, quickAdjustSign * minutes * 60)}
+                  type="button"
+                >
+                  {minutes}
+                </button>
+              )) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -260,15 +352,17 @@ export function FocusClockRow({
 
   return (
     // Mobile: horizontal 2-row scroll carousel. sm+: standard grid.
-    <div className="sm:hidden w-full overflow-x-auto pt-4 pb-4" style={{ WebkitOverflowScrolling: "touch" }}>
+    <div className="adhdice-scrollbar sm:hidden w-full overflow-x-auto pt-4 pb-4" style={{ WebkitOverflowScrolling: "touch" }}>
       <div
         style={{
           display: "grid",
           gridTemplateRows: "repeat(2, auto)",
           gridAutoFlow: "column",
           width: "max-content",
-          columnGap: 12,
-          rowGap: 12,
+          minWidth: "100%",
+          justifyContent: "center",
+          columnGap: 24,
+          rowGap: 10,
           paddingLeft: 16,
           paddingRight: 16,
         }}
@@ -334,12 +428,12 @@ export function FocusClockRowDesktop({
   return (
     <div className="hidden sm:block">
       <div className="mx-auto max-w-[86rem] overflow-hidden rounded-[2rem] border border-[#ebe4fb] bg-white/82 shadow-[0_18px_48px_rgba(81,61,168,0.08)] backdrop-blur [--clock-scale:0.54] md:[--clock-scale:0.58] lg:[--clock-scale:0.62] xl:[--clock-scale:0.68] 2xl:[--clock-scale:0.72] h-[calc(344px*var(--clock-scale)+3.75rem)] dark:border-white/10 dark:bg-white/[0.05]">
-        <div className="h-full overflow-y-auto px-4 pt-5 pb-3 snap-y snap-mandatory">
+        <div className={`adhdice-scrollbar h-full px-4 pt-5 pb-3 ${categoryRows.length > 1 ? "overflow-y-auto snap-y snap-mandatory" : "overflow-y-hidden"}`}>
         <div className="flex flex-col gap-14">
           {categoryRows.map((row, rowIndex) => (
             <div
               key={`focus-clock-row-${rowIndex}`}
-              className="grid snap-start grid-cols-5 items-start justify-items-center gap-x-2 pt-5"
+              className="flex snap-start items-start justify-center gap-x-6 pt-5"
             >
               {row.map((cat) => (
                 <div

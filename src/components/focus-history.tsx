@@ -1438,7 +1438,7 @@ export function DailyHistoryGallery({
       ) : null}
 
       {editingEntry ? (
-            <ModalShell className="max-h-[82vh] w-full max-w-2xl overflow-y-auto rounded-[var(--radius-modal)] border p-6 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
+            <ModalShell className="max-h-[82vh] w-full max-w-2xl overflow-y-auto rounded-[var(--radius-modal)] border p-6 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]" onClose={() => setEditingId(null)}>
               <h4 className="text-xl font-black text-[var(--text-primary)]">Edit Focus Entry</h4>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">Update duration, date, and labels for this individual entry.</p>
               <p className="mt-2 text-sm font-semibold text-[var(--accent)]">Time logged: {formatLoggedTime(editingEntry.createdAt)}</p>

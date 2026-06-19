@@ -55,22 +55,24 @@ function ManualSuggestionInput({
       }
     }
 
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setIsOpen(false);
-      }
-    }
-
     document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleEscape);
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleEscape);
     };
   }, [isOpen]);
 
   return (
-    <label className="flex flex-col gap-2" ref={rootRef}>
+    <label
+      className="flex flex-col gap-2"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && isOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsOpen(false);
+        }
+      }}
+      ref={rootRef}
+    >
       <FieldLabel>{label}</FieldLabel>
       <div className="relative">
         <input
@@ -147,22 +149,24 @@ function ManualPillSelect({
       }
     }
 
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setIsOpen(false);
-      }
-    }
-
     document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleEscape);
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleEscape);
     };
   }, [isOpen]);
 
   return (
-    <div className="grid gap-2" ref={rootRef}>
+    <div
+      className="grid gap-2"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && isOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          setIsOpen(false);
+        }
+      }}
+      ref={rootRef}
+    >
       <FieldLabel>{label}</FieldLabel>
       <div className="relative">
         <button
@@ -244,7 +248,7 @@ export function SessionFinishModal({
   };
 
   return (
-    <ModalShell className="flex w-full max-w-lg max-h-[82vh] flex-col overflow-hidden rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
+    <ModalShell className="flex w-full max-w-lg max-h-[82vh] flex-col overflow-hidden rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]" onClose={onCancel}>
         <div className="flex shrink-0 flex-col items-center text-center">
           <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-3xl" style={{ backgroundColor: category.color + "20", color: category.color }}>
             <CategoryIcon name={category.icon} className="h-10 w-10" />
@@ -255,49 +259,28 @@ export function SessionFinishModal({
           </p>
         </div>
 
-        <div className="mt-8 min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="adhdice-scrollbar mt-8 min-h-0 flex-1 overflow-y-auto pr-1">
           <div className="space-y-6">
-          <label className="flex flex-col gap-2">
-            <FieldLabel>Session Title</FieldLabel>
-            <input
-              className={`px-4 py-2 ui-input-light ${manualInputClassName}`}
-              list="finish-focus-titles"
-              onChange={(e) => setTitle(e.target.value)}
-              type="text"
-              value={title}
-            />
-            <datalist id="finish-focus-titles">
-              {labelOptions.titles.map((option) => <option key={option} value={option} />)}
-            </datalist>
-          </label>
+          <ManualSuggestionInput
+            label="Session Title"
+            onChange={setTitle}
+            options={labelOptions.titles}
+            value={title}
+          />
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-2">
-              <FieldLabel>Focus Type</FieldLabel>
-              <input
-                className={`px-4 py-2 ui-input-light ${manualInputClassName}`}
-                list="finish-focus-types"
-                onChange={(e) => setFocusType(e.target.value as FocusType)}
-                type="text"
-                value={focusType}
-              />
-              <datalist id="finish-focus-types">
-                {labelOptions.types.map((option) => <option key={option} value={option} />)}
-              </datalist>
-            </label>
-            <label className="flex flex-col gap-2">
-              <FieldLabel>Subtype</FieldLabel>
-              <input
-                className={`px-4 py-2 ui-input-light ${manualInputClassName}`}
-                list="finish-primary-subtypes"
-                onChange={(e) => setFocusSubtype(e.target.value as FocusSubtype)}
-                type="text"
-                value={focusSubtype}
-              />
-              <datalist id="finish-primary-subtypes">
-                {labelOptions.primarySubtypes.map((option) => <option key={option} value={option} />)}
-              </datalist>
-            </label>
+            <ManualSuggestionInput
+              label="Focus Type"
+              onChange={(value) => setFocusType(value as FocusType)}
+              options={labelOptions.types}
+              value={focusType}
+            />
+            <ManualSuggestionInput
+              label="Subtype"
+              onChange={(value) => setFocusSubtype(value as FocusSubtype)}
+              options={labelOptions.primarySubtypes}
+              value={focusSubtype}
+            />
           </div>
 
           <label className="flex flex-col gap-2">
@@ -310,20 +293,13 @@ export function SessionFinishModal({
             />
           </label>
 
-          <label className="flex flex-col gap-2">
-            <FieldLabel>Subtype 2</FieldLabel>
-            <input
-              className={`px-4 py-2 ui-input-light ${manualInputClassName}`}
-              list="finish-secondary-subtypes"
-              onChange={(e) => setFocusSubtype2(e.target.value)}
-              placeholder="Optional"
-              type="text"
-              value={focusSubtype2}
-            />
-            <datalist id="finish-secondary-subtypes">
-              {labelOptions.secondarySubtypes.map((option) => <option key={option} value={option} />)}
-            </datalist>
-          </label>
+          <ManualSuggestionInput
+            label="Subtype 2"
+            onChange={setFocusSubtype2}
+            options={labelOptions.secondarySubtypes}
+            placeholder="Optional"
+            value={focusSubtype2}
+          />
 
           <label className="flex flex-col gap-2">
             <FieldLabel>Session Notes</FieldLabel>
@@ -435,7 +411,7 @@ export function ManualEntryModal({
   };
 
   return (
-    <ModalShell className="w-full max-w-2xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
+    <ModalShell className="adhdice-scrollbar w-full max-w-2xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]" onClose={onClose}>
         <h2 className="ui-display-font text-center text-3xl tracking-[0.08em] text-[#6f57f6] dark:text-[#cabfff]">Manual Entry</h2>
 
         <div className="mt-10 space-y-6">

@@ -4,6 +4,7 @@ import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusTy
 import type { FocusCategory as DbFocusCategory, FocusSession as DbFocusSession } from "@/lib/database.types";
 import type { AppendEconomyEventOpts } from "@/hooks/useEconomy";
 import {
+  adjustActiveFocusSession,
   dedupeCategoriesByName,
   isUuid,
   normalizeCategoryTitle,
@@ -288,8 +289,7 @@ export function useFocus(
       accumulatedSeconds: 0,
       isRunning: false,
     };
-    const nextAccumulated = Math.max(0, current.accumulatedSeconds + deltaSeconds);
-    const nextSession: ActiveFocusSession = { ...current, accumulatedSeconds: nextAccumulated };
+    const nextSession = adjustActiveFocusSession(current, deltaSeconds, Date.now());
 
     setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
 

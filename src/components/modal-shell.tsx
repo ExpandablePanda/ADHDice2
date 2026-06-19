@@ -35,7 +35,7 @@ export function ModalShell({
     if (!el) return;
 
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && latestOnCloseRef.current) {
+      if (e.key === "Escape" && !e.defaultPrevented && latestOnCloseRef.current) {
         latestOnCloseRef.current();
         return;
       }

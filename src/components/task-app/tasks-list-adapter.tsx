@@ -1,5 +1,5 @@
 "use client";
-import { CalendarDays, Clock3, Ellipsis, ExternalLink, Flame, Footprints, Skull, Tag, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, Clock3, Ellipsis, ExternalLink, Flame, Footprints, Skull, Tag, Trash2, X } from "lucide-react";
 import {
   buildTaskRowContextMenuState,
   TaskManagementTableV2,
@@ -22,12 +22,14 @@ import { getTaskDisplayStatus, formatDueLabel, formatDueTimeLabel } from "@/lib/
 import { isTaskOpen } from "@/lib/task-buckets";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusCircle } from "./task-status-ui";
 import { formatRepeatSummary } from "@/lib/task-repeat";
+import { buildChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import { formatLocalDate, todayISO } from "@/lib/utils";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
   TASK_TABLE_TAG_CHIP_CLASS,
+  TASK_TABLE_TITLE_CELL_CLASS,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
@@ -112,6 +114,7 @@ type TasksTableSourceProps = {
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
+  onReorderChildTask?: (taskId: string, direction: "down" | "up") => void;
   onFollowDetachedTask?: (taskId: string) => void;
   onDismissDetachedTask?: (taskId: string) => void;
   onNextTaskTimer?: () => void;
@@ -275,6 +278,7 @@ export function TasksTableAdapter({
           onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
           onOpenChildTask={tableProps.onOpenChildTask}
+          onReorderChildTask={tableProps.onReorderChildTask}
           onFollowDetachedTask={tableProps.onFollowDetachedTask}
           onDismissDetachedTask={tableProps.onDismissDetachedTask}
           onNextTaskTimer={tableProps.onNextTaskTimer}
@@ -454,6 +458,7 @@ function StepsCardPreview({
   closeQuickPanel,
   currentListLabel,
   group,
+  isExpanded = true,
   listDefinitions,
   listMembershipsByTaskId,
   onCreateChildTask,
@@ -462,6 +467,7 @@ function StepsCardPreview({
   onOpenStep,
   onOpenQuickPanel,
   onRenameStep,
+  onReorderStep,
   onOpenActualTime,
   onSetActualSeconds,
   onSetDue,
@@ -474,6 +480,7 @@ function StepsCardPreview({
   onSetStatus,
   onSetTags,
   onToggleTaskList,
+  onToggleExpanded,
   selectedBucket,
   showAllSteps = false,
 }: {
@@ -483,6 +490,7 @@ function StepsCardPreview({
   closeQuickPanel: () => void;
   currentListLabel?: string | null;
   group: ChildTaskPreviewGroup;
+  isExpanded?: boolean;
   listDefinitions: TaskListDefinition[];
   listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
@@ -491,6 +499,7 @@ function StepsCardPreview({
   onOpenStep: (taskId: string) => void;
   onOpenQuickPanel: (taskId: string, mode: ListQuickPanelMode) => void;
   onRenameStep?: (taskId: string, title: string) => void;
+  onReorderStep?: (taskId: string, direction: "down" | "up") => void;
   onOpenActualTime?: (taskId: string) => void;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
   onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }) => void;
@@ -503,16 +512,26 @@ function StepsCardPreview({
   onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null) => void;
   onSetTags?: (taskId: string, tags: string[]) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
+  onToggleExpanded?: () => void;
   selectedBucket: string;
   showAllSteps?: boolean;
 }) {
   const [editingStepTitleId, setEditingStepTitleId] = useState<string | null>(null);
+  const [collapsedStepIds, setCollapsedStepIds] = useState<Record<string, boolean>>({});
   const [stepTitleDrafts, setStepTitleDrafts] = useState<Record<string, string>>({});
   const [substepDraftParentId, setSubstepDraftParentId] = useState<string | null>(null);
   const [substepTitleDrafts, setSubstepTitleDrafts] = useState<Record<string, string>>({});
   const [substepCreationErrors, setSubstepCreationErrors] = useState<Record<string, string | null>>({});
-  const visibleItems = showAllSteps ? group.items : group.items.slice(0, 4);
-  const hiddenItemCount = Math.max(0, group.items.length - visibleItems.length);
+  const collapsedStepIdSet = useMemo(
+    () => new Set(Object.entries(collapsedStepIds).flatMap(([taskId, isCollapsed]) => (isCollapsed ? [taskId] : []))),
+    [collapsedStepIds],
+  );
+  const { collapsibleTaskIds, visibleItems: expandedItems } = useMemo(
+    () => buildChildTaskPreviewVisibility(group.items, collapsedStepIdSet),
+    [collapsedStepIdSet, group.items],
+  );
+  const visibleItems = showAllSteps ? expandedItems : expandedItems.slice(0, 4);
+  const hiddenItemCount = Math.max(0, expandedItems.length - visibleItems.length);
 
   if (visibleItems.length === 0 && !group.summary.hasInvalidDescendants) {
     return null;
@@ -538,8 +557,23 @@ function StepsCardPreview({
   return (
     <section className="mt-3 border-t border-[#f0ebfb] pt-3 dark:border-white/10">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">Steps</p>
+        <div className="inline-flex items-center gap-1.5">
+          <span className={TASK_TABLE_TITLE_CELL_CLASS}>Steps</span>
+          <button
+            aria-expanded={isExpanded}
+            className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#9b92be] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:border-[#42306f] dark:hover:bg-[#22193f] dark:focus-visible:ring-[#3b2f68]/90"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleExpanded?.();
+            }}
+            type="button"
+          >
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+          </button>
+        </div>
       </div>
+      {!isExpanded ? null : (
+        <>
       {group.summary.hasInvalidDescendants ? (
         <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">
           {group.summary.invalidChildLinkCount === 1 ? "1 invalid step link" : `${group.summary.invalidChildLinkCount} invalid step links`}
@@ -548,6 +582,8 @@ function StepsCardPreview({
       {visibleItems.length > 0 ? (
         <ul className="mt-2">
           {visibleItems.map((item) => {
+            const siblingItems = group.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth);
+            const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
             const childTask = childTasksById.get(item.id) ?? null;
             const scheduleLabel = formatStepPreviewSchedule(item);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
@@ -569,6 +605,8 @@ function StepsCardPreview({
             const extraTagCount = Math.max(0, item.tags.length - visibleTags.length);
             const isRenaming = editingStepTitleId === item.id;
             const titleDraft = stepTitleDrafts[item.id] ?? item.title;
+            const canCollapse = collapsibleTaskIds.has(item.id);
+            const isCollapsed = canCollapse && collapsedStepIds[item.id] === true;
             const commitTitle = () => {
               const nextTitle = titleDraft.trim();
               if (nextTitle && nextTitle !== item.title) {
@@ -624,22 +662,44 @@ function StepsCardPreview({
                             value={titleDraft}
                           />
                         ) : (
-                          <button
-                            className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setEditingStepTitleId(item.id);
-                              setStepTitleDrafts((current) => ({ ...current, [item.id]: item.title }));
-                            }}
-                            type="button"
-                          >
-                            <p className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
-                              {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
-                            </p>
-                          </button>
+                          <div className="flex min-w-0 items-center gap-1">
+                            <button
+                              className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setEditingStepTitleId(item.id);
+                                setStepTitleDrafts((current) => ({ ...current, [item.id]: item.title }));
+                              }}
+                              type="button"
+                            >
+                              <p className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
+                                {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                              </p>
+                            </button>
+                            {canCollapse ? (
+                              <button
+                                aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                                className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#8a79d6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setCollapsedStepIds((current) => ({ ...current, [item.id]: !isCollapsed }));
+                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                type="button"
+                              >
+                                {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                              </button>
+                            ) : null}
+                          </div>
                         )}
                       </div>
                       <div className="flex flex-none items-center gap-1">
+                        {onReorderStep ? (
+                          <>
+                            <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] transition hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex <= 0} onClick={(event) => { event.stopPropagation(); onReorderStep(item.id, "up"); }} onPointerDown={(event) => event.stopPropagation()} type="button"><ArrowUp className="h-3.5 w-3.5" /></button>
+                            <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] transition hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1} onClick={(event) => { event.stopPropagation(); onReorderStep(item.id, "down"); }} onPointerDown={(event) => event.stopPropagation()} type="button"><ArrowDown className="h-3.5 w-3.5" /></button>
+                          </>
+                        ) : null}
                         {onCreateChildTask ? (
                           <button
                             aria-label={`Add substep to ${item.title || "Untitled step"}`}
@@ -911,6 +971,8 @@ function StepsCardPreview({
       {hiddenItemCount > 0 ? (
         <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{`${hiddenItemCount} more ${hiddenItemCount === 1 ? "step" : "steps"} shown in the inspector.`}</p>
       ) : null}
+        </>
+      )}
     </section>
   );
 }
@@ -1476,6 +1538,7 @@ function TasksSimpleList({
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [inlineInspectorTaskId, setInlineInspectorTaskId] = useState<string | null>(null);
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
+  const [collapsedStepSectionsByTaskId, setCollapsedStepSectionsByTaskId] = useState<Record<string, boolean>>({});
   const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
   const listShellRef = useRef<HTMLDivElement | null>(null);
   const tasks = tableProps.tasks;
@@ -1803,6 +1866,7 @@ function TasksSimpleList({
                 closeQuickPanel={closeQuickPanel}
                 currentListLabel={currentListLabel}
                 group={stepPreviewGroup}
+                isExpanded={searchMatchedStepParentTaskIdSet.has(task.id) || !collapsedStepSectionsByTaskId[task.id]}
                 listDefinitions={rowContext.listDefinitions}
                 listMembershipsByTaskId={rowContext.listMembershipsByTaskId}
                 onCreateChildTask={tableProps.onCreateChildTask}
@@ -1816,6 +1880,7 @@ function TasksSimpleList({
                 }}
                 onOpenQuickPanel={openQuickPanel}
                 onRenameStep={tableProps.onSetTitle}
+                onReorderStep={tableProps.onReorderChildTask}
                 onSetActualSeconds={tableProps.onSetActualSeconds}
                 onSetDue={tableProps.onSetDue}
                 onSetEnergy={tableProps.onSetEnergy}
@@ -1827,6 +1892,15 @@ function TasksSimpleList({
                 onSetStatus={tableProps.onSetStatus}
                 onSetTags={tableProps.onSetTags}
                 onToggleTaskList={tableProps.onToggleTaskList}
+                onToggleExpanded={() => {
+                  if (searchMatchedStepParentTaskIdSet.has(task.id)) {
+                    return;
+                  }
+                  setCollapsedStepSectionsByTaskId((current) => ({
+                    ...current,
+                    [task.id]: !current[task.id],
+                  }));
+                }}
                 selectedBucket={selectedBucket}
                 showAllSteps={searchMatchedStepParentTaskIdSet.has(task.id)}
               />
@@ -1961,6 +2035,7 @@ function TasksSimpleList({
                 onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
                 onOpenTaskEditor={tableProps.onOpenTaskEditor}
                 onOpenChildTask={(taskId) => setInlineInspectorTaskId(taskId)}
+                onReorderChildTask={tableProps.onReorderChildTask}
                 onFollowDetachedTask={tableProps.onFollowDetachedTask}
                 onDismissDetachedTask={tableProps.onDismissDetachedTask}
                 onNextTaskTimer={tableProps.onNextTaskTimer}

@@ -423,7 +423,10 @@ export function CategoryManager({
   };
 
   return (
-    <ModalShell className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[var(--radius-modal)] border p-10 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]">
+    <ModalShell
+      className="adhdice-scrollbar w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[var(--radius-modal)] border p-10 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]"
+      onClose={editingCat ? () => setEditingCat(null) : onClose}
+    >
         {!editingCat ? (
           <>
             <div className="flex items-center justify-between gap-4">
@@ -585,7 +588,7 @@ export function CategoryManager({
                     value={iconSearch}
                   />
                 </div>
-                <div className="max-h-[22rem] overflow-y-auto rounded-[var(--radius-card)] border p-3 border-[var(--border-soft)] bg-[var(--surface-muted)] dark:border-white/10 dark:bg-white/[0.04]">
+                <div className="adhdice-scrollbar max-h-[22rem] overflow-y-auto rounded-[var(--radius-card)] border p-3 border-[var(--border-soft)] bg-[var(--surface-muted)] dark:border-white/10 dark:bg-white/[0.04]">
                   <div className="grid grid-cols-5 gap-3">
                   {filteredIcons.map((icon) => (
                     <button

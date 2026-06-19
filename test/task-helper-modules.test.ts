@@ -51,6 +51,8 @@ import {
   isTopLevelTask,
   sortTaskSiblings,
 } from "../src/lib/task-hierarchy.ts";
+import { buildTaskSiblingReorderPlan } from "../src/lib/task-sibling-reorder.ts";
+import { buildChildTaskPreviewVisibility } from "../src/lib/task-child-preview-collapse.ts";
 import {
   buildChildTaskPreviewLookup,
   buildTaskPrimaryVisibility,
@@ -787,6 +789,65 @@ test("task hierarchy helpers identify roots, children, ancestry, descendants, an
     issues.filter((issue) => issue.type === "circular_parent").map((issue) => issue.taskId),
     ["cycle-a", "cycle-b"],
   );
+});
+
+test("same-parent sibling reorder normalizes only the affected sibling group", () => {
+  const tasks = [
+    createTask({ id: "parent", sort_order: 50, status: "pending", title: "Parent" }),
+    createTask({ id: "step-a", parent_task_id: "parent", sort_order: 10, status: "pending", title: "A" }),
+    createTask({ id: "step-b", parent_task_id: "parent", sort_order: 30, status: "pending", title: "B" }),
+    createTask({ id: "step-c", parent_task_id: "parent", sort_order: 30, status: "pending", title: "C" }),
+    createTask({ id: "other-parent", sort_order: 60, status: "pending", title: "Other" }),
+    createTask({ id: "other-step", parent_task_id: "other-parent", sort_order: 99, status: "pending", title: "Other step" }),
+  ];
+
+  assert.deepEqual(buildTaskSiblingReorderPlan(tasks, "step-b", "down"), {
+    ok: true,
+    orderedTaskIds: ["step-a", "step-c", "step-b"],
+    parentTaskId: "parent",
+    updates: [
+      { id: "step-a", sortOrder: 1 },
+      { id: "step-c", sortOrder: 2 },
+      { id: "step-b", sortOrder: 3 },
+    ],
+  });
+});
+
+test("same-parent sibling reorder supports substeps and rejects unsafe movement", () => {
+  const tasks = [
+    createTask({ id: "parent", sort_order: 1, status: "pending", title: "Parent" }),
+    createTask({ id: "step", parent_task_id: "parent", sort_order: 1, status: "pending", title: "Step" }),
+    createTask({ id: "sub-a", parent_task_id: "step", sort_order: 1, status: "pending", title: "Sub A" }),
+    createTask({ id: "sub-b", parent_task_id: "step", sort_order: 2, status: "pending", title: "Sub B" }),
+  ];
+
+  assert.deepEqual(buildTaskSiblingReorderPlan(tasks, "sub-b", "up"), {
+    ok: true,
+    orderedTaskIds: ["sub-b", "sub-a"],
+    parentTaskId: "step",
+    updates: [
+      { id: "sub-b", sortOrder: 1 },
+      { id: "sub-a", sortOrder: 2 },
+    ],
+  });
+  assert.deepEqual(buildTaskSiblingReorderPlan(tasks, "parent", "up"), { ok: false, reason: "not_child" });
+  assert.deepEqual(buildTaskSiblingReorderPlan(tasks, "sub-a", "up"), { ok: false, reason: "boundary" });
+});
+
+test("child preview visibility collapses only descendants of the chosen step", () => {
+  const items = [
+    { depth: 1, id: "step-a", parentTaskId: "parent" },
+    { depth: 2, id: "substep-a1", parentTaskId: "step-a" },
+    { depth: 2, id: "substep-a2", parentTaskId: "step-a" },
+    { depth: 1, id: "step-b", parentTaskId: "parent" },
+    { depth: 2, id: "substep-b1", parentTaskId: "step-b" },
+    { depth: 1, id: "step-c", parentTaskId: "parent" },
+  ] as const;
+
+  const visibility = buildChildTaskPreviewVisibility(items as Parameters<typeof buildChildTaskPreviewVisibility>[0], new Set(["step-a"]));
+
+  assert.deepEqual(Array.from(visibility.collapsibleTaskIds).sort(), ["parent", "step-a", "step-b"]);
+  assert.deepEqual(visibility.visibleItems.map((item) => item.id), ["step-a", "step-b", "substep-b1", "step-c"]);
 });
 
 test("read-only task hierarchy adapter classifies flat tasks as top-level without mutating input", () => {

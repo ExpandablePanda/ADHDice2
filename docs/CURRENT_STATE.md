@@ -5,8 +5,8 @@ Last reviewed: 2026-06-19
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.5.1`.
-- Current release group: `6.5.x` Steps cleanup, List/Table parity, and metadata parity.
+- Current working app version: `6.6.3`.
+- Current release group: `6.6.x` safe same-parent Step/Substep ordering.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
@@ -116,6 +116,14 @@ Role: active working
 - Table View Step due chips use the same concise due copy as parent rows (`Today`, not `Due Today`), expanded Step rows sit closer to the parent Steps toggle area, and clicking an already-open Step metadata chip follows the same close-on-repeat inline action behavior as parent chips.
 - The Edit Task Steps area keeps one user-facing Steps section, uses the circular Step icon on Add Step controls, removes the redundant status chip from same-table Step rows, and makes the desktop Meta Data column sticky so it stays available while scrolling the left Steps list.
 - In `6.5.1`, the follow-up parity pass restyles parent and Step row action icons as bare icons with hover/focus circles, moves Step shoeprints actions beside history/delete, and uses the shoeprints action to open inline substep drafts under the clicked Step.
+- In `6.5.2`, Focus timers become an active-session sandbox: a searchable category picker starts clocks, inactive categories stay out of the clock canvas, pause/play and gear remain as the primary controls, and the gear tray exposes submit, reset, and repeatable five/ten-minute adjustments. Clock-face adjustments use a wider input with external five-minute steppers, and running subtraction now adjusts the displayed elapsed total while clamping at zero.
+- In `6.5.3`, the Focus timer picker is reduced to half its prior desktop width, active clock rows center their visible clocks on mobile and desktop, and the timer gear plus quick-adjust numerals are enlarged for clearer recognition.
+- In `6.5.4`, Focus timer dropdown and sandbox scrollers hide their scrollbar chrome while preserving scrolling, centered clocks use an exact 10px gap, the timer picker height is tightened toward the chip scale, and the active sandbox moves to 10px below the picker.
+- In `6.5.5`, centered Focus clocks use a roomier 24px horizontal gap on mobile and desktop, and the sandbox sits 20px below the timer picker.
+- In `6.5.6`, the Session Complete modal hides its internal scrollbar chrome while preserving scrolling and replaces its four native datalist popups with the existing white, site-styled Focus suggestion dropdown.
+- In `6.5.7`, the shared hidden-scrollbar utility explicitly suppresses Safari WebKit scrollbar rendering, Master Categories and its nested option list use that utility, and Manual Entry applies it to the modal element that actually owns scrolling. This also removes the stray gray overlay thumb from the Focus clock sandbox.
+- In `6.5.8`, Escape closes the current Focus menu through the shared modal shell, including Session Complete, Manual Entry, Category Goals, Focus History editing, and Master Categories. Suggestion dropdowns consume the first Escape press, and category editing returns to the Master Categories list before the modal itself closes.
+- In `6.5.9`, the desktop Focus clock sandbox creates a vertical scroll layer only when more than one five-clock row exists. Single-row sandboxes use hidden vertical overflow, removing Safari's stray gray overlay scrollbar thumb at its source.
 - List View parent titles now rename inline, List parent/Step metadata rows expose the remaining editable metadata chips through horizontal scrollers, and Step history streak chips render from the same preview metadata used by Table/Edit.
 - Task search now keeps valid child rows hidden as standalone rows while allowing Step/Substep title, notes, tag, or link matches to surface the top-level parent and expand its sibling Steps.
 - Edit Task Step chip rows scroll horizontally so all Step metadata chips remain reachable, and Step title rename controls stop row-selection propagation more reliably.
@@ -190,6 +198,22 @@ Role: active working
 ## Next Recommended Tickets
 1. Diagnose the black/glitched HUD/UI reload seam as an isolated ticket before any other UI work in that area.
 2. Define the future snapshot payload contract and restore overwrite rules before adding any restore SQL or runtime restore entry points.
-3. `6.5.2 Steps Movement And Ordering Rules`: decide and implement the smallest safe move/reorder/promote/demote behavior for same-table Steps, starting with product rules before UI.
+3. Extend Step movement only after separate product approval; cross-parent movement, promote/demote, and drag/drop remain deferred.
 4. Run the gated legacy Step promotion only after manual dry-run review, then verify duplicate suppression against real promoted rows.
 5. Decide when `scheduled_on` becomes authoritative and gate that behind a dedicated runtime/data contract ticket.
+
+## 6.6.0 Implementation Note
+
+Table View, the full Edit Task Steps section, and List View now expose compact Move Up and Move Down controls for same-table Steps and Substeps. One shared pure reorder planner validates that the row is a valid child, keeps `parent_task_id` unchanged, limits movement to siblings at the same hierarchy depth, deterministically normalizes only that sibling group's `sort_order`, and returns only changed sibling writes. Persistence uses the existing guarded task update path. Cross-parent movement, drag/drop, promote/demote, schema changes, and live promotion remain deferred.
+
+## 6.6.1 Implementation Note
+
+Table View and List View Step rows now show a compact chevron immediately beside the step title when that step has visible same-table substeps. The chevron toggles local collapse and expand for that step's descendants only, preserves the existing rename/open/action behavior on the title and row, and uses one shared preview-visibility helper so descendant hiding follows the same rule in both surfaces. Edit Task behavior, reorder safety, persistence, `parent_task_id`, and broader movement rules are unchanged in this follow-up.
+
+## 6.6.2 Implementation Note
+
+The Table View parent-row `Steps` toggle now uses the same purple hover/focus circle treatment as the new step-level chevrons, so the parent affordance reads like the same control family. List View parent cards now also give the `Steps` section its own collapsible chevron header; the section defaults open, can be collapsed locally per card, and still force-opens during step-search expansion so matched parents continue to reveal their child rows.
+
+## 6.6.3 Implementation Note
+
+The parent-level `Steps` control in List View now matches the Table View control structure instead of using a separate list-specific button treatment. Both surfaces render `Steps` as neutral label text with a separate chevron-only button, so the purple hover/focus highlight applies only to the chevron and not to the word `Steps`.

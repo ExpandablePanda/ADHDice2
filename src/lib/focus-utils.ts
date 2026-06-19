@@ -1,4 +1,4 @@
-import type { FocusCategory } from "@/lib/types";
+import type { ActiveFocusSession, FocusCategory } from "@/lib/types";
 
 export function sanitizeFocusLabel(value: string | null | undefined, fallback: string) {
   const trimmed = (value ?? "").trim();
@@ -41,4 +41,21 @@ export function dedupeCategoriesByName(categories: FocusCategory[]) {
       return accumulator;
     }, new Map<string, FocusCategory>()).values(),
   );
+}
+
+export function adjustActiveFocusSession(
+  session: ActiveFocusSession,
+  deltaSeconds: number,
+  nowMs: number,
+): ActiveFocusSession {
+  const elapsedSeconds = session.isRunning && session.startTime
+    ? Math.max(0, Math.floor((nowMs - session.startTime) / 1000))
+    : 0;
+  const adjustedSeconds = Math.max(0, session.accumulatedSeconds + elapsedSeconds + deltaSeconds);
+
+  return {
+    ...session,
+    accumulatedSeconds: adjustedSeconds,
+    startTime: session.isRunning ? nowMs : null,
+  };
 }

@@ -199,10 +199,26 @@ Steps remain same-table `adhdice_clean_tasks` rows through `parent_task_id`; leg
 
 This follow-up keeps Steps as same-table task rows and fixes active parity gaps without adding movement/reorder. Parent and Step row actions now use bare icons with hover/focus circles, Step shoeprints actions live with row actions and create inline substep drafts, repeated metadata-chip clicks toggle inline action rows closed, List View parent titles rename inline, and List parent/Step cards expose empty and filled metadata chips for status, due, priority, repeat, lists, tags, estimate, actual time, energy, link, and notes while Date Added stays read-only. Search child matches surface the top-level parent and show sibling Steps; Step streak chips continue to come from child task history preview stats.
 
+## 6.6.0 Same-Parent Sibling Reorder
+
+Table View, Edit Task, and List View now share explicit Move Up and Move Down controls and one pure reorder planner. The planner rejects top-level or invalid hierarchy rows, never writes `parent_task_id`, preserves sibling identity and relative order, and normalizes `sort_order` only within the affected parent group. Drag/drop, cross-parent movement, promote, and demote are not part of this slice.
+
+## 6.6.1 Step/Substep Chevron Collapse
+
+Table View and List View now expose a compact chevron beside the title of any same-table Step that owns visible same-table children. Toggling the chevron hides or reveals only that step's descendants inside the current preview surface; it does not change task data, `parent_task_id`, sorting, or persistence. The visibility rule is shared through a small pure helper so collapsed descendants stay local to the UI surface and siblings continue to render in stable order.
+
+## 6.6.2 Parent Steps Toggle Polish
+
+The parent-level `Steps` affordance is now part of the same chevron control language. In Table View, the parent-row `Steps` toggle uses the same hover/focus circle treatment as the child chevrons. In List View, the parent card's `Steps` section is no longer permanently glued open; it has its own collapsible chevron header while search-matched parents still auto-expand so child hits remain visible.
+
+## 6.6.3 Parent Steps Toggle Parity
+
+List View now reuses the same parent `Steps` control structure as Table View rather than a list-specific variant. Both surfaces keep the `Steps` text neutral and put the interactive hover/focus affordance only on the chevron button.
+
 ## Next Ticket
 
-`6.5.2 Steps Movement And Ordering Rules`
+`6.6.4 Step Movement Follow-Up Rules`
 
-Goal: define and implement the smallest safe movement/order behavior for same-table Steps, beginning with product rules for sibling reorder, move-to-parent, promote, demote, and drag/drop interaction boundaries.
+Goal: evaluate drag interaction and any broader movement rules separately after same-parent button reorder is manually verified.
 
 Verification should stay narrow: focused helper tests only plus `git diff --check`.
