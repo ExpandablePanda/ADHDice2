@@ -33,13 +33,14 @@ export function FocusClock({
       return;
     }
 
-    // Sync immediately when timer starts so we never render with stale wall-clock time.
-    setNowMs(Date.now());
+    // Sync on the next frame when the timer starts so the display does not linger on stale wall-clock time.
+    const frameId = requestAnimationFrame(() => setNowMs(Date.now()));
     timerRef.current = setInterval(() => {
       setNowMs(Date.now());
     }, 1000);
 
     return () => {
+      cancelAnimationFrame(frameId);
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isRunning]);
@@ -114,7 +115,7 @@ export function FocusClock({
                 {formatDuration(displaySeconds)}
               </p>
               <div className="mt-3 flex max-w-[11.5rem] flex-col items-center">
-                <p className="line-clamp-2 text-[0.84rem] font-black uppercase leading-tight tracking-[0.16em] break-words text-[#8d87a7] dark:text-white/35">
+                <p className="line-clamp-2 text-xl font-medium normal-case leading-snug tracking-normal break-words text-[var(--text-secondary)] dark:text-white/70">
                   {category.title}
                 </p>
                 <div className="mt-2 h-1.5 w-10 rounded-full transition-all duration-500 group-hover:w-14" style={{ backgroundColor: category.color }} />

@@ -27,7 +27,7 @@ import {
   X,
 } from "lucide-react";
 import type { TaskActualTimeEntry, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
-import type { ChildTaskPreviewGroup, ChildTaskPreviewLookup } from "@/lib/task-app-derived";
+import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import {
@@ -118,6 +118,10 @@ export type PrototypeTaskSubtask = {
   id: string;
   status: TaskStatus;
   title: string;
+};
+type PrototypeSubtaskMiniRow = {
+  depth: number;
+  subtask: PrototypeTaskSubtask;
 };
 
 declare global {
@@ -421,6 +425,13 @@ function filterPrototypeSubtasks(
     }));
 }
 
+function flattenPrototypeSubtasksForMiniRows(subtasks: PrototypeTaskSubtask[], depth = 1): PrototypeSubtaskMiniRow[] {
+  return subtasks.flatMap((subtask) => [
+    { depth, subtask },
+    ...flattenPrototypeSubtasksForMiniRows(subtask.children, depth + 1),
+  ]);
+}
+
 function collectPrototypeSubtaskIds(subtasks: PrototypeTaskSubtask[], rootId: string): string[] {
   for (const subtask of subtasks) {
     if (subtask.id === rootId) {
@@ -650,8 +661,8 @@ function InlineSubtaskEditor({
 
   return (
     <div className="space-y-2">
-      {subtasks.map((subtask, subtaskIndex) => (
-        <div className="space-y-2" key={`${subtask.id || "subtask"}-${subtaskIndex}`}>
+      {subtasks.map((subtask) => (
+        <div className="space-y-2" key={subtask.id}>
           <div className="rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
             <div className="flex items-start gap-2">
               <div className="mt-1 flex h-6 w-6 flex-none items-center justify-center">
@@ -674,7 +685,7 @@ function InlineSubtaskEditor({
                     onCommitTitle?.(subtask.id);
                   }
                 }}
-                placeholder="Step..."
+                placeholder="Step title..."
                 style={SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE}
                 type="text"
                 value={drafts[subtask.id] ?? subtask.title}
@@ -697,7 +708,7 @@ function InlineSubtaskEditor({
               </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5 pl-8">
-              {STATUS_OPTIONS.map((option, optionIndex) => (
+              {STATUS_OPTIONS.map((option) => (
                 <button
                   aria-label={`Set step status to ${option.label}`}
                   className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${
@@ -705,7 +716,7 @@ function InlineSubtaskEditor({
                       ? "shadow-[0_0_0_1px_rgba(111,87,246,0.18)]"
                       : "opacity-78 hover:opacity-100"
                   }`}
-                  key={`${option.value || "step-status"}-${optionIndex}`}
+                  key={option.value}
                   onClick={() => onSetStatus?.(subtask.id, option.value)}
                   type="button"
                 >
@@ -725,242 +736,6 @@ function InlineSubtaskEditor({
                 onDelete={onDelete}
                 onDraftChange={onDraftChange}
                 onSetStatus={onSetStatus}
-                subtasks={subtask.children}
-              />
-            </div>
-          ) : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TaskCellSubtaskTree({
-  autofocusSubtaskId,
-  drafts,
-  depth = 0,
-  editingSubtaskId,
-  ownerTaskId,
-  onAddChild,
-  onAddStep,
-  onAutofocusHandled,
-  onCommitTitle,
-  onDelete,
-  onDraftChange,
-  onStartEditing,
-  onSetStatus,
-  subtasks,
-}: {
-  autofocusSubtaskId?: string | null;
-  drafts: Record<string, string>;
-  depth?: number;
-  editingSubtaskId?: string | null;
-  ownerTaskId?: string;
-  onAddChild?: (subtaskId: string) => void;
-  onAddStep?: (taskId: string) => void;
-  onAutofocusHandled?: () => void;
-  onCommitTitle?: (subtaskId: string) => void;
-  onDelete?: (subtaskId: string) => void;
-  onDraftChange: (subtaskId: string, value: string) => void;
-  onStartEditing?: (subtaskId: string, currentTitle: string) => void;
-  onSetStatus?: (subtaskId: string, nextStatus: TaskSubtaskStatus) => void;
-  subtasks: PrototypeTaskSubtask[];
-}) {
-  const [expandedStatusSubtaskId, setExpandedStatusSubtaskId] = useState<string | null>(null);
-
-  useEffect(() => {
-    installStepTypographyDebugHelper();
-  }, []);
-
-  function getNextSubtaskAction(currentInput: HTMLInputElement, subtaskId: string) {
-    const stepTree = currentInput.closest("[data-step-tree-root='true']");
-    if (!(stepTree instanceof HTMLElement)) {
-      return null;
-    }
-
-    const stepRows = Array.from(stepTree.querySelectorAll<HTMLElement>("[data-subtask-row-id]"));
-    const currentRowIndex = stepRows.findIndex((row) => row.dataset.subtaskRowId === subtaskId);
-    if (currentRowIndex < 0) {
-      return null;
-    }
-
-    const currentRow = stepRows[currentRowIndex];
-    const nextRow = stepRows[currentRowIndex + 1];
-    const nextSubtaskId = nextRow?.dataset.subtaskRowId;
-    const nextSubtaskTitle = nextRow?.dataset.subtaskTitle;
-    if (nextSubtaskId && typeof nextSubtaskTitle === "string") {
-      return {
-        kind: "edit" as const,
-        subtaskId: nextSubtaskId,
-        title: nextSubtaskTitle,
-      };
-    }
-
-    const currentDepth = Number.parseInt(currentRow?.dataset.subtaskDepth ?? "", 10);
-    if (ownerTaskId && currentDepth === 0) {
-      return {
-        kind: "create" as const,
-        taskId: ownerTaskId,
-      };
-    }
-
-    return null;
-  }
-
-  return (
-    <div className="space-y-1.5" data-step-tree-root={depth === 0 ? "true" : undefined}>
-      {subtasks.map((subtask, subtaskIndex) => (
-        <div
-          className="space-y-1.5"
-          data-subtask-depth={depth}
-          data-subtask-row-id={subtask.id}
-          data-subtask-title={subtask.title}
-          key={`${subtask.id || "subtask"}-${subtaskIndex}`}
-        >
-          <div className="flex min-w-0 items-center gap-1.5">
-            <button
-              aria-label={`Set step status for ${subtask.title}`}
-              className="flex h-5 w-5 flex-none items-center justify-center rounded-full transition hover:scale-105"
-              onClick={(event) => {
-                event.stopPropagation();
-                setExpandedStatusSubtaskId((current) => current === subtask.id ? null : subtask.id);
-              }}
-              type="button"
-            >
-              {renderTaskStatusCircle(subtask.status, "sm")}
-            </button>
-            {editingSubtaskId === subtask.id ? (
-              <input
-                autoFocus
-                className={`${SUBTASK_RENAME_INPUT_TEXT_CLASS} h-[15px] min-h-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6] ${subtask.status === "done" ? "opacity-60 line-through" : ""}`}
-                data-adhdice-step-typography-active-input={process.env.NODE_ENV === "development" ? "true" : undefined}
-                onBlur={() => onCommitTitle?.(subtask.id)}
-                onChange={(event) => onDraftChange(subtask.id, event.target.value)}
-                onClick={(event) => event.stopPropagation()}
-                onFocus={() => {
-                  if (autofocusSubtaskId === subtask.id) {
-                    onAutofocusHandled?.();
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    const currentInput = event.currentTarget;
-                    const nextAction = getNextSubtaskAction(currentInput, subtask.id);
-                    onCommitTitle?.(subtask.id);
-                    requestAnimationFrame(() => {
-                      if (nextAction?.kind === "edit") {
-                        onStartEditing?.(nextAction.subtaskId, nextAction.title);
-                        return;
-                      }
-
-                      if (nextAction?.kind === "create") {
-                        onAddStep?.(nextAction.taskId);
-                      }
-                    });
-                    return;
-                  }
-
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onDraftChange(subtask.id, subtask.title);
-                    onCommitTitle?.(subtask.id);
-                  }
-                }}
-                onPointerDown={stopRowActionPointerEvent}
-                style={SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE}
-                type="text"
-                value={drafts[subtask.id] ?? subtask.title}
-              />
-            ) : (
-              <button
-                className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.45rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
-                data-subtask-title-trigger="true"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onStartEditing?.(subtask.id, subtask.title);
-                }}
-                onPointerDown={stopRowActionPointerEvent}
-                type="button"
-              >
-                <p
-                  className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 whitespace-normal break-words ${subtask.status === "done" ? "opacity-60 line-through" : ""}`}
-                  data-adhdice-step-typography-visible-title={process.env.NODE_ENV === "development" ? "true" : undefined}
-                >
-                  {subtask.title}
-                </p>
-              </button>
-            )}
-            <div className="flex flex-none items-center gap-1">
-              {onAddChild ? (
-                <button
-                  aria-label="Add sub-step"
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onAddChild(subtask.id);
-                  }}
-                  type="button"
-                >
-                  <Footprints className="h-3 w-3" />
-                </button>
-              ) : null}
-              {onDelete ? (
-                <button
-                  aria-label="Delete step"
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe8ed] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDelete(subtask.id);
-                  }}
-                  type="button"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              ) : null}
-            </div>
-          </div>
-          {expandedStatusSubtaskId === subtask.id && onSetStatus ? (
-            <div className="ml-[26px] flex flex-wrap gap-1.5">
-              {STATUS_OPTIONS.map((option, optionIndex) => (
-                <button
-                  aria-label={`Set step status to ${option.label}`}
-                  className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${
-                    subtask.status === option.value
-                      ? "shadow-[0_0_0_1px_rgba(111,87,246,0.18)]"
-                      : "opacity-78 hover:opacity-100"
-                  }`}
-                  key={`${subtask.id}-status-${option.value || "step-status"}-${optionIndex}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onSetStatus(subtask.id, option.value);
-                    setExpandedStatusSubtaskId(null);
-                  }}
-                  type="button"
-                >
-                  {renderTaskStatusCircle(option.value, "sm")}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {subtask.children.length > 0 ? (
-            <div className={`ml-[9px] border-l border-[#ede7f7] pl-4 dark:border-white/10 ${depth > 0 ? "mt-1" : ""}`}>
-              <TaskCellSubtaskTree
-                autofocusSubtaskId={autofocusSubtaskId}
-                depth={depth + 1}
-                drafts={drafts}
-                editingSubtaskId={editingSubtaskId}
-                ownerTaskId={ownerTaskId}
-                onAddChild={onAddChild}
-                onAddStep={onAddStep}
-                onAutofocusHandled={onAutofocusHandled}
-                onCommitTitle={onCommitTitle}
-                onDelete={onDelete}
-                onDraftChange={onDraftChange}
-                onSetStatus={onSetStatus}
-                onStartEditing={onStartEditing}
                 subtasks={subtask.children}
               />
             </div>
@@ -1546,50 +1321,58 @@ function formatDue(dueOn: string, dueTime: string) {
 }
 
 const CHILD_TASK_PREVIEW_ITEM_LIMIT = 12;
-const EMPTY_CHILD_TASK_PREVIEW_GROUP: ChildTaskPreviewGroup = {
-  items: [],
-  summary: {
-    descendantCount: 0,
-    directChildCount: 0,
-    hasInvalidDescendants: false,
-    invalidChildLinkCount: 0,
-  },
-};
 
-function formatChildTaskPreviewSummary(summary: ChildTaskPreviewGroup["summary"]) {
-  const directLabel = summary.directChildCount === 1 ? "1 direct child" : `${summary.directChildCount} direct children`;
-  const descendantLabel = summary.descendantCount === 1 ? "1 total descendant" : `${summary.descendantCount} total descendants`;
+function formatChildTaskPreviewSchedule(item: ChildTaskPreview) {
+  if (item.dueOn || item.dueTime) {
+    return `Due ${formatDue(item.dueOn ?? "", item.dueTime ?? "")}`;
+  }
+  if (item.scheduledOn) {
+    return `Scheduled ${formatDue(item.scheduledOn, "")}`;
+  }
+  return "";
+}
 
-  return `${directLabel} · ${descendantLabel}`;
+function formatChildTaskPreviewEstimate(minutes: number | null) {
+  if (!minutes || minutes <= 0) {
+    return "";
+  }
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+function formatChildTaskPreviewRepeat(item: ChildTaskPreview) {
+  const repeatLabel = REPEAT_OPTIONS.find((option) => option.value === item.repeat)?.label ?? item.repeat;
+  if (item.repeat === "none") {
+    return repeatLabel;
+  }
+  return item.repeatInterval > 1 ? `${repeatLabel} · ${item.repeatInterval}` : repeatLabel;
 }
 
 function formatInvalidChildLinkCount(count: number) {
-  return count === 1 ? "1 invalid child link" : `${count} invalid child links`;
+  return count === 1 ? "1 invalid step link" : `${count} invalid step links`;
 }
 
-function ChildTaskPreviewSection({
+function SameTableStepCreationControl({
   creationBlocked,
-  group,
+  iconOnly = false,
   onCreateChildTask,
-  onOpenChildTask,
   parentTaskId,
 }: {
   creationBlocked?: boolean;
-  group?: ChildTaskPreviewGroup;
+  iconOnly?: boolean;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
-  onOpenChildTask?: (taskId: string) => void;
   parentTaskId: string;
 }) {
-  const previewGroup = group ?? EMPTY_CHILD_TASK_PREVIEW_GROUP;
   const [isCreating, setIsCreating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [creationError, setCreationError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const canCreateChildTask = Boolean(onCreateChildTask) && !creationBlocked;
   const showCreationBlockedMessage = Boolean(onCreateChildTask) && creationBlocked;
-  const visibleItems = previewGroup.items.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT);
-  const hiddenItemCount = Math.max(0, previewGroup.items.length - visibleItems.length);
 
   useEffect(() => {
     if (isCreating) {
@@ -1600,11 +1383,11 @@ function ChildTaskPreviewSection({
   async function handleCreateChildTask() {
     const nextTitle = titleDraft.trim();
     if (!nextTitle) {
-      setCreationError("Enter a child task title.");
+      setCreationError("Enter a step title.");
       return;
     }
     if (!onCreateChildTask || creationBlocked) {
-      setCreationError("Child task creation is blocked for this task.");
+      setCreationError("Step creation is blocked for this task.");
       return;
     }
 
@@ -1614,7 +1397,7 @@ function ChildTaskPreviewSection({
     setIsSubmitting(false);
 
     if (result.error || !result.taskId) {
-      setCreationError(result.error ?? "Child task was not created.");
+      setCreationError(result.error ?? "Step was not created.");
       return;
     }
 
@@ -1628,128 +1411,94 @@ function ChildTaskPreviewSection({
     setIsCreating(false);
   }
 
-  if (visibleItems.length === 0 && !previewGroup.summary.hasInvalidDescendants && !onCreateChildTask) {
+  if (!onCreateChildTask) {
     return null;
   }
 
-  return (
-    <section className="mt-3 rounded-[1rem] border border-[#ede7f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Child tasks</p>
-          <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatChildTaskPreviewSummary(previewGroup.summary)}</p>
-          <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">Child tasks are nested under this task and hidden from top-level views.</p>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <span className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS}`}>Task rows</span>
-          {canCreateChildTask && !isCreating ? (
-            <TaskTableChipButton
-              onClick={() => {
-                setCreationError(null);
-                setIsCreating(true);
-              }}
-              toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-            >
-              Add child task
-            </TaskTableChipButton>
-          ) : null}
-        </div>
-      </div>
-      {showCreationBlockedMessage ? (
-        <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">Child creation is blocked until the hierarchy issue is fixed.</p>
-      ) : null}
-      {previewGroup.summary.hasInvalidDescendants ? (
-        <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">{formatInvalidChildLinkCount(previewGroup.summary.invalidChildLinkCount)}</p>
-      ) : null}
-      {isCreating ? (
-        <form
-          className="mt-3 rounded-[0.85rem] border border-[#e5dcfb] bg-white p-2 dark:border-white/10 dark:bg-[#1b1530]/80"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void handleCreateChildTask();
-          }}
-        >
-          <label className="block">
-            <span className="sr-only">Child task title</span>
-            <input
-              className={`${OVERLAY_INPUT_CLASS} h-10 rounded-[0.8rem] text-sm`}
-              disabled={isSubmitting}
-              onChange={(event) => {
-                setTitleDraft(event.target.value);
-                if (creationError) {
-                  setCreationError(null);
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  cancelCreateChildTask();
-                }
-              }}
-              placeholder="Child task title"
-              ref={inputRef}
-              value={titleDraft}
-            />
-          </label>
-          {creationError ? <p className="mt-2 text-xs text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p> : null}
-          <div className="mt-2 flex flex-wrap justify-end gap-1.5">
-            <TaskTableChipButton onClick={cancelCreateChildTask} toneClassName={INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
-            <TaskTableChipButton
-              disabled={isSubmitting}
-              type="submit"
-              toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-            >
-              {isSubmitting ? "Adding..." : "Add"}
-            </TaskTableChipButton>
-          </div>
-        </form>
-      ) : null}
-      {visibleItems.length > 0 ? (
-        <ul className="mt-3 space-y-2">
-          {visibleItems.map((item) => {
-            const dueLabel = item.dueOn || item.dueTime ? formatDue(item.dueOn ?? "", item.dueTime ?? "") : "";
-            const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.85;
+  if (showCreationBlockedMessage) {
+    return (
+      <p className="text-xs text-[#9a7a24] dark:text-[#f3d38a]">Step creation is blocked until the hierarchy issue is fixed.</p>
+    );
+  }
 
-            return (
-              <li
-                className="rounded-[0.85rem] border border-[#ede7f7] bg-white px-3 py-2 dark:border-white/10 dark:bg-[#1b1530]/80"
-                key={item.id}
-                style={{ marginLeft: `${depthIndent}rem` }}
-              >
-                <div className="flex min-w-0 items-start gap-2">
-                  <span className="mt-0.5 flex-none">{renderTaskStatusCircle(item.status, "sm")}</span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-start justify-between gap-2">
-                      <p className="truncate text-sm font-medium text-[#27304c] dark:text-white">{item.title || "Untitled child task"}</p>
-                      {onOpenChildTask ? (
-                        <TaskTableChipButton onClick={() => onOpenChildTask(item.id)} toneClassName={INACTIVE_CHIP_CLASS}>Open</TaskTableChipButton>
-                      ) : null}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#8d87a7] dark:text-white/45">
-                      <span>{formatTaskStatusLabel(item.status)}</span>
-                      {dueLabel ? <span aria-hidden="true">·</span> : null}
-                      {dueLabel ? <span>{dueLabel}</span> : null}
-                    </div>
-                    {item.priorityFlags.length > 0 ? (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {item.priorityFlags.map((priority) => (
-                          <span className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${priorityTone(priority)}`} key={`${item.id}-${priority}`}>
-                            {priority === "focus" ? "Focus" : priority === "important" ? "Important" : "Urgent"}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+  if (!isCreating) {
+    if (iconOnly) {
+      return (
+        <button
+          aria-label="Add Step"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+          data-step-row-add={parentTaskId}
+          onClick={() => {
+            setCreationError(null);
+            setIsCreating(true);
+          }}
+          type="button"
+        >
+          <Footprints className="h-3.5 w-3.5" />
+        </button>
+      );
+    }
+
+    return (
+      <TaskTableChipButton
+        onClick={() => {
+          setCreationError(null);
+          setIsCreating(true);
+        }}
+        toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+      >
+        Add Step
+      </TaskTableChipButton>
+    );
+  }
+
+  return (
+    <div className="w-full">
+      {showCreationBlockedMessage ? (
+        <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">Step creation is blocked until the hierarchy issue is fixed.</p>
       ) : null}
-      {hiddenItemCount > 0 ? (
-        <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{`${hiddenItemCount} more child ${hiddenItemCount === 1 ? "task" : "tasks"} hidden in preview.`}</p>
-      ) : null}
-    </section>
+      <form
+        className="rounded-[0.85rem] border border-[#e5dcfb] bg-white p-2 dark:border-white/10 dark:bg-[#1b1530]/80"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void handleCreateChildTask();
+        }}
+      >
+        <label className="block">
+          <span className="sr-only">Step title</span>
+          <input
+            className={`${OVERLAY_INPUT_CLASS} h-10 rounded-[0.8rem] text-sm`}
+            disabled={isSubmitting}
+            onChange={(event) => {
+              setTitleDraft(event.target.value);
+              if (creationError) {
+                setCreationError(null);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                cancelCreateChildTask();
+              }
+            }}
+            placeholder="Step title"
+            ref={inputRef}
+            value={titleDraft}
+          />
+        </label>
+        {creationError ? <p className="mt-2 text-xs text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p> : null}
+        <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+          <TaskTableChipButton onClick={cancelCreateChildTask} toneClassName={INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
+          <TaskTableChipButton
+            disabled={isSubmitting}
+            type="submit"
+            toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+          >
+            {isSubmitting ? "Adding..." : "Add"}
+          </TaskTableChipButton>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -2087,6 +1836,8 @@ export function TaskManagementTableV2({
   const [renderedTaskCount, setRenderedTaskCount] = useState(INITIAL_RENDERED_TASK_COUNT);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [retainedSelectedTask, setRetainedSelectedTask] = useState<PrototypeTaskRow | null>(null);
+  const [metadataTargetTaskId, setMetadataTargetTaskId] = useState<string | null>(null);
+  const [retainedMetadataTargetTask, setRetainedMetadataTargetTask] = useState<PrototypeTaskRow | null>(null);
   const [selectedTaskLeftCurrentList, setSelectedTaskLeftCurrentList] = useState(false);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("full");
   const [overlayAnchor, setOverlayAnchor] = useState<{ left: number; top: number } | null>(null);
@@ -2108,6 +1859,11 @@ export function TaskManagementTableV2({
   const [activeMetadataPanelByTaskId, setActiveMetadataPanelByTaskId] = useState<Record<string, MetadataPanelId>>({});
   const [notePickerOpenByTaskId, setNotePickerOpenByTaskId] = useState<Record<string, boolean>>({});
   const [expandedSubtasksByTaskId, setExpandedSubtasksByTaskId] = useState<Record<string, boolean>>({});
+  const [expandedStepsByTaskId, setExpandedStepsByTaskId] = useState<Record<string, boolean>>({});
+  const [tableStepDraftParentId, setTableStepDraftParentId] = useState<string | null>(null);
+  const [tableStepTitleDrafts, setTableStepTitleDrafts] = useState<Record<string, string>>({});
+  const [tableStepCreationErrorByParentId, setTableStepCreationErrorByParentId] = useState<Record<string, string | null>>({});
+  const tableStepDraftInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingSubtaskAutoExpandByTaskId, setPendingSubtaskAutoExpandByTaskId] = useState<Record<string, boolean>>({});
   const [hiddenSubtaskIds, setHiddenSubtaskIds] = useState<Record<string, boolean>>({});
   const [openColumnMenuId, setOpenColumnMenuId] = useState<SortColumnId | null>(null);
@@ -2121,6 +1877,12 @@ export function TaskManagementTableV2({
   const [columnOrder, setColumnOrder] = useState<TaskManagementTableColumnId[]>(() => getInitialColumnOrder());
   const [columnAlignments, setColumnAlignments] = useState<Partial<Record<TaskManagementTableColumnId, ColumnAlignment>>>(() => getInitialColumnAlignments());
   const [statusDisplayMode, setStatusDisplayMode] = useState<"chip" | "circle">(() => getInitialStatusDisplayMode());
+
+  useEffect(() => {
+    if (tableStepDraftParentId) {
+      tableStepDraftInputRef.current?.focus();
+    }
+  }, [tableStepDraftParentId]);
   const [localRunningTimers, setLocalRunningTimers] = useState<RunningTaskTimer[]>([]);
   const [localActiveTimerIndex, setLocalActiveTimerIndex] = useState(0);
   const [localTimerNow, setLocalTimerNow] = useState(() => Date.now());
@@ -2138,6 +1900,7 @@ export function TaskManagementTableV2({
   const lastShrinkAllColumnsTokenRef = useRef(0);
   const lastRowsSignatureRef = useRef(buildPrototypeRowsSignature(rows));
   const pendingRowClickTimeoutRef = useRef<number | null>(null);
+  const pendingMetadataTargetTaskIdRef = useRef<string | null>(null);
   const recentInlineCommitRef = useRef<Map<string, { expiresAt: number; value: string }>>(new Map());
   const effectiveRunningTimers = runningTaskTimers ?? localRunningTimers;
   const effectiveActiveTimerIndex = activeTaskTimerIndex ?? localActiveTimerIndex;
@@ -2165,6 +1928,35 @@ export function TaskManagementTableV2({
     () => selectedTaskFromRows ?? (selectedTaskId && retainedSelectedTask?.id === selectedTaskId ? retainedSelectedTask : null),
     [retainedSelectedTask, selectedTaskFromRows, selectedTaskId],
   );
+  const metadataTargetTaskFromRows = useMemo(
+    () => (metadataTargetTaskId ? tasks.find((task) => task.id === metadataTargetTaskId) ?? null : null),
+    [metadataTargetTaskId, tasks],
+  );
+  const metadataTargetTask = useMemo(
+    () => metadataTargetTaskFromRows
+      ?? (metadataTargetTaskId && retainedMetadataTargetTask?.id === metadataTargetTaskId ? retainedMetadataTargetTask : null),
+    [metadataTargetTaskFromRows, metadataTargetTaskId, retainedMetadataTargetTask],
+  );
+  const childTaskParentInfoByTaskId = useMemo(() => {
+    const taskTitleById = new Map(tasks.map((task) => [task.id, task.title]));
+    if (retainedSelectedTask) {
+      taskTitleById.set(retainedSelectedTask.id, retainedSelectedTask.title);
+    }
+
+    const parentInfo = new Map<string, { depth: number; parentTaskId: string; parentTitle: string }>();
+    for (const [groupParentTaskId, group] of Object.entries(childTaskPreviewByParentTaskId)) {
+      for (const item of group.items) {
+        const parentTaskId = item.parentTaskId ?? groupParentTaskId;
+        parentInfo.set(item.id, {
+          depth: item.depth,
+          parentTaskId,
+          parentTitle: taskTitleById.get(parentTaskId) ?? "Parent task",
+        });
+      }
+    }
+    return parentInfo;
+  }, [childTaskPreviewByParentTaskId, retainedSelectedTask, tasks]);
+  const selectedTaskParentInfo = selectedTaskId ? childTaskParentInfoByTaskId.get(selectedTaskId) ?? null : null;
   const selectedTaskIsDetached = Boolean(selectedTaskId && selectedTask && !selectedTaskFromRows && selectedTaskLeftCurrentList);
   const selectedTaskFollowDestination = useMemo(
     () => (selectedTaskIsDetached && selectedTaskId ? getFollowTaskDestination?.(selectedTaskId) ?? null : null),
@@ -2343,6 +2135,14 @@ export function TaskManagementTableV2({
     const requestedTask = requestedVisibleTask ?? requestedRetainedTask;
 
     if (!requestedTask) {
+      return;
+    }
+
+    if (pendingMetadataTargetTaskIdRef.current === requestedOpenTaskId && selectedTaskId && selectedTaskId !== requestedOpenTaskId) {
+      setRetainedMetadataTargetTask(clonePrototypeTaskRow(requestedTask));
+      setMetadataTargetTaskId(requestedOpenTaskId);
+      pendingMetadataTargetTaskIdRef.current = null;
+      onRequestedOpenTaskHandled?.(requestedOpenTaskId);
       return;
     }
 
@@ -2774,6 +2574,12 @@ export function TaskManagementTableV2({
       }
       return clonePrototypeTaskRow(updater(current));
     });
+    setRetainedMetadataTargetTask((current) => {
+      if (!current || current.id !== taskId) {
+        return current;
+      }
+      return clonePrototypeTaskRow(updater(current));
+    });
   }
 
   function patchTasks(taskIds: string[], updater: (task: PrototypeTaskRow) => PrototypeTaskRow) {
@@ -2790,11 +2596,18 @@ export function TaskManagementTableV2({
       }
       return clonePrototypeTaskRow(updater(current));
     });
+    setRetainedMetadataTargetTask((current) => {
+      if (!current || !taskIdSet.has(current.id)) {
+        return current;
+      }
+      return clonePrototypeTaskRow(updater(current));
+    });
   }
 
   function getTaskById(taskId: string) {
     return tasks.find((task) => task.id === taskId)
-      ?? (retainedSelectedTask?.id === taskId ? retainedSelectedTask : null);
+      ?? (retainedSelectedTask?.id === taskId ? retainedSelectedTask : null)
+      ?? (retainedMetadataTargetTask?.id === taskId ? retainedMetadataTargetTask : null);
   }
 
   function modeSupportsBatchQuickEdit(mode: OverlayMode) {
@@ -2911,11 +2724,34 @@ export function TaskManagementTableV2({
         }
       }
     }
+    if (metadataTargetTaskId && metadataTargetTaskId !== selectedTaskId) {
+      if (!options?.skipNotesCommit) {
+        commitTaskNotes(metadataTargetTaskId);
+      }
+      if (!options?.skipLinkCommit) {
+        commitTaskLink(metadataTargetTaskId);
+      }
+      const currentTask = getTaskById(metadataTargetTaskId);
+      const dueDraft = dueDrafts[metadataTargetTaskId];
+      if (dueDraft && currentTask && (dueDraft.dueOn !== currentTask.dueOn || dueDraft.dueTime !== currentTask.dueTime)) {
+        setTaskDue(metadataTargetTaskId, dueDraft.dueOn, dueDraft.dueTime);
+      }
+      const estimatedDraft = estimatedMinutesDrafts[metadataTargetTaskId];
+      if (estimatedDraft && currentTask) {
+        const estimatedMinutes = Number.parseInt(estimatedDraft, 10);
+        if (Number.isFinite(estimatedMinutes) && estimatedMinutes !== currentTask.estimatedMinutes) {
+          setTaskEstimatedMinutes(metadataTargetTaskId, estimatedMinutes);
+        }
+      }
+    }
     setEditingTaskTitleId(null);
     setEditingSubtaskId(null);
     hasSeenSelectedTaskInCurrentListRef.current = false;
     setSelectedTaskId(null);
     setRetainedSelectedTask(null);
+    setMetadataTargetTaskId(null);
+    setRetainedMetadataTargetTask(null);
+    pendingMetadataTargetTaskIdRef.current = null;
     setSelectedTaskLeftCurrentList(false);
     setQuickEditTargetTaskIds(null);
     setOverlayMode("full");
@@ -3474,6 +3310,9 @@ export function TaskManagementTableV2({
     }
 
     setEditingTaskTitleId(null);
+    setMetadataTargetTaskId(null);
+    setRetainedMetadataTargetTask(null);
+    pendingMetadataTargetTaskIdRef.current = null;
     hasSeenSelectedTaskInCurrentListRef.current = tasks.some((task) => task.id === taskId);
     setSelectedTaskLeftCurrentList(false);
     setRetainedSelectedTask((current) => current?.id === taskId ? current : null);
@@ -3509,6 +3348,149 @@ export function TaskManagementTableV2({
       Math.max(24, shellRect.height - estimatedCardHeight - 24),
     );
     setOverlayAnchor({ left: nextLeft, top: nextTop });
+  }
+
+  function openTaskInCurrentEditor(taskId: string) {
+    if (getTaskById(taskId)) {
+      openInspector(taskId, "full");
+      return;
+    }
+
+    onOpenChildTask?.(taskId);
+  }
+
+  function openTableStepActions(taskId: string, mode: OverlayMode = "status") {
+    if (allowInlineInspector && isInlineAccordionMode(mode)) {
+      openInspector(taskId, mode);
+      return;
+    }
+
+    openTaskInCurrentEditor(taskId);
+  }
+
+  function childPreviewToPrototypeTaskRow(item: ChildTaskPreview): PrototypeTaskRow {
+    const retainedTask = getTaskById(item.id);
+    if (retainedTask) {
+      return retainedTask;
+    }
+
+    return {
+      actualSeconds: item.actualSeconds,
+      createdAt: "",
+      dueOn: item.dueOn ?? item.scheduledOn ?? "",
+      dueTime: item.dueTime ?? "",
+      energy: item.energy,
+      estimatedMinutes: item.estimatedMinutes,
+      id: item.id,
+      linkLabel: item.linkLabel,
+      linkUrl: item.linkUrl,
+      linkedNotes: [],
+      lists: [],
+      currentStreak: 0,
+      missedStreak: 0,
+      notes: item.notes,
+      priorities: [...item.priorityFlags],
+      repeat: item.repeat,
+      repeatDayOfMonth: item.repeatDayOfMonth,
+      repeatDaysOfWeek: [...item.repeatDaysOfWeek],
+      repeatInterval: item.repeatInterval,
+      status: item.status,
+      subtasks: [],
+      subtasksAutoReset: false,
+      tags: [...item.tags],
+      title: item.title,
+      trashedAt: null,
+      updatedAt: "",
+    };
+  }
+
+  function beginTableStepDraft(parentTaskId: string) {
+    if (!onCreateChildTask || childTaskCreationBlockedTaskIds.includes(parentTaskId)) {
+      return;
+    }
+
+    setExpandedStepsByTaskId((current) => ({
+      ...current,
+      [parentTaskId]: true,
+    }));
+    setTableStepCreationErrorByParentId((current) => ({
+      ...current,
+      [parentTaskId]: null,
+    }));
+    setTableStepTitleDrafts((current) => (
+      current[parentTaskId] === undefined ? { ...current, [parentTaskId]: "" } : current
+    ));
+    setTableStepDraftParentId(parentTaskId);
+  }
+
+  function cancelTableStepDraft(parentTaskId: string) {
+    setTableStepDraftParentId((current) => (current === parentTaskId ? null : current));
+    setTableStepCreationErrorByParentId((current) => ({
+      ...current,
+      [parentTaskId]: null,
+    }));
+    setTableStepTitleDrafts((current) => {
+      const next = { ...current };
+      delete next[parentTaskId];
+      return next;
+    });
+  }
+
+  async function commitTableStepDraft(parentTaskId: string) {
+    const nextTitle = tableStepTitleDrafts[parentTaskId]?.trim() ?? "";
+    if (!nextTitle) {
+      setTableStepCreationErrorByParentId((current) => ({
+        ...current,
+        [parentTaskId]: "Enter a step title.",
+      }));
+      tableStepDraftInputRef.current?.focus();
+      return;
+    }
+    if (!onCreateChildTask || childTaskCreationBlockedTaskIds.includes(parentTaskId)) {
+      setTableStepCreationErrorByParentId((current) => ({
+        ...current,
+        [parentTaskId]: "Step creation is blocked for this task.",
+      }));
+      return;
+    }
+
+    const result = await onCreateChildTask(parentTaskId, nextTitle);
+    if (result.error || !result.taskId) {
+      setTableStepCreationErrorByParentId((current) => ({
+        ...current,
+        [parentTaskId]: result.error ?? "Step was not created.",
+      }));
+      tableStepDraftInputRef.current?.focus();
+      return;
+    }
+
+    cancelTableStepDraft(parentTaskId);
+    setExpandedStepsByTaskId((current) => ({
+      ...current,
+      [parentTaskId]: true,
+    }));
+  }
+
+  function selectEditorMetadataTask(taskId: string) {
+    const visibleOrRetainedTask = getTaskById(taskId);
+    setEditingTaskTitleId(null);
+    setEditingSubtaskId(null);
+    if (visibleOrRetainedTask) {
+      pendingMetadataTargetTaskIdRef.current = null;
+      setRetainedMetadataTargetTask(clonePrototypeTaskRow(visibleOrRetainedTask));
+      setMetadataTargetTaskId(taskId);
+      return;
+    }
+
+    pendingMetadataTargetTaskIdRef.current = taskId;
+    setMetadataTargetTaskId(taskId);
+    onOpenChildTask?.(taskId);
+  }
+
+  function selectParentMetadataTask() {
+    pendingMetadataTargetTaskIdRef.current = null;
+    setMetadataTargetTaskId(null);
+    setRetainedMetadataTargetTask(null);
   }
 
   function renderInlineAccordionContent(task: PrototypeTaskRow) {
@@ -4008,6 +3990,66 @@ export function TaskManagementTableV2({
     }
 
     return null;
+  }
+
+  function renderInlineActionRow(task: PrototypeTaskRow) {
+    const inlineAccordionContent = renderInlineAccordionContent(task);
+    const hasInlineAccordionContent = Children.count(inlineAccordionContent) > 0;
+
+    if (!allowInlineInspector || selectedTaskId !== task.id || !isInlineAccordionMode(overlayMode) || !hasInlineAccordionContent) {
+      return null;
+    }
+
+    return (
+      <motion.div
+        animate={{ height: "auto", opacity: 1, y: 0 }}
+        className="ml-[10px] mt-2 w-max min-w-full overflow-hidden rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-2.5 shadow-[0_18px_45px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#1b1530]"
+        data-task-table-inline-editor={task.id}
+        exit={{ height: 0, opacity: 0, y: -6 }}
+        initial={{ height: 0, opacity: 0, y: -6 }}
+        onClick={(event) => event.stopPropagation()}
+        transition={{ duration: 0.18 }}
+      >
+        <div className="mb-1 flex items-center gap-2">
+          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
+            {overlayMode === "status"
+              ? "Status actions"
+              : overlayMode === "due"
+                ? "Due actions"
+                : overlayMode === "estimated"
+                  ? "Estimated time"
+                  : overlayMode === "actual"
+                    ? "Actual time"
+                    : overlayMode === "priority"
+                      ? "Priority actions"
+                      : overlayMode === "energy"
+                        ? "Energy actions"
+                        : overlayMode === "repeat"
+                          ? "Repeat actions"
+                          : overlayMode === "tags"
+                            ? "Tag actions"
+                            : overlayMode === "link"
+                              ? "Link actions"
+                              : overlayMode === "notes"
+                                ? "Notes actions"
+                                : "List actions"}
+          </p>
+          <button
+            aria-label="Close actions"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-[#f4f5f8] text-[#8a82a7] transition hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/8 dark:text-white/55 dark:hover:text-[#cabfff]"
+            onClick={() => closeInspector()}
+            type="button"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <div className="flex min-w-max items-start gap-1.5">
+            {inlineAccordionContent}
+          </div>
+        </div>
+      </motion.div>
+    );
   }
 
   function beginColumnResize(event: ReactPointerEvent<HTMLSpanElement>, columnId: TaskManagementTableColumnId) {
@@ -4528,8 +4570,13 @@ export function TaskManagementTableV2({
     if (columnId === "title") {
       const hasDescription = task.notes.trim().length > 0;
       const hasSubtasks = visibleSubtasks.length > 0;
+      const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
+      const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
+      const stepsExpanded = expandedStepsByTaskId[task.id] ?? false;
       const subtasksExpanded = expandedSubtasksByTaskId[task.id] ?? false;
-      const hasSecondaryContent = hasDescription || hasSubtasks;
+      const hasUnifiedSteps = hasStepPreview || hasSubtasks;
+      const unifiedStepsExpanded = hasStepPreview ? stepsExpanded : subtasksExpanded;
+      const hasSecondaryContent = hasDescription || hasStepPreview || hasSubtasks;
       const isRenamingTitle = editingTaskTitleId === task.id;
       const titleDraft = titleDraftsRef.current[task.id] ?? task.title;
       return (
@@ -4603,14 +4650,14 @@ export function TaskManagementTableV2({
                   <MoveLeft className="h-3 w-3" />
                 </button>
               ) : null}
-              {onTaskSubtaskAdd ? (
+              {onCreateChildTask ? (
                 <button
-                  aria-label="Add step"
+                  aria-label="Add Step"
                   className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
                   onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
                     event.stopPropagation();
-                    void handleTaskSubtaskAdd(task.id);
+                    beginTableStepDraft(task.id);
                   }}
                   type="button"
                 >
@@ -4663,53 +4710,31 @@ export function TaskManagementTableV2({
                 {task.notes.trim()}
               </p>
             ) : null}
-            {hasSubtasks ? (
+            {hasUnifiedSteps ? (
               <div className="w-full min-w-0">
                 <button
-                  aria-expanded={subtasksExpanded}
+                  aria-expanded={unifiedStepsExpanded}
                   className="inline-flex items-center gap-1 text-left transition hover:opacity-85"
                   onClick={(event) => {
                     event.stopPropagation();
-                    setExpandedSubtasksByTaskId((current) => ({
-                      ...current,
-                      [task.id]: !subtasksExpanded,
-                    }));
+                    if (hasStepPreview) {
+                      setExpandedStepsByTaskId((current) => ({
+                        ...current,
+                        [task.id]: !stepsExpanded,
+                      }));
+                    }
+                    if (hasSubtasks) {
+                      setExpandedSubtasksByTaskId((current) => ({
+                        ...current,
+                        [task.id]: !unifiedStepsExpanded,
+                      }));
+                    }
                   }}
                   type="button"
                 >
                   <span className={TITLE_CELL_CLASS}>Steps</span>
-                  <ChevronDown className={`h-3.5 w-3.5 text-[#9b92be] transition-transform dark:text-white/35 ${subtasksExpanded ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`h-3.5 w-3.5 text-[#9b92be] transition-transform dark:text-white/35 ${unifiedStepsExpanded ? "rotate-180" : ""}`} />
                 </button>
-                {subtasksExpanded ? (
-                  <div className="mt-2 w-full min-w-0">
-                    <TaskCellSubtaskTree
-                      autofocusSubtaskId={autofocusSubtaskId}
-                      drafts={subtaskTitleDrafts}
-                      editingSubtaskId={editingSubtaskId}
-                      ownerTaskId={task.id}
-                      onAddChild={(subtaskId) => { void handleTaskSubtaskAddChild(subtaskId); }}
-                      onAddStep={(taskId) => { void handleTaskSubtaskAdd(taskId); }}
-                      onAutofocusHandled={() => setAutofocusSubtaskId(null)}
-                      onCommitTitle={commitSubtaskTitle}
-                      onDelete={handleTaskSubtaskDelete}
-                      onDraftChange={(subtaskId, value) => {
-                        setSubtaskTitleDrafts((current) => ({
-                          ...current,
-                          [subtaskId]: value,
-                        }));
-                      }}
-                      onSetStatus={onTaskSubtaskStatusChange}
-                      onStartEditing={(subtaskId, currentTitle) => {
-                        setEditingSubtaskId(subtaskId);
-                        setSubtaskTitleDrafts((current) => ({
-                          ...current,
-                          [subtaskId]: current[subtaskId] ?? currentTitle,
-                        }));
-                      }}
-                      subtasks={visibleSubtasks}
-                    />
-                  </div>
-                ) : null}
               </div>
             ) : null}
           </div>
@@ -4960,6 +4985,658 @@ export function TaskManagementTableV2({
     );
   }
 
+  const renderEditorChildTaskRows = (group: ChildTaskPreviewGroup | undefined) => {
+    const visibleItems = group?.items.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT) ?? [];
+    const hiddenItemCount = Math.max(0, (group?.items.length ?? 0) - visibleItems.length);
+    const canSelectChildTask = Boolean(onOpenChildTask);
+    const canDeleteChildTask = Boolean(onOpenDeleteTask);
+
+    if (visibleItems.length === 0 && !group?.summary.hasInvalidDescendants) {
+      return null;
+    }
+
+    return (
+      <div className="space-y-2">
+        {group?.summary.hasInvalidDescendants ? (
+          <p className="text-xs text-[#9a7a24] dark:text-[#f3d38a]">{formatInvalidChildLinkCount(group.summary.invalidChildLinkCount)}</p>
+        ) : null}
+        {visibleItems.map((item) => {
+          const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.85;
+          const scheduleLabel = formatChildTaskPreviewSchedule(item);
+          const estimateLabel = formatChildTaskPreviewEstimate(item.estimatedMinutes);
+          const visibleTags = item.tags.slice(0, 2);
+          const extraTagCount = Math.max(0, item.tags.length - visibleTags.length);
+          const hasNotes = item.notes.trim().length > 0;
+          const isMetadataTarget = metadataTargetTaskId === item.id;
+          const isRenamingStepTitle = editingTaskTitleId === item.id;
+
+          return (
+            <div
+              className={`group flex min-w-0 items-start gap-2 rounded-[0.95rem] border border-transparent px-1.5 py-2.5 text-left transition ${isMetadataTarget ? "bg-[#fbfaff] dark:bg-white/[0.05]" : "bg-transparent"} ${canSelectChildTask ? "cursor-pointer hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90" : ""}`}
+              data-same-table-step-row={item.id}
+              key={item.id}
+              onClick={canSelectChildTask ? (event) => {
+                event.stopPropagation();
+                selectEditorMetadataTask(item.id);
+              } : undefined}
+              onKeyDown={canSelectChildTask ? (event) => {
+                if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                  return;
+                }
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  selectEditorMetadataTask(item.id);
+                }
+              } : undefined}
+              role={canSelectChildTask ? "button" : undefined}
+              style={{ marginLeft: `${depthIndent}rem` }}
+              tabIndex={canSelectChildTask ? 0 : undefined}
+            >
+              <span className="mt-1 flex-none">{renderTaskStatusCircle(item.status, "sm")}</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    {isRenamingStepTitle ? (
+                      <TaskTitleDraftInput
+                        autoFocus
+                        className="min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-1 text-sm font-semibold text-[#27304c] outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+                        initialValue={item.title}
+                        onCommit={commitTaskTitle}
+                        onDone={() => setEditingTaskTitleId((current) => (current === item.id ? null : current))}
+                        onDraftChange={setTitleDraft}
+                        taskId={item.id}
+                      />
+                    ) : (
+                      <button
+                        className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          selectEditorMetadataTask(item.id);
+                          setEditingTaskTitleId(item.id);
+                          setTitleDraft(item.id, item.title);
+                        }}
+                        type="button"
+                      >
+                        <p className="min-w-0 truncate text-sm font-semibold text-[#27304c] dark:text-white">
+                          {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                        </p>
+                      </button>
+                    )}
+                    <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
+                      {formatChildTaskPreviewDepthLabel(item.depth)}
+                    </p>
+                  </div>
+                  {canDeleteChildTask && !isMetadataTarget ? (
+                    <button
+                      aria-label={`Move step ${item.title || "Untitled step"} to trash`}
+                      className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#d94e67] opacity-70 transition hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f]"
+                      data-same-table-step-delete={item.id}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenDeleteTask?.(item.id);
+                      }}
+                      onPointerDown={stopRowActionPointerEvent}
+                      type="button"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className={`${CHIP_BASE} ${statusTone(item.status)}`}>{formatStatusLabel(item.status)}</span>
+                  {scheduleLabel ? <span className={`${CHIP_BASE} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>{scheduleLabel}</span> : null}
+                  {estimateLabel ? (
+                    <span className={`${CHIP_BASE} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] gap-1.5`}>
+                      <Clock3 className="h-3.25 w-3.25" />
+                      {estimateLabel}
+                    </span>
+                  ) : null}
+                  {item.actualSeconds > 0 ? (
+                    <span className={`${CHIP_BASE} border-[#ece7f5] bg-white text-[#6f57f6] dark:border-white/10 dark:bg-[#181226] dark:text-[#cabfff] gap-1.5`}>
+                      <Clock3 className="h-3.25 w-3.25" />
+                      {formatActual(item.actualSeconds)}
+                    </span>
+                  ) : null}
+                  {item.priorityFlags.map((priority) => (
+                    <span className={`${CHIP_BASE} ${priorityTone(priority)}`} key={`${item.id}-editor-priority-${priority}`}>
+                      {formatPriorityLabel(priority)}
+                    </span>
+                  ))}
+                  {item.energy !== "none" ? <span className={`${CHIP_BASE} ${energyTone(item.energy)}`}>{formatEnergyLabel(item.energy)}</span> : null}
+                  {item.repeat !== "none" ? <span className={`${CHIP_BASE} ${repeatTone(item.repeat)}`}>{formatChildTaskPreviewRepeat(item)}</span> : null}
+                  {visibleTags.map((tag) => (
+                    <span className={`${CHIP_BASE} ${TAG_CHIP_CLASS}`} key={`${item.id}-editor-tag-${tag}`}>
+                      #{tag}
+                    </span>
+                  ))}
+                  {extraTagCount > 0 ? <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>+{extraTagCount}</span> : null}
+                  {item.linkLabel || item.linkUrl ? (
+                    <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>{item.linkLabel || "Link"}</span>
+                  ) : null}
+                  {hasNotes ? <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>Notes</span> : null}
+                </div>
+                {isMetadataTarget ? (
+                  <div
+                    className="mt-2 flex flex-wrap items-center justify-between gap-2 pl-8"
+                    data-step-row-controls={item.id}
+                    onClick={(event) => event.stopPropagation()}
+                    onPointerDown={stopRowActionPointerEvent}
+                  >
+                    <div className="flex flex-wrap gap-1.5" data-step-row-status-icons={item.id}>
+                      {STATUS_OPTIONS.map((option) => (
+                        <button
+                          aria-label={`Set step status to ${option.label}`}
+                          className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${
+                            item.status === option.value
+                              ? "shadow-[0_0_0_1px_rgba(111,87,246,0.18)]"
+                              : "opacity-78 hover:opacity-100"
+                          }`}
+                          key={option.value}
+                          onClick={() => setTaskStatus(item.id, option.value)}
+                          type="button"
+                        >
+                          {renderTaskStatusCircle(option.value, "sm")}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <SameTableStepCreationControl
+                        creationBlocked={childTaskCreationBlockedTaskIds.includes(item.id)}
+                        iconOnly
+                        onCreateChildTask={onCreateChildTask}
+                        parentTaskId={item.id}
+                      />
+                      {canDeleteChildTask ? (
+                        <button
+                          aria-label={`Move step ${item.title || "Untitled step"} to trash`}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe8ed] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
+                          data-step-row-delete={item.id}
+                          onClick={() => onOpenDeleteTask?.(item.id)}
+                          type="button"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+        {hiddenItemCount > 0 ? (
+          <p className="text-xs text-[#8d87a7] dark:text-white/45">{`${hiddenItemCount} more ${hiddenItemCount === 1 ? "step" : "steps"} hidden in preview.`}</p>
+        ) : null}
+      </div>
+    );
+  };
+
+  const getStepMiniCellActionMode = (columnId: TaskManagementTableColumnId): OverlayMode | null => {
+    if (columnId === "status_icon" || columnId === "status") return "status";
+    if (columnId === "due") return "due";
+    if (columnId === "estimated") return "estimated";
+    if (columnId === "actual") return "actual";
+    if (columnId === "tags") return "tags";
+    if (columnId === "notes") return "notes";
+    if (columnId === "priority") return "priority";
+    if (columnId === "energy") return "energy";
+    if (columnId === "repeat") return "repeat";
+    return null;
+  };
+
+  const wrapStepMiniCellAction = (item: ChildTaskPreview, columnId: TaskManagementTableColumnId, content: ReactNode) => {
+    const mode = getStepMiniCellActionMode(columnId);
+    if (!allowInlineInspector || !mode) {
+      return content;
+    }
+
+    return (
+      <button
+        className={`${CONTROL_FONT_CLASS} inline-flex min-w-0 max-w-full items-center justify-center overflow-hidden rounded-[0.95rem] py-1 transition`}
+        onClick={(event) => {
+          event.stopPropagation();
+          openTableStepActions(item.id, mode);
+        }}
+        type="button"
+      >
+        {content}
+      </button>
+    );
+  };
+
+  const renderChildTaskMiniCell = (item: ChildTaskPreview, columnId: TaskManagementTableColumnId) => {
+    const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.55;
+    const scheduleLabel = formatChildTaskPreviewSchedule(item) || "No date";
+    const estimateLabel = formatChildTaskPreviewEstimate(item.estimatedMinutes) || "No est";
+    const visibleTags = item.tags.slice(0, 1);
+    const extraTagCount = Math.max(0, item.tags.length - visibleTags.length);
+    const hasNotes = item.notes.trim().length > 0;
+
+    if (columnId === "status_icon") {
+      return wrapStepMiniCellAction(item, columnId, <div className="flex items-center justify-center self-center">{renderTaskStatusCircle(item.status, "sm")}</div>);
+    }
+
+    if (columnId === "title") {
+      const isRenamingStepTitle = editingTaskTitleId === item.id;
+      return (
+        <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: `${0.2 + depthIndent}rem` }}>
+          <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            {isRenamingStepTitle ? (
+              <span onClick={(event) => event.stopPropagation()}>
+                <TaskTitleDraftInput
+                  autoFocus
+                  className="h-[24px] min-h-0 w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 text-[13px] font-medium text-[#27304c] outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+                  initialValue={item.title}
+                  onCommit={commitTaskTitle}
+                  onDone={() => setEditingTaskTitleId((current) => (current === item.id ? null : current))}
+                  onDraftChange={setTitleDraft}
+                  taskId={item.id}
+                />
+              </span>
+            ) : (
+              <button
+                className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setEditingTaskTitleId(item.id);
+                  setTitleDraft(item.id, item.title);
+                }}
+                type="button"
+              >
+                <p className="min-w-0 truncate text-[13px] font-medium text-[#27304c] dark:text-white">
+                  {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                </p>
+              </button>
+            )}
+            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
+              {formatChildTaskPreviewDepthLabel(item.depth)}
+            </p>
+          </div>
+          {onOpenDeleteTask ? (
+            <button
+              aria-label={`Move step ${item.title || "Untitled step"} to trash`}
+              className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#d94e67] opacity-70 transition hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f]"
+              data-same-table-step-delete={item.id}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenDeleteTask(item.id);
+              }}
+              onPointerDown={stopRowActionPointerEvent}
+              type="button"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (columnId === "due") {
+      return wrapStepMiniCellAction(item, columnId, (
+        <div>
+          <span className={`${CHIP_BASE} ${item.dueOn || item.dueTime || item.scheduledOn ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}`}>
+            {scheduleLabel}
+          </span>
+        </div>
+      ));
+    }
+
+    if (columnId === "estimated") {
+      return wrapStepMiniCellAction(item, columnId, (
+        <div>
+          <span className={`${CHIP_BASE} ${item.estimatedMinutes ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS} gap-1.5`}>
+            <Clock3 className="h-3.25 w-3.25" />
+            {estimateLabel}
+          </span>
+        </div>
+      ));
+    }
+
+    if (columnId === "actual") {
+      return wrapStepMiniCellAction(item, columnId, (
+        <div>
+          <span className={`${CHIP_BASE} ${item.actualSeconds > 0 ? "border-[#ece7f5] bg-white text-[#6f57f6] dark:border-white/10 dark:bg-[#181226] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS} gap-1.5`}>
+            <Clock3 className="h-3.25 w-3.25" />
+            {formatActual(item.actualSeconds)}
+          </span>
+        </div>
+      ));
+    }
+
+    if (columnId === "tags") {
+      return wrapStepMiniCellAction(item, columnId, (
+        <div className="flex min-w-0 flex-nowrap gap-2">
+          {visibleTags.length > 0 ? visibleTags.map((tag) => (
+            <span className={`${CHIP_BASE} ${TAG_CHIP_CLASS}`} key={`${item.id}-mini-tag-${tag}`}>
+              #{tag}
+            </span>
+          )) : (
+            <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}># Tag</span>
+          )}
+          {extraTagCount > 0 ? <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>+{extraTagCount}</span> : null}
+        </div>
+      ));
+    }
+
+    if (columnId === "link") {
+      const linkContent = (
+        <div className="flex min-w-0 flex-nowrap items-center gap-2">
+          <span className={`${CHIP_BASE} ${item.linkLabel ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>{item.linkLabel || "No link"}</span>
+          {item.linkUrl ? (
+            <button
+              className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${LIST_CHIP_CLASS} px-2`}
+              onClick={(event) => {
+                event.stopPropagation();
+                openExternalLink(item.linkUrl);
+              }}
+              type="button"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      );
+      return item.linkUrl ? linkContent : wrapStepMiniCellAction(item, columnId, linkContent);
+    }
+
+    if (columnId === "notes") {
+      return wrapStepMiniCellAction(item, columnId, (
+        <div>
+          <span className={`${CHIP_BASE} ${hasNotes ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>{hasNotes ? "Notes" : "No notes"}</span>
+        </div>
+      ));
+    }
+
+    if (columnId === "priority") {
+      return wrapStepMiniCellAction(item, columnId, (
+        <div className="flex min-w-0 flex-nowrap gap-2">
+          {item.priorityFlags.length > 0 ? item.priorityFlags.slice(0, 1).map((priority) => (
+            <span className={`${CHIP_BASE} ${priorityTone(priority)}`} key={`${item.id}-mini-priority-${priority}`}>
+              {formatPriorityLabel(priority)}
+            </span>
+          )) : (
+            <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>None</span>
+          )}
+          {item.priorityFlags.length > 1 ? <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>+{item.priorityFlags.length - 1}</span> : null}
+        </div>
+      ));
+    }
+
+    if (columnId === "energy") {
+      return wrapStepMiniCellAction(item, columnId, (
+        <div>
+          <span className={`${CHIP_BASE} ${energyTone(item.energy)}`}>{formatEnergyLabel(item.energy)}</span>
+        </div>
+      ));
+    }
+
+    if (columnId === "repeat") {
+      return wrapStepMiniCellAction(item, columnId, (
+        <div>
+          <span className={`${CHIP_BASE} ${repeatTone(item.repeat)}`}>{formatChildTaskPreviewRepeat(item)}</span>
+        </div>
+      ));
+    }
+
+    if (columnId === "status") {
+      return wrapStepMiniCellAction(item, columnId, (
+        <div>
+          <span className={`${CHIP_BASE} ${statusTone(item.status)}`}>{formatStatusLabel(item.status)}</span>
+        </div>
+      ));
+    }
+
+    return (
+      <div>
+        <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>-</span>
+      </div>
+    );
+  };
+
+  const renderTableStepDraftCell = (parentTaskId: string, columnId: TaskManagementTableColumnId) => {
+    const draft = tableStepTitleDrafts[parentTaskId] ?? "";
+    const creationError = tableStepCreationErrorByParentId[parentTaskId];
+
+    if (columnId === "status_icon") {
+      return <div className="flex items-center justify-center self-center">{renderTaskStatusCircle("pending", "sm")}</div>;
+    }
+
+    if (columnId === "title") {
+      return (
+        <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: "0.2rem" }}>
+          <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <input
+              aria-label="New step title"
+              className="w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-1 text-[13px] font-medium text-[#27304c] outline-none transition placeholder:text-[#aaa2c8] focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+              onBlur={() => {
+                if (draft.trim()) {
+                  void commitTableStepDraft(parentTaskId);
+                  return;
+                }
+                cancelTableStepDraft(parentTaskId);
+              }}
+              onChange={(event) => {
+                setTableStepTitleDrafts((current) => ({
+                  ...current,
+                  [parentTaskId]: event.target.value,
+                }));
+                if (creationError) {
+                  setTableStepCreationErrorByParentId((current) => ({
+                    ...current,
+                    [parentTaskId]: null,
+                  }));
+                }
+              }}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void commitTableStepDraft(parentTaskId);
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  cancelTableStepDraft(parentTaskId);
+                }
+              }}
+              placeholder="Step title..."
+              ref={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
+              type="text"
+              value={draft}
+            />
+            {creationError ? (
+              <p className="mt-1 text-[11px] font-medium text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p>
+            ) : (
+              <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">Step</p>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (columnId === "status") {
+      return (
+        <div>
+          <span className={`${CHIP_BASE} ${statusTone("pending")}`}>Pending</span>
+        </div>
+      );
+    }
+
+    if (columnId === "due") {
+      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No date</span>;
+    }
+
+    if (columnId === "estimated") {
+      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS} gap-1.5`}><Clock3 className="h-3.25 w-3.25" />No est</span>;
+    }
+
+    if (columnId === "actual") {
+      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS} gap-1.5`}><Clock3 className="h-3.25 w-3.25" />0m</span>;
+    }
+
+    if (columnId === "tags") {
+      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}># Tag</span>;
+    }
+
+    if (columnId === "link") {
+      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No link</span>;
+    }
+
+    if (columnId === "notes") {
+      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No notes</span>;
+    }
+
+    if (columnId === "priority" || columnId === "energy") {
+      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>None</span>;
+    }
+
+    if (columnId === "repeat") {
+      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No Repeat</span>;
+    }
+
+    return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>-</span>;
+  };
+
+  const renderChildTaskMiniRows = (task: PrototypeTaskRow, group: ChildTaskPreviewGroup | undefined) => {
+    const visibleItems = group?.items.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT) ?? [];
+    const hiddenItemCount = Math.max(0, (group?.items.length ?? 0) - visibleItems.length);
+    const canOpenStepActions = allowInlineInspector || Boolean(onOpenChildTask);
+    const isDraftingStepForTask = tableStepDraftParentId === task.id;
+
+    if (visibleItems.length === 0 && !group?.summary.hasInvalidDescendants && !isDraftingStepForTask) {
+      return null;
+    }
+
+    return (
+      <div className="ml-[10px] w-max min-w-full" data-task-table-step-rows={task.id}>
+        {group?.summary.hasInvalidDescendants ? (
+          <div className="rounded-[0.95rem] border border-[#f1dfaa] bg-[#fff9e8] px-3 py-2 text-left text-xs font-medium text-[#9a7a24] dark:border-[#6b5317] dark:bg-[#44350d]/55 dark:text-[#f3d38a]">
+            {formatInvalidChildLinkCount(group?.summary.invalidChildLinkCount ?? 0)}
+          </div>
+        ) : null}
+        {isDraftingStepForTask ? (
+          <form
+            className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-3 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+            data-table-step-draft-row={task.id}
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void commitTableStepDraft(task.id);
+            }}
+            style={{ gridTemplateColumns }}
+          >
+            {visibleHeaderColumns.map((column) => (
+              <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${task.id}-draft-${column.id}`}>
+                {renderTableStepDraftCell(task.id, column.id)}
+              </div>
+            ))}
+          </form>
+        ) : null}
+        {visibleItems.map((item) => {
+          const inlineStepTask = childPreviewToPrototypeTaskRow(item);
+
+          return (
+            <Fragment key={item.id}>
+              <div
+                className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-3 pl-[3px] pr-0 text-center transition dark:bg-[#181226] ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""}`}
+                data-same-table-step-row={item.id}
+                onClick={canOpenStepActions ? (event) => {
+                  event.stopPropagation();
+                  openTableStepActions(item.id, "status");
+                } : undefined}
+                onKeyDown={canOpenStepActions ? (event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openTableStepActions(item.id, "status");
+                  }
+                } : undefined}
+                role={canOpenStepActions ? "button" : undefined}
+                style={{ gridTemplateColumns }}
+                tabIndex={canOpenStepActions ? 0 : undefined}
+              >
+                {visibleHeaderColumns.map((column) => (
+                  <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${item.id}-${column.id}`}>
+                    {renderChildTaskMiniCell(item, column.id)}
+                  </div>
+                ))}
+              </div>
+              {renderInlineActionRow(inlineStepTask)}
+            </Fragment>
+          );
+        })}
+        {hiddenItemCount > 0 ? (
+          <p className="px-3 text-left text-xs text-[#8d87a7] dark:text-white/45">{`${hiddenItemCount} more ${hiddenItemCount === 1 ? "step" : "steps"} hidden in preview.`}</p>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderSourceStepMiniCell = (row: PrototypeSubtaskMiniRow, columnId: TaskManagementTableColumnId) => {
+    const { depth, subtask } = row;
+    const depthIndent = Math.min(Math.max(depth - 1, 0), 3) * 0.55;
+
+    if (columnId === "status_icon") {
+      return <div className="flex items-center justify-center self-center">{renderTaskStatusCircle(subtask.status, "sm")}</div>;
+    }
+
+    if (columnId === "title") {
+      return (
+        <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: `${0.2 + depthIndent}rem` }}>
+          <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="min-w-0 truncate text-[13px] font-medium text-[#27304c] dark:text-white">
+              {subtask.title || (depth > 1 ? "Untitled substep" : "Untitled step")}
+            </p>
+            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
+              {formatChildTaskPreviewDepthLabel(depth)}
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (columnId === "status") {
+      return (
+        <div>
+          <span className={`${CHIP_BASE} ${statusTone(subtask.status)}`}>{formatStatusLabel(subtask.status)}</span>
+        </div>
+      );
+    }
+
+    return <div aria-hidden="true" />;
+  };
+
+  const renderSourceStepMiniRows = (task: PrototypeTaskRow, subtasks: PrototypeTaskSubtask[]) => {
+    const rows = flattenPrototypeSubtasksForMiniRows(subtasks);
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="ml-[10px] w-max min-w-full" data-task-table-source-step-rows={task.id}>
+        {rows.map((row) => (
+          <div
+            className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-3 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+            key={row.subtask.id}
+            onClick={(event) => event.stopPropagation()}
+            style={{ gridTemplateColumns }}
+          >
+            {visibleHeaderColumns.map((column) => (
+              <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${row.subtask.id}-${column.id}`}>
+                {renderSourceStepMiniCell(row, column.id)}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className={`mx-auto mt-3 h-fit w-full max-w-[88rem] ${className}`} style={TABLE_FONT_STYLE}>
       <div className={`relative overflow-visible rounded-[2rem] border border-[#ece7f8] bg-white px-0 pt-1 pb-6 shadow-[0_26px_80px_rgba(90,67,171,0.10)] dark:border-white/10 dark:bg-[#140f26] ${shellClassName}`} ref={shellRef}>
@@ -5152,12 +5829,16 @@ export function TaskManagementTableV2({
                 No rows match the current table filters.
               </div>
             ) : renderedTasks.map((task) => {
-              const visibleSubtaskSignature = buildPrototypeSubtaskSignature(filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds));
+              const visibleSubtasks = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds);
+              const hasSourceStepRows = visibleSubtasks.length > 0;
+              const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
+              const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
+              const stepsExpanded = expandedStepsByTaskId[task.id] ?? false;
+              const hasTableStepDraft = tableStepDraftParentId === task.id;
+              const sourceStepsExpanded = hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false);
               const showInlineAccordion = allowInlineInspector
                 && selectedTaskId === task.id
                 && isInlineAccordionMode(overlayMode);
-              const inlineAccordionContent = showInlineAccordion ? renderInlineAccordionContent(task) : null;
-              const hasInlineAccordionContent = Children.count(inlineAccordionContent) > 0;
 
               return (
                 <Fragment key={getPrototypeTaskRowKey(task)}>
@@ -5239,54 +5920,25 @@ export function TaskManagementTableV2({
                       ))}
                     </div>
                   </motion.div>
-                  {showInlineAccordion && hasInlineAccordionContent ? (
+                  {renderInlineActionRow(task)}
+                  {(hasTableStepDraft || (hasStepPreview && stepsExpanded)) ? (
                     <motion.div
-                      animate={{ height: "auto", opacity: 1, y: 0 }}
-                      className="ml-[10px] mt-2 w-max min-w-full overflow-hidden rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-2.5 shadow-[0_18px_45px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#1b1530]"
-                      data-task-table-inline-editor={task.id}
-                      exit={{ height: 0, opacity: 0, y: -6 }}
-                      initial={{ height: 0, opacity: 0, y: -6 }}
-                      onClick={(event) => event.stopPropagation()}
-                      transition={{ duration: 0.18 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      data-task-table-step-mini-rows={task.id}
+                      initial={shouldAnimateRows ? { opacity: 0, y: -4 } : false}
+                      transition={{ duration: 0.16 }}
                     >
-                      <div className="mb-1 flex items-center gap-2">
-                        <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-                          {overlayMode === "status"
-                            ? "Status actions"
-                            : overlayMode === "due"
-                              ? "Due actions"
-                              : overlayMode === "estimated"
-                                ? "Estimated time"
-                                : overlayMode === "actual"
-                                  ? "Actual time"
-                                  : overlayMode === "priority"
-                                    ? "Priority actions"
-                                    : overlayMode === "energy"
-                                      ? "Energy actions"
-                                      : overlayMode === "repeat"
-                                        ? "Repeat actions"
-                              : overlayMode === "tags"
-                                          ? "Tag actions"
-                                          : overlayMode === "link"
-                                            ? "Link actions"
-                                            : overlayMode === "notes"
-                                              ? "Notes actions"
-                                              : "List actions"}
-                        </p>
-                        <button
-                          aria-label="Close actions"
-                          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-[#f4f5f8] text-[#8a82a7] transition hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/8 dark:text-white/55 dark:hover:text-[#cabfff]"
-                          onClick={() => closeInspector()}
-                          type="button"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <div className="flex min-w-max items-start gap-1.5">
-                          {inlineAccordionContent}
-                        </div>
-                      </div>
+                      {renderChildTaskMiniRows(task, stepPreviewGroup)}
+                    </motion.div>
+                  ) : null}
+                  {hasSourceStepRows && sourceStepsExpanded ? (
+                    <motion.div
+                      animate={{ opacity: 1, y: 0 }}
+                      data-task-table-source-step-mini-rows={task.id}
+                      initial={shouldAnimateRows ? { opacity: 0, y: -4 } : false}
+                      transition={{ duration: 0.16 }}
+                    >
+                      {renderSourceStepMiniRows(task, visibleSubtasks)}
                     </motion.div>
                   ) : null}
                 </Fragment>
@@ -5418,7 +6070,7 @@ export function TaskManagementTableV2({
             <motion.div
               animate={{ opacity: 1 }}
               className="absolute inset-0 z-20 flex flex-col rounded-[2rem] bg-white/78 backdrop-blur-sm dark:bg-[#140f26]/92"
-              onClick={closeInspector}
+              onClick={() => closeInspector()}
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
               key={`task-table-inspector-${selectedTask.id || "blank"}-${overlayMode}`}
@@ -5462,15 +6114,26 @@ export function TaskManagementTableV2({
                 const isFocusedOverlay = overlayMode !== "full" || overlayAnchor !== null;
                 const batchQuickEditCount = quickEditTargetTaskIds?.length ?? 0;
                 const batchQuickEditLabel = batchQuickEditCount > 1 ? `Applying to ${batchQuickEditCount} selected tasks` : null;
+                const metadataTask = overlayMode === "full" ? metadataTargetTask ?? selectedTask : selectedTask;
+                const isEditingStepMetadata = overlayMode === "full" && metadataTargetTask?.id === metadataTask.id;
+                const metadataContextLabel = `${metadataTask.title || "Untitled task"} | ${isEditingStepMetadata ? formatChildTaskPreviewDepthLabel(childTaskParentInfoByTaskId.get(metadataTask.id)?.depth ?? 1) : "Parent"}`;
                 const titleDraft = titleDraftsRef.current[selectedTask.id] ?? selectedTask.title;
-                const linkDraft = linkDrafts[selectedTask.id] ?? { label: selectedTask.linkLabel, url: selectedTask.linkUrl };
-                const notesDraft = notesDrafts[selectedTask.id] ?? selectedTask.notes;
-                const linkedNoteDraft = linkedNoteDrafts[selectedTask.id] ?? selectedTask.linkedNotes.map((note) => note.id);
-                const estimatedMinutesDraft = estimatedMinutesDrafts[selectedTask.id] ?? (selectedTask.estimatedMinutes ? String(selectedTask.estimatedMinutes) : "");
-                const tagDraft = tagDrafts[selectedTask.id] ?? "";
-                const listDraft = listDrafts[selectedTask.id] ?? "";
+                const selectedTaskNotesDraft = notesDrafts[selectedTask.id] ?? selectedTask.notes;
+                const metadataLinkDraft = linkDrafts[metadataTask.id] ?? { label: metadataTask.linkLabel, url: metadataTask.linkUrl };
+                const metadataNotesDraft = notesDrafts[metadataTask.id] ?? metadataTask.notes;
+                const metadataLinkedNoteDraft = linkedNoteDrafts[metadataTask.id] ?? metadataTask.linkedNotes.map((note) => note.id);
+                const metadataEstimatedMinutesDraft = estimatedMinutesDrafts[metadataTask.id] ?? (metadataTask.estimatedMinutes ? String(metadataTask.estimatedMinutes) : "");
+                const metadataTagDraft = tagDrafts[metadataTask.id] ?? "";
+                const metadataListDraft = listDrafts[metadataTask.id] ?? "";
+                const metadataTaskActualTimeEntries = taskActualTimeEntriesByTaskId?.[metadataTask.id] ?? [];
+                const linkDraft = metadataLinkDraft;
+                const notesDraft = selectedTaskNotesDraft;
+                const linkedNoteDraft = metadataLinkedNoteDraft;
+                const estimatedMinutesDraft = metadataEstimatedMinutesDraft;
+                const tagDraft = metadataTagDraft;
+                const listDraft = metadataListDraft;
                 const selectedTaskVisibleSubtasks = filterPrototypeSubtasks(selectedTask.subtasks, hiddenSubtaskIds);
-                const activeMetadataPanel = activeMetadataPanelByTaskId[selectedTask.id] ?? "due";
+                const activeMetadataPanel = activeMetadataPanelByTaskId[metadataTask.id] ?? "due";
                 const metadataPanelId: MetadataPanelId = overlayMode === "full"
                   ? activeMetadataPanel
                   : overlayMode;
@@ -5489,27 +6152,27 @@ export function TaskManagementTableV2({
                 function metadataFieldHasValue(id: MetadataPanelId) {
                   switch (id) {
                     case "due":
-                      return Boolean(selectedTask.dueOn || selectedTask.dueTime);
+                      return Boolean(metadataTask.dueOn || metadataTask.dueTime);
                     case "estimated":
-                      return selectedTask.estimatedMinutes !== null;
+                      return metadataTask.estimatedMinutes !== null;
                     case "actual":
-                      return getDisplayedActualSeconds(selectedTask) > 0 || selectedTaskActualTimeEntries.length > 0;
+                      return getDisplayedActualSeconds(metadataTask) > 0 || metadataTaskActualTimeEntries.length > 0;
                     case "priority":
-                      return selectedTask.priorities.length > 0;
+                      return metadataTask.priorities.length > 0;
                     case "repeat":
-                      return selectedTask.repeat !== "none";
+                      return metadataTask.repeat !== "none";
                     case "energy":
-                      return selectedTask.energy !== "none";
+                      return metadataTask.energy !== "none";
                     case "status":
-                      return selectedTask.status !== "pending";
+                      return metadataTask.status !== "pending";
                     case "lists":
-                      return selectedTask.lists.length > 0;
+                      return metadataTask.lists.length > 0;
                     case "tags":
-                      return selectedTask.tags.length > 0;
+                      return metadataTask.tags.length > 0;
                     case "link":
-                      return Boolean(selectedTask.linkLabel || selectedTask.linkUrl);
+                      return Boolean(metadataTask.linkLabel || metadataTask.linkUrl);
                     case "notes":
-                      return Boolean(selectedTask.notes.trim() || selectedTask.linkedNotes.length > 0);
+                      return Boolean(metadataTask.notes.trim() || metadataTask.linkedNotes.length > 0);
                     default:
                       return false;
                   }
@@ -5546,41 +6209,41 @@ export function TaskManagementTableV2({
                     <>
                       {renderInlineTextChoices(
                         DUE_PRESETS.map((preset) => ({ label: preset.label, value: preset.value })),
-                        selectedTask.dueOn ? [selectedTask.dueOn] : [],
-                        (value) => setTaskDue(selectedTask.id, value, value ? selectedTask.dueTime : ""),
+                        metadataTask.dueOn ? [metadataTask.dueOn] : [],
+                        (value) => setTaskDue(metadataTask.id, value, value ? metadataTask.dueTime : ""),
                       )}
                       <div className="mt-3 grid gap-2 sm:grid-cols-2">
                         <input
                           className={OVERLAY_INPUT_CLASS}
                           onChange={(event) => setDueDrafts((current) => ({
                             ...current,
-                            [selectedTask.id]: {
+                            [metadataTask.id]: {
                               dueOn: event.target.value,
-                              dueTime: current[selectedTask.id]?.dueTime ?? selectedTask.dueTime,
+                              dueTime: current[metadataTask.id]?.dueTime ?? metadataTask.dueTime,
                             },
                           }))}
                           type="date"
-                          value={(dueDrafts[selectedTask.id]?.dueOn ?? selectedTask.dueOn) || ""}
+                          value={(dueDrafts[metadataTask.id]?.dueOn ?? metadataTask.dueOn) || ""}
                         />
                         <input
                           className={OVERLAY_INPUT_CLASS}
                           onChange={(event) => setDueDrafts((current) => ({
                             ...current,
-                            [selectedTask.id]: {
-                              dueOn: current[selectedTask.id]?.dueOn ?? selectedTask.dueOn,
+                            [metadataTask.id]: {
+                              dueOn: current[metadataTask.id]?.dueOn ?? metadataTask.dueOn,
                               dueTime: event.target.value,
                             },
                           }))}
                           type="time"
-                          value={(dueDrafts[selectedTask.id]?.dueTime ?? selectedTask.dueTime) || ""}
+                          value={(dueDrafts[metadataTask.id]?.dueTime ?? metadataTask.dueTime) || ""}
                         />
                       </div>
                       <div className="mt-3 flex justify-end gap-2">
-                        <TaskTableChipButton onClick={() => setTaskDue(selectedTask.id, "", "")} toneClassName={INACTIVE_CHIP_CLASS}>Clear</TaskTableChipButton>
+                        <TaskTableChipButton onClick={() => setTaskDue(metadataTask.id, "", "")} toneClassName={INACTIVE_CHIP_CLASS}>Clear</TaskTableChipButton>
                         <TaskTableChipButton onClick={() => {
-                          const draft = dueDrafts[selectedTask.id];
+                          const draft = dueDrafts[metadataTask.id];
                           if (!draft) return;
-                          setTaskDue(selectedTask.id, draft.dueOn, draft.dueTime);
+                          setTaskDue(metadataTask.id, draft.dueOn, draft.dueTime);
                         }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save date + time</TaskTableChipButton>
                       </div>
                     </>
@@ -5590,40 +6253,40 @@ export function TaskManagementTableV2({
                     <>
                       {renderInlineTextChoices(
                         ESTIMATED_TIME_PRESETS.map((minutes) => ({ label: minutes === 60 ? "1h" : `${minutes}m`, value: String(minutes) })),
-                        selectedTask.estimatedMinutes !== null ? [String(selectedTask.estimatedMinutes)] : [],
+                        metadataTask.estimatedMinutes !== null ? [String(metadataTask.estimatedMinutes)] : [],
                         (value) => {
                           const minutes = Number.parseInt(value, 10);
-                          setTaskEstimatedMinutes(selectedTask.id, selectedTask.estimatedMinutes === minutes ? null : minutes);
+                          setTaskEstimatedMinutes(metadataTask.id, metadataTask.estimatedMinutes === minutes ? null : minutes);
                         },
                       )}
                       <div className="mt-3 flex gap-2">
-                        <input className={OVERLAY_INPUT_CLASS} inputMode="numeric" onChange={(event) => setEstimatedMinutesDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="Custom minutes" type="text" value={estimatedMinutesDraft} />
-                        <TaskTableChipButton onClick={() => setTaskEstimatedMinutes(selectedTask.id, estimatedMinutesDraft ? Number.parseInt(estimatedMinutesDraft, 10) : null)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
+                        <input className={OVERLAY_INPUT_CLASS} inputMode="numeric" onChange={(event) => setEstimatedMinutesDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="Custom minutes" type="text" value={metadataEstimatedMinutesDraft} />
+                        <TaskTableChipButton onClick={() => setTaskEstimatedMinutes(metadataTask.id, metadataEstimatedMinutesDraft ? Number.parseInt(metadataEstimatedMinutesDraft, 10) : null)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
                       </div>
                     </>
                   );
                 } else if (metadataPanelId === "actual") {
                   metadataPanelContent = (
                     <>
-                      <div className="mb-3 text-sm text-[#7d7597] dark:text-white/55">Current time: {formatActual(getDisplayedActualSeconds(selectedTask))}</div>
+                      <div className="mb-3 text-sm text-[#7d7597] dark:text-white/55">Current time: {formatActual(getDisplayedActualSeconds(metadataTask))}</div>
                       <div className="flex flex-wrap gap-2">
-                        {getRunningTimer(selectedTask.id) ? (
+                        {getRunningTimer(metadataTask.id) ? (
                           <>
                             <TaskTableChipButton className="gap-2" onClick={() => {
-                              const timer = getRunningTimer(selectedTask.id);
+                              const timer = getRunningTimer(metadataTask.id);
                               if (timer?.pausedAt) {
-                                resumeTaskTimer(selectedTask.id);
+                                resumeTaskTimer(metadataTask.id);
                               } else {
-                                pauseTaskTimer(selectedTask.id);
+                                pauseTaskTimer(metadataTask.id);
                               }
-                            }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">{getRunningTimer(selectedTask.id)?.pausedAt ? <CirclePlay className="h-3.5 w-3.5" /> : <CirclePause className="h-3.5 w-3.5" />}{getRunningTimer(selectedTask.id)?.pausedAt ? "Continue timer" : "Pause timer"}</TaskTableChipButton>
-                            <TaskTableChipButton className="gap-2" onClick={() => stopTaskTimer(selectedTask.id)} toneClassName="border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]"><TimerReset className="h-3.5 w-3.5" />Stop focus timer</TaskTableChipButton>
+                            }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">{getRunningTimer(metadataTask.id)?.pausedAt ? <CirclePlay className="h-3.5 w-3.5" /> : <CirclePause className="h-3.5 w-3.5" />}{getRunningTimer(metadataTask.id)?.pausedAt ? "Continue timer" : "Pause timer"}</TaskTableChipButton>
+                            <TaskTableChipButton className="gap-2" onClick={() => stopTaskTimer(metadataTask.id)} toneClassName="border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]"><TimerReset className="h-3.5 w-3.5" />Stop focus timer</TaskTableChipButton>
                           </>
                         ) : (
-                          <TaskTableChipButton className="gap-2" onClick={() => openFocusTimerForTask(selectedTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"><CirclePlay className="h-3.5 w-3.5" />Start focus timer</TaskTableChipButton>
+                          <TaskTableChipButton className="gap-2" onClick={() => openFocusTimerForTask(metadataTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"><CirclePlay className="h-3.5 w-3.5" />Start focus timer</TaskTableChipButton>
                         )}
-                        <TaskTableChipButton className="gap-2" onClick={() => openActualTimeEntryForTask(selectedTask.id)} toneClassName={INACTIVE_CHIP_CLASS}><Clock3 className="h-3.5 w-3.5" />Manual time entry</TaskTableChipButton>
-                        <TaskTableChipButton className="gap-2" onClick={() => { onTaskActualSecondsChange?.(selectedTask.id, 0); patchTask(selectedTask.id, (task) => ({ ...task, actualSeconds: 0 })); }} toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"><TimerReset className="h-3.5 w-3.5" />Clear actual time</TaskTableChipButton>
+                        <TaskTableChipButton className="gap-2" onClick={() => openActualTimeEntryForTask(metadataTask.id)} toneClassName={INACTIVE_CHIP_CLASS}><Clock3 className="h-3.5 w-3.5" />Manual time entry</TaskTableChipButton>
+                        <TaskTableChipButton className="gap-2" onClick={() => { onTaskActualSecondsChange?.(metadataTask.id, 0); patchTask(metadataTask.id, (task) => ({ ...task, actualSeconds: 0 })); }} toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"><TimerReset className="h-3.5 w-3.5" />Clear actual time</TaskTableChipButton>
                       </div>
                     </>
                   );
@@ -5631,11 +6294,11 @@ export function TaskManagementTableV2({
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
                       {PRIORITY_OPTIONS.map((option, optionIndex) => {
-                        const selected = selectedTask.priorities.includes(option.value);
-                        const nextPriorities = selected ? selectedTask.priorities.filter((value) => value !== option.value) : [...selectedTask.priorities, option.value];
-                        return <TaskTableChipButton key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => setTaskPriorities(selectedTask.id, nextPriorities)} toneClassName={selected ? priorityTone(option.value) : INACTIVE_CHIP_CLASS}>{option.label}</TaskTableChipButton>;
+                        const selected = metadataTask.priorities.includes(option.value);
+                        const nextPriorities = selected ? metadataTask.priorities.filter((value) => value !== option.value) : [...metadataTask.priorities, option.value];
+                        return <TaskTableChipButton key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => setTaskPriorities(metadataTask.id, nextPriorities)} toneClassName={selected ? priorityTone(option.value) : INACTIVE_CHIP_CLASS}>{option.label}</TaskTableChipButton>;
                       })}
-                      <TaskTableChipButton onClick={() => setTaskPriorities(selectedTask.id, [])} toneClassName={INACTIVE_CHIP_CLASS}>Clear all</TaskTableChipButton>
+                      <TaskTableChipButton onClick={() => setTaskPriorities(metadataTask.id, [])} toneClassName={INACTIVE_CHIP_CLASS}>Clear all</TaskTableChipButton>
                     </div>
                   );
                 } else if (metadataPanelId === "repeat") {
@@ -5643,11 +6306,11 @@ export function TaskManagementTableV2({
                     <>
                       {renderInlineTextChoices(
                         REPEAT_OPTIONS,
-                        [selectedTask.repeat],
-                        (value) => setTaskRepeat(selectedTask.id, value),
+                        [metadataTask.repeat],
+                        (value) => setTaskRepeat(metadataTask.id, value),
                         (value, selected) => selected ? repeatTone(value) : INACTIVE_CHIP_CLASS,
                       )}
-                      {selectedTask.repeat !== "none" ? (
+                      {metadataTask.repeat !== "none" ? (
                         <div className="mt-3 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                           <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom cadence</p>
                           <div className="flex flex-wrap items-center gap-2">
@@ -5655,48 +6318,48 @@ export function TaskManagementTableV2({
                             <input
                               className={`${OVERLAY_INPUT_CLASS} w-24`}
                               inputMode="numeric"
-                              onBlur={(event) => setTaskRepeatInterval(selectedTask, event.target.value)}
-                              onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "") }))}
+                              onBlur={(event) => setTaskRepeatInterval(metadataTask, event.target.value)}
+                              onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") }))}
                               placeholder="1"
                               type="text"
-                              value={repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval)}
+                              value={repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval)}
                             />
                             {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
                               <TaskTableChipButton
-                                key={`${selectedTask.id}-repeat-unit-${repeatUnit}`}
-                                onClick={() => setTaskRepeat(selectedTask.id, repeatUnit)}
-                                toneClassName={selectedTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}
+                                key={`${metadataTask.id}-repeat-unit-${repeatUnit}`}
+                                onClick={() => setTaskRepeat(metadataTask.id, repeatUnit)}
+                                toneClassName={metadataTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}
                               >
                                 {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
                               </TaskTableChipButton>
                             ))}
-                            <TaskTableChipButton onClick={() => setTaskRepeatInterval(selectedTask, repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
+                            <TaskTableChipButton onClick={() => setTaskRepeatInterval(metadataTask, repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
                           </div>
-                          {selectedTask.repeat === "weekly" || selectedTask.repeat === "custom" ? (
+                          {metadataTask.repeat === "weekly" || metadataTask.repeat === "custom" ? (
                             <div className="mt-3 flex flex-wrap gap-2">
                               {REPEAT_WEEKDAY_OPTIONS.map((option) => {
-                                const selected = selectedTask.repeatDaysOfWeek.includes(option.value);
+                                const selected = metadataTask.repeatDaysOfWeek.includes(option.value);
                                 return (
-                                  <TaskTableChipButton key={`${selectedTask.id}-weekday-${option.value}`} onClick={() => toggleTaskRepeatWeekday(selectedTask, option.value)} toneClassName={selected ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}>
+                                  <TaskTableChipButton key={`${metadataTask.id}-weekday-${option.value}`} onClick={() => toggleTaskRepeatWeekday(metadataTask, option.value)} toneClassName={selected ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}>
                                     {option.label}
                                   </TaskTableChipButton>
                                 );
                               })}
                             </div>
                           ) : null}
-                          {selectedTask.repeat === "monthly" || selectedTask.repeat === "custom" ? (
+                          {metadataTask.repeat === "monthly" || metadataTask.repeat === "custom" ? (
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                               <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Day of month</span>
                               <input
                                 className={`${OVERLAY_INPUT_CLASS} w-24`}
                                 inputMode="numeric"
-                                onBlur={(event) => setTaskRepeatDayOfMonth(selectedTask, event.target.value)}
-                                onChange={(event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) }))}
+                                onBlur={(event) => setTaskRepeatDayOfMonth(metadataTask, event.target.value)}
+                                onChange={(event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) }))}
                                 placeholder="15"
                                 type="text"
-                                value={repeatDayOfMonthDrafts[selectedTask.id] ?? (selectedTask.repeatDayOfMonth ? String(selectedTask.repeatDayOfMonth) : "")}
+                                value={repeatDayOfMonthDrafts[metadataTask.id] ?? (metadataTask.repeatDayOfMonth ? String(metadataTask.repeatDayOfMonth) : "")}
                               />
-                              <TaskTableChipButton onClick={() => setTaskRepeatDayOfMonth(selectedTask, repeatDayOfMonthDrafts[selectedTask.id] ?? (selectedTask.repeatDayOfMonth ? String(selectedTask.repeatDayOfMonth) : ""))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply day</TaskTableChipButton>
+                              <TaskTableChipButton onClick={() => setTaskRepeatDayOfMonth(metadataTask, repeatDayOfMonthDrafts[metadataTask.id] ?? (metadataTask.repeatDayOfMonth ? String(metadataTask.repeatDayOfMonth) : ""))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply day</TaskTableChipButton>
                             </div>
                           ) : null}
                         </div>
@@ -5707,7 +6370,7 @@ export function TaskManagementTableV2({
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
                       {ENERGY_OPTIONS.map((option, optionIndex) => (
-                        <TaskTableChipButton key={`${option.value || "energy-option"}-${optionIndex}`} onClick={() => setTaskEnergy(selectedTask.id, option.value)} toneClassName={selectedTask.energy === option.value ? energyTone(option.value) : INACTIVE_CHIP_CLASS}>{option.label}</TaskTableChipButton>
+                        <TaskTableChipButton key={`${option.value || "energy-option"}-${optionIndex}`} onClick={() => setTaskEnergy(metadataTask.id, option.value)} toneClassName={metadataTask.energy === option.value ? energyTone(option.value) : INACTIVE_CHIP_CLASS}>{option.label}</TaskTableChipButton>
                       ))}
                     </div>
                   );
@@ -5715,7 +6378,7 @@ export function TaskManagementTableV2({
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
                       {STATUS_OPTIONS.map((option, optionIndex) => (
-                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selectedTask.status === option.value ? statusTone(option.value) : `${statusTone(option.value)} opacity-78 hover:opacity-100`}`} key={`${option.value || "status-option"}-${optionIndex}`} onClick={() => setTaskStatus(selectedTask.id, option.value)} type="button">{renderTaskStatusCircle(option.value, "sm")}<span>{formatTaskStatusLabel(option.value)}</span></button>
+                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${metadataTask.status === option.value ? statusTone(option.value) : `${statusTone(option.value)} opacity-78 hover:opacity-100`}`} key={`${option.value || "status-option"}-${optionIndex}`} onClick={() => setTaskStatus(metadataTask.id, option.value)} type="button">{renderTaskStatusCircle(option.value, "sm")}<span>{formatTaskStatusLabel(option.value)}</span></button>
                       ))}
                     </div>
                   );
@@ -5724,90 +6387,86 @@ export function TaskManagementTableV2({
                     <>
                       {renderInlineTextChoices(
                         mergedListOptions.map((list) => ({ label: list.label, value: list.label })),
-                        selectedTask.lists,
-                        (value) => toggleTaskList(selectedTask.id, value),
+                        metadataTask.lists,
+                        (value) => toggleTaskList(metadataTask.id, value),
                         (_value, selected) => selected ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS,
                       )}
-                      <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setListDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value }))} placeholder="Add custom list" type="text" value={listDraft} /><TaskTableChipButton onClick={() => { void createTaskListForRow(selectedTask.id); }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Add</TaskTableChipButton></div>
+                      <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setListDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value }))} placeholder="Add custom list" type="text" value={metadataListDraft} /><TaskTableChipButton onClick={() => { void createTaskListForRow(metadataTask.id); }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Add</TaskTableChipButton></div>
                     </>
                   );
                 } else if (metadataPanelId === "tags") {
                   metadataPanelContent = (
                     <>
-                      <div className="flex flex-wrap gap-2">{mergedTagOptions.map((tag, tagIndex) => <TaskTableChipButton key={`${selectedTask.id || "task"}-tag-choice-${tag || "blank"}-${tagIndex}`} onClick={() => toggleTaskTag(selectedTask.id, tag)} toneClassName={selectedTask.tags.includes(tag) ? TAG_CHIP_CLASS : INACTIVE_CHIP_CLASS}>#{tag}</TaskTableChipButton>)}</div>
-                      <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setTagDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.toLowerCase().replace(/\s+/g, "-") }))} placeholder="new-tag" type="text" value={tagDraft} /><TaskTableChipButton onClick={() => addTaskTag(selectedTask.id, tagDraft)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Add tag</TaskTableChipButton></div>
+                      <div className="flex flex-wrap gap-2">{mergedTagOptions.map((tag, tagIndex) => <TaskTableChipButton key={`${metadataTask.id || "task"}-tag-choice-${tag || "blank"}-${tagIndex}`} onClick={() => toggleTaskTag(metadataTask.id, tag)} toneClassName={metadataTask.tags.includes(tag) ? TAG_CHIP_CLASS : INACTIVE_CHIP_CLASS}>#{tag}</TaskTableChipButton>)}</div>
+                      <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setTagDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.toLowerCase().replace(/\s+/g, "-") }))} placeholder="new-tag" type="text" value={metadataTagDraft} /><TaskTableChipButton onClick={() => addTaskTag(metadataTask.id, metadataTagDraft)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Add tag</TaskTableChipButton></div>
                     </>
                   );
                 } else if (metadataPanelId === "link") {
                   metadataPanelContent = (
                     <div className="space-y-2">
-                      <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(selectedTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [selectedTask.id]: { ...(current[selectedTask.id] ?? linkDraft), label: event.target.value } }))} placeholder="Link label" type="text" value={linkDraft.label} />
-                      <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(selectedTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [selectedTask.id]: { ...(current[selectedTask.id] ?? linkDraft), url: event.target.value } }))} placeholder="https://example.com" type="url" value={linkDraft.url} />
-                      <div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => clearTaskLink(selectedTask.id)} toneClassName={INACTIVE_CHIP_CLASS}>Clear link</TaskTableChipButton><TaskTableChipButton onClick={() => commitTaskLink(selectedTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save link</TaskTableChipButton></div>
+                      <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(metadataTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [metadataTask.id]: { ...(current[metadataTask.id] ?? metadataLinkDraft), label: event.target.value } }))} placeholder="Link label" type="text" value={metadataLinkDraft.label} />
+                      <input className={OVERLAY_INPUT_CLASS} onBlur={() => commitTaskLink(metadataTask.id)} onChange={(event) => setLinkDrafts((current) => ({ ...current, [metadataTask.id]: { ...(current[metadataTask.id] ?? metadataLinkDraft), url: event.target.value } }))} placeholder="https://example.com" type="url" value={metadataLinkDraft.url} />
+                      <div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => clearTaskLink(metadataTask.id)} toneClassName={INACTIVE_CHIP_CLASS}>Clear link</TaskTableChipButton><TaskTableChipButton onClick={() => commitTaskLink(metadataTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save link</TaskTableChipButton></div>
                     </div>
                   );
                 } else if (metadataPanelId === "notes") {
                   metadataPanelContent = (
                     <>
-                      {selectedTask.linkedNotes.length > 0 ? <div className="mb-3 flex flex-wrap gap-2">{selectedTask.linkedNotes.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${LIST_CHIP_CLASS}`} key={`${note.id || "linked-note"}-${noteIndex}`} onClick={() => openLinkedNote(note.id)} type="button">{note.title}</button>)}</div> : null}
-                      <TaskTableChipButton className="mb-3" onClick={() => setNotePickerOpenByTaskId((current) => ({ ...current, [selectedTask.id]: !current[selectedTask.id] }))} toneClassName={INACTIVE_CHIP_CLASS}>{notePickerOpenByTaskId[selectedTask.id] ? "Hide saved notes" : "Connect existing note"}</TaskTableChipButton>
-                      {notePickerOpenByTaskId[selectedTask.id] ? <div className="mb-3 flex flex-wrap gap-2">{allNoteOptions.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${linkedNoteDraft.includes(note.id) ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${note.id || "note-option"}-${noteIndex}`} onClick={() => { const nextLinked = linkedNoteDraft.includes(note.id) ? linkedNoteDraft.filter((id) => id !== note.id) : [...linkedNoteDraft, note.id]; setLinkedNoteDrafts((current) => ({ ...current, [selectedTask.id]: nextLinked })); setTaskLinkedNoteIds(selectedTask.id, nextLinked); }} type="button">{note.title}</button>)}</div> : null}
-                      <div className="space-y-2"><textarea className={`${OVERLAY_INPUT_CLASS} min-h-[120px] resize-none py-3`} onBlur={() => commitTaskNotes(selectedTask.id)} onChange={(event) => setNotesDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value }))} placeholder="Add notes" value={notesDraft} /><div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => clearTaskNotes(selectedTask.id)} toneClassName={INACTIVE_CHIP_CLASS}>Clear notes</TaskTableChipButton><TaskTableChipButton onClick={() => commitTaskNotes(selectedTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save notes</TaskTableChipButton></div></div>
+                      {metadataTask.linkedNotes.length > 0 ? <div className="mb-3 flex flex-wrap gap-2">{metadataTask.linkedNotes.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${LIST_CHIP_CLASS}`} key={`${note.id || "linked-note"}-${noteIndex}`} onClick={() => openLinkedNote(note.id)} type="button">{note.title}</button>)}</div> : null}
+                      <TaskTableChipButton className="mb-3" onClick={() => setNotePickerOpenByTaskId((current) => ({ ...current, [metadataTask.id]: !current[metadataTask.id] }))} toneClassName={INACTIVE_CHIP_CLASS}>{notePickerOpenByTaskId[metadataTask.id] ? "Hide saved notes" : "Connect existing note"}</TaskTableChipButton>
+                      {notePickerOpenByTaskId[metadataTask.id] ? <div className="mb-3 flex flex-wrap gap-2">{allNoteOptions.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${metadataLinkedNoteDraft.includes(note.id) ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${note.id || "note-option"}-${noteIndex}`} onClick={() => { const nextLinked = metadataLinkedNoteDraft.includes(note.id) ? metadataLinkedNoteDraft.filter((id) => id !== note.id) : [...metadataLinkedNoteDraft, note.id]; setLinkedNoteDrafts((current) => ({ ...current, [metadataTask.id]: nextLinked })); setTaskLinkedNoteIds(metadataTask.id, nextLinked); }} type="button">{note.title}</button>)}</div> : null}
+                      <div className="space-y-2"><textarea className={`${OVERLAY_INPUT_CLASS} min-h-[120px] resize-none py-3`} onBlur={() => commitTaskNotes(metadataTask.id)} onChange={(event) => setNotesDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value }))} placeholder="Add notes" value={metadataNotesDraft} /><div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => clearTaskNotes(metadataTask.id)} toneClassName={INACTIVE_CHIP_CLASS}>Clear notes</TaskTableChipButton><TaskTableChipButton onClick={() => commitTaskNotes(metadataTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save notes</TaskTableChipButton></div></div>
                     </>
                   );
                 }
+                const childTaskPreviewGroup = overlayMode === "full" ? childTaskPreviewByParentTaskId[selectedTask.id] : undefined;
+                const hasSameTableStepRows = Boolean(childTaskPreviewGroup && (childTaskPreviewGroup.items.length > 0 || childTaskPreviewGroup.summary.hasInvalidDescendants));
+                const sameTableStepRowsNode = overlayMode === "full" ? renderEditorChildTaskRows(childTaskPreviewGroup) : null;
+                const hasUnifiedStepRows = hasSameTableStepRows || selectedTaskVisibleSubtasks.length > 0;
                 const stepsEditorNode = overlayMode === "full" ? (
                   <div className="mt-3 rounded-[1rem] border border-[#ede7f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
-                    <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Steps</p>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <TaskTableChipButton
                           onClick={() => setTaskSubtasksAutoReset(selectedTask.id, !selectedTask.subtasksAutoReset)}
                           toneClassName={selectedTask.subtasksAutoReset ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}
                         >
-                          {selectedTask.subtasksAutoReset ? "Reset steps on new due date" : "Keep step status on new due date"}
+                          {selectedTask.subtasksAutoReset ? "Reset step status on new due date" : "Keep step status on new due date"}
                         </TaskTableChipButton>
-                        <button
-                          aria-label="Add step"
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-                          onClick={() => { void handleTaskSubtaskAdd(selectedTask.id); }}
-                          type="button"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </button>
+                        <SameTableStepCreationControl
+                          creationBlocked={childTaskCreationBlockedTaskIds.includes(selectedTask.id)}
+                          onCreateChildTask={onCreateChildTask}
+                          parentTaskId={selectedTask.id}
+                        />
                       </div>
                     </div>
-                    {selectedTaskVisibleSubtasks.length > 0 ? (
-                      <InlineSubtaskEditor
-                        autofocusSubtaskId={autofocusSubtaskId}
-                        drafts={subtaskTitleDrafts}
-                        onAddChild={(subtaskId) => { void handleTaskSubtaskAddChild(subtaskId); }}
-                        onAutofocusHandled={() => setAutofocusSubtaskId(null)}
-                        onCommitTitle={commitSubtaskTitle}
-                        onDelete={handleTaskSubtaskDelete}
-                        onDraftChange={(subtaskId, value) => {
-                          setSubtaskTitleDrafts((current) => ({
-                            ...current,
-                            [subtaskId]: value,
-                          }));
-                        }}
-                        onSetStatus={(subtaskId, nextStatus) => onTaskSubtaskStatusChange?.(subtaskId, nextStatus)}
-                        subtasks={selectedTaskVisibleSubtasks}
-                      />
+                    {hasUnifiedStepRows ? (
+                      <div className="mt-3 space-y-3">
+                        {sameTableStepRowsNode}
+                        {selectedTaskVisibleSubtasks.length > 0 ? (
+                          <InlineSubtaskEditor
+                            autofocusSubtaskId={autofocusSubtaskId}
+                            drafts={subtaskTitleDrafts}
+                            onAddChild={(subtaskId) => { void handleTaskSubtaskAddChild(subtaskId); }}
+                            onAutofocusHandled={() => setAutofocusSubtaskId(null)}
+                            onCommitTitle={commitSubtaskTitle}
+                            onDelete={handleTaskSubtaskDelete}
+                            onDraftChange={(subtaskId, value) => {
+                              setSubtaskTitleDrafts((current) => ({
+                                ...current,
+                                [subtaskId]: value,
+                              }));
+                            }}
+                            onSetStatus={(subtaskId, nextStatus) => onTaskSubtaskStatusChange?.(subtaskId, nextStatus)}
+                            subtasks={selectedTaskVisibleSubtasks}
+                          />
+                        ) : null}
+                      </div>
                     ) : (
                       <p className="text-sm text-[#8d87a7] dark:text-white/45">No steps yet.</p>
                     )}
                   </div>
-                ) : null;
-                const childTaskPreviewGroup = overlayMode === "full" ? childTaskPreviewByParentTaskId[selectedTask.id] : undefined;
-                const childTaskPreviewNode = overlayMode === "full" ? (
-                  <ChildTaskPreviewSection
-                    creationBlocked={childTaskCreationBlockedTaskIds.includes(selectedTask.id)}
-                    group={childTaskPreviewGroup}
-                    onCreateChildTask={onCreateChildTask}
-                    onOpenChildTask={onOpenChildTask}
-                    parentTaskId={selectedTask.id}
-                  />
                 ) : null;
                 const shouldShowDetachedTaskNotice = selectedTaskIsDetached && suppressDetachedNoticeTaskId !== selectedTask.id;
                 const detachedTaskNotice = shouldShowDetachedTaskNotice ? (
@@ -5851,6 +6510,21 @@ export function TaskManagementTableV2({
                 const fullDesktopEditorContent = (
                   <div className="grid gap-3 lg:grid-cols-[1.05fr_0.95fr]">
                     <div className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
+                      {selectedTaskParentInfo ? (
+                        <div className="mb-3 flex flex-wrap items-center gap-2">
+                          <TaskTableChipButton
+                            className="gap-2"
+                            onClick={() => openTaskInCurrentEditor(selectedTaskParentInfo.parentTaskId)}
+                            toneClassName={INACTIVE_CHIP_CLASS}
+                          >
+                            <MoveLeft className="h-3.5 w-3.5" />
+                            <span>{`Parent: ${selectedTaskParentInfo.parentTitle}`}</span>
+                          </TaskTableChipButton>
+                          <span className="text-xs font-medium text-[#8d87a7] dark:text-white/45">
+                            {formatChildTaskPreviewDepthLabel(selectedTaskParentInfo.depth)}
+                          </span>
+                        </div>
+                      ) : null}
                       <div className="min-w-0 flex-1">
                         <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
                         {batchQuickEditLabel ? (
@@ -5894,12 +6568,18 @@ export function TaskManagementTableV2({
                       </label>
                       {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
                       {stepsEditorNode}
-                      {childTaskPreviewNode}
                     </div>
                     <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">Meta Data</p>
-                        <p className="mt-1 text-sm text-[#7d7597] dark:text-white/50">Choose a field to edit.</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <p className="text-sm text-[#7d7597] dark:text-white/50">{metadataContextLabel}</p>
+                          {isEditingStepMetadata ? (
+                            <TaskTableChipButton onClick={selectParentMetadataTask} toneClassName={INACTIVE_CHIP_CLASS}>
+                              Parent metadata
+                            </TaskTableChipButton>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-y-1.5 text-sm">
                         {metadataPanelOptions.map((option, index) => (
@@ -5911,7 +6591,7 @@ export function TaskManagementTableV2({
                                   ? "text-[#6f57f6] dark:text-[#cabfff]"
                                   : "text-[#8d87a7] hover:text-[#6f57f6] dark:text-white/45 dark:hover:text-[#cabfff]"
                               }`}
-                              onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: option.id }))}
+                              onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [metadataTask.id]: option.id }))}
                               type="button"
                             >
                               <span>{option.label}</span>

@@ -1,5 +1,5 @@
 "use client";
-import { Ellipsis, Tag, X } from "lucide-react";
+import { Ellipsis, Tag, Trash2, X } from "lucide-react";
 import {
   buildTaskRowContextMenuState,
   TaskManagementTableV2,
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/task-management-table-v2";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
-import type { ChildTaskPreviewLookup, DuplicateTitleGroup } from "@/lib/task-app-derived";
+import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskListDefinition } from "@/lib/task-lists";
@@ -64,6 +64,12 @@ function priorityTone(priority: "focus" | "important" | "urgent") {
   if (priority === "focus") return "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
   if (priority === "important") return "border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]";
   return "border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]";
+}
+
+function formatPreviewPriorityLabel(priority: ChildTaskPreviewPriority) {
+  if (priority === "focus") return "Focus";
+  if (priority === "important") return "Important";
+  return "Urgent";
 }
 
 function repeatTone(repeat: PrototypeTaskRow["repeat"]) {
@@ -384,6 +390,141 @@ function formatPriorityChipLabel(task: Task, focusedTaskIdSet: Set<string>) {
   if (activePriorities.includes("important")) return "Important";
   if (activePriorities.includes("focus")) return "Focus";
   return `${task.priority.charAt(0).toUpperCase()}${task.priority.slice(1)} priority`;
+}
+
+function formatStepPreviewSchedule(item: ChildTaskPreview) {
+  if (item.dueOn || item.dueTime) {
+    const dueLabel = formatDueLabel(item.dueOn);
+    const dueTimeLabel = formatDueTimeLabel(item.dueTime);
+    return dueTimeLabel ? `Due ${dueLabel} · ${dueTimeLabel}` : `Due ${dueLabel}`;
+  }
+  if (item.scheduledOn) {
+    return `Scheduled ${formatDueLabel(item.scheduledOn)}`;
+  }
+  return "";
+}
+
+function formatStepPreviewEstimate(minutes: number | null) {
+  if (!minutes || minutes <= 0) {
+    return "";
+  }
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+function StepsCardPreview({
+  group,
+  onDeleteStep,
+  onOpenStep,
+}: {
+  group: ChildTaskPreviewGroup;
+  onDeleteStep?: (taskId: string) => void;
+  onOpenStep: (taskId: string) => void;
+}) {
+  const visibleItems = group.items.slice(0, 4);
+  const hiddenItemCount = Math.max(0, group.items.length - visibleItems.length);
+
+  if (visibleItems.length === 0 && !group.summary.hasInvalidDescendants) {
+    return null;
+  }
+
+  return (
+    <section className="mt-3 border-t border-[#f0ebfb] pt-3 dark:border-white/10">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">Steps</p>
+      </div>
+      {group.summary.hasInvalidDescendants ? (
+        <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">
+          {group.summary.invalidChildLinkCount === 1 ? "1 invalid step link" : `${group.summary.invalidChildLinkCount} invalid step links`}
+        </p>
+      ) : null}
+      {visibleItems.length > 0 ? (
+        <ul className="mt-2">
+          {visibleItems.map((item) => {
+            const scheduleLabel = formatStepPreviewSchedule(item);
+            const estimateLabel = formatStepPreviewEstimate(item.estimatedMinutes);
+            const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
+
+            return (
+              <li
+                className="cursor-pointer rounded-[0.95rem] border border-transparent bg-transparent px-1.5 py-2.5 transition hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90"
+                data-same-table-step-row={item.id}
+                key={item.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenStep(item.id);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onOpenStep(item.id);
+                  }
+                }}
+                role="button"
+                style={{ marginLeft: `${depthIndent}rem` }}
+                tabIndex={0}
+              >
+                <div className="flex min-w-0 items-start gap-2">
+                  <span className="mt-0.5 flex-none">{renderTaskStatusCircle(item.status, "sm")}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-start justify-between gap-2">
+                      <p className="min-w-0 truncate text-sm font-semibold text-[#1f2642] dark:text-white">
+                        {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                      </p>
+                      {onDeleteStep ? (
+                        <button
+                          aria-label={`Move step ${item.title || "Untitled step"} to trash`}
+                          className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#d94e67] opacity-70 transition hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f]"
+                          data-same-table-step-delete={item.id}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onDeleteStep(item.id);
+                          }}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          type="button"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[#8d87a7] dark:text-white/45">
+                      <span>{formatChildTaskPreviewDepthLabel(item.depth)}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{formatTaskStatusLabel(item.status)}</span>
+                      {scheduleLabel ? <span aria-hidden="true">·</span> : null}
+                      {scheduleLabel ? <span>{scheduleLabel}</span> : null}
+                      {estimateLabel ? <span aria-hidden="true">·</span> : null}
+                      {estimateLabel ? <span>{estimateLabel}</span> : null}
+                    </div>
+                    {item.priorityFlags.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {item.priorityFlags.map((priority) => (
+                          <span
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] ${priorityTone(priority)}`}
+                            key={`${item.id}-${priority}`}
+                          >
+                            {formatPreviewPriorityLabel(priority)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {hiddenItemCount > 0 ? (
+        <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{`${hiddenItemCount} more ${hiddenItemCount === 1 ? "step" : "steps"} shown in the inspector.`}</p>
+      ) : null}
+    </section>
+  );
 }
 
 function MetadataChipButton({
@@ -879,6 +1020,8 @@ function TasksSimpleList({
         const isQuickPanelOpen = activePanelMode !== null;
         const panelTitle = task.title;
         const listMemberships = rowContext.listMembershipsByTaskId[task.id] ?? [];
+        const stepPreviewGroup = tableProps.childTaskPreviewByParentTaskId?.[task.id];
+        const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
 
         return (
           <div className="space-y-3" key={task.id}>
@@ -1012,6 +1155,17 @@ function TasksSimpleList({
                 </div>
               </div>
             </div>
+            {hasStepPreview && stepPreviewGroup ? (
+              <StepsCardPreview
+                group={stepPreviewGroup}
+                onDeleteStep={tableProps.onOpenDeleteTask}
+                onOpenStep={(taskId) => {
+                  setRowContextMenu(null);
+                  closeQuickPanel();
+                  setInlineInspectorTaskId(taskId);
+                }}
+              />
+            ) : null}
             </article>
             {activePanelMode === "status" ? (
               <QuickPanelShell onClose={closeQuickPanel} title={`Status · ${panelTitle}`}>

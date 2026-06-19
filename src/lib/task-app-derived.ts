@@ -63,14 +63,26 @@ export type TaskPrimaryVisibility = {
 export type ChildTaskPreviewPriority = "focus" | "important" | "urgent";
 
 export type ChildTaskPreview = {
+  actualSeconds: number;
   depth: number;
   dueOn: string | null;
   dueTime: string | null;
+  energy: Task["energy"];
+  estimatedMinutes: number | null;
   id: string;
   issueTypes: Array<TaskHierarchyIssue["type"]>;
+  linkLabel: string;
+  linkUrl: string;
+  notes: string;
   parentTaskId: string | null;
   priorityFlags: ChildTaskPreviewPriority[];
+  repeat: Task["repeat_frequency"];
+  repeatDayOfMonth: number | null;
+  repeatDaysOfWeek: number[];
+  repeatInterval: number;
+  scheduledOn: string | null;
   status: TaskStatus;
+  tags: string[];
   title: string;
 };
 
@@ -90,6 +102,10 @@ export type ChildTaskPreviewLookup = Record<string, ChildTaskPreviewGroup>;
 
 const EMPTY_TASKS: Task[] = [];
 const isDevelopment = process.env.NODE_ENV !== "production";
+
+export function formatChildTaskPreviewDepthLabel(depth: number) {
+  return depth > 1 ? "Substep" : "Step";
+}
 
 function pushTaskDeriveLog(message: string) {
   console.info(message);
@@ -266,14 +282,26 @@ export function buildChildTaskPreviewLookup(
           : 1;
 
         return {
+          actualSeconds: descendant.actual_seconds,
           depth: relativeDepth,
           dueOn: descendant.due_on,
           dueTime: descendant.due_time,
+          energy: descendant.energy,
+          estimatedMinutes: descendant.estimated_minutes,
           id: descendant.id,
           issueTypes: adapter.getNode(descendant.id)?.issueTypes ?? [],
+          linkLabel: descendant.external_link_label ?? "",
+          linkUrl: descendant.external_link_url ?? "",
+          notes: descendant.notes ?? "",
           parentTaskId: descendant.parent_task_id,
           priorityFlags: getChildTaskPriorityFlags(descendant, focusedTaskIdSet),
+          repeat: descendant.repeat_frequency,
+          repeatDayOfMonth: descendant.repeat_day_of_month,
+          repeatDaysOfWeek: descendant.repeat_days_of_week ?? [],
+          repeatInterval: Math.max(1, descendant.repeat_interval ?? 1),
+          scheduledOn: descendant.scheduled_on,
           status: descendant.status,
+          tags: descendant.tags ?? [],
           title: descendant.title,
         };
       }),

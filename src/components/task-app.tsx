@@ -174,9 +174,11 @@ import {
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { buildFocusLabelOptions, getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
+import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import { calcNextDueDateFromDate } from "@/lib/task-repeat";
 import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
+import { filterPromotedLegacySubtasks } from "@/lib/task-legacy-step-promotion";
 import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
 import {
   buildTaskHistoryFacts,
@@ -215,6 +217,7 @@ import {
 
 import type {
   FocusCategory as DbFocusCategory,
+  LegacySubtaskPromotion as DbLegacySubtaskPromotion,
   Note,
   Task,
   TaskEnergy,
@@ -297,7 +300,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.4.9";
+const APP_VERSION = "6.4.31";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -903,6 +906,7 @@ export function TaskApp() {
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
   const [taskActualTimeEntries, setTaskActualTimeEntries] = useState<TaskActualTimeEntry[]>([]);
   const [taskSubtasks, setTaskSubtasks] = useState<DbTaskSubtask[]>([]);
+  const [taskLegacySubtaskPromotions, setTaskLegacySubtaskPromotions] = useState<DbLegacySubtaskPromotion[]>([]);
   const [availableTaskNotes, setAvailableTaskNotes] = useState<TaskEditorLinkedNote[]>([]);
   const [supportsNestedSubtasks, setSupportsNestedSubtasks] = useState(true);
   const [isGridEditMode, setIsGridEditMode] = useState(false);
@@ -1169,6 +1173,7 @@ export function TaskApp() {
     setTaskHistory,
     setTaskListManualMemberships,
     setTaskLists,
+    setTaskLegacySubtaskPromotions,
     setTaskSubtasks,
     setTasks,
     suppressCategoryReload,
@@ -1274,6 +1279,7 @@ export function TaskApp() {
         setFocusHistory([]);
         setTaskHistory([]);
         setTaskSubtasks([]);
+        setTaskLegacySubtaskPromotions([]);
         setAvailableTaskNotes([]);
         setIsGridEditMode(false);
         setSelectedGridWidgetId(null);
@@ -1696,12 +1702,21 @@ export function TaskApp() {
       window.removeEventListener("pageshow", handlePageShow);
     };
   }, [session?.user?.id, supabase, todayKey]);
-  const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(taskSubtasks), [taskSubtasks]);
+  const visibleTaskSubtasks = useMemo(
+    () => filterPromotedLegacySubtasks(taskSubtasks, taskLegacySubtaskPromotions),
+    [taskLegacySubtaskPromotions, taskSubtasks],
+  );
+  const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(visibleTaskSubtasks), [visibleTaskSubtasks]);
+  const rawTaskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(taskSubtasks), [taskSubtasks]);
   const hasStepsByTaskId = useMemo(
-    () => tasks.reduce<Record<string, boolean>>((accumulator, task) => {
-      accumulator[task.id] = (taskSubtasksByTaskId[task.id]?.length ?? 0) > 0;
-      return accumulator;
-    }, {}),
+    () => {
+      const sameTableChildrenByParentId = buildTaskHierarchyAdapter(tasks).childrenByParentId;
+      return tasks.reduce<Record<string, boolean>>((accumulator, task) => {
+        const sameTableStepCount = sameTableChildrenByParentId.get(task.id)?.length ?? 0;
+        accumulator[task.id] = (taskSubtasksByTaskId[task.id]?.length ?? 0) > 0 || sameTableStepCount > 0;
+        return accumulator;
+      }, {});
+    },
     [taskSubtasksByTaskId, tasks],
   );
   const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory, todayKey), [taskHistory, todayKey]);
@@ -3396,7 +3411,7 @@ export function TaskApp() {
     onLogActualTime: handleTaskEditorActualTimeLog,
     onOpenHistory: selectedTaskForEditor ? openSelectedTaskHistory : undefined,
     onSave: handleTaskEditorSave,
-    subtasks: selectedTaskForEditor ? taskSubtasksByTaskId[selectedTaskForEditor.id] ?? [] : [],
+    subtasks: selectedTaskForEditor ? rawTaskSubtasksByTaskId[selectedTaskForEditor.id] ?? [] : [],
     task: selectedTaskForEditor,
   } : null;
 
@@ -4141,6 +4156,7 @@ export function TaskApp() {
             onDayStartTimeChange={setDayStartTime}
             onTimeZoneChange={setUserTimeZone}
             onResetEconomy={resetEconomy}
+            onWorkspaceRefresh={softRefreshWorkspace}
             onThemeChange={setTheme}
             tasks={tasks}
             theme={theme}

@@ -5,7 +5,7 @@ Last reviewed: 2026-06-18
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.4.9`.
+- Current working app version: `6.4.31`.
 - Current release group: `6.4.x` children/substeps metadata architecture.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -87,9 +87,31 @@ Role: active working
 - In `6.4.7`, `computeTaskAppDerivedData` also returns a read-only `childTaskPreviewByParentTaskId` lookup from the full flat task array, and the shared `TaskManagementTableV2` full overlay renders a source-distinct `Child tasks` preview for the selected task without changing Table/List top-level rows, filters, counts, sorting, persistence, legacy Steps, rewards, recurrence, archive/trash, or schema.
 - In `6.4.8`, the `Child tasks` preview can create real same-table child task rows through the existing normal task creation path with `parent_task_id` set, and child preview rows can open through the existing shared full-overlay inspector path for normal task editing and grandchild creation without changing schema, rewards, recurrence, archive/trash, legacy Steps, or flat-view filtering rules.
 - In `6.4.9`, valid same-table child tasks and grandchildren are hidden from primary top-level Table/List row arrays, search results, list counts, and status counts, while orphans/cycles remain visible as ordinary rows and full task data still backs the `Child tasks` preview plus child open/edit flows.
+- In `6.4.10`, the root layout suppresses benign body-level hydration warnings caused by browser extensions injecting attributes before React hydrates, without changing app-rendered UI behavior.
+- In `6.4.11`, Focus clock category titles reuse the softer Focus Activity trend text treatment instead of the previous heavy uppercase label styling.
+- In `6.4.12`, Focus clock category titles keep that same body-font treatment but increase to a larger medium-weight size so they read closer to the Activity Summary text.
+- In `6.4.13`, Focus clock category titles increase two Tailwind text steps from `text-base` to `text-xl` while preserving the same body-font treatment.
+- In `6.4.14`, the full task overlay pivoted the same-table `parent_task_id` hierarchy preview to user-facing Steps language: Add Step created a real task row, nested rows were labeled Step/Substep by depth, and the old lightweight `adhdice_task_subtasks` editor remained in a separate transition-only surface while migration stayed gated. That split user-facing surface is superseded by `6.4.20`.
+- In `6.4.15`, the legacy Step promotion bridge gains a durable `adhdice_legacy_subtask_promotions` mapping type/schema record plus dry-run and manual promotion helpers. The dry run reports mapped, eligible, skipped, ambiguous, parent-missing, parent-archived/trashed, ordering, parent mapping, status mapping, and sample rows without creating task rows; live promotion remains an explicit manual action and is not wired to automatic UI execution.
+- In `6.4.16`, Settings gains a Legacy Step Promotion operator surface with an explicit dry-run report, reviewed/armed confirmation, and manual promotion action. Workspace loading now fetches `adhdice_legacy_subtask_promotions`, mapped migration-source rows are suppressed from Table/List render data to avoid duplicate Steps, and unmapped migration-source rows remain available during transition.
+- In `6.4.17`, Table View parent rows gain an expandable same-table Steps section and List View cards gain a compact Steps preview. Both use the existing `parent_task_id` hierarchy lookup, show Step/Substep depth plus status, due/scheduled date, priority, and estimate metadata where available, and open Steps through the normal task inspector/editor path.
+- In `6.4.18`, nested Table/List Step preview rows are directly clickable and keyboard-openable while preserving the normal inspector/editor path. The Step/Substep label helper is shared and covered by focused tests. Inline quick actions and move/reorder/promote/demote remain deferred because the safe path is the existing inspector and hierarchy movement needs explicit product rules.
+- In `6.4.19`, Table View corrects the same-table Steps visual architecture: expanded `parent_task_id` Steps render as compact child mini rows under the parent using the parent table column grid for status, schedule, estimate, actual time, tags, link, notes, priority, energy, repeat, and status metadata. The parent task keeps its own normal metadata row, valid same-table Steps remain hidden from top-level rows, and mapped migration-source rows stay suppressed.
+- In `6.4.20`, normal task UI returns to one user-facing Steps concept: the full Edit Task UI no longer renders a separate same-table explanation panel, same-table `parent_task_id` Step rows appear inside the unified Steps section with metadata and open the normal editor, Add Step uses the same-table child-task creation path, and unmapped migration-source rows can still appear under the same Steps section without a separate old-checklist label. Settings keeps migration/operator wording because that is the admin surface for dry-run and gated promotion.
+- In `6.4.21`, Table View removes the remaining title-cell-only Step tree that showed migration-source rows as a red status icon plus title without metadata. Expanded source-only rows now render under the parent as compact mini rows using the same table column grid with real status/title and honest empty metadata chips, while same-table Steps continue to render with their real task metadata.
+- In `6.4.22`, same-table Step rows are restyled to share the parent task row architecture instead of separate card/spreadsheet rows: Table View rows sit on the same white surface with parent-like row spacing, Edit Task/List Step previews remove the `Open` chip, row click selects the Step through the existing editor path, selected Steps get a parent/back affordance, and same-table Step rows expose a trash icon wired to the existing task delete/trash flow. Unmapped migration-source rows remain transitional with status/title only.
+- In `6.4.23`, the full Edit Task Steps interaction is corrected so clicking a same-table Step inside the parent editor keeps the parent editor shell open and retargets only the right-side Meta Data panel. The Meta Data helper line now names the active metadata target such as `Moisturize (AM) | Parent` or `Face | Step`, Step field edits continue through existing task update callbacks, and a `Parent metadata` chip returns the right panel to the parent without opening a separate Step editor.
+- In `6.4.24`, Step-targeted Meta Data mode restores the Step control row on the right panel: current status icon, all status icon choices, Add Step/Substep through the same-table creation control, and same-table Step delete through the existing task trash/delete flow. Parent metadata mode remains unchanged.
+- In `6.4.25`, those Step mode controls move to the selected Step row in the left Steps column instead of living in the right Meta Data panel. The selected same-table Step row now contains the status icon picker plus Add Step/Substep and delete controls, while the right panel remains metadata-only.
+- In `6.4.26`, the selected Step-row Add Step/Substep control changes from a text chip to a circular shoeprints icon button while preserving the same same-table child creation behavior.
+- In `6.4.27`, normal Table/List Steps labels no longer expose implementation count copy such as `direct steps` or `total step rows`; the UI just says `Steps`. The existing Steps smart-list rule now treats both visible migration-source rows and valid same-table `parent_task_id` children as Steps, so parents with new same-table Steps appear in Steps lists without hiding or mutating old source rows.
+- In `6.4.28`, Table View Step title cells fill the Task column like parent rows, use a smaller depth offset, and render Step titles with medium weight so rows sit closer to the parent task name without the bold title look.
+- In `6.4.29`, the Table View parent shoeprints Step button opens a focused inline same-table Step title draft row under that parent instead of opening the Edit Task UI or creating an old source Step. Same-table Step titles in the full Edit Task Steps list can also be clicked and renamed through the existing task title update path.
+- In `6.4.30`, Table View inline action rows now render directly under the row they edit: parent metadata actions appear before expanded Steps, and same-table Step row clicks/metadata chips open an inline action row under that Step instead of opening the full Edit Task UI.
+- In `6.4.31`, Table View Step inline action rows render from Step preview metadata even when the same-table Step is hidden from the top-level row array. Step metadata chips can open action rows directly under the Step, and Step title clicks switch to a compact in-row rename input that uses the existing task title update path.
 
 ## Current Product Shape
-- Tasks: primary dashboard with guarded cloud-backed task rows, shared shell controls, Table View, List View, cards, matrix, filters, buckets, and legacy subtask support from `adhdice_task_subtasks`.
+- Tasks: primary dashboard with guarded cloud-backed task rows, shared shell controls, Table View, List View, cards, matrix, filters, buckets, same-table Steps mini rows/previews, and migration-source `adhdice_task_subtasks` rows surfaced under the unified Steps concept while promotion remains gated.
 - Archive vs Trash: fully split at runtime. Archive is a stable non-active bucket, Trash is the 30-day auto-delete bucket keyed by `trashed_at`, and active task views exclude both.
 - Focus: focus categories, timers, active sessions, history, and focus-day task selection.
 - Roll: reward/economy surface with boards, prize baskets, free-roll banking, point spending, and history.
@@ -113,13 +135,13 @@ Role: active working
 - `src/hooks/useWorkspaceData.ts`
 - `src/components/ui/task-management-table-v2.tsx`
 - task revision/conflict handling
-- same-table hierarchy rollout work beyond the read-only inspector preview, especially editing, nested row rendering, and persistence behavior
+- same-table hierarchy rollout work beyond inspector-backed Table/List previews, especially inline quick actions, true nested table rows, movement/reorder rules, and live legacy promotion QA
 
 ## Important Deferred Work
 - `scheduled_on` remains shadow-only and is not runtime-authoritative yet.
 - Legacy subtasks in `adhdice_task_subtasks` are unchanged.
 - Custom child-task metadata editors, drag/drop, cross-parent move/promote/demote behavior, nested Table/List row rendering, child reward rules, and legacy-subtask migration remain deferred.
-- `6.4.2` locks the future task hierarchy architecture in `docs/task-hierarchy-plan.md`: child tasks and grandchildren should become same-table `adhdice_clean_tasks` rows through `parent_task_id`, with a hybrid bridge/migration from legacy subtasks and no expansion of `adhdice_task_subtasks` into a duplicate task model.
+- `6.4.2` locks the future task hierarchy architecture in `docs/task-hierarchy-plan.md`: user-facing Steps should become same-table `adhdice_clean_tasks` rows through `parent_task_id`, with a hybrid bridge/migration from legacy subtasks and no expansion of `adhdice_task_subtasks` into a duplicate task model.
 - Runtime adoption of `scheduled_on`, any `next_scheduled_on` behavior, nested same-table child-task row UI, and reward-economy redesign remain deferred.
 - Import update-existing-ID behavior remains deferred because the current live import path does not expose that branch yet.
 - Snapshot/restore UX, schema, and SQL-backed restore execution remain deferred to a later phase.
@@ -158,6 +180,6 @@ Role: active working
 ## Next Recommended Tickets
 1. Diagnose the black/glitched HUD/UI reload seam as an isolated ticket before any other UI work in that area.
 2. Define the future snapshot payload contract and restore overwrite rules before adding any restore SQL or runtime restore entry points.
-3. `6.4.10 Legacy Step Promotion To Child Task Diagnosis`: if child visibility holds up in manual QA, diagnose the safest promotion/migration path from legacy Steps to same-table child task rows.
-4. Plan the same-table child-task UI rollout separately from legacy subtask migration, with explicit rules for mixed data states.
+3. `6.4.32 Steps Movement And Ordering Rules`: decide and implement the smallest safe move/reorder/promote/demote behavior for same-table Steps, starting with product rules before UI.
+4. Run the gated legacy Step promotion only after manual dry-run review, then verify duplicate suppression against real promoted rows.
 5. Decide when `scheduled_on` becomes authoritative and gate that behind a dedicated runtime/data contract ticket.

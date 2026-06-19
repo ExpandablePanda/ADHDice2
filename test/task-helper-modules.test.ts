@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createTask } from "../src/lib/task-buckets.ts";
 import { buildChildTaskCreationDraft } from "../src/lib/task-child-creation.ts";
+import {
+  buildLegacyStepPromotionDryRun,
+  buildPromotedStepTaskInsert,
+  filterPromotedLegacySubtasks,
+} from "../src/lib/task-legacy-step-promotion.ts";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "../src/lib/task-filter-state.ts";
 import {
   formatDueTimeLabel,
@@ -48,6 +54,7 @@ import {
   buildTaskPrimaryVisibility,
   buildTaskHierarchyDiagnostics,
   computeTaskAppDerivedData,
+  formatChildTaskPreviewDepthLabel,
 } from "../src/lib/task-app-derived.ts";
 import { buildTaskCollections } from "../src/lib/task-selectors.ts";
 import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
@@ -101,6 +108,84 @@ function computeDerivedForHierarchyDiagnostics(
   });
 }
 
+test("normal task UI keeps Steps unified without migration-source labels", async () => {
+  const taskUiSources = await Promise.all([
+    readFile(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/task-app/task-editor-modal.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8"),
+  ]);
+  const [tableSource, listSource, , taskAppSource] = taskUiSources;
+  const combinedTaskUiSource = taskUiSources.join("\n");
+  const getSourceSlice = (source: string, start: string, end: string) => {
+    const startIndex = source.indexOf(start);
+    const endIndex = source.indexOf(end, startIndex);
+    assert.notEqual(startIndex, -1);
+    assert.notEqual(endIndex, -1);
+    return source.slice(startIndex, endIndex);
+  };
+  const stepPreviewSources = [
+    getSourceSlice(tableSource, "const renderEditorChildTaskRows", "const renderChildTaskMiniCell"),
+    getSourceSlice(tableSource, "const renderChildTaskMiniRows", "const renderSourceStepMiniCell"),
+    getSourceSlice(listSource, "function StepsCardPreview", "function MetadataChipButton"),
+  ];
+
+  assert.equal(combinedTaskUiSource.includes("Legacy checklist"), false);
+  assert.equal(combinedTaskUiSource.includes("Steps are task rows nested"), false);
+  assert.equal(/>\s*Task rows\s*</.test(combinedTaskUiSource), false);
+  assert.equal(combinedTaskUiSource.includes("direct step"), false);
+  assert.equal(combinedTaskUiSource.includes("total step row"), false);
+  assert.equal(combinedTaskUiSource.includes("TaskCellSubtaskTree"), false);
+  assert.equal(taskAppSource.includes("buildTaskHierarchyAdapter(tasks).childrenByParentId"), true);
+  assert.equal(taskAppSource.includes("sameTableStepCount > 0"), true);
+  assert.equal(combinedTaskUiSource.includes("data-task-table-source-step-rows"), true);
+  assert.equal(tableSource.includes("metadataContextLabel"), true);
+  assert.equal(tableSource.includes("Choose a field to edit."), false);
+  assert.equal(tableSource.includes("selectEditorMetadataTask(item.id)"), true);
+  assert.equal(tableSource.includes("data-step-metadata-controls"), false);
+  assert.equal(tableSource.includes("data-step-row-controls"), true);
+  assert.equal(tableSource.includes("data-step-row-add"), true);
+  assert.equal(tableSource.includes("data-step-row-status-icons"), true);
+  assert.equal(tableSource.includes("data-step-row-delete"), true);
+  assert.equal(tableSource.includes("beginTableStepDraft(task.id)"), true);
+  assert.equal(tableSource.includes("data-table-step-draft-row"), true);
+  assert.equal(tableSource.includes("setEditingTaskTitleId(item.id)"), true);
+  assert.equal(tableSource.includes("openTableStepActions(item.id, \"status\")"), true);
+  assert.equal(tableSource.includes("childPreviewToPrototypeTaskRow(item)"), true);
+  assert.equal(tableSource.includes("renderInlineActionRow(task)"), true);
+  assert.equal(tableSource.includes("renderInlineActionRow(inlineStepTask)"), true);
+  assert.equal(tableSource.includes("data-same-table-step-delete"), true);
+  assert.equal(listSource.includes("data-same-table-step-delete"), true);
+  for (const source of stepPreviewSources) {
+    assert.equal(/>\s*Open\s*</.test(source), false);
+  }
+});
+
+function createLegacySubtask(overrides: Partial<{
+  created_at: string;
+  id: string;
+  parent_subtask_id: string | null;
+  sort_order: number;
+  status: "pending" | "in_progress" | "done" | "missed" | "did_my_best" | "upcoming" | "not_due";
+  task_id: string;
+  title: string;
+  updated_at: string;
+  user_id: string;
+}>) {
+  const createdAt = overrides.created_at ?? "2026-06-18T09:00:00.000Z";
+  return {
+    created_at: createdAt,
+    id: overrides.id ?? "legacy-step",
+    parent_subtask_id: overrides.parent_subtask_id ?? null,
+    sort_order: overrides.sort_order ?? 0,
+    status: overrides.status ?? "pending",
+    task_id: overrides.task_id ?? "task-parent",
+    title: overrides.title ?? "Legacy step",
+    updated_at: overrides.updated_at ?? createdAt,
+    user_id: overrides.user_id ?? "test-user",
+  };
+}
+
 test("filter state helpers detect active filters and preserve key UI state on reset", () => {
   const activeState = {
     ...DEFAULT_TASK_UI_STATE,
@@ -152,6 +237,159 @@ test("task selectors build expected filtered collections and list memberships", 
   assert.equal(collections.filteredLowEnergyTasks.length, 1);
   assert.equal(collections.inboxTasks.length, 1);
   assert.equal(collections.quickWinTasks.length, 1);
+});
+
+test("legacy step promotion dry run reports eligible nested rows and safe skips", () => {
+  const parentTask = createTask({
+    created_at: "2026-06-18T09:00:00.000Z",
+    id: "task-parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Parent",
+  });
+  const archivedTask = createTask({
+    created_at: "2026-06-18T10:00:00.000Z",
+    id: "task-archived",
+    sort_order: 2,
+    status: "archived",
+    title: "Archived",
+  });
+  const mappedTask = createTask({
+    created_at: "2026-06-18T11:00:00.000Z",
+    id: "task-mapped-step",
+    parent_task_id: parentTask.id,
+    sort_order: 3,
+    status: "done",
+    title: "Mapped step",
+  });
+
+  const dryRun = buildLegacyStepPromotionDryRun({
+    currentUserId: "test-user",
+    mappings: [{
+      created_at: "2026-06-18T12:00:00.000Z",
+      legacy_subtask_id: "legacy-mapped",
+      task_id: mappedTask.id,
+      updated_at: "2026-06-18T12:00:00.000Z",
+      user_id: "test-user",
+    }],
+    subtasks: [
+      createLegacySubtask({ id: "legacy-root", task_id: parentTask.id, title: "Root step" }),
+      createLegacySubtask({ id: "legacy-child", parent_subtask_id: "legacy-root", sort_order: 1, task_id: parentTask.id, title: "Nested step" }),
+      createLegacySubtask({ id: "legacy-mapped", sort_order: 2, task_id: parentTask.id, title: "Already mapped" }),
+      createLegacySubtask({ id: "legacy-archived", task_id: archivedTask.id, title: "Archived parent step" }),
+      createLegacySubtask({ id: "legacy-missing-parent", task_id: "task-missing", title: "Missing parent step" }),
+    ],
+    tasks: [parentTask, archivedTask, mappedTask],
+  });
+
+  assert.equal(dryRun.summary.totalLegacySubtasks, 5);
+  assert.equal(dryRun.summary.alreadyMapped, 1);
+  assert.equal(dryRun.summary.eligibleForPromotion, 2);
+  assert.equal(dryRun.summary.skippedBecauseParentTaskArchivedOrTrashed, 1);
+  assert.equal(dryRun.summary.skippedBecauseParentTaskMissing, 1);
+  assert.deepEqual(
+    dryRun.proposedRows.map((row) => [row.legacySubtaskId, row.taskId, row.parentTaskId, row.depth]),
+    [
+      ["legacy-root", "legacy-root", parentTask.id, 1],
+      ["legacy-child", "legacy-child", "legacy-root", 2],
+    ],
+  );
+  assert.deepEqual(dryRun.alreadyMappedRows, [{
+    legacySubtaskId: "legacy-mapped",
+    taskId: mappedTask.id,
+    title: "Already mapped",
+  }]);
+});
+
+test("legacy step promotion dry run blocks stable task id collisions", () => {
+  const parentTask = createTask({
+    created_at: "2026-06-18T09:00:00.000Z",
+    id: "task-parent",
+    sort_order: 1,
+    status: "pending",
+    title: "Parent",
+  });
+  const collidingTask = createTask({
+    created_at: "2026-06-18T10:00:00.000Z",
+    id: "legacy-root",
+    sort_order: 2,
+    status: "pending",
+    title: "Existing task with legacy id",
+  });
+
+  const dryRun = buildLegacyStepPromotionDryRun({
+    currentUserId: "test-user",
+    mappings: [],
+    subtasks: [
+      createLegacySubtask({ id: "legacy-root", task_id: parentTask.id, title: "Root step" }),
+    ],
+    tasks: [parentTask, collidingTask],
+  });
+
+  assert.equal(dryRun.summary.eligibleForPromotion, 0);
+  assert.equal(dryRun.summary.duplicateOrAmbiguous, 1);
+  assert.deepEqual(dryRun.skippedRows, [{
+    legacySubtaskId: "legacy-root",
+    reason: "stable_task_id_collision",
+    title: "Root step",
+  }]);
+});
+
+test("promotion mappings suppress promoted legacy checklist rows while preserving unmapped rows", () => {
+  const subtasks = [
+    createLegacySubtask({ id: "legacy-promoted", task_id: "task-parent", title: "Promoted legacy row" }),
+    createLegacySubtask({ id: "legacy-unmapped", sort_order: 1, task_id: "task-parent", title: "Unmapped legacy row" }),
+  ];
+
+  const filtered = filterPromotedLegacySubtasks(subtasks, [{
+    created_at: "2026-06-18T12:00:00.000Z",
+    legacy_subtask_id: "legacy-promoted",
+    task_id: "legacy-promoted",
+    updated_at: "2026-06-18T12:00:00.000Z",
+    user_id: "test-user",
+  }]);
+
+  assert.deepEqual(filtered.map((subtask) => subtask.id), ["legacy-unmapped"]);
+});
+
+test("promotion mapping suppression keeps unmapped children visible when a legacy parent is promoted", () => {
+  const subtasks = [
+    createLegacySubtask({ id: "legacy-parent", task_id: "task-parent", title: "Promoted parent" }),
+    createLegacySubtask({ id: "legacy-child", parent_subtask_id: "legacy-parent", sort_order: 1, task_id: "task-parent", title: "Unmapped child" }),
+  ];
+
+  const filtered = filterPromotedLegacySubtasks(subtasks, [{
+    created_at: "2026-06-18T12:00:00.000Z",
+    legacy_subtask_id: "legacy-parent",
+    task_id: "legacy-parent",
+    updated_at: "2026-06-18T12:00:00.000Z",
+    user_id: "test-user",
+  }]);
+
+  assert.deepEqual(filtered.map((subtask) => [subtask.id, subtask.parent_subtask_id]), [
+    ["legacy-child", null],
+  ]);
+});
+
+test("promoted step task insert maps status, parent, and sort without completion side effects", () => {
+  const payload = buildPromotedStepTaskInsert({
+    depth: 1,
+    legacySubtaskId: "legacy-done",
+    parentTaskId: "task-parent",
+    proposedStatus: "done",
+    sortOrder: 7,
+    sourceStatus: "done",
+    taskId: "legacy-done",
+    title: "Completed legacy step",
+  }, "test-user");
+
+  assert.equal(payload.id, "legacy-done");
+  assert.equal(payload.parent_task_id, "task-parent");
+  assert.equal(payload.status, "done");
+  assert.equal(payload.completed_at, null);
+  assert.equal(payload.sort_order, 7);
+  assert.equal(payload.title, "Completed legacy step");
+  assert.equal(payload.user_id, "test-user");
 });
 
 test("momentum helpers cycle view, update day buckets, and compute metrics", () => {
@@ -1143,14 +1381,25 @@ test("child task preview lookup exposes direct same-table children", () => {
     title: "Parent",
   });
   const child = createTask({
+    actual_seconds: 900,
     created_at: "2026-06-18T08:01:00.000Z",
     due_on: "2026-06-19",
     due_time: "09:30",
+    energy: "low",
+    estimated_minutes: 25,
+    external_link_label: "Brief",
+    external_link_url: "https://example.com/brief",
     id: "child",
     is_important: true,
+    notes: "Bring the small pieces together.",
     parent_task_id: "parent",
+    repeat_frequency: "weekly",
+    repeat_interval: 2,
+    repeat_days_of_week: [1, 3],
+    scheduled_on: "2026-06-20",
     sort_order: 1,
     status: "in_progress",
+    tags: ["setup", "draft"],
     title: "Child",
   });
 
@@ -1161,14 +1410,26 @@ test("child task preview lookup exposes direct same-table children", () => {
   assert.equal(preview.parent.summary.descendantCount, 1);
   assert.equal(preview.parent.summary.hasInvalidDescendants, false);
   assert.deepEqual(preview.parent.items, [{
+    actualSeconds: 900,
     depth: 1,
     dueOn: "2026-06-19",
     dueTime: "09:30",
+    energy: "low",
+    estimatedMinutes: 25,
     id: "child",
     issueTypes: [],
+    linkLabel: "Brief",
+    linkUrl: "https://example.com/brief",
+    notes: "Bring the small pieces together.",
     parentTaskId: "parent",
     priorityFlags: ["important"],
+    repeat: "weekly",
+    repeatDayOfMonth: null,
+    repeatDaysOfWeek: [1, 3],
+    repeatInterval: 2,
+    scheduledOn: "2026-06-20",
     status: "in_progress",
+    tags: ["setup", "draft"],
     title: "Child",
   }]);
 });
@@ -1194,6 +1455,7 @@ test("child task preview lookup is depth-aware for grandchildren", () => {
 
   assert.deepEqual(preview.parent.items.map((item) => item.id), ["child", "grandchild"]);
   assert.deepEqual(preview.parent.items.map((item) => item.depth), [1, 2]);
+  assert.deepEqual(preview.parent.items.map((item) => formatChildTaskPreviewDepthLabel(item.depth)), ["Step", "Substep"]);
   assert.deepEqual(preview.parent.items[1]?.priorityFlags, ["focus"]);
   assert.equal(preview.child.summary.directChildCount, 1);
   assert.deepEqual(preview.child.items.map((item) => item.id), ["grandchild"]);
@@ -1253,6 +1515,7 @@ test("child task preview lookup keeps sibling and descendant order stable by sor
   const preview = buildChildTaskPreviewLookup([parent, secondChild, firstChild, grandchild]);
 
   assert.deepEqual(preview.parent.items.map((item) => item.id), ["first-child", "grandchild", "second-child"]);
+  assert.deepEqual(preview.parent.items.map((item) => `${item.id}:${item.depth}`), ["first-child:1", "grandchild:2", "second-child:1"]);
 });
 
 test("child task preview lookup does not recurse through cycles", () => {

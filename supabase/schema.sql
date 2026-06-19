@@ -173,6 +173,14 @@ create table public.adhdice_task_subtasks (
   updated_at timestamptz not null default now()
 );
 
+create table public.adhdice_legacy_subtask_promotions (
+  legacy_subtask_id uuid primary key references public.adhdice_task_subtasks(id) on delete cascade,
+  task_id uuid not null unique references public.adhdice_clean_tasks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table public.adhdice_task_grid_layouts (
   user_id uuid primary key references auth.users(id) on delete cascade,
   layout_json text not null default '[]',
@@ -327,6 +335,8 @@ create index adhdice_task_actual_time_entries_user_task_date_idx
   on public.adhdice_task_actual_time_entries (user_id, task_id, entry_date desc, created_at desc);
 create index adhdice_task_subtasks_task_sort_idx
   on public.adhdice_task_subtasks (task_id, sort_order, created_at asc);
+create index adhdice_legacy_subtask_promotions_user_idx
+  on public.adhdice_legacy_subtask_promotions (user_id, created_at desc);
 create index adhdice_task_grid_layouts_updated_at_idx
   on public.adhdice_task_grid_layouts (updated_at desc);
 create index adhdice_health_checkins_user_date_idx
@@ -356,6 +366,7 @@ alter table public.adhdice_task_list_manual_memberships enable row level securit
 alter table public.adhdice_task_history enable row level security;
 alter table public.adhdice_task_actual_time_entries enable row level security;
 alter table public.adhdice_task_subtasks enable row level security;
+alter table public.adhdice_legacy_subtask_promotions enable row level security;
 alter table public.adhdice_task_grid_layouts enable row level security;
 alter table public.adhdice_health_profiles enable row level security;
 alter table public.adhdice_health_checkins enable row level security;
@@ -613,6 +624,32 @@ create policy "Users can delete their own task subtasks"
   for delete
   using (auth.uid() = user_id);
 
+create policy "Users can read their own legacy subtask promotions"
+  on public.adhdice_legacy_subtask_promotions
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can create their own legacy subtask promotions"
+  on public.adhdice_legacy_subtask_promotions
+  for insert
+  with check (
+    auth.uid() = adhdice_legacy_subtask_promotions.user_id
+    and exists (
+      select 1
+      from public.adhdice_task_subtasks legacy_subtask
+      where legacy_subtask.id = adhdice_legacy_subtask_promotions.legacy_subtask_id
+        and legacy_subtask.user_id = auth.uid()
+        and legacy_subtask.user_id = adhdice_legacy_subtask_promotions.user_id
+    )
+    and exists (
+      select 1
+      from public.adhdice_clean_tasks promoted_task
+      where promoted_task.id = adhdice_legacy_subtask_promotions.task_id
+        and promoted_task.user_id = auth.uid()
+        and promoted_task.user_id = adhdice_legacy_subtask_promotions.user_id
+    )
+  );
+
 create policy "Users can read their own task grid layouts"
   on public.adhdice_task_grid_layouts
   for select
@@ -766,6 +803,11 @@ create trigger adhdice_task_history_set_updated_at
 
 create trigger adhdice_task_subtasks_set_updated_at
   before update on public.adhdice_task_subtasks
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_legacy_subtask_promotions_set_updated_at
+  before update on public.adhdice_legacy_subtask_promotions
   for each row
   execute function public.adhdice_clean_set_updated_at();
 

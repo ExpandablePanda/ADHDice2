@@ -286,6 +286,22 @@ export type TaskSubtaskUpdate = Partial<
   Pick<TaskSubtask, "title" | "status" | "sort_order">
 >;
 
+export type LegacySubtaskPromotion = {
+  legacy_subtask_id: string;
+  task_id: string;
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LegacySubtaskPromotionInsert = {
+  legacy_subtask_id: string;
+  task_id: string;
+  user_id: string;
+};
+
+export type LegacySubtaskPromotionUpdate = Record<string, never>;
+
 export type TaskHistory = {
   id: string;
   task_id: string;
@@ -1152,6 +1168,12 @@ export type Database = {
         Row: TaskSubtask;
         Insert: TaskSubtaskInsert;
         Update: TaskSubtaskUpdate;
+        Relationships: [];
+      };
+      adhdice_legacy_subtask_promotions: {
+        Row: LegacySubtaskPromotion;
+        Insert: LegacySubtaskPromotionInsert;
+        Update: LegacySubtaskPromotionUpdate;
         Relationships: [];
       };
       adhdice_task_history: {

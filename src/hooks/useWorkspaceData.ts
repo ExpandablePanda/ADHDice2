@@ -7,6 +7,7 @@ import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import type {
   FocusCategory as DbFocusCategory,
   FocusSession as DbFocusSession,
+  LegacySubtaskPromotion as DbLegacySubtaskPromotion,
   Task,
   TaskActualTimeEntry as DbTaskActualTimeEntry,
   TaskFocusDay as DbTaskFocusDay,
@@ -76,6 +77,7 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   setTaskHistory: Dispatch<SetStateAction<DbTaskHistory[]>>;
   setTaskListManualMemberships: Dispatch<SetStateAction<TaskListManualMembership[]>>;
   setTaskLists: Dispatch<SetStateAction<TaskListDefinition[]>>;
+  setTaskLegacySubtaskPromotions: Dispatch<SetStateAction<DbLegacySubtaskPromotion[]>>;
   setTaskSubtasks: Dispatch<SetStateAction<DbTaskSubtask[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   suppressCategoryReload: MutableRefObject<boolean>;
@@ -130,6 +132,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   setTaskHistory,
   setTaskListManualMemberships,
   setTaskLists,
+  setTaskLegacySubtaskPromotions,
   setTaskSubtasks,
   setTasks,
   suppressCategoryReload,
@@ -385,6 +388,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         .eq("user_id", userId)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true });
+      const taskLegacySubtaskPromotionsRequest = client
+        .from("adhdice_legacy_subtask_promotions")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true });
       const profileRequest = client
         .from("adhdice_user_profiles")
         .select("*")
@@ -393,6 +401,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const criticalCoreRequest = Promise.all([
         taskRequest,
         taskSubtasksRequest,
+        taskLegacySubtaskPromotionsRequest,
         profileRequest,
       ]);
       const secondaryCoreRequest = Promise.all([
@@ -435,7 +444,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .eq("user_id", userId)
           .maybeSingle(),
       ]);
-      const [taskResult, taskSubtasksResult, profileResult] = await criticalCoreRequest;
+      const [taskResult, taskSubtasksResult, taskLegacySubtaskPromotionsResult, profileResult] = await criticalCoreRequest;
 
       if (!isActive) {
         return;
@@ -444,6 +453,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const criticalErrors = [
         taskResult.error,
         taskSubtasksResult.error,
+        taskLegacySubtaskPromotionsResult.error,
         profileResult.error,
       ].filter(Boolean);
 
@@ -454,10 +464,12 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
+      const nextTaskLegacySubtaskPromotions = taskLegacySubtaskPromotionsResult.data ?? [];
       startTransition(() => {
         const nextTasks = taskResult.data ?? [];
         setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
         setTaskSubtasks((current) => keepCurrentIfStructurallyEqual(current, nextTaskSubtasks));
+        setTaskLegacySubtaskPromotions((current) => keepCurrentIfStructurallyEqual(current, nextTaskLegacySubtaskPromotions));
         onProfileLoaded(profileResult.data ?? null, user);
         if (profileResult.data) {
           const nextEconomy = {
@@ -702,6 +714,18 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         {
           event: "*",
           schema: "public",
+          table: "adhdice_legacy_subtask_promotions",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void loadCoreWorkspaceData({ silent: true });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
           table: "adhdice_focus_categories",
           filter: `user_id=eq.${userId}`,
         },
@@ -855,6 +879,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     setTaskActualTimeEntries,
     setTaskGridLayout,
     setTaskHistory,
+    setTaskLegacySubtaskPromotions,
     taskGridStarterLayout,
   ]);
 
