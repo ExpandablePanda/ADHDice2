@@ -5,8 +5,8 @@ Last reviewed: 2026-06-19
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.6.3`.
-- Current release group: `6.6.x` safe same-parent Step/Substep ordering.
+- Current working app version: `6.7.4`.
+- Current release group: `6.7.x` same-parent Step/Substep drag reorder.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
@@ -158,7 +158,7 @@ Role: active working
 ## Important Deferred Work
 - `scheduled_on` remains shadow-only and is not runtime-authoritative yet.
 - Legacy subtasks in `adhdice_task_subtasks` are unchanged.
-- Custom child-task metadata editors, drag/drop, cross-parent move/promote/demote behavior, nested Table/List row rendering, child reward rules, and legacy-subtask migration remain deferred.
+- Custom child-task metadata editors, cross-parent move/promote/demote behavior, nested Table/List row rendering beyond the current same-parent drag slice, child reward rules, and legacy-subtask migration remain deferred.
 - `6.4.2` locks the future task hierarchy architecture in `docs/task-hierarchy-plan.md`: user-facing Steps should become same-table `adhdice_clean_tasks` rows through `parent_task_id`, with a hybrid bridge/migration from legacy subtasks and no expansion of `adhdice_task_subtasks` into a duplicate task model.
 - Runtime adoption of `scheduled_on`, any `next_scheduled_on` behavior, nested same-table child-task row UI, and reward-economy redesign remain deferred.
 - Import update-existing-ID behavior remains deferred because the current live import path does not expose that branch yet.
@@ -198,7 +198,7 @@ Role: active working
 ## Next Recommended Tickets
 1. Diagnose the black/glitched HUD/UI reload seam as an isolated ticket before any other UI work in that area.
 2. Define the future snapshot payload contract and restore overwrite rules before adding any restore SQL or runtime restore entry points.
-3. Extend Step movement only after separate product approval; cross-parent movement, promote/demote, and drag/drop remain deferred.
+3. Extend Step movement only after separate product approval; same-parent drag/drop now exists, but cross-parent movement and promote/demote remain deferred.
 4. Run the gated legacy Step promotion only after manual dry-run review, then verify duplicate suppression against real promoted rows.
 5. Decide when `scheduled_on` becomes authoritative and gate that behind a dedicated runtime/data contract ticket.
 
@@ -217,3 +217,23 @@ The Table View parent-row `Steps` toggle now uses the same purple hover/focus ci
 ## 6.6.3 Implementation Note
 
 The parent-level `Steps` control in List View now matches the Table View control structure instead of using a separate list-specific button treatment. Both surfaces render `Steps` as neutral label text with a separate chevron-only button, so the purple hover/focus highlight applies only to the chevron and not to the word `Steps`.
+
+## 6.7.0 Implementation Note
+
+Table View, the full Edit Task Steps section, and List View now add dedicated grip-handle drag/drop reorder for same-parent Steps and same-parent Substeps. The existing shared sibling reorder helper in `src/lib/task-sibling-reorder.ts` now accepts drag-style before/after placement in addition to Move Up and Move Down, but it still only normalizes `sort_order` inside the affected sibling group and never edits `parent_task_id`. Drag starts only from the compact handle, invalid drops are ignored, the existing Move Up/Move Down controls remain as fallback, and cross-parent movement, promote/demote, parent-task drag, and live promotion remain deferred.
+
+## 6.7.1 Implementation Note
+
+Same-parent Step/Substep drag now keeps high-frequency hover bookkeeping in refs and updates React drop-indicator state only when the target row or before/after placement actually changes. Table View and the shared Edit Task rows no longer rerender their large surface on every native `dragover`; List View uses the same synchronous bookkeeping and deduplication. Reorder planning still uses `src/lib/task-sibling-reorder.ts`, persistence still writes only `sort_order` through the guarded task update path, and Move Up/Move Down remains available.
+
+## 6.7.2 Implementation Note
+
+The remaining same-parent drag delay was mainly in the drop persistence seam rather than in `dragover`. Reorder now applies the planned sibling `sort_order` updates to local task state immediately on drop, then persists only the changed siblings through the existing guarded task-row update path in parallel instead of awaiting one shared full update action per row in sequence. Table View, Edit Task, and List View all benefit because they share the same `reorderChildTask` persistence seam; `parent_task_id` still never changes, `src/lib/task-sibling-reorder.ts` still owns the reorder plan, and a guarded full workspace refresh is reserved only for rare save-error or conflict recovery.
+
+## 6.7.3 Implementation Note
+
+List View no longer caps expanded same-table Steps/Substeps to a four-row preview. The parent card `Steps` section now shows every currently visible same-table descendant when expanded, while the existing parent-section collapse plus per-step chevrons remain the only height controls. The old overflow copy about extra steps being "shown in the inspector" is removed from normal List View, search-matched parents still auto-expand their Steps section, and no movement rules, `parent_task_id` behavior, Table View limits, or Edit Task hierarchy scope changed in this follow-up.
+
+## 6.7.4 Implementation Note
+
+The full Edit Task UI no longer caps same-table Steps/Substeps to a short preview inside the left `Steps` section. All currently visible descendants now render inline there, the old `hidden in preview` overflow copy is removed, and the existing descendant chevrons remain the only row-hiding control inside that editor surface. Same-parent drag/drop, Move Up/Move Down, title rename, metadata targeting, sticky right Meta Data column behavior, `sort_order` logic, and `parent_task_id` rules are unchanged in this follow-up.

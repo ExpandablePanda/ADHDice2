@@ -1,5 +1,5 @@
 "use client";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, Clock3, Ellipsis, ExternalLink, Flame, Footprints, Skull, Tag, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Flame, Footprints, GripVertical, Skull, Tag, Trash2, X } from "lucide-react";
 import {
   buildTaskRowContextMenuState,
   TaskManagementTableV2,
@@ -16,13 +16,14 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import { buildTaskTableRow } from "@/lib/task-table-row";
-import { useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { getTaskDisplayStatus, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen } from "@/lib/task-buckets";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusCircle } from "./task-status-ui";
 import { formatRepeatSummary } from "@/lib/task-repeat";
 import { buildChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
+import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { formatLocalDate, todayISO } from "@/lib/utils";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
@@ -35,6 +36,8 @@ import {
 } from "@/components/ui/task-table-primitives";
 
 type ListQuickPanelMode = "actual" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
+type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
+type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
 
 const QUICK_PANEL_SHELL_CLASS = "rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] px-4 py-3 shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-[#41306c] dark:bg-[#18112d]";
 const QUICK_PANEL_TEXT_INPUT_CLASS = "h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]";
@@ -114,7 +117,7 @@ type TasksTableSourceProps = {
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
-  onReorderChildTask?: (taskId: string, direction: "down" | "up") => void;
+  onReorderChildTask?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onFollowDetachedTask?: (taskId: string) => void;
   onDismissDetachedTask?: (taskId: string) => void;
   onNextTaskTimer?: () => void;
@@ -482,7 +485,6 @@ function StepsCardPreview({
   onToggleTaskList,
   onToggleExpanded,
   selectedBucket,
-  showAllSteps = false,
 }: {
   activeQuickPanel: { mode: ListQuickPanelMode; taskId: string } | null;
   allTagOptions: string[];
@@ -499,7 +501,7 @@ function StepsCardPreview({
   onOpenStep: (taskId: string) => void;
   onOpenQuickPanel: (taskId: string, mode: ListQuickPanelMode) => void;
   onRenameStep?: (taskId: string, title: string) => void;
-  onReorderStep?: (taskId: string, direction: "down" | "up") => void;
+  onReorderStep?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onOpenActualTime?: (taskId: string) => void;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
   onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }) => void;
@@ -514,10 +516,13 @@ function StepsCardPreview({
   onToggleTaskList?: (taskId: string, listId: string) => void;
   onToggleExpanded?: () => void;
   selectedBucket: string;
-  showAllSteps?: boolean;
 }) {
   const [editingStepTitleId, setEditingStepTitleId] = useState<string | null>(null);
   const [collapsedStepIds, setCollapsedStepIds] = useState<Record<string, boolean>>({});
+  const [childTaskDragState, setChildTaskDragState] = useState<ChildTaskDragState | null>(null);
+  const [childTaskDropTarget, setChildTaskDropTarget] = useState<ChildTaskDropTarget | null>(null);
+  const childTaskDragStateRef = useRef<ChildTaskDragState | null>(null);
+  const childTaskDropTargetRef = useRef<ChildTaskDropTarget | null>(null);
   const [stepTitleDrafts, setStepTitleDrafts] = useState<Record<string, string>>({});
   const [substepDraftParentId, setSubstepDraftParentId] = useState<string | null>(null);
   const [substepTitleDrafts, setSubstepTitleDrafts] = useState<Record<string, string>>({});
@@ -530,10 +535,8 @@ function StepsCardPreview({
     () => buildChildTaskPreviewVisibility(group.items, collapsedStepIdSet),
     [collapsedStepIdSet, group.items],
   );
-  const visibleItems = showAllSteps ? expandedItems : expandedItems.slice(0, 4);
-  const hiddenItemCount = Math.max(0, expandedItems.length - visibleItems.length);
 
-  if (visibleItems.length === 0 && !group.summary.hasInvalidDescendants) {
+  if (expandedItems.length === 0 && !group.summary.hasInvalidDescendants) {
     return null;
   }
 
@@ -552,6 +555,85 @@ function StepsCardPreview({
     setSubstepTitleDrafts((current) => ({ ...current, [parentTaskId]: "" }));
     setSubstepCreationErrors((current) => ({ ...current, [parentTaskId]: null }));
     setSubstepDraftParentId(null);
+  };
+
+  const clearChildTaskDragState = () => {
+    childTaskDragStateRef.current = null;
+    childTaskDropTargetRef.current = null;
+    setChildTaskDragState(null);
+    setChildTaskDropTarget(null);
+  };
+
+  const beginChildTaskDrag = (event: ReactDragEvent<HTMLElement>, item: ChildTaskPreview) => {
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", item.id);
+    const nextDragState = {
+      depth: item.depth,
+      parentTaskId: item.parentTaskId,
+      taskId: item.id,
+    };
+    childTaskDragStateRef.current = nextDragState;
+    childTaskDropTargetRef.current = null;
+    setChildTaskDragState(nextDragState);
+    setChildTaskDropTarget(null);
+  };
+
+  const getChildTaskDropPlacement = (event: ReactDragEvent<HTMLElement>): TaskSiblingDropPlacement => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientY - rect.top < rect.height / 2 ? "before" : "after";
+  };
+
+  const canDropChildTaskOnItem = (item: ChildTaskPreview) => {
+    const dragState = childTaskDragStateRef.current;
+    return Boolean(
+      dragState
+      && dragState.taskId !== item.id
+      && dragState.parentTaskId === item.parentTaskId
+      && dragState.depth === item.depth,
+    );
+  };
+
+  const updateChildTaskDropTarget = (event: ReactDragEvent<HTMLElement>, item: ChildTaskPreview) => {
+    if (!canDropChildTaskOnItem(item)) {
+      if (childTaskDropTargetRef.current) {
+        childTaskDropTargetRef.current = null;
+        setChildTaskDropTarget(null);
+      }
+      return;
+    }
+
+    event.preventDefault();
+    const placement = getChildTaskDropPlacement(event);
+    const currentDropTarget = childTaskDropTargetRef.current;
+    if (currentDropTarget?.taskId !== item.id || currentDropTarget.placement !== placement) {
+      const nextDropTarget = { placement, taskId: item.id };
+      childTaskDropTargetRef.current = nextDropTarget;
+      setChildTaskDropTarget(nextDropTarget);
+    }
+  };
+
+  const dropChildTaskOnItem = (event: ReactDragEvent<HTMLElement>, item: ChildTaskPreview) => {
+    const dragState = childTaskDragStateRef.current;
+    if (!dragState || !canDropChildTaskOnItem(item)) {
+      clearChildTaskDragState();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const placement = getChildTaskDropPlacement(event);
+    onReorderStep?.(dragState.taskId, { placement, targetTaskId: item.id });
+    clearChildTaskDragState();
+  };
+
+  const getChildTaskDropIndicatorClassName = (itemId: string) => {
+    if (childTaskDropTarget?.taskId !== itemId) {
+      return "";
+    }
+    return childTaskDropTarget.placement === "before"
+      ? "shadow-[inset_0_2px_0_0_rgba(111,87,246,0.95)]"
+      : "shadow-[inset_0_-2px_0_0_rgba(111,87,246,0.95)]";
   };
 
   return (
@@ -579,9 +661,9 @@ function StepsCardPreview({
           {group.summary.invalidChildLinkCount === 1 ? "1 invalid step link" : `${group.summary.invalidChildLinkCount} invalid step links`}
         </p>
       ) : null}
-      {visibleItems.length > 0 ? (
+      {expandedItems.length > 0 ? (
         <ul className="mt-2">
-          {visibleItems.map((item) => {
+          {expandedItems.map((item) => {
             const siblingItems = group.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth);
             const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
             const childTask = childTasksById.get(item.id) ?? null;
@@ -617,9 +699,11 @@ function StepsCardPreview({
 
             return (
               <li
-                className="cursor-pointer rounded-[0.95rem] border border-transparent bg-transparent px-1.5 py-2.5 transition hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90"
+                className={`cursor-pointer rounded-[0.95rem] border border-transparent bg-transparent px-1.5 py-2.5 transition hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90 ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                 data-same-table-step-row={item.id}
                 key={item.id}
+                onDragOver={(event) => updateChildTaskDropTarget(event, item)}
+                onDrop={(event) => dropChildTaskOnItem(event, item)}
                 onClick={(event) => {
                   event.stopPropagation();
                   onOpenStep(item.id);
@@ -696,6 +780,21 @@ function StepsCardPreview({
                       <div className="flex flex-none items-center gap-1">
                         {onReorderStep ? (
                           <>
+                            <button
+                              aria-label={`Drag to reorder ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#8a79d6] opacity-70 transition hover:bg-[#f3efff] hover:text-[#6f57f6] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:bg-[#22193f] dark:hover:text-[#cabfff]"
+                              draggable
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                              }}
+                              onDragEnd={clearChildTaskDragState}
+                              onDragStart={(event) => beginChildTaskDrag(event, item)}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              type="button"
+                            >
+                              <GripVertical className="h-3.5 w-3.5" />
+                            </button>
                             <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] transition hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex <= 0} onClick={(event) => { event.stopPropagation(); onReorderStep(item.id, "up"); }} onPointerDown={(event) => event.stopPropagation()} type="button"><ArrowUp className="h-3.5 w-3.5" /></button>
                             <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] transition hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1} onClick={(event) => { event.stopPropagation(); onReorderStep(item.id, "down"); }} onPointerDown={(event) => event.stopPropagation()} type="button"><ArrowDown className="h-3.5 w-3.5" /></button>
                           </>
@@ -967,9 +1066,6 @@ function StepsCardPreview({
             );
           })}
         </ul>
-      ) : null}
-      {hiddenItemCount > 0 ? (
-        <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{`${hiddenItemCount} more ${hiddenItemCount === 1 ? "step" : "steps"} shown in the inspector.`}</p>
       ) : null}
         </>
       )}
@@ -1902,7 +1998,6 @@ function TasksSimpleList({
                   }));
                 }}
                 selectedBucket={selectedBucket}
-                showAllSteps={searchMatchedStepParentTaskIdSet.has(task.id)}
               />
             ) : null}
             </article>

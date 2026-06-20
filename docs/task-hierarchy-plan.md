@@ -1,6 +1,6 @@
 # Task Hierarchy Plan
 
-Last reviewed: 2026-06-18
+Last reviewed: 2026-06-19
 
 Role: active working
 
@@ -215,10 +215,30 @@ The parent-level `Steps` affordance is now part of the same chevron control lang
 
 List View now reuses the same parent `Steps` control structure as Table View rather than a list-specific variant. Both surfaces keep the `Steps` text neutral and put the interactive hover/focus affordance only on the chevron button.
 
+## 6.7.0 Same-Parent Drag Reorder
+
+The same shared reorder foundation now supports dedicated grip-handle drag/drop for same-parent sibling Steps and same-parent sibling Substeps in Table View, Edit Task, and List View. The helper in `src/lib/task-sibling-reorder.ts` still owns the reorder plan; it now also accepts before/after insertion instructions and continues to reject top-level rows, invalid hierarchy, cross-parent targets, and no-op placements. Persistence still updates only `sort_order` through the existing guarded task update path, while `parent_task_id`, promote/demote, parent-task drag, and cross-parent movement remain out of scope.
+
+## 6.7.1 Same-Parent Drag Reorder Polish
+
+The existing Table View, Edit Task, and List View drag paths now keep synchronous transient drag bookkeeping in refs and publish drop-indicator state only when the stable target task ID or before/after placement changes. This removes redundant render churn during native `dragover` while preserving grip-only drag start, same-parent and same-depth validation, drop-only persistence, Move Up/Move Down fallback controls, and the existing shared reorder planner. No movement scope or task hierarchy fields changed.
+
+## 6.7.2 Same-Parent Drag Speed Polish
+
+The shared reorder planner and movement guardrails are unchanged, but the drop persistence path now feels faster. After a valid same-parent drop, the planned sibling `sort_order` values are reflected locally right away, then the affected sibling rows persist through the existing guarded task-row update seam in parallel. If a guarded save conflicts or fails, the workspace reloads the latest cloud state rather than inventing a second movement system. Cross-parent movement, promote/demote, and `parent_task_id` edits remain deferred.
+
+## 6.7.3 List View Step Preview Limit Removal
+
+List View's collapsible parent `Steps` section no longer enforces the earlier four-row preview cap for same-table Steps/Substeps. When the section is expanded, all currently visible descendants render inline; when collapsed, the section stays hidden. Step/Substep chevrons still control descendant visibility within that expanded set, search-matched parents still force the section open, and same-parent reorder, rename, metadata chips, child creation, and `parent_task_id` behavior are unchanged.
+
+## 6.7.4 Edit Task Step Preview Limit Removal
+
+The full Edit Task UI now follows the same no-preview-cap rule for same-table Steps/Substeps. Inside the editor's left `Steps` section, all currently visible descendants render inline instead of truncating to a short preview, and the old `hidden in preview` footer copy is removed. Descendant chevrons still control local collapse, the right Meta Data column still targets the selected Step or parent, and same-parent reorder plus all hierarchy guardrails remain unchanged.
+
 ## Next Ticket
 
-`6.6.4 Step Movement Follow-Up Rules`
+`6.7.5 Step Movement Guardrails Follow-Up`
 
-Goal: evaluate drag interaction and any broader movement rules separately after same-parent button reorder is manually verified.
+Goal: evaluate any future movement rules beyond same-parent sibling reorder, including whether cross-parent movement or promote/demote should ever exist and what extra repair/guard UI they would require.
 
 Verification should stay narrow: focused helper tests only plus `git diff --check`.

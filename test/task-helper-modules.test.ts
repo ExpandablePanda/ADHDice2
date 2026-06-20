@@ -834,6 +834,59 @@ test("same-parent sibling reorder supports substeps and rejects unsafe movement"
   assert.deepEqual(buildTaskSiblingReorderPlan(tasks, "sub-a", "up"), { ok: false, reason: "boundary" });
 });
 
+test("same-parent sibling reorder supports drag-style before and after placement", () => {
+  const tasks = [
+    createTask({ id: "parent", sort_order: 1, status: "pending", title: "Parent" }),
+    createTask({ id: "step-a", parent_task_id: "parent", sort_order: 10, status: "pending", title: "A" }),
+    createTask({ id: "step-b", parent_task_id: "parent", sort_order: 20, status: "pending", title: "B" }),
+    createTask({ id: "step-c", parent_task_id: "parent", sort_order: 30, status: "pending", title: "C" }),
+    createTask({ id: "step-d", parent_task_id: "parent", sort_order: 40, status: "pending", title: "D" }),
+  ];
+
+  assert.deepEqual(buildTaskSiblingReorderPlan(tasks, "step-d", { placement: "before", targetTaskId: "step-b" }), {
+    ok: true,
+    orderedTaskIds: ["step-a", "step-d", "step-b", "step-c"],
+    parentTaskId: "parent",
+    updates: [
+      { id: "step-a", sortOrder: 1 },
+      { id: "step-d", sortOrder: 2 },
+      { id: "step-b", sortOrder: 3 },
+      { id: "step-c", sortOrder: 4 },
+    ],
+  });
+
+  assert.deepEqual(buildTaskSiblingReorderPlan(tasks, "step-a", { placement: "after", targetTaskId: "step-c" }), {
+    ok: true,
+    orderedTaskIds: ["step-b", "step-c", "step-a", "step-d"],
+    parentTaskId: "parent",
+    updates: [
+      { id: "step-b", sortOrder: 1 },
+      { id: "step-c", sortOrder: 2 },
+      { id: "step-a", sortOrder: 3 },
+      { id: "step-d", sortOrder: 4 },
+    ],
+  });
+});
+
+test("same-parent sibling reorder drag placement rejects cross-parent and no-op drops", () => {
+  const tasks = [
+    createTask({ id: "parent", sort_order: 1, status: "pending", title: "Parent" }),
+    createTask({ id: "step-a", parent_task_id: "parent", sort_order: 1, status: "pending", title: "A" }),
+    createTask({ id: "step-b", parent_task_id: "parent", sort_order: 2, status: "pending", title: "B" }),
+    createTask({ id: "other-parent", sort_order: 2, status: "pending", title: "Other Parent" }),
+    createTask({ id: "other-step", parent_task_id: "other-parent", sort_order: 1, status: "pending", title: "Other Step" }),
+  ];
+
+  assert.deepEqual(buildTaskSiblingReorderPlan(tasks, "step-a", { placement: "before", targetTaskId: "other-step" }), {
+    ok: false,
+    reason: "boundary",
+  });
+  assert.deepEqual(buildTaskSiblingReorderPlan(tasks, "step-a", { placement: "before", targetTaskId: "step-b" }), {
+    ok: false,
+    reason: "boundary",
+  });
+});
+
 test("child preview visibility collapses only descendants of the chosen step", () => {
   const items = [
     { depth: 1, id: "step-a", parentTaskId: "parent" },

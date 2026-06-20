@@ -36,7 +36,7 @@ Use this as a repeatable browser smoke test after a Codex implementation pass. K
 - [ ] Table View Step mini rows show same-table task metadata in or near the parent table columns.
 - [ ] Table View Step mini rows sit on the same white surface as parent rows, with no grey card/spreadsheet background or outline.
 - [ ] Table View does not show a title-cell-only `x` plus Step title strip; any visible source-only Step rows align under the parent with status/title only and blank metadata cells.
-- [ ] List View parent cards with same-table Steps show a compact Steps preview.
+- [ ] List View parent cards with same-table Steps show a collapsible Steps section, and expanding it shows all visible same-table Steps/Substeps inline with no preview cap.
 - [ ] Table/List/Edit Task same-table Step rows do not show an `Open` chip.
 - [ ] Same-table Step rows show a small trash icon that uses the normal task delete/trash flow.
 - [ ] Opening a same-table Step from Table/List preview uses the normal inspector/editor path.
@@ -64,17 +64,27 @@ Use this as a repeatable browser smoke test after a Codex implementation pass. K
 - [ ] In the full Edit Task UI, clicking a same-table Step title lets the title be renamed and saved through the normal task title path.
 - [ ] In the full Edit Task UI, Step metadata chips scroll horizontally so Focus, Important, Urgent, Repeat, Due, and other chips remain reachable.
 - [ ] Edit Task UI Add Step uses the circular Step icon, same-table Step rows do not show a redundant status chip next to due metadata, and the right Meta Data column remains visible while scrolling lower Steps on desktop.
+- [ ] In the full Edit Task UI, the left `Steps` section shows all visible same-table Steps/Substeps inline with no preview cap and no `hidden in preview` overflow copy.
 - [ ] Table View Move Up/Move Down reorders sibling Steps and sibling Substeps, persists after refresh, and does not change their parents.
+- [ ] Table View drag handle reorders sibling Steps and sibling Substeps only within the same parent group, clears the drag visual state immediately after drop, persists after refresh, and ignores invalid drop zones.
+- [ ] Table View drag indicator changes cleanly between before/after positions without excessive flicker or sluggish row rerenders.
 - [ ] Table View reorder controls do not break row selection, metadata chips, rename, right-click, Step creation, horizontal scroll, or the sticky Tasks column.
 - [ ] In Table View, a Step with substeps shows a chevron beside its title; collapsing hides only that Step's descendants and expanding restores them without breaking rename or row actions.
 - [ ] In Table View, the parent-row `Steps` toggle uses the same purple hover/focus circle treatment as the child chevrons.
 - [ ] In Table View, the parent-row `Steps` text stays neutral while only the chevron button gets the hover/focus highlight.
 - [ ] Edit Task Move Up/Move Down reorders sibling Steps/Substeps while selection, rename, Add Step/Substep, and the sticky Meta Data column still work.
+- [ ] Edit Task drag handle reorders sibling Steps/Substeps while selection, rename, Add Step/Substep, and the sticky Meta Data column still work, with the new order appearing immediately after drop.
+- [ ] Edit Task Step/Substep drag indicator remains stable while the right Meta Data column stays sticky and targets the selected row.
 - [ ] List View Move Up/Move Down reorders sibling Steps/Substeps while metadata chips, rename, Step creation, and Steps collapse/expand still work.
+- [ ] List View drag handle reorders sibling Steps/Substeps while metadata chips, rename, Step creation, card clicks, and Steps collapse/expand still work, with the new order appearing immediately after drop.
+- [ ] List View Step/Substep drag indicator remains stable and dragging the grip does not trigger the parent card click.
 - [ ] In List View, a Step with substeps shows a chevron beside its title; collapsing hides only that Step's descendants and expanding restores them without opening rename or the full editor.
 - [ ] In List View, the parent card `Steps` header has its own chevron toggle so the section can collapse independently from the rest of the card, while search-matched parents still auto-expand their Steps.
 - [ ] In List View, the parent card `Steps` control matches the Table View control structure and only the chevron button gets the hover/focus highlight.
+- [ ] In expanded List View `Steps` sections, no `shown in the inspector` or `more step(s)` overflow copy appears.
 - [ ] Reordered Steps/Substeps remain hidden from top-level task rows and are not duplicated.
+- [ ] Dragging a Step/Substep outside a valid same-parent sibling zone does nothing.
+- [ ] Same-table Step/Substep drag does not change `parent_task_id`, and cross-parent drag/drop or promote/demote is not exposed.
 - [ ] Table/List normal UI labels say `Steps` without `direct steps` or `total step rows` count copy.
 - [ ] A parent with only new same-table Steps appears in the existing Steps smart list/filter.
 - [ ] Old source-only rows remain visible for manual cleanup when they have not been replaced/promoted.

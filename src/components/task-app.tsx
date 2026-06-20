@@ -175,7 +175,7 @@ import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/li
 import { buildFocusLabelOptions, getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
-import { buildTaskSiblingReorderPlan, type TaskSiblingReorderDirection } from "@/lib/task-sibling-reorder";
+import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import { calcNextDueDateFromDate } from "@/lib/task-repeat";
 import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
@@ -301,7 +301,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.6.3";
+const APP_VERSION = "6.7.4";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -2318,8 +2318,8 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
-  async function reorderChildTask(taskId: string, direction: TaskSiblingReorderDirection) {
-    const plan = buildTaskSiblingReorderPlan(tasks, taskId, direction);
+  async function reorderChildTask(taskId: string, instruction: TaskSiblingReorderInstruction) {
+    const plan = buildTaskSiblingReorderPlan(tasks, taskId, instruction);
     if (!plan.ok) {
       if (plan.reason !== "boundary") {
         setMessage({ tone: "warn", text: "This Step could not be reordered because its hierarchy is no longer valid." });
@@ -2327,11 +2327,88 @@ export function TaskApp() {
       return;
     }
 
-    for (const siblingUpdate of plan.updates) {
-      const saved = await updateTask(siblingUpdate.id, { sort_order: siblingUpdate.sortOrder });
-      if (!saved) {
-        return;
+    if (plan.updates.length === 0) {
+      return;
+    }
+
+    const updatedTaskIdSet = new Set(plan.updates.map((update) => update.id));
+    const expectedTaskById = new Map(
+      tasks
+        .filter((task) => updatedTaskIdSet.has(task.id))
+        .map((task) => [task.id, task] as const),
+    );
+    const sortOrderByTaskId = new Map(plan.updates.map((update) => [update.id, update.sortOrder] as const));
+    const updatedTaskIds = Array.from(updatedTaskIdSet);
+
+    setTasks((current) => sortTasksForUi(current.map((task) => {
+      const nextSortOrder = sortOrderByTaskId.get(task.id);
+      return typeof nextSortOrder === "number"
+        ? { ...task, sort_order: nextSortOrder }
+        : task;
+    })));
+
+    markPendingTaskMutations(updatedTaskIds);
+    let results;
+    try {
+      results = await Promise.all(
+        plan.updates.map((siblingUpdate) => runGuardedTaskRowUpdate(
+          siblingUpdate.id,
+          { sort_order: siblingUpdate.sortOrder },
+          { expectedTask: expectedTaskById.get(siblingUpdate.id) ?? null },
+        )),
+      );
+    } finally {
+      clearPendingTaskMutations(updatedTaskIds);
+    }
+
+    const persistedTasksById = new Map<string, Task>();
+    let conflictCount = 0;
+    let firstErrorMessage: string | null = null;
+    let needsRefresh = false;
+
+    for (const result of results) {
+      if (result.error) {
+        firstErrorMessage ??= result.error.message;
+        needsRefresh = true;
+        continue;
       }
+
+      if (result.conflict) {
+        conflictCount += 1;
+        needsRefresh = true;
+        if (result.conflict.latestTask) {
+          persistedTasksById.set(result.conflict.latestTask.id, result.conflict.latestTask);
+        }
+        continue;
+      }
+
+      if (result.data) {
+        persistedTasksById.set(result.data.id, result.data);
+      }
+    }
+
+    if (persistedTasksById.size > 0) {
+      setTasks((current) => sortTasksForUi(current.map((task) => persistedTasksById.get(task.id) ?? task)));
+    }
+
+    if (!needsRefresh) {
+      return;
+    }
+
+    await softRefreshWorkspace();
+    if (firstErrorMessage) {
+      setMessage({
+        tone: "warn",
+        text: `Step reorder was refreshed from the cloud after a save error. ${firstErrorMessage}`,
+      });
+      return;
+    }
+
+    if (conflictCount > 0) {
+      setMessage({
+        tone: "warn",
+        text: `${conflictCount} reordered step${conflictCount === 1 ? "" : "s"} changed in the cloud first, so the latest order was reloaded.`,
+      });
     }
   }
   const {

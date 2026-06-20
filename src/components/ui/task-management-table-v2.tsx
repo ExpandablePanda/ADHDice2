@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, Fragment, startTransition, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Children, Fragment, startTransition, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowUp,
@@ -14,6 +14,7 @@ import {
   Flame,
   Footprints,
   Flag,
+  GripVertical,
   Link2,
   ExternalLink,
   MoveLeft,
@@ -30,6 +31,7 @@ import {
 import type { TaskActualTimeEntry, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
+import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import {
@@ -111,6 +113,8 @@ export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
 export type RunningTaskTimer = { baseSeconds: number; pausedAt?: number | null; startedActualSeconds: number; startedAt: number; taskId: string; title: string };
 export type TaskRowContextMenuQuickEditMode = "actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
+type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
+type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
 export type TaskRowContextMenuQuickEditItem = {
   label: string;
   mode: TaskRowContextMenuQuickEditMode;
@@ -840,7 +844,7 @@ type TaskManagementTableV2Props = {
   onOpenTaskActualTime?: (taskId: string, options?: { durationSeconds?: number; title?: string }) => void;
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
-  onReorderChildTask?: (taskId: string, direction: "down" | "up") => void;
+  onReorderChildTask?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onLoadMoreRows?: () => void;
   onRequestedOpenTaskHandled?: (taskId: string) => void;
   onFollowDetachedTask?: (taskId: string) => void;
@@ -1873,6 +1877,10 @@ export function TaskManagementTableV2({
   const [expandedSubtasksByTaskId, setExpandedSubtasksByTaskId] = useState<Record<string, boolean>>({});
   const [expandedStepsByTaskId, setExpandedStepsByTaskId] = useState<Record<string, boolean>>({});
   const [collapsedChildTaskIds, setCollapsedChildTaskIds] = useState<Record<string, boolean>>({});
+  const [childTaskDragState, setChildTaskDragState] = useState<ChildTaskDragState | null>(null);
+  const [childTaskDropTarget, setChildTaskDropTarget] = useState<ChildTaskDropTarget | null>(null);
+  const childTaskDragStateRef = useRef<ChildTaskDragState | null>(null);
+  const childTaskDropTargetRef = useRef<ChildTaskDropTarget | null>(null);
   const [tableStepDraftParentId, setTableStepDraftParentId] = useState<string | null>(null);
   const [tableStepTitleDrafts, setTableStepTitleDrafts] = useState<Record<string, string>>({});
   const [tableStepCreationErrorByParentId, setTableStepCreationErrorByParentId] = useState<Record<string, string | null>>({});
@@ -2062,6 +2070,89 @@ export function TaskManagementTableV2({
     () => new Set(Object.entries(collapsedChildTaskIds).flatMap(([taskId, isCollapsed]) => (isCollapsed ? [taskId] : []))),
     [collapsedChildTaskIds],
   );
+
+  const clearChildTaskDragState = () => {
+    childTaskDragStateRef.current = null;
+    childTaskDropTargetRef.current = null;
+    setChildTaskDragState(null);
+    setChildTaskDropTarget(null);
+  };
+
+  const beginChildTaskDrag = (event: ReactPointerEvent<HTMLButtonElement> | ReactDragEvent<HTMLButtonElement>, item: ChildTaskPreview) => {
+    event.stopPropagation();
+    const nextDragState = {
+      depth: item.depth,
+      parentTaskId: item.parentTaskId,
+      taskId: item.id,
+    };
+    childTaskDragStateRef.current = nextDragState;
+    childTaskDropTargetRef.current = null;
+    setChildTaskDragState(nextDragState);
+    setChildTaskDropTarget(null);
+    if ("dataTransfer" in event) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", item.id);
+    }
+  };
+
+  const getChildTaskDropPlacement = (event: ReactDragEvent<HTMLElement>): TaskSiblingDropPlacement => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+  };
+
+  const canDropChildTaskOnItem = (item: ChildTaskPreview) => {
+    const dragState = childTaskDragStateRef.current;
+    return Boolean(
+      dragState
+      && dragState.taskId !== item.id
+      && dragState.parentTaskId === item.parentTaskId
+      && dragState.depth === item.depth,
+    );
+  };
+
+  const updateChildTaskDropTarget = (event: ReactDragEvent<HTMLElement>, item: ChildTaskPreview) => {
+    if (!canDropChildTaskOnItem(item)) {
+      if (childTaskDropTargetRef.current) {
+        childTaskDropTargetRef.current = null;
+        setChildTaskDropTarget(null);
+      }
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const nextDropTarget = { placement: getChildTaskDropPlacement(event), taskId: item.id };
+    const currentDropTarget = childTaskDropTargetRef.current;
+    if (currentDropTarget?.taskId === nextDropTarget.taskId && currentDropTarget.placement === nextDropTarget.placement) {
+      return;
+    }
+    childTaskDropTargetRef.current = nextDropTarget;
+    setChildTaskDropTarget(nextDropTarget);
+  };
+
+  const dropChildTaskOnItem = (event: ReactDragEvent<HTMLElement>, item: ChildTaskPreview) => {
+    const dragState = childTaskDragStateRef.current;
+    if (!dragState || !canDropChildTaskOnItem(item)) {
+      clearChildTaskDragState();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const placement = getChildTaskDropPlacement(event);
+    onReorderChildTask?.(dragState.taskId, { placement, targetTaskId: item.id });
+    clearChildTaskDragState();
+  };
+
+  const getChildTaskDropIndicatorClassName = (itemId: string) => {
+    if (childTaskDropTarget?.taskId !== itemId) {
+      return "";
+    }
+
+    return childTaskDropTarget.placement === "before"
+      ? "shadow-[inset_0_2px_0_rgba(111,87,246,0.75)]"
+      : "shadow-[inset_0_-2px_0_rgba(111,87,246,0.75)]";
+  };
   const renderedTasks = useMemo(
     () => displayedTasks.slice(0, renderedTaskCount),
     [displayedTasks, renderedTaskCount],
@@ -5019,12 +5110,10 @@ export function TaskManagementTableV2({
 
   const renderEditorChildTaskRows = (group: ChildTaskPreviewGroup | undefined) => {
     const { collapsibleTaskIds, visibleItems: expandedItems } = buildChildTaskPreviewVisibility(group?.items ?? [], collapsedChildTaskIdSet);
-    const visibleItems = expandedItems.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT);
-    const hiddenItemCount = Math.max(0, expandedItems.length - visibleItems.length);
     const canSelectChildTask = Boolean(onOpenChildTask);
     const canDeleteChildTask = Boolean(onOpenDeleteTask);
 
-    if (visibleItems.length === 0 && !group?.summary.hasInvalidDescendants) {
+    if (expandedItems.length === 0 && !group?.summary.hasInvalidDescendants) {
       return null;
     }
 
@@ -5033,7 +5122,7 @@ export function TaskManagementTableV2({
         {group?.summary.hasInvalidDescendants ? (
           <p className="text-xs text-[#9a7a24] dark:text-[#f3d38a]">{formatInvalidChildLinkCount(group.summary.invalidChildLinkCount)}</p>
         ) : null}
-        {visibleItems.map((item) => {
+        {expandedItems.map((item) => {
           const siblingItems = group?.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth) ?? [];
           const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
           const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.85;
@@ -5049,9 +5138,11 @@ export function TaskManagementTableV2({
 
           return (
             <div
-              className={`group flex min-w-0 items-start gap-2 rounded-[0.95rem] border border-transparent px-1.5 py-2.5 text-left transition ${isMetadataTarget ? "bg-[#fbfaff] dark:bg-white/[0.05]" : "bg-transparent"} ${canSelectChildTask ? "cursor-pointer hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90" : ""}`}
+              className={`group flex min-w-0 items-start gap-2 rounded-[0.95rem] border border-transparent px-1.5 py-2.5 text-left transition ${isMetadataTarget ? "bg-[#fbfaff] dark:bg-white/[0.05]" : "bg-transparent"} ${canSelectChildTask ? "cursor-pointer hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
               data-same-table-step-row={item.id}
               key={item.id}
+              onDragOver={(event) => updateChildTaskDropTarget(event, item)}
+              onDrop={(event) => dropChildTaskOnItem(event, item)}
               onClick={canSelectChildTask ? (event) => {
                 event.stopPropagation();
                 selectEditorMetadataTask(item.id);
@@ -5124,6 +5215,23 @@ export function TaskManagementTableV2({
                     </p>
                   </div>
                   <div className="flex flex-none items-center gap-1">
+                    {onReorderChildTask ? (
+                      <button
+                        aria-label={`Drag to reorder ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                        className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#8a79d6] opacity-70 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                        draggable
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onDragEnd={clearChildTaskDragState}
+                        onDragStart={(event) => beginChildTaskDrag(event, item)}
+                        onPointerDown={stopRowActionPointerEvent}
+                        type="button"
+                      >
+                        <GripVertical className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
                     {onReorderChildTask ? (
                       <>
                         <button
@@ -5268,9 +5376,6 @@ export function TaskManagementTableV2({
             </div>
           );
         })}
-        {hiddenItemCount > 0 ? (
-          <p className="text-xs text-[#8d87a7] dark:text-white/45">{`${hiddenItemCount} more ${hiddenItemCount === 1 ? "step" : "steps"} hidden in preview.`}</p>
-        ) : null}
       </div>
     );
   };
@@ -5734,8 +5839,10 @@ export function TaskManagementTableV2({
           return (
             <Fragment key={item.id}>
               <div
-                className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-2 pl-[3px] pr-0 text-center transition dark:bg-[#181226] ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""}`}
+                className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-2 pl-[3px] pr-0 text-center transition dark:bg-[#181226] ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                 data-same-table-step-row={item.id}
+                onDragOver={(event) => updateChildTaskDropTarget(event, item)}
+                onDrop={(event) => dropChildTaskOnItem(event, item)}
                 onClick={canOpenStepActions ? (event) => {
                   event.stopPropagation();
                   openTableStepActions(item.id, "status");
@@ -5758,6 +5865,18 @@ export function TaskManagementTableV2({
                         {renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
                         {onReorderChildTask ? (
                           <span className="ml-auto flex shrink-0 items-center" onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
+                            <button
+                              aria-label={`Drag to reorder ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent text-[#8a79d6] opacity-70 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                              draggable
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                              }}
+                              onDragEnd={clearChildTaskDragState}
+                              onDragStart={(event) => beginChildTaskDrag(event, item)}
+                              type="button"
+                            ><GripVertical className="h-3.5 w-3.5" /></button>
                             <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex <= 0} onClick={() => onReorderChildTask(item.id, "up")} type="button"><ArrowUp className="h-3.5 w-3.5" /></button>
                             <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1} onClick={() => onReorderChildTask(item.id, "down")} type="button"><ArrowDown className="h-3.5 w-3.5" /></button>
                           </span>

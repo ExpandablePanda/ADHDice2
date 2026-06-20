@@ -1,6 +1,13 @@
 import { buildTaskHierarchyAdapter, type TaskHierarchyItem } from "@/lib/task-hierarchy";
 
 export type TaskSiblingReorderDirection = "down" | "up";
+export type TaskSiblingDropPlacement = "after" | "before";
+export type TaskSiblingReorderInstruction =
+  | TaskSiblingReorderDirection
+  | {
+      placement: TaskSiblingDropPlacement;
+      targetTaskId: string;
+    };
 
 export type TaskSiblingSortOrderUpdate = {
   id: string;
@@ -22,7 +29,7 @@ export type TaskSiblingReorderPlan =
 export function buildTaskSiblingReorderPlan<TTask extends TaskHierarchyItem>(
   tasks: readonly TTask[],
   taskId: string,
-  direction: TaskSiblingReorderDirection,
+  instruction: TaskSiblingReorderInstruction,
 ): TaskSiblingReorderPlan {
   const adapter = buildTaskHierarchyAdapter(tasks);
   const task = adapter.taskById.get(taskId);
@@ -44,13 +51,15 @@ export function buildTaskSiblingReorderPlan<TTask extends TaskHierarchyItem>(
   }
 
   const currentIndex = siblings.findIndex((sibling) => sibling.id === taskId);
-  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-  if (currentIndex < 0 || targetIndex < 0 || targetIndex >= siblings.length) {
+  if (currentIndex < 0) {
     return { ok: false, reason: "boundary" };
   }
 
-  const reordered = [...siblings];
-  [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex]!, reordered[currentIndex]!];
+  const reordered = buildReorderedSiblings(siblings, currentIndex, instruction);
+  if (!reordered) {
+    return { ok: false, reason: "boundary" };
+  }
+
   const updates = reordered.flatMap((sibling, index) => {
     const sortOrder = index + 1;
     return sibling.sort_order === sortOrder ? [] : [{ id: sibling.id, sortOrder }];
@@ -62,4 +71,39 @@ export function buildTaskSiblingReorderPlan<TTask extends TaskHierarchyItem>(
     parentTaskId: task.parent_task_id,
     updates,
   };
+}
+
+function buildReorderedSiblings<TTask extends TaskHierarchyItem>(
+  siblings: readonly TTask[],
+  currentIndex: number,
+  instruction: TaskSiblingReorderInstruction,
+): TTask[] | null {
+  if (typeof instruction === "string") {
+    const targetIndex = instruction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= siblings.length) {
+      return null;
+    }
+
+    const reordered = [...siblings];
+    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex]!, reordered[currentIndex]!];
+    return reordered;
+  }
+
+  const currentTask = siblings[currentIndex];
+  if (!currentTask) {
+    return null;
+  }
+
+  const remainingSiblings = siblings.filter((sibling) => sibling.id !== currentTask.id);
+  const targetIndex = remainingSiblings.findIndex((sibling) => sibling.id === instruction.targetTaskId);
+  if (targetIndex < 0) {
+    return null;
+  }
+
+  const insertIndex = instruction.placement === "before" ? targetIndex : targetIndex + 1;
+  const reordered = [...remainingSiblings];
+  reordered.splice(insertIndex, 0, currentTask);
+
+  const orderChanged = reordered.some((sibling, index) => sibling.id !== siblings[index]?.id);
+  return orderChanged ? reordered : null;
 }
