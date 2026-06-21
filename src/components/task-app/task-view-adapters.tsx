@@ -7,6 +7,12 @@ import { BottomDockComponent } from "./bottom-dock";
 import { FilterRowsComponent } from "./task-filter-rows";
 import { FocusPlannerModalComponent } from "./focus-planner-modal";
 import { Select } from "./task-status-select";
+import { formatTaskStatusLabel, renderTaskStatusCircle, TASK_STATUS_CHIP_STYLES } from "./task-status-ui";
+import {
+  TASK_TABLE_CHIP_BASE_CLASS,
+  TASK_TABLE_INACTIVE_CHIP_CLASS,
+  TaskTableChipButton,
+} from "@/components/ui/task-table-primitives";
 import { TaskGridViewComponent } from "./task-grid-view";
 import {
   buildTaskDueDateSet,
@@ -25,6 +31,7 @@ import type { TaskDraft } from "./task-editor-model";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 import type { AppPage } from "@/lib/task-ui-state";
 import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
+import { getTaskHistoryCalendarActionStatuses } from "@/lib/task-complete";
 import type {
   Task,
   TaskHistory as DbTaskHistory,
@@ -74,6 +81,11 @@ function formatCalendarDate(dateKey: string) {
 }
 
 const HISTORY_STATUS_CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
+const ACTIVE_CHIP_RING_CLASS = "ring-2 ring-[#d7cbfb] ring-offset-1 dark:ring-[#6d56d6] dark:ring-offset-[#18112d]";
+
+function statusTone(status: TaskStatus) {
+  return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
+}
 
 function FocusStatsCard({
   activeCount,
@@ -508,7 +520,7 @@ export function TaskHistoryModal({
   todayDateKey,
 }: {
   onClose: () => void;
-  onSetStatus: (entryDate: string, status: "clear" | "did_my_best" | "done" | "missed") => Promise<void>;
+  onSetStatus: (entryDate: string, status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<void>;
   task: Task;
   taskHistory: DbTaskHistory[];
   taskTitle: string;
@@ -527,6 +539,7 @@ export function TaskHistoryModal({
   const selectedEntry = historyByDate.get(selectedDate) ?? null;
   const selectedIsFuture = selectedDate > today;
   const selectedIsDue = dueDates.has(selectedDate);
+  const calendarActionStatuses = getTaskHistoryCalendarActionStatuses(task);
 
   for (let weekIndex = 0; weekIndex < Math.ceil(totalDays / 7); weekIndex += 1) {
     weeks.push(days.slice(weekIndex * 7, weekIndex * 7 + 7));
@@ -541,11 +554,11 @@ export function TaskHistoryModal({
         : "border-[#f0ebfb] bg-white text-[#c9bfdc] dark:border-white/[0.06] dark:bg-[#141124] dark:text-white/15";
     }
     if (entry.status === "missed") return "border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]";
-    if (entry.status === "did_my_best") return "border-[#b8d4fb] bg-[#eef5ff] text-[#3669d6] dark:border-[#2a4377] dark:bg-[#16233f] dark:text-[#9dc0ff]";
+    if (entry.status === "did_my_best") return "border-[#f2d36f] bg-[#fff7d6] text-[#b28700] dark:border-[#6c5521] dark:bg-[#3a2b05] dark:text-[#f3d38a]";
     return "border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]";
   }
 
-  async function handleSetStatus(status: "clear" | "did_my_best" | "done" | "missed") {
+  async function handleSetStatus(status: "clear" | "complete" | "did_my_best" | "done" | "missed") {
     if (selectedIsFuture) {
       return;
     }
@@ -557,17 +570,24 @@ export function TaskHistoryModal({
     }
   }
 
+  function renderOfficialStatusChip(status: TaskStatus, label?: string) {
+    return (
+      <span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${statusTone(status)} gap-2`}>
+        {renderTaskStatusCircle(status, "sm")}
+        <span>{label ?? formatTaskStatusLabel(status)}</span>
+      </span>
+    );
+  }
+
   function renderStatusPill(entry: DbTaskHistory | null) {
     if (!entry) {
       return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`}>No Entry</span>;
     }
-    if (entry.status === "missed") {
-      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]`}>{formatTaskHistoryEntryLabel(entry)}</span>;
+    if (entry.status === "complete" && entry.event_type === "completed_permanently") {
+      return renderOfficialStatusChip("complete", formatTaskHistoryEntryLabel(entry));
     }
-    if (entry.status === "did_my_best") {
-      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#b8d4fb] bg-[#eef5ff] text-[#3669d6] dark:border-[#2a4377] dark:bg-[#16233f] dark:text-[#9dc0ff]`}>{formatTaskHistoryEntryLabel(entry)}</span>;
-    }
-    return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]`}>{formatTaskHistoryEntryLabel(entry)}</span>;
+
+    return renderOfficialStatusChip(entry.status, formatTaskHistoryEntryLabel(entry));
   }
 
   return (
@@ -592,10 +612,11 @@ export function TaskHistoryModal({
                 <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p>
                 <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Tap a square to inspect or update that date.</p>
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
-                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#bddbd0] bg-[#edf9f4]" />Done / Marked Complete</span>
-                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#b8d4fb] bg-[#eef5ff]" />Did My Best</span>
-                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#f7bbc3] bg-[#fff1f3]" />Missed</span>
+              <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+                {renderOfficialStatusChip("done", "Done")}
+                {renderOfficialStatusChip("complete", "Marked Complete")}
+                {renderOfficialStatusChip("did_my_best", "Did My Best")}
+                {renderOfficialStatusChip("missed", "Missed")}
                 <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#ddd6fb] bg-[#faf8ff]" />Due</span>
               </div>
             </div>
@@ -664,11 +685,27 @@ export function TaskHistoryModal({
               </div>
               {renderStatusPill(selectedEntry)}
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <button className="ui-pill-button-strong-light justify-start" disabled={isSaving || selectedIsFuture} onClick={() => { void handleSetStatus("done"); }} type="button">Done</button>
-              <button className="ui-pill-button-strong-light justify-start" disabled={isSaving || selectedIsFuture} onClick={() => { void handleSetStatus("did_my_best"); }} type="button">Did My Best</button>
-              <button className="ui-pill-button-danger-light justify-start" disabled={isSaving || selectedIsFuture} onClick={() => { void handleSetStatus("missed"); }} type="button">Missed</button>
-              <button className="ui-pill-button-light justify-start" disabled={isSaving || selectedIsFuture} onClick={() => { void handleSetStatus("clear"); }} type="button">Clear</button>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {calendarActionStatuses.map((status) => (
+                <TaskTableChipButton
+                  className="gap-2"
+                  disabled={isSaving || selectedIsFuture}
+                  key={status}
+                  onClick={() => { void handleSetStatus(status); }}
+                  toneClassName={`${statusTone(status)}${selectedEntry?.status === status ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"} disabled:opacity-50`}
+                >
+                  {renderTaskStatusCircle(status, "sm")}
+                  <span>{formatTaskStatusLabel(status)}</span>
+                </TaskTableChipButton>
+              ))}
+              <TaskTableChipButton
+                className="gap-2"
+                disabled={isSaving || selectedIsFuture}
+                onClick={() => { void handleSetStatus("clear"); }}
+                toneClassName={`${TASK_TABLE_INACTIVE_CHIP_CLASS}${selectedEntry === null ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"} disabled:opacity-50`}
+              >
+                <span>Clear</span>
+              </TaskTableChipButton>
             </div>
             <p className="mt-4 text-xs text-[#8d87a7] dark:text-white/40">
               Calendar edits update saved task history, streaks, and the live task status when the active unresolved state changes. They do not change past rewards or economy.

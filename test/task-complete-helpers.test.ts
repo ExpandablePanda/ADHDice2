@@ -8,6 +8,7 @@ import {
   buildCompleteHistoryPayload,
   canTaskBeMarkedComplete,
   getTaskCompleteConfirmationCopy,
+  getTaskHistoryCalendarActionStatuses,
   getSelectableTaskStatusesForRepeatFrequency,
   isArchiveLikeTask,
   shouldOptimisticallyPatchTaskStatus,
@@ -38,6 +39,27 @@ test("recurring status options keep occurrence statuses and add complete", () =>
     "not_due",
     "archived",
     "trashed",
+  ]);
+});
+
+test("calendar action statuses hide occurrence-only actions for one-off tasks", () => {
+  assert.deepEqual(getTaskHistoryCalendarActionStatuses({ repeat_frequency: "none" }), [
+    "complete",
+  ]);
+});
+
+test("calendar action statuses keep occurrence actions and separate complete for recurring tasks", () => {
+  assert.deepEqual(getTaskHistoryCalendarActionStatuses({ repeat_frequency: "daily" }), [
+    "done",
+    "did_my_best",
+    "missed",
+    "complete",
+  ]);
+  assert.deepEqual(getTaskHistoryCalendarActionStatuses({ repeat_frequency: "daily_until_complete" }), [
+    "done",
+    "did_my_best",
+    "missed",
+    "complete",
   ]);
 });
 

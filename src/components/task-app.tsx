@@ -310,7 +310,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.7.10";
+const APP_VERSION = "6.7.12";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -3736,8 +3736,12 @@ export function TaskApp() {
     : null;
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
-    onSetStatus: async (entryDate: string, status: "clear" | "did_my_best" | "done" | "missed") => {
+    onSetStatus: async (entryDate: string, status: "clear" | "complete" | "did_my_best" | "done" | "missed") => {
       if (!taskHistoryModalTaskId) {
+        return;
+      }
+      if (status === "complete") {
+        await updateTaskStatus(taskHistoryModalTask, "complete");
         return;
       }
       await syncTaskHistoryEntry(

@@ -40,6 +40,12 @@ export function getSelectableTaskStatuses(task: Pick<Task, "repeat_frequency">) 
   return getSelectableTaskStatusesForRepeatFrequency(task.repeat_frequency);
 }
 
+export function getTaskHistoryCalendarActionStatuses(task: Pick<Task, "repeat_frequency">) {
+  return task.repeat_frequency === "none"
+    ? (["complete"] as const)
+    : (["done", "did_my_best", "missed", "complete"] as const);
+}
+
 export function getIncompleteCompletionDescendants(taskId: string, tasks: Task[]) {
   return getTaskDescendants(taskId, tasks).filter((descendant) => descendant.status !== "complete");
 }

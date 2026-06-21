@@ -5,7 +5,7 @@ Last reviewed: 2026-06-20
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.7.10`.
+- Current working app version: `6.7.12`.
 - Current release group: `6.7.x` same-parent Step/Substep drag reorder.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -273,3 +273,11 @@ Manual QA focus for `6.7.9`: attempt to mark a parent with unfinished Steps `Com
 ## 6.7.10 Implementation Note
 
 Permanent Complete history rendering now uses a dedicated display label instead of falling through to generic Done styling in the Task History modal. History/calendar entries with `status = "complete"` plus `event_type = "completed_permanently"` now render to the user as `Marked Complete` using the existing dark green Complete tone, while ordinary `Done`, `Did My Best`, `Missed`, and due-schedule rendering remain unchanged. This is a display-only follow-up; Complete action behavior, rewards, recurrence, archive logic, and SQL/manual rollover concerns are unchanged in `6.7.10`.
+
+## 6.7.11 Implementation Note
+
+The Task History calendar now matches the intended task action model instead of only exposing occurrence-style completion controls. One-off tasks now offer permanent `Complete` rather than occurrence-only `Done` / `Did My Best` / `Missed`, while recurring and `Daily Until Complete` tasks keep those occurrence actions and also gain separate permanent `Complete`, routed through the existing Complete confirmation/write path rather than a new lifecycle branch. The Task History calendar and pills also now render `Did My Best` in the approved gold tone, while `Done`, `Missed`, and dark-green `Marked Complete` remain unchanged.
+
+## 6.7.12 Implementation Note
+
+The Task History calendar modal now uses copies of the shared official status chips instead of one-off custom pills for the visible status-chip surfaces in that UI. The calendar legend, saved-history status pills, selected-date status pill, and clickable status action chips now reuse the same icon-plus-chip language and sizing family as the rest of the task app, while `Clear` stays a neutral utility action and no Complete/reward/recurrence/archive behavior changes in this polish pass.
