@@ -5,6 +5,7 @@ import { useState, type ReactNode } from "react";
 import type { TaskDraft } from "./task-editor-model";
 import { renderTaskStatusCircle } from "./task-status-ui";
 import { formatActualSecondsLabel, formatRepeatSummary, formatTaskMetaLine } from "@/lib/task-formatting";
+import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { getNextPendingSubtask } from "@/lib/task-subtasks";
 import { isTaskUrgent } from "@/lib/task-buckets";
@@ -26,8 +27,6 @@ type Message = {
 
 type QuickPriority = "urgent" | "important" | "focus";
 const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
-const TASK_STATUS_OPTIONS: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "upcoming", "not_due"];
-
 function EmptyTaskState({ text }: { text: string }) {
   return (
     <div className="rounded-[1.25rem] border border-dashed px-4 py-5 text-sm border-[#ddd6f9] bg-[#faf8ff] text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
@@ -245,7 +244,7 @@ export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStat
               {task.is_important ? <TaskMetaChip tone="yellow">Important</TaskMetaChip> : null}
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {TASK_STATUS_OPTIONS.map((status) => {
+              {getSelectableTaskStatuses(task).map((status) => {
                 const isActive = task.status === status;
                 return (
                   <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-7 w-7 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">
@@ -291,7 +290,7 @@ export function TaskMatrixViewComponent({ onEditTask, onSetStatus, subtasksByTas
                   {task.one_step_at_a_time && getNextPendingSubtask(task.id, subtasksByTaskId) ? <p className="mt-1 text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]">Next: {getNextPendingSubtask(task.id, subtasksByTaskId)?.title}</p> : null}
                 </div>
                 <div className="flex items-center gap-2">
-                  {TASK_STATUS_OPTIONS.map((status) => {
+                  {getSelectableTaskStatuses(task).map((status) => {
                     const isActive = task.status === status;
                     return (
                       <button aria-label={`Set status to ${formatOptionLabel(status)}`} className={`h-6 w-6 rounded-full border-2 transition ${isActive ? "border-[#202844] dark:border-white" : "border-transparent opacity-65 hover:opacity-100"}`} key={status} onClick={() => onSetStatus(task, status)} title={formatOptionLabel(status)} type="button">

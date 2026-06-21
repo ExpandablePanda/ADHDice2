@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { TrendingUp } from "lucide-react";
 import { ModalShell } from "./modal-shell";
+import { FocusPillSelect, FocusSuggestionInput } from "./focus-form-controls";
 import {
   TaskTableChipButton,
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
@@ -1443,18 +1444,20 @@ export function DailyHistoryGallery({
               <p className="mt-1 text-sm text-[var(--text-secondary)]">Update duration, date, and labels for this individual entry.</p>
               <p className="mt-2 text-sm font-semibold text-[var(--accent)]">Time logged: {formatLoggedTime(editingEntry.createdAt)}</p>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <label className="text-sm sm:col-span-2">
-                  <span className="mb-1 block font-semibold">Saved Category</span>
-                  <select className="h-10 w-full px-3 ui-input-light" value={entryCategoryId} onChange={(event) => handleCategoryChange(event.target.value)}>
-                    <option value="__none__">No saved category</option>
-                    {categories.map((category) => <option key={category.id} value={category.id}>{category.title}</option>)}
-                  </select>
-                </label>
-                <label className="text-sm sm:col-span-2">
-                  <span className="mb-1 block font-semibold">Title</span>
-                  <input className="h-10 w-full px-3 ui-input-light" list="history-focus-titles" type="text" value={entryTitle} onChange={(event) => setEntryTitle(event.target.value)} />
-                  <datalist id="history-focus-titles">{labelOptions.titles.map((option) => <option key={option} value={option} />)}</datalist>
-                </label>
+                <div className="sm:col-span-2">
+                  <FocusPillSelect
+                    label="Saved Category"
+                    onChange={handleCategoryChange}
+                    options={[
+                      { label: "No saved category", value: "__none__" },
+                      ...categories.map((category) => ({ label: category.title, value: category.id })),
+                    ]}
+                    value={entryCategoryId}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <FocusSuggestionInput label="Title" onChange={setEntryTitle} options={labelOptions.titles} value={entryTitle} />
+                </div>
                 <label className="text-sm">
                   <span className="mb-1 block font-semibold">Date</span>
                   <input className="h-10 w-full px-3 ui-input-light" type="date" value={entryDate} onChange={(event) => setEntryDate(event.target.value)} />
@@ -1467,21 +1470,15 @@ export function DailyHistoryGallery({
                   <span className="mb-1 block font-semibold">Minutes</span>
                   <input className="h-10 w-full px-3 ui-input-light" max={59} min={0} type="number" value={entryMinutes} onChange={(event) => setEntryMinutes(event.target.value)} />
                 </label>
-                <label className="text-sm">
-                  <span className="mb-1 block font-semibold">Type</span>
-                  <input className="h-10 w-full px-3 ui-input-light" list="history-focus-types" type="text" value={entryType} onChange={(event) => setEntryType(event.target.value as FocusType)} />
-                  <datalist id="history-focus-types">{labelOptions.types.map((option) => <option key={option} value={option} />)}</datalist>
-                </label>
-                <label className="text-sm">
-                  <span className="mb-1 block font-semibold">Subtype</span>
-                  <input className="h-10 w-full px-3 ui-input-light" list="history-primary-subtypes" type="text" value={entryPrimarySubtype} onChange={(event) => setEntryPrimarySubtype(event.target.value as FocusSubtype)} />
-                  <datalist id="history-primary-subtypes">{labelOptions.primarySubtypes.map((option) => <option key={option} value={option} />)}</datalist>
-                </label>
-                <label className="text-sm">
-                  <span className="mb-1 block font-semibold">Subtype 2</span>
-                  <input className="h-10 w-full px-3 ui-input-light" list="history-secondary-subtypes" placeholder="Optional" type="text" value={entrySecondarySubtype} onChange={(event) => setEntrySecondarySubtype(event.target.value)} />
-                  <datalist id="history-secondary-subtypes">{labelOptions.secondarySubtypes.map((option) => <option key={option} value={option} />)}</datalist>
-                </label>
+                <div className="text-sm">
+                  <FocusSuggestionInput label="Type" onChange={(value) => setEntryType(value as FocusType)} options={labelOptions.types} value={entryType} />
+                </div>
+                <div className="text-sm">
+                  <FocusSuggestionInput label="Subtype" onChange={(value) => setEntryPrimarySubtype(value as FocusSubtype)} options={labelOptions.primarySubtypes} value={entryPrimarySubtype} />
+                </div>
+                <div className="text-sm">
+                  <FocusSuggestionInput label="Subtype 2" onChange={setEntrySecondarySubtype} options={labelOptions.secondarySubtypes} placeholder="Optional" value={entrySecondarySubtype} />
+                </div>
                 <label className="text-sm sm:col-span-2">
                   <span className="mb-1 block font-semibold">Notes</span>
                   <textarea className="min-h-20 w-full px-3 py-2 ui-input-light" value={entryNotes} onChange={(event) => setEntryNotes(event.target.value)} />

@@ -1,4 +1,5 @@
 import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import { isArchiveLikeTask, shouldHideTaskFromPrimaryViews } from "@/lib/task-complete";
 import { todayISO } from "@/lib/utils";
 
 export type TaskBucket =
@@ -24,7 +25,7 @@ export type TaskBucketContext = {
 };
 
 const OPEN_TASK_STATUSES: TaskStatus[] = ["pending", "in_progress", "upcoming", "not_due", "missed"];
-const FINISHED_TASK_STATUSES: TaskStatus[] = ["done", "did_my_best"];
+const FINISHED_TASK_STATUSES: TaskStatus[] = ["done", "did_my_best", "complete"];
 
 export function isTaskOpenStatus(status: TaskStatus) {
   return OPEN_TASK_STATUSES.includes(status);
@@ -43,7 +44,7 @@ export function isTaskFinished(task: Task) {
 }
 
 export function isTaskVisibleInPrimaryViews(task: Task) {
-  return task.status !== "archived" && task.status !== "trashed";
+  return !shouldHideTaskFromPrimaryViews(task);
 }
 
 export function isTaskUrgent(task: Task) {
@@ -72,7 +73,7 @@ export function isTaskQuickWin(task: Task) {
 export function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucket {
   const todayKey = todayISO();
 
-  if (task.status === "archived") {
+  if (isArchiveLikeTask(task)) {
     return "archive";
   }
 

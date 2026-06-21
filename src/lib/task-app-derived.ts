@@ -1,5 +1,6 @@
 import { buildTaskCollections } from "@/lib/task-selectors";
 import { buildTaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
+import { isArchiveLikeTask } from "@/lib/task-complete";
 import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
 import { sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
 import type {
@@ -396,7 +397,7 @@ export function computeTaskAppDerivedData({
 
   const normalizationStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const primaryTasks = tasks.filter((task) => !primaryHiddenChildTaskIds.has(task.id));
-  const archiveTasks = primaryTasks.filter((task) => task.status === "archived");
+  const archiveTasks = primaryTasks.filter((task) => isArchiveLikeTask(task));
   const recentlyDeletedTasks = primaryTasks.filter((task) => isTaskInRecentTrash(task));
   const visibleTasks = primaryTasks.filter(isTaskVisibleInPrimaryViews);
   const taskLinkedNotesByTaskId = availableTaskNotes.reduce<Record<string, TaskEditorLinkedNote[]>>((accumulator, note) => {
@@ -434,6 +435,7 @@ export function computeTaskAppDerivedData({
     done: 0,
     missed: 0,
     did_my_best: 0,
+    complete: 0,
     upcoming: 0,
     not_due: 0,
     archived: 0,

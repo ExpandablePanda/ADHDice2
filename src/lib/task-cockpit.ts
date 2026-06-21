@@ -1,4 +1,5 @@
 import type { Task } from "@/lib/database.types";
+import { isArchiveLikeTask } from "@/lib/task-complete";
 import {
   getTaskBucket,
   isTaskFinished,
@@ -225,7 +226,7 @@ function getTaskCockpitBucket(
     isUrgentTask: boolean;
   },
 ): TaskBucket {
-  if (task.status === "archived") {
+  if (isArchiveLikeTask(task)) {
     return "archive";
   }
 

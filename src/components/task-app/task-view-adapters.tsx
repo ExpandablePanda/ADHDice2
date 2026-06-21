@@ -11,6 +11,7 @@ import { TaskGridViewComponent } from "./task-grid-view";
 import {
   buildTaskDueDateSet,
   computeTaskSpecificHistoryStats,
+  formatTaskHistoryEntryLabel,
   type TaskHistoryStats,
 } from "@/lib/task-history";
 import {
@@ -561,12 +562,12 @@ export function TaskHistoryModal({
       return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`}>No Entry</span>;
     }
     if (entry.status === "missed") {
-      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]`}>Missed</span>;
+      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]`}>{formatTaskHistoryEntryLabel(entry)}</span>;
     }
     if (entry.status === "did_my_best") {
-      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#b8d4fb] bg-[#eef5ff] text-[#3669d6] dark:border-[#2a4377] dark:bg-[#16233f] dark:text-[#9dc0ff]`}>Did My Best</span>;
+      return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#b8d4fb] bg-[#eef5ff] text-[#3669d6] dark:border-[#2a4377] dark:bg-[#16233f] dark:text-[#9dc0ff]`}>{formatTaskHistoryEntryLabel(entry)}</span>;
     }
-    return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]`}>Done</span>;
+    return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]`}>{formatTaskHistoryEntryLabel(entry)}</span>;
   }
 
   return (
@@ -592,7 +593,7 @@ export function TaskHistoryModal({
                 <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Tap a square to inspect or update that date.</p>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-3 text-xs">
-                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#bddbd0] bg-[#edf9f4]" />Done</span>
+                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#bddbd0] bg-[#edf9f4]" />Done / Marked Complete</span>
                 <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#b8d4fb] bg-[#eef5ff]" />Did My Best</span>
                 <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#f7bbc3] bg-[#fff1f3]" />Missed</span>
                 <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#ddd6fb] bg-[#faf8ff]" />Due</span>

@@ -9,7 +9,12 @@ import {
   isMissingTaskListsTableError,
 } from "../src/lib/task-db-compat.ts";
 import { isProbablyValidUrl, parseTagList } from "../src/lib/task-input-parsing.ts";
-import { calcNextDueDate, formatRepeatSummary, resolveRecurringLiveStatusFromNextDueDate } from "../src/lib/task-repeat.ts";
+import {
+  buildDailyUntilCompleteMissedDateKeys,
+  calcNextDueDate,
+  formatRepeatSummary,
+  resolveRecurringLiveStatusFromNextDueDate,
+} from "../src/lib/task-repeat.ts";
 import { formatTaskMetaLine } from "../src/lib/task-formatting.ts";
 import { isValidDateKey, normalizeTaskFocusIds } from "../src/lib/task-focus-days.ts";
 import { normalizeLogoSrc } from "../src/lib/profile-store.ts";
@@ -57,6 +62,44 @@ test("repeat helpers compute summaries and next due date", () => {
   assert.equal(formatRepeatSummary(task), "Weekly (Mon, Wed)");
   const nextDue = calcNextDueDate(task);
   assert.ok(nextDue);
+});
+
+test("daily until complete repeat helpers advance like daily and expose the locked label", () => {
+  const task = createTask({
+    created_at: "2026-05-20T09:00:00.000Z",
+    due_on: "2026-05-20",
+    id: "task-daily-until-complete",
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "done",
+    title: "Daily until complete",
+  });
+
+  assert.equal(formatRepeatSummary(task), "Daily Until Complete");
+  assert.equal(calcNextDueDate(task), "2026-05-21");
+});
+
+test("daily until complete missed-date helper backfills overdue days without duplicating logged history", () => {
+  const task = createTask({
+    created_at: "2026-05-20T09:00:00.000Z",
+    due_on: "2026-05-20",
+    id: "task-daily-until-complete-missed",
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "pending",
+    title: "Daily until complete missed helper",
+  });
+
+  assert.deepEqual(
+    buildDailyUntilCompleteMissedDateKeys(task, "2026-05-23", null),
+    ["2026-05-20", "2026-05-21", "2026-05-22"],
+  );
+  assert.deepEqual(
+    buildDailyUntilCompleteMissedDateKeys(task, "2026-05-23", "2026-05-21"),
+    ["2026-05-22"],
+  );
 });
 
 test("repeat helpers resolve recurring live status from next due date and logical-day time", () => {

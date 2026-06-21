@@ -44,6 +44,7 @@ const DESKTOP_COLUMNS = "md:grid-cols-[2.75rem_minmax(0,2.2fr)_7rem_7rem_6rem_6r
 
 const STATUS_STYLES: Record<TaskStatus, string> = {
   archived: "border-[#b7becd] bg-white text-[#5e687d] dark:border-white/20 dark:bg-white/[0.04] dark:text-white/55",
+  complete: "border-[#5d9b76] bg-white text-[#256947] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]",
   did_my_best: "border-[#f2d36f] bg-white text-[#b28700] dark:border-[#65511a] dark:bg-[#3a2d10] dark:text-[#ffd56b]",
   done: "border-[#97dfc1] bg-white text-[#119a69] dark:border-[#245441] dark:bg-[#14362c] dark:text-[#7de4b8]",
   in_progress: "border-[#a9c2ff] bg-white text-[#4473df] dark:border-[#29437c] dark:bg-[#17253f] dark:text-[#a9c2ff]",

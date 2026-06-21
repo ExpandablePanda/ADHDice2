@@ -14,7 +14,7 @@ import {
   type TaskRewardCandidate,
   type TaskRewardResolution,
 } from "@/lib/task-rewards";
-import { resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import { buildDailyUntilCompleteMissedDateKeys, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
 import {
   isMissingTaskRewardClaimSubtaskColumnError,
   isMissingTaskRewardClaimsTableError,
@@ -35,6 +35,7 @@ type UseTaskRewardControllerOptions = {
   dayStartTime: string;
   logicalDayNow: number;
   setMessage: Dispatch<SetStateAction<Message | null>>;
+  setTaskHistory: Dispatch<SetStateAction<DbTaskHistory[]>>;
   setTaskSubtasks: Dispatch<SetStateAction<DbTaskSubtask[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
@@ -51,6 +52,7 @@ export function useTaskRewardController({
   dayStartTime,
   logicalDayNow,
   setMessage,
+  setTaskHistory,
   setTaskSubtasks,
   setTasks,
   sortTasksForUi,
@@ -100,6 +102,66 @@ export function useTaskRewardController({
       .map((candidate) => candidate.task);
   }
 
+  async function backfillDailyUntilCompleteMisses(task: Task) {
+    const missedDates = buildDailyUntilCompleteMissedDateKeys(task, currentDayKey, null);
+    if (missedDates.length === 0) {
+      return true;
+    }
+
+    const { data: existingRows, error: existingRowsError } = await client
+      .from("adhdice_task_history")
+      .select("*")
+      .eq("user_id", currentUserId)
+      .eq("task_id", task.id)
+      .in("entry_date", missedDates);
+
+    if (existingRowsError) {
+      setMessage({ tone: "warn", text: existingRowsError.message });
+      return false;
+    }
+
+    const latestExistingDate = (existingRows ?? [])
+      .map((entry) => entry.entry_date)
+      .sort()
+      .at(-1) ?? null;
+    const normalizedMissedDates = buildDailyUntilCompleteMissedDateKeys(task, currentDayKey, latestExistingDate);
+    if (normalizedMissedDates.length === 0) {
+      return true;
+    }
+
+    const payload = normalizedMissedDates.map((entryDate) => ({
+      counted_as_due_occurrence: false,
+      entry_date: entryDate,
+      event_type: "status" as const,
+      status: "missed" as const,
+      task_id: task.id,
+      user_id: currentUserId,
+      was_completed: false,
+    }));
+
+    const { data, error } = await client
+      .from("adhdice_task_history")
+      .upsert(payload, { onConflict: "user_id,task_id,entry_date" })
+      .select("*");
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if ((data ?? []).length > 0) {
+      setTaskHistory((current) => {
+        const nextByKey = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
+        for (const entry of data ?? []) {
+          nextByKey.set(`${entry.task_id}:${entry.entry_date}`, entry);
+        }
+        return [...nextByKey.values()];
+      });
+    }
+
+    return true;
+  }
+
   async function finalizeRecurringTasks(completedTasks: Task[]) {
     if (!client || !currentUserId || completedTasks.length === 0) {
       return;
@@ -108,6 +170,13 @@ export function useTaskRewardController({
     const updates = await Promise.all(completedTasks.map(async (task) => {
       if (task.repeat_frequency === "none") {
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
+      }
+
+      if (task.repeat_frequency === "daily_until_complete") {
+        const historySaved = await backfillDailyUntilCompleteMisses(task);
+        if (!historySaved) {
+          return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
+        }
       }
 
       const nextDue = calcNextDueDateFromDate(task, currentDayKey);

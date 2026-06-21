@@ -64,7 +64,7 @@ export function useTaskUpdateAction({
       clearPendingTaskMutations?.([taskId]);
       if (conflict.latestTask) {
         setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? conflict.latestTask ?? task : task)));
-        if (conflict.latestTask.status === "done" || conflict.latestTask.status === "did_my_best" || conflict.latestTask.status === "archived" || conflict.latestTask.status === "trashed") {
+        if (conflict.latestTask.status === "done" || conflict.latestTask.status === "did_my_best" || conflict.latestTask.status === "complete" || conflict.latestTask.status === "archived" || conflict.latestTask.status === "trashed") {
           routeTask(taskId, null);
         }
       }
@@ -78,7 +78,7 @@ export function useTaskUpdateAction({
         : data;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
-      if (data.status === "done" || data.status === "did_my_best" || data.status === "archived" || data.status === "trashed") {
+      if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {
         routeTask(taskId, null);
       }
       const historySaved = await syncTaskHistoryEntry(taskId, data.status);

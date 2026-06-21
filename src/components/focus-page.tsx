@@ -16,6 +16,7 @@ import { CategoryManager } from "./category-manager";
 import { DailyHistoryGallery } from "./focus-history";
 import { SessionFinishModal, ManualEntryModal } from "./focus-modals";
 import { ModalShell } from "./modal-shell";
+import { FocusPillSelect } from "./focus-form-controls";
 
 function FocusTimerPicker({
   categories,
@@ -455,18 +456,18 @@ function CategoryGoalsModal({
           <p className="text-sm text-[var(--text-secondary)]">
             Set daily and weekly goals with hours and minutes. Editing one side auto-fills the other using a 7-day week.
           </p>
-          <label className="flex flex-col gap-2">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-40">Sort Goals</span>
-            <select
-              className="px-4 py-3 ui-input-light"
-              onChange={(event) => setSortMode(event.target.value as "alphabetical" | "daily" | "weekly")}
+          <div className="w-full sm:w-[14rem]">
+            <FocusPillSelect
+              label="Sort Goals"
+              onChange={(value) => setSortMode(value as "alphabetical" | "daily" | "weekly")}
+              options={[
+                { label: "Alphabetical", value: "alphabetical" },
+                { label: "Daily Hours", value: "daily" },
+                { label: "Weekly Hours", value: "weekly" },
+              ]}
               value={sortMode}
-            >
-              <option value="alphabetical">Alphabetical</option>
-              <option value="daily">Daily Hours</option>
-              <option value="weekly">Weekly Hours</option>
-            </select>
-          </label>
+            />
+          </div>
         </div>
 
         <div className="mt-6 max-h-[55vh] overflow-y-auto pr-2">

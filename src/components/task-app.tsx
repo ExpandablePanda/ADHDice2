@@ -177,8 +177,17 @@ import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
-import { calcNextDueDateFromDate } from "@/lib/task-repeat";
+import {
+  buildDailyUntilCompleteMissedDateKeys,
+  calcNextDueDateFromDate,
+} from "@/lib/task-repeat";
 import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
+import {
+  buildCompleteHistoryPayload,
+  canTaskBeMarkedComplete,
+  COMPLETE_BLOCKED_MESSAGE,
+  getTaskCompleteConfirmationDescription,
+} from "@/lib/task-complete";
 import { filterPromotedLegacySubtasks } from "@/lib/task-legacy-step-promotion";
 import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
 import {
@@ -301,7 +310,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.7.4";
+const APP_VERSION = "6.7.10";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -743,8 +752,8 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
 };
 const priorityOptions: TaskPriority[] = ["normal", "high", "low"];
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
-const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "upcoming", "not_due", "archived", "trashed"];
-const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "weekly", "monthly", "custom"];
+const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "complete", "upcoming", "not_due", "archived", "trashed"];
+const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
 const repeatWeekdayOptions = [
   { label: "Sun", value: 0 },
   { label: "Mon", value: 1 },
@@ -930,6 +939,19 @@ export function TaskApp() {
   const [shrinkAllColumnsToken, setShrinkAllColumnsToken] = useState(0);
   const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
+  const [pendingCompleteAction, setPendingCompleteAction] = useState<{
+    focusToday?: boolean;
+    linkedNoteIds?: string[];
+    source: "editor" | "status";
+    subtasks?: TaskSubtaskDraft[];
+    taskId: string;
+    values?: TaskUpdate;
+  } | null>(null);
+  const [taskEditorStatusResetSignal, setTaskEditorStatusResetSignal] = useState<{
+    status: TaskStatus;
+    taskId: string;
+    token: number;
+  } | null>(null);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
   const [taskActualTimeEntryTaskId, setTaskActualTimeEntryTaskId] = useState<string | null>(null);
   const [taskActualTimeEntryPrefill, setTaskActualTimeEntryPrefill] = useState<{ durationSeconds: number; title: string } | null>(null);
@@ -2133,6 +2155,7 @@ export function TaskApp() {
     dayStartTime,
     logicalDayNow,
     setMessage,
+    setTaskHistory,
     setTaskSubtasks,
     setTasks,
     sortTasksForUi,
@@ -3232,6 +3255,17 @@ export function TaskApp() {
     subtasks: TaskSubtaskDraft[];
     values: Parameters<typeof saveTaskEditor>[0];
   }) {
+    if (selectedTaskForEditor && draft.values.status === "complete") {
+      requestTaskComplete(selectedTaskForEditor, {
+        focusToday: draft.focusToday,
+        linkedNoteIds: draft.linkedNoteIds,
+        source: "editor",
+        subtasks: draft.subtasks,
+        values: draft.values,
+      });
+      return;
+    }
+
     const savedTask = await saveTaskEditor(draft.values, {
       focusToday: draft.focusToday,
       linkedNoteIds: draft.linkedNoteIds,
@@ -3282,6 +3316,183 @@ export function TaskApp() {
     });
   }
 
+  function buildCompleteTaskUpdateValues(task: Task, values?: TaskUpdate) {
+    return {
+      ...values,
+      completed_at: values?.completed_at ?? task.completed_at ?? new Date().toISOString(),
+      repeat_day_of_month: null,
+      repeat_days_of_week: [],
+      repeat_frequency: "none" as const,
+      repeat_interval: 1,
+      status: "complete" as const,
+      trashed_at: null,
+    } satisfies TaskUpdate;
+  }
+
+  function requestTaskComplete(
+    task: Task,
+    options?: {
+      focusToday?: boolean;
+      linkedNoteIds?: string[];
+      source?: "editor" | "status";
+      subtasks?: TaskSubtaskDraft[];
+      values?: TaskUpdate;
+    },
+  ) {
+    const eligibility = canTaskBeMarkedComplete(task.id, tasks);
+    if (!eligibility.canComplete) {
+      if (options?.source === "editor") {
+        setTaskEditorStatusResetSignal({
+          status: task.status,
+          taskId: task.id,
+          token: Date.now(),
+        });
+      }
+      setMessage({ tone: "warn", text: COMPLETE_BLOCKED_MESSAGE });
+      return false;
+    }
+
+    setPendingCompleteAction({
+      focusToday: options?.focusToday,
+      linkedNoteIds: options?.linkedNoteIds,
+      source: options?.source ?? "status",
+      subtasks: options?.subtasks,
+      taskId: task.id,
+      values: options?.values,
+    });
+    return true;
+  }
+
+  async function confirmPendingTaskComplete() {
+    if (!pendingCompleteAction || !session?.user?.id) {
+      return;
+    }
+
+    const task = tasks.find((entry) => entry.id === pendingCompleteAction.taskId);
+    if (!task) {
+      setPendingCompleteAction(null);
+      return;
+    }
+
+    const eligibility = canTaskBeMarkedComplete(task.id, tasks);
+    if (!eligibility.canComplete) {
+      setPendingCompleteAction(null);
+      setMessage({ tone: "warn", text: COMPLETE_BLOCKED_MESSAGE });
+      return;
+    }
+
+    const completeUpdateValues = buildCompleteTaskUpdateValues(task, pendingCompleteAction.values);
+    const { conflict, data, error } = await runGuardedTaskRowUpdate(task.id, completeUpdateValues, {
+      expectedTask: task,
+    });
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return;
+    }
+
+    if (conflict) {
+      if (conflict.latestTask) {
+        setTasks((current) => sortTasksForUi(current.map((currentTask) => currentTask.id === task.id ? conflict.latestTask ?? currentTask : currentTask)));
+      }
+      setMessage({ tone: "warn", text: buildTaskUpdateConflictMessage(conflict) });
+      return;
+    }
+
+    if (!data) {
+      setMessage({ tone: "warn", text: "Task completion succeeded, but no updated task row came back from Supabase." });
+      return;
+    }
+
+    const linkedNoteIds = pendingCompleteAction.linkedNoteIds ?? [];
+    const subtasks = pendingCompleteAction.subtasks ?? [];
+    const historyPayload = buildCompleteHistoryPayload({
+      due_on: completeUpdateValues.due_on ?? task.due_on,
+      id: task.id,
+      repeat_frequency: task.repeat_frequency,
+    }, todayKey, session.user.id);
+    const missedDates = buildDailyUntilCompleteMissedDateKeys(task, todayKey, null);
+    const missedPayloads = task.repeat_frequency === "daily_until_complete"
+      ? missedDates.map((entryDate) => ({
+        counted_as_due_occurrence: false,
+        entry_date: entryDate,
+        event_type: "status" as const,
+        status: "missed" as const,
+        task_id: task.id,
+        user_id: session.user.id,
+        was_completed: false,
+      }))
+      : [];
+    const historyPayloads = [...missedPayloads, historyPayload];
+
+    const { data: historyRows, error: historyError } = await client
+      .from("adhdice_task_history")
+      .upsert(historyPayloads, { onConflict: "user_id,task_id,entry_date" })
+      .select("*");
+
+    if (historyError) {
+      await runGuardedTaskRowUpdate(task.id, {
+        completed_at: task.completed_at,
+        repeat_day_of_month: task.repeat_day_of_month,
+        repeat_days_of_week: task.repeat_days_of_week,
+        repeat_frequency: task.repeat_frequency,
+        repeat_interval: task.repeat_interval,
+        status: task.status,
+        trashed_at: task.trashed_at,
+      }, { expectedTask: data });
+      setMessage({ tone: "warn", text: historyError.message });
+      return;
+    }
+
+    if (subtasks.length > 0) {
+      const subtasksResult = await replaceTaskSubtasks(task.id, subtasks);
+      if (!subtasksResult.saved) {
+        setMessage({ tone: "warn", text: "Task was marked Complete, but its Steps could not be saved." });
+        return;
+      }
+    }
+
+    if (pendingCompleteAction.source === "editor") {
+      const linkedNotesSaved = await syncTaskNoteLinks(task.id, linkedNoteIds);
+      if (!linkedNotesSaved) {
+        setMessage({ tone: "warn", text: "Task was marked Complete, but its linked notes could not be saved." });
+        return;
+      }
+    }
+
+    setTasks((current) => sortTasksForUi(current.map((currentTask) => currentTask.id === task.id ? data : currentTask)));
+    if ((historyRows ?? []).length > 0) {
+      setTaskHistory((current) => {
+        const byKey = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
+        for (const row of historyRows ?? []) {
+          byKey.set(`${row.task_id}:${row.entry_date}`, row);
+        }
+        return [...byKey.values()];
+      });
+    }
+
+    routeTask(task.id, null);
+    if (focusedTaskIds.includes(task.id)) {
+      void saveFocusSelection(focusedTaskIds.filter((id) => id !== task.id));
+    }
+
+    await queueTaskRewards([{ previousStatus: task.status, task: data }]);
+
+    if (pendingCompleteAction.source === "editor") {
+      closeTaskEditorWithReset();
+    }
+    if (selectedListTaskIds.includes(task.id)) {
+      clearListTaskSelection();
+    }
+    setPendingCompleteAction(null);
+    setMessage({
+      tone: "good",
+      text: task.parent_task_id
+        ? `"${data.title}" marked Complete and kept with its parent.`
+        : `"${data.title}" marked Complete and moved to Archive.`,
+    });
+  }
+
   function buildTaskStatusUpdate(task: Task, status: TaskStatus) {
     const now = new Date().toISOString();
 
@@ -3313,6 +3524,11 @@ export function TaskApp() {
   }
 
   function updateTaskStatus(task: Task, status: TaskStatus) {
+    if (status === "complete") {
+      requestTaskComplete(task, { source: "status" });
+      return Promise.resolve(false);
+    }
+
     const values = buildTaskStatusUpdate(task, status);
     return updateTask(
       task.id,
@@ -3510,6 +3726,7 @@ export function TaskApp() {
     onLogActualTime: handleTaskEditorActualTimeLog,
     onOpenHistory: selectedTaskForEditor ? openSelectedTaskHistory : undefined,
     onSave: handleTaskEditorSave,
+    statusResetSignal: taskEditorStatusResetSignal,
     subtasks: selectedTaskForEditor ? rawTaskSubtasksByTaskId[selectedTaskForEditor.id] ?? [] : [],
     task: selectedTaskForEditor,
   } : null;
@@ -3861,6 +4078,26 @@ export function TaskApp() {
                 actualTimeEntryFlow={actualTimeEntryFlow}
                 batchDeleteFlow={batchDeleteFlow}
                 batchEditFlow={batchEditFlow}
+                completeFlow={(() => {
+                  if (!pendingCompleteAction) {
+                    return null;
+                  }
+                  const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
+                  const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
+                  return {
+                  confirmLabel: "Mark Complete",
+                  description: getTaskCompleteConfirmationDescription(completeFlowTask),
+                  modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
+                    ? "Mark step complete"
+                    : "Mark task permanently complete",
+                  onClose: () => setPendingCompleteAction(null),
+                  onConfirm: () => { void confirmPendingTaskComplete(); },
+                  taskTitle: pendingCompleteTask?.title ?? "Task",
+                  title: (pendingCompleteTask?.parent_task_id ?? null)
+                    ? "Mark this Step Complete?"
+                    : "Mark permanently Complete?",
+                };
+                })()}
                 focusPlannerFlow={focusPlannerFlow}
                 momentumFlow={momentumFlow}
                 taskEditorFlow={taskEditorFlow}

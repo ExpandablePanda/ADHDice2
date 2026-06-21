@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-06-19
+Last reviewed: 2026-06-20
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.7.4`.
+- Current working app version: `6.7.10`.
 - Current release group: `6.7.x` same-parent Step/Substep drag reorder.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -200,7 +200,7 @@ Role: active working
 2. Define the future snapshot payload contract and restore overwrite rules before adding any restore SQL or runtime restore entry points.
 3. Extend Step movement only after separate product approval; same-parent drag/drop now exists, but cross-parent movement and promote/demote remain deferred.
 4. Run the gated legacy Step promotion only after manual dry-run review, then verify duplicate suppression against real promoted rows.
-5. Decide when `scheduled_on` becomes authoritative and gate that behind a dedicated runtime/data contract ticket.
+5. Implement the remaining `Complete` calendar/filter/UI polish phase for `Daily Until Complete` now that `6.7.9` has landed the first QA fixes for blocked rollback and child visibility.
 
 ## 6.6.0 Implementation Note
 
@@ -237,3 +237,39 @@ List View no longer caps expanded same-table Steps/Substeps to a four-row previe
 ## 6.7.4 Implementation Note
 
 The full Edit Task UI no longer caps same-table Steps/Substeps to a short preview inside the left `Steps` section. All currently visible descendants now render inline there, the old `hidden in preview` overflow copy is removed, and the existing descendant chevrons remain the only row-hiding control inside that editor surface. Same-parent drag/drop, Move Up/Move Down, title rename, metadata targeting, sticky right Meta Data column behavior, `sort_order` logic, and `parent_task_id` rules are unchanged in this follow-up.
+
+## 6.7.5 Implementation Note
+
+Focus surfaces now replace their remaining native-looking category and label dropdowns with the shared ADHDice-styled Focus combobox/select controls. The Focus Goals editor sort control, Master Categories sort/type/subtype controls, and Focus History edit modal saved-category/title/type/subtype fields now use the same site-styled popover language already established in Focus modals, while timer behavior, recurrence/status logic, HUD, and non-Focus dropdowns remain unchanged.
+
+## 6.7.6 Implementation Note
+
+The `Daily Until Complete` / `Complete` feature work now has its manual data-contract foundation only. A new manual SQL migration adds the planned `complete` task status, `daily_until_complete` repeat value, and minimal `adhdice_task_history` metadata columns for `completed_permanently` plus `counted_as_due_occurrence`, while local TypeScript database types and the new `docs/daily-until-complete-plan.md` spec are aligned to that contract. Runtime status menus, recurrence rollover, missed backfill, rewards, archive behavior, confirmation, and calendar rendering remain intentionally unchanged in this release.
+
+## 6.7.7 Implementation Note
+
+`Daily Until Complete` now exists as a real repeat option in the normal repeat-selection surfaces, and the shared client recurrence helpers treat it like the existing daily engine for next-due-date calculation and live due classification. Overdue user-driven `Done` / `Did My Best` completion now backfills one `Missed` history row per skipped day before advancing to the next daily occurrence, while a new manual SQL patch file, `supabase/patch_daily_until_complete_rollover_rpc.sql`, updates the canonical `adhdice_reconcile_task_rollover` path so app-load/day-change rollover can do the same backfill and preserve anchored overdue `due_on` values after the SQL is run manually. `Complete` status action semantics, reward banking, archive cascade, undo/restore behavior, calendar rendering, and active-view filtering remain intentionally deferred to the next phase.
+
+Verification for `6.7.7` should stay narrow: run `git diff --check` plus the focused task recurrence/history tests only, and treat the known unrelated `matchesTaskListRules` memoization failure in `test/task-refactor-helpers.test.ts` as pre-existing if it still appears.
+
+Manual QA focus for `6.7.7`: create a `Daily Until Complete` task and a `Daily Until Complete` Step, confirm the repeat option appears in Table View, List View, and the editor, confirm overdue `Done` / `Did My Best` creates one missed history row per skipped day without duplicates, and confirm ordinary daily tasks still advance exactly as before.
+
+## 6.7.8 Implementation Note
+
+`Complete` now has a first real runtime action path for normal single-task status changes and existing-task editor saves. The action is blocked until all descendants recursively are already `complete`, then confirmed with the locked permanent-completion modal copy before writing one `completed_permanently` task-history row for today, clearing recurrence back to `none`, preserving due-date metadata, and banking rolls exactly once through the existing reward path. In derived task views, `status = 'complete'` is now treated as archive-like so completed rows move out of normal active views without introducing a broader archive-schema redesign in this phase.
+
+Verification for `6.7.8` should stay narrow: run `git diff --check` plus the focused helper/history/archive/reward tests. If `test/task-refactor-helpers.test.ts` still reports the known unrelated `matchesTaskListRules` memoization failure, treat it as pre-existing and do not fix it in this ticket.
+
+Manual QA focus for `6.7.8`: mark a one-off task `Complete` from List View, Table View, and the Edit Task modal; confirm the confirmation modal appears first, the task disappears from active views and appears under Archive, and only one reward bank event is created. Then mark a `Daily Until Complete` task `Complete` both when due today and when overdue, confirm skipped days backfill as `Missed`, confirm only one `Complete` history row exists for today, and confirm a parent task is blocked with `Complete all Steps before completing this task.` until every descendant is already `Complete`.
+
+## 6.7.9 Implementation Note
+
+The first `Complete` QA follow-up now fixes two regressions without broad archive redesign. Blocked parent `Complete` attempts no longer leave a stale local `Complete` chip/circle in the single-task status UI; the table/list status surface stops optimistic local patching for `Complete`, and the Edit Task modal receives a targeted status reset back to the row’s actual prior status when descendant validation fails. Child Steps/Substeps also no longer use archive-like hiding or archive wording on individual completion: they still confirm, stop recurring, write `completed_permanently` history, and bank one reward, but they stay visible under active parents and only hide/archive together through the existing derived parent-child visibility rule once the parent itself becomes completed/archive-like.
+
+Verification for `6.7.9` should stay narrow: run `git diff --check` plus focused Complete/helper/history/archive/derived-view tests only. If unrelated pre-existing failures appear outside that scope, report them and leave them untouched.
+
+Manual QA focus for `6.7.9`: attempt to mark a parent with unfinished Steps `Complete` from Table View, List View, and Edit Task, and confirm the blocked message appears without leaving the status UI on `Complete`. Then mark an individual Step/Substep `Complete`, confirm the child-specific confirmation copy appears, confirm the row stays visible under its active parent as `Complete`, and finally mark a fully completed top-level parent `Complete` to confirm the parent leaves active views while its completed descendants no longer appear independently.
+
+## 6.7.10 Implementation Note
+
+Permanent Complete history rendering now uses a dedicated display label instead of falling through to generic Done styling in the Task History modal. History/calendar entries with `status = "complete"` plus `event_type = "completed_permanently"` now render to the user as `Marked Complete` using the existing dark green Complete tone, while ordinary `Done`, `Did My Best`, `Missed`, and due-schedule rendering remain unchanged. This is a display-only follow-up; Complete action behavior, rewards, recurrence, archive logic, and SQL/manual rollover concerns are unchanged in `6.7.10`.

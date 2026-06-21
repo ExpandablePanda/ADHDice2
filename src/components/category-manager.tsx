@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { type FocusCategory, type FocusType, type FocusSubtype, type FocusLabelOptions } from "@/lib/types";
 import { CategoryIcon } from "./task-app";
 import { ModalShell } from "./modal-shell";
+import { FocusPillSelect, FocusSuggestionInput } from "./focus-form-controls";
 
 const ACCENT_COLORS = [
   "#6f57f6",
@@ -454,17 +455,17 @@ export function CategoryManager({
                 <span className="text-lg font-bold">+</span> Add New
               </button>
 
-              <label className="flex flex-col gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider opacity-40">Sort Categories</span>
-                <select
-                  className="px-4 py-3 ui-input-light"
-                  onChange={(e) => setSortMode(e.target.value as SortMode)}
+              <div className="w-full sm:w-[15rem]">
+                <FocusPillSelect
+                  label="Sort Categories"
+                  onChange={(value) => setSortMode(value as SortMode)}
+                  options={[
+                    { label: "Category Title", value: "title" },
+                    { label: "Focus Type", value: "focusType" },
+                  ]}
                   value={sortMode}
-                >
-                  <option value="title">Category Title</option>
-                  <option value="focusType">Focus Type</option>
-                </select>
-              </label>
+                />
+              </div>
             </div>
 
             <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -531,50 +532,29 @@ export function CategoryManager({
                 />
               </label>
 
-              <label className="flex flex-col gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider opacity-40">Focus Type</span>
-                <input
-                  className="px-4 py-2 ui-input-light"
-                  list="category-manager-focus-types"
-                  onChange={(e) => setEditingCat({ ...editingCat, focusType: e.target.value as FocusType })}
-                  placeholder="Work"
-                  type="text"
-                  value={editingCat.focusType}
-                />
-                <datalist id="category-manager-focus-types">
-                  {labelOptions.types.map((option) => <option key={option} value={option} />)}
-                </datalist>
-              </label>
+              <FocusSuggestionInput
+                label="Focus Type"
+                onChange={(value) => setEditingCat({ ...editingCat, focusType: value as FocusType })}
+                options={labelOptions.types}
+                placeholder="Work"
+                value={editingCat.focusType}
+              />
 
-              <label className="flex flex-col gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype</span>
-                <input
-                  className="px-4 py-2 ui-input-light"
-                  list="category-manager-primary-subtypes"
-                  onChange={(e) => handlePrimarySubtypeChange(e.target.value as FocusSubtype)}
-                  placeholder="Productive"
-                  type="text"
-                  value={primarySubtypeDraft}
-                />
-                <datalist id="category-manager-primary-subtypes">
-                  {labelOptions.primarySubtypes.map((option) => <option key={option} value={option} />)}
-                </datalist>
-              </label>
+              <FocusSuggestionInput
+                label="Subtype"
+                onChange={(value) => handlePrimarySubtypeChange(value as FocusSubtype)}
+                options={labelOptions.primarySubtypes}
+                placeholder="Productive"
+                value={primarySubtypeDraft}
+              />
 
-              <label className="flex flex-col gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider opacity-40">Subtype 2</span>
-                <input
-                  className="px-4 py-2 ui-input-light"
-                  list="category-manager-secondary-subtypes"
-                  onChange={(e) => handleSecondarySubtypeChange(e.target.value)}
-                  placeholder="Optional"
-                  type="text"
-                  value={secondarySubtypeDraft}
-                />
-                <datalist id="category-manager-secondary-subtypes">
-                  {labelOptions.secondarySubtypes.map((option) => <option key={option} value={option} />)}
-                </datalist>
-              </label>
+              <FocusSuggestionInput
+                label="Subtype 2"
+                onChange={handleSecondarySubtypeChange}
+                options={labelOptions.secondarySubtypes}
+                placeholder="Optional"
+                value={secondarySubtypeDraft}
+              />
 
               <div className="flex flex-col gap-3">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

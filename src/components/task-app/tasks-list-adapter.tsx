@@ -14,6 +14,7 @@ import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import { buildTaskTableRow } from "@/lib/task-table-row";
 import { useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode } from "react";
@@ -51,6 +52,7 @@ const PRIORITY_OPTIONS = [
 const REPEAT_OPTIONS = [
   { label: "No Repeat", value: "none" as const },
   { label: "Daily", value: "daily" as const },
+  { label: "Daily Until Complete", value: "daily_until_complete" as const },
   { label: "Weekly", value: "weekly" as const },
   { label: "Monthly", value: "monthly" as const },
   { label: "Custom Cadence", value: "custom" as const },
@@ -64,8 +66,6 @@ const REPEAT_WEEKDAY_OPTIONS = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ];
-const STATUS_OPTIONS: TaskStatus[] = ["pending", "in_progress", "done", "missed", "did_my_best", "upcoming", "not_due", "archived", "trashed"];
-
 function priorityTone(priority: "focus" | "important" | "urgent") {
   if (priority === "focus") return "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
   if (priority === "important") return "border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]";
@@ -351,6 +351,7 @@ type TasksListAdapterProps = {
 
 const SIMPLE_STATUS_STYLES: Record<TaskStatus, string> = {
   archived: "border-[#d8ddea] bg-white text-[#68738c] dark:border-white/15 dark:bg-white/[0.04] dark:text-white/55",
+  complete: "border-[#5d9b76] bg-[#eef8f1] text-[#256947] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]",
   did_my_best: "border-[#f2d36f] bg-[#fff9e7] text-[#9f7200] dark:border-[#65511a] dark:bg-[#3a2d10] dark:text-[#ffd56b]",
   done: "border-[#97dfc1] bg-[#ecfbf4] text-[#119a69] dark:border-[#245441] dark:bg-[#14362c] dark:text-[#7de4b8]",
   in_progress: "border-[#a9c2ff] bg-[#eef3ff] text-[#4473df] dark:border-[#29437c] dark:bg-[#17253f] dark:text-[#a9c2ff]",
@@ -964,7 +965,7 @@ function StepsCardPreview({
                 {activePanelMode === "status" ? (
                   <QuickPanelShell onClose={closeQuickPanel} title={`Status · ${item.title || "Step"}`}>
                     <div className="flex flex-wrap gap-2">
-                      {STATUS_OPTIONS.map((status) => (
+                      {getSelectableTaskStatuses(childTask ?? { repeat_frequency: item.repeat }).map((status) => (
                         <TaskTableChipButton
                           className="gap-2"
                           key={status}
@@ -1352,7 +1353,9 @@ function RepeatQuickPanel({
     onSave(nextRepeat, {
       repeatDayOfMonth: Number.isFinite(parsedDayOfMonth) && parsedDayOfMonth >= 1 && parsedDayOfMonth <= 31 ? parsedDayOfMonth : nextDayOfMonth ?? null,
       repeatDaysOfWeek: nextRepeat === "weekly" || nextRepeat === "custom" ? nextDays : [],
-      repeatInterval: Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1,
+      repeatInterval: nextRepeat === "daily_until_complete"
+        ? 1
+        : Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1,
     });
   };
 
@@ -1372,17 +1375,19 @@ function RepeatQuickPanel({
       </div>
       {repeatFrequency !== "none" ? (
         <div className="mt-3 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">Interval</span>
-            <input
-              className={`${QUICK_PANEL_TEXT_INPUT_CLASS} w-20`}
-              min={1}
-              onChange={(event) => setIntervalDraft(event.target.value)}
-              type="number"
-              value={intervalDraft}
-            />
-            <TaskTableChipButton onClick={() => applyCadence(repeatFrequency)} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save interval</TaskTableChipButton>
-          </div>
+          {repeatFrequency !== "daily_until_complete" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">Interval</span>
+              <input
+                className={`${QUICK_PANEL_TEXT_INPUT_CLASS} w-20`}
+                min={1}
+                onChange={(event) => setIntervalDraft(event.target.value)}
+                type="number"
+                value={intervalDraft}
+              />
+              <TaskTableChipButton onClick={() => applyCadence(repeatFrequency)} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save interval</TaskTableChipButton>
+            </div>
+          ) : null}
           {repeatFrequency === "weekly" || repeatFrequency === "custom" ? (
             <div className="flex flex-wrap gap-2">
               {REPEAT_WEEKDAY_OPTIONS.map((option) => {
@@ -2004,7 +2009,7 @@ function TasksSimpleList({
             {activePanelMode === "status" ? (
               <QuickPanelShell onClose={closeQuickPanel} title={`Status · ${panelTitle}`}>
                 <div className="flex flex-wrap gap-2">
-                  {STATUS_OPTIONS.map((status) => (
+                  {getSelectableTaskStatuses(task).map((status) => (
                     <TaskTableChipButton
                       className="gap-2"
                       key={status}

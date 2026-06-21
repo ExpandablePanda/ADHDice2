@@ -8,6 +8,7 @@ export const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {
   done: "border border-[#97dfc1] bg-white text-[#119a69]",
   missed: "border border-[#f4afbc] bg-white text-[#d94e67]",
   did_my_best: "border border-[#f2d36f] bg-white text-[#b28700]",
+  complete: "border border-[#5d9b76] bg-white text-[#256947]",
   upcoming: "border border-[#cfd6e4] bg-white text-[#68738c]",
   not_due: "border border-[#a9daf7] bg-white text-[#3388c9]",
   archived: "border border-[#b7becd] bg-white text-[#5e687d]",
@@ -53,6 +54,10 @@ export function renderTaskStatusGlyph(
 
   if (status === "did_my_best") {
     return <Star className={iconSize} />;
+  }
+
+  if (status === "complete") {
+    return <span className={`${size === "sm" ? "text-[11px]" : "text-xs"} font-bold leading-none`}>✓</span>;
   }
 
   if (status === "upcoming") {
@@ -121,6 +126,14 @@ export function renderTaskStatusCircle(
   if (status === "did_my_best") {
     return (
       <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#b28700] text-[#b28700]`}>
+        {renderTaskStatusGlyph(status, size)}
+      </span>
+    );
+  }
+
+  if (status === "complete") {
+    return (
+      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#256947] text-[#256947]`}>
         {renderTaskStatusGlyph(status, size)}
       </span>
     );

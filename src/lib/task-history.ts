@@ -1,13 +1,13 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
-import { resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import { isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
 
 export function isTaskCompletedForHistory(status: TaskStatus) {
-  return status === "done" || status === "did_my_best";
+  return status === "done" || status === "did_my_best" || status === "complete";
 }
 
 export function isTaskHistoryStatus(status: TaskStatus) {
-  return status === "done" || status === "did_my_best" || status === "missed";
+  return status === "done" || status === "did_my_best" || status === "missed" || status === "complete";
 }
 
 export type TaskHistoryStats = {
@@ -42,6 +42,37 @@ export type TaskHistoryFacts = {
 
 export function mapTaskHistoryRow(row: DbTaskHistory) {
   return row;
+}
+
+export function isPermanentCompleteHistoryEntry(entry: Pick<DbTaskHistory, "event_type" | "status">) {
+  return entry.status === "complete" && entry.event_type === "completed_permanently";
+}
+
+export function formatTaskHistoryEntryLabel(entry: Pick<DbTaskHistory, "event_type" | "status">) {
+  if (isPermanentCompleteHistoryEntry(entry)) {
+    return "Marked Complete";
+  }
+
+  if (entry.status === "did_my_best") {
+    return "Did My Best";
+  }
+
+  if (entry.status === "missed") {
+    return "Missed";
+  }
+
+  if (entry.status === "done") {
+    return "Done";
+  }
+
+  if (entry.status === "complete") {
+    return "Complete";
+  }
+
+  return entry.status
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function createHistoryWindowFlags(initialValue = false): Record<TaskHistoryWindowPreset, boolean> {
@@ -102,8 +133,15 @@ export function resolveLiveTaskStatusFromHistory(
     };
   }
 
+  if (latestEntry?.status === "complete") {
+    return {
+      completedAt: task.completed_at ?? now.toISOString(),
+      status: "complete",
+    };
+  }
+
   if (task.repeat_frequency === "none") {
-    if (latestEntry?.status === "done" || latestEntry?.status === "did_my_best") {
+    if (latestEntry?.status === "done" || latestEntry?.status === "did_my_best" || latestEntry?.status === "complete") {
       return {
         completedAt: task.completed_at ?? now.toISOString(),
         status: latestEntry.status,
@@ -336,7 +374,7 @@ export function isTaskDueOnDate(task: Task, dateKey: string) {
 
   const interval = Math.max(1, task.repeat_interval ?? 1);
 
-  if (task.repeat_frequency === "daily" || task.repeat_frequency === "custom") {
+  if (isDailyCadenceRepeatFrequency(task.repeat_frequency)) {
     return isAlignedToInterval(daysBetween(anchorDateKey, dateKey), interval);
   }
 
@@ -376,7 +414,7 @@ function isHistoricalRecurringDueDate(task: Task, dateKey: string) {
 
   const interval = Math.max(1, task.repeat_interval ?? 1);
 
-  if (task.repeat_frequency === "daily" || task.repeat_frequency === "custom") {
+  if (isDailyCadenceRepeatFrequency(task.repeat_frequency)) {
     return isAlignedToInterval(daysBetween(anchorDateKey, dateKey), interval);
   }
 

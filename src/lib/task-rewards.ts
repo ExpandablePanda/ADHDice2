@@ -91,7 +91,7 @@ export const TASK_REWARD_TIERS: TaskRewardTier[] = [
 ];
 
 export function isRewardCompletionStatus(status: TaskStatus | null | undefined) {
-  return status === "done" || status === "did_my_best";
+  return status === "done" || status === "did_my_best" || status === "complete";
 }
 
 export function isNewRewardCompletion(previousStatus: TaskStatus | null | undefined, nextStatus: TaskStatus) {

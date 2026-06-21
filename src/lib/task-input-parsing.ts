@@ -483,7 +483,13 @@ function parseDueTimeValue(value: string) {
 
 function parseRepeatValue(value: string) {
   const normalized = normalizeOptionValue(value);
-  if (normalized === "none" || normalized === "daily" || normalized === "weekly" || normalized === "monthly") {
+  if (
+    normalized === "none"
+    || normalized === "daily"
+    || normalized === "weekly"
+    || normalized === "monthly"
+    || normalized === "daily_until_complete"
+  ) {
     return normalized as TaskRepeatFrequency;
   }
   return null;

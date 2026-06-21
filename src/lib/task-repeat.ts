@@ -1,4 +1,4 @@
-import { formatDateKey } from "@/lib/task-grid-layout";
+import { formatDateKey, shiftDateKey } from "@/lib/task-grid-layout";
 import type { Task, TaskStatus } from "@/lib/database.types";
 
 type ResolveRecurringLiveStatusOptions = {
@@ -11,6 +11,14 @@ type ResolveRecurringLiveStatusOptions = {
 
 const REPEAT_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
+export function isDailyUntilCompleteRepeatFrequency(repeatFrequency: Task["repeat_frequency"]) {
+  return repeatFrequency === "daily_until_complete";
+}
+
+export function isDailyCadenceRepeatFrequency(repeatFrequency: Task["repeat_frequency"]) {
+  return repeatFrequency === "daily" || repeatFrequency === "daily_until_complete" || repeatFrequency === "custom";
+}
+
 export function calcNextDueDate(task: Task): string | null {
   return calcNextDueDateFromDate(task, task.due_on ?? formatDateKey(new Date()));
 }
@@ -20,7 +28,7 @@ export function calcNextDueDateFromDate(task: Task, referenceDateKey: string): s
   const base = new Date(`${referenceDateKey}T12:00:00`);
   const interval = Math.max(1, task.repeat_interval ?? 1);
 
-  if (task.repeat_frequency === "daily") {
+  if (isDailyCadenceRepeatFrequency(task.repeat_frequency)) {
     base.setDate(base.getDate() + interval);
     return formatDateKey(base);
   }
@@ -123,6 +131,10 @@ export function resolveRecurringLiveStatusFromNextDueDate(
 export function formatRepeatSummary(task: Task) {
   if (task.repeat_frequency === "none") return null;
 
+  if (task.repeat_frequency === "daily_until_complete") {
+    return "Daily Until Complete";
+  }
+
   if (task.repeat_frequency === "daily") {
     return task.repeat_interval > 1 ? `Every ${task.repeat_interval} days` : "Daily";
   }
@@ -145,4 +157,39 @@ export function formatRepeatSummary(task: Task) {
   }
 
   return "Custom repeat";
+}
+
+function compareDateKeys(left: string, right: string) {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+export function buildDailyUntilCompleteMissedDateKeys(
+  task: Pick<Task, "due_on" | "repeat_frequency">,
+  currentDayKey: string,
+  latestHistoryDate: string | null,
+) {
+  if (!isDailyUntilCompleteRepeatFrequency(task.repeat_frequency) || !task.due_on) {
+    return [] as string[];
+  }
+
+  if (compareDateKeys(task.due_on, currentDayKey) >= 0) {
+    return [] as string[];
+  }
+
+  const startDate = latestHistoryDate
+    ? (compareDateKeys(shiftDateKey(latestHistoryDate, 1), task.due_on) > 0 ? shiftDateKey(latestHistoryDate, 1) : task.due_on)
+    : task.due_on;
+  const endDate = shiftDateKey(currentDayKey, -1);
+  if (compareDateKeys(startDate, endDate) > 0) {
+    return [] as string[];
+  }
+
+  const dates: string[] = [];
+  let cursor = startDate;
+  while (compareDateKeys(cursor, endDate) <= 0) {
+    dates.push(cursor);
+    cursor = shiftDateKey(cursor, 1);
+  }
+  return dates;
 }

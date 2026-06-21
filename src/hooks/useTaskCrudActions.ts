@@ -256,7 +256,7 @@ export function useTaskCrudActions({
           delete next[taskId];
         }
         for (const task of [...movedToTrashTasks, ...conflictedTasks]) {
-          if (task.status === "archived" || task.status === "trashed" || task.status === "done" || task.status === "did_my_best") {
+          if (task.status === "archived" || task.status === "trashed" || task.status === "done" || task.status === "did_my_best" || task.status === "complete") {
             delete next[task.id];
           }
         }

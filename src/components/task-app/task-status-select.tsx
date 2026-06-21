@@ -17,6 +17,8 @@ export function renderTaskStatusIcon(status: TaskStatus) {
       return <X className={`${iconClassName} translate-y-[0.5px]`} strokeWidth={2.6} />;
     case "did_my_best":
       return <Star className={iconClassName} />;
+    case "complete":
+      return <span className="text-sm font-bold leading-none">✓</span>;
     case "upcoming":
       return <Clock className={iconClassName} />;
     case "not_due":

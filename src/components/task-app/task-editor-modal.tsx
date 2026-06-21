@@ -11,6 +11,7 @@ import { isTaskFinishedStatusValue } from "@/lib/task-buckets";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, FocusLabelOptions } from "@/lib/types";
 import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import { getSelectableTaskStatuses, getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
 
 import {
   applyTaskEditorDraftOverrides,
@@ -40,7 +41,7 @@ import {
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "./task-status-ui";
 
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
-const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "weekly", "monthly", "custom"];
+const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
 const repeatWeekdayOptions = [
   { label: "Sun", value: 0 },
   { label: "Mon", value: 1 },
@@ -249,6 +250,7 @@ export function TaskEditorModal({
   onLogActualTime,
   onOpenHistory,
   onSave,
+  statusResetSignal,
   subtasks,
   task,
 }: {
@@ -264,6 +266,7 @@ export function TaskEditorModal({
   onLogActualTime: (entry: { title: string; notes: string; date: string; durationSeconds: number }) => Promise<boolean>;
   onOpenHistory?: () => void;
   onSave: (draft: { values: TaskDraft; focusToday: boolean; linkedNoteIds: string[]; subtasks: TaskSubtaskDraft[] }) => Promise<void>;
+  statusResetSignal?: { status: TaskStatus; taskId: string; token: number } | null;
   subtasks: DbTaskSubtask[];
   task: Task | null;
 }) {
@@ -309,6 +312,14 @@ export function TaskEditorModal({
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  useEffect(() => {
+    if (!statusResetSignal || !task || statusResetSignal.taskId !== task.id) {
+      return;
+    }
+
+    setDraft((current) => ({ ...current, status: statusResetSignal.status }));
+  }, [statusResetSignal, task]);
 
   useEffect(() => () => {
     if (editorScrollIdleTimeoutRef.current) {
@@ -462,7 +473,9 @@ export function TaskEditorModal({
     }));
   }
 
-  const visibleStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "missed", "did_my_best", "upcoming", "not_due", "archived"];
+  const visibleStatusOptions: TaskStatus[] = task
+    ? getSelectableTaskStatuses(task)
+    : getSelectableTaskStatusesForRepeatFrequency(draft.repeatFrequency).filter((status) => status !== "complete" && status !== "trashed");
   const compactRepeatOptions = repeatFrequencyOptions;
   const compactRepeatLabel = draft.repeatFrequency === "custom" ? "Custom cadence" : formatOptionLabel(draft.repeatFrequency);
   const handleManualFocusEntryProxy = onLogActualTime;
@@ -536,7 +549,9 @@ export function TaskEditorModal({
               one_step_at_a_time: draftSnapshot.oneStepAtATime,
               subtasks_auto_reset: draftSnapshot.subtasksAutoReset,
               repeat_frequency: draftSnapshot.repeatFrequency,
-              repeat_interval: Math.max(1, parsePositiveInteger(draftSnapshot.repeatInterval) ?? 1),
+              repeat_interval: draftSnapshot.repeatFrequency === "daily_until_complete"
+                ? 1
+                : Math.max(1, parsePositiveInteger(draftSnapshot.repeatInterval) ?? 1),
               repeat_days_of_week: draftSnapshot.repeatFrequency === "weekly" || draftSnapshot.repeatFrequency === "custom"
                 ? [...draftSnapshot.repeatDaysOfWeek].sort((a, b) => a - b)
                 : [],
@@ -580,7 +595,19 @@ export function TaskEditorModal({
                 value={draft.status}
               />
               <CompactSelectField label="Energy" onChange={(value) => setDraft((c) => ({ ...c, energy: value }))} options={energyOptions} value={draft.energy} />
-              <CompactSelectField label="Repeat" onChange={(value) => setDraft((c) => ({ ...c, repeatFrequency: value }))} options={compactRepeatOptions} renderValueLabel={(value) => value === "custom" ? "Custom cadence" : formatOptionLabel(value)} value={draft.repeatFrequency} />
+              <CompactSelectField
+                label="Repeat"
+                onChange={(value) => setDraft((current) => ({
+                  ...current,
+                  repeatDayOfMonth: value === "daily_until_complete" ? "" : current.repeatDayOfMonth,
+                  repeatDaysOfWeek: value === "daily_until_complete" ? [] : current.repeatDaysOfWeek,
+                  repeatFrequency: value,
+                  repeatInterval: value === "daily_until_complete" ? "1" : current.repeatInterval,
+                }))}
+                options={compactRepeatOptions}
+                renderValueLabel={(value) => value === "custom" ? "Custom cadence" : formatOptionLabel(value)}
+                value={draft.repeatFrequency}
+              />
             </div>
 
             <div className="grid gap-4">
@@ -826,7 +853,7 @@ export function TaskEditorModal({
                   {compactRepeatLabel}
                 </span>
               </div>
-              {draft.repeatFrequency !== "daily" ? (
+              {draft.repeatFrequency !== "daily" && draft.repeatFrequency !== "daily_until_complete" ? (
                 <div className="sm:max-w-[10rem]">
                   <LabeledInput label="Interval" onChange={(v) => setDraft((c) => ({ ...c, repeatInterval: v }))} placeholder="1" type="number" value={draft.repeatInterval} />
                 </div>

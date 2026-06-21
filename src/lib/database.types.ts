@@ -7,10 +7,11 @@ export type TaskStatus =
   | "upcoming"
   | "not_due"
   | "archived"
-  | "trashed";
+  | "trashed"
+  | "complete";
 export type TaskPriority = "low" | "normal" | "high";
 export type TaskEnergy = "none" | "low" | "medium" | "high";
-export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom";
+export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
 export type TaskSubtaskStatus =
   | "pending"
   | "in_progress"
@@ -308,10 +309,14 @@ export type TaskHistory = {
   user_id: string;
   entry_date: string;
   status: TaskStatus;
+  event_type: TaskHistoryEventType;
+  counted_as_due_occurrence: boolean;
   was_completed: boolean;
   created_at: string;
   updated_at: string;
 };
+
+export type TaskHistoryEventType = "status" | "completed_permanently";
 
 export type TaskHistoryInsert = {
   id?: string;
@@ -319,11 +324,13 @@ export type TaskHistoryInsert = {
   user_id: string;
   entry_date: string;
   status: TaskStatus;
-  was_completed: boolean;
+  event_type?: TaskHistoryEventType;
+  counted_as_due_occurrence?: boolean;
+  was_completed?: boolean;
 };
 
 export type TaskHistoryUpdate = Partial<
-  Pick<TaskHistory, "status" | "was_completed">
+  Pick<TaskHistory, "status" | "event_type" | "counted_as_due_occurrence" | "was_completed">
 >;
 
 export type TaskActualTimeEntry = {

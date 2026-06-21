@@ -33,6 +33,8 @@ import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTask
 import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
+import { getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
+import { shouldOptimisticallyPatchTaskStatus } from "@/lib/task-complete";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
@@ -55,7 +57,7 @@ import { mergeMeasuredColumnWidths } from "@/lib/task-table-measurements";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = "focus" | "important" | "urgent";
-type TaskRepeat = "custom" | "daily" | "monthly" | "none" | "weekly";
+type TaskRepeat = "custom" | "daily" | "daily_until_complete" | "monthly" | "none" | "weekly";
 type SortOptionId =
   | "status_asc"
   | "status_desc"
@@ -1096,6 +1098,7 @@ const ENERGY_OPTIONS: Array<{ label: string; value: TaskEnergy }> = [
 const REPEAT_OPTIONS: Array<{ label: string; value: TaskRepeat }> = [
   { label: "No Repeat", value: "none" },
   { label: "Daily", value: "daily" },
+  { label: "Daily Until Complete", value: "daily_until_complete" },
   { label: "Weekly", value: "weekly" },
   { label: "Monthly", value: "monthly" },
   { label: "Custom Cadence", value: "custom" },
@@ -1117,6 +1120,7 @@ const STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
   { label: "Done", value: "done" },
   { label: "Did My Best", value: "did_my_best" },
   { label: "Missed", value: "missed" },
+  { label: "Complete", value: "complete" },
   { label: "Upcoming", value: "upcoming" },
   { label: "Not Due", value: "not_due" },
   { label: "Archived", value: "archived" },
@@ -3002,7 +3006,9 @@ export function TaskManagementTableV2({
 
   function setTaskStatus(taskId: string, status: TaskStatus) {
     const targetTaskIds = getQuickEditTargetTaskIds(taskId);
-    patchTasks(targetTaskIds, (task) => ({ ...task, status }));
+    if (shouldOptimisticallyPatchTaskStatus(status)) {
+      patchTasks(targetTaskIds, (task) => ({ ...task, status }));
+    }
     for (const targetTaskId of targetTaskIds) {
       onTaskStatusChange?.(targetTaskId, status);
     }
@@ -3048,9 +3054,15 @@ export function TaskManagementTableV2({
     }
     const targetTaskIds = getQuickEditTargetTaskIds(taskId);
     const nextCadence = {
-      repeatDayOfMonth: cadencePatch.repeatDayOfMonth ?? currentTask.repeatDayOfMonth,
-      repeatDaysOfWeek: cadencePatch.repeatDaysOfWeek ?? currentTask.repeatDaysOfWeek,
-      repeatInterval: cadencePatch.repeatInterval ?? currentTask.repeatInterval,
+      repeatDayOfMonth: repeat === "daily_until_complete"
+        ? null
+        : cadencePatch.repeatDayOfMonth ?? currentTask.repeatDayOfMonth,
+      repeatDaysOfWeek: repeat === "daily_until_complete"
+        ? []
+        : cadencePatch.repeatDaysOfWeek ?? currentTask.repeatDaysOfWeek,
+      repeatInterval: repeat === "daily_until_complete"
+        ? 1
+        : cadencePatch.repeatInterval ?? currentTask.repeatInterval,
     };
     patchTasks(targetTaskIds, (task) => {
       return {
@@ -3620,19 +3632,19 @@ export function TaskManagementTableV2({
     }
 
     if (overlayMode === "status") {
-      return STATUS_OPTIONS.map((option, optionIndex) => (
+      return getSelectableTaskStatusesForRepeatFrequency(task.repeat).map((status, optionIndex) => (
         <button
           className={inlineAccordionButtonClass()}
-          key={`${option.value || "status-option"}-${optionIndex}`}
+          key={`${status || "status-option"}-${optionIndex}`}
           onClick={() => {
-            setTaskStatus(task.id, option.value);
+            setTaskStatus(task.id, status);
             closeInspector();
           }}
           type="button"
         >
-          <span className={`${inlineAccordionChipContentClass(selectedTaskId === task.id && task.status === option.value ? statusTone(option.value) : `${statusTone(option.value)} opacity-78 hover:opacity-100`)} inline-flex items-center gap-2 whitespace-nowrap`}>
-            {renderTaskStatusCircle(option.value, "sm")}
-            <span>{formatTaskStatusLabel(option.value)}</span>
+          <span className={`${inlineAccordionChipContentClass(selectedTaskId === task.id && task.status === status ? statusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`)} inline-flex items-center gap-2 whitespace-nowrap`}>
+            {renderTaskStatusCircle(status, "sm")}
+            <span>{formatTaskStatusLabel(status)}</span>
           </span>
         </button>
       ));
@@ -3867,30 +3879,32 @@ export function TaskManagementTableV2({
         ...(task.repeat !== "none"
           ? [(
             <div className={inlineAccordionInputCardClass("w-[30rem]")} key="repeat-cadence">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
-                <input
-                  className={`${OVERLAY_INPUT_CLASS} w-20`}
-                  inputMode="numeric"
-                  onBlur={(event) => setTaskRepeatInterval(task, event.target.value)}
-                  onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [task.id]: event.target.value.replace(/[^\d]/g, "") }))}
-                  placeholder="1"
-                  type="text"
-                  value={repeatIntervalDrafts[task.id] ?? String(task.repeatInterval)}
-                />
-                {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
-                  <button
-                    className={inlineAccordionButtonClass()}
-                    key={`${task.id}-inline-repeat-unit-${repeatUnit}`}
-                    onClick={() => setTaskRepeat(task.id, repeatUnit)}
-                    type="button"
-                  >
-                    <span className={inlineAccordionChipContentClass(task.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS)}>
-                      {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              {task.repeat !== "daily_until_complete" ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
+                  <input
+                    className={`${OVERLAY_INPUT_CLASS} w-20`}
+                    inputMode="numeric"
+                    onBlur={(event) => setTaskRepeatInterval(task, event.target.value)}
+                    onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [task.id]: event.target.value.replace(/[^\d]/g, "") }))}
+                    placeholder="1"
+                    type="text"
+                    value={repeatIntervalDrafts[task.id] ?? String(task.repeatInterval)}
+                  />
+                  {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
+                    <button
+                      className={inlineAccordionButtonClass()}
+                      key={`${task.id}-inline-repeat-unit-${repeatUnit}`}
+                      onClick={() => setTaskRepeat(task.id, repeatUnit)}
+                      type="button"
+                    >
+                      <span className={inlineAccordionChipContentClass(task.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS)}>
+                        {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {task.repeat === "weekly" || task.repeat === "custom" ? (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {REPEAT_WEEKDAY_OPTIONS.map((option) => (
@@ -5335,19 +5349,19 @@ export function TaskManagementTableV2({
                     onPointerDown={stopRowActionPointerEvent}
                   >
                     <div className="flex flex-wrap gap-1.5" data-step-row-status-icons={item.id}>
-                      {STATUS_OPTIONS.map((option) => (
+                      {getSelectableTaskStatusesForRepeatFrequency(item.repeat).map((status) => (
                         <button
-                          aria-label={`Set step status to ${option.label}`}
+                          aria-label={`Set step status to ${formatTaskStatusLabel(status)}`}
                           className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${
-                            item.status === option.value
+                            item.status === status
                               ? "shadow-[0_0_0_1px_rgba(111,87,246,0.18)]"
                               : "opacity-78 hover:opacity-100"
                           }`}
-                          key={option.value}
-                          onClick={() => setTaskStatus(item.id, option.value)}
+                          key={status}
+                          onClick={() => setTaskStatus(item.id, status)}
                           type="button"
                         >
-                          {renderTaskStatusCircle(option.value, "sm")}
+                          {renderTaskStatusCircle(status, "sm")}
                         </button>
                       ))}
                     </div>
@@ -6653,28 +6667,30 @@ export function TaskManagementTableV2({
                       {metadataTask.repeat !== "none" ? (
                         <div className="mt-3 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                           <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom cadence</p>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
-                            <input
-                              className={`${OVERLAY_INPUT_CLASS} w-24`}
-                              inputMode="numeric"
-                              onBlur={(event) => setTaskRepeatInterval(metadataTask, event.target.value)}
-                              onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") }))}
-                              placeholder="1"
-                              type="text"
-                              value={repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval)}
-                            />
-                            {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
-                              <TaskTableChipButton
-                                key={`${metadataTask.id}-repeat-unit-${repeatUnit}`}
-                                onClick={() => setTaskRepeat(metadataTask.id, repeatUnit)}
-                                toneClassName={metadataTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}
-                              >
-                                {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
-                              </TaskTableChipButton>
-                            ))}
-                            <TaskTableChipButton onClick={() => setTaskRepeatInterval(metadataTask, repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
-                          </div>
+                          {metadataTask.repeat !== "daily_until_complete" ? (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
+                              <input
+                                className={`${OVERLAY_INPUT_CLASS} w-24`}
+                                inputMode="numeric"
+                                onBlur={(event) => setTaskRepeatInterval(metadataTask, event.target.value)}
+                                onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") }))}
+                                placeholder="1"
+                                type="text"
+                                value={repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval)}
+                              />
+                              {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
+                                <TaskTableChipButton
+                                  key={`${metadataTask.id}-repeat-unit-${repeatUnit}`}
+                                  onClick={() => setTaskRepeat(metadataTask.id, repeatUnit)}
+                                  toneClassName={metadataTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}
+                                >
+                                  {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
+                                </TaskTableChipButton>
+                              ))}
+                              <TaskTableChipButton onClick={() => setTaskRepeatInterval(metadataTask, repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
+                            </div>
+                          ) : null}
                           {metadataTask.repeat === "weekly" || metadataTask.repeat === "custom" ? (
                             <div className="mt-3 flex flex-wrap gap-2">
                               {REPEAT_WEEKDAY_OPTIONS.map((option) => {
@@ -6717,8 +6733,8 @@ export function TaskManagementTableV2({
                 } else if (metadataPanelId === "status") {
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
-                      {STATUS_OPTIONS.map((option, optionIndex) => (
-                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${metadataTask.status === option.value ? statusTone(option.value) : `${statusTone(option.value)} opacity-78 hover:opacity-100`}`} key={`${option.value || "status-option"}-${optionIndex}`} onClick={() => setTaskStatus(metadataTask.id, option.value)} type="button">{renderTaskStatusCircle(option.value, "sm")}<span>{formatTaskStatusLabel(option.value)}</span></button>
+                      {getSelectableTaskStatusesForRepeatFrequency(metadataTask.repeat).map((status, optionIndex) => (
+                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${metadataTask.status === status ? statusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}`} key={`${status || "status-option"}-${optionIndex}`} onClick={() => setTaskStatus(metadataTask.id, status)} type="button">{renderTaskStatusCircle(status, "sm")}<span>{formatTaskStatusLabel(status)}</span></button>
                       ))}
                     </div>
                   );
@@ -7259,15 +7275,17 @@ export function TaskManagementTableV2({
 	                    </div>
 	                    {selectedTask.repeat !== "none" ? (
 	                      <div className="mt-3 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
-	                        <div className="flex flex-wrap items-center gap-2">
-	                          <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
-	                          <input className={`${OVERLAY_INPUT_CLASS} w-24`} inputMode="numeric" onBlur={(event) => setTaskRepeatInterval(selectedTask, event.target.value)} onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="1" type="text" value={repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval)} />
-	                          {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
-	                            <TaskTableChipButton key={`${selectedTask.id}-full-repeat-unit-${repeatUnit}`} onClick={() => setTaskRepeat(selectedTask.id, repeatUnit)} toneClassName={selectedTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}>
-	                              {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
-	                            </TaskTableChipButton>
-	                          ))}
-	                        </div>
+	                        {selectedTask.repeat !== "daily_until_complete" ? (
+	                          <div className="flex flex-wrap items-center gap-2">
+	                            <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
+	                            <input className={`${OVERLAY_INPUT_CLASS} w-24`} inputMode="numeric" onBlur={(event) => setTaskRepeatInterval(selectedTask, event.target.value)} onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="1" type="text" value={repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval)} />
+	                            {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
+	                              <TaskTableChipButton key={`${selectedTask.id}-full-repeat-unit-${repeatUnit}`} onClick={() => setTaskRepeat(selectedTask.id, repeatUnit)} toneClassName={selectedTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}>
+	                                {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
+	                              </TaskTableChipButton>
+	                            ))}
+	                          </div>
+	                        ) : null}
 	                        {selectedTask.repeat === "weekly" || selectedTask.repeat === "custom" ? (
 	                          <div className="mt-3 flex flex-wrap gap-2">
 	                            {REPEAT_WEEKDAY_OPTIONS.map((option) => (
@@ -7312,20 +7330,20 @@ export function TaskManagementTableV2({
                     ) : null}
                     {overlayMode !== "energy" ? (
                     <div className={`${overlayMode === "status" ? "" : "mt-4"} flex flex-wrap gap-2`}>
-                      {STATUS_OPTIONS.map((option, optionIndex) => (
+                      {getSelectableTaskStatusesForRepeatFrequency(selectedTask.repeat).map((status, optionIndex) => (
                         <button
-                          className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selectedTask.status === option.value ? statusTone(option.value) : `${statusTone(option.value)} opacity-78 hover:opacity-100`}`}
-                          key={`${option.value || "status-option"}-${optionIndex}`}
+                          className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selectedTask.status === status ? statusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}`}
+                          key={`${status || "status-option"}-${optionIndex}`}
                           onClick={() => {
-                            setTaskStatus(selectedTask.id, option.value);
+                            setTaskStatus(selectedTask.id, status);
                             if (overlayMode === "status") {
                               closeInspector();
                             }
                           }}
                           type="button"
                         >
-                          {renderTaskStatusCircle(option.value, "sm")}
-                          <span>{formatTaskStatusLabel(option.value)}</span>
+                          {renderTaskStatusCircle(status, "sm")}
+                          <span>{formatTaskStatusLabel(status)}</span>
                         </button>
                       ))}
                     </div>

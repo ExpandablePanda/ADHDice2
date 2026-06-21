@@ -8,25 +8,30 @@ import {
   buildTaskDueDateSet,
   computeTaskHistoryStats,
   computeTaskSpecificHistoryStats,
+  formatTaskHistoryEntryLabel,
   resolveLiveTaskStatusFromHistory,
 } from "../src/lib/task-history.ts";
 
 function createHistoryEntry({
   entryDate,
+  eventType = "status",
   id,
   status,
   taskId = "task-1",
   wasCompleted,
 }: {
   entryDate: string;
+  eventType?: "completed_permanently" | "status";
   id: string;
-  status: "did_my_best" | "done" | "missed";
+  status: "complete" | "did_my_best" | "done" | "missed";
   taskId?: string;
   wasCompleted: boolean;
 }): DbTaskHistory {
   return {
+    counted_as_due_occurrence: false,
     created_at: `${entryDate}T09:00:00.000Z`,
     entry_date: entryDate,
+    event_type: eventType,
     id,
     status,
     task_id: taskId,
@@ -107,6 +112,33 @@ test("daily recurring due dates still leave today as a due opportunity when yest
 
   assert.equal(dueDates.has("2026-06-12"), true);
   assert.equal(history.some((entry) => entry.entry_date === "2026-06-12"), false);
+});
+
+test("daily until complete due dates stay anchored while overdue and include each missed day", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-10",
+    id: "daily-until-complete-overdue",
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "missed",
+    title: "Daily until complete overdue",
+  });
+  const history = [
+    createHistoryEntry({ entryDate: "2026-06-10", id: "duc1", status: "missed", taskId: task.id, wasCompleted: false }),
+    createHistoryEntry({ entryDate: "2026-06-11", id: "duc2", status: "missed", taskId: task.id, wasCompleted: false }),
+    createHistoryEntry({ entryDate: "2026-06-12", id: "duc3", status: "missed", taskId: task.id, wasCompleted: false }),
+  ];
+
+  const dueDates = buildTaskDueDateSet(task, "2026-06-10", "2026-06-13", history);
+  const stats = computeTaskSpecificHistoryStats(task, history, "2026-06-13");
+
+  assert.equal(dueDates.has("2026-06-10"), true);
+  assert.equal(dueDates.has("2026-06-11"), true);
+  assert.equal(dueDates.has("2026-06-12"), true);
+  assert.equal(dueDates.has("2026-06-13"), true);
+  assert.equal(stats.missedStreak, 3);
 });
 
 test("weekly recurring history only marks scheduled prior occurrences as due opportunities", () => {
@@ -213,4 +245,24 @@ test("recurring live status may remain missed while today still has no saved his
 
   assert.equal(result.status, "missed");
   assert.equal(history.some((entry) => entry.entry_date === "2026-06-12"), false);
+});
+
+test("permanent complete history rows render as marked complete", () => {
+  const completeEntry = createHistoryEntry({
+    entryDate: "2026-06-20",
+    eventType: "completed_permanently",
+    id: "complete-1",
+    status: "complete",
+    wasCompleted: true,
+  });
+  const doneEntry = createHistoryEntry({
+    entryDate: "2026-06-20",
+    id: "done-1",
+    status: "done",
+    wasCompleted: true,
+  });
+
+  assert.equal(formatTaskHistoryEntryLabel(completeEntry), "Marked Complete");
+  assert.equal(formatTaskHistoryEntryLabel(doneEntry), "Done");
+  assert.equal(completeEntry.counted_as_due_occurrence, false);
 });
