@@ -16,14 +16,14 @@ type UseTaskActionsOptions = {
   crud: Omit<Parameters<typeof useTaskCrudActions>[0], "replaceTaskSubtasks">;
   currentDayKey: string;
   create: Omit<Parameters<typeof useTaskCreateAction>[0], "routeTask">;
-  editorSave: Omit<Parameters<typeof useTaskEditorSaveAction>[0], "replaceTaskSubtasks" | "syncTaskHistoryEntry" | "syncTaskNoteLinks">;
+  editorSave: Omit<Parameters<typeof useTaskEditorSaveAction>[0], "currentDayKey" | "replaceTaskSubtasks" | "syncTaskHistoryEntry" | "syncTaskNoteLinks">;
   batchEdit: Omit<Parameters<typeof useTaskBatchEditAction>[0], "routeTask" | "saveFocusSelection" | "syncTaskHistoryEntry">;
   list?: Parameters<typeof useTaskListActions>[0];
   history: Parameters<typeof useTaskHistoryActions>[0];
   noteLinks: Parameters<typeof useTaskNoteLinkActions>[0];
   routing: Parameters<typeof useTaskRoutingActions>[0];
   subtask: Parameters<typeof useTaskSubtaskActions>[0];
-  update: Omit<Parameters<typeof useTaskUpdateAction>[0], "routeTask" | "syncTaskHistoryEntry">;
+  update: Omit<Parameters<typeof useTaskUpdateAction>[0], "currentDayKey" | "routeTask" | "syncTaskHistoryEntry">;
 };
 
 export function useTaskActions({
@@ -55,11 +55,13 @@ export function useTaskActions({
   });
   const updateAction = useTaskUpdateAction({
     ...update,
+    currentDayKey,
     routeTask: routingActions.routeTask,
     syncTaskHistoryEntry,
   });
   const editorSaveAction = useTaskEditorSaveAction({
     ...editorSave,
+    currentDayKey,
     replaceTaskSubtasks: subtaskActions.replaceTaskSubtasks,
     syncTaskHistoryEntry,
     syncTaskNoteLinks: noteLinkActions.syncTaskNoteLinks,

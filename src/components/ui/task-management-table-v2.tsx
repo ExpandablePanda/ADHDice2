@@ -81,6 +81,7 @@ type SortColumnId =
   | "title"
   | "lists"
   | "date_added"
+  | "date_completed"
   | "due"
   | "estimated"
   | "actual"
@@ -157,6 +158,7 @@ function buildPrototypeSubtaskSignature(subtasks: PrototypeTaskSubtask[]): strin
 function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
   return JSON.stringify(rows.map((row) => ({
     actualSeconds: row.actualSeconds,
+    completedAt: row.completedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     dueOn: row.dueOn,
@@ -756,6 +758,7 @@ function InlineSubtaskEditor({
 
 export type PrototypeTaskRow = {
   actualSeconds: number;
+  completedAt: string | null;
   createdAt: string;
   trashedAt: string | null;
   updatedAt: string;
@@ -901,7 +904,9 @@ type TaskManagementTableV2Props = {
 const DEFAULT_ROWS: PrototypeTaskRow[] = [
   {
     actualSeconds: 1200,
+    completedAt: null,
     createdAt: new Date().toISOString(),
+    trashedAt: null,
     updatedAt: new Date().toISOString(),
     dueOn: "",
     dueTime: "",
@@ -935,7 +940,9 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
   },
   {
     actualSeconds: 300,
+    completedAt: null,
     createdAt: new Date(Date.now() - 3_600_000).toISOString(),
+    trashedAt: null,
     updatedAt: new Date(Date.now() - 3_600_000).toISOString(),
     dueOn: offsetDate(1),
     dueTime: "09:00",
@@ -976,7 +983,9 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
   },
   {
     actualSeconds: 0,
+    completedAt: null,
     createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+    trashedAt: null,
     updatedAt: new Date(Date.now() - 86_400_000).toISOString(),
     dueOn: offsetDate(7),
     dueTime: "",
@@ -1140,6 +1149,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   title: 220,
   lists: 92,
   date_added: 116,
+  date_completed: 132,
   due: 92,
   estimated: 76,
   actual: 76,
@@ -1156,6 +1166,7 @@ const MIN_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   title: 156,
   lists: 62,
   date_added: 92,
+  date_completed: 104,
   due: 64,
   estimated: 60,
   actual: 60,
@@ -1172,6 +1183,7 @@ const COLUMN_WIDTH_BUFFER: Record<TaskManagementTableColumnId, number> = {
   title: 4,
   lists: 4,
   date_added: 8,
+  date_completed: 8,
   due: 4,
   estimated: 4,
   actual: 4,
@@ -1191,6 +1203,7 @@ const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "title", label: "Task", menuLabel: "Task", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search tasks" },
   { id: "lists", label: "Lists", menuLabel: "Lists", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search lists" },
   { id: "date_added", label: "Date Added", menuLabel: "Date Added", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
+  { id: "date_completed", label: "Date Completed", menuLabel: "Date Completed", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
   { id: "due", label: "Due", menuLabel: "Due", options: [{ id: "due_asc", label: "Sort earliest first" }, { id: "due_desc", label: "Sort latest first" }] },
   { id: "estimated", label: "Est.", menuLabel: "Estimated time", options: [{ id: "number_asc", label: "Sort low-high" }, { id: "number_desc", label: "Sort high-low" }] },
   { id: "actual", label: "Actual", menuLabel: "Actual time", options: [{ id: "active_first", label: "Sort active timers first" }, { id: "number_asc", label: "Sort low-high" }, { id: "number_desc", label: "Sort high-low" }] },
@@ -1589,6 +1602,14 @@ function dateAddedSortValue(task: PrototypeTaskRow) {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
+function dateCompletedSortValue(task: PrototypeTaskRow) {
+  if (!task.completedAt) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const timestamp = Date.parse(task.completedAt);
+  return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
+}
+
 function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLElement>) {
   event.stopPropagation();
 }
@@ -1736,6 +1757,10 @@ function sortRows(
   const sorted = [...rows];
 
   sorted.sort((left, right) => {
+    if (columnId === "date_completed" && Boolean(left.completedAt) !== Boolean(right.completedAt)) {
+      return left.completedAt ? -1 : 1;
+    }
+
     let comparison = 0;
 
     if (optionId === "text_asc" || optionId === "text_desc") {
@@ -1749,7 +1774,9 @@ function sortRows(
     } else if (optionId === "number_asc" || optionId === "number_desc") {
       comparison = numberSortValue(left, columnId, options) - numberSortValue(right, columnId, options);
     } else if (optionId === "date_asc" || optionId === "date_desc") {
-      comparison = dateAddedSortValue(left) - dateAddedSortValue(right);
+      const leftDate = columnId === "date_completed" ? dateCompletedSortValue(left) : dateAddedSortValue(left);
+      const rightDate = columnId === "date_completed" ? dateCompletedSortValue(right) : dateAddedSortValue(right);
+      comparison = leftDate - rightDate;
     } else if (optionId === "due_asc" || optionId === "due_desc") {
       comparison = dueSortValue(left) - dueSortValue(right);
     } else if (optionId === "priority_asc" || optionId === "priority_desc") {
@@ -2457,7 +2484,7 @@ export function TaskManagementTableV2({
 
   useEffect(() => {
     setColumnOrder((current) => {
-      const nextVisible = visibleColumns && visibleColumns.length > 0
+      const nextVisible: SortColumnId[] = visibleColumns && visibleColumns.length > 0
         ? ["status_icon", "title", ...visibleColumns.filter((columnId) => columnId !== "status_icon" && columnId !== "title")]
         : HEADER_COLUMNS.map((column) => column.id);
       const deduped = Array.from(new Set(nextVisible));
@@ -3509,6 +3536,7 @@ export function TaskManagementTableV2({
 
     return {
       actualSeconds: item.actualSeconds,
+      completedAt: null,
       createdAt: item.createdAt,
       dueOn: item.dueOn ?? item.scheduledOn ?? "",
       dueTime: item.dueTime ?? "",
@@ -4915,6 +4943,16 @@ export function TaskManagementTableV2({
         <div>
           <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
             {formatEntryTimestamp(task.createdAt)}
+          </span>
+        </div>
+      );
+    }
+
+    if (columnId === "date_completed") {
+      return wrapMeasuredContent(
+        <div>
+          <span className={`${CHIP_BASE} ${task.completedAt ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
+            {task.completedAt ? formatEntryTimestamp(task.completedAt) : "Not completed"}
           </span>
         </div>
       );

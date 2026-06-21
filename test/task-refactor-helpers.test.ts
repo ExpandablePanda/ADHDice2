@@ -12,10 +12,13 @@ import { isProbablyValidUrl, parseTagList } from "../src/lib/task-input-parsing.
 import {
   buildDailyUntilCompleteMissedDateKeys,
   calcNextDueDate,
+  filterMissingTaskHistoryDateKeys,
   formatRepeatSummary,
   resolveRecurringLiveStatusFromNextDueDate,
+  shouldReconcileOverdueTaskMisses,
 } from "../src/lib/task-repeat.ts";
 import { formatTaskMetaLine } from "../src/lib/task-formatting.ts";
+import { TASK_FILTER_STATUS_OPTIONS } from "../src/lib/task-filter-state.ts";
 import { isValidDateKey, normalizeTaskFocusIds } from "../src/lib/task-focus-days.ts";
 import { normalizeLogoSrc } from "../src/lib/profile-store.ts";
 import { buildAgentPlanTaskItem } from "../src/lib/task-agent-plan.ts";
@@ -32,6 +35,10 @@ test("db compat helpers match expected schema fallback errors", () => {
   assert.equal(isMissingTaskListManualMembershipsTableError("adhdice_task_list_manual_memberships schema cache"), true);
   assert.equal(isMissingTaskEnergyNoneEnumError("adhdice_clean_task_energy invalid input value for enum \"none\""), true);
   assert.equal(isMissingTaskActualSecondsColumnError("actual_seconds adhdice_clean_tasks schema cache"), true);
+});
+
+test("task filter status options include permanent Complete", () => {
+  assert.equal(TASK_FILTER_STATUS_OPTIONS.includes("complete"), true);
 });
 
 test("focus-day helpers normalize valid UUID ids and date keys", () => {
@@ -100,6 +107,16 @@ test("daily until complete missed-date helper backfills overdue days without dup
     buildDailyUntilCompleteMissedDateKeys(task, "2026-05-23", "2026-05-21"),
     ["2026-05-22"],
   );
+  assert.deepEqual(
+    filterMissingTaskHistoryDateKeys(
+      buildDailyUntilCompleteMissedDateKeys(task, "2026-05-23", null),
+      ["2026-05-20", "2026-05-22"],
+    ),
+    ["2026-05-21"],
+  );
+  assert.equal(shouldReconcileOverdueTaskMisses(task, "2026-05-23"), true);
+  assert.equal(shouldReconcileOverdueTaskMisses({ ...task, due_on: "2026-05-23" }, "2026-05-23"), false);
+  assert.equal(shouldReconcileOverdueTaskMisses({ ...task, repeat_frequency: "daily" }, "2026-05-23"), true);
 });
 
 test("repeat helpers resolve recurring live status from next due date and logical-day time", () => {
@@ -226,6 +243,7 @@ test("agent plan helper maps task to list row shape", () => {
 test("task table row helper maps task directly to live table shape", () => {
   const task = createTask({
     actual_seconds: 600,
+    completed_at: "2026-05-21T14:30:00.000Z",
     created_at: "2026-05-20T09:00:00.000Z",
     due_on: "2026-05-20",
     energy: "medium",
@@ -273,6 +291,7 @@ test("task table row helper maps task directly to live table shape", () => {
   });
 
   assert.equal(row.id, "task-table-row");
+  assert.equal(row.completedAt, "2026-05-21T14:30:00.000Z");
   assert.deepEqual(row.priorities, ["focus", "important"]);
   assert.deepEqual(row.lists, ["Custom"]);
   assert.equal(row.subtasks[0]?.title, "Step");

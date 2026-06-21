@@ -21,6 +21,8 @@ test("task ui state migration repairs missing newer columns", () => {
     assert.equal(migrated.visibleColumnsByView[view].includes("link"), true);
     assert.equal(migrated.visibleColumnsByView[view].includes("notes"), true);
   }
+  assert.equal(migrated.visibleColumnsByView.table.includes("date_completed"), true);
+  assert.equal(migrated.visibleColumnsByView.list.includes("date_completed"), false);
 });
 
 test("task ui state migration drops invalid columns and repairs bucket/view/status filters", () => {

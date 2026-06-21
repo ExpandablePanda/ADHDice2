@@ -193,3 +193,18 @@ export function buildDailyUntilCompleteMissedDateKeys(
   }
   return dates;
 }
+
+export function filterMissingTaskHistoryDateKeys(
+  candidateDates: string[],
+  existingDates: Iterable<string>,
+) {
+  const existingDateSet = new Set(existingDates);
+  return candidateDates.filter((dateKey) => !existingDateSet.has(dateKey));
+}
+
+export function shouldReconcileOverdueTaskMisses(
+  task: Pick<Task, "due_on">,
+  currentDayKey: string,
+) {
+  return Boolean(task.due_on && task.due_on < currentDayKey);
+}

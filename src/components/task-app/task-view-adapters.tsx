@@ -18,6 +18,7 @@ import {
   buildTaskDueDateSet,
   computeTaskSpecificHistoryStats,
   formatTaskHistoryEntryLabel,
+  getTaskHistoryCalendarVirtualState,
   type TaskHistoryStats,
 } from "@/lib/task-history";
 import {
@@ -513,58 +514,121 @@ export function MomentumTaskModal({
 
 export function TaskHistoryModal({
   onClose,
-  onSetStatus,
+  onSetStatuses,
   task,
   taskHistory,
   taskTitle,
   todayDateKey,
 }: {
   onClose: () => void;
-  onSetStatus: (entryDate: string, status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<void>;
+  onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<void>;
   task: Task;
   taskHistory: DbTaskHistory[];
   taskTitle: string;
   todayDateKey: string;
 }) {
   const today = todayDateKey;
-  const totalDays = 140;
-  const days = Array.from({ length: totalDays }, (_, index) => shiftDateKey(today, index - (totalDays - 1)));
+  const pastDayCount = 140;
+  const futureDayCount = 42;
+  const totalDays = pastDayCount + futureDayCount;
+  const days = Array.from({ length: totalDays }, (_, index) => shiftDateKey(today, index - (pastDayCount - 1)));
   const historyByDate = new Map(taskHistory.map((historyEntry) => [historyEntry.entry_date, historyEntry]));
-  const [selectedDate, setSelectedDate] = useState(() => [...historyByDate.keys()].sort().at(-1) ?? today);
+  const initialSelectedDate = [...historyByDate.keys()].sort().at(-1) ?? today;
+  const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
+  const [selectedDates, setSelectedDates] = useState<string[]>([initialSelectedDate]);
+  const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const weeks: string[][] = [];
-  const dueDates = buildTaskDueDateSet(task, days[0] ?? today, today, taskHistory);
+  const dueDates = buildTaskDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, taskHistory);
+  const sortedDueDates = [...dueDates].sort();
+  const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
   const stats = computeTaskSpecificHistoryStats(task, taskHistory, today, days[0] ?? today);
   const sortedHistory = [...taskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));
   const selectedEntry = historyByDate.get(selectedDate) ?? null;
+  const selectedDateSet = new Set(selectedDates);
+  const selectedEntries = selectedDates.map((dateKey) => historyByDate.get(dateKey) ?? null);
   const selectedIsFuture = selectedDate > today;
   const selectedIsDue = dueDates.has(selectedDate);
+  const selectedVirtualState = getTaskHistoryCalendarVirtualState({
+    dateKey: selectedDate,
+    hasHistoryEntry: selectedEntry !== null,
+    isDue: selectedIsDue,
+    nextDueDateKey: getNextDueDateKey(selectedDate),
+    todayDateKey: today,
+  });
   const calendarActionStatuses = getTaskHistoryCalendarActionStatuses(task);
+  const visibleCalendarActionStatuses = isMultiSelect
+    ? calendarActionStatuses.filter((status) => status !== "complete")
+    : calendarActionStatuses;
 
   for (let weekIndex = 0; weekIndex < Math.ceil(totalDays / 7); weekIndex += 1) {
     weeks.push(days.slice(weekIndex * 7, weekIndex * 7 + 7));
   }
 
   function cellTone(dateKey: string) {
-    if (dateKey > today) return "border-transparent bg-transparent text-[#d9d4ea] dark:text-white/15";
     const entry = historyByDate.get(dateKey);
     if (!entry) {
-      return dueDates.has(dateKey)
-        ? "border-[#ddd6fb] bg-[#faf8ff] text-[#70698b] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/40"
-        : "border-[#f0ebfb] bg-white text-[#c9bfdc] dark:border-white/[0.06] dark:bg-[#141124] dark:text-white/15";
+      const virtualState = getTaskHistoryCalendarVirtualState({
+        dateKey,
+        hasHistoryEntry: false,
+        isDue: dueDates.has(dateKey),
+        nextDueDateKey: getNextDueDateKey(dateKey),
+        todayDateKey: today,
+      });
+      if (virtualState === "upcoming") {
+        return "border-[#cfd6e4] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60";
+      }
+      if (virtualState === "due") {
+        return "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]";
+      }
+      return "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]";
     }
     if (entry.status === "missed") return "border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]";
     if (entry.status === "did_my_best") return "border-[#f2d36f] bg-[#fff7d6] text-[#b28700] dark:border-[#6c5521] dark:bg-[#3a2b05] dark:text-[#f3d38a]";
     return "border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]";
   }
 
+  function selectDate(dateKey: string) {
+    if (!isMultiSelect) {
+      setSelectedDate(dateKey);
+      setSelectedDates([dateKey]);
+      return;
+    }
+
+    if (dateKey > today) {
+      return;
+    }
+
+    if (selectedDates.includes(dateKey)) {
+      if (selectedDates.length === 1) return;
+      const next = selectedDates.filter((entry) => entry !== dateKey);
+      setSelectedDates(next);
+      if (selectedDate === dateKey) setSelectedDate(next.at(-1) ?? today);
+      return;
+    }
+
+    setSelectedDate(dateKey);
+    setSelectedDates([...selectedDates, dateKey].sort());
+  }
+
+  function toggleMultiSelect() {
+    if (isMultiSelect) {
+      setSelectedDates([selectedDate]);
+    } else if (selectedDate > today) {
+      setSelectedDate(today);
+      setSelectedDates([today]);
+    }
+    setIsMultiSelect(!isMultiSelect);
+  }
+
   async function handleSetStatus(status: "clear" | "complete" | "did_my_best" | "done" | "missed") {
-    if (selectedIsFuture) {
+    const editableDates = selectedDates.filter((dateKey) => dateKey <= today);
+    if (editableDates.length === 0 || (status === "complete" && editableDates.length > 1)) {
       return;
     }
     setIsSaving(true);
     try {
-      await onSetStatus(selectedDate, status);
+      await onSetStatuses(editableDates, status);
     } finally {
       setIsSaving(false);
     }
@@ -579,8 +643,17 @@ export function TaskHistoryModal({
     );
   }
 
-  function renderStatusPill(entry: DbTaskHistory | null) {
+  function renderStatusPill(entry: DbTaskHistory | null, virtualState: "due" | "not_due" | "upcoming" | null = null) {
     if (!entry) {
+      if (virtualState === "due") {
+        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]`}>Due</span>;
+      }
+      if (virtualState === "upcoming") {
+        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#cfd6e4] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`}>Upcoming</span>;
+      }
+      if (virtualState === "not_due") {
+        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]`}>Not Due</span>;
+      }
       return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`}>No Entry</span>;
     }
     if (entry.status === "complete" && entry.event_type === "completed_permanently") {
@@ -588,6 +661,12 @@ export function TaskHistoryModal({
     }
 
     return renderOfficialStatusChip(entry.status, formatTaskHistoryEntryLabel(entry));
+  }
+
+  function isSelectedStatus(status: TaskStatus) {
+    return isMultiSelect
+      ? selectedEntries.length > 0 && selectedEntries.every((entry) => entry?.status === status)
+      : selectedEntry?.status === status;
   }
 
   return (
@@ -610,14 +689,27 @@ export function TaskHistoryModal({
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p>
-                <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Tap a square to inspect or update that date.</p>
+                <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a square to inspect or update that date."}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <TaskTableChipButton
+                    onClick={toggleMultiSelect}
+                    toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}
+                  >
+                    {isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}
+                  </TaskTableChipButton>
+                  {isMultiSelect && selectedDates.length > 1 ? (
+                    <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton>
+                  ) : null}
+                </div>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
                 {renderOfficialStatusChip("done", "Done")}
                 {renderOfficialStatusChip("complete", "Marked Complete")}
                 {renderOfficialStatusChip("did_my_best", "Did My Best")}
                 {renderOfficialStatusChip("missed", "Missed")}
-                <span className="flex items-center gap-1.5 text-[#7d88a1] dark:text-white/50"><span className="inline-block h-3 w-3 rounded-sm border border-[#ddd6fb] bg-[#faf8ff]" />Due</span>
+                <span className="flex items-center gap-1.5 text-[#d96b1c] dark:text-[#ffb47c]"><span className="inline-block h-3 w-3 rounded-sm border border-[#f6be96] bg-[#fff4eb] dark:border-[#7a4527] dark:bg-[#3a2418]" />Due</span>
+                <span className="flex items-center gap-1.5 text-[#68738c] dark:text-white/60"><span className="inline-block h-3 w-3 rounded-sm border border-[#cfd6e4] bg-[#f4f5f8] dark:border-white/10 dark:bg-white/8" />Upcoming</span>
+                <span className="flex items-center gap-1.5 text-[#3388c9] dark:text-[#8ed0f6]"><span className="inline-block h-3 w-3 rounded-sm border border-[#a9daf7] bg-[#eef8ff] dark:border-[#315f7c] dark:bg-[#173044]" />Not Due</span>
               </div>
             </div>
             <div className="adhdice-scrollbar -mx-2 overflow-x-auto px-2 pb-2">
@@ -626,9 +718,10 @@ export function TaskHistoryModal({
                   <div className="flex flex-col gap-1.5" key={weekIndex}>
                     {week.map((dateKey) => (
                       <button
-                        className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDate === dateKey ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""}`}
+                        aria-pressed={selectedDateSet.has(dateKey)}
+                        className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDateSet.has(dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""} ${isMultiSelect && dateKey > today ? "cursor-not-allowed opacity-45" : ""}`}
                         key={dateKey}
-                        onClick={() => setSelectedDate(dateKey)}
+                        onClick={() => selectDate(dateKey)}
                         title={dateKey}
                         type="button"
                       >
@@ -653,9 +746,9 @@ export function TaskHistoryModal({
               {sortedHistory.length === 0 ? <EmptyTaskState text="No saved task history yet." /> : null}
               {sortedHistory.map((entry) => (
                 <button
-                  className={`flex w-full items-center justify-between rounded-[1.25rem] border px-4 py-3 text-left transition ${selectedDate === entry.entry_date ? "border-[#cfc3ff] bg-[#f8f5ff] dark:border-[#6f57f6] dark:bg-[#22193d]" : "border-[#efebfb] bg-[#fcfbff] hover:border-[#ddd3ff] dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20"}`}
+                  className={`flex w-full items-center justify-between rounded-[1.25rem] border px-4 py-3 text-left transition ${selectedDateSet.has(entry.entry_date) ? "border-[#cfc3ff] bg-[#f8f5ff] dark:border-[#6f57f6] dark:bg-[#22193d]" : "border-[#efebfb] bg-[#fcfbff] hover:border-[#ddd3ff] dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20"}`}
                   key={entry.id}
-                  onClick={() => setSelectedDate(entry.entry_date)}
+                  onClick={() => selectDate(entry.entry_date)}
                   type="button"
                 >
                   <div>
@@ -673,39 +766,45 @@ export function TaskHistoryModal({
           <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Edit Selected Date</p>
-                <h3 className="mt-1 text-xl font-black text-[#1f2746] dark:text-white">{formatCalendarDate(selectedDate)}</h3>
+                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{isMultiSelect ? "Edit Selected Dates" : "Edit Selected Date"}</p>
+                <h3 className="mt-1 text-xl font-black text-[#1f2746] dark:text-white">{isMultiSelect ? `${selectedDates.length} dates selected` : formatCalendarDate(selectedDate)}</h3>
                 <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/50">
-                  {selectedIsFuture
+                  {isMultiSelect
+                    ? "The selected result will be saved to every selected date in one update."
+                    : selectedIsFuture
                     ? "Future dates cannot be edited yet."
                     : selectedIsDue
                       ? "This date is part of the task's due schedule."
                       : "This date is outside the inferred due schedule and will be treated as a manual history entry."}
                 </p>
               </div>
-              {renderStatusPill(selectedEntry)}
+              {isMultiSelect
+                ? <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>{selectedDates.length} Selected</span>
+                : renderStatusPill(selectedEntry, selectedVirtualState)}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              {calendarActionStatuses.map((status) => (
+              {visibleCalendarActionStatuses.map((status) => (
                 <TaskTableChipButton
                   className="gap-2"
-                  disabled={isSaving || selectedIsFuture}
+                  disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && selectedIsFuture)}
                   key={status}
                   onClick={() => { void handleSetStatus(status); }}
-                  toneClassName={`${statusTone(status)}${selectedEntry?.status === status ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"} disabled:opacity-50`}
+                  toneClassName={`${statusTone(status)}${isSelectedStatus(status) ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"} disabled:opacity-50`}
                 >
                   {renderTaskStatusCircle(status, "sm")}
                   <span>{formatTaskStatusLabel(status)}</span>
                 </TaskTableChipButton>
               ))}
-              <TaskTableChipButton
-                className="gap-2"
-                disabled={isSaving || selectedIsFuture}
-                onClick={() => { void handleSetStatus("clear"); }}
-                toneClassName={`${TASK_TABLE_INACTIVE_CHIP_CLASS}${selectedEntry === null ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"} disabled:opacity-50`}
-              >
-                <span>Clear</span>
-              </TaskTableChipButton>
+              {selectedEntries.some(Boolean) ? (
+                <TaskTableChipButton
+                  className="gap-2"
+                  disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && selectedIsFuture)}
+                  onClick={() => { void handleSetStatus("clear"); }}
+                  toneClassName={`${TASK_TABLE_INACTIVE_CHIP_CLASS} opacity-78 hover:opacity-100 disabled:opacity-50`}
+                >
+                  <span>Clear</span>
+                </TaskTableChipButton>
+              ) : null}
             </div>
             <p className="mt-4 text-xs text-[#8d87a7] dark:text-white/40">
               Calendar edits update saved task history, streaks, and the live task status when the active unresolved state changes. They do not change past rewards or economy.

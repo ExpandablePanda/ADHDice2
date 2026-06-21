@@ -12,7 +12,7 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import type { TaskListManualMembership as DbTaskListManualMembership } from "../src/lib/database.types.ts";
 import type { TaskListManualMembership } from "../src/lib/task-lists.ts";
 
-test("action hooks expose expected callable actions", () => {
+test("action hooks expose expected callable actions", async () => {
   let routingState: Record<string, "inbox" | "today" | "quick_wins" | "waiting" | "later"> = {};
   const setTaskRouting = (updater: (current: typeof routingState) => typeof routingState) => {
     routingState = updater(routingState);
@@ -57,8 +57,14 @@ test("action hooks expose expected callable actions", () => {
   assert.equal(typeof crud.importTasks, "function");
   assert.equal(typeof crud.deleteTasks, "function");
 
+  let quickEditReconcileCalls = 0;
   const update = useTaskUpdateAction({
+    currentDayKey: "2026-06-21",
     onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => {
+      quickEditReconcileCalls += 1;
+      return true;
+    },
     routeTask: () => {},
     setMessage: () => {},
     setTasks: () => {},
@@ -69,7 +75,9 @@ test("action hooks expose expected callable actions", () => {
       conflict: null,
       data: createTask({
         created_at: "2026-05-20T00:00:00.000Z",
+        due_on: "2026-06-10",
         id: "task-update",
+        repeat_frequency: "daily_until_complete",
         sort_order: 1,
         status: "pending",
         title: "Task",
@@ -81,13 +89,17 @@ test("action hooks expose expected callable actions", () => {
     }),
   });
   assert.equal(typeof update.updateTask, "function");
+  await update.updateTask("task-update", { due_on: "2026-06-10" });
+  assert.equal(quickEditReconcileCalls, 1);
 
   const editor = useTaskEditorSaveAction({
+    currentDayKey: "2026-06-21",
     focusedTaskIds: [],
     currentUserId: "u1",
     insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
     onTasksCompleted: async () => {},
     replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    reconcileOverdueTaskMisses: async () => true,
     saveFocusSelection: async () => {},
     setMessage: () => {},
     setTasks: () => {},
@@ -131,6 +143,7 @@ test("action hooks expose expected callable actions", () => {
     }),
   });
   assert.equal(typeof history.syncTaskHistoryEntry, "function");
+  assert.equal(typeof history.syncTaskHistoryEntries, "function");
 
   const noteLinks = useTaskNoteLinkActions({
     client: {} as never,
@@ -280,6 +293,7 @@ test("action hooks expose expected callable actions", () => {
     },
     update: {
       onTasksCompleted: async () => {},
+      reconcileOverdueTaskMisses: async () => true,
       setMessage: () => {},
       setTasks: () => {},
       sortTasksForUi: (tasks) => tasks,
@@ -427,7 +441,9 @@ test("updateTask forwards an explicit expected snapshot to guarded writes", asyn
   let receivedExpectedTask: typeof expectedTask | null | undefined;
 
   const update = useTaskUpdateAction({
+    currentDayKey: "2026-06-21",
     onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
     routeTask: () => {},
     setMessage: () => {},
     setTasks: () => {},

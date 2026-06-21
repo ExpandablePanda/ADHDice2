@@ -15,10 +15,11 @@ import {
 } from "../src/lib/task-complete.ts";
 import { isNewRewardCompletion } from "../src/lib/task-rewards.ts";
 
-test("one-off status options exclude occurrence-only recurring statuses and include complete", () => {
+test("one-off status options include missed and complete but exclude occurrence-success statuses", () => {
   assert.deepEqual(getSelectableTaskStatusesForRepeatFrequency("none"), [
     "pending",
     "in_progress",
+    "missed",
     "complete",
     "upcoming",
     "not_due",
@@ -42,8 +43,9 @@ test("recurring status options keep occurrence statuses and add complete", () =>
   ]);
 });
 
-test("calendar action statuses hide occurrence-only actions for one-off tasks", () => {
+test("calendar action statuses give one-off tasks missed and complete only", () => {
   assert.deepEqual(getTaskHistoryCalendarActionStatuses({ repeat_frequency: "none" }), [
+    "missed",
     "complete",
   ]);
 });

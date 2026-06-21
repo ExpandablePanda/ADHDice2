@@ -33,9 +33,9 @@ parent-child visibility rules rather than new descendant writes in this pass.
 
 ### One-off tasks
 
-- One-off tasks use `Pending -> In Progress -> Complete`.
-- One-off tasks do not expose `Done`, `Did My Best`, or `Missed`.
-- One-off overdue tasks stay `Pending` or `In Progress`.
+- One-off tasks use `Pending -> In Progress -> Missed / Complete`.
+- One-off tasks do not expose occurrence-success statuses `Done` or `Did My Best`.
+- One-off overdue tasks can stay `Pending` / `In Progress` or be marked `Missed`.
 - One-off overdue tasks show red overdue title chips such as `Overdue 1d` and `Overdue 3d`.
 - One-off `In Progress` stays `In Progress` overnight.
 - One-off `Pending` stays `Pending` overnight and becomes visually overdue.

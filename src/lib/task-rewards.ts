@@ -23,6 +23,59 @@ export type PendingTaskReward = {
   tier: TaskRewardTier | null;
 };
 
+export const PENDING_TASK_REWARDS_STORAGE_KEY = "adhdice-pending-task-rewards";
+
+export function getPendingTaskRewardKey(reward: Pick<PendingTaskReward, "claimRefs" | "rewardDate">) {
+  const claimKey = reward.claimRefs
+    .map((claimRef) => `${claimRef.taskId}:${claimRef.subtaskId ?? "task"}`)
+    .sort()
+    .join("|");
+  return `${reward.rewardDate}:${claimKey}`;
+}
+
+export function mergePendingTaskRewards(current: PendingTaskReward[], incoming: PendingTaskReward[]) {
+  const existingKeys = new Set(current.map(getPendingTaskRewardKey));
+  const additions = incoming.filter((reward) => !existingKeys.has(getPendingTaskRewardKey(reward)));
+  return additions.length > 0 ? [...current, ...additions] : current;
+}
+
+export function parsePendingTaskRewards(rawValue: string | null) {
+  if (!rawValue) {
+    return [] as PendingTaskReward[];
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [] as PendingTaskReward[];
+    }
+
+    return parsed.filter((value): value is PendingTaskReward => {
+      if (!value || typeof value !== "object") return false;
+      const reward = value as Partial<PendingTaskReward>;
+      return Array.isArray(reward.claimRefs)
+        && reward.claimRefs.length > 0
+        && reward.claimRefs.every((claimRef) => (
+          claimRef
+          && typeof claimRef.taskId === "string"
+          && (claimRef.subtaskId === null || typeof claimRef.subtaskId === "string")
+          && typeof claimRef.title === "string"
+        ))
+        && Array.isArray(reward.tasks)
+        && reward.tasks.length > 0
+        && reward.tasks.every((task) => task && typeof task.id === "string")
+        && typeof reward.createdAt === "string"
+        && typeof reward.diceCount === "number"
+        && reward.diceCount > 0
+        && (reward.mode === "single" || reward.mode === "batch")
+        && typeof reward.rewardDate === "string"
+        && typeof reward.streakLength === "number";
+    });
+  } catch {
+    return [] as PendingTaskReward[];
+  }
+}
+
 export type TaskRewardResolution = {
   awardedTokens: number;
   basePoints: number;

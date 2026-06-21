@@ -2,11 +2,12 @@
 
 import { Pill } from "./task-editor-fields";
 import { TASK_STATUS_CHIP_STYLES, renderTaskStatusChip } from "./task-status-ui";
+import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
+import { TASK_FILTER_STATUS_OPTIONS } from "@/lib/task-filter-state";
 import { formatOptionLabel } from "@/lib/task-label-format";
 
 const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
-const TASK_STATUS_OPTIONS: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "upcoming", "not_due", "archived", "trashed"];
 const CHIP_BUTTON_CLASS = "shrink-0 appearance-none bg-transparent p-0 text-left";
 const CHIP_MUTED_CLASS = "inline-flex items-center rounded-full bg-[#f1ecff] px-3 py-1.5 text-xs font-semibold leading-none text-[#5f6983] dark:bg-[#22193f] dark:text-[#cabfff]";
 
@@ -85,15 +86,15 @@ export function FilterRowsComponent({
                 ) : null}
               </div>
               <div className="flex flex-wrap gap-3">
-                {TASK_STATUS_OPTIONS.map((status) => (
-                  <button
-                    className={`rounded-full px-4 py-2 text-base font-semibold transition ${TASK_STATUS_CHIP_STYLES[status]} ${selectedStatuses.includes(status) ? "ring-2 ring-[#6f57f6]/35" : "opacity-85 hover:opacity-100"}`}
+                {TASK_FILTER_STATUS_OPTIONS.map((status) => (
+                  <TaskTableChipButton
+                    className={`transition ${selectedStatuses.includes(status) ? "ring-2 ring-[#6f57f6]/35" : "opacity-85 hover:opacity-100"}`}
                     key={status}
                     onClick={() => onToggleStatusFilter(status)}
-                    type="button"
+                    toneClassName={TASK_STATUS_CHIP_STYLES[status]}
                   >
                     {renderTaskStatusChip(status, { count: statusCounts[status], size: "sm" })}
-                  </button>
+                  </TaskTableChipButton>
                 ))}
               </div>
             </div>

@@ -38,9 +38,9 @@ export type AgentPlanMetaPill = {
   tone?: AgentPlanMetaTone;
 };
 
-export type AgentPlanColumnId = "bucket" | "date_added" | "due" | "energy" | "estimated_time" | "actual_time" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal";
+export type AgentPlanColumnId = "bucket" | "date_added" | "date_completed" | "due" | "energy" | "estimated_time" | "actual_time" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal";
 
-const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "date_added", "due", "energy", "estimated_time", "actual_time", "tags", "link", "notes", "priority", "repeat", "signal"];
+const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "date_added", "date_completed", "due", "energy", "estimated_time", "actual_time", "tags", "link", "notes", "priority", "repeat", "signal"];
 
 export type AgentPlanSubtaskItem = {
   children: AgentPlanSubtaskItem[];
@@ -52,6 +52,7 @@ export type AgentPlanSubtaskItem = {
 export type AgentPlanTaskItem = {
   actualSeconds: number;
   bucket: string;
+  completedAt: string | null;
   dueOn: string | null;
   dueTime: string | null;
   estimatedMinutes: number | null;
@@ -84,7 +85,7 @@ export type AgentPlanTaskItem = {
   rowChips: AgentPlanMetaPill[];
   currentStreak: number;
   missedStreak: number;
-  repeatFrequency: "none" | "daily" | "weekly" | "monthly" | "custom";
+  repeatFrequency: "none" | "daily" | "daily_until_complete" | "weekly" | "monthly" | "custom";
   repeatInterval: number;
   repeatDaysOfWeek: number[];
   repeatDayOfMonth: number | null;
@@ -260,6 +261,7 @@ const FOCUS_RING_CLASS = "focus-visible:outline-none focus-visible:ring-2 focus-
 const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   bucket: 150,
   date_added: 168,
+  date_completed: 176,
   due: 168,
   energy: 132,
   estimated_time: 156,
@@ -276,6 +278,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
 const MIN_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   bucket: 84,
   date_added: 112,
+  date_completed: 120,
   due: 52,
   energy: 92,
   estimated_time: 92,
@@ -292,6 +295,7 @@ const MIN_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
 const COLUMN_HEADER_LABELS: Record<ResizableColumnId, string> = {
   bucket: "Lists",
   date_added: "Date Added",
+  date_completed: "Date Completed",
   due: "Due",
   energy: "Energy",
   estimated_time: "Est. Time",
@@ -319,7 +323,7 @@ type HorizontalScrollIndicator = {
   width: number;
 };
 
-type ResizableColumnId = "bucket" | "date_added" | "due" | "energy" | "estimated_time" | "actual_time" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal" | "status" | "task";
+type ResizableColumnId = "bucket" | "date_added" | "date_completed" | "due" | "energy" | "estimated_time" | "actual_time" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal" | "status" | "task";
 
 function getPriorityTone(priority: AgentPlanPriorityValue): AgentPlanMetaTone {
   if (priority === "focus") return "accent";
@@ -1667,6 +1671,7 @@ export default function AgentPlan({
                     const metadataValueByColumn: Partial<Record<AgentPlanColumnId, string>> = {
                       bucket: getMetadataValue(task, "Lists"),
                       date_added: formatDateAddedLabel(task.createdAt),
+                      date_completed: task.completedAt ? formatDateAddedLabel(task.completedAt) : "Not completed",
                       due: dueValue,
                       energy: energyValue,
                       estimated_time: estimatedTimeValue,
@@ -1951,6 +1956,16 @@ export default function AgentPlan({
                                 <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
                                   <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`} data-column-measure>
                                     {formatDateAddedLabel(task.createdAt)}
+                                  </span>
+                                </td>
+                              );
+                            }
+
+                            if (columnId === "date_completed") {
+                              return (
+                                <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>
+                                  <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES.neutral}`} data-column-measure>
+                                    {task.completedAt ? formatDateAddedLabel(task.completedAt) : "Not completed"}
                                   </span>
                                 </td>
                               );

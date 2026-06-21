@@ -174,5 +174,81 @@ export function useTaskHistoryActions({
     return true;
   }
 
-  return { syncTaskHistoryEntry };
+  async function syncTaskHistoryEntries(
+    taskId: string,
+    status: TaskStatus,
+    entryDates: string[],
+    options?: { syncLiveTask?: boolean },
+  ) {
+    const uniqueEntryDates = Array.from(new Set(entryDates)).sort();
+    if (uniqueEntryDates.length === 0) {
+      return true;
+    }
+
+    const shouldKeepEntries = isTaskHistoryStatus(status);
+    if (!shouldKeepEntries) {
+      const { error } = await client
+        .from("adhdice_task_history")
+        .delete()
+        .eq("task_id", taskId)
+        .eq("user_id", currentUserId)
+        .in("entry_date", uniqueEntryDates);
+
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+
+      let nextTaskHistory: DbTaskHistory[] = [];
+      const selectedDateSet = new Set(uniqueEntryDates);
+      setTaskHistory((current) => {
+        const filtered = current.filter((entry) => (
+          entry.task_id !== taskId || !selectedDateSet.has(entry.entry_date)
+        ));
+        nextTaskHistory = filtered.filter((entry) => entry.task_id === taskId);
+        return filtered;
+      });
+
+      return options?.syncLiveTask
+        ? syncLiveTaskStatus(taskId, nextTaskHistory)
+        : true;
+    }
+
+    const payloads: TaskHistoryInsert[] = uniqueEntryDates.map((entryDate) => ({
+      entry_date: entryDate,
+      status,
+      task_id: taskId,
+      user_id: currentUserId,
+      was_completed: isTaskCompletedForHistory(status),
+    }));
+    const { data, error } = await client
+      .from("adhdice_task_history")
+      .upsert(payloads, { onConflict: "user_id,task_id,entry_date" })
+      .select("*");
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    const mappedEntries = (data ?? []).map(mapTaskHistoryRow);
+    const updatedDateSet = new Set(mappedEntries.map((entry) => entry.entry_date));
+    let nextTaskHistory: DbTaskHistory[] = [];
+    setTaskHistory((current) => {
+      const merged = [
+        ...mappedEntries,
+        ...current.filter((entry) => (
+          entry.task_id !== taskId || !updatedDateSet.has(entry.entry_date)
+        )),
+      ];
+      nextTaskHistory = merged.filter((entry) => entry.task_id === taskId);
+      return merged;
+    });
+
+    return options?.syncLiveTask
+      ? syncLiveTaskStatus(taskId, nextTaskHistory)
+      : true;
+  }
+
+  return { syncTaskHistoryEntries, syncTaskHistoryEntry };
 }

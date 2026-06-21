@@ -481,7 +481,7 @@ export function TaskEditorModal({
   const handleManualFocusEntryProxy = onLogActualTime;
 
   return (
-    <ModalShell className={`relative w-full max-w-[42rem] max-h-[92vh] overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="Task editor" onClose={onClose}>
+    <ModalShell className={`relative w-full max-w-[42rem] max-h-[92vh] overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`} label="Task editor" mobileFocused={isEditing} onClose={onClose}>
       <div
         className="adhdice-scrollbar-overlay max-h-[92vh] overflow-y-auto"
         onScroll={handleEditorScroll}

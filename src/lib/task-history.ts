@@ -75,6 +75,38 @@ export function formatTaskHistoryEntryLabel(entry: Pick<DbTaskHistory, "event_ty
     .join(" ");
 }
 
+export type TaskHistoryCalendarVirtualState = "due" | "not_due" | "upcoming";
+
+export function getTaskHistoryCalendarVirtualState({
+  dateKey,
+  hasHistoryEntry,
+  isDue,
+  nextDueDateKey,
+  todayDateKey,
+}: {
+  dateKey: string;
+  hasHistoryEntry: boolean;
+  isDue: boolean;
+  nextDueDateKey: string | null;
+  todayDateKey: string;
+}): TaskHistoryCalendarVirtualState | null {
+  if (hasHistoryEntry) {
+    return null;
+  }
+  if (isDue) {
+    return "due";
+  }
+  if (
+    dateKey >= todayDateKey
+    && nextDueDateKey
+    && dateKey < nextDueDateKey
+    && dateKey >= shiftDateKey(nextDueDateKey, -7)
+  ) {
+    return "upcoming";
+  }
+  return "not_due";
+}
+
 function createHistoryWindowFlags(initialValue = false): Record<TaskHistoryWindowPreset, boolean> {
   return {
     "1": initialValue,
@@ -474,6 +506,14 @@ export function buildTaskDueDateSet(task: Task, startDateKey: string, endDateKey
   return dueDates;
 }
 
+export function buildOverdueTaskMissedDateKeys(task: Task, currentDayKey: string) {
+  if (!task.due_on || task.due_on >= currentDayKey) {
+    return [] as string[];
+  }
+
+  return [...buildTaskDueDateSet(task, task.due_on, shiftDateKey(currentDayKey, -1))].sort();
+}
+
 export function computeTaskSpecificHistoryStats(
   task: Task,
   history: DbTaskHistory[],
@@ -487,12 +527,18 @@ export function computeTaskSpecificHistoryStats(
   const completedDays = sortedHistory.filter((entry) => entry.was_completed).length;
   const missedDays = sortedHistory.filter((entry) => !entry.was_completed).length;
   const loggedDays = sortedHistory.length;
+  let missedStreak = 0;
+  for (let index = sortedHistory.length - 1; index >= 0; index -= 1) {
+    if (sortedHistory[index]?.status !== "missed") {
+      break;
+    }
+    missedStreak += 1;
+  }
 
   if (task.repeat_frequency === "none") {
     const latestEntry = sortedHistory.at(-1) ?? null;
     const currentStreak = latestEntry?.was_completed ? 1 : 0;
     const bestStreak = completedDays > 0 ? 1 : 0;
-    const missedStreak = latestEntry && !latestEntry.was_completed ? 1 : 0;
     const completionRate = loggedDays === 0 ? 0 : Math.round((completedDays / loggedDays) * 100);
     return {
       bestStreak,
@@ -524,14 +570,6 @@ export function computeTaskSpecificHistoryStats(
     } else {
       runningCompleted = 0;
     }
-  }
-
-  let missedStreak = 0;
-  for (let index = sortedHistory.length - 1; index >= 0; index -= 1) {
-    if (sortedHistory[index]?.status !== "missed") {
-      break;
-    }
-    missedStreak += 1;
   }
 
   const dueDays = loggedDays;

@@ -99,7 +99,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
-import { ScrollUpButton, TaskTableChipButton } from "@/components/ui/task-table-primitives";
+import { ScrollUpButton, TASK_TABLE_CHIP_BASE_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievements } from "@/hooks/useAchievements";
@@ -178,8 +178,8 @@ import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import {
-  buildDailyUntilCompleteMissedDateKeys,
   calcNextDueDateFromDate,
+  shouldReconcileOverdueTaskMisses,
 } from "@/lib/task-repeat";
 import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
 import {
@@ -310,7 +310,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.7.12";
+const APP_VERSION = "6.7.19";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -324,7 +324,7 @@ type AppUpdateAttempt = {
 type RefreshStatus = "idle" | "syncing" | "updating";
 
 function formatPendingDiceChipLabel(diceCount: number) {
-  return `${diceCount} ${diceCount === 1 ? "die" : "dice"} ready`;
+  return `${diceCount} ${diceCount === 1 ? "Die" : "Dice"} Ready`;
 }
 
 function readAppUpdateAttempt(): AppUpdateAttempt | null {
@@ -621,6 +621,7 @@ const FOCUS_ALARM_INTERVAL_STEP_MINUTES = 5;
 const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   bucket: "Lists",
   date_added: "Date Added",
+  date_completed: "Date Completed",
   due: "Due",
   energy: "Energy",
   estimated_time: "Estimated Time",
@@ -2146,6 +2147,7 @@ export function TaskApp() {
     pendingRewardDiceCount,
     pendingRewardQueue,
     queueTaskRewards,
+    reconcileOverdueTaskMisses,
   } = useTaskRewardController({
     calcNextDueDateFromDate,
     client,
@@ -2211,6 +2213,7 @@ export function TaskApp() {
     routeTask,
     saveTaskEditor,
     saveTaskListDefinition,
+    syncTaskHistoryEntries,
     syncTaskHistoryEntry,
     syncTaskNoteLinks,
     toggleTaskManualListMembership,
@@ -2276,6 +2279,7 @@ export function TaskApp() {
         isMissingTaskEnergyNoneEnumError,
       ),
       onTasksCompleted: queueTaskRewards,
+      reconcileOverdueTaskMisses,
       saveFocusSelection,
       setMessage,
       setTasks,
@@ -2334,6 +2338,7 @@ export function TaskApp() {
       clearPendingTaskMutations,
       markPendingTaskMutations,
       onTasksCompleted: queueTaskRewards,
+      reconcileOverdueTaskMisses,
       setMessage,
       setTasks,
       sortTasksForUi,
@@ -3281,11 +3286,18 @@ export function TaskApp() {
   function openSelectedTaskHistory() {
     if (selectedTaskForEditor) {
       setTaskHistoryModalTaskId(selectedTaskForEditor.id);
+      if (shouldReconcileOverdueTaskMisses(selectedTaskForEditor, todayKey)) {
+        void reconcileOverdueTaskMisses(selectedTaskForEditor);
+      }
     }
   }
 
   function openTaskHistoryForTask(taskId: string) {
     setTaskHistoryModalTaskId(taskId);
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (task && shouldReconcileOverdueTaskMisses(task, todayKey)) {
+      void reconcileOverdueTaskMisses(task);
+    }
   }
 
   function closeActualTimeEntry() {
@@ -3381,6 +3393,13 @@ export function TaskApp() {
       return;
     }
 
+    if (shouldReconcileOverdueTaskMisses(task, todayKey)) {
+      const historyReconciled = await reconcileOverdueTaskMisses(task);
+      if (!historyReconciled) {
+        return;
+      }
+    }
+
     const completeUpdateValues = buildCompleteTaskUpdateValues(task, pendingCompleteAction.values);
     const { conflict, data, error } = await runGuardedTaskRowUpdate(task.id, completeUpdateValues, {
       expectedTask: task,
@@ -3411,23 +3430,9 @@ export function TaskApp() {
       id: task.id,
       repeat_frequency: task.repeat_frequency,
     }, todayKey, session.user.id);
-    const missedDates = buildDailyUntilCompleteMissedDateKeys(task, todayKey, null);
-    const missedPayloads = task.repeat_frequency === "daily_until_complete"
-      ? missedDates.map((entryDate) => ({
-        counted_as_due_occurrence: false,
-        entry_date: entryDate,
-        event_type: "status" as const,
-        status: "missed" as const,
-        task_id: task.id,
-        user_id: session.user.id,
-        was_completed: false,
-      }))
-      : [];
-    const historyPayloads = [...missedPayloads, historyPayload];
-
     const { data: historyRows, error: historyError } = await client
       .from("adhdice_task_history")
-      .upsert(historyPayloads, { onConflict: "user_id,task_id,entry_date" })
+      .upsert([historyPayload], { onConflict: "user_id,task_id,entry_date" })
       .select("*");
 
     if (historyError) {
@@ -3736,18 +3741,19 @@ export function TaskApp() {
     : null;
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
-    onSetStatus: async (entryDate: string, status: "clear" | "complete" | "did_my_best" | "done" | "missed") => {
+    onSetStatuses: async (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => {
       if (!taskHistoryModalTaskId) {
         return;
       }
       if (status === "complete") {
+        if (entryDates.length !== 1) return;
         await updateTaskStatus(taskHistoryModalTask, "complete");
         return;
       }
-      await syncTaskHistoryEntry(
+      await syncTaskHistoryEntries(
         taskHistoryModalTaskId,
         status === "clear" ? "pending" : status,
-        entryDate,
+        entryDates,
         { syncLiveTask: true },
       );
     },
@@ -5515,8 +5521,10 @@ function CommandCenterHeader({
                 {HUD_VERSION}
               </span>
             </button>
-            <span className="hidden shrink-0 rounded-full bg-[#f1ecff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] sm:inline-flex dark:bg-white/10 dark:text-[#c5b8ff]">
-              {activeHudPageTitle}
+            <span className="hidden shrink-0 sm:inline">
+              <span className={`${TASK_TABLE_CHIP_BASE_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
+                {activeHudPageTitle}
+              </span>
             </span>
             {activeHudTaskTimer ? (
               <div className="hidden min-w-0 shrink-0 items-center gap-2 rounded-full bg-[#f5f1ff] px-2.5 py-1 text-[#5f4ac9] sm:flex dark:bg-[#241c42] dark:text-[#d6cdff]">
@@ -5527,10 +5535,10 @@ function CommandCenterHeader({
                 </span>
               </div>
             ) : null}
-            <div className="shrink-0 rounded-full bg-[#faf7ff] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7c73a0] dark:bg-white/[0.05] dark:text-white/55">
+            <div className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#e4deef] bg-[#faf7ff] text-[#7c73a0] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/55`}>
               Today {todayTaskCount}
             </div>
-            <div className="shrink-0 rounded-full bg-[#fff5eb] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#c06b1c] dark:bg-[#3b2714] dark:text-[#ffbe87]">
+            <div className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#ffd8be] bg-[#fff5eb] text-[#c06b1c] dark:border-[#65401d] dark:bg-[#3b2714] dark:text-[#ffbe87]`}>
               Urgent {urgentTaskCount}
             </div>
             {pendingRewardDiceCount > 0 ? (

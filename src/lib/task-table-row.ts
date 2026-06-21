@@ -47,6 +47,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
 
   return {
     actualSeconds: task.actual_seconds ?? 0,
+    completedAt: task.completed_at,
     createdAt: task.created_at,
     trashedAt: task.trashed_at,
     updatedAt: task.updated_at,

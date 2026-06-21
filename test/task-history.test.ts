@@ -5,10 +5,12 @@ import type { TaskHistory as DbTaskHistory } from "../src/lib/database.types.ts"
 import { createTask } from "../src/lib/task-buckets.ts";
 import {
   buildTaskHistoryFacts,
+  buildOverdueTaskMissedDateKeys,
   buildTaskDueDateSet,
   computeTaskHistoryStats,
   computeTaskSpecificHistoryStats,
   formatTaskHistoryEntryLabel,
+  getTaskHistoryCalendarVirtualState,
   resolveLiveTaskStatusFromHistory,
 } from "../src/lib/task-history.ts";
 
@@ -41,6 +43,84 @@ function createHistoryEntry({
   };
 }
 
+test("calendar virtual states distinguish upcoming and not-due dates without overriding history", () => {
+  assert.equal(getTaskHistoryCalendarVirtualState({
+    dateKey: "2026-06-21",
+    hasHistoryEntry: false,
+    isDue: true,
+    nextDueDateKey: "2026-06-21",
+    todayDateKey: "2026-06-21",
+  }), "due");
+  assert.equal(getTaskHistoryCalendarVirtualState({
+    dateKey: "2026-06-22",
+    hasHistoryEntry: false,
+    isDue: true,
+    nextDueDateKey: "2026-06-22",
+    todayDateKey: "2026-06-21",
+  }), "due");
+  assert.equal(getTaskHistoryCalendarVirtualState({
+    dateKey: "2026-06-22",
+    hasHistoryEntry: false,
+    isDue: false,
+    nextDueDateKey: "2026-06-28",
+    todayDateKey: "2026-06-21",
+  }), "upcoming");
+  assert.equal(getTaskHistoryCalendarVirtualState({
+    dateKey: "2026-06-22",
+    hasHistoryEntry: true,
+    isDue: true,
+    nextDueDateKey: "2026-06-22",
+    todayDateKey: "2026-06-21",
+  }), null);
+});
+
+test("overdue missed backfill uses one-off and recurring due opportunities only", () => {
+  const oneOff = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-10",
+    id: "one-off-overdue",
+    repeat_frequency: "none",
+    sort_order: 1,
+    status: "pending",
+    title: "One-off overdue",
+  });
+  const weekly = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-01",
+    id: "weekly-overdue",
+    repeat_days_of_week: [1],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 2,
+    status: "pending",
+    title: "Weekly overdue",
+  });
+
+  assert.deepEqual(buildOverdueTaskMissedDateKeys(oneOff, "2026-06-21"), ["2026-06-10"]);
+  assert.deepEqual(buildOverdueTaskMissedDateKeys(weekly, "2026-06-21"), ["2026-06-01", "2026-06-08", "2026-06-15"]);
+});
+
+test("monthly calendar dates distinguish scheduled upcoming dates from non-due dates", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-21",
+    id: "monthly-virtual-states",
+    repeat_day_of_month: 21,
+    repeat_frequency: "monthly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "pending",
+    title: "Monthly virtual states",
+  });
+  const dueDates = buildTaskDueDateSet(task, "2026-06-21", "2026-07-22");
+
+  assert.equal(dueDates.has("2026-07-21"), true);
+  assert.equal(dueDates.has("2026-07-20"), false);
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-21", hasHistoryEntry: false, isDue: true, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "due");
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-13", hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "not_due");
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-14", hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "upcoming");
+});
+
 test("aggregate missed streak stays active when today has not been logged yet", () => {
   const stats = computeTaskHistoryStats([
     createHistoryEntry({ entryDate: "2026-06-01", id: "h1", status: "done", wasCompleted: true }),
@@ -67,6 +147,27 @@ test("aggregate missed streak excludes today when today has no saved missed row"
   ], "2026-06-12");
 
   assert.equal(stats.missedStreak, 1);
+});
+
+test("one-off task missed streak counts trailing batch-edited missed history", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-15",
+    id: "one-off-batch-missed",
+    repeat_frequency: "none",
+    sort_order: 1,
+    status: "missed",
+    title: "One-off batch missed",
+  });
+  const history = Array.from({ length: 7 }, (_, index) => createHistoryEntry({
+    entryDate: `2026-06-${String(index + 15).padStart(2, "0")}`,
+    id: `one-off-missed-${index}`,
+    status: "missed",
+    taskId: task.id,
+    wasCompleted: false,
+  }));
+
+  assert.equal(computeTaskSpecificHistoryStats(task, history, "2026-06-21").missedStreak, 7);
 });
 
 test("daily recurring history keeps older missed dates classified as due opportunities after due_on advances", () => {

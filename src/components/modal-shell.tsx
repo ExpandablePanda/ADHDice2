@@ -6,11 +6,13 @@ export function ModalShell({
   className,
   onClose,
   label,
+  mobileFocused = false,
 }: {
   children: React.ReactNode;
   className?: string;
   onClose?: () => void;
   label?: string;
+  mobileFocused?: boolean;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const latestOnCloseRef = useRef(onClose);
@@ -64,11 +66,11 @@ export function ModalShell({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[140] flex items-center justify-center p-4">
+    <div className={`fixed inset-0 z-[140] flex justify-center ${mobileFocused ? "items-start overflow-y-auto px-4 pb-4 pt-4 sm:items-center sm:overflow-hidden sm:p-4" : "items-center p-4"}`}>
       {onClose && (
         <div
           aria-hidden="true"
-          className="absolute inset-0 bg-black/40"
+          className={`absolute inset-0 bg-black/40 ${mobileFocused ? "backdrop-blur-sm sm:backdrop-blur-none" : ""}`}
           onClick={onClose}
         />
       )}

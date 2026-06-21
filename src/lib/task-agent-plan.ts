@@ -231,6 +231,7 @@ export function buildAgentPlanTaskItem(
   return {
     actualSeconds: task.actual_seconds ?? 0,
     bucket: getTaskBucket(task, context.bucketContext),
+    completedAt: task.completed_at,
     dueOn: task.due_on,
     dueTime: task.due_time,
     estimatedMinutes: task.estimated_minutes ?? null,

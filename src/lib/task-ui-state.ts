@@ -45,11 +45,12 @@ export const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
 export const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
 export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
-export const TASK_UI_SCHEMA_VERSION = 4;
+export const TASK_UI_SCHEMA_VERSION = 5;
 export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
   "date_added",
+  "date_completed",
   "due",
   "estimated_time",
   "actual_time",
@@ -63,12 +64,13 @@ export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
 ];
 
 export const DEFAULT_TASK_TABLE_VISIBLE_COLUMNS: AgentPlanColumnId[] = [...VALID_LIST_COLUMN_IDS];
+const DEFAULT_NON_TABLE_VISIBLE_COLUMNS = DEFAULT_TASK_TABLE_VISIBLE_COLUMNS.filter((columnId) => columnId !== "date_completed");
 export const DEFAULT_VISIBLE_COLUMNS_BY_VIEW: Record<TaskViewMode, AgentPlanColumnId[]> = {
   table: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
-  list: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
-  cards: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
-  matrix: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
-  grid: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
+  list: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
+  cards: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
+  matrix: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
+  grid: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
 };
 export const DEFAULT_TASK_UI_STATE: TaskUiState = {
   duplicateTitleMode: false,
@@ -154,7 +156,8 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
       ? candidate.filter((columnId): columnId is AgentPlanColumnId => VALID_LIST_COLUMN_IDS.includes(columnId as AgentPlanColumnId))
       : [];
     const deduped = normalized.length > 0 ? Array.from(new Set(normalized)) : [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW[view]];
-    const withDateAdded: AgentPlanColumnId[] = deduped.includes("date_added") ? deduped : [...deduped, "date_added"];
+    const withDateCompleted = view === "table" && !deduped.includes("date_completed") ? [...deduped, "date_completed" as const] : deduped;
+    const withDateAdded: AgentPlanColumnId[] = withDateCompleted.includes("date_added") ? withDateCompleted : [...withDateCompleted, "date_added"];
     const withEstimated: AgentPlanColumnId[] = withDateAdded.includes("estimated_time") ? withDateAdded : [...withDateAdded, "estimated_time"];
     const withActual: AgentPlanColumnId[] = withEstimated.includes("actual_time") ? withEstimated : [...withEstimated, "actual_time"];
     const withTags: AgentPlanColumnId[] = withActual.includes("tags") ? withActual : [...withActual, "tags"];

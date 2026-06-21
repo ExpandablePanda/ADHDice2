@@ -10,6 +10,7 @@ export const CHILD_COMPLETE_CONFIRMATION_DESCRIPTION = "This will stop recurring
 const ONE_OFF_SELECTABLE_STATUSES: TaskStatus[] = [
   "pending",
   "in_progress",
+  "missed",
   "complete",
   "upcoming",
   "not_due",
@@ -42,7 +43,7 @@ export function getSelectableTaskStatuses(task: Pick<Task, "repeat_frequency">) 
 
 export function getTaskHistoryCalendarActionStatuses(task: Pick<Task, "repeat_frequency">) {
   return task.repeat_frequency === "none"
-    ? (["complete"] as const)
+    ? (["missed", "complete"] as const)
     : (["done", "did_my_best", "missed", "complete"] as const);
 }
 

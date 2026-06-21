@@ -6,6 +6,7 @@ import type { TaskDraft, TaskSubtaskDraft } from "@/components/task-app/task-edi
 import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
+import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
 
 type Message = {
   text: string;
@@ -27,9 +28,11 @@ type InsertTaskRowResult = {
 };
 
 type UseTaskEditorSaveActionOptions = {
+  currentDayKey: string;
   focusedTaskIds: string[];
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   replaceTaskSubtasks: (taskId: string, subtasks: TaskSubtaskDraft[]) => Promise<{ saved: boolean; usedNestedFallback: boolean }>;
+  reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
   saveFocusSelection: (nextTaskIds: string[], validTaskIds?: Set<string> | Task[]) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -43,11 +46,13 @@ type UseTaskEditorSaveActionOptions = {
 };
 
 export function useTaskEditorSaveAction({
+  currentDayKey,
   focusedTaskIds,
   insertTaskRowWithLegacyEnergyFallback,
   currentUserId,
   onTasksCompleted,
   replaceTaskSubtasks,
+  reconcileOverdueTaskMisses,
   saveFocusSelection,
   setMessage,
   setTasks,
@@ -102,6 +107,13 @@ export function useTaskEditorSaveAction({
         : data;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
+
+      if (shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
+        const historyReconciled = await reconcileOverdueTaskMisses(nextData);
+        if (!historyReconciled) {
+          return false;
+        }
+      }
 
       const historySaved = await syncTaskHistoryEntry(taskId, data.status);
       if (!historySaved) {

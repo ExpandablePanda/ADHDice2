@@ -6,6 +6,7 @@ import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mu
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
+import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
 
 type Message = {
   text: string;
@@ -18,8 +19,10 @@ type UpdateTaskActionOptions = {
 
 type UseTaskUpdateActionOptions = {
   clearPendingTaskMutations?: (taskIds: string[]) => void;
+  currentDayKey: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
+  reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
   routeTask: (taskId: string, bucket: TaskRoutingBucket | null) => void;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -31,8 +34,10 @@ type UseTaskUpdateActionOptions = {
 
 export function useTaskUpdateAction({
   clearPendingTaskMutations,
+  currentDayKey,
   markPendingTaskMutations,
   onTasksCompleted,
+  reconcileOverdueTaskMisses,
   routeTask,
   setMessage,
   setTasks,
@@ -80,6 +85,12 @@ export function useTaskUpdateAction({
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
       if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {
         routeTask(taskId, null);
+      }
+      if (shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
+        const historyReconciled = await reconcileOverdueTaskMisses(nextData);
+        if (!historyReconciled) {
+          return false;
+        }
       }
       const historySaved = await syncTaskHistoryEntry(taskId, data.status);
       if (!historySaved) {

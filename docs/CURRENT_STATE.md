@@ -5,7 +5,7 @@ Last reviewed: 2026-06-20
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.7.12`.
+- Current working app version: `6.7.19`.
 - Current release group: `6.7.x` same-parent Step/Substep drag reorder.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -280,4 +280,34 @@ The Task History calendar now matches the intended task action model instead of 
 
 ## 6.7.12 Implementation Note
 
-The Task History calendar modal now uses copies of the shared official status chips instead of one-off custom pills for the visible status-chip surfaces in that UI. The calendar legend, saved-history status pills, selected-date status pill, and clickable status action chips now reuse the same icon-plus-chip language and sizing family as the rest of the task app, while `Clear` stays a neutral utility action and no Complete/reward/recurrence/archive behavior changes in this polish pass.
+One-off tasks now expose `Missed` and permanent `Complete` while continuing to exclude occurrence-success actions, and Task History calendar actions follow that same model. Calendar dates without saved history use display-only `Not Due` / `Upcoming` states where applicable, never offer `Clear` without a real row, and preserve saved-history colors and precedence. The existing app-load/day-change `adhdice_reconcile_task_rollover` call remains the live Daily Until Complete rollover path; its SQL implementation still requires the manual `supabase/patch_daily_until_complete_rollover_rpc.sql` patch.
+
+Mobile List View now always shows the existing Repeat quick-edit chip beside Due Date, including `No Repeat`, and reuses the established repeat update path and bottom action panel. Edit Task remains one shared modal for List and Table; on mobile edit opens near the top with a blurred, outside-click-dismissable backdrop, while desktop modal placement and the mobile quick-action rows stay unchanged.
+
+## 6.7.13 Implementation Note
+
+The Filters status list now includes `Complete` and uses the approved smaller task action chip scale. Saving an overdue `Daily Until Complete` edit now immediately runs the existing focused missed-history reconciliation path, with per-date dedupe so same-day saves and reloads do not duplicate or skip rows; the anchored overdue due date is unchanged. Task History now renders display-only `Due`, `Upcoming`, and `Not Due` calendar states with orange, grey, and light-blue treatments respectively, keeps real history rows authoritative, and includes all three states in the legend.
+
+## 6.7.14 Implementation Note
+
+Daily Until Complete missed-history reconciliation now also runs after table quick due/repeat edits, closing the path that could leave retroactive overdue dates as virtual Due cells. Task History now treats scheduled occurrence dates as `Due`, uses `Upcoming` only for the seven-day lead window before the next due date, and leaves earlier dates `Not Due`; saved history still overrides every virtual state. Table View also gains a sortable `Date Completed` metadata column backed by the existing task `completed_at` value, with incomplete rows kept below completed rows.
+
+## 6.7.15 Implementation Note
+
+Focused app-side overdue reconciliation now backfills missing history for every task cadence instead of only Daily Until Complete: one-off tasks receive a Missed row on their overdue due date, recurring tasks receive Missed rows only on overdue scheduled occurrence dates, and existing saved history always wins. Reconciliation runs from editor saves, table quick edits, recurring completion, permanent Complete, and Task History opening so previously created QA rows repair without waiting for another logical day. Collapsed HUD chips now use title case (`Overview`, `Today`, `Urgent`) and reward readiness reads `1 Die Ready` or `2 Dice Ready`.
+
+## 6.7.16 Implementation Note
+
+The collapsed HUD `Overview`, `Today`, and `Urgent` chips now use the exact shared task-table chip scale and border structure already used by the adjacent `Refresh` and `Open` controls. Their title-case copy and existing color roles remain unchanged.
+
+## 6.7.17 Implementation Note
+
+Pending task reward rolls are now stored in a user-scoped browser bank instead of existing only in React state. Refreshing or moving between app pages preserves the queue, newly earned rolls append with task/day dedupe, and storage is reduced only after a successful claim or a confirmed already-claimed result; failed claims remain available for retry. Reward calculation, reward resolution, economy writes, and Roll UI behavior are unchanged.
+
+## 6.7.18 Implementation Note
+
+Task History calendar now has an explicit `Select Multiple` mode for applying `Done`, `Did My Best`, `Missed`, or `Clear` to multiple past/current dates at once. Batch edits use one deduplicated history upsert/delete, one local history merge, and one live task/streak synchronization; future dates remain unavailable and permanent `Complete` stays on the existing single-task lifecycle path.
+
+## 6.7.19 Implementation Note
+
+One-off task history no longer caps `Missed Streak` at one. No-repeat tasks now count all trailing saved Missed rows, including rows created through multi-date calendar edits, while their existing one-off completion-streak semantics remain unchanged. The Task History stats card and table-row missed-streak chip share this corrected calculation.

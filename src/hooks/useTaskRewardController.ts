@@ -1,20 +1,24 @@
 "use client";
 
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CommitTaskRewardOpts, CommitTaskRewardResult } from "@/hooks/useEconomy";
 import type { Task, TaskHistory as DbTaskHistory, TaskSubtask as DbTaskSubtask, TaskUpdate } from "@/lib/database.types";
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import {
   getRecurringFinalizationTasksForRewardClaims,
+  mergePendingTaskRewards,
   getPendingRewardDiceCount,
+  parsePendingTaskRewards,
+  PENDING_TASK_REWARDS_STORAGE_KEY,
   buildSingleTaskReward,
   isNewRewardCompletion,
   type PendingTaskReward,
   type TaskRewardCandidate,
   type TaskRewardResolution,
 } from "@/lib/task-rewards";
-import { buildDailyUntilCompleteMissedDateKeys, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import { filterMissingTaskHistoryDateKeys, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import { buildOverdueTaskMissedDateKeys } from "@/lib/task-history";
 import {
   isMissingTaskRewardClaimSubtaskColumnError,
   isMissingTaskRewardClaimsTableError,
@@ -25,6 +29,18 @@ type Message = {
   text: string;
   tone: "neutral" | "good" | "warn";
 };
+
+function getPendingRewardStorageKey(userId: string) {
+  return `${PENDING_TASK_REWARDS_STORAGE_KEY}:${userId}`;
+}
+
+function readPendingRewardQueue(userId: string) {
+  try {
+    return parsePendingTaskRewards(window.localStorage.getItem(getPendingRewardStorageKey(userId)));
+  } catch {
+    return [] as PendingTaskReward[];
+  }
+}
 
 type UseTaskRewardControllerOptions = {
   calcNextDueDateFromDate: (task: Task, referenceDateKey: string) => string | null;
@@ -60,6 +76,7 @@ export function useTaskRewardController({
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskRewardControllerOptions) {
   const [pendingRewardQueue, setPendingRewardQueue] = useState<PendingTaskReward[]>([]);
+  const pendingRewardQueueRef = useRef<PendingTaskReward[]>([]);
   const [areRewardTablesUnavailable, setAreRewardTablesUnavailable] = useState(false);
 
   function showRewardMigrationMessage() {
@@ -84,13 +101,43 @@ export function useTaskRewardController({
       || message.includes("Network request failed");
   }
 
-  function getPendingRewardQueueKey(reward: Pick<PendingTaskReward, "claimRefs" | "rewardDate">) {
-    const claimKey = reward.claimRefs
-      .map((claimRef) => `${claimRef.taskId}:${claimRef.subtaskId ?? "task"}`)
-      .sort()
-      .join("|");
-    return `${reward.rewardDate}:${claimKey}`;
+  function updatePendingRewardQueue(updater: (current: PendingTaskReward[]) => PendingTaskReward[]) {
+    const current = pendingRewardQueueRef.current;
+    const next = updater(current);
+    if (next === current) {
+      return;
+    }
+
+    pendingRewardQueueRef.current = next;
+    setPendingRewardQueue(next);
+    if (typeof window !== "undefined" && currentUserId) {
+      try {
+        window.localStorage.setItem(getPendingRewardStorageKey(currentUserId), JSON.stringify(next));
+      } catch {
+        setMessage({ tone: "warn", text: "Banked rolls are available now, but this browser could not save them for refresh." });
+      }
+    }
   }
+
+  useEffect(() => {
+    pendingRewardQueueRef.current = [];
+    const hydratedQueue = currentUserId && typeof window !== "undefined"
+      ? readPendingRewardQueue(currentUserId)
+      : [];
+    const timeout = window.setTimeout(() => {
+      const nextQueue = mergePendingTaskRewards(hydratedQueue, pendingRewardQueueRef.current);
+      pendingRewardQueueRef.current = nextQueue;
+      setPendingRewardQueue(nextQueue);
+      if (currentUserId) {
+        try {
+          window.localStorage.setItem(getPendingRewardStorageKey(currentUserId), JSON.stringify(nextQueue));
+        } catch {
+          // The interactive update path reports storage failures when rewards change.
+        }
+      }
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [currentUserId]);
 
   function getRecurringFinalizationCandidates(candidates: TaskRewardCandidate[]) {
     return candidates
@@ -102,8 +149,8 @@ export function useTaskRewardController({
       .map((candidate) => candidate.task);
   }
 
-  async function backfillDailyUntilCompleteMisses(task: Task) {
-    const missedDates = buildDailyUntilCompleteMissedDateKeys(task, currentDayKey, null);
+  async function reconcileOverdueTaskMisses(task: Task) {
+    const missedDates = buildOverdueTaskMissedDateKeys(task, currentDayKey);
     if (missedDates.length === 0) {
       return true;
     }
@@ -120,11 +167,10 @@ export function useTaskRewardController({
       return false;
     }
 
-    const latestExistingDate = (existingRows ?? [])
-      .map((entry) => entry.entry_date)
-      .sort()
-      .at(-1) ?? null;
-    const normalizedMissedDates = buildDailyUntilCompleteMissedDateKeys(task, currentDayKey, latestExistingDate);
+    const normalizedMissedDates = filterMissingTaskHistoryDateKeys(
+      missedDates,
+      (existingRows ?? []).map((entry) => entry.entry_date),
+    );
     if (normalizedMissedDates.length === 0) {
       return true;
     }
@@ -172,11 +218,9 @@ export function useTaskRewardController({
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
 
-      if (task.repeat_frequency === "daily_until_complete") {
-        const historySaved = await backfillDailyUntilCompleteMisses(task);
-        if (!historySaved) {
-          return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
-        }
+      const historySaved = await reconcileOverdueTaskMisses(task);
+      if (!historySaved) {
+        return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
 
       const nextDue = calcNextDueDateFromDate(task, currentDayKey);
@@ -378,11 +422,7 @@ export function useTaskRewardController({
       return;
     }
 
-    setPendingRewardQueue((current) => {
-      const existingKeys = new Set(current.map((entry) => getPendingRewardQueueKey(entry)));
-      const nextRewards = pendingRewards.filter((entry) => !existingKeys.has(getPendingRewardQueueKey(entry)));
-      return nextRewards.length > 0 ? [...current, ...nextRewards] : current;
-    });
+    updatePendingRewardQueue((current) => mergePendingTaskRewards(current, pendingRewards));
 
     if (recurringTasksToFinalize.length > 0) {
       await finalizeRecurringTasks(recurringTasksToFinalize);
@@ -398,7 +438,6 @@ export function useTaskRewardController({
 
       if (areRewardTablesUnavailable) {
         await finalizeRecurringTasks(recurringFinalizationTasks);
-        setPendingRewardQueue((current) => current.slice(1));
         showRewardMigrationMessage();
         return false;
       }
@@ -424,7 +463,7 @@ export function useTaskRewardController({
       });
 
       if (claimResult === "already_claimed") {
-        setPendingRewardQueue((current) => current.slice(1));
+        updatePendingRewardQueue((current) => current.slice(1));
         await finalizeRecurringTasks(recurringFinalizationTasks);
         setMessage({
           tone: "neutral",
@@ -438,7 +477,7 @@ export function useTaskRewardController({
         return false;
       }
 
-      setPendingRewardQueue((current) => current.slice(1));
+      updatePendingRewardQueue((current) => current.slice(1));
       await finalizeRecurringTasks(recurringFinalizationTasks);
       setMessage({
         tone: "good",
@@ -474,5 +513,6 @@ export function useTaskRewardController({
     pendingRewardDiceCount: getPendingRewardDiceCount(pendingRewardQueue),
     pendingRewardQueue,
     queueTaskRewards,
+    reconcileOverdueTaskMisses,
   };
 }

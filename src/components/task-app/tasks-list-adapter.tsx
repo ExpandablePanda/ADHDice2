@@ -178,6 +178,7 @@ type TasksTableAdapterProps = {
 const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumnId> = {
   bucket: "lists",
   date_added: "date_added",
+  date_completed: "date_completed",
   due: "due",
   energy: "energy",
   estimated_time: "estimated",
@@ -1872,11 +1873,13 @@ function TasksSimpleList({
                       <MetadataChipButton active={activePanelMode === "priority"} onClick={() => openQuickPanel(task.id, "priority")}>
                         {formatPriorityChipLabel(task, rowContext.focusedTaskIdSet)}
                       </MetadataChipButton>
-                      {repeatSummary ? (
-                        <MetadataChipButton active={activePanelMode === "repeat"} onClick={() => openQuickPanel(task.id, "repeat")}>
-                          {repeatSummary}
-                        </MetadataChipButton>
-                      ) : null}
+                      <MetadataChipButton
+                        active={activePanelMode === "repeat"}
+                        onClick={() => openQuickPanel(task.id, "repeat")}
+                        toneClassName={repeatTone(task.repeat_frequency)}
+                      >
+                        {repeatSummary ?? "No Repeat"}
+                      </MetadataChipButton>
                       <MetadataChipButton active={activePanelMode === "list"} onClick={() => openQuickPanel(task.id, "list")}>
                         {categoryLabel}
                       </MetadataChipButton>
