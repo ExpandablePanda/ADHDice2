@@ -5,7 +5,7 @@ Last reviewed: 2026-06-20
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.7.19`.
+- Current working app version: `6.7.20`.
 - Current release group: `6.7.x` same-parent Step/Substep drag reorder.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -311,3 +311,7 @@ Task History calendar now has an explicit `Select Multiple` mode for applying `D
 ## 6.7.19 Implementation Note
 
 One-off task history no longer caps `Missed Streak` at one. No-repeat tasks now count all trailing saved Missed rows, including rows created through multi-date calendar edits, while their existing one-off completion-streak semantics remain unchanged. The Task History stats card and table-row missed-streak chip share this corrected calculation.
+
+## 6.7.20 Implementation Note
+
+An unresolved overdue one-off task now remains a daily completion opportunity: focused reconciliation writes Missed history from its original due date through yesterday, while today renders as `Due` and future dates remain `Not Due`. This applies only while the task is unresolved (`Pending`, `In Progress`, `Missed`, `Upcoming`, or `Not Due`); completed, archived, and trashed tasks do not receive new overdue history.

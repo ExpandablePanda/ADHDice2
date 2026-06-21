@@ -203,8 +203,16 @@ export function filterMissingTaskHistoryDateKeys(
 }
 
 export function shouldReconcileOverdueTaskMisses(
-  task: Pick<Task, "due_on">,
+  task: Pick<Task, "due_on" | "status">,
   currentDayKey: string,
 ) {
-  return Boolean(task.due_on && task.due_on < currentDayKey);
+  return Boolean(
+    task.due_on
+    && task.due_on < currentDayKey
+    && (task.status === "pending"
+      || task.status === "in_progress"
+      || task.status === "missed"
+      || task.status === "upcoming"
+      || task.status === "not_due"),
+  );
 }

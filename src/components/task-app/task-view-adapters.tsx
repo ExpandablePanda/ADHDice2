@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/task-table-primitives";
 import { TaskGridViewComponent } from "./task-grid-view";
 import {
-  buildTaskDueDateSet,
+  buildTaskHistoryCalendarDueDateSet,
   computeTaskSpecificHistoryStats,
   formatTaskHistoryEntryLabel,
   getTaskHistoryCalendarVirtualState,
@@ -539,7 +539,7 @@ export function TaskHistoryModal({
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const weeks: string[][] = [];
-  const dueDates = buildTaskDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, taskHistory);
+  const dueDates = buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, taskHistory);
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
   const stats = computeTaskSpecificHistoryStats(task, taskHistory, today, days[0] ?? today);

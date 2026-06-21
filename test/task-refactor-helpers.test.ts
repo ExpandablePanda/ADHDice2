@@ -117,6 +117,7 @@ test("daily until complete missed-date helper backfills overdue days without dup
   assert.equal(shouldReconcileOverdueTaskMisses(task, "2026-05-23"), true);
   assert.equal(shouldReconcileOverdueTaskMisses({ ...task, due_on: "2026-05-23" }, "2026-05-23"), false);
   assert.equal(shouldReconcileOverdueTaskMisses({ ...task, repeat_frequency: "daily" }, "2026-05-23"), true);
+  assert.equal(shouldReconcileOverdueTaskMisses({ ...task, status: "complete" }, "2026-05-23"), false);
 });
 
 test("repeat helpers resolve recurring live status from next due date and logical-day time", () => {

@@ -5,6 +5,7 @@ import type { TaskHistory as DbTaskHistory } from "../src/lib/database.types.ts"
 import { createTask } from "../src/lib/task-buckets.ts";
 import {
   buildTaskHistoryFacts,
+  buildTaskHistoryCalendarDueDateSet,
   buildOverdueTaskMissedDateKeys,
   buildTaskDueDateSet,
   computeTaskHistoryStats,
@@ -96,7 +97,36 @@ test("overdue missed backfill uses one-off and recurring due opportunities only"
     title: "Weekly overdue",
   });
 
-  assert.deepEqual(buildOverdueTaskMissedDateKeys(oneOff, "2026-06-21"), ["2026-06-10"]);
+  assert.deepEqual(buildOverdueTaskMissedDateKeys(oneOff, "2026-06-21"), [
+    "2026-06-10",
+    "2026-06-11",
+    "2026-06-12",
+    "2026-06-13",
+    "2026-06-14",
+    "2026-06-15",
+    "2026-06-16",
+    "2026-06-17",
+    "2026-06-18",
+    "2026-06-19",
+    "2026-06-20",
+  ]);
+  assert.deepEqual(
+    [...buildTaskHistoryCalendarDueDateSet(oneOff, "2026-06-09", "2026-06-22", "2026-06-21")],
+    [
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+    ],
+  );
   assert.deepEqual(buildOverdueTaskMissedDateKeys(weekly, "2026-06-21"), ["2026-06-01", "2026-06-08", "2026-06-15"]);
 });
 

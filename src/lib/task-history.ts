@@ -506,9 +506,54 @@ export function buildTaskDueDateSet(task: Task, startDateKey: string, endDateKey
   return dueDates;
 }
 
+function isUnresolvedTaskStatus(status: TaskStatus) {
+  return status === "pending"
+    || status === "in_progress"
+    || status === "missed"
+    || status === "upcoming"
+    || status === "not_due";
+}
+
+export function buildTaskHistoryCalendarDueDateSet(
+  task: Task,
+  startDateKey: string,
+  endDateKey: string,
+  todayDateKey: string,
+  history: DbTaskHistory[] = [],
+) {
+  const dueDates = buildTaskDueDateSet(task, startDateKey, endDateKey, history);
+  if (
+    task.repeat_frequency !== "none"
+    || !task.due_on
+    || task.due_on > todayDateKey
+    || !isUnresolvedTaskStatus(task.status)
+  ) {
+    return dueDates;
+  }
+
+  let cursor = compareDateKeys(task.due_on, startDateKey) > 0 ? task.due_on : startDateKey;
+  const lastOpportunityDate = compareDateKeys(todayDateKey, endDateKey) < 0 ? todayDateKey : endDateKey;
+  while (compareDateKeys(cursor, lastOpportunityDate) <= 0) {
+    dueDates.add(cursor);
+    cursor = shiftDateKey(cursor, 1);
+  }
+  return dueDates;
+}
+
 export function buildOverdueTaskMissedDateKeys(task: Task, currentDayKey: string) {
-  if (!task.due_on || task.due_on >= currentDayKey) {
+  if (!task.due_on || task.due_on >= currentDayKey || !isUnresolvedTaskStatus(task.status)) {
     return [] as string[];
+  }
+
+  if (task.repeat_frequency === "none") {
+    const missedDates: string[] = [];
+    let cursor = task.due_on;
+    const lastMissedDate = shiftDateKey(currentDayKey, -1);
+    while (compareDateKeys(cursor, lastMissedDate) <= 0) {
+      missedDates.push(cursor);
+      cursor = shiftDateKey(cursor, 1);
+    }
+    return missedDates;
   }
 
   return [...buildTaskDueDateSet(task, task.due_on, shiftDateKey(currentDayKey, -1))].sort();
