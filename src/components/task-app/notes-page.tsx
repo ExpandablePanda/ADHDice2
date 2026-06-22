@@ -5,6 +5,7 @@ import type { User } from "@supabase/supabase-js";
 import { NoteEditorComponent } from "./note-editor";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { Note, Task } from "@/lib/database.types";
+import { ScratchPaperPageSection, type ScratchPaperData } from "./scratch-paper";
 
 type NotesPageProps = {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
@@ -13,6 +14,7 @@ type NotesPageProps = {
   onOpenNoteHandled?: () => void;
   openNoteId?: string | null;
   tasks: Task[];
+  scratchPaper: ScratchPaperData;
 };
 
 export function NotesPageComponent({
@@ -22,6 +24,7 @@ export function NotesPageComponent({
   onOpenNoteHandled,
   openNoteId,
   tasks,
+  scratchPaper,
 }: NotesPageProps) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [search, setSearch] = useState("");
@@ -166,6 +169,8 @@ export function NotesPageComponent({
           +
         </button>
       </div>
+
+      <ScratchPaperPageSection {...scratchPaper} />
 
       <div className="mb-4 flex gap-2 rounded-2xl px-4 py-3 bg-[#f7f5ff] dark:bg-white/5">
         <input

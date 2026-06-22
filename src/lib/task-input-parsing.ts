@@ -3,7 +3,6 @@ import type {
   TaskPriority,
   TaskRepeatFrequency,
   TaskStatus,
-  TaskSubtaskStatus,
 } from "@/lib/database.types";
 import { formatDateKey, shiftDateKey } from "@/lib/task-grid-layout";
 
@@ -13,10 +12,20 @@ export type ImportedTaskWarning = {
 };
 
 export type ImportedTaskSubtask = {
+  actualSeconds: number | null;
   children: ImportedTaskSubtask[];
+  dueOn: string | null;
+  dueTime: string | null;
+  energy: TaskEnergy;
+  estimatedMinutes: number | null;
   id: string;
+  isImportant: boolean;
+  isUrgent: boolean;
   line: number;
-  status: TaskSubtaskStatus;
+  priority: TaskPriority;
+  repeatFrequency: TaskRepeatFrequency;
+  status: TaskStatus;
+  tags: string[];
   title: string;
 };
 
@@ -36,9 +45,6 @@ export type ImportedTaskDraft = {
   title: string;
   priority: TaskPriority;
 };
-
-const STEP_ONLY_PERSISTED_FIELDS = new Set(["status"]);
-const STEP_METADATA_FIELDS = new Set(["actual", "due", "energy", "est", "estimate", "status", "tags"]);
 
 export function parseTagList(value: string) {
   return Array.from(
@@ -183,19 +189,22 @@ function parseStepLine(
   const parsed = parseImportTokens(value);
   const warnings: ImportedTaskWarning[] = parsed.warnings.map((warning) => ({ ...warning, line }));
   const subtask: ImportedTaskSubtask = {
+    actualSeconds: null,
     children: [],
+    dueOn: null,
+    dueTime: null,
+    energy: "none",
+    estimatedMinutes: null,
     id: createImportedSubtaskId(line),
+    isImportant: false,
+    isUrgent: false,
     line,
+    priority: "normal",
+    repeatFrequency: "none",
     status: "pending",
+    tags: parsed.tags,
     title: parsed.title,
   };
-
-  if (parsed.tags.length > 0) {
-    warnings.push({
-      line,
-      message: `Step tags (${parsed.tags.map((tag) => `#${tag}`).join(", ")}) were skipped because steps do not currently persist tags.`,
-    });
-  }
 
   for (const token of parsed.metadataTokens) {
     const handled = applyStepMetadataToken(subtask, token.field, token.value, todayDateKey);
@@ -373,8 +382,35 @@ function applyStepMetadataToken(
 ) {
   const value = rawValue.trim();
 
+  if (field === "due" || field === "date") {
+    const parsed = parseDueDateValue(value, todayDateKey);
+    if (!parsed) {
+      return { warning: `Could not parse step due value "${rawValue}".` };
+    }
+    subtask.dueOn = parsed;
+    return {};
+  }
+
+  if (field === "time" || field === "due_time") {
+    const parsed = parseDueTimeValue(value);
+    if (!parsed) {
+      return { warning: `Could not parse step due time "${rawValue}".` };
+    }
+    subtask.dueTime = parsed;
+    return {};
+  }
+
+  if (field === "repeat" || field === "repeats") {
+    const parsed = parseRepeatValue(value);
+    if (!parsed) {
+      return { warning: `Could not parse step repeat value "${rawValue}".` };
+    }
+    subtask.repeatFrequency = parsed;
+    return {};
+  }
+
   if (field === "status") {
-    const parsed = parseSubtaskStatusValue(value);
+    const parsed = parseTaskStatusValue(value);
     if (!parsed) {
       return { warning: `Could not parse step status value "${rawValue}".` };
     }
@@ -382,36 +418,52 @@ function applyStepMetadataToken(
     return {};
   }
 
-  if (field === "due" || field === "date") {
-    return parseDueDateValue(value, todayDateKey)
-      ? { warning: `Step metadata "${field}" was skipped because steps do not currently persist due dates.` }
-      : { warning: `Could not parse step due value "${rawValue}".` };
-  }
-
   if (field === "estimate" || field === "est") {
-    return parseDurationMinutesValue(value) !== null
-      ? { warning: `Step metadata "${field}" was skipped because steps do not currently persist estimated time.` }
-      : { warning: `Could not parse step estimate value "${rawValue}".` };
+    const parsed = parseDurationMinutesValue(value);
+    if (parsed === null) {
+      return { warning: `Could not parse step estimate value "${rawValue}".` };
+    }
+    subtask.estimatedMinutes = parsed;
+    return {};
   }
 
   if (field === "actual") {
-    return parseDurationMinutesValue(value) !== null
-      ? { warning: `Step metadata "${field}" was skipped because steps do not currently persist actual time.` }
-      : { warning: `Could not parse step actual value "${rawValue}".` };
+    const parsed = parseDurationMinutesValue(value);
+    if (parsed === null) {
+      return { warning: `Could not parse step actual value "${rawValue}".` };
+    }
+    subtask.actualSeconds = parsed * 60;
+    return {};
   }
 
   if (field === "energy") {
-    return parseEnergyValue(value)
-      ? { warning: `Step metadata "${field}" was skipped because steps do not currently persist energy.` }
-      : { warning: `Could not parse step energy value "${rawValue}".` };
+    const parsed = parseEnergyValue(value);
+    if (!parsed) {
+      return { warning: `Could not parse step energy value "${rawValue}".` };
+    }
+    subtask.energy = parsed;
+    return {};
   }
 
-  if (field === "tags") {
-    return { warning: `Step metadata "${field}" was skipped because steps do not currently persist tags.` };
+  if (field === "priority") {
+    const parsed = parsePriorityValue(value);
+    if (!parsed) {
+      return { warning: `Could not parse step priority value "${rawValue}".` };
+    }
+    if (parsed.kind === "priority") {
+      subtask.priority = parsed.value;
+      return {};
+    }
+    if (parsed.kind === "flag") {
+      if (parsed.value === "urgent") subtask.isUrgent = true;
+      if (parsed.value === "important") subtask.isImportant = true;
+      return {};
+    }
+    return { warning: `Step priority value "${rawValue}" is not supported by the current import path.` };
   }
 
-  if (STEP_METADATA_FIELDS.has(field) && !STEP_ONLY_PERSISTED_FIELDS.has(field)) {
-    return { warning: `Step metadata "${field}" was skipped by the current step data model.` };
+  if (field === "list") {
+    return { warning: `Step list metadata "${rawValue}" was skipped because task lists are not stored on the task row itself.` };
   }
 
   return { warning: `Unknown step metadata field "${field}" was skipped.` };
@@ -500,15 +552,6 @@ function parseTaskStatusValue(value: string) {
   const aliased = normalizeStatusAlias(normalized);
   if (aliased === "pending" || aliased === "in_progress" || aliased === "done" || aliased === "missed" || aliased === "did_my_best" || aliased === "upcoming" || aliased === "not_due" || aliased === "archived" || aliased === "trashed") {
     return aliased as TaskStatus;
-  }
-  return null;
-}
-
-function parseSubtaskStatusValue(value: string) {
-  const normalized = normalizeOptionValue(value);
-  const aliased = normalizeStatusAlias(normalized);
-  if (aliased === "pending" || aliased === "in_progress" || aliased === "done" || aliased === "missed" || aliased === "did_my_best" || aliased === "upcoming" || aliased === "not_due") {
-    return aliased as TaskSubtaskStatus;
   }
   return null;
 }

@@ -13,6 +13,7 @@ export type HudWidgetType =
   | "new_task"
   | "refocus"
   | "quick_capture"
+  | "scratch_paper"
   | "task_counts";
 
 export type HudWidgetSize = "1x1" | "1x2" | "2x1" | "2x2";
@@ -77,7 +78,7 @@ export type HudUiState = {
   selectedHudWidgetId: string | null;
 };
 
-export const HUD_UI_SCHEMA_VERSION = 6;
+export const HUD_UI_SCHEMA_VERSION = 7;
 export const HUD_WORKSPACE_SCHEMA_VERSION = 2;
 export const HUD_WORKSPACE_SNAP_PX = 8;
 export const HUD_LAYOUT_SNAPSHOT_LIMIT = 5;
@@ -98,6 +99,7 @@ export const HUD_WIDGET_TYPES: HudWidgetType[] = [
   "new_task",
   "refocus",
   "quick_capture",
+  "scratch_paper",
   "task_counts",
 ];
 
@@ -111,6 +113,7 @@ export const HUD_WIDGET_LABELS: Record<HudWidgetType, string> = {
   points: "Points",
   quick_capture: "Quick Capture",
   refocus: "Refocus",
+  scratch_paper: "Scratch Paper",
   sync_status: "Sync Status",
   streak: "Streak",
   task_counts: "Task Counts",
@@ -129,6 +132,7 @@ const DEFAULT_WIDGET_SIZES: Record<HudWidgetType, HudWidgetSize> = {
   points: "1x1",
   quick_capture: "1x1",
   refocus: "1x1",
+  scratch_paper: "2x2",
   sync_status: "1x1",
   streak: "1x1",
   task_counts: "2x1",
@@ -144,6 +148,8 @@ const HUD_WIDGET_DIMENSION_LIMITS = {
   minWidth: 44,
 } as const;
 
+const SCRATCH_PAPER_MAX_HEIGHT_PX = 640;
+
 const HUD_WIDGET_MIN_DIMENSIONS: Record<HudWidgetType, { heightPx: number; widthPx: number }> = {
   calm: { heightPx: 54, widthPx: 104 },
   dark_mode: { heightPx: 44, widthPx: 44 },
@@ -154,6 +160,7 @@ const HUD_WIDGET_MIN_DIMENSIONS: Record<HudWidgetType, { heightPx: number; width
   points: { heightPx: 44, widthPx: 96 },
   quick_capture: { heightPx: 44, widthPx: 148 },
   refocus: { heightPx: 44, widthPx: 112 },
+  scratch_paper: { heightPx: 176, widthPx: 320 },
   sync_status: { heightPx: 44, widthPx: 108 },
   streak: { heightPx: 44, widthPx: 96 },
   task_counts: { heightPx: 48, widthPx: 184 },
@@ -175,6 +182,7 @@ const HUD_WORKSPACE_DEFAULT_DIMENSIONS = {
 } as const;
 
 const HUD_WORKSPACE_GAP_PX = 8;
+const HUD_WORKSPACE_EDGE_INSET_PX = 5;
 const HUD_WORKSPACE_CANVAS_PADDING_PX = HUD_WORKSPACE_GAP_PX * 3;
 
 function snapToWorkspaceGrid(value: number) {
@@ -182,16 +190,18 @@ function snapToWorkspaceGrid(value: number) {
 }
 
 function clampWorkspaceCoordinate(position: number, size: number, workspaceSize: number) {
-  return Math.max(0, Math.min(Math.max(0, workspaceSize - size), snapToWorkspaceGrid(position)));
+  const maxPosition = Math.max(HUD_WORKSPACE_EDGE_INSET_PX, workspaceSize - size - HUD_WORKSPACE_EDGE_INSET_PX);
+  const snappedPosition = HUD_WORKSPACE_EDGE_INSET_PX + snapToWorkspaceGrid(position - HUD_WORKSPACE_EDGE_INSET_PX);
+  return Math.max(HUD_WORKSPACE_EDGE_INSET_PX, Math.min(maxPosition, snappedPosition));
 }
 
 function enumerateSnappedCoordinates(max: number) {
-  if (max <= 0) {
-    return [0];
+  if (max <= HUD_WORKSPACE_EDGE_INSET_PX) {
+    return [HUD_WORKSPACE_EDGE_INSET_PX];
   }
 
   const coordinates: number[] = [];
-  for (let value = 0; value <= max; value += HUD_WORKSPACE_SNAP_PX) {
+  for (let value = HUD_WORKSPACE_EDGE_INSET_PX; value <= max; value += HUD_WORKSPACE_SNAP_PX) {
     coordinates.push(value);
   }
   if (coordinates[coordinates.length - 1] !== max) {
@@ -226,8 +236,8 @@ export function getHudWorkspaceContentDimensions(
   const visibleWidgets = widgets.filter((widget) => widget.isVisible);
   const farRight = visibleWidgets.reduce((maxRight, widget) => Math.max(maxRight, getWidgetRight(widget)), 0);
   const farBottom = visibleWidgets.reduce((maxBottom, widget) => Math.max(maxBottom, getWidgetBottom(widget)), 0);
-  const widthOverflow = Math.max(0, farRight - workspace.widthPx);
-  const heightOverflow = Math.max(0, farBottom - workspace.heightPx);
+  const widthOverflow = Math.max(0, farRight + HUD_WORKSPACE_EDGE_INSET_PX - workspace.widthPx);
+  const heightOverflow = Math.max(0, farBottom + HUD_WORKSPACE_EDGE_INSET_PX - workspace.heightPx);
 
   return {
     heightPx: workspace.heightPx + (heightOverflow > 0 ? heightOverflow + HUD_WORKSPACE_CANVAS_PADDING_PX : 0),
@@ -298,8 +308,8 @@ function resolveWorkspacePlacement(
   }
 
   const searchArea = getPlacementSearchArea(widgets, workspace, targetWidget, options);
-  const maxX = Math.max(0, searchArea.widthPx - targetWidget.widthPx);
-  const maxY = Math.max(0, searchArea.heightPx - targetWidget.heightPx);
+  const maxX = Math.max(HUD_WORKSPACE_EDGE_INSET_PX, searchArea.widthPx - targetWidget.widthPx - HUD_WORKSPACE_EDGE_INSET_PX);
+  const maxY = Math.max(HUD_WORKSPACE_EDGE_INSET_PX, searchArea.heightPx - targetWidget.heightPx - HUD_WORKSPACE_EDGE_INSET_PX);
   const desiredX = clampWorkspaceCoordinate(targetWidget.x, targetWidget.widthPx, searchArea.widthPx);
   const desiredY = clampWorkspaceCoordinate(targetWidget.y, targetWidget.heightPx, searchArea.heightPx);
   const desiredPlacement = {
@@ -386,6 +396,7 @@ const DEFAULT_HUD_PAGES: HudPage[] = [
       defaultWidget("new_task"),
       defaultWidget("refocus"),
       defaultWidget("quick_capture"),
+      defaultWidget("scratch_paper"),
       defaultWidget("task_counts"),
     ],
   },
@@ -409,11 +420,14 @@ export function clampHudWidgetDimensions(
   heightPx: number,
 ) {
   const minimums = getWidgetMinimumDimensions(type);
+  const maxHeight = type === "scratch_paper"
+    ? SCRATCH_PAPER_MAX_HEIGHT_PX
+    : HUD_WIDGET_DIMENSION_LIMITS.maxHeight;
   return {
     heightPx: clampDimension(
       heightPx,
       minimums.heightPx,
-      HUD_WIDGET_DIMENSION_LIMITS.maxHeight,
+      maxHeight,
     ),
     widthPx: clampDimension(
       widthPx,
@@ -430,6 +444,10 @@ function getDefaultWidgetDimensions(widget: Pick<HudWidgetLayoutItem, "size" | "
 
   if (widget.type === "calm") {
     return { heightPx: 54, widthPx: 104 };
+  }
+
+  if (widget.type === "scratch_paper") {
+    return { heightPx: 200, widthPx: 360 };
   }
 
   return {
@@ -530,7 +548,7 @@ function sortHudWorkspaceWidgets(widgets: HudWorkspaceWidget[]) {
 
 function packOrderedWorkspaceWidgets(widgets: HudWorkspaceWidget[]) {
   const packedWidgets: HudWorkspaceWidget[] = [];
-  let cursorX = 0;
+  let cursorX = HUD_WORKSPACE_EDGE_INSET_PX;
 
   for (const widget of widgets) {
     packedWidgets.push({
@@ -549,7 +567,7 @@ function getLaneHeight(widgets: HudWorkspaceWidget[]) {
 
 function packWorkspaceLanes(lanes: ReturnType<typeof groupWorkspaceWidgetLanes>) {
   const packedWidgets: HudWorkspaceWidget[] = [];
-  let laneY = 0;
+  let laneY = HUD_WORKSPACE_EDGE_INSET_PX;
 
   for (let laneIndex = 0; laneIndex < lanes.length; laneIndex += 1) {
     const lane = lanes[laneIndex];
@@ -680,7 +698,7 @@ export function getHudSortableTarget(
 ): HudSortableTarget {
   const targetWidgets = sortHudWorkspaceWidgets(widgets.filter((widget) => widget.isVisible && widget.id !== widgetId));
   if (targetWidgets.length === 0) {
-    return { laneIndex: 0, laneY: 0, slotIndex: 0 };
+    return { laneIndex: 0, laneY: HUD_WORKSPACE_EDGE_INSET_PX, slotIndex: 0 };
   }
 
   const lanes = groupWorkspaceWidgetLanes(targetWidgets);
@@ -755,8 +773,8 @@ function buildWorkspaceWidgetsFromOrderedItems(
   workspaceWidthPx: number,
 ) {
   const widgets: HudWorkspaceWidget[] = [];
-  let cursorX = 0;
-  let cursorY = 0;
+  let cursorX = HUD_WORKSPACE_EDGE_INSET_PX;
+  let cursorY = HUD_WORKSPACE_EDGE_INSET_PX;
   let rowHeight = 0;
 
   for (const { isVisible, widget } of orderedWidgets) {
@@ -768,8 +786,8 @@ function buildWorkspaceWidgetsFromOrderedItems(
     );
     const { heightPx, widthPx } = dimensions;
 
-    if (cursorX > 0 && cursorX + widthPx > workspaceWidthPx) {
-      cursorX = 0;
+    if (cursorX > HUD_WORKSPACE_EDGE_INSET_PX && cursorX + widthPx + HUD_WORKSPACE_EDGE_INSET_PX > workspaceWidthPx) {
+      cursorX = HUD_WORKSPACE_EDGE_INSET_PX;
       cursorY += rowHeight + HUD_WORKSPACE_GAP_PX;
       rowHeight = 0;
     }
@@ -997,7 +1015,7 @@ function normalizeHudWorkspace(
   if (includeMissingDefaults || deduped.length < HUD_WIDGET_TYPES.length) {
     for (const widget of fallbackWorkspace.widgets) {
       if (!seenTypes.has(widget.type)) {
-        deduped.push({ ...widget, isVisible: false });
+        deduped.push({ ...widget, isVisible: includeMissingDefaults && widget.type === "scratch_paper" });
         seenTypes.add(widget.type);
       }
     }
@@ -1168,6 +1186,30 @@ export function addHudSnapshot(state: HudUiState): HudUiState {
       ...state.hudSnapshots.map((snapshot) => createHudSnapshot(snapshot.id, snapshot.workspace)),
       createHudSnapshot(nextSnapshotId, nextWorkspace),
     ],
+  };
+}
+
+export function addEmptyHudSnapshot(state: HudUiState): HudUiState {
+  if (state.hudSnapshots.length >= HUD_LAYOUT_SNAPSHOT_LIMIT) {
+    return state;
+  }
+
+  const nextSnapshotId = Math.max(0, ...state.hudSnapshots.map((snapshot) => snapshot.id)) + 1;
+  if (nextSnapshotId > HUD_LAYOUT_SNAPSHOT_LIMIT) {
+    return state;
+  }
+
+  const nextWorkspace = cloneHudWorkspace(DEFAULT_HUD_UI_STATE.hudWorkspace);
+  nextWorkspace.widgets = nextWorkspace.widgets.map((widget) => ({ ...widget, isVisible: false }));
+  return {
+    ...state,
+    activeSnapshotId: nextSnapshotId,
+    hudWorkspace: nextWorkspace,
+    hudSnapshots: [
+      ...state.hudSnapshots.map((snapshot) => createHudSnapshot(snapshot.id, snapshot.workspace)),
+      createHudSnapshot(nextSnapshotId, nextWorkspace),
+    ],
+    selectedHudWidgetId: null,
   };
 }
 

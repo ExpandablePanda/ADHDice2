@@ -7,6 +7,7 @@ import {
   HUD_WIDGET_LABELS,
   HUD_WIDGET_TYPES,
   HUD_WORKSPACE_SNAP_PX,
+  addEmptyHudSnapshot,
   addHudSnapshot,
   clampHudWidgetDimensions,
   cycleHudSnapshot,
@@ -26,6 +27,7 @@ import {
   updateActiveHudWorkspace,
   updateHudWorkspaceWidgetLayout,
 } from "@/lib/task-hud-layout";
+import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
 
 type HudWorkspaceScrollMetrics = {
   clientHeight: number;
@@ -734,6 +736,17 @@ export function HudCommandCenter({
     flashSnapshotLabel(`Snapshot ${nextSnapshotId}`);
   }
 
+  function handleNewLayout() {
+    if (!canAddSnapshot) {
+      flashSnapshotLabel("Max 5 snapshots");
+      return;
+    }
+    const nextSnapshotId = Math.max(0, ...snapshotIds) + 1;
+    setHudUiState((current) => addEmptyHudSnapshot(current));
+    setIsHiddenWidgetTrayOpen(true);
+    flashSnapshotLabel(`New layout ${nextSnapshotId}`);
+  }
+
   function handleCustomScrollbarPointerDown(event: ReactPointerEvent<HTMLButtonElement>, axis: "horizontal" | "vertical") {
     event.preventDefault();
     event.stopPropagation();
@@ -799,7 +812,7 @@ export function HudCommandCenter({
   function renderWidgetTile(widget: HudWorkspaceWidget) {
     const isSelected = hudUiState.isHudEditMode && selectedWidget?.id === widget.id;
     const isDragging = isSelected && dragMoveRef.current?.widgetId === widget.id && dragMoveRef.current?.hasExceededDragThreshold === true && activeDragGuide !== null;
-    const overflowClass = widget.type === "notification_inbox" ? "overflow-visible z-20" : "overflow-hidden";
+    const overflowClass = widget.type === "notification_inbox" || widget.type === "scratch_paper" ? "overflow-visible z-20" : "overflow-hidden";
     const tileStyle: CSSProperties = {
       height: widget.heightPx,
       left: clampPosition(widget.x),
@@ -1037,6 +1050,14 @@ export function HudCommandCenter({
             >
               {canAddSnapshot ? "Add Snapshot" : "Max 5"}
             </button>
+            <TaskTableChipButton
+              disabled={!canAddSnapshot}
+              onClick={handleNewLayout}
+              toneClassName="border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#493a78] dark:bg-[#241b42] dark:text-[#cabfff]"
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" />
+              {canAddSnapshot ? "New Layout" : "Max 5 Layouts"}
+            </TaskTableChipButton>
             <button className="ui-pill-button-danger-light" onClick={resetHudLayout} type="button">
               <RotateCcw className="mr-1 inline h-3.5 w-3.5" />
               Reset HUD Layout

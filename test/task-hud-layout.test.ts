@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addHudSnapshot,
+  addEmptyHudSnapshot,
   createDefaultHudUiState,
   cycleHudSnapshot,
   getHudSortableTarget,
@@ -47,10 +48,10 @@ test("hud workspace reorder packs visible widgets into the requested sortable or
     "sync_status",
   ]);
   assert.deepEqual(reordered.map((item) => [item.id, item.x, item.y]), [
-    ["dark_mode", 0, 0],
-    ["xp", 58, 0],
-    ["calm", 116, 0],
-    ["sync_status", 174, 0],
+    ["dark_mode", 5, 5],
+    ["xp", 63, 5],
+    ["calm", 121, 5],
+    ["sync_status", 179, 5],
   ]);
 });
 
@@ -64,9 +65,9 @@ test("hud workspace reorder keeps lane contents from wrapping by workspace width
   const reordered = reorderHudWorkspaceWidgets(widgets, "sync_status", { laneIndex: 0, laneY: 0, slotIndex: 1 });
 
   assert.deepEqual(reordered.map((item) => [item.id, item.x, item.y]), [
-    ["dark_mode", 0, 0],
-    ["sync_status", 98, 0],
-    ["calm", 196, 0],
+    ["dark_mode", 5, 5],
+    ["sync_status", 103, 5],
+    ["calm", 201, 5],
   ]);
 });
 
@@ -86,12 +87,12 @@ test("hud lane reorder inserts row two widget into row one without spilling row 
   const reordered = reorderHudWorkspaceWidgets(widgets, "xp", { laneIndex: 0, laneY: 0, slotIndex: 2 });
 
   assert.deepEqual(reordered.map((item) => [item.id, item.x, item.y]), [
-    ["dark_mode", 0, 0],
-    ["calm", 98, 0],
-    ["xp", 196, 0],
-    ["sync_status", 294, 0],
-    ["points", 0, 48],
-    ["tokens", 98, 48],
+    ["dark_mode", 5, 5],
+    ["calm", 103, 5],
+    ["xp", 201, 5],
+    ["sync_status", 299, 5],
+    ["points", 5, 53],
+    ["tokens", 103, 53],
   ]);
 });
 
@@ -106,9 +107,9 @@ test("hud lane reorder resolves target lane by y when source lane disappears", (
   const reordered = reorderHudWorkspaceWidgets(widgets, "dark_mode", target);
 
   assert.deepEqual(reordered.map((item) => [item.id, item.x, item.y]), [
-    ["calm", 0, 0],
-    ["dark_mode", 98, 0],
-    ["sync_status", 196, 0],
+    ["calm", 5, 5],
+    ["dark_mode", 103, 5],
+    ["sync_status", 201, 5],
   ]);
 });
 
@@ -144,21 +145,21 @@ test("hud lane reorder sizes rows by tallest widget and vertically centers short
   const tallInFirstLane = reorderHudWorkspaceWidgets(widgets, "sync_status", { laneIndex: 0, laneY: 0, slotIndex: 1 });
 
   assert.deepEqual(tallInFirstLane.map((item) => [item.id, item.x, item.y]), [
-    ["dark_mode", 0, 28],
-    ["sync_status", 98, 0],
-    ["calm", 196, 28],
-    ["xp", 0, 104],
-    ["points", 0, 152],
+    ["dark_mode", 5, 33],
+    ["sync_status", 103, 5],
+    ["calm", 201, 33],
+    ["xp", 5, 109],
+    ["points", 5, 157],
   ]);
 
   const tallBackInSecondLane = reorderHudWorkspaceWidgets(tallInFirstLane, "sync_status", { laneIndex: 1, laneY: 104, slotIndex: 1 });
 
   assert.deepEqual(tallBackInSecondLane.map((item) => [item.id, item.x, item.y]), [
-    ["dark_mode", 0, 0],
-    ["calm", 98, 0],
-    ["xp", 0, 76],
-    ["sync_status", 98, 48],
-    ["points", 0, 152],
+    ["dark_mode", 5, 5],
+    ["calm", 103, 5],
+    ["xp", 5, 81],
+    ["sync_status", 103, 53],
+    ["points", 5, 157],
   ]);
 });
 
@@ -248,6 +249,13 @@ test("hud widget resize clamps focus alarm to content-safe minimums", () => {
   assert.equal(focusAlarm?.widthPx, 224);
 });
 
+test("hud widget placement keeps a five pixel sandbox top-left inset", () => {
+  const widgets = [widget("dark_mode", 0, 0, 50, 40)];
+  const topLeft = updateHudWorkspaceWidgetLayout(widgets, { heightPx: 120, widthPx: 200 }, "dark_mode", { x: 0, y: 0 });
+
+  assert.deepEqual([topLeft[0]?.x, topLeft[0]?.y], [5, 5]);
+});
+
 test("hud workspace normalization repairs persisted widgets below usable minimums", () => {
   const normalized = normalizeHudUiState({
     activeHudPageId: "command",
@@ -308,6 +316,7 @@ test("hud workspace normalization repairs persisted widgets below usable minimum
   const newTask = normalized.hudWorkspace.widgets.find((item) => item.type === "new_task");
   const focusAlarm = normalized.hudWorkspace.widgets.find((item) => item.type === "focus_alarm");
   const quickCapture = normalized.hudWorkspace.widgets.find((item) => item.type === "quick_capture");
+  const scratchPaper = normalized.hudWorkspace.widgets.find((item) => item.type === "scratch_paper");
 
   assert.equal(calm?.heightPx, 54);
   assert.equal(calm?.widthPx, 104);
@@ -318,6 +327,9 @@ test("hud workspace normalization repairs persisted widgets below usable minimum
   assert.equal(focusAlarm?.widthPx, 224);
   assert.equal(quickCapture?.heightPx, 44);
   assert.equal(quickCapture?.widthPx, 148);
+  assert.equal(scratchPaper?.isVisible, true);
+  assert.equal(scratchPaper?.heightPx, 200);
+  assert.equal(scratchPaper?.widthPx, 360);
 });
 
 test("hud workspace content dimensions do not add fake gutter when widgets fit inside the sandbox", () => {
@@ -342,7 +354,7 @@ test("hud workspace content dimensions add reachable gutter after true horizonta
 
   assert.deepEqual(
     getHudWorkspaceContentDimensions(widgets, { heightPx: 120, widthPx: 880 }),
-    { heightPx: 208, widthPx: 1112 },
+    { heightPx: 213, widthPx: 1117 },
   );
 });
 
@@ -413,6 +425,7 @@ test("createDefaultHudUiState returns a fresh default layout snapshot", () => {
   assert.equal(first.hudWorkspace.isWidthUserSized, false);
   assert.deepEqual(first.hudSnapshots.map((snapshot) => snapshot.id), [1]);
   assert.equal(first.hudWorkspace.widthPx, 880);
+  assert.equal(first.hudWorkspace.widgets.find((widget) => widget.type === "scratch_paper")?.isVisible, true);
 });
 
 test("legacy single-layout HUD state migrates into snapshot 1", () => {
@@ -457,6 +470,23 @@ test("add snapshot creates the next snapshot and switches active snapshot", () =
   assert.deepEqual(next.hudSnapshots.map((snapshot) => snapshot.id), [1, 2]);
   assert.equal(next.hudWorkspace.widthPx, 944);
   assert.equal(next.hudSnapshots[1]?.workspace.widthPx, 944);
+});
+
+test("new empty HUD layout preserves the current snapshot and hides every widget", () => {
+  const state = createDefaultHudUiState();
+  const originalVisibleTypes = state.hudWorkspace.widgets.filter((widget) => widget.isVisible).map((widget) => widget.type);
+
+  const next = addEmptyHudSnapshot(state);
+
+  assert.equal(next.activeSnapshotId, 2);
+  assert.deepEqual(next.hudSnapshots.map((snapshot) => snapshot.id), [1, 2]);
+  assert.deepEqual(
+    next.hudSnapshots.find((snapshot) => snapshot.id === 1)?.workspace.widgets.filter((widget) => widget.isVisible).map((widget) => widget.type),
+    originalVisibleTypes,
+  );
+  assert.equal(next.hudWorkspace.widgets.every((widget) => !widget.isVisible), true);
+  assert.equal(next.hudSnapshots.find((snapshot) => snapshot.id === 2)?.workspace.widgets.every((widget) => !widget.isVisible), true);
+  assert.equal(next.selectedHudWidgetId, null);
 });
 
 test("save snapshot overwrites the active snapshot layout", () => {

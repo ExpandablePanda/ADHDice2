@@ -2,7 +2,7 @@ import { buildTaskCollections } from "@/lib/task-selectors";
 import { buildTaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
 import { isArchiveLikeTask } from "@/lib/task-complete";
 import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
-import { sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
+import { getTaskDisplayStatus, sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
 import type {
   Task,
   TaskHistory,
@@ -317,7 +317,7 @@ export function buildChildTaskPreviewLookup(
           repeatDaysOfWeek: descendant.repeat_days_of_week ?? [],
           repeatInterval: Math.max(1, descendant.repeat_interval ?? 1),
           scheduledOn: descendant.scheduled_on,
-          status: descendant.status,
+          status: getTaskDisplayStatus(descendant),
           tags: descendant.tags ?? [],
           title: descendant.title,
           updatedAt: descendant.updated_at,

@@ -1,12 +1,12 @@
 # Current State
 
-Last reviewed: 2026-06-20
+Last reviewed: 2026-06-22
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.7.20`.
-- Current release group: `6.7.x` same-parent Step/Substep drag reorder.
+- Current working app version: `6.8.18`.
+- Current release group: `6.8.x` Scratch Paper.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
@@ -315,3 +315,71 @@ One-off task history no longer caps `Missed Streak` at one. No-repeat tasks now 
 ## 6.7.20 Implementation Note
 
 An unresolved overdue one-off task now remains a daily completion opportunity: focused reconciliation writes Missed history from its original due date through yesterday, while today renders as `Due` and future dates remain `Not Due`. This applies only while the task is unresolved (`Pending`, `In Progress`, `Missed`, `Upcoming`, or `Not Due`); completed, archived, and trashed tasks do not receive new overdue history.
+
+## 6.8.0 Implementation Note
+
+Scratch Paper adds a medium resizable HUD widget and a Scratch Paper section on the existing Notes page. Supabase-backed notes support optional titles, bodies, active/resolved/trashed states, editing, search, manual resolve/trash/restore, and multiple current-task links whose pills show live task status and open the shared task editor. The HUD lists active notes only with internal scrolling, and its toolbar chip opens Notes. Task creation from a no-match link search opens the existing New Task modal with a prefilled title; it never creates silently. Apply `supabase/add_scratch_paper_notes.sql` manually before persistence is live. Rich text/markdown, inline status actions, realtime subscriptions, and advanced restore/delete workflows remain deferred.
+
+## 6.8.1 Implementation Note
+
+HUD edit mode now includes a `New Layout` chip. It creates and switches to a new empty snapshot, preserves every existing snapshot unchanged, hides all widgets in the new layout, and opens the widget tray so the layout can be built from scratch. The existing cloned `Add Snapshot` action, reset behavior, drag/reorder, resize, and five-snapshot limit remain unchanged.
+
+## 6.8.2 Implementation Note
+
+HUD workspace layout math now keeps visible widgets at least 5px inside the sandbox edges. The inset is shared by default packing, persisted-layout normalization, widget add, drag/reorder, resize placement, and overflow sizing, while the existing 8px widget-to-widget gap and scrollable overflow behavior remain unchanged.
+
+## 6.8.3 Implementation Note
+
+Scratch Paper HUD note entry is now body-first and notepad-like, with title kept optional behind a secondary reveal. Typing `/` in the note body opens a live current-task picker, the same picker can be opened from a visible `/ Link Task` chip, selected tasks are stored as inline body tokens that render back as task pills in saved view, and no-match searches still route to the existing New Task modal with the title prefilled instead of creating silently. Linked task pills now open the shared task editor from the title area and expose the existing task-status model inline from Scratch Paper, while active HUD cards keep a clearer manual `Resolve` action and resolved notes continue moving into the Notes page `Resolved` filter without auto-resolving from task completion.
+
+## 6.8.4 Implementation Note
+
+Scratch Paper HUD now keeps the same shared body-first composer and active-note cards as the Notes page, but moves them into one internal widget scroll viewport so the composer, `/ Link Task` picker, search, and active note cards all stay reachable inside compact HUD sizes. The HUD tile also stops clipping Scratch Paper overlays, while the Notes page remains the full management surface for filters, restore, and broader note browsing.
+
+## 6.8.5 Implementation Note
+
+Scratch Paper task pickers now anchor directly beneath the active body field without expanding the HUD scroll layout. Selecting a task removes the slash query from normal textarea text and immediately shows the existing linked-task pill beside the composer, while saved notes retain task pills and older stored tokens are hidden when editing. Synchronous create locks prevent rapid Enter/click submissions from inserting two notes; refetch continues replacing local notes rather than merging copies. Persisted paper-card drag remains deferred because Scratch Paper notes do not have an ordering field.
+
+## 6.8.6 Implementation Note
+
+Scratch Paper slash-task search now opens as a constrained overlay from inside the active textarea/composer block instead of starting below that block. The picker keeps its own results scroll, so `/` and `/ Link Task` stay visible without pushing the composer actions down; task filtering, composer chips, saved pills, and persistence are unchanged.
+
+## 6.8.7 Implementation Note
+
+Scratch Paper create and edit composers now keep linked task pills inside the same bordered paper surface as the plain textarea, while saved cards retain their existing token-free task-pill rendering, shared task editor opening, and status controls. Scratch Paper alone can now resize vertically up to 640px in the HUD; other widget size limits, horizontal resizing, workspace drag/reorder, persistence, and internal overflow scrolling are unchanged.
+
+## 6.8.8 Implementation Note
+
+Scratch Paper create and edit composers now use a lightweight tokenized inline editor so task chips sit among note text while safe task tokens remain storage-only. Slash selection inserts at the active query/caret range, existing link placement survives editing, and saved notes use the same inline rendering. Compact task chips show the task title plus status icon only while retaining shared task-editor opening and the existing status menu; persistence schema and unrelated task systems are unchanged.
+
+## 6.8.9 Implementation Note
+
+Scratch Paper slash linking now reads the tokenized editor's serialized caret position, so `/` queries open and filter in place and selection replaces the active query without exposing storage tokens. The shared inline task chip is tightened to the surrounding note text rhythm while retaining title opening and the compact icon-only status action in composer, saved cards, HUD, and Notes page.
+
+## 6.8.10 Implementation Note
+
+Scratch Paper now treats its shared HUD and Notes-page typing surface as the current note editor. Slash task linking opens from serialized inline input, including directly after an inline task chip, and filters live; saving creates or updates the selected note without clearing it, compact arrows switch among active notes after safely saving dirty content, and the selected note is omitted from the card list to avoid a duplicate. Existing compact inline task chips, note status actions, Notes filters/search/restore, persistence schema, and unrelated task systems remain unchanged.
+
+## 6.8.11 Implementation Note
+
+Scratch Paper typed slash linking now captures the contenteditable caret anchor from `beforeinput`, with a keyboard fallback, and tracks later input/backspace against that stable serialized range instead of trying to rediscover the command after each DOM mutation. Escape and outside clicks close the shared picker, while HUD and Notes-page editors retain the same inline task chips, current-note save behavior, and note navigation.
+
+## 6.8.12 Implementation Note
+
+Scratch Paper now routes both the `/ Link Task` toolbar action and typed slash commands through the same picker-opening function and existing `TaskLinkPicker` state. The shared contenteditable path synchronizes slash queries on input with a keyup fallback, while inline chip insertion, compact chip rendering, current-note saving, note navigation, Escape dismissal, and outside-click dismissal remain unchanged.
+
+## 6.8.13 Implementation Note
+
+Scratch Paper restores the deterministic controlled-input behavior recorded in the known-good `6.8.3` textarea implementation at the current tokenized contenteditable boundary: typing `/` is intercepted on the focused editor, inserted directly into the serialized note model, and immediately routed through the existing picker-open function before later input/backspace updates the same anchored query. A development-only readout reports the typed event, serialized caret prefix, detected query, picker state/query, and result count for manual browser proof; inline chips, current-note saving, note navigation, and production UI remain unchanged.
+
+## 6.8.14 Implementation Note
+
+Scratch Paper now latches the task picker open after typed `/`, focuses the picker search input, and keeps slash-driven query entry inside the picker instead of letting the editor immediately fall back closed. The development readout now reports picker source, open event, close reason, focus target, and query state; inline chips, save/current-note behavior, note navigation, and the shared picker surface remain unchanged.
+
+## 6.8.15 Implementation Note
+
+Scratch Paper removes the stale focus-change callback plumbing that was crashing focus and blur in the current note editor, while leaving the 6.8.14 picker latch and focus handoff behavior intact. The dev readout still compiles, and inline chips, save/current-note behavior, note navigation, and the shared picker surface remain unchanged.
+
+## 6.8.16 Implementation Note
+
+Import Tasks now creates modern same-table Step and Substep task rows through `parent_task_id` instead of saving new imports into the legacy checklist table, so imported child rows land in the same Table/List/editor surfaces and carry the same task-row metadata fields that manually created Steps/Substeps use today. The shared child-preview derivation also now applies the same display-status normalization as parent tasks, which keeps weekly child rows due next week aligned with the parent's `Upcoming` virtual status while preserving the existing one-off, recurring, legacy-checklist coexistence, and `Daily Until Complete` behavior.

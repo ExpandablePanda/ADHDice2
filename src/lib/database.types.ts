@@ -815,6 +815,47 @@ export type NoteInsert = {
 
 export type NoteUpdate = Partial<Pick<Note, "title" | "body" | "tags" | "linked_task_ids">>;
 
+export type ScratchNoteStatus = "active" | "resolved" | "trashed";
+
+export type ScratchNote = {
+  id: string;
+  user_id: string;
+  title: string | null;
+  body: string;
+  status: ScratchNoteStatus;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  trashed_at: string | null;
+};
+
+export type ScratchNoteInsert = {
+  id?: string;
+  user_id: string;
+  title?: string | null;
+  body?: string;
+  status?: ScratchNoteStatus;
+};
+
+export type ScratchNoteUpdate = Partial<Pick<ScratchNote, "title" | "body" | "status" | "resolved_at" | "trashed_at" | "updated_at">>;
+
+export type ScratchNoteTaskLink = {
+  id: string;
+  note_id: string;
+  task_id: string;
+  user_id: string;
+  created_at: string;
+};
+
+export type ScratchNoteTaskLinkInsert = {
+  id?: string;
+  note_id: string;
+  task_id: string;
+  user_id: string;
+};
+
+export type ScratchNoteTaskLinkUpdate = Record<string, never>;
+
 export type HealthWeightUnit = "lb" | "kg";
 export type HealthMetricType = "steps" | "active_energy_kcal" | "exercise_minutes" | "sleep_minutes" | "body_mass_kg";
 export type HealthMetricSource = "apple_health_import" | "manual";
@@ -1283,6 +1324,18 @@ export type Database = {
         Row: Note;
         Insert: NoteInsert;
         Update: NoteUpdate;
+        Relationships: [];
+      };
+      adhdice_scratch_notes: {
+        Row: ScratchNote;
+        Insert: ScratchNoteInsert;
+        Update: ScratchNoteUpdate;
+        Relationships: [];
+      };
+      adhdice_scratch_note_task_links: {
+        Row: ScratchNoteTaskLink;
+        Insert: ScratchNoteTaskLinkInsert;
+        Update: ScratchNoteTaskLinkUpdate;
         Relationships: [];
       };
       adhdice_health_profiles: {

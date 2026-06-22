@@ -7,6 +7,7 @@ import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 import { NotesPageComponent } from "./notes-page";
 import { PageShellHeader } from "./page-shell-header";
+import type { ScratchPaperData } from "./scratch-paper";
 
 type NotesPageRouteProps = {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
@@ -14,13 +15,14 @@ type NotesPageRouteProps = {
   onOpenNoteHandled?: () => void;
   openNoteId?: string | null;
   tasks: Task[];
+  scratchPaper: ScratchPaperData;
 };
 
 export function NotesPageRoute(props: NotesPageRouteProps) {
   return (
     <NotesPageComponent
       {...props}
-      headerNode={<PageShellHeader subtitle="Knowledge Base" title="Notes" />}
+      headerNode={<PageShellHeader subtitle="Scratch Paper + Knowledge Base" title="Notes" />}
     />
   );
 }

@@ -2,8 +2,9 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskInsert, TaskSubtaskStatus, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskInsert, TaskUpdate } from "@/lib/database.types";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
+import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import type { DeleteTaskRowResult, TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import type { ImportedTaskSubtask, ImportedTaskWarning } from "@/lib/task-input-parsing";
 import { parseImportedTaskLines } from "@/lib/task-input-parsing";
@@ -35,7 +36,7 @@ type UseTaskCrudActionsOptions = {
   shouldRouteTaskToInbox: (task: Task) => boolean;
   sortTasksForUi: (tasks: Task[]) => Task[];
   tasks: Task[];
-  replaceTaskSubtasks: (taskId: string, subtasks: Array<{ children: ImportedTaskSubtask[]; id: string; status: TaskSubtaskStatus; title: string }>) => Promise<{ saved: boolean; usedNestedFallback: boolean }>;
+  replaceTaskSubtasks?: unknown;
   deleteTaskRow: (taskId: string, expectedTask?: Task | null) => Promise<DeleteTaskRowResult>;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
 };
@@ -51,7 +52,6 @@ export function useTaskCrudActions({
   shouldRouteTaskToInbox,
   sortTasksForUi,
   tasks,
-  replaceTaskSubtasks,
   deleteTaskRow,
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskCrudActionsOptions) {
@@ -74,7 +74,8 @@ export function useTaskCrudActions({
       } satisfies ImportTasksResult;
     }
 
-    const importedTasks: Task[] = [];
+    const importedAllTasks: Task[] = [];
+    const importedRootTasks: Task[] = [];
     const warnings: ImportedTaskWarning[] = [...parsed.warnings];
     const importErrors: ImportedTaskWarning[] = [];
 
@@ -121,29 +122,27 @@ export function useTaskCrudActions({
         });
       }
 
-      if (parsedTask.subtasks.length > 0) {
-        const subtaskSave = await replaceTaskSubtasks(insertResult.data.id, parsedTask.subtasks);
-        if (!subtaskSave.saved) {
-          warnings.push({
-            line: parsedTask.line,
-            message: "Steps could not be saved for this task.",
-          });
-        } else if (subtaskSave.usedNestedFallback && containsNestedSubtasks(parsedTask.subtasks)) {
-          warnings.push({
-            line: parsedTask.line,
-            message: "Nested substeps were flattened because this database is missing nested-subtask support.",
-          });
-        }
-      }
+      importedRootTasks.push(insertResult.data);
+      importedAllTasks.push(insertResult.data);
 
-      importedTasks.push(insertResult.data);
+      if (parsedTask.subtasks.length > 0) {
+        const childImport = await insertImportedChildTaskTree({
+          children: parsedTask.subtasks,
+          client,
+          currentUserId,
+          importErrors,
+          parentTaskId: insertResult.data.id,
+          warnings,
+        });
+        importedAllTasks.push(...childImport.insertedTasks);
+      }
     }
 
-    if (importedTasks.length > 0) {
-      setTasks((current) => sortTasksForUi(mergeTasksById(current, importedTasks)));
+    if (importedAllTasks.length > 0) {
+      setTasks((current) => sortTasksForUi(mergeTasksById(current, importedAllTasks)));
       setTaskRouting((current) => {
         const next = { ...current };
-        for (const task of importedTasks) {
+        for (const task of importedRootTasks) {
           if (shouldRouteTaskToInbox(task)) {
             next[task.id] = "inbox";
           }
@@ -154,7 +153,7 @@ export function useTaskCrudActions({
 
     const result = {
       errorCount: importErrors.length,
-      importedCount: importedTasks.length,
+      importedCount: importedRootTasks.length,
       warningCount: warnings.length,
     } satisfies ImportTasksResult;
 
@@ -321,10 +320,6 @@ export function mergeTasksById(currentTasks: Task[], incomingTasks: Task[]) {
   return Array.from(tasksById.values());
 }
 
-function containsNestedSubtasks(subtasks: ImportedTaskSubtask[]): boolean {
-  return subtasks.some((subtask) => subtask.children.length > 0 || containsNestedSubtasks(subtask.children));
-}
-
 function formatWarningBlock(warnings: ImportedTaskWarning[]) {
   return warnings.map((warning) => `Line ${warning.line}: ${warning.message}`).join("\n");
 }
@@ -403,4 +398,95 @@ async function insertImportedTaskRow(client: SupabaseClient, payload: TaskInsert
     usedActualFallback,
     usedEnergyFallback,
   };
+}
+
+async function insertImportedChildTaskTree({
+  children,
+  client,
+  currentUserId,
+  importErrors,
+  parentTaskId,
+  warnings,
+}: {
+  children: ImportedTaskSubtask[];
+  client: SupabaseClient;
+  currentUserId: string;
+  importErrors: ImportedTaskWarning[];
+  parentTaskId: string;
+  warnings: ImportedTaskWarning[];
+}): Promise<{ insertedTasks: Task[] }> {
+  const insertedTasks: Task[] = [];
+
+  for (const [index, child] of children.entries()) {
+    const childDraft = buildChildTaskCreationDraft({
+      parentTaskId,
+      title: child.title,
+    });
+    if (!childDraft.ok) {
+      importErrors.push({
+        line: child.line,
+        message: "Step could not be created because the imported parent link was invalid.",
+      });
+      continue;
+    }
+
+    const payload: TaskInsert = {
+      ...childDraft.draft,
+      actual_seconds: child.actualSeconds ?? undefined,
+      due_on: child.dueOn,
+      due_time: child.dueTime,
+      energy: child.energy,
+      estimated_minutes: child.estimatedMinutes,
+      is_important: child.isImportant,
+      is_urgent: child.isUrgent,
+      parent_task_id: parentTaskId,
+      priority: child.priority,
+      repeat_frequency: child.repeatFrequency,
+      sort_order: index,
+      status: child.status,
+      tags: child.tags,
+      user_id: currentUserId,
+    };
+
+    const insertResult = await insertImportedTaskRow(client, payload);
+    if (insertResult.error) {
+      importErrors.push({ line: child.line, message: insertResult.error.message });
+      continue;
+    }
+
+    if (!insertResult.data) {
+      importErrors.push({ line: child.line, message: "Step insert returned no row." });
+      continue;
+    }
+
+    if (insertResult.usedActualFallback) {
+      warnings.push({
+        line: child.line,
+        message: "Step actual time was skipped because this database is missing the task actual-time column.",
+      });
+    }
+
+    if (insertResult.usedEnergyFallback) {
+      warnings.push({
+        line: child.line,
+        message: "Step energy value \"none\" fell back to \"low\" because this database is missing the newer energy enum value.",
+      });
+    }
+
+    insertedTasks.push(insertResult.data);
+
+    if (child.children.length > 0) {
+      const descendantImport = await insertImportedChildTaskTree({
+        children: child.children,
+        client,
+        currentUserId,
+        importErrors,
+        parentTaskId: insertResult.data.id,
+        warnings,
+      });
+      insertedTasks.push(...descendantImport.insertedTasks);
+    }
+  }
+
+  return { insertedTasks };
 }

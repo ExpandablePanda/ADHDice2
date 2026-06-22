@@ -118,6 +118,12 @@ export type RunningTaskTimer = { baseSeconds: number; pausedAt?: number | null; 
 export type TaskRowContextMenuQuickEditMode = "actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
 type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
+type PendingTableReveal = {
+  key: string;
+  kind: "child-branch" | "inline" | "source-steps" | "step-preview";
+  minVisibleHeight: number;
+  taskId: string;
+};
 export type TaskRowContextMenuQuickEditItem = {
   label: string;
   mode: TaskRowContextMenuQuickEditMode;
@@ -141,9 +147,73 @@ declare global {
 
 const INLINE_ACCORDION_MODES: OverlayMode[] = ["actual", "due", "energy", "estimated", "link", "lists", "notes", "priority", "repeat", "status", "tags"];
 const BATCH_QUICK_EDIT_MODES: OverlayMode[] = ["due", "energy", "estimated", "lists", "priority", "repeat", "status", "tags"];
+const TABLE_REVEAL_TOP_PADDING = 14;
+const TABLE_REVEAL_BOTTOM_PADDING = 16;
+const TABLE_REVEAL_VIEWPORT_SAFE_BOTTOM = 104;
+const TABLE_REVEAL_INLINE_MIN_VISIBLE_HEIGHT = 104;
+const TABLE_REVEAL_STEPS_MIN_VISIBLE_HEIGHT = 144;
 
 function isInlineAccordionMode(mode: OverlayMode) {
   return INLINE_ACCORDION_MODES.includes(mode);
+}
+
+function isScrollableElement(element: HTMLElement) {
+  const computedStyle = window.getComputedStyle(element);
+  return /(auto|scroll|overlay)/.test(computedStyle.overflowY) && element.scrollHeight > element.clientHeight + 1;
+}
+
+function findNearestScrollableContainer(target: HTMLElement, fallbackContainer?: HTMLElement | null) {
+  if (fallbackContainer?.contains(target)) {
+    return fallbackContainer;
+  }
+
+  let current: HTMLElement | null = target.parentElement;
+  while (current) {
+    if (isScrollableElement(current)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+
+  return fallbackContainer ?? null;
+}
+
+function revealTargetInScrollableContainer(
+  target: HTMLElement,
+  {
+    behavior = "smooth",
+    fallbackContainer,
+    minVisibleHeight = TABLE_REVEAL_INLINE_MIN_VISIBLE_HEIGHT,
+  }: {
+    behavior?: ScrollBehavior;
+    fallbackContainer?: HTMLElement | null;
+    minVisibleHeight?: number;
+  },
+) {
+  const scrollContainer = findNearestScrollableContainer(target, fallbackContainer);
+  if (!scrollContainer) {
+    return;
+  }
+
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const visibleTop = Math.max(containerRect.top, 0) + TABLE_REVEAL_TOP_PADDING;
+  const visibleBottomBase = Math.min(containerRect.bottom, window.innerHeight - TABLE_REVEAL_VIEWPORT_SAFE_BOTTOM) - TABLE_REVEAL_BOTTOM_PADDING;
+  const visibleBottom = Math.max(visibleTop + 24, visibleBottomBase);
+  const targetRect = target.getBoundingClientRect();
+  const desiredBottom = Math.min(targetRect.bottom, targetRect.top + minVisibleHeight);
+
+  let scrollDelta = 0;
+  if (desiredBottom > visibleBottom) {
+    scrollDelta = desiredBottom - visibleBottom;
+  } else if (targetRect.top < visibleTop) {
+    scrollDelta = targetRect.top - visibleTop;
+  }
+
+  if (Math.abs(scrollDelta) < 2) {
+    return;
+  }
+
+  scrollContainer.scrollBy({ top: scrollDelta, behavior });
 }
 
 function buildPrototypeSubtaskSignature(subtasks: PrototypeTaskSubtask[]): string {
@@ -1946,8 +2016,10 @@ export function TaskManagementTableV2({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const inspectorPanelRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const activeInlineActionRowRef = useRef<HTMLDivElement | null>(null);
   const [showTableScrollUp, setShowTableScrollUp] = useState(false);
   const [quickEditTargetTaskIds, setQuickEditTargetTaskIds] = useState<string[] | null>(null);
+  const [pendingTableReveal, setPendingTableReveal] = useState<PendingTableReveal | null>(null);
   const hasSeenSelectedTaskInCurrentListRef = useRef(false);
   const lastShrinkAllColumnsTokenRef = useRef(0);
   const lastRowsSignatureRef = useRef(buildPrototypeRowsSignature(rows));
@@ -2640,22 +2712,78 @@ export function TaskManagementTableV2({
   }, [allowInlineInspector, enableInspector, selectedTaskId, dueDrafts, estimatedMinutesDrafts, notesDrafts, linkDrafts]);
 
   useEffect(() => {
+    if (!pendingTableReveal) {
+      return;
+    }
+
+    const resolveRevealTarget = () => {
+      const shellElement = shellRef.current;
+      if (!shellElement) {
+        return null;
+      }
+
+      if (pendingTableReveal.kind === "inline") {
+        const activeInlineActionRow = activeInlineActionRowRef.current;
+        if (activeInlineActionRow?.getAttribute("data-task-table-inline-editor") === pendingTableReveal.taskId) {
+          return activeInlineActionRow;
+        }
+        return shellElement.querySelector<HTMLElement>(`[data-task-table-inline-editor="${pendingTableReveal.taskId}"]`);
+      }
+
+      if (pendingTableReveal.kind === "step-preview") {
+        return shellElement.querySelector<HTMLElement>(`[data-task-table-step-mini-rows="${pendingTableReveal.taskId}"]`);
+      }
+
+      if (pendingTableReveal.kind === "source-steps") {
+        return shellElement.querySelector<HTMLElement>(`[data-task-table-source-step-mini-rows="${pendingTableReveal.taskId}"]`);
+      }
+
+      return shellElement.querySelector<HTMLElement>(`[data-same-table-step-row="${pendingTableReveal.taskId}"]`);
+    };
+
+    let secondFrameId = 0;
+    const revealTarget = () => {
+      const target = resolveRevealTarget();
+      if (!target) {
+        return;
+      }
+      revealTargetInScrollableContainer(target, {
+        fallbackContainer: tableScrollContainerRef.current,
+        minVisibleHeight: pendingTableReveal.minVisibleHeight,
+      });
+    };
+
+    const firstFrameId = window.requestAnimationFrame(() => {
+      revealTarget();
+      secondFrameId = window.requestAnimationFrame(() => {
+        revealTarget();
+        setPendingTableReveal((current) => (current?.key === pendingTableReveal.key ? null : current));
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrameId);
+      window.cancelAnimationFrame(secondFrameId);
+    };
+  }, [pendingTableReveal]);
+
+  useEffect(() => {
     if (!selectedTaskId || !allowInlineInspector || !isInlineAccordionMode(overlayMode)) {
       return;
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element)) {
+      const pointerTarget = event.target;
+      if (!(pointerTarget instanceof Element)) {
         return;
       }
 
-      const inlineEditor = target.closest("[data-task-table-inline-editor]");
+      const inlineEditor = pointerTarget.closest("[data-task-table-inline-editor]");
       if (inlineEditor?.getAttribute("data-task-table-inline-editor") === selectedTaskId) {
         return;
       }
 
-      const activeRow = target.closest("[data-task-table-row]");
+      const activeRow = pointerTarget.closest("[data-task-table-row]");
       if (activeRow?.getAttribute("data-task-table-row") === selectedTaskId) {
         return;
       }
@@ -3472,10 +3600,17 @@ export function TaskManagementTableV2({
     setOverlayMode(mode);
     setOpenColumnMenuId(null);
     if (mode === "full") {
+      setPendingTableReveal(null);
       setOverlayAnchor(null);
       return;
     }
     if (allowInlineInspector && isInlineAccordionMode(mode)) {
+      setPendingTableReveal({
+        key: `inline:${taskId}:${mode}`,
+        kind: "inline",
+        minVisibleHeight: TABLE_REVEAL_INLINE_MIN_VISIBLE_HEIGHT,
+        taskId,
+      });
       setOverlayAnchor(null);
       return;
     }
@@ -4171,6 +4306,9 @@ export function TaskManagementTableV2({
         exit={{ height: 0, opacity: 0, y: -6 }}
         initial={{ height: 0, opacity: 0, y: -6 }}
         onClick={(event) => event.stopPropagation()}
+        ref={(node) => {
+          activeInlineActionRowRef.current = node;
+        }}
         transition={{ duration: 0.18 }}
       >
         <div className="mb-1 flex items-center gap-2">
@@ -4882,17 +5020,35 @@ export function TaskManagementTableV2({
                     className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#9b92be] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:border-[#42306f] dark:hover:bg-[#22193f] dark:focus-visible:ring-[#3b2f68]/90"
                     onClick={(event) => {
                       event.stopPropagation();
+                      const nextStepsExpanded = !stepsExpanded;
+                      const nextSourceStepsExpanded = !unifiedStepsExpanded;
                       if (hasStepPreview) {
                         setExpandedStepsByTaskId((current) => ({
                           ...current,
-                          [task.id]: !stepsExpanded,
+                          [task.id]: nextStepsExpanded,
                         }));
+                        if (nextStepsExpanded) {
+                          setPendingTableReveal({
+                            key: `step-preview:${task.id}`,
+                            kind: "step-preview",
+                            minVisibleHeight: TABLE_REVEAL_STEPS_MIN_VISIBLE_HEIGHT,
+                            taskId: task.id,
+                          });
+                        }
                       }
                       if (hasSubtasks) {
                         setExpandedSubtasksByTaskId((current) => ({
                           ...current,
-                          [task.id]: !unifiedStepsExpanded,
+                          [task.id]: nextSourceStepsExpanded,
                         }));
+                        if (!hasStepPreview && nextSourceStepsExpanded) {
+                          setPendingTableReveal({
+                            key: `source-steps:${task.id}`,
+                            kind: "source-steps",
+                            minVisibleHeight: TABLE_REVEAL_STEPS_MIN_VISIBLE_HEIGHT,
+                            taskId: task.id,
+                          });
+                        }
                       }
                     }}
                     type="button"
@@ -5519,6 +5675,14 @@ export function TaskManagementTableV2({
                     className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#8a79d6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
                     onClick={(event) => {
                       event.stopPropagation();
+                      if (isCollapsed) {
+                        setPendingTableReveal({
+                          key: `child-branch:${item.id}`,
+                          kind: "child-branch",
+                          minVisibleHeight: TABLE_REVEAL_STEPS_MIN_VISIBLE_HEIGHT,
+                          taskId: item.id,
+                        });
+                      }
                       setCollapsedChildTaskIds((current) => ({ ...current, [item.id]: !isCollapsed }));
                     }}
                     onPointerDown={stopRowActionPointerEvent}

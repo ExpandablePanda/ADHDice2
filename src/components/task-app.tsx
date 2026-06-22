@@ -83,6 +83,7 @@ import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from 
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
+import { ScratchPaperWidget, type ScratchPaperData } from "./task-app/scratch-paper";
 import {
   applyTaskEditorDraftOverrides,
   createTaskEditorDraft,
@@ -105,6 +106,7 @@ import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievements } from "@/hooks/useAchievements";
 import { useFocus, mapFocusCategoryRow, mapActiveSessions, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
+import { useScratchNotes } from "@/hooks/useScratchNotes";
 import { useTaskActions } from "@/hooks/useTaskActions";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
@@ -310,7 +312,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.7.20";
+const APP_VERSION = "6.8.18";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -869,6 +871,7 @@ export function TaskApp() {
     weightEntries: healthWeightEntries,
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy);
   const currentUserId = session?.user?.id ?? null;
+  const scratchNotes = useScratchNotes(supabase, currentUserId);
   const [isTaskEditorOpen, setIsTaskEditorOpen] = useState(false);
   const [taskEditorMode, setTaskEditorMode] = useState<TaskEditorMode>("create");
   const [taskEditorTaskId, setTaskEditorTaskId] = useState<string | null>(null);
@@ -2592,6 +2595,11 @@ export function TaskApp() {
     openNewTaskEditor();
   }, [openNewTaskEditor]);
 
+  const openScratchLinkedTaskTemplate = useCallback((title: string) => {
+    setTaskEditorInitialDraft({ title });
+    openNewTaskEditor();
+  }, [openNewTaskEditor]);
+
   const {
     deferTask,
     focusTask,
@@ -3831,6 +3839,25 @@ export function TaskApp() {
       openExistingTaskEditor(task);
     }
   };
+  const scratchPaperData: ScratchPaperData = {
+    error: scratchNotes.error,
+    isLoading: scratchNotes.isLoading,
+    links: scratchNotes.links,
+    notes: scratchNotes.notes,
+    onCreate: scratchNotes.createNote,
+    onCreateTask: openScratchLinkedTaskTemplate,
+    onOpenTask: openTaskEditorFromId,
+    onSetStatus: scratchNotes.setNoteStatus,
+    onSetTaskStatus: (taskId, status) => {
+      const task = tasks.find((entry) => entry.id === taskId);
+      if (!task) {
+        return;
+      }
+      void updateTaskStatus(task, status);
+    },
+    onUpdate: scratchNotes.updateNote,
+    tasks,
+  };
 
   const taskOperationsHeaderProps = {
     actionLabel: hasFocusedToday ? "Refocus" : "Focus",
@@ -3975,6 +4002,7 @@ export function TaskApp() {
                       onOpenComposer={openInlineNewListTaskComposer}
                       onOpenFocusPlanner={openFocusPlanner}
                       onOpenQuickCapture={() => { void openTaskImportPanel(); }}
+                      onViewScratchPaper={() => setActivePage("Notes")}
                       onNextTaskTimer={() => cycleHudTaskTimer("next")}
                       onPauseTaskTimer={pauseHudTaskTimer}
                       onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
@@ -4016,6 +4044,7 @@ export function TaskApp() {
                       canIncreaseMobileZoom={canIncreaseMobileZoom}
                       onOpenPendingRewardBank={openPendingRewardBank}
                       pendingRewardDiceCount={pendingRewardDiceCount}
+                      scratchPaper={scratchPaperData}
                     />
                   );
                 }}
@@ -4495,6 +4524,7 @@ export function TaskApp() {
             currentUser={currentUser}
             onOpenNoteHandled={() => setNotePageOpenNoteId(null)}
             openNoteId={notePageOpenNoteId}
+            scratchPaper={scratchPaperData}
             tasks={tasks}
           />
         ) : activePage === "Settings" ? (
@@ -5194,6 +5224,7 @@ function CommandCenterHeader({
   onOpenComposer,
   onOpenFocusPlanner,
   onOpenQuickCapture,
+  onViewScratchPaper,
   onNextTaskTimer,
   onPauseTaskTimer,
   onPreviousTaskTimer,
@@ -5225,6 +5256,7 @@ function CommandCenterHeader({
   canIncreaseMobileZoom,
   onOpenPendingRewardBank,
   pendingRewardDiceCount,
+  scratchPaper,
 }: {
   activeHudTaskTimer: RunningTaskTimer | null;
   activeTaskCount: number;
@@ -5236,6 +5268,7 @@ function CommandCenterHeader({
   onOpenComposer: () => void;
   onOpenFocusPlanner: () => void;
   onOpenQuickCapture: () => void;
+  onViewScratchPaper: () => void;
   onNextTaskTimer: () => void;
   onPauseTaskTimer: (taskId: string) => void;
   onPreviousTaskTimer: () => void;
@@ -5267,6 +5300,7 @@ function CommandCenterHeader({
   canIncreaseMobileZoom: boolean;
   onOpenPendingRewardBank: () => void;
   pendingRewardDiceCount: number;
+  scratchPaper: ScratchPaperData;
 }) {
   const isHudCollapsed = hudUiState.isHudCollapsed;
   const isWorkspaceRefreshing = refreshStatus !== "idle";
@@ -5437,6 +5471,9 @@ function CommandCenterHeader({
         </div>
       );
     }
+    if (widgetType === "scratch_paper") {
+      return <ScratchPaperWidget {...scratchPaper} onViewNotes={onViewScratchPaper} />;
+    }
     if (widgetType === "focus_timer") {
       return (
         <div className="flex h-full items-center gap-2">
@@ -5563,6 +5600,14 @@ function CommandCenterHeader({
               {refreshStatus === "updating" ? "Updating" : isWorkspaceRefreshing ? "Syncing" : "Refresh"}
             </TaskTableChipButton>
             <TaskTableChipButton
+              aria-label="Open Scratch Paper notes"
+              className="shrink-0 text-[#6f57f6] dark:text-[#cabfff]"
+              onClick={onViewScratchPaper}
+              toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+            >
+              Scratch Paper
+            </TaskTableChipButton>
+            <TaskTableChipButton
               aria-label="Expand HUD"
               className="shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
               onClick={() => setHudCollapsed(false)}
@@ -5613,6 +5658,14 @@ function CommandCenterHeader({
             {formatPendingDiceChipLabel(pendingRewardDiceCount)}
           </TaskTableChipButton>
         ) : null}
+        <TaskTableChipButton
+          aria-label="Open Scratch Paper notes"
+          className="text-[#6f57f6] dark:text-[#cabfff]"
+          onClick={onViewScratchPaper}
+          toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+        >
+          Scratch Paper
+        </TaskTableChipButton>
         <TaskTableChipButton
           aria-label="Collapse HUD"
           className="gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"

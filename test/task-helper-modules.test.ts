@@ -612,19 +612,23 @@ test("import parser captures parent metadata and nested steps", () => {
   assert.equal(parsed.tasks[1]?.subtasks[1]?.title, "PM");
 });
 
-test("import parser preserves step status and warns on unsupported step metadata", () => {
+test("import parser preserves modern same-table step metadata", () => {
   const parsed = parseImportedTaskLines([
     "Clean Bathroom #home *due-Today",
-    "-Sink #cleaning *estimate-5m *status-InProgress",
-    "-Floor *due-Tomorrow",
+    "-Sink #cleaning *estimate-5m *status-InProgress *priority-Important *energy-High",
+    "-Floor *due-Tomorrow *repeat-Weekly",
   ], { todayDateKey: "2026-06-10" });
 
   assert.equal(parsed.tasks.length, 1);
   assert.equal(parsed.tasks[0]?.subtasks[0]?.title, "Sink");
   assert.equal(parsed.tasks[0]?.subtasks[0]?.status, "in_progress");
-  assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /do not currently persist tags/i);
-  assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /do not currently persist estimated time/i);
-  assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /do not currently persist due dates/i);
+  assert.equal(parsed.tasks[0]?.subtasks[0]?.estimatedMinutes, 5);
+  assert.deepEqual(parsed.tasks[0]?.subtasks[0]?.tags, ["cleaning"]);
+  assert.equal(parsed.tasks[0]?.subtasks[0]?.isImportant, true);
+  assert.equal(parsed.tasks[0]?.subtasks[0]?.energy, "high");
+  assert.equal(parsed.tasks[0]?.subtasks[1]?.dueOn, "2026-06-11");
+  assert.equal(parsed.tasks[0]?.subtasks[1]?.repeatFrequency, "weekly");
+  assert.deepEqual(parsed.warnings, []);
 });
 
 test("import parser warns on orphan steps and unknown metadata", () => {
@@ -636,6 +640,34 @@ test("import parser warns on orphan steps and unknown metadata", () => {
   assert.equal(parsed.tasks.length, 1);
   assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /no parent task above it/i);
   assert.match(parsed.warnings.map((warning) => warning.message).join("\n"), /unknown metadata field "mood"/i);
+});
+
+test("child task preview lookup uses the same display status semantics as parent tasks", () => {
+  const parent = createTask({
+    created_at: "2026-06-22T09:00:00.000Z",
+    due_on: "2026-06-29",
+    id: "weekly-parent",
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "upcoming",
+    title: "Weekly parent",
+  });
+  const child = createTask({
+    created_at: "2026-06-22T09:05:00.000Z",
+    due_on: "2026-06-29",
+    id: "weekly-step",
+    parent_task_id: parent.id,
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "not_due",
+    title: "Weekly step",
+  });
+
+  const previewLookup = buildChildTaskPreviewLookup([parent, child], [], {}, "2026-06-22");
+
+  assert.equal(previewLookup[parent.id]?.items[0]?.status, "upcoming");
 });
 
 test("task update conflict helpers only auto-reapply low-risk untouched fields", () => {
