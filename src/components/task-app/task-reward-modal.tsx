@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { ErrorBoundary } from "../error-boundary";
 import type { DicePhase } from "../dice-3d";
+import { ModalShell } from "../modal-shell";
 import {
   buildTaskRewardBankSession,
   type PendingTaskReward,
@@ -35,7 +36,6 @@ export function TaskRewardModal({
   onClaim,
   onClose,
   pendingRewards,
-  variant = "global",
 }: TaskRewardModalProps) {
   const [stage, setStage] = useState<RewardStage>("intro");
   const [batchIndex, setBatchIndex] = useState(0);
@@ -136,29 +136,24 @@ export function TaskRewardModal({
     }
   }
 
-  const rootClassName = variant === "table"
-    ? "absolute inset-0 bg-white/36 backdrop-blur-md dark:bg-[#0f0b1d]/52"
-    : "fixed inset-x-3 bottom-24 top-[8.75rem] z-[140] bg-white/36 backdrop-blur-md sm:inset-x-5 sm:top-[8.5rem] lg:inset-x-8 lg:top-[8.25rem] dark:bg-[#0f0b1d]/52";
-
   return (
-    <div
-      className={rootClassName}
-      onFocusCapture={() => {
-        if (stage !== "intro") {
-          setIsAutoAdvancePaused(true);
-        }
-      }}
-      onPointerDownCapture={() => {
-        if (stage !== "intro") {
-          setIsAutoAdvancePaused(true);
-        }
-      }}
+    <ModalShell
+      className="h-[min(46rem,calc(100vh-2rem))] w-[min(64rem,calc(100vw-2rem))]"
+      label="Task reward"
+      onClose={onClose}
     >
       <div
-        aria-label="Task reward"
-        aria-modal="true"
         className="relative flex h-full w-full flex-col overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white/90 shadow-[0_30px_80px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#171328]/94"
-        role="dialog"
+        onFocusCapture={() => {
+          if (stage !== "intro") {
+            setIsAutoAdvancePaused(true);
+          }
+        }}
+        onPointerDownCapture={() => {
+          if (stage !== "intro") {
+            setIsAutoAdvancePaused(true);
+          }
+        }}
       >
         <div className="flex items-start justify-between gap-4 border-b border-[#ece8f8] px-6 py-5 dark:border-white/10">
           <div>
@@ -237,12 +232,12 @@ export function TaskRewardModal({
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-[1.5rem] bg-[#f5f1ff] p-4 dark:bg-white/[0.02]">
+              <div className="overflow-hidden rounded-[1.5rem] bg-[#f5f1ff] p-6 dark:bg-white/[0.02]">
                 <ErrorBoundary fallback={<div className="h-[220px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
                   <Suspense fallback={<div className="h-[220px] w-full rounded-2xl bg-[#f0ecff] dark:bg-[#130e24]" />}>
                     <RewardDice3DCanvas
                       dark={isDark}
-                      height={220}
+                      height={320}
                       onSettled={() => {}}
                       phase={batchPhase}
                       results={activeBatch}
@@ -340,6 +335,6 @@ export function TaskRewardModal({
           ) : null}
         </div>
       </div>
-    </div>
+    </ModalShell>
   );
 }

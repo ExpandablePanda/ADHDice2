@@ -312,7 +312,7 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.8.18";
+const APP_VERSION = "6.9.7";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -3960,7 +3960,7 @@ export function TaskApp() {
           </div>
         </ModalShell>
       ) : null}
-      {activeRewardBankSession && (activePage !== "Tasks" || taskUiState.view !== "table") ? (
+      {activeRewardBankSession ? (
         <TaskRewardModal
           isDark={theme === "dark"}
           onClaim={claimPendingRewardBank}
@@ -4175,15 +4175,7 @@ export function TaskApp() {
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
-                  overlayNode: activeRewardBankSession ? (
-                    <TaskRewardModal
-                      isDark={theme === "dark"}
-                      onClaim={claimPendingRewardBank}
-                      onClose={() => setActiveRewardBankSession(null)}
-                      pendingRewards={activeRewardBankSession}
-                      variant="table"
-                    />
-                  ) : null,
+                  overlayNode: null,
                   onCreateTaskList: async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null }),
                   onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
@@ -4312,15 +4304,7 @@ export function TaskApp() {
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
-                  overlayNode: activeRewardBankSession ? (
-                    <TaskRewardModal
-                      isDark={theme === "dark"}
-                      onClaim={claimPendingRewardBank}
-                      onClose={() => setActiveRewardBankSession(null)}
-                      pendingRewards={activeRewardBankSession}
-                      variant="table"
-                    />
-                  ) : null,
+                  overlayNode: null,
                   onCreateTaskList: async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null }),
                   onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
@@ -4356,7 +4340,7 @@ export function TaskApp() {
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
                   taskActualTimeEntriesByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
-                  onOpenTaskEditor: openTaskEditorFromId,
+                  onOpenTaskEditor: (taskId) => setRequestedListOverlayTaskId(taskId),
                   onOpenChildTask: openChildTaskFromPreview,
                   onReorderChildTask: (taskId, direction) => { void reorderChildTask(taskId, direction); },
                   onFollowDetachedTask: followDetachedTask,
@@ -4946,9 +4930,6 @@ function TopHeader({
         unoptimized={profile.avatarSrc.startsWith("data:")}
         width={44}
       />
-      <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#f05566] text-[10px] font-semibold text-white">
-        2
-      </span>
     </button>
   );
 
@@ -5315,9 +5296,6 @@ function CommandCenterHeader({
         unoptimized={profile.avatarSrc.startsWith("data:")}
         width={44}
       />
-      <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#f05566] text-[10px] font-semibold text-white">
-        2
-      </span>
     </button>
   );
 
@@ -5564,14 +5542,23 @@ function CommandCenterHeader({
               </span>
             </span>
             {activeHudTaskTimer ? (
-              <div className="hidden min-w-0 shrink-0 items-center gap-2 rounded-full bg-[#f5f1ff] px-2.5 py-1 text-[#5f4ac9] sm:flex dark:bg-[#241c42] dark:text-[#d6cdff]">
+              <TaskTableChipButton
+                aria-label={`${activeHudTaskTimer.pausedAt ? "Resume" : "Pause"} timer for ${activeHudTaskTimer.title}`}
+                className="min-w-0 shrink-0 gap-2 text-[#5f4ac9] dark:text-[#d6cdff]"
+                onClick={() => activeHudTaskTimer.pausedAt ? onResumeTaskTimer(activeHudTaskTimer.taskId) : onPauseTaskTimer(activeHudTaskTimer.taskId)}
+                toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+              >
                 <Clock className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate text-[11px] font-semibold">{activeHudTaskTimer.title}</span>
-                <span className="shrink-0 text-[10px] font-black uppercase tracking-[0.16em]">
+                <span className="max-w-36 truncate">{activeHudTaskTimer.title}</span>
+                <span className="shrink-0 font-black uppercase tracking-[0.12em]">
                   {formatActualSecondsLabel(timerSeconds)}
                 </span>
-              </div>
+                <span className="shrink-0">{activeHudTaskTimer.pausedAt ? "Paused" : "Running"}</span>
+              </TaskTableChipButton>
             ) : null}
+            <div className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
+              Points {economy.points}
+            </div>
             <div className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#e4deef] bg-[#faf7ff] text-[#7c73a0] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/55`}>
               Today {todayTaskCount}
             </div>

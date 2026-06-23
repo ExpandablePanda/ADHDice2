@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, InputHTMLAttributes } from "react";
 
 function joinClasses(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -21,12 +21,29 @@ export const TASK_TABLE_ACTIVE_LIST_CHIP_CLASS = "border-[#ddd2ff] bg-[#6f57f6] 
 export const TASK_TABLE_TAG_CHIP_CLASS = "border-[#e8defe] bg-[#f3eeff] text-[#7762f3] dark:border-[#3a2e63] dark:bg-[#21183d] dark:text-[#c7bcff]";
 export const TASK_TABLE_INACTIVE_CHIP_CLASS = "border border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60";
 export const TASK_TABLE_INPUT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_TEXT_CLASS} w-full rounded-[0.95rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35`;
+export const TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} shrink-0 text-[#7a7592] dark:text-white/58`;
+export const TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} h-[26px] w-[56px] min-w-[56px] max-w-[56px] shrink-0 rounded-full border border-[#e4deef] bg-[#f4f5f8] px-2 text-center text-[#68738c] outline-none transition placeholder:text-[#9b92be] focus:border-[#c9bcff] focus:bg-white focus:text-[#595378] dark:border-white/10 dark:bg-white/8 dark:text-white/60 dark:placeholder:text-white/35 dark:focus:border-[#6d56d6] dark:focus:bg-[#22193f]`;
 
 type TaskTableChipButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   toneClassName?: string;
 };
 
 type ScrollUpButtonProps = ButtonHTMLAttributes<HTMLButtonElement>;
+type CompactRepeatCadenceControlsProps<TRepeat extends string> = {
+  activeToneClassName: string;
+  dayInputProps: InputHTMLAttributes<HTMLInputElement>;
+  inactiveToneClassName: string;
+  intervalInputProps: InputHTMLAttributes<HTMLInputElement>;
+  onRepeatUnitClick: (repeat: TRepeat) => void;
+  onWeekdayClick: (weekday: number) => void;
+  repeat: TRepeat;
+  repeatDaysOfWeek: number[];
+  repeatUnits: Array<{ label: string; value: TRepeat }>;
+  showInterval: boolean;
+  showMonthDay: boolean;
+  showWeekdays: boolean;
+  weekdayOptions: Array<{ label: string; value: number }>;
+};
 
 export function TaskTableChipButton({
   children,
@@ -54,6 +71,67 @@ export function TaskTableChipButton({
         {children}
       </span>
     </button>
+  );
+}
+
+export function CompactRepeatCadenceControls<TRepeat extends string>({
+  activeToneClassName,
+  dayInputProps,
+  inactiveToneClassName,
+  intervalInputProps,
+  onRepeatUnitClick,
+  onWeekdayClick,
+  repeat,
+  repeatDaysOfWeek,
+  repeatUnits,
+  showInterval,
+  showMonthDay,
+  showWeekdays,
+  weekdayOptions,
+}: CompactRepeatCadenceControlsProps<TRepeat>) {
+  return (
+    <div className="space-y-2">
+      {showInterval ? (
+        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+          <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>Every</span>
+          <input
+            {...intervalInputProps}
+            className={joinClasses(TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS, intervalInputProps.className)}
+          />
+          {repeatUnits.map((repeatUnit) => (
+            <TaskTableChipButton
+              key={`repeat-unit-${repeatUnit.value}`}
+              onClick={() => onRepeatUnitClick(repeatUnit.value)}
+              toneClassName={repeat === repeatUnit.value ? activeToneClassName : inactiveToneClassName}
+            >
+              {repeatUnit.label}
+            </TaskTableChipButton>
+          ))}
+        </div>
+      ) : null}
+      {showWeekdays ? (
+        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+          {weekdayOptions.map((option) => (
+            <TaskTableChipButton
+              key={`repeat-weekday-${option.value}`}
+              onClick={() => onWeekdayClick(option.value)}
+              toneClassName={repeatDaysOfWeek.includes(option.value) ? activeToneClassName : inactiveToneClassName}
+            >
+              {option.label}
+            </TaskTableChipButton>
+          ))}
+        </div>
+      ) : null}
+      {showMonthDay ? (
+        <div className="flex flex-nowrap items-center gap-1.5">
+          <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>Day</span>
+          <input
+            {...dayInputProps}
+            className={joinClasses(TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS, dayInputProps.className)}
+          />
+        </div>
+      ) : null}
+    </div>
   );
 }
 

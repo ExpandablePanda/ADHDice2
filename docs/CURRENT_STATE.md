@@ -1,17 +1,56 @@
 # Current State
 
-Last reviewed: 2026-06-22
+Last reviewed: 2026-06-23
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.8.18`.
-- Current release group: `6.8.x` Scratch Paper.
+- Current working app version: `6.9.7`.
+- Current release group: `6.9.x` task hierarchy and HUD controls.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 6.9 Checkpoint
+- `6.9.3` failed browser QA.
+- Temporary visible diagnostics proved the active failing paths: the Table full editor in `src/components/ui/task-management-table-v2.tsx`, the Table inline custom cadence panel in `src/components/ui/task-management-table-v2.tsx`, and the banked reward modal/canvas dice path.
+- `6.9.4` improved the compact custom cadence layout and the banked dice spacing, but Step/Substep row clicks still opened a child-as-main-editor page with `Parent: ...` breadcrumb context instead of keeping the original parent editor active.
+- `6.9.5` changed Step row clicks in Table View and List View so they opened the original parent editor, but Substep row clicks could still open a nested child layer because the reveal path resolved only the immediate parent.
+- `6.9.6` resolves the top-level same-table parent for Substeps, opens that parent as the main editor, expands the ancestor Step path, and keeps the clicked Substep as the metadata target.
+- `6.9.6` restores List View parent streak/missed-streak chips, keeps Step/Substep repeat chips visible where repeat data exists, removes leftover visible debug cadence labels, and shares the compact custom cadence UI/input styling between Table and List cadence surfaces.
+- `6.9.6` keeps Every/Day custom cadence numeric inputs on the adjacent chip scale across Table inline, Table editor metadata/full sections, and List quick edit. Ordinal monthly recurrence remains intentionally untouched.
+- Browser QA confirmed `6.9.6` working for Substep editor behavior, child metadata save routing, List View chips, and custom cadence UI.
+- `6.9.7` restores Shift-click range selection across visible parent, Step, and Substep table rows; removes the Table View Step/Substep preview cap so expanded parents show all visible descendants; adds the existing History action to List View parent rows; and routes List View Edit Task overlay actions through the current inlay editor UI inside the overlay shell.
+- `6.9.5` keeps Step/Substep streak and missed-streak row chips visible on child rows where those existing history values are already present.
+- `6.9.5` tightens the compact custom cadence Every/Day numeric inputs so they match the adjacent chip scale while keeping the three-row layout intact. Ordinal monthly recurrence remains intentionally untouched.
+- `6.9.4` replaces the confirmed banked reward dice overlap behavior with deterministic cell-based grid slots inside the modal canvas, keeping each die in its own non-overlapping position while spinning around its own axis. Existing batching, bank persistence, cancel/close behavior, and reward claim flow remain unchanged.
+- The `6.9.2` post-6.9.1 QA cleanup keeps banked task-reward rolls in the queue until a specific reward claim succeeds, using reward keys instead of queue position for consumption. Opening, closing, canceling, outside-clicking, Escape-dismissal, workspace refreshes, and HUD collapsed/expanded remounts should not consume banked rolls.
+- Table View inline action rows translate their content by the table scroll container's `scrollLeft`, so controls appear in the currently visible horizontal viewport when the table is scrolled far right.
+- The profile avatar's hard-coded `2` badge was removed because it had no state/data source; the real notification count remains in the notification inbox widget.
+- In `6.9.1`, Table View Step/Substep preview rows use their real task ids with the existing metadata update callbacks, open the shared Edit Task inspector on row/keyboard activation, and support the existing row context menu and additive selection behavior.
+- Existing Step/Substep streak and missed-streak chips remain display-only and render only for positive values already present in task data.
+- Repeat quick edit keeps the action row open when Custom cadence is selected so its existing cadence controls appear immediately.
+- The collapsed HUD now shows live Points and a clickable running/paused timer chip backed by the existing economy and timer state/actions.
+- Banked reward dice now mount in the shared centered modal shell, with outside-click, Escape, and close-button dismissal; the larger dice stage preserves the existing reward resolution and claim path.
+
+### Deferred or partial
+- Ordinal monthly recurrence such as first Tuesday is deferred. Current persistence supports only repeat interval, weekday array, and numeric day-of-month; there is no ordinal-week field or safe existing encoding.
+- No schema migration was added in `6.9.4`; ordinal monthly recurrence still needs a persistence/model decision before implementation.
+- Dice spacing/layout work remains deferred after the `6.9.4` improvement; `6.9.5` does not change dice behavior.
+- Mixed parent/Step/Substep bulk editing uses the existing selected-id callback path, but needs manual QA across every metadata type because automated browser testing was intentionally excluded from this work order.
+
+### Manual QA
+1. Parent row opens the first-level editor.
+2. Step row opens the parent editor while selecting/focusing the Step inside the Steps section.
+3. Substep row opens the parent editor while selecting/focusing the Substep inside the Steps section.
+4. No child-as-main-editor page or `Parent: ... | Step/Substep` breadcrumb page appears when switching between parent, Step, and Substep rows.
+5. Parent title/body edits still save to the parent, while selected Step/Substep metadata edits still save to the clicked child task.
+6. Confirm Step/Substep streak and missed-streak chips appear on child rows where those values already exist.
+7. Choose Repeat then Custom cadence and confirm the compact three-row cadence controls open immediately.
+8. Confirm Every and Day numeric inputs stay compact and visually match the adjacent chip scale.
+9. Open banked rolls; confirm dice stay separated, spin in place, close/cancel without consumption, and consume only intended dice on claim.
 
 ## 6.2 Checkpoint
 - The existing dense task table experience is now explicitly `Table View`.

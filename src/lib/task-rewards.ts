@@ -39,6 +39,16 @@ export function mergePendingTaskRewards(current: PendingTaskReward[], incoming: 
   return additions.length > 0 ? [...current, ...additions] : current;
 }
 
+export function removePendingTaskRewardsByKey(current: PendingTaskReward[], claimedRewards: Array<Pick<PendingTaskReward, "claimRefs" | "rewardDate">>) {
+  if (claimedRewards.length === 0) {
+    return current;
+  }
+
+  const claimedKeys = new Set(claimedRewards.map(getPendingTaskRewardKey));
+  const next = current.filter((reward) => !claimedKeys.has(getPendingTaskRewardKey(reward)));
+  return next.length === current.length ? current : next;
+}
+
 export function parsePendingTaskRewards(rawValue: string | null) {
   if (!rawValue) {
     return [] as PendingTaskReward[];

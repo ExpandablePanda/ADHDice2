@@ -8,6 +8,7 @@ import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateT
 import {
   getRecurringFinalizationTasksForRewardClaims,
   mergePendingTaskRewards,
+  removePendingTaskRewardsByKey,
   getPendingRewardDiceCount,
   parsePendingTaskRewards,
   PENDING_TASK_REWARDS_STORAGE_KEY,
@@ -463,7 +464,7 @@ export function useTaskRewardController({
       });
 
       if (claimResult === "already_claimed") {
-        updatePendingRewardQueue((current) => current.slice(1));
+        updatePendingRewardQueue((current) => removePendingTaskRewardsByKey(current, [resolution]));
         await finalizeRecurringTasks(recurringFinalizationTasks);
         setMessage({
           tone: "neutral",
@@ -477,7 +478,7 @@ export function useTaskRewardController({
         return false;
       }
 
-      updatePendingRewardQueue((current) => current.slice(1));
+      updatePendingRewardQueue((current) => removePendingTaskRewardsByKey(current, [resolution]));
       await finalizeRecurringTasks(recurringFinalizationTasks);
       setMessage({
         tone: "good",

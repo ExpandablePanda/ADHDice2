@@ -5,6 +5,7 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import {
   mergePendingTaskRewards,
   parsePendingTaskRewards,
+  removePendingTaskRewardsByKey,
   type PendingTaskReward,
 } from "../src/lib/task-rewards.ts";
 
@@ -44,4 +45,12 @@ test("new banked rolls append without duplicating already persisted rewards", ()
 
   assert.deepEqual(mergePendingTaskRewards([first], [first, second]), [first, second]);
   assert.equal(mergePendingTaskRewards(current, [first]), current);
+});
+
+test("claimed banked rolls are removed by reward key instead of queue position", () => {
+  const first = createPendingReward("task-1", 2);
+  const second = createPendingReward("task-2", 3);
+  const third = createPendingReward("task-3", 1);
+
+  assert.deepEqual(removePendingTaskRewardsByKey([first, second, third], [second]), [first, third]);
 });

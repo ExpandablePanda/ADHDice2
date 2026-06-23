@@ -33,6 +33,7 @@ import {
   TASK_TABLE_TAG_CHIP_CLASS,
   TASK_TABLE_TITLE_CELL_CLASS,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS,
+  CompactRepeatCadenceControls,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 
@@ -65,6 +66,11 @@ const REPEAT_WEEKDAY_OPTIONS = [
   { label: "Thu", value: 4 },
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
+];
+const COMPACT_REPEAT_UNITS: Array<{ label: string; value: PrototypeTaskRow["repeat"] }> = [
+  { label: "Days", value: "daily" },
+  { label: "Weeks", value: "weekly" },
+  { label: "Months", value: "monthly" },
 ];
 function priorityTone(priority: "focus" | "important" | "urgent") {
   if (priority === "focus") return "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
@@ -1375,54 +1381,42 @@ function RepeatQuickPanel({
         ))}
       </div>
       {repeatFrequency !== "none" ? (
-        <div className="mt-3 space-y-3">
-          {repeatFrequency !== "daily_until_complete" ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">Interval</span>
-              <input
-                className={`${QUICK_PANEL_TEXT_INPUT_CLASS} w-20`}
-                min={1}
-                onChange={(event) => setIntervalDraft(event.target.value)}
-                type="number"
-                value={intervalDraft}
-              />
-              <TaskTableChipButton onClick={() => applyCadence(repeatFrequency)} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save interval</TaskTableChipButton>
-            </div>
-          ) : null}
-          {repeatFrequency === "weekly" || repeatFrequency === "custom" ? (
-            <div className="flex flex-wrap gap-2">
-              {REPEAT_WEEKDAY_OPTIONS.map((option) => {
-                const isActive = repeatDaysOfWeek.includes(option.value);
-                const nextDays = isActive
-                  ? repeatDaysOfWeek.filter((entry) => entry !== option.value)
-                  : [...repeatDaysOfWeek, option.value].sort((left, right) => left - right);
-                return (
-                  <QuickChipOption
-                    active={isActive}
-                    activeToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
-                    key={option.value}
-                    onClick={() => applyCadence(repeatFrequency, nextDays)}
-                  >
-                    {option.label}
-                  </QuickChipOption>
-                );
-              })}
-            </div>
-          ) : null}
-          {repeatFrequency === "monthly" ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">Day</span>
-              <input
-                className={`${QUICK_PANEL_TEXT_INPUT_CLASS} w-20`}
-                max={31}
-                min={1}
-                onChange={(event) => setDayOfMonthDraft(event.target.value)}
-                type="number"
-                value={dayOfMonthDraft}
-              />
-              <TaskTableChipButton onClick={() => applyCadence(repeatFrequency, repeatDaysOfWeek, null)} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Save day</TaskTableChipButton>
-            </div>
-          ) : null}
+        <div className="mt-3 space-y-2">
+          <CompactRepeatCadenceControls
+            activeToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
+            dayInputProps={{
+              inputMode: "numeric",
+              max: 31,
+              min: 1,
+              onBlur: () => applyCadence(repeatFrequency, repeatDaysOfWeek, null),
+              onChange: (event) => setDayOfMonthDraft(event.target.value.replace(/[^\d]/g, "").slice(0, 2)),
+              type: "text",
+              value: dayOfMonthDraft,
+            }}
+            inactiveToneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+            intervalInputProps={{
+              inputMode: "numeric",
+              min: 1,
+              onBlur: () => applyCadence(repeatFrequency),
+              onChange: (event) => setIntervalDraft(event.target.value.replace(/[^\d]/g, "")),
+              type: "text",
+              value: intervalDraft,
+            }}
+            onRepeatUnitClick={(repeatUnit) => applyCadence(repeatUnit)}
+            onWeekdayClick={(weekday) => {
+              const nextDays = repeatDaysOfWeek.includes(weekday)
+                ? repeatDaysOfWeek.filter((entry) => entry !== weekday)
+                : [...repeatDaysOfWeek, weekday].sort((left, right) => left - right);
+              applyCadence(repeatFrequency, nextDays);
+            }}
+            repeat={repeatFrequency}
+            repeatDaysOfWeek={repeatDaysOfWeek}
+            repeatUnits={COMPACT_REPEAT_UNITS}
+            showInterval={repeatFrequency !== "daily_until_complete"}
+            showMonthDay={repeatFrequency === "monthly" || repeatFrequency === "custom"}
+            showWeekdays={repeatFrequency === "weekly" || repeatFrequency === "custom"}
+            weekdayOptions={REPEAT_WEEKDAY_OPTIONS}
+          />
         </div>
       ) : null}
     </QuickPanelShell>
@@ -1638,7 +1632,6 @@ function TasksSimpleList({
 }: TasksListAdapterProps) {
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
-  const [inlineInspectorTaskId, setInlineInspectorTaskId] = useState<string | null>(null);
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
   const [collapsedStepSectionsByTaskId, setCollapsedStepSectionsByTaskId] = useState<Record<string, boolean>>({});
   const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
@@ -1655,12 +1648,8 @@ function TasksSimpleList({
     () => new Map([...(tableProps.allTasks ?? tasks), ...tasks].map((task) => [task.id, task])),
     [tableProps.allTasks, tasks],
   );
-  const noteOptions = useMemo(
-    () => tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? [],
-    [tableProps.allNoteOptions],
-  );
-  const inspectorRows = useMemo(
-    () => tableProps.tasks.map((task) => buildTaskTableRow(task, {
+  const overlayRows = useMemo(
+    () => tasks.map((task) => buildTaskTableRow(task, {
       focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
       linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
       listDefinitions: tableProps.rowContext.listDefinitions,
@@ -1669,31 +1658,25 @@ function TasksSimpleList({
       taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
       todayDateKey: tableProps.rowContext.todayDateKey,
     })),
-    [tableProps.rowContext, tableProps.tasks],
+    [tableProps.rowContext, tasks],
   );
-  const requestedInspectorTask = inlineInspectorTaskId
-    ? tableProps.tasks.find((task) => task.id === inlineInspectorTaskId)
-      ?? tableProps.allTasks?.find((task) => task.id === inlineInspectorTaskId)
-      ?? null
-    : null;
-  const requestedInspectorTaskRow = useMemo(
-    () => requestedInspectorTask
-      ? buildTaskTableRow(requestedInspectorTask, {
+  const requestedOpenTaskRow = useMemo(
+    () => tableProps.requestedOpenTask
+      ? buildTaskTableRow(tableProps.requestedOpenTask, {
         focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
-        linkedNotes: tableProps.rowContext.linkedNotesByTaskId[requestedInspectorTask.id] ?? [],
+        linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
         listDefinitions: tableProps.rowContext.listDefinitions,
-        listMemberships: tableProps.rowContext.listMembershipsByTaskId[requestedInspectorTask.id] ?? [],
-        subtasks: tableProps.rowContext.subtasksByTaskId[requestedInspectorTask.id] ?? [],
-        taskHistory: tableProps.rowContext.taskHistoryByTaskId[requestedInspectorTask.id] ?? [],
+        listMemberships: tableProps.rowContext.listMembershipsByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
         todayDateKey: tableProps.rowContext.todayDateKey,
       })
       : null,
-    [requestedInspectorTask, tableProps.rowContext],
+    [tableProps.requestedOpenTask, tableProps.rowContext],
   );
   const closeQuickPanel = () => setActiveQuickPanel(null);
   const openQuickPanel = (taskId: string, mode: ListQuickPanelMode) => {
     setRowContextMenu(null);
-    setInlineInspectorTaskId(null);
     setActiveQuickPanel((current) => current?.taskId === taskId && current.mode === mode ? null : { mode, taskId });
   };
   const rowContextMenuTask = useMemo(
@@ -1731,12 +1714,92 @@ function TasksSimpleList({
       filterRowsNode={filterRowsNode}
       agentPlanNode={(
         <div className="relative space-y-3" ref={listShellRef}>
+          {tableProps.requestedOpenTaskId ? (
+            <TaskManagementTableV2
+              allowInlineInspector
+              allListOptions={tableProps.allListOptions}
+              allNoteOptions={tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? []}
+              allTagOptions={tableProps.allTagOptions}
+              childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
+              childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
+              className="m-0 max-w-none p-0"
+              currentListLabel={tableProps.currentListLabel}
+              enableInspector
+              getFollowTaskDestination={tableProps.getFollowTaskDestination}
+              onClearSelection={tableProps.onClearSelection}
+              onCreateChildTask={tableProps.onCreateChildTask}
+              onCreateTaskList={tableProps.onCreateTaskList}
+              onDeleteTaskActualTimeEntry={tableProps.onDeleteTaskActualTimeEntry}
+              onDismissDetachedTask={tableProps.onDismissDetachedTask}
+              onDuplicateTask={tableProps.onDuplicateTask}
+              onFollowDetachedTask={tableProps.onFollowDetachedTask}
+              onNextTaskTimer={tableProps.onNextTaskTimer}
+              onOpenBatchDelete={tableProps.onOpenBatchDelete}
+              onOpenBatchEdit={tableProps.onOpenBatchEdit}
+              onOpenDeleteTask={tableProps.onOpenDeleteTask}
+              onOpenFocusTimer={tableProps.onOpenFocusTimer}
+              onOpenNote={tableProps.onOpenNote}
+              onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
+              onOpenTaskEditor={tableProps.onOpenTaskEditor}
+              onOpenTaskHistory={tableProps.onOpenTaskHistory}
+              onPauseTaskTimer={tableProps.onPauseTaskTimer}
+              onPreviousTaskTimer={tableProps.onPreviousTaskTimer}
+              onReorderChildTask={tableProps.onReorderChildTask}
+              onInspectorClose={() => tableProps.onRequestedOpenTaskHandled?.(tableProps.requestedOpenTaskId ?? "")}
+              onRestoreTask={tableProps.onRestoreTask}
+              onResumeTaskTimer={tableProps.onResumeTaskTimer}
+              onSelectAllVisible={tableProps.onSelectAllVisible}
+              onStartTaskTimer={tableProps.onStartTaskTimer}
+              onStopTaskTimer={tableProps.onStopTaskTimer}
+              onTaskActualSecondsChange={tableProps.onSetActualSeconds}
+              onTaskDueChange={tableProps.onSetDue}
+              onTaskEnergyChange={tableProps.onSetEnergy}
+              onTaskEstimatedMinutesChange={tableProps.onSetEstimatedMinutes}
+              onTaskLinkChange={tableProps.onSetLink}
+              onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
+              onTaskNotesChange={tableProps.onSetNotes}
+              onTaskPriorityChange={tableProps.onSetPriority}
+              onTaskRepeatChange={tableProps.onSetRepeat}
+              onTaskStatusChange={(taskId, status) => {
+                const expectedTask = tableProps.tasks.find((task) => task.id === taskId) ?? null;
+                tableProps.onSetStatus?.(taskId, status, expectedTask);
+              }}
+              onTaskSubtaskAdd={tableProps.onAddTaskSubtask}
+              onTaskSubtaskAddChild={tableProps.onAddChildTaskSubtask}
+              onTaskSubtaskDelete={tableProps.onDeleteTaskSubtask}
+              onTaskSubtaskRename={tableProps.onRenameTaskSubtask}
+              onTaskSubtasksAutoResetChange={tableProps.onSetTaskSubtasksAutoReset}
+              onTaskSubtaskStatusChange={tableProps.onSetTaskSubtaskStatus}
+              onTaskTagsChange={tableProps.onSetTags}
+              onTaskTitleChange={tableProps.onSetTitle}
+              onToggleTaskList={tableProps.onToggleTaskList}
+              onToggleTaskSelection={tableProps.onToggleTaskSelection}
+              overlayOnly
+              requestedOpenTask={requestedOpenTaskRow}
+              requestedOpenTaskId={tableProps.requestedOpenTaskId}
+              rows={overlayRows}
+              runningTaskTimers={tableProps.runningTaskTimers}
+              selectedTaskIds={tableProps.selectedTaskIds}
+              suppressDetachedNoticeTaskId={tableProps.suppressDetachedNoticeTaskId}
+              taskActualTimeEntriesByTaskId={tableProps.taskActualTimeEntriesByTaskId}
+              visibleColumns={["status_icon", "title"]}
+            />
+          ) : null}
           {tasks.map((task) => {
         const displayStatus = getTaskDisplayStatus(task);
         const dueLabel = formatDueLabel(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
         const dueMeta = dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;
         const repeatSummary = formatRepeatSummary(task);
+        const taskRow = buildTaskTableRow(task, {
+          focusedTaskIdSet: rowContext.focusedTaskIdSet,
+          linkedNotes: rowContext.linkedNotesByTaskId[task.id] ?? [],
+          listDefinitions: rowContext.listDefinitions,
+          listMemberships: rowContext.listMembershipsByTaskId[task.id] ?? [],
+          subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
+          taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
+          todayDateKey: rowContext.todayDateKey,
+        });
         const categoryLabel = resolveTaskCategoryLabel({
           currentListLabel,
           listDefinitions: rowContext.listDefinitions,
@@ -1756,7 +1819,6 @@ function TasksSimpleList({
           setEditingTaskTitleId((current) => (current === task.id ? null : current));
         };
         const isOpenTask = isTaskOpen(task);
-        const isInspectorOpen = inlineInspectorTaskId === task.id;
         const activePanelMode = activeQuickPanel?.taskId === task.id ? activeQuickPanel.mode : null;
         const isQuickPanelOpen = activePanelMode !== null;
         const panelTitle = task.title;
@@ -1768,7 +1830,7 @@ function TasksSimpleList({
           <div className="space-y-3" key={task.id}>
             <article
               className={`rounded-[1.35rem] border bg-white/92 p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition dark:bg-white/[0.05] ${
-                isInspectorOpen || isQuickPanelOpen
+                isQuickPanelOpen
                   ? "border-[#cfc2ff] bg-[#fcfbff] dark:border-[#4f3d86] dark:bg-[#18112d]"
                   : "border-[#ece8f8] hover:border-[#ddd2fb] hover:bg-white dark:border-white/10 dark:hover:border-white/15"
               }`}
@@ -1801,14 +1863,14 @@ function TasksSimpleList({
                 onClick={() => {
                   setRowContextMenu(null);
                   closeQuickPanel();
-                  setInlineInspectorTaskId(task.id);
+                  tableProps.onOpenTaskEditor?.(task.id);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     setRowContextMenu(null);
                     closeQuickPanel();
-                    setInlineInspectorTaskId(task.id);
+                    tableProps.onOpenTaskEditor?.(task.id);
                   }
                 }}
                 role="button"
@@ -1870,6 +1932,18 @@ function TasksSimpleList({
                       <MetadataChipButton active={activePanelMode === "due"} onClick={() => openQuickPanel(task.id, "due")}>
                         {dueMeta}
                       </MetadataChipButton>
+                      {taskRow.currentStreak > 0 ? (
+                        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
+                          <Flame className="h-3 w-3" />
+                          {taskRow.currentStreak}
+                        </span>
+                      ) : null}
+                      {taskRow.missedStreak > 0 ? (
+                        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>
+                          <Skull className="h-3 w-3" />
+                          {taskRow.missedStreak}
+                        </span>
+                      ) : null}
                       <MetadataChipButton active={activePanelMode === "priority"} onClick={() => openQuickPanel(task.id, "priority")}>
                         {formatPriorityChipLabel(task, rowContext.focusedTaskIdSet)}
                       </MetadataChipButton>
@@ -1940,7 +2014,22 @@ function TasksSimpleList({
                     </div>
                   </div>
 
-                  <div className="relative shrink-0">
+                  <div className="relative flex shrink-0 items-center gap-1">
+                    {tableProps.onOpenTaskHistory ? (
+                      <button
+                        aria-label={`Open history for ${task.title}`}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ece8f8] bg-white text-[#66718c] transition hover:border-[#d9cffb] hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          closeQuickPanel();
+                          setRowContextMenu(null);
+                          tableProps.onOpenTaskHistory?.(task.id);
+                        }}
+                        type="button"
+                      >
+                        <CalendarDays className="h-4 w-4" />
+                      </button>
+                    ) : null}
                     <button
                       aria-expanded={rowContextMenu?.taskId === task.id}
                       aria-label={`More actions for ${task.title}`}
@@ -1980,7 +2069,11 @@ function TasksSimpleList({
                 onOpenStep={(taskId) => {
                   setRowContextMenu(null);
                   closeQuickPanel();
-                  setInlineInspectorTaskId(taskId);
+                  if (tableProps.onOpenChildTask) {
+                    tableProps.onOpenChildTask(taskId);
+                    return;
+                  }
+                  tableProps.onOpenTaskEditor?.(taskId);
                 }}
                 onOpenQuickPanel={openQuickPanel}
                 onRenameStep={tableProps.onSetTitle}
@@ -2110,85 +2203,6 @@ function TasksSimpleList({
                 onSave={(notes) => tableProps.onSetNotes?.(task.id, notes)}
               />
             ) : null}
-            {isInspectorOpen ? (
-              <TaskManagementTableV2
-                allowInlineInspector
-                allListOptions={tableProps.allListOptions}
-                allNoteOptions={noteOptions}
-                allTagOptions={tableProps.allTagOptions}
-                childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
-                childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
-                searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
-                className="mt-0 max-w-none"
-                currentListLabel={tableProps.currentListLabel}
-                enableInspector
-                getFollowTaskDestination={tableProps.getFollowTaskDestination}
-                onClearSelection={tableProps.onClearSelection}
-                overlayNode={tableProps.overlayNode}
-                onCreateTaskList={tableProps.onCreateTaskList}
-                onCreateChildTask={tableProps.onCreateChildTask}
-                onOpenBatchDelete={tableProps.onOpenBatchDelete}
-                onOpenBatchEdit={tableProps.onOpenBatchEdit}
-                onOpenDeleteTask={tableProps.onOpenDeleteTask}
-                onDuplicateTask={tableProps.onDuplicateTask}
-                onRestoreTask={tableProps.onRestoreTask}
-                onOpenTaskHistory={tableProps.onOpenTaskHistory}
-                onOpenFocusTimer={tableProps.onOpenFocusTimer}
-                onOpenNote={tableProps.onOpenNote}
-                onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
-                onOpenTaskEditor={tableProps.onOpenTaskEditor}
-                onOpenChildTask={(taskId) => setInlineInspectorTaskId(taskId)}
-                onReorderChildTask={tableProps.onReorderChildTask}
-                onFollowDetachedTask={tableProps.onFollowDetachedTask}
-                onDismissDetachedTask={tableProps.onDismissDetachedTask}
-                onNextTaskTimer={tableProps.onNextTaskTimer}
-                onPreviousTaskTimer={tableProps.onPreviousTaskTimer}
-                onDeleteTaskActualTimeEntry={tableProps.onDeleteTaskActualTimeEntry}
-                onPauseTaskTimer={tableProps.onPauseTaskTimer}
-                onResumeTaskTimer={tableProps.onResumeTaskTimer}
-                onStartTaskTimer={tableProps.onStartTaskTimer}
-                onStopTaskTimer={tableProps.onStopTaskTimer}
-                onTaskActualSecondsChange={tableProps.onSetActualSeconds}
-                taskActualTimeEntriesByTaskId={tableProps.taskActualTimeEntriesByTaskId}
-                onTaskDueChange={tableProps.onSetDue}
-                onTaskEnergyChange={tableProps.onSetEnergy}
-                onTaskEstimatedMinutesChange={tableProps.onSetEstimatedMinutes}
-                onTaskLinkChange={tableProps.onSetLink}
-                onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
-                onTaskNotesChange={tableProps.onSetNotes}
-                onTaskPriorityChange={tableProps.onSetPriority}
-                onTaskRepeatChange={tableProps.onSetRepeat}
-                onTaskStatusChange={(taskId, status) => {
-                  const expectedTask = tableProps.tasks.find((entry) => entry.id === taskId) ?? null;
-                  tableProps.onSetStatus?.(taskId, status, expectedTask);
-                }}
-                onTaskSubtaskAdd={tableProps.onAddTaskSubtask}
-                onTaskSubtaskAddChild={tableProps.onAddChildTaskSubtask}
-                onTaskSubtasksAutoResetChange={tableProps.onSetTaskSubtasksAutoReset}
-                onTaskSubtaskDelete={tableProps.onDeleteTaskSubtask}
-                onTaskSubtaskRename={tableProps.onRenameTaskSubtask}
-                onTaskSubtaskStatusChange={tableProps.onSetTaskSubtaskStatus}
-                onTaskTagsChange={tableProps.onSetTags}
-                onTaskTitleChange={tableProps.onSetTitle}
-                onSelectAllVisible={tableProps.onSelectAllVisible}
-                onToggleTaskSelection={tableProps.onToggleTaskSelection}
-                onToggleTaskList={tableProps.onToggleTaskList}
-                onInspectorClose={() => setInlineInspectorTaskId(null)}
-                primaryBadgeLabel="Live task table"
-                requestedOpenTaskId={inlineInspectorTaskId}
-                requestedOpenTask={requestedInspectorTaskRow}
-                rows={inspectorRows}
-                runningTaskTimers={tableProps.runningTaskTimers}
-                secondaryBadgeLabel="List view"
-                selectedTaskIds={tableProps.selectedTaskIds}
-                shellClassName="[&_.sticky]:hidden [&_[data-task-table-row]]:hidden [&_[data-task-table-inline-editor]]:hidden"
-                showHeader={false}
-                suppressDetachedNoticeTaskId={tableProps.suppressDetachedNoticeTaskId}
-                title="Tasks"
-                visibleColumns={["status_icon", "title"]}
-                activeTaskTimerIndex={tableProps.activeTaskTimerIndex}
-              />
-            ) : null}
           </div>
         );
       })}
@@ -2219,7 +2233,7 @@ function TasksSimpleList({
               onOpenDetails={() => {
                 setRowContextMenu(null);
                 closeQuickPanel();
-                setInlineInspectorTaskId(rowContextMenuTask.id);
+                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
               }}
               onOpenHistory={tableProps.onOpenTaskHistory ? () => {
                 tableProps.onOpenTaskHistory?.(rowContextMenuTask.id);
@@ -2245,7 +2259,7 @@ function TasksSimpleList({
                   openQuickPanel(rowContextMenuTask.id, mappedMode);
                   return;
                 }
-                setInlineInspectorTaskId(rowContextMenuTask.id);
+                tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
               }}
               onOpenTimeLog={tableProps.onOpenTaskActualTime ? () => {
                 tableProps.onOpenTaskActualTime?.(rowContextMenuTask.id);

@@ -2,7 +2,7 @@
 
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, useGLTF } from "@react-three/drei";
-import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { withBasePath } from "@/lib/utils";
 
@@ -51,8 +51,6 @@ const D6_BODY_COLOR = "#cbbcff";
 const D6_BODY_EMISSIVE = "#8f7af6";
 const D6_PIP_COLOR = "#ffffff";
 const D6_PIP_EMISSIVE = "#f7f4ff";
-const REWARD_DICE_BOUNDS = { x: 3.45, y: 1.9 };
-
 export type D6MaterialPreset = "candy" | "ceramic" | "glass" | "matte" | "metal";
 
 export type D6VisualStyle = {
@@ -120,12 +118,6 @@ export const DEFAULT_D20_VISUAL_STYLE: D20VisualStyle = {
 };
 
 const DEFAULT_D20_CAMERA_POSITION: [number, number, number] = [0, 0.2, 12.2];
-
-type RewardDiceMotionState = {
-  position: THREE.Vector3;
-  radius: number;
-  velocity: THREE.Vector3;
-};
 
 function isD6PipMesh(mesh: THREE.Mesh) {
   return mesh.name.includes("Material001");
@@ -281,70 +273,6 @@ function buildD20Material(mesh: THREE.Mesh, style: D20VisualStyle = DEFAULT_D20_
     roughness: isLetterMesh ? style.pipRoughness : style.bodyRoughness,
     transparent: (isLetterMesh ? style.pipOpacity : style.bodyOpacity) < 0.999,
   });
-}
-
-function clampRewardDieToBounds(position: THREE.Vector3, velocity: THREE.Vector3, radius: number) {
-  if (position.x > REWARD_DICE_BOUNDS.x - radius) {
-    position.x = REWARD_DICE_BOUNDS.x - radius;
-    velocity.x *= -0.82;
-  } else if (position.x < -REWARD_DICE_BOUNDS.x + radius) {
-    position.x = -REWARD_DICE_BOUNDS.x + radius;
-    velocity.x *= -0.82;
-  }
-
-  if (position.y > REWARD_DICE_BOUNDS.y - radius) {
-    position.y = REWARD_DICE_BOUNDS.y - radius;
-    velocity.y *= -0.78;
-  } else if (position.y < -REWARD_DICE_BOUNDS.y + radius) {
-    position.y = -REWARD_DICE_BOUNDS.y + radius;
-    velocity.y *= -0.78;
-  }
-}
-
-function resolveRewardDiceCollisions(sharedStates: MutableRefObject<Array<RewardDiceMotionState | null>>, index: number) {
-  const currentState = sharedStates.current[index];
-  if (!currentState) {
-    return;
-  }
-
-  for (let otherIndex = index + 1; otherIndex < sharedStates.current.length; otherIndex += 1) {
-    const otherState = sharedStates.current[otherIndex];
-    if (!otherState) {
-      continue;
-    }
-
-    const dx = otherState.position.x - currentState.position.x;
-    const dy = otherState.position.y - currentState.position.y;
-    const distance = Math.hypot(dx, dy);
-    const minDistance = currentState.radius + otherState.radius;
-    if (distance === 0 || distance >= minDistance) {
-      continue;
-    }
-
-    const normalX = dx / distance;
-    const normalY = dy / distance;
-    const overlap = minDistance - distance;
-    const pushX = normalX * overlap * 0.5;
-    const pushY = normalY * overlap * 0.5;
-
-    currentState.position.x -= pushX;
-    currentState.position.y -= pushY;
-    otherState.position.x += pushX;
-    otherState.position.y += pushY;
-
-    const relativeVelocityX = currentState.velocity.x - otherState.velocity.x;
-    const relativeVelocityY = currentState.velocity.y - otherState.velocity.y;
-    const separatingSpeed = (relativeVelocityX * normalX) + (relativeVelocityY * normalY);
-    if (separatingSpeed > 0) {
-      continue;
-    }
-
-    const impulse = -separatingSpeed * 0.88;
-    currentState.velocity.x += normalX * impulse;
-    currentState.velocity.y += normalY * impulse;
-    otherState.velocity.x -= normalX * impulse;
-    otherState.velocity.y -= normalY * impulse;
-  }
 }
 
 function angleDelta(current: number, target: number) {
@@ -700,23 +628,19 @@ useGLTF.preload(withBasePath("/d6.glb"));
 function RewardDiceModel({
   faceValue,
   isLead,
-  motionIndex,
   offset,
   onSettled,
   phase,
   scale,
-  sharedMotionStates,
   speedScale = 1,
   speedMult,
 }: {
   faceValue: number;
   isLead: boolean;
-  motionIndex: number;
   offset: [number, number, number];
   onSettled: () => void;
   phase: DicePhase;
   scale: number;
-  sharedMotionStates: MutableRefObject<Array<RewardDiceMotionState | null>>;
   speedScale?: number;
   speedMult: number;
 }) {
@@ -737,9 +661,7 @@ function RewardDiceModel({
   }, [scene]);
   const groupRef = useRef<THREE.Group>(null!);
   const vel = useRef({ x: 0, y: 0, z: 0 });
-  const linearVelocity = useRef(new THREE.Vector3());
   const currentPosition = useRef(new THREE.Vector3(...offset));
-  const dieRadius = useRef(scale * 0.48);
   const notified = useRef(false);
   const settleRotation = useMemo(() => {
     const [x, y, z] = D6_FACE_ROTATIONS[faceValue] ?? D6_FACE_ROTATIONS[1];
@@ -749,40 +671,20 @@ function RewardDiceModel({
   useEffect(() => {
     if (phase === "rolling") {
       notified.current = false;
-      currentPosition.current.set(
-        (Math.random() > 0.5 ? -1 : 1) * (REWARD_DICE_BOUNDS.x + 1 + (Math.random() * 0.9)),
-        THREE.MathUtils.randFloat(-0.75, 0.95),
-        offset[2],
-      );
-      linearVelocity.current.set(
-        (offset[0] - currentPosition.current.x) * THREE.MathUtils.randFloat(1.3, 1.7),
-        THREE.MathUtils.randFloat(-1.55, 1.55),
-        0,
-      );
+      currentPosition.current.set(...offset);
       vel.current = {
-        x: (9.25 + Math.random() * 4) * speedMult * speedScale,
-        y: (12.5 + Math.random() * 5.5) * speedMult * speedScale,
-        z: (7 + Math.random() * 4.5) * speedMult * speedScale,
-      };
-      sharedMotionStates.current[motionIndex] = {
-        position: currentPosition.current,
-        radius: dieRadius.current,
-        velocity: linearVelocity.current,
+        x: (8.8 + Math.random() * 3.2) * speedMult * speedScale,
+        y: (11.2 + Math.random() * 4.2) * speedMult * speedScale,
+        z: (6.4 + Math.random() * 3.4) * speedMult * speedScale,
       };
     }
-  }, [motionIndex, offset, phase, sharedMotionStates, speedMult, speedScale]);
+  }, [offset, phase, speedMult, speedScale]);
 
   useEffect(() => {
     if (phase === "idle") {
       currentPosition.current.set(...offset);
-      linearVelocity.current.set(0, 0, 0);
-      sharedMotionStates.current[motionIndex] = {
-        position: currentPosition.current,
-        radius: dieRadius.current,
-        velocity: linearVelocity.current,
-      };
     }
-  }, [motionIndex, offset, phase, sharedMotionStates]);
+  }, [offset, phase]);
 
   useFrame((_, dt) => {
     const group = groupRef.current;
@@ -791,15 +693,8 @@ function RewardDiceModel({
     }
 
     const position = currentPosition.current;
-    const motionVelocity = linearVelocity.current;
-
     if (phase === "rolling") {
-      position.x += motionVelocity.x * dt;
-      position.y += motionVelocity.y * dt;
-      motionVelocity.multiplyScalar(0.995);
-      clampRewardDieToBounds(position, motionVelocity, dieRadius.current);
-      resolveRewardDiceCollisions(sharedMotionStates, motionIndex);
-
+      position.set(...offset);
       group.position.set(position.x, position.y, offset[2]);
       group.rotation.x += vel.current.x * dt;
       group.rotation.y += vel.current.y * dt;
@@ -811,12 +706,6 @@ function RewardDiceModel({
       vel.current.x *= 0.89;
       vel.current.y *= 0.89;
       vel.current.z *= 0.89;
-      motionVelocity.multiplyScalar(0.9);
-      position.x += motionVelocity.x * dt;
-      position.y += motionVelocity.y * dt;
-      clampRewardDieToBounds(position, motionVelocity, dieRadius.current);
-      resolveRewardDiceCollisions(sharedMotionStates, motionIndex);
-
       position.x = THREE.MathUtils.lerp(position.x, offset[0], 0.2);
       position.y = THREE.MathUtils.lerp(position.y, offset[1], 0.2);
       group.position.set(position.x, position.y, offset[2]);
@@ -842,7 +731,6 @@ function RewardDiceModel({
 
   useEffect(() => {
     return () => {
-      sharedMotionStates.current[motionIndex] = null;
       clone.traverse((obj) => {
         if ((obj as THREE.Mesh).isMesh) {
           const mesh = obj as THREE.Mesh;
@@ -856,7 +744,7 @@ function RewardDiceModel({
         }
       });
     };
-  }, [clone, motionIndex, sharedMotionStates]);
+  }, [clone]);
 
   return (
     <group ref={groupRef} position={offset}>
@@ -983,42 +871,28 @@ function PreviewD20Model({
   );
 }
 
-function getRewardDiceOffsets(count: number): Array<[number, number, number]> {
-  if (count === 1) {
-    return [[0, 0, 0]];
-  }
-
-  if (count === 2) {
-    return [
-      [-1.45, 0.06, -0.12],
-      [1.45, -0.06, 0.12],
-    ];
-  }
-
-  if (count === 3) {
-    return [
-      [-1.55, 0.42, -0.16],
-      [1.55, 0.18, 0.16],
-      [0, -0.9, 0],
-    ];
-  }
-
-  const spacingX = count > 8 ? 1.25 : count > 4 ? 1.45 : 1.7;
-  const spacingY = count > 8 ? 1.15 : 1.3;
-  const columns = count <= 3 ? count : count <= 8 ? Math.min(4, count) : Math.min(5, count);
+function getRewardDiceLayout(count: number) {
+  const columns = count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4;
   const rows = Math.ceil(count / columns);
+  const spacingX = count >= 10 ? 2.15 : count >= 7 ? 2.25 : 2.4;
+  const spacingY = count >= 10 ? 2.05 : count >= 7 ? 2.15 : 2.28;
+  const scale = count >= 13 ? 0.48 : count >= 10 ? 0.56 : count >= 7 ? 0.68 : count >= 5 ? 0.82 : count >= 3 ? 0.94 : 1.06;
+  const cameraZ = count >= 13 ? 11.8 : count >= 10 ? 10.8 : count >= 7 ? 9.8 : count >= 5 ? 9.1 : 8.4;
+  const fov = count >= 10 ? 38 : count >= 7 ? 40 : 42;
   const columnCenter = (columns - 1) / 2;
   const rowCenter = (rows - 1) / 2;
-
-  return Array.from({ length: count }, (_, index) => {
+  const offsets: Array<[number, number, number]> = Array.from({ length: count }, (_, index) => {
     const column = index % columns;
     const row = Math.floor(index / columns);
+
     return [
       (column - columnCenter) * spacingX,
       (rowCenter - row) * spacingY,
-      (column - columnCenter) * 0.12 + (row % 2 === 0 ? 0.08 : -0.12),
+      0,
     ];
   });
+
+  return { cameraZ, fov, offsets, scale };
 }
 
 export function RewardDice3DCanvas({
@@ -1040,13 +914,11 @@ export function RewardDice3DCanvas({
 }) {
   const bg = dark ? "#130e24" : "#f0ecff";
   const accentColor = dark ? "#cabfff" : "#9b87ff";
-  const offsets = useMemo(() => getRewardDiceOffsets(results.length), [results.length]);
-  const scale = results.length >= 10 ? 0.78 : results.length >= 6 ? 0.92 : 1.08;
-  const sharedMotionStates = useRef<Array<RewardDiceMotionState | null>>([]);
+  const layout = useMemo(() => getRewardDiceLayout(results.length), [results.length]);
 
   return (
-    <div className={`w-full overflow-hidden rounded-2xl ${className}`} style={{ height, background: bg }}>
-      <Canvas camera={{ position: [0, 0, 8.5], fov: 46 }} gl={{ antialias: true }}>
+    <div className={`relative w-full overflow-hidden rounded-2xl ${className}`} style={{ height, background: bg }}>
+      <Canvas camera={{ position: [0, 0, layout.cameraZ], fov: layout.fov }} gl={{ antialias: true }}>
         <color attach="background" args={[bg]} />
         <ambientLight intensity={1.08} />
         <directionalLight position={[4, 8, 6]} intensity={1.28} />
@@ -1056,12 +928,10 @@ export function RewardDice3DCanvas({
             faceValue={result}
             isLead={index === 0}
             key={`${index}-${result}`}
-            motionIndex={index}
-            offset={offsets[index] ?? [0, 0, 0]}
+            offset={layout.offsets[index] ?? [0, 0, 0]}
             onSettled={onSettled}
             phase={phase}
-            scale={scale}
-            sharedMotionStates={sharedMotionStates}
+            scale={layout.scale}
             speedScale={speedScale}
             speedMult={1 + (index * 0.04)}
           />

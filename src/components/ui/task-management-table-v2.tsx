@@ -50,6 +50,7 @@ import {
   TASK_TABLE_TEXT_CLASS as UNIFIED_TABLE_TEXT_CLASS,
   TASK_TABLE_TITLE_CELL_CLASS as TITLE_CELL_CLASS,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS as VISIBLE_TITLE_TEXT_CLASS,
+  CompactRepeatCadenceControls,
   ScrollUpButton,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
@@ -138,12 +139,6 @@ type PrototypeSubtaskMiniRow = {
   depth: number;
   subtask: PrototypeTaskSubtask;
 };
-
-declare global {
-  interface Window {
-    copyAdhdiceStepTypographyDebug?: () => Promise<StepTypographyDebugPayload | null>;
-  }
-}
 
 const INLINE_ACCORDION_MODES: OverlayMode[] = ["actual", "due", "energy", "estimated", "link", "lists", "notes", "priority", "repeat", "status", "tags"];
 const BATCH_QUICK_EDIT_MODES: OverlayMode[] = ["due", "energy", "estimated", "lists", "priority", "repeat", "status", "tags"];
@@ -548,124 +543,6 @@ const PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
   letterSpacing: "normal",
   lineHeight: "13px",
 };
-const STEP_TYPOGRAPHY_DEBUG_ACTIVE_INPUT_ATTR = "data-adhdice-step-typography-active-input";
-const STEP_TYPOGRAPHY_DEBUG_VISIBLE_TITLE_ATTR = "data-adhdice-step-typography-visible-title";
-type StepTypographyDebugEntry = {
-  appearance: string;
-  borderBottomWidth: string;
-  borderTopWidth: string;
-  boundingBox: {
-    height: number;
-    left: number;
-    top: number;
-    width: number;
-  };
-  className: string;
-  color: string;
-  fontFamily: string;
-  fontSize: string;
-  fontWeight: string;
-  height: string;
-  letterSpacing: string;
-  lineHeight: string;
-  paddingBottom: string;
-  paddingLeft: string;
-  paddingRight: string;
-  paddingTop: string;
-  tagName: string;
-  transform: string;
-  webkitAppearance: string;
-  zoom: string;
-};
-type StepTypographyDebugPayload = {
-  activeInput: StepTypographyDebugEntry | null;
-  activeInputSelector: string;
-  generatedAt: string;
-  nearestVisibleTitle: StepTypographyDebugEntry | null;
-  visibleTitleSelector: string;
-};
-
-function getStepTypographyDebugEntry(element: Element | null): StepTypographyDebugEntry | null {
-  if (!(element instanceof HTMLElement)) {
-    return null;
-  }
-
-  const styles = window.getComputedStyle(element);
-  const bounds = element.getBoundingClientRect();
-
-  return {
-    appearance: styles.getPropertyValue("appearance"),
-    borderBottomWidth: styles.borderBottomWidth,
-    borderTopWidth: styles.borderTopWidth,
-    boundingBox: {
-      height: bounds.height,
-      left: bounds.left,
-      top: bounds.top,
-      width: bounds.width,
-    },
-    className: element.className,
-    color: styles.color,
-    fontFamily: styles.fontFamily,
-    fontSize: styles.fontSize,
-    fontWeight: styles.fontWeight,
-    height: styles.height,
-    letterSpacing: styles.letterSpacing,
-    lineHeight: styles.lineHeight,
-    paddingBottom: styles.paddingBottom,
-    paddingLeft: styles.paddingLeft,
-    paddingRight: styles.paddingRight,
-    paddingTop: styles.paddingTop,
-    tagName: element.tagName,
-    transform: styles.transform,
-    webkitAppearance: styles.getPropertyValue("-webkit-appearance"),
-    zoom: styles.getPropertyValue("zoom"),
-  };
-}
-
-function findNearestVisibleStepTitle(activeInput: HTMLElement): HTMLElement | null {
-  const visibleTitles = Array.from(document.querySelectorAll<HTMLElement>(`[${STEP_TYPOGRAPHY_DEBUG_VISIBLE_TITLE_ATTR}]`));
-  const inputBounds = activeInput.getBoundingClientRect();
-  const inputCenterX = inputBounds.left + inputBounds.width / 2;
-  const inputCenterY = inputBounds.top + inputBounds.height / 2;
-
-  return visibleTitles.reduce<{ distance: number; title: HTMLElement | null }>((nearest, title) => {
-    const titleBounds = title.getBoundingClientRect();
-    const titleCenterX = titleBounds.left + titleBounds.width / 2;
-    const titleCenterY = titleBounds.top + titleBounds.height / 2;
-    const distance = Math.hypot(titleCenterX - inputCenterX, titleCenterY - inputCenterY);
-
-    return distance < nearest.distance ? { distance, title } : nearest;
-  }, { distance: Number.POSITIVE_INFINITY, title: null }).title;
-}
-
-function installStepTypographyDebugHelper() {
-  if (process.env.NODE_ENV !== "development" || typeof window === "undefined") {
-    return;
-  }
-
-  window.copyAdhdiceStepTypographyDebug = async () => {
-    const activeInput = document.querySelector<HTMLElement>(`[${STEP_TYPOGRAPHY_DEBUG_ACTIVE_INPUT_ATTR}]:focus`)
-      ?? document.querySelector<HTMLElement>(`[${STEP_TYPOGRAPHY_DEBUG_ACTIVE_INPUT_ATTR}]`);
-    const nearestVisibleTitle = activeInput ? findNearestVisibleStepTitle(activeInput) : null;
-    const payload: StepTypographyDebugPayload = {
-      activeInput: getStepTypographyDebugEntry(activeInput),
-      activeInputSelector: `[${STEP_TYPOGRAPHY_DEBUG_ACTIVE_INPUT_ATTR}]`,
-      generatedAt: new Date().toISOString(),
-      nearestVisibleTitle: getStepTypographyDebugEntry(nearestVisibleTitle),
-      visibleTitleSelector: `[${STEP_TYPOGRAPHY_DEBUG_VISIBLE_TITLE_ATTR}]`,
-    };
-    const text = JSON.stringify(payload, null, 2);
-
-    console.log("ADHDice step typography debug", payload);
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      console.log("ADHDice step typography debug copied to clipboard.");
-    }
-
-    return payload;
-  };
-}
-
 function normalizeTaskListLabel(value: string) {
   return value.trim().toLowerCase();
 }
@@ -735,10 +612,6 @@ function InlineSubtaskEditor({
   onSetStatus?: (subtaskId: string, nextStatus: TaskSubtaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
 }) {
-  useEffect(() => {
-    installStepTypographyDebugHelper();
-  }, []);
-
   return (
     <div className="space-y-2">
       {subtasks.map((subtask) => (
@@ -751,7 +624,6 @@ function InlineSubtaskEditor({
               <input
                 autoFocus={autofocusSubtaskId === subtask.id}
                 className={`${SUBTASK_RENAME_INPUT_TEXT_CLASS} ${subtask.status === "done" ? "line-through opacity-60" : ""}`}
-                data-adhdice-step-typography-active-input={process.env.NODE_ENV === "development" ? "true" : undefined}
                 onBlur={() => onCommitTitle?.(subtask.id)}
                 onChange={(event) => onDraftChange(subtask.id, event.target.value)}
                 onFocus={() => {
@@ -920,6 +792,7 @@ type TaskManagementTableV2Props = {
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
   onReorderChildTask?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
+  overlayOnly?: boolean;
   onLoadMoreRows?: () => void;
   onRequestedOpenTaskHandled?: (taskId: string) => void;
   onFollowDetachedTask?: (taskId: string) => void;
@@ -1192,6 +1065,11 @@ const REPEAT_WEEKDAY_OPTIONS = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ];
+const COMPACT_REPEAT_UNITS: Array<{ label: string; value: TaskRepeat }> = [
+  { label: "Days", value: "daily" },
+  { label: "Weeks", value: "weekly" },
+  { label: "Months", value: "monthly" },
+];
 
 const STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
   { label: "Pending", value: "pending" },
@@ -1414,8 +1292,6 @@ function formatDue(dueOn: string, dueTime: string) {
 
   return dueTime ? `${dateLabel} · ${formatClockTime(dueTime)}` : dateLabel;
 }
-
-const CHILD_TASK_PREVIEW_ITEM_LIMIT = 12;
 
 function formatChildTaskPreviewSchedule(item: ChildTaskPreview) {
   if (item.dueOn || item.dueTime) {
@@ -1895,6 +1771,7 @@ export function TaskManagementTableV2({
   onOpenTaskEditor,
   onOpenChildTask,
   onReorderChildTask,
+  overlayOnly = false,
   onLoadMoreRows,
   onRequestedOpenTaskHandled,
   onFollowDetachedTask,
@@ -1991,6 +1868,8 @@ export function TaskManagementTableV2({
   const [openColumnMenuId, setOpenColumnMenuId] = useState<SortColumnId | null>(null);
   const [columnMenuPosition, setColumnMenuPosition] = useState<ColumnMenuPosition | null>(null);
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
+  const [pendingCustomCadenceTaskId, setPendingCustomCadenceTaskId] = useState<string | null>(null);
+  const [tableViewportMetrics, setTableViewportMetrics] = useState({ clientWidth: 0, scrollLeft: 0 });
   const [sortState, setSortState] = useState<{ columnId: SortColumnId; optionId: SortOptionId } | null>(() => getInitialSortState());
   const [textFilters, setTextFilters] = useState<Partial<Record<TextFilterColumnId, string>>>({});
   const [structuredFilters, setStructuredFilters] = useState<StructuredFilters>(DEFAULT_STRUCTURED_FILTERS);
@@ -2087,8 +1966,23 @@ export function TaskManagementTableV2({
     [getFollowTaskDestination, selectedTaskId, selectedTaskIsDetached],
   );
   const rowContextMenuTask = useMemo(
-    () => (rowContextMenu ? tasks.find((task) => task.id === rowContextMenu.taskId) ?? null : null),
-    [rowContextMenu, tasks],
+    () => {
+      if (!rowContextMenu) {
+        return null;
+      }
+      const task = tasks.find((entry) => entry.id === rowContextMenu.taskId);
+      if (task) {
+        return task;
+      }
+      for (const group of Object.values(childTaskPreviewByParentTaskId)) {
+        const item = group.items.find((entry) => entry.id === rowContextMenu.taskId);
+        if (item) {
+          return childPreviewToPrototypeTaskRow(item);
+        }
+      }
+      return null;
+    },
+    [childTaskPreviewByParentTaskId, retainedMetadataTargetTask, retainedSelectedTask, rowContextMenu, tasks],
   );
   const selectedTaskActualTimeEntries = useMemo(
     () => (selectedTask ? taskActualTimeEntriesByTaskId?.[selectedTask.id] ?? [] : []),
@@ -2161,10 +2055,6 @@ export function TaskManagementTableV2({
     () => rows.map((row) => row.id).join("\u001f"),
     [rows],
   );
-  const visibleTaskIds = useMemo(
-    () => displayedTasks.map((task) => task.id),
-    [displayedTasks],
-  );
   const searchMatchedStepParentTaskIdSet = useMemo(
     () => new Set(searchMatchedStepParentTaskIds),
     [searchMatchedStepParentTaskIds],
@@ -2172,6 +2062,19 @@ export function TaskManagementTableV2({
   const collapsedChildTaskIdSet = useMemo(
     () => new Set(Object.entries(collapsedChildTaskIds).flatMap(([taskId, isCollapsed]) => (isCollapsed ? [taskId] : []))),
     [collapsedChildTaskIds],
+  );
+  const visibleTaskIds = useMemo(
+    () => displayedTasks.flatMap((task) => {
+      const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
+      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || searchMatchedStepParentTaskIdSet.has(task.id);
+      if (!stepPreviewGroup || !stepsExpanded) {
+        return [task.id];
+      }
+
+      const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(stepPreviewGroup.items, collapsedChildTaskIdSet);
+      return [task.id, ...childTaskPreviewVisibility.visibleItems.map((item) => item.id)];
+    }),
+    [childTaskPreviewByParentTaskId, collapsedChildTaskIdSet, displayedTasks, expandedStepsByTaskId, searchMatchedStepParentTaskIdSet],
   );
 
   const clearChildTaskDragState = () => {
@@ -2361,6 +2264,11 @@ export function TaskManagementTableV2({
       return;
     }
 
+    if (childTaskParentInfoByTaskId.has(requestedOpenTaskId) && revealChildTaskInParentEditor(requestedOpenTaskId)) {
+      onRequestedOpenTaskHandled?.(requestedOpenTaskId);
+      return;
+    }
+
     if (selectedTaskId === requestedOpenTaskId && selectedTask?.id === requestedOpenTaskId) {
       onRequestedOpenTaskHandled?.(requestedOpenTaskId);
       return;
@@ -2383,7 +2291,7 @@ export function TaskManagementTableV2({
     setOpenColumnMenuId(null);
     setOverlayAnchor(null);
     onRequestedOpenTaskHandled?.(requestedOpenTaskId);
-  }, [onRequestedOpenTaskHandled, requestedOpenTask, requestedOpenTaskId, selectedTask, selectedTaskId, tasks]);
+  }, [childTaskParentInfoByTaskId, onRequestedOpenTaskHandled, requestedOpenTask, requestedOpenTaskId, selectedTask, selectedTaskId, tasks]);
   const mergedListOptions = useMemo(() => {
     const byLabel = new Map<string, { id: string; label: string }>();
     for (const option of allListOptions) {
@@ -2803,10 +2711,12 @@ export function TaskManagementTableV2({
   }, []);
 
   useEffect(() => {
-    if (rowContextMenu && !tasks.some((task) => task.id === rowContextMenu.taskId)) {
+    if (rowContextMenu
+      && !tasks.some((task) => task.id === rowContextMenu.taskId)
+      && !childTaskParentInfoByTaskId.has(rowContextMenu.taskId)) {
       setRowContextMenu(null);
     }
-  }, [rowContextMenu, tasks]);
+  }, [childTaskParentInfoByTaskId, rowContextMenu, tasks]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -2876,9 +2786,19 @@ export function TaskManagementTableV2({
   }
 
   function getTaskById(taskId: string) {
-    return tasks.find((task) => task.id === taskId)
+    const task = tasks.find((entry) => entry.id === taskId)
       ?? (retainedSelectedTask?.id === taskId ? retainedSelectedTask : null)
       ?? (retainedMetadataTargetTask?.id === taskId ? retainedMetadataTargetTask : null);
+    if (task) {
+      return task;
+    }
+    for (const group of Object.values(childTaskPreviewByParentTaskId)) {
+      const item = group.items.find((entry) => entry.id === taskId);
+      if (item) {
+        return childPreviewToPrototypeTaskRow(item);
+      }
+    }
+    return null;
   }
 
   function modeSupportsBatchQuickEdit(mode: OverlayMode) {
@@ -3588,13 +3508,20 @@ export function TaskManagementTableV2({
       return;
     }
 
+    const nextTask = getTaskById(taskId);
+    const isTaskInRows = tasks.some((task) => task.id === taskId);
     setEditingTaskTitleId(null);
     setMetadataTargetTaskId(null);
     setRetainedMetadataTargetTask(null);
     pendingMetadataTargetTaskIdRef.current = null;
-    hasSeenSelectedTaskInCurrentListRef.current = tasks.some((task) => task.id === taskId);
+    hasSeenSelectedTaskInCurrentListRef.current = isTaskInRows;
     setSelectedTaskLeftCurrentList(false);
-    setRetainedSelectedTask((current) => current?.id === taskId ? current : null);
+    setRetainedSelectedTask((current) => {
+      if (current?.id === taskId) {
+        return current;
+      }
+      return !isTaskInRows && nextTask ? clonePrototypeTaskRow(nextTask) : null;
+    });
     setQuickEditTargetTaskIds(nextQuickEditTargetTaskIds);
     setSelectedTaskId(taskId);
     setOverlayMode(mode);
@@ -3636,6 +3563,65 @@ export function TaskManagementTableV2({
     setOverlayAnchor({ left: nextLeft, top: nextTop });
   }
 
+  function revealChildTaskInParentEditor(taskId: string) {
+    const parentInfo = childTaskParentInfoByTaskId.get(taskId);
+    if (!parentInfo) {
+      return false;
+    }
+
+    const metadataTask = getTaskById(taskId);
+    if (!metadataTask) {
+      return false;
+    }
+
+    const ancestorChildTaskIds: string[] = [];
+    let currentTaskId = taskId;
+    let topLevelParentTaskId = parentInfo.parentTaskId;
+    let guard = 0;
+    while (true) {
+      guard += 1;
+      if (guard > 24) {
+        return false;
+      }
+      const currentParentInfo = childTaskParentInfoByTaskId.get(currentTaskId);
+      if (!currentParentInfo) {
+        break;
+      }
+      const parentTaskId = currentParentInfo.parentTaskId;
+      if (!childTaskParentInfoByTaskId.has(parentTaskId)) {
+        topLevelParentTaskId = parentTaskId;
+        break;
+      }
+      ancestorChildTaskIds.push(parentTaskId);
+      currentTaskId = parentTaskId;
+    }
+
+    const parentTask = getTaskById(topLevelParentTaskId);
+    if (!parentTask) {
+      return false;
+    }
+
+    setExpandedStepsByTaskId((current) => ({
+      ...current,
+      [parentTask.id]: true,
+    }));
+    if (ancestorChildTaskIds.length > 0) {
+      setCollapsedChildTaskIds((current) => {
+        const next = { ...current };
+        for (const ancestorTaskId of ancestorChildTaskIds) {
+          delete next[ancestorTaskId];
+        }
+        return next;
+      });
+    }
+
+    openInspector(parentTask.id, "full");
+    setRetainedMetadataTargetTask(clonePrototypeTaskRow(metadataTask));
+    setMetadataTargetTaskId(taskId);
+    pendingMetadataTargetTaskIdRef.current = null;
+    return true;
+  }
+
   function toggleInlineActionRow(taskId: string, mode: OverlayMode, sourceElement?: HTMLElement | null, nextQuickEditTargetTaskIds: string[] | null = null) {
     if (allowInlineInspector && isInlineAccordionMode(mode) && selectedTaskId === taskId && overlayMode === mode) {
       closeInspector();
@@ -3646,8 +3632,16 @@ export function TaskManagementTableV2({
   }
 
   function openTaskInCurrentEditor(taskId: string) {
-    if (getTaskById(taskId)) {
+    if (revealChildTaskInParentEditor(taskId)) {
+      return;
+    }
+
+    const task = getTaskById(taskId);
+    if (task) {
       openInspector(taskId, "full");
+      if (!tasks.some((entry) => entry.id === taskId)) {
+        setRetainedSelectedTask(clonePrototypeTaskRow(task));
+      }
       return;
     }
 
@@ -3664,7 +3658,9 @@ export function TaskManagementTableV2({
   }
 
   function childPreviewToPrototypeTaskRow(item: ChildTaskPreview): PrototypeTaskRow {
-    const retainedTask = getTaskById(item.id);
+    const retainedTask = tasks.find((task) => task.id === item.id)
+      ?? (retainedSelectedTask?.id === item.id ? retainedSelectedTask : null)
+      ?? (retainedMetadataTargetTask?.id === item.id ? retainedMetadataTargetTask : null);
     if (retainedTask) {
       return retainedTask;
     }
@@ -3765,22 +3761,6 @@ export function TaskManagementTableV2({
       ...current,
       [parentTaskId]: true,
     }));
-  }
-
-  function selectEditorMetadataTask(taskId: string) {
-    const visibleOrRetainedTask = getTaskById(taskId);
-    setEditingTaskTitleId(null);
-    setEditingSubtaskId(null);
-    if (visibleOrRetainedTask) {
-      pendingMetadataTargetTaskIdRef.current = null;
-      setRetainedMetadataTargetTask(clonePrototypeTaskRow(visibleOrRetainedTask));
-      setMetadataTargetTaskId(taskId);
-      return;
-    }
-
-    pendingMetadataTargetTaskIdRef.current = taskId;
-    setMetadataTargetTaskId(taskId);
-    onOpenChildTask?.(taskId);
   }
 
   function selectParentMetadataTask() {
@@ -4025,6 +4005,9 @@ export function TaskManagementTableV2({
     }
 
     if (overlayMode === "repeat") {
+      const effectiveRepeat = pendingCustomCadenceTaskId === task.id && task.repeat === "none" ? "custom" : task.repeat;
+      const cadenceTask = effectiveRepeat === task.repeat ? task : { ...task, repeat: effectiveRepeat };
+
       return [
         ...REPEAT_OPTIONS.map((option, optionIndex) => (
           <button
@@ -4032,70 +4015,48 @@ export function TaskManagementTableV2({
             key={`${option.value || "repeat-option"}-${optionIndex}`}
             onClick={() => {
               setTaskRepeat(task.id, option.value);
-              closeInspector();
+              setPendingCustomCadenceTaskId(option.value === "custom" ? task.id : null);
+              if (option.value !== "custom") {
+                closeInspector();
+              }
             }}
             type="button"
           >
-            <span className={inlineAccordionChipContentClass(task.repeat === option.value ? repeatTone(option.value) : INACTIVE_CHIP_CLASS)}>{option.label}</span>
+            <span className={inlineAccordionChipContentClass(effectiveRepeat === option.value ? repeatTone(option.value) : INACTIVE_CHIP_CLASS)}>{option.label}</span>
           </button>
         )),
-        ...(task.repeat !== "none"
+        ...(effectiveRepeat !== "none"
           ? [(
-            <div className={inlineAccordionInputCardClass("w-[30rem]")} key="repeat-cadence">
-              {task.repeat !== "daily_until_complete" ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
-                  <input
-                    className={`${OVERLAY_INPUT_CLASS} w-20`}
-                    inputMode="numeric"
-                    onBlur={(event) => setTaskRepeatInterval(task, event.target.value)}
-                    onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [task.id]: event.target.value.replace(/[^\d]/g, "") }))}
-                    placeholder="1"
-                    type="text"
-                    value={repeatIntervalDrafts[task.id] ?? String(task.repeatInterval)}
-                  />
-                  {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
-                    <button
-                      className={inlineAccordionButtonClass()}
-                      key={`${task.id}-inline-repeat-unit-${repeatUnit}`}
-                      onClick={() => setTaskRepeat(task.id, repeatUnit)}
-                      type="button"
-                    >
-                      <span className={inlineAccordionChipContentClass(task.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS)}>
-                        {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              {task.repeat === "weekly" || task.repeat === "custom" ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {REPEAT_WEEKDAY_OPTIONS.map((option) => (
-                    <button
-                      className={inlineAccordionButtonClass()}
-                      key={`${task.id}-inline-weekday-${option.value}`}
-                      onClick={() => toggleTaskRepeatWeekday(task, option.value)}
-                      type="button"
-                    >
-                      <span className={inlineAccordionChipContentClass(task.repeatDaysOfWeek.includes(option.value) ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS)}>{option.label}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              {task.repeat === "monthly" || task.repeat === "custom" ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Day</span>
-                  <input
-                    className={`${OVERLAY_INPUT_CLASS} w-20`}
-                    inputMode="numeric"
-                    onBlur={(event) => setTaskRepeatDayOfMonth(task, event.target.value)}
-                    onChange={(event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [task.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) }))}
-                    placeholder="15"
-                    type="text"
-                    value={repeatDayOfMonthDrafts[task.id] ?? (task.repeatDayOfMonth ? String(task.repeatDayOfMonth) : "")}
-                  />
-                </div>
-              ) : null}
+            <div className={inlineAccordionInputCardClass("w-fit max-w-full")} key="repeat-cadence">
+              <CompactRepeatCadenceControls
+                activeToneClassName={repeatTone(effectiveRepeat)}
+                dayInputProps={{
+                  inputMode: "numeric",
+                  onBlur: (event) => setTaskRepeatDayOfMonth(cadenceTask, event.target.value),
+                  onChange: (event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [task.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) })),
+                  placeholder: "15",
+                  type: "text",
+                  value: repeatDayOfMonthDrafts[task.id] ?? (task.repeatDayOfMonth ? String(task.repeatDayOfMonth) : ""),
+                }}
+                inactiveToneClassName={INACTIVE_CHIP_CLASS}
+                intervalInputProps={{
+                  inputMode: "numeric",
+                  onBlur: (event) => setTaskRepeatInterval(cadenceTask, event.target.value),
+                  onChange: (event) => setRepeatIntervalDrafts((current) => ({ ...current, [task.id]: event.target.value.replace(/[^\d]/g, "") })),
+                  placeholder: "1",
+                  type: "text",
+                  value: repeatIntervalDrafts[task.id] ?? String(task.repeatInterval),
+                }}
+                onRepeatUnitClick={(repeatUnit) => setTaskRepeat(task.id, repeatUnit)}
+                onWeekdayClick={(weekday) => toggleTaskRepeatWeekday(cadenceTask, weekday)}
+                repeat={effectiveRepeat}
+                repeatDaysOfWeek={task.repeatDaysOfWeek}
+                repeatUnits={COMPACT_REPEAT_UNITS}
+                showInterval={effectiveRepeat !== "daily_until_complete"}
+                showMonthDay={effectiveRepeat === "monthly" || effectiveRepeat === "custom"}
+                showWeekdays={effectiveRepeat === "weekly" || effectiveRepeat === "custom"}
+                weekdayOptions={REPEAT_WEEKDAY_OPTIONS}
+              />
             </div>
           )]
           : []),
@@ -4298,6 +4259,10 @@ export function TaskManagementTableV2({
       return null;
     }
 
+    const actionRowMaxWidth = tableViewportMetrics.clientWidth > 0
+      ? Math.max(280, tableViewportMetrics.clientWidth - 24)
+      : undefined;
+
     return (
       <motion.div
         animate={{ height: "auto", opacity: 1, y: 0 }}
@@ -4311,42 +4276,50 @@ export function TaskManagementTableV2({
         }}
         transition={{ duration: 0.18 }}
       >
-        <div className="mb-1 flex items-center gap-2">
-          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-            {overlayMode === "status"
-              ? "Status actions"
-              : overlayMode === "due"
-                ? "Due actions"
-                : overlayMode === "estimated"
-                  ? "Estimated time"
-                  : overlayMode === "actual"
-                    ? "Actual time"
-                    : overlayMode === "priority"
-                      ? "Priority actions"
-                      : overlayMode === "energy"
-                        ? "Energy actions"
-                        : overlayMode === "repeat"
-                          ? "Repeat actions"
-                          : overlayMode === "tags"
-                            ? "Tag actions"
-                            : overlayMode === "link"
-                              ? "Link actions"
-                              : overlayMode === "notes"
-                                ? "Notes actions"
-                                : "List actions"}
-          </p>
-          <button
-            aria-label="Close actions"
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-[#f4f5f8] text-[#8a82a7] transition hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/8 dark:text-white/55 dark:hover:text-[#cabfff]"
-            onClick={() => closeInspector()}
-            type="button"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        <div className="overflow-x-auto">
-          <div className="flex min-w-max items-start gap-1.5">
-            {inlineAccordionContent}
+        <div
+          className="min-w-0"
+          style={{
+            maxWidth: actionRowMaxWidth,
+            transform: tableViewportMetrics.scrollLeft > 0 ? `translateX(${tableViewportMetrics.scrollLeft}px)` : undefined,
+          }}
+        >
+          <div className="mb-1 flex items-center gap-2">
+            <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
+              {overlayMode === "status"
+                ? "Status actions"
+                : overlayMode === "due"
+                  ? "Due actions"
+                  : overlayMode === "estimated"
+                    ? "Estimated time"
+                    : overlayMode === "actual"
+                      ? "Actual time"
+                      : overlayMode === "priority"
+                        ? "Priority actions"
+                        : overlayMode === "energy"
+                          ? "Energy actions"
+                          : overlayMode === "repeat"
+                            ? "Repeat actions"
+                            : overlayMode === "tags"
+                              ? "Tag actions"
+                              : overlayMode === "link"
+                                ? "Link actions"
+                                : overlayMode === "notes"
+                                  ? "Notes actions"
+                                  : "List actions"}
+            </p>
+            <button
+              aria-label="Close actions"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-[#f4f5f8] text-[#8a82a7] transition hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/8 dark:text-white/55 dark:hover:text-[#cabfff]"
+              onClick={() => closeInspector()}
+              type="button"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <div className="flex min-w-max items-start gap-1.5">
+              {inlineAccordionContent}
+            </div>
           </div>
         </div>
       </motion.div>
@@ -5353,7 +5326,7 @@ export function TaskManagementTableV2({
               onDrop={(event) => dropChildTaskOnItem(event, item)}
               onClick={canSelectChildTask ? (event) => {
                 event.stopPropagation();
-                selectEditorMetadataTask(item.id);
+                openTaskInCurrentEditor(item.id);
               } : undefined}
               onKeyDown={canSelectChildTask ? (event) => {
                 if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
@@ -5362,7 +5335,7 @@ export function TaskManagementTableV2({
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   event.stopPropagation();
-                  selectEditorMetadataTask(item.id);
+                  openTaskInCurrentEditor(item.id);
                 }
               } : undefined}
               role={canSelectChildTask ? "button" : undefined}
@@ -5391,9 +5364,7 @@ export function TaskManagementTableV2({
                           className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                           onClick={(event) => {
                             event.stopPropagation();
-                            selectEditorMetadataTask(item.id);
-                            setEditingTaskTitleId(item.id);
-                            setTitleDraft(item.id, item.title);
+                            openTaskInCurrentEditor(item.id);
                           }}
                           onPointerDown={stopRowActionPointerEvent}
                           type="button"
@@ -5696,6 +5667,22 @@ export function TaskManagementTableV2({
             <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
               {formatChildTaskPreviewDepthLabel(item.depth)}
             </p>
+            {item.currentStreak > 0 || item.missedStreak > 0 ? (
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                {item.currentStreak > 0 ? (
+                  <span className={`${CHIP_BASE} border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e] gap-1 px-2`}>
+                    <Flame className="h-3 w-3" />
+                    {item.currentStreak}
+                  </span>
+                ) : null}
+                {item.missedStreak > 0 ? (
+                  <span className={`${CHIP_BASE} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] gap-1 px-2`}>
+                    <Skull className="h-3 w-3" />
+                    {item.missedStreak}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           {onCreateChildTask ? (
             <button
@@ -6009,11 +5996,8 @@ export function TaskManagementTableV2({
   };
 
   const renderChildTaskMiniRows = (task: PrototypeTaskRow, group: ChildTaskPreviewGroup | undefined) => {
-    const showAllStepItems = searchMatchedStepParentTaskIdSet.has(task.id);
     const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(group?.items ?? [], collapsedChildTaskIdSet);
-    const previewItems = childTaskPreviewVisibility.visibleItems;
-    const visibleItems = showAllStepItems ? previewItems : previewItems.slice(0, CHILD_TASK_PREVIEW_ITEM_LIMIT);
-    const hiddenItemCount = Math.max(0, previewItems.length - visibleItems.length);
+    const visibleItems = childTaskPreviewVisibility.visibleItems;
     const canOpenStepActions = allowInlineInspector || Boolean(onOpenChildTask);
     const isDraftingStepForTask = tableStepDraftParentId === task.id;
     const isDraftingSubstepForVisibleItem = Boolean(tableStepDraftParentId && visibleItems.some((item) => item.id === tableStepDraftParentId));
@@ -6055,19 +6039,37 @@ export function TaskManagementTableV2({
           return (
             <Fragment key={item.id}>
               <div
-                className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-2 pl-[3px] pr-0 text-center transition dark:bg-[#181226] ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-2 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-[#ddd2ff] bg-[#f7f2ff] ring-2 ring-[#6f57f6]/15 dark:border-[#42306f] dark:bg-[#201733] dark:ring-[#cabfff]/12" : "border-transparent bg-white dark:bg-[#181226]"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                 data-same-table-step-row={item.id}
                 onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                 onDrop={(event) => dropChildTaskOnItem(event, item)}
                 onClick={canOpenStepActions ? (event) => {
                   event.stopPropagation();
-                  openTableStepActions(item.id, "status");
+                  if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
+                    startTaskSelection(item.id, { additive: true, range: event.shiftKey });
+                    return;
+                  }
+                  openTaskInCurrentEditor(item.id);
                 } : undefined}
+                onDoubleClick={onToggleTaskSelection ? (event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  startTaskSelection(item.id, { additive: true });
+                } : undefined}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openRowContextMenu(item.id, event.clientX, event.clientY);
+                }}
                 onKeyDown={canOpenStepActions ? (event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     event.stopPropagation();
-                    openTableStepActions(item.id, "status");
+                    if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
+                      startTaskSelection(item.id, { additive: true, range: event.shiftKey });
+                      return;
+                    }
+                    openTaskInCurrentEditor(item.id);
                   }
                 } : undefined}
                 role={canOpenStepActions ? "button" : undefined}
@@ -6124,9 +6126,6 @@ export function TaskManagementTableV2({
             </Fragment>
           );
         })}
-        {hiddenItemCount > 0 ? (
-          <p className="px-3 text-left text-xs text-[#8d87a7] dark:text-white/45">{`${hiddenItemCount} more ${hiddenItemCount === 1 ? "step" : "steps"} hidden in preview.`}</p>
-        ) : null}
       </div>
     );
   };
@@ -6194,8 +6193,20 @@ export function TaskManagementTableV2({
   };
 
   return (
-    <div className={`mx-auto mt-3 h-fit w-full max-w-[88rem] ${className}`} style={TABLE_FONT_STYLE}>
-      <div className={`relative overflow-visible rounded-[2rem] border border-[#ece7f8] bg-white px-0 pt-1 pb-6 shadow-[0_26px_80px_rgba(90,67,171,0.10)] dark:border-white/10 dark:bg-[#140f26] ${shellClassName}`} ref={shellRef}>
+    <div
+      className={overlayOnly
+        ? `fixed inset-0 z-50 m-0 h-screen w-screen max-w-none ${className}`
+        : `mx-auto mt-3 h-fit w-full max-w-[88rem] ${className}`}
+      style={TABLE_FONT_STYLE}
+    >
+      <div
+        className={overlayOnly
+          ? `relative h-full overflow-visible rounded-none border-0 bg-transparent p-0 shadow-none ${shellClassName}`
+          : `relative overflow-visible rounded-[2rem] border border-[#ece7f8] bg-white px-0 pt-1 pb-6 shadow-[0_26px_80px_rgba(90,67,171,0.10)] dark:border-white/10 dark:bg-[#140f26] ${shellClassName}`}
+        ref={shellRef}
+      >
+        {!overlayOnly ? (
+          <>
         {showHeader ? (
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#f0ebfb] pb-5 dark:border-white/10">
             <div className="flex items-center gap-4">
@@ -6234,6 +6245,18 @@ export function TaskManagementTableV2({
             initial="hidden"
             ref={tableScrollContainerRef}
             onScroll={() => {
+              const scrollElement = tableScrollContainerRef.current;
+              if (scrollElement) {
+                setTableViewportMetrics((current) => {
+                  const next = {
+                    clientWidth: scrollElement.clientWidth,
+                    scrollLeft: scrollElement.scrollLeft,
+                  };
+                  return current.clientWidth === next.clientWidth && current.scrollLeft === next.scrollLeft
+                    ? current
+                    : next;
+                });
+              }
               if (rowContextMenu) {
                 setRowContextMenu(null);
               }
@@ -6608,6 +6631,8 @@ export function TaskManagementTableV2({
             />
           </div>
         ) : null}
+          </>
+        ) : null}
 
         <AnimatePresence>
           {overlayNode ? (
@@ -6869,57 +6894,35 @@ export function TaskManagementTableV2({
                       {metadataTask.repeat !== "none" ? (
                         <div className="mt-3 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                           <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom cadence</p>
-                          {metadataTask.repeat !== "daily_until_complete" ? (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
-                              <input
-                                className={`${OVERLAY_INPUT_CLASS} w-24`}
-                                inputMode="numeric"
-                                onBlur={(event) => setTaskRepeatInterval(metadataTask, event.target.value)}
-                                onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") }))}
-                                placeholder="1"
-                                type="text"
-                                value={repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval)}
-                              />
-                              {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
-                                <TaskTableChipButton
-                                  key={`${metadataTask.id}-repeat-unit-${repeatUnit}`}
-                                  onClick={() => setTaskRepeat(metadataTask.id, repeatUnit)}
-                                  toneClassName={metadataTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}
-                                >
-                                  {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
-                                </TaskTableChipButton>
-                              ))}
-                              <TaskTableChipButton onClick={() => setTaskRepeatInterval(metadataTask, repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
-                            </div>
-                          ) : null}
-                          {metadataTask.repeat === "weekly" || metadataTask.repeat === "custom" ? (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {REPEAT_WEEKDAY_OPTIONS.map((option) => {
-                                const selected = metadataTask.repeatDaysOfWeek.includes(option.value);
-                                return (
-                                  <TaskTableChipButton key={`${metadataTask.id}-weekday-${option.value}`} onClick={() => toggleTaskRepeatWeekday(metadataTask, option.value)} toneClassName={selected ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}>
-                                    {option.label}
-                                  </TaskTableChipButton>
-                                );
-                              })}
-                            </div>
-                          ) : null}
-                          {metadataTask.repeat === "monthly" || metadataTask.repeat === "custom" ? (
-                            <div className="mt-3 flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Day of month</span>
-                              <input
-                                className={`${OVERLAY_INPUT_CLASS} w-24`}
-                                inputMode="numeric"
-                                onBlur={(event) => setTaskRepeatDayOfMonth(metadataTask, event.target.value)}
-                                onChange={(event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) }))}
-                                placeholder="15"
-                                type="text"
-                                value={repeatDayOfMonthDrafts[metadataTask.id] ?? (metadataTask.repeatDayOfMonth ? String(metadataTask.repeatDayOfMonth) : "")}
-                              />
-                              <TaskTableChipButton onClick={() => setTaskRepeatDayOfMonth(metadataTask, repeatDayOfMonthDrafts[metadataTask.id] ?? (metadataTask.repeatDayOfMonth ? String(metadataTask.repeatDayOfMonth) : ""))} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply day</TaskTableChipButton>
-                            </div>
-                          ) : null}
+                          <CompactRepeatCadenceControls
+                            activeToneClassName={repeatTone(metadataTask.repeat)}
+                            dayInputProps={{
+                              inputMode: "numeric",
+                              onBlur: (event) => setTaskRepeatDayOfMonth(metadataTask, event.target.value),
+                              onChange: (event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) })),
+                              placeholder: "15",
+                              type: "text",
+                              value: repeatDayOfMonthDrafts[metadataTask.id] ?? (metadataTask.repeatDayOfMonth ? String(metadataTask.repeatDayOfMonth) : ""),
+                            }}
+                            inactiveToneClassName={INACTIVE_CHIP_CLASS}
+                            intervalInputProps={{
+                              inputMode: "numeric",
+                              onBlur: (event) => setTaskRepeatInterval(metadataTask, event.target.value),
+                              onChange: (event) => setRepeatIntervalDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") })),
+                              placeholder: "1",
+                              type: "text",
+                              value: repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval),
+                            }}
+                            onRepeatUnitClick={(repeatUnit) => setTaskRepeat(metadataTask.id, repeatUnit)}
+                            onWeekdayClick={(weekday) => toggleTaskRepeatWeekday(metadataTask, weekday)}
+                            repeat={metadataTask.repeat}
+                            repeatDaysOfWeek={metadataTask.repeatDaysOfWeek}
+                            repeatUnits={COMPACT_REPEAT_UNITS}
+                            showInterval={metadataTask.repeat !== "daily_until_complete"}
+                            showMonthDay={metadataTask.repeat === "monthly" || metadataTask.repeat === "custom"}
+                            showWeekdays={metadataTask.repeat === "weekly" || metadataTask.repeat === "custom"}
+                            weekdayOptions={REPEAT_WEEKDAY_OPTIONS}
+                          />
                         </div>
                       ) : null}
                     </>
@@ -6981,7 +6984,8 @@ export function TaskManagementTableV2({
                 const hasSameTableStepRows = Boolean(childTaskPreviewGroup && (childTaskPreviewGroup.items.length > 0 || childTaskPreviewGroup.summary.hasInvalidDescendants));
                 const sameTableStepRowsNode = overlayMode === "full" ? renderEditorChildTaskRows(childTaskPreviewGroup) : null;
                 const hasUnifiedStepRows = hasSameTableStepRows || selectedTaskVisibleSubtasks.length > 0;
-                const stepsEditorNode = overlayMode === "full" ? (
+                const showNestedStepsEditor = overlayMode === "full" && !selectedTaskParentInfo;
+                const stepsEditorNode = showNestedStepsEditor ? (
                   <div className="mt-3 rounded-[1rem] border border-[#ede7f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Steps</p>
@@ -7070,14 +7074,10 @@ export function TaskManagementTableV2({
                     <div className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
                       {selectedTaskParentInfo ? (
                         <div className="mb-3 flex flex-wrap items-center gap-2">
-                          <TaskTableChipButton
-                            className="gap-2"
-                            onClick={() => openTaskInCurrentEditor(selectedTaskParentInfo.parentTaskId)}
-                            toneClassName={INACTIVE_CHIP_CLASS}
-                          >
+                          <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium ${INACTIVE_CHIP_CLASS}`}>
                             <MoveLeft className="h-3.5 w-3.5" />
                             <span>{`Parent: ${selectedTaskParentInfo.parentTitle}`}</span>
-                          </TaskTableChipButton>
+                          </span>
                           <span className="text-xs font-medium text-[#8d87a7] dark:text-white/45">
                             {formatChildTaskPreviewDepthLabel(selectedTaskParentInfo.depth)}
                           </span>
@@ -7477,32 +7477,35 @@ export function TaskManagementTableV2({
 	                    </div>
 	                    {selectedTask.repeat !== "none" ? (
 	                      <div className="mt-3 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
-	                        {selectedTask.repeat !== "daily_until_complete" ? (
-	                          <div className="flex flex-wrap items-center gap-2">
-	                            <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Every</span>
-	                            <input className={`${OVERLAY_INPUT_CLASS} w-24`} inputMode="numeric" onBlur={(event) => setTaskRepeatInterval(selectedTask, event.target.value)} onChange={(event) => setRepeatIntervalDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="1" type="text" value={repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval)} />
-	                            {(["daily", "weekly", "monthly"] as TaskRepeat[]).map((repeatUnit) => (
-	                              <TaskTableChipButton key={`${selectedTask.id}-full-repeat-unit-${repeatUnit}`} onClick={() => setTaskRepeat(selectedTask.id, repeatUnit)} toneClassName={selectedTask.repeat === repeatUnit ? repeatTone(repeatUnit) : INACTIVE_CHIP_CLASS}>
-	                                {repeatUnit === "daily" ? "Days" : repeatUnit === "weekly" ? "Weeks" : "Months"}
-	                              </TaskTableChipButton>
-	                            ))}
-	                          </div>
-	                        ) : null}
-	                        {selectedTask.repeat === "weekly" || selectedTask.repeat === "custom" ? (
-	                          <div className="mt-3 flex flex-wrap gap-2">
-	                            {REPEAT_WEEKDAY_OPTIONS.map((option) => (
-	                              <TaskTableChipButton key={`${selectedTask.id}-full-weekday-${option.value}`} onClick={() => toggleTaskRepeatWeekday(selectedTask, option.value)} toneClassName={selectedTask.repeatDaysOfWeek.includes(option.value) ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}>
-	                                {option.label}
-	                              </TaskTableChipButton>
-	                            ))}
-	                          </div>
-	                        ) : null}
-	                        {selectedTask.repeat === "monthly" || selectedTask.repeat === "custom" ? (
-	                          <div className="mt-3 flex flex-wrap items-center gap-2">
-	                            <span className="text-sm font-medium text-[#7d7597] dark:text-white/55">Day of month</span>
-	                            <input className={`${OVERLAY_INPUT_CLASS} w-24`} inputMode="numeric" onBlur={(event) => setTaskRepeatDayOfMonth(selectedTask, event.target.value)} onChange={(event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) }))} placeholder="15" type="text" value={repeatDayOfMonthDrafts[selectedTask.id] ?? (selectedTask.repeatDayOfMonth ? String(selectedTask.repeatDayOfMonth) : "")} />
-	                          </div>
-	                        ) : null}
+	                        <CompactRepeatCadenceControls
+	                          activeToneClassName={repeatTone(selectedTask.repeat)}
+	                          dayInputProps={{
+	                            inputMode: "numeric",
+	                            onBlur: (event) => setTaskRepeatDayOfMonth(selectedTask, event.target.value),
+	                            onChange: (event) => setRepeatDayOfMonthDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "").slice(0, 2) })),
+	                            placeholder: "15",
+	                            type: "text",
+	                            value: repeatDayOfMonthDrafts[selectedTask.id] ?? (selectedTask.repeatDayOfMonth ? String(selectedTask.repeatDayOfMonth) : ""),
+	                          }}
+	                          inactiveToneClassName={INACTIVE_CHIP_CLASS}
+	                          intervalInputProps={{
+	                            inputMode: "numeric",
+	                            onBlur: (event) => setTaskRepeatInterval(selectedTask, event.target.value),
+	                            onChange: (event) => setRepeatIntervalDrafts((current) => ({ ...current, [selectedTask.id]: event.target.value.replace(/[^\d]/g, "") })),
+	                            placeholder: "1",
+	                            type: "text",
+	                            value: repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval),
+	                          }}
+	                          onRepeatUnitClick={(repeatUnit) => setTaskRepeat(selectedTask.id, repeatUnit)}
+	                          onWeekdayClick={(weekday) => toggleTaskRepeatWeekday(selectedTask, weekday)}
+	                          repeat={selectedTask.repeat}
+	                          repeatDaysOfWeek={selectedTask.repeatDaysOfWeek}
+	                          repeatUnits={COMPACT_REPEAT_UNITS}
+	                          showInterval={selectedTask.repeat !== "daily_until_complete"}
+	                          showMonthDay={selectedTask.repeat === "monthly" || selectedTask.repeat === "custom"}
+	                          showWeekdays={selectedTask.repeat === "weekly" || selectedTask.repeat === "custom"}
+	                          weekdayOptions={REPEAT_WEEKDAY_OPTIONS}
+	                        />
 	                      </div>
 	                    ) : null}
                   </section>
