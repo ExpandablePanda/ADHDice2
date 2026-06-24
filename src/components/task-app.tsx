@@ -310,9 +310,72 @@ function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
   return timer.baseSeconds + Math.max(0, Math.floor((endTime - timer.startedAt) / 1000));
 }
 
+function getFocusSessionDisplaySeconds(activeSession: ActiveFocusSession | undefined, nowMs: number) {
+  if (!activeSession) {
+    return 0;
+  }
+
+  if (activeSession.isRunning && activeSession.startTime) {
+    const elapsed = Math.max(0, Math.floor((nowMs - activeSession.startTime) / 1000));
+    return Math.max(0, activeSession.accumulatedSeconds + elapsed);
+  }
+
+  return Math.max(0, activeSession.accumulatedSeconds);
+}
+
+function resolveCollapsedHudFocusTimer(
+  categories: FocusCategory[],
+  activeSessions: Record<string, ActiveFocusSession>,
+  nowMs: number,
+) {
+  for (const category of categories) {
+    const activeSession = activeSessions[category.id];
+    if (activeSession?.isRunning) {
+      return {
+        categoryId: category.id,
+        isPaused: false,
+        seconds: getFocusSessionDisplaySeconds(activeSession, nowMs),
+        title: category.title,
+      };
+    }
+  }
+
+  for (const category of categories) {
+    const activeSession = activeSessions[category.id];
+    if (activeSession && getFocusSessionDisplaySeconds(activeSession, nowMs) > 0) {
+      return {
+        categoryId: category.id,
+        isPaused: true,
+        seconds: getFocusSessionDisplaySeconds(activeSession, nowMs),
+        title: category.title,
+      };
+    }
+  }
+
+  return null;
+}
+
+function formatCollapsedHudTimerLabel(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getCollapsedHudTimerProgress(totalSeconds: number, isPaused: boolean) {
+  if (isPaused) {
+    return 1;
+  }
+  const secondsWithinMinute = totalSeconds % 60;
+  return secondsWithinMinute === 0 ? 1 : secondsWithinMinute / 60;
+}
+
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.9.7";
+const APP_VERSION = "6.9.11";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -3993,9 +4056,11 @@ export function TaskApp() {
                   return (
                     <CommandCenterHeader
                       activeHudTaskTimer={activeHudTaskTimer}
+                      activeSessions={activeSessions}
                       activeTaskCount={filteredActiveTasks.length}
                       currentHudPageId={hudUiState.activeHudPageId}
                       economy={economy}
+                      focusCategories={focusCategories}
                       hudUiState={hudUiState}
                       urgentTaskCount={filteredUrgentTasks.length}
                       onOpenAccount={() => setIsAccountOpen(true)}
@@ -4008,6 +4073,9 @@ export function TaskApp() {
                       onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
                       onResumeTaskTimer={resumeHudTaskTimer}
                       onStopTaskTimer={stopHudTaskTimer}
+                      onToggleFocusTimer={(categoryId) => {
+                        void handleToggleTimer(categoryId);
+                      }}
                       profile={profile}
                       runningTaskTimers={runningTaskTimers}
                       setHudUiState={setHudUiState}
@@ -4242,11 +4310,26 @@ export function TaskApp() {
                       repeat_frequency: repeat,
                       ...(cadence
                         ? {
-                          repeat_day_of_month: cadence.repeatDayOfMonth,
+                          repeat_day_of_month: repeat === "monthly" && cadence.repeatMonthlyMode !== "ordinal_weekday"
+                            ? cadence.repeatDayOfMonth
+                            : null,
                           repeat_days_of_week: repeat === "weekly" || repeat === "custom" ? cadence.repeatDaysOfWeek : [],
                           repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence.repeatInterval),
+                          repeat_monthly_mode: repeat === "monthly"
+                            ? (cadence.repeatMonthlyMode ?? "day_of_month")
+                            : "day_of_month",
+                          repeat_monthly_ordinal: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
+                            ? (cadence.repeatMonthlyOrdinal ?? "first")
+                            : null,
+                          repeat_monthly_weekday: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
+                            ? (cadence.repeatMonthlyWeekday ?? 1)
+                            : null,
                         }
-                        : {}),
+                        : {
+                          repeat_monthly_mode: repeat === "monthly" ? "day_of_month" : "day_of_month",
+                          repeat_monthly_ordinal: null,
+                          repeat_monthly_weekday: null,
+                        }),
                     });
                   },
                   onSetStatus: (taskId, status, expectedTask) => {
@@ -4371,11 +4454,26 @@ export function TaskApp() {
                       repeat_frequency: repeat,
                       ...(cadence
                         ? {
-                          repeat_day_of_month: cadence.repeatDayOfMonth,
+                          repeat_day_of_month: repeat === "monthly" && cadence.repeatMonthlyMode !== "ordinal_weekday"
+                            ? cadence.repeatDayOfMonth
+                            : null,
                           repeat_days_of_week: repeat === "weekly" || repeat === "custom" ? cadence.repeatDaysOfWeek : [],
                           repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence.repeatInterval),
+                          repeat_monthly_mode: repeat === "monthly"
+                            ? (cadence.repeatMonthlyMode ?? "day_of_month")
+                            : "day_of_month",
+                          repeat_monthly_ordinal: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
+                            ? (cadence.repeatMonthlyOrdinal ?? "first")
+                            : null,
+                          repeat_monthly_weekday: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
+                            ? (cadence.repeatMonthlyWeekday ?? 1)
+                            : null,
                         }
-                        : {}),
+                        : {
+                          repeat_monthly_mode: repeat === "monthly" ? "day_of_month" : "day_of_month",
+                          repeat_monthly_ordinal: null,
+                          repeat_monthly_weekday: null,
+                        }),
                     });
                   },
                   onSetStatus: (taskId, status, expectedTask) => {
@@ -5196,9 +5294,11 @@ function TopHeader({
 
 function CommandCenterHeader({
   activeHudTaskTimer,
+  activeSessions,
   activeTaskCount,
   currentHudPageId,
   economy,
+  focusCategories,
   hudUiState,
   urgentTaskCount,
   onOpenAccount,
@@ -5211,6 +5311,7 @@ function CommandCenterHeader({
   onPreviousTaskTimer,
   onResumeTaskTimer,
   onStopTaskTimer,
+  onToggleFocusTimer,
   profile,
   runningTaskTimers,
   setHudUiState,
@@ -5240,9 +5341,11 @@ function CommandCenterHeader({
   scratchPaper,
 }: {
   activeHudTaskTimer: RunningTaskTimer | null;
+  activeSessions: Record<string, ActiveFocusSession>;
   activeTaskCount: number;
   currentHudPageId: "overview" | "command";
   economy: { level: number; xp: number; points: number; tokens: number };
+  focusCategories: FocusCategory[];
   hudUiState: import("@/lib/task-hud-layout").HudUiState;
   urgentTaskCount: number;
   onOpenAccount: () => void;
@@ -5255,6 +5358,7 @@ function CommandCenterHeader({
   onPreviousTaskTimer: () => void;
   onResumeTaskTimer: (taskId: string) => void;
   onStopTaskTimer: (taskId: string) => void;
+  onToggleFocusTimer: (categoryId: string) => void;
   profile: UserProfile;
   runningTaskTimers: RunningTaskTimer[];
   setHudUiState: Dispatch<SetStateAction<import("@/lib/task-hud-layout").HudUiState>>;
@@ -5300,6 +5404,8 @@ function CommandCenterHeader({
   );
 
   const timerSeconds = activeHudTaskTimer ? getTaskTimerDisplaySeconds(activeHudTaskTimer, taskTimerNow) : 0;
+  const collapsedHudFocusTimer = resolveCollapsedHudFocusTimer(focusCategories, activeSessions, taskTimerNow);
+  const collapsedHudTaskTimer = activeHudTaskTimer ?? runningTaskTimers[0] ?? null;
   const activeHudPageTitle = hudUiState.hudPages.find((page) => page.id === currentHudPageId)?.title ?? "HUD";
   const [isNotificationInboxOpen, setIsNotificationInboxOpen] = useState(false);
 
@@ -5536,26 +5642,84 @@ function CommandCenterHeader({
                 {HUD_VERSION}
               </span>
             </button>
+            {collapsedHudFocusTimer ? (
+              <div className="relative shrink-0">
+                <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 36">
+                  <rect fill="none" height="34" rx="17" stroke="rgba(111,87,246,0.14)" strokeWidth="1.5" width="98" x="1" y="1" />
+                  <rect
+                    fill="none"
+                    height="34"
+                    pathLength="100"
+                    rx="17"
+                    stroke="#6f57f6"
+                    strokeDasharray="100"
+                    strokeDashoffset={100 * (1 - getCollapsedHudTimerProgress(collapsedHudFocusTimer.seconds, collapsedHudFocusTimer.isPaused))}
+                    strokeLinecap="round"
+                    strokeWidth="1.75"
+                    style={{ opacity: collapsedHudFocusTimer.isPaused ? 0.55 : 0.8, transition: "stroke-dashoffset 1s linear, opacity 160ms ease" }}
+                    width="98"
+                    x="1"
+                    y="1"
+                  />
+                </svg>
+                <TaskTableChipButton
+                  aria-label={`${collapsedHudFocusTimer.isPaused ? "Resume" : "Pause"} timer for ${collapsedHudFocusTimer.title}`}
+                  className="relative shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
+                  onClick={() => onToggleFocusTimer(collapsedHudFocusTimer.categoryId)}
+                  toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+                >
+                  {collapsedHudFocusTimer.isPaused ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
+                  <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
+                    {formatCollapsedHudTimerLabel(collapsedHudFocusTimer.seconds)}
+                  </span>
+                  <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudFocusTimer.title}</span>
+                  <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8174b8] dark:text-[#b4abdc]">
+                    {collapsedHudFocusTimer.isPaused ? "Paused" : "Running"}
+                  </span>
+                </TaskTableChipButton>
+              </div>
+            ) : collapsedHudTaskTimer ? (
+              <div className="relative shrink-0">
+                <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 36">
+                  <rect fill="none" height="34" rx="17" stroke="rgba(111,87,246,0.14)" strokeWidth="1.5" width="98" x="1" y="1" />
+                  <rect
+                    fill="none"
+                    height="34"
+                    pathLength="100"
+                    rx="17"
+                    stroke="#6f57f6"
+                    strokeDasharray="100"
+                    strokeDashoffset={100 * (1 - getCollapsedHudTimerProgress(getTaskTimerDisplaySeconds(collapsedHudTaskTimer, taskTimerNow), Boolean(collapsedHudTaskTimer.pausedAt)))}
+                    strokeLinecap="round"
+                    strokeWidth="1.75"
+                    style={{ opacity: collapsedHudTaskTimer.pausedAt ? 0.55 : 0.8, transition: "stroke-dashoffset 1s linear, opacity 160ms ease" }}
+                    width="98"
+                    x="1"
+                    y="1"
+                  />
+                </svg>
+                <TaskTableChipButton
+                  aria-label={`${collapsedHudTaskTimer.pausedAt ? "Resume" : "Pause"} timer for ${collapsedHudTaskTimer.title}`}
+                  className="relative shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
+                  onClick={() => collapsedHudTaskTimer.pausedAt ? onResumeTaskTimer(collapsedHudTaskTimer.taskId) : onPauseTaskTimer(collapsedHudTaskTimer.taskId)}
+                  toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+                >
+                  {collapsedHudTaskTimer.pausedAt ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
+                  <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
+                    {formatCollapsedHudTimerLabel(getTaskTimerDisplaySeconds(collapsedHudTaskTimer, taskTimerNow))}
+                  </span>
+                  <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudTaskTimer.title}</span>
+                  <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8174b8] dark:text-[#b4abdc]">
+                    {collapsedHudTaskTimer.pausedAt ? "Paused" : "Running"}
+                  </span>
+                </TaskTableChipButton>
+              </div>
+            ) : null}
             <span className="hidden shrink-0 sm:inline">
               <span className={`${TASK_TABLE_CHIP_BASE_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
                 {activeHudPageTitle}
               </span>
             </span>
-            {activeHudTaskTimer ? (
-              <TaskTableChipButton
-                aria-label={`${activeHudTaskTimer.pausedAt ? "Resume" : "Pause"} timer for ${activeHudTaskTimer.title}`}
-                className="min-w-0 shrink-0 gap-2 text-[#5f4ac9] dark:text-[#d6cdff]"
-                onClick={() => activeHudTaskTimer.pausedAt ? onResumeTaskTimer(activeHudTaskTimer.taskId) : onPauseTaskTimer(activeHudTaskTimer.taskId)}
-                toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
-              >
-                <Clock className="h-3.5 w-3.5 shrink-0" />
-                <span className="max-w-36 truncate">{activeHudTaskTimer.title}</span>
-                <span className="shrink-0 font-black uppercase tracking-[0.12em]">
-                  {formatActualSecondsLabel(timerSeconds)}
-                </span>
-                <span className="shrink-0">{activeHudTaskTimer.pausedAt ? "Paused" : "Running"}</span>
-              </TaskTableChipButton>
-            ) : null}
             <div className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
               Points {economy.points}
             </div>

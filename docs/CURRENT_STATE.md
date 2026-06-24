@@ -5,7 +5,7 @@ Last reviewed: 2026-06-23
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.9.7`.
+- Current working app version: `6.9.11`.
 - Current release group: `6.9.x` task hierarchy and HUD controls.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,13 @@ Role: active working
 - `6.9.6` keeps Every/Day custom cadence numeric inputs on the adjacent chip scale across Table inline, Table editor metadata/full sections, and List quick edit. Ordinal monthly recurrence remains intentionally untouched.
 - Browser QA confirmed `6.9.6` working for Substep editor behavior, child metadata save routing, List View chips, and custom cadence UI.
 - `6.9.7` restores Shift-click range selection across visible parent, Step, and Substep table rows; removes the Table View Step/Substep preview cap so expanded parents show all visible descendants; adds the existing History action to List View parent rows; and routes List View Edit Task overlay actions through the current inlay editor UI inside the overlay shell.
+- `6.9.7` was committed, and browser QA passed for the List View Edit Task overlay, Shift-click range selection, and full Table View Step/Substep rendering.
+- `6.9.8` tightens List View row click routing so status/history/metadata actions stay on their own quick-action paths, restores Step/Substep title rename entry inside the shared List overlay editor, defaults parent Step sections collapsed in List View to match Table View, adds a List View Add Step icon beside History, and adds a safe Weekdays repeat preset backed by the existing weekly weekday array model.
+- Browser QA for `6.9.8` passed general List click routing, List View Add Step, default-collapsed Steps in List View, the Weekdays preset behavior, and the shared overlay rename path where applicable.
+- `6.9.9` moves List View parent quick-action rows so they open directly under the clicked parent row above the Steps section, fixes shared repeat chip labeling so the exact Monday-Friday weekly preset displays `Weekdays`, and attempts a compact collapsed HUD timer chip using the existing active/paused timer state and controls.
+- `6.9.10` adds a small consistent gap above List View quick-action rows, routes List View Step/Substep status-circle clicks into the local status/action row instead of the Edit Task overlay, restores the collapsed HUD active timer chip to the live Focus-session timer path while keeping the existing pause/resume behavior, and starts ordinal monthly recurrence schema/model groundwork for rules like first Tuesday or last Monday.
+- After `6.9.10`, the ordinal monthly SQL fields were applied locally, so the runtime/UI follow-up can now use the real persistence columns instead of a schema-only placeholder.
+- `6.9.11` polishes the collapsed HUD timer chip with smaller live `mm:ss`/`h:mm:ss` text plus a subtle animated perimeter progress line, and wires ordinal monthly recurrence through the shared cadence UI, task save/load mappings, repeat labels, and monthly due-date/history helpers for rules like first Tuesday or last Monday.
 - `6.9.5` keeps Step/Substep streak and missed-streak row chips visible on child rows where those existing history values are already present.
 - `6.9.5` tightens the compact custom cadence Every/Day numeric inputs so they match the adjacent chip scale while keeping the three-row layout intact. Ordinal monthly recurrence remains intentionally untouched.
 - `6.9.4` replaces the confirmed banked reward dice overlap behavior with deterministic cell-based grid slots inside the modal canvas, keeping each die in its own non-overlapping position while spinning around its own axis. Existing batching, bank persistence, cancel/close behavior, and reward claim flow remain unchanged.
@@ -36,8 +43,6 @@ Role: active working
 - Banked reward dice now mount in the shared centered modal shell, with outside-click, Escape, and close-button dismissal; the larger dice stage preserves the existing reward resolution and claim path.
 
 ### Deferred or partial
-- Ordinal monthly recurrence such as first Tuesday is deferred. Current persistence supports only repeat interval, weekday array, and numeric day-of-month; there is no ordinal-week field or safe existing encoding.
-- No schema migration was added in `6.9.4`; ordinal monthly recurrence still needs a persistence/model decision before implementation.
 - Dice spacing/layout work remains deferred after the `6.9.4` improvement; `6.9.5` does not change dice behavior.
 - Mixed parent/Step/Substep bulk editing uses the existing selected-id callback path, but needs manual QA across every metadata type because automated browser testing was intentionally excluded from this work order.
 

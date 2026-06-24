@@ -1,6 +1,6 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
-import { isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import { getMonthlyOccurrenceDateKey, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
 
 export function isTaskCompletedForHistory(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "complete";
@@ -383,13 +383,6 @@ function isAlignedToInterval(distance: number, interval: number) {
   return ((distance % interval) + interval) % interval === 0;
 }
 
-function getMonthlyOccurrenceDay(task: Task, dateKey: string) {
-  const date = toDate(dateKey);
-  const maxDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  const targetDay = task.repeat_day_of_month ?? toDate(task.due_on ?? dateKey).getDate();
-  return Math.min(targetDay, maxDay);
-}
-
 export function isTaskDueOnDate(task: Task, dateKey: string) {
   const anchorDateKey = task.due_on;
   if (!anchorDateKey) {
@@ -432,7 +425,7 @@ export function isTaskDueOnDate(task: Task, dateKey: string) {
     if (monthDiff < 0 || !isAlignedToInterval(monthDiff, interval)) {
       return false;
     }
-    return toDate(dateKey).getDate() === getMonthlyOccurrenceDay(task, dateKey);
+    return dateKey === getMonthlyOccurrenceDateKey(task, dateKey);
   }
 
   return false;
@@ -472,7 +465,7 @@ function isHistoricalRecurringDueDate(task: Task, dateKey: string) {
     if (!isAlignedToInterval(monthDiff, interval)) {
       return false;
     }
-    return toDate(dateKey).getDate() === getMonthlyOccurrenceDay(task, dateKey);
+    return dateKey === getMonthlyOccurrenceDateKey(task, dateKey);
   }
 
   return false;

@@ -69,6 +69,17 @@ test("repeat helpers compute summaries and next due date", () => {
   assert.equal(formatRepeatSummary(task), "Weekly (Mon, Wed)");
   const nextDue = calcNextDueDate(task);
   assert.ok(nextDue);
+  assert.equal(nextDue, "2026-05-25");
+
+  const weekdaysTask = createTask({
+    ...task,
+    due_on: "2026-05-22",
+    id: "task-repeat-weekdays",
+    repeat_days_of_week: [1, 2, 3, 4, 5],
+    title: "Weekdays",
+  });
+  assert.equal(formatRepeatSummary(weekdaysTask), "Weekdays");
+  assert.equal(calcNextDueDate(weekdaysTask), "2026-05-25");
 });
 
 test("daily until complete repeat helpers advance like daily and expose the locked label", () => {
@@ -85,6 +96,26 @@ test("daily until complete repeat helpers advance like daily and expose the lock
 
   assert.equal(formatRepeatSummary(task), "Daily Until Complete");
   assert.equal(calcNextDueDate(task), "2026-05-21");
+});
+
+test("ordinal monthly repeat helpers summarize and advance to the next matching weekday", () => {
+  const task = createTask({
+    created_at: "2026-05-20T09:00:00.000Z",
+    due_on: "2026-06-02",
+    id: "task-ordinal-monthly",
+    repeat_day_of_month: null,
+    repeat_frequency: "monthly",
+    repeat_interval: 1,
+    repeat_monthly_mode: "ordinal_weekday",
+    repeat_monthly_ordinal: "first",
+    repeat_monthly_weekday: 2,
+    sort_order: 1,
+    status: "pending",
+    title: "First Tuesday",
+  });
+
+  assert.equal(formatRepeatSummary(task), "First Tuesday monthly");
+  assert.equal(calcNextDueDate(task), "2026-07-07");
 });
 
 test("daily until complete missed-date helper backfills overdue days without duplicating logged history", () => {

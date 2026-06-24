@@ -86,6 +86,9 @@ export type ChildTaskPreview = {
   repeatDayOfMonth: number | null;
   repeatDaysOfWeek: number[];
   repeatInterval: number;
+  repeatMonthlyMode: Task["repeat_monthly_mode"];
+  repeatMonthlyOrdinal: Task["repeat_monthly_ordinal"];
+  repeatMonthlyWeekday: Task["repeat_monthly_weekday"];
   scheduledOn: string | null;
   status: TaskStatus;
   tags: string[];
@@ -316,6 +319,9 @@ export function buildChildTaskPreviewLookup(
           repeatDayOfMonth: descendant.repeat_day_of_month,
           repeatDaysOfWeek: descendant.repeat_days_of_week ?? [],
           repeatInterval: Math.max(1, descendant.repeat_interval ?? 1),
+          repeatMonthlyMode: descendant.repeat_monthly_mode,
+          repeatMonthlyOrdinal: descendant.repeat_monthly_ordinal,
+          repeatMonthlyWeekday: descendant.repeat_monthly_weekday,
           scheduledOn: descendant.scheduled_on,
           status: getTaskDisplayStatus(descendant),
           tags: descendant.tags ?? [],

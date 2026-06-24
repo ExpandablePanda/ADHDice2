@@ -151,6 +151,29 @@ test("monthly calendar dates distinguish scheduled upcoming dates from non-due d
   assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-14", hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "upcoming");
 });
 
+test("ordinal monthly due dates use the configured weekday occurrence in calendar/history helpers", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-02",
+    id: "monthly-ordinal-history",
+    repeat_day_of_month: null,
+    repeat_frequency: "monthly",
+    repeat_interval: 1,
+    repeat_monthly_mode: "ordinal_weekday",
+    repeat_monthly_ordinal: "first",
+    repeat_monthly_weekday: 2,
+    sort_order: 1,
+    status: "pending",
+    title: "First Tuesday history",
+  });
+  const dueDates = buildTaskDueDateSet(task, "2026-06-02", "2026-07-10");
+
+  assert.equal(dueDates.has("2026-07-07"), true);
+  assert.equal(dueDates.has("2026-07-02"), false);
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-07", hasHistoryEntry: false, isDue: true, nextDueDateKey: "2026-07-07", todayDateKey: "2026-06-21" }), "due");
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-06", hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-07", todayDateKey: "2026-06-21" }), "upcoming");
+});
+
 test("aggregate missed streak stays active when today has not been logged yet", () => {
   const stats = computeTaskHistoryStats([
     createHistoryEntry({ entryDate: "2026-06-01", id: "h1", status: "done", wasCompleted: true }),

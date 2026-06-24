@@ -4,6 +4,8 @@ create type public.adhdice_clean_task_status as enum ('pending', 'in_progress', 
 create type public.adhdice_clean_task_priority as enum ('low', 'normal', 'high');
 create type public.adhdice_clean_task_energy as enum ('none', 'low', 'medium', 'high');
 create type public.adhdice_clean_task_repeat_frequency as enum ('none', 'daily', 'weekly', 'monthly', 'custom');
+create type public.adhdice_clean_task_repeat_monthly_mode as enum ('day_of_month', 'ordinal_weekday');
+create type public.adhdice_clean_task_repeat_monthly_ordinal as enum ('first', 'second', 'third', 'fourth', 'last');
 create type public.adhdice_clean_task_subtask_status as enum ('pending', 'in_progress', 'done', 'missed', 'did_my_best', 'upcoming', 'not_due');
 create type public.adhdice_clean_focus_source as enum ('timer', 'manual', 'import');
 
@@ -33,10 +35,18 @@ create table public.adhdice_clean_tasks (
   repeat_interval integer not null default 1 check (repeat_interval > 0),
   repeat_days_of_week smallint[] not null default '{}',
   repeat_day_of_month integer check (repeat_day_of_month is null or (repeat_day_of_month >= 1 and repeat_day_of_month <= 31)),
+  repeat_monthly_mode public.adhdice_clean_task_repeat_monthly_mode not null default 'day_of_month',
+  repeat_monthly_ordinal public.adhdice_clean_task_repeat_monthly_ordinal,
+  repeat_monthly_weekday smallint check (repeat_monthly_weekday is null or (repeat_monthly_weekday >= 0 and repeat_monthly_weekday <= 6)),
   sort_order bigint not null default 0,
   completed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  constraint adhdice_clean_tasks_repeat_monthly_ordinal_fields_check
+    check (
+      (repeat_monthly_mode = 'day_of_month' and repeat_monthly_ordinal is null and repeat_monthly_weekday is null)
+      or (repeat_monthly_mode = 'ordinal_weekday' and repeat_monthly_ordinal is not null and repeat_monthly_weekday is not null)
+    ),
   constraint adhdice_clean_tasks_parent_task_not_self
     check (parent_task_id is null or parent_task_id <> id)
 );

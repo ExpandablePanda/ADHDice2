@@ -13,16 +13,23 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { Task, TaskActualTimeEntry, TaskHistory, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
+import type { Task, TaskActualTimeEntry, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import { buildTaskTableRow } from "@/lib/task-table-row";
-import { useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { getTaskDisplayStatus, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen } from "@/lib/task-buckets";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusCircle } from "./task-status-ui";
-import { formatRepeatSummary } from "@/lib/task-repeat";
+import {
+  formatRepeatFrequencyLabel,
+  formatRepeatSummary,
+  isWeekdaysRepeatSelection,
+  REPEAT_MONTHLY_MODE_OPTIONS,
+  REPEAT_MONTHLY_ORDINAL_OPTIONS,
+  REPEAT_WEEKDAY_FULL_LABELS,
+} from "@/lib/task-repeat";
 import { buildChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { formatLocalDate, todayISO } from "@/lib/utils";
@@ -41,7 +48,7 @@ type ListQuickPanelMode = "actual" | "due" | "energy" | "estimated" | "link" | "
 type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
 type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
 
-const QUICK_PANEL_SHELL_CLASS = "rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] px-4 py-3 shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-[#41306c] dark:bg-[#18112d]";
+const QUICK_PANEL_SHELL_CLASS = "mt-2.5 rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] px-4 py-3 shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-[#41306c] dark:bg-[#18112d]";
 const QUICK_PANEL_TEXT_INPUT_CLASS = "h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]";
 const QUICK_PANEL_PRIMARY_CHIP_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
 const ACTIVE_CHIP_RING_CLASS = "ring-2 ring-[#d7cbfb] ring-offset-1 dark:ring-[#6d56d6] dark:ring-offset-[#18112d]";
@@ -67,6 +74,7 @@ const REPEAT_WEEKDAY_OPTIONS = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ];
+const REPEAT_MONTHLY_WEEKDAY_OPTIONS = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label, value }));
 const COMPACT_REPEAT_UNITS: Array<{ label: string; value: PrototypeTaskRow["repeat"] }> = [
   { label: "Days", value: "daily" },
   { label: "Weeks", value: "weekly" },
@@ -97,6 +105,11 @@ function energyTone(energy: PrototypeTaskRow["energy"]) {
 
 function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
+}
+
+function shouldIgnoreListOverlayOpen(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    && Boolean(target.closest("button, input, textarea, select, a, [data-list-action-control='true']"));
 }
 
 type TasksTableSourceProps = {
@@ -138,7 +151,7 @@ type TasksTableSourceProps = {
   onSetLinkedNoteIds?: (taskId: string, linkedNoteIds: string[]) => void;
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
-  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">) => void;
+  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
   onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null) => void;
   onAddTaskSubtask?: (taskId: string) => string | null | Promise<string | null>;
   onAddChildTaskSubtask?: (subtaskId: string) => string | null | Promise<string | null>;
@@ -492,7 +505,14 @@ function StepsCardPreview({
   onSetTags,
   onToggleTaskList,
   onToggleExpanded,
+  parentStepCreationError,
+  parentStepDraftInputRef,
+  parentStepDraftValue,
   selectedBucket,
+  showParentStepDraft,
+  onCancelParentStepDraft,
+  onCommitParentStepDraft,
+  onParentStepDraftChange,
 }: {
   activeQuickPanel: { mode: ListQuickPanelMode; taskId: string } | null;
   allTagOptions: string[];
@@ -518,12 +538,19 @@ function StepsCardPreview({
   onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
-  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">) => void;
+  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
   onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null) => void;
   onSetTags?: (taskId: string, tags: string[]) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
   onToggleExpanded?: () => void;
+  parentStepCreationError?: string | null;
+  parentStepDraftInputRef?: RefObject<HTMLInputElement | null>;
+  parentStepDraftValue: string;
   selectedBucket: string;
+  showParentStepDraft: boolean;
+  onCancelParentStepDraft?: () => void;
+  onCommitParentStepDraft?: () => void;
+  onParentStepDraftChange?: (value: string) => void;
 }) {
   const [editingStepTitleId, setEditingStepTitleId] = useState<string | null>(null);
   const [collapsedStepIds, setCollapsedStepIds] = useState<Record<string, boolean>>({});
@@ -544,7 +571,7 @@ function StepsCardPreview({
     [collapsedStepIdSet, group.items],
   );
 
-  if (expandedItems.length === 0 && !group.summary.hasInvalidDescendants) {
+  if (expandedItems.length === 0 && !group.summary.hasInvalidDescendants && !showParentStepDraft) {
     return null;
   }
 
@@ -664,6 +691,35 @@ function StepsCardPreview({
       </div>
       {!isExpanded ? null : (
         <>
+      {showParentStepDraft ? (
+        <div className="mt-2 rounded-[0.95rem] border border-[#e7defc] bg-[#fcfbff] px-3 py-3 dark:border-[#41306c] dark:bg-[#18112d]">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              className={`${QUICK_PANEL_TEXT_INPUT_CLASS} min-w-[14rem] flex-1`}
+              onChange={(event) => onParentStepDraftChange?.(event.target.value)}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  onCommitParentStepDraft?.();
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  onCancelParentStepDraft?.();
+                }
+              }}
+              placeholder="Step title..."
+              ref={parentStepDraftInputRef}
+              value={parentStepDraftValue}
+            />
+            <TaskTableChipButton onClick={() => onCommitParentStepDraft?.()} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Add Step</TaskTableChipButton>
+            <TaskTableChipButton onClick={() => onCancelParentStepDraft?.()} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>Cancel</TaskTableChipButton>
+          </div>
+          {parentStepCreationError ? (
+            <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">{parentStepCreationError}</p>
+          ) : null}
+        </div>
+      ) : null}
       {group.summary.hasInvalidDescendants ? (
         <p className="mt-2 text-xs text-[#9a7a24] dark:text-[#f3d38a]">
           {group.summary.invalidChildLinkCount === 1 ? "1 invalid step link" : `${group.summary.invalidChildLinkCount} invalid step links`}
@@ -689,7 +745,14 @@ function StepsCardPreview({
             const repeatSummary = childTask
               ? formatRepeatSummary(childTask)
               : item.repeat !== "none"
-                ? item.repeatInterval > 1 ? `${item.repeat} · ${item.repeatInterval}` : item.repeat
+                ? formatRepeatFrequencyLabel(
+                  item.repeat,
+                  item.repeatInterval,
+                  item.repeatDaysOfWeek,
+                  item.repeatMonthlyMode,
+                  item.repeatMonthlyOrdinal,
+                  item.repeatMonthlyWeekday,
+                )
                 : "";
             const visibleTags = item.tags.slice(0, 3);
             const extraTagCount = Math.max(0, item.tags.length - visibleTags.length);
@@ -728,7 +791,19 @@ function StepsCardPreview({
                 tabIndex={0}
               >
                 <div className="flex min-w-0 items-start gap-2">
-                  <span className="mt-0.5 flex-none">{renderTaskStatusCircle(item.status, "sm")}</span>
+                  <button
+                    aria-expanded={activePanelMode === "status"}
+                    aria-label={`Change status for ${item.title || (item.depth > 1 ? "substep" : "step")}`}
+                    className="mt-0.5 inline-flex h-7 w-7 flex-none items-center justify-center rounded-full text-[#8d97b0] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45 dark:hover:bg-white/[0.06] dark:hover:text-[#cabfff]"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenQuickPanel(item.id, "status");
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    type="button"
+                  >
+                    {renderTaskStatusCircle(displayStatus, "sm")}
+                  </button>
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-start justify-between gap-2">
                       <div className="flex min-w-0 items-start gap-1.5">
@@ -857,7 +932,7 @@ function StepsCardPreview({
                     <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
                       {formatChildTaskPreviewDepthLabel(item.depth)}
                     </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <div className="mt-2 flex flex-wrap items-center gap-2" data-list-action-control="true">
                       <MetadataChipButton
                         active={activePanelMode === "status"}
                         onClick={() => onOpenQuickPanel(item.id, "status")}
@@ -910,7 +985,7 @@ function StepsCardPreview({
                         </MetadataChipButton>
                       ) : null}
                     </div>
-                    <div className="mt-2 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
+                    <div className="mt-2 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]" data-list-action-control="true">
                       <span className={`${TASK_TABLE_INACTIVE_CHIP_CLASS} inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[12px] font-medium`}>
                         Added {formatDateAddedChip(item.createdAt)}
                       </span>
@@ -1343,26 +1418,75 @@ function RepeatQuickPanel({
   repeatDaysOfWeek,
   repeatFrequency,
   repeatInterval,
+  repeatMonthlyMode,
+  repeatMonthlyOrdinal,
+  repeatMonthlyWeekday,
 }: {
   onClose: () => void;
-  onSave: (repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">) => void;
+  onSave: (repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
   repeatDayOfMonth: number | null;
   repeatDaysOfWeek: number[];
   repeatFrequency: PrototypeTaskRow["repeat"];
   repeatInterval: number;
+  repeatMonthlyMode: TaskRepeatMonthlyMode;
+  repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
+  repeatMonthlyWeekday: number | null;
 }) {
   const [intervalDraft, setIntervalDraft] = useState(String(Math.max(1, repeatInterval)));
   const [dayOfMonthDraft, setDayOfMonthDraft] = useState(repeatDayOfMonth ? String(repeatDayOfMonth) : "");
+  const [monthlyMode, setMonthlyMode] = useState<TaskRepeatMonthlyMode>(repeatMonthlyMode);
+  const [monthlyOrdinal, setMonthlyOrdinal] = useState<TaskRepeatMonthlyOrdinal | null>(repeatMonthlyOrdinal);
+  const [monthlyWeekday, setMonthlyWeekday] = useState<number | null>(repeatMonthlyWeekday);
+  const isWeekdaysPresetSelected = isWeekdaysRepeatSelection(repeatFrequency, repeatDaysOfWeek, Math.max(1, repeatInterval));
 
-  const applyCadence = (nextRepeat: PrototypeTaskRow["repeat"], nextDays = repeatDaysOfWeek, nextDayOfMonth = repeatDayOfMonth) => {
+  useEffect(() => {
+    setIntervalDraft(String(Math.max(1, repeatInterval)));
+    setDayOfMonthDraft(repeatDayOfMonth ? String(repeatDayOfMonth) : "");
+    setMonthlyMode(repeatMonthlyMode);
+    setMonthlyOrdinal(repeatMonthlyOrdinal);
+    setMonthlyWeekday(repeatMonthlyWeekday);
+  }, [repeatDayOfMonth, repeatInterval, repeatMonthlyMode, repeatMonthlyOrdinal, repeatMonthlyWeekday]);
+
+  const applyCadence = (
+    nextRepeat: PrototypeTaskRow["repeat"],
+    nextDays = repeatDaysOfWeek,
+    nextDayOfMonth = repeatDayOfMonth,
+    nextMonthlyMode = monthlyMode,
+    nextMonthlyOrdinal = monthlyOrdinal,
+    nextMonthlyWeekday = monthlyWeekday,
+  ) => {
     const parsedInterval = Number.parseInt(intervalDraft, 10);
     const parsedDayOfMonth = Number.parseInt(dayOfMonthDraft, 10);
+    const resolvedMonthlyMode = nextRepeat === "monthly" ? nextMonthlyMode : "day_of_month";
+    const resolvedMonthlyOrdinal = nextRepeat === "monthly" && resolvedMonthlyMode === "ordinal_weekday"
+      ? nextMonthlyOrdinal ?? "first"
+      : null;
+    const resolvedMonthlyWeekday = nextRepeat === "monthly" && resolvedMonthlyMode === "ordinal_weekday"
+      ? nextMonthlyWeekday ?? 1
+      : null;
     onSave(nextRepeat, {
-      repeatDayOfMonth: Number.isFinite(parsedDayOfMonth) && parsedDayOfMonth >= 1 && parsedDayOfMonth <= 31 ? parsedDayOfMonth : nextDayOfMonth ?? null,
+      repeatDayOfMonth: nextRepeat === "monthly" && resolvedMonthlyMode === "day_of_month"
+        ? (Number.isFinite(parsedDayOfMonth) && parsedDayOfMonth >= 1 && parsedDayOfMonth <= 31 ? parsedDayOfMonth : nextDayOfMonth ?? null)
+        : null,
       repeatDaysOfWeek: nextRepeat === "weekly" || nextRepeat === "custom" ? nextDays : [],
       repeatInterval: nextRepeat === "daily_until_complete"
         ? 1
         : Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1,
+      repeatMonthlyMode: resolvedMonthlyMode,
+      repeatMonthlyOrdinal: resolvedMonthlyOrdinal,
+      repeatMonthlyWeekday: resolvedMonthlyWeekday,
+    });
+  };
+
+  const applyWeekdaysPreset = () => {
+    setIntervalDraft("1");
+    onSave("weekly", {
+      repeatDayOfMonth: repeatDayOfMonth ?? null,
+      repeatDaysOfWeek: [...WEEKDAYS_REPEAT_DAYS],
+      repeatInterval: 1,
+      repeatMonthlyMode: "day_of_month",
+      repeatMonthlyOrdinal: null,
+      repeatMonthlyWeekday: null,
     });
   };
 
@@ -1379,6 +1503,13 @@ function RepeatQuickPanel({
             {option.label}
           </QuickChipOption>
         ))}
+        <QuickChipOption
+          active={isWeekdaysPresetSelected}
+          activeToneClassName={repeatTone("weekly")}
+          onClick={applyWeekdaysPreset}
+        >
+          Weekdays
+        </QuickChipOption>
       </div>
       {repeatFrequency !== "none" ? (
         <div className="mt-3 space-y-2">
@@ -1402,6 +1533,33 @@ function RepeatQuickPanel({
               type: "text",
               value: intervalDraft,
             }}
+            monthlyMode={monthlyMode}
+            monthlyModeOptions={REPEAT_MONTHLY_MODE_OPTIONS}
+            monthlyOrdinal={monthlyOrdinal}
+            monthlyOrdinalOptions={REPEAT_MONTHLY_ORDINAL_OPTIONS}
+            monthlyWeekday={monthlyWeekday}
+            onMonthlyModeClick={(value) => {
+              const nextOrdinal = value === "ordinal_weekday" ? (monthlyOrdinal ?? "first") : null;
+              const nextWeekday = value === "ordinal_weekday" ? (monthlyWeekday ?? 1) : null;
+              setMonthlyMode(value);
+              setMonthlyOrdinal(nextOrdinal);
+              setMonthlyWeekday(nextWeekday);
+              applyCadence(repeatFrequency, repeatDaysOfWeek, repeatDayOfMonth, value, nextOrdinal, nextWeekday);
+            }}
+            onMonthlyOrdinalClick={(value) => {
+              const nextWeekday = monthlyWeekday ?? 1;
+              setMonthlyMode("ordinal_weekday");
+              setMonthlyOrdinal(value);
+              setMonthlyWeekday(nextWeekday);
+              applyCadence(repeatFrequency, repeatDaysOfWeek, repeatDayOfMonth, "ordinal_weekday", value, nextWeekday);
+            }}
+            onMonthlyWeekdayClick={(value) => {
+              const nextOrdinal = monthlyOrdinal ?? "first";
+              setMonthlyMode("ordinal_weekday");
+              setMonthlyOrdinal(nextOrdinal);
+              setMonthlyWeekday(value);
+              applyCadence(repeatFrequency, repeatDaysOfWeek, repeatDayOfMonth, "ordinal_weekday", nextOrdinal, value);
+            }}
             onRepeatUnitClick={(repeatUnit) => applyCadence(repeatUnit)}
             onWeekdayClick={(weekday) => {
               const nextDays = repeatDaysOfWeek.includes(weekday)
@@ -1413,9 +1571,12 @@ function RepeatQuickPanel({
             repeatDaysOfWeek={repeatDaysOfWeek}
             repeatUnits={COMPACT_REPEAT_UNITS}
             showInterval={repeatFrequency !== "daily_until_complete"}
-            showMonthDay={repeatFrequency === "monthly" || repeatFrequency === "custom"}
+            showMonthDay={repeatFrequency === "monthly" && monthlyMode !== "ordinal_weekday"}
+            showMonthlyMode={repeatFrequency === "monthly"}
+            showMonthlyOrdinals={repeatFrequency === "monthly" && monthlyMode === "ordinal_weekday"}
+            showMonthlyWeekdays={repeatFrequency === "monthly" && monthlyMode === "ordinal_weekday"}
             showWeekdays={repeatFrequency === "weekly" || repeatFrequency === "custom"}
-            weekdayOptions={REPEAT_WEEKDAY_OPTIONS}
+            weekdayOptions={repeatFrequency === "monthly" && monthlyMode === "ordinal_weekday" ? REPEAT_MONTHLY_WEEKDAY_OPTIONS : REPEAT_WEEKDAY_OPTIONS}
           />
         </div>
       ) : null}
@@ -1634,8 +1795,12 @@ function TasksSimpleList({
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
   const [collapsedStepSectionsByTaskId, setCollapsedStepSectionsByTaskId] = useState<Record<string, boolean>>({});
+  const [parentStepDraftTaskId, setParentStepDraftTaskId] = useState<string | null>(null);
+  const [parentStepTitleDrafts, setParentStepTitleDrafts] = useState<Record<string, string>>({});
+  const [parentStepCreationErrors, setParentStepCreationErrors] = useState<Record<string, string | null>>({});
   const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
   const listShellRef = useRef<HTMLDivElement | null>(null);
+  const parentStepDraftInputRef = useRef<HTMLInputElement | null>(null);
   const tasks = tableProps.tasks;
   const rowContext = tableProps.rowContext;
   const visibleTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
@@ -1683,6 +1848,11 @@ function TasksSimpleList({
     () => rowContextMenu ? tasks.find((task) => task.id === rowContextMenu.taskId) ?? null : null,
     [rowContextMenu, tasks],
   );
+  useEffect(() => {
+    if (parentStepDraftTaskId) {
+      parentStepDraftInputRef.current?.focus();
+    }
+  }, [parentStepDraftTaskId]);
 
   function openRowContextMenu(taskId: string, clientX: number, clientY: number) {
     const nextMenu = buildTaskRowContextMenuState(listShellRef.current, taskId, clientX, clientY);
@@ -1692,6 +1862,37 @@ function TasksSimpleList({
 
     setRowContextMenu(nextMenu);
     return true;
+  }
+
+  async function commitParentStepDraft(parentTaskId: string) {
+    const nextTitle = parentStepTitleDrafts[parentTaskId]?.trim() ?? "";
+    if (!nextTitle) {
+      setParentStepCreationErrors((current) => ({
+        ...current,
+        [parentTaskId]: "Step title can't be empty.",
+      }));
+      parentStepDraftInputRef.current?.focus();
+      return;
+    }
+    if (!tableProps.onCreateChildTask) {
+      setParentStepCreationErrors((current) => ({
+        ...current,
+        [parentTaskId]: "Step creation is unavailable for this task.",
+      }));
+      return;
+    }
+    const result = await tableProps.onCreateChildTask(parentTaskId, nextTitle);
+    if (result?.error) {
+      setParentStepCreationErrors((current) => ({
+        ...current,
+        [parentTaskId]: result.error,
+      }));
+      parentStepDraftInputRef.current?.focus();
+      return;
+    }
+    setParentStepTitleDrafts((current) => ({ ...current, [parentTaskId]: "" }));
+    setParentStepCreationErrors((current) => ({ ...current, [parentTaskId]: null }));
+    setParentStepDraftTaskId((current) => (current === parentTaskId ? null : current));
   }
 
   if (tasks.length === 0) {
@@ -1824,8 +2025,17 @@ function TasksSimpleList({
         const panelTitle = task.title;
         const listMemberships = rowContext.listMembershipsByTaskId[task.id] ?? [];
         const stepPreviewGroup = tableProps.childTaskPreviewByParentTaskId?.[task.id];
-        const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-
+        const effectiveStepPreviewGroup = stepPreviewGroup ?? (parentStepDraftTaskId === task.id
+          ? {
+            items: [],
+            summary: {
+              descendantCount: 0,
+              directChildCount: 0,
+              hasInvalidDescendants: false,
+              invalidChildLinkCount: 0,
+            },
+          }
+          : null);
         return (
           <div className="space-y-3" key={task.id}>
             <article
@@ -1834,6 +2044,14 @@ function TasksSimpleList({
                   ? "border-[#cfc2ff] bg-[#fcfbff] dark:border-[#4f3d86] dark:bg-[#18112d]"
                   : "border-[#ece8f8] hover:border-[#ddd2fb] hover:bg-white dark:border-white/10 dark:hover:border-white/15"
               }`}
+              onClick={(event) => {
+                if (shouldIgnoreListOverlayOpen(event.target)) {
+                  return;
+                }
+                setRowContextMenu(null);
+                closeQuickPanel();
+                tableProps.onOpenTaskEditor?.(task.id);
+              }}
               onContextMenu={(event) => {
                 if (openRowContextMenu(task.id, event.clientX, event.clientY)) {
                   event.preventDefault();
@@ -1860,11 +2078,6 @@ function TasksSimpleList({
 
               <div
                 className="min-w-0 flex-1 cursor-pointer"
-                onClick={() => {
-                  setRowContextMenu(null);
-                  closeQuickPanel();
-                  tableProps.onOpenTaskEditor?.(task.id);
-                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
@@ -2014,7 +2227,28 @@ function TasksSimpleList({
                     </div>
                   </div>
 
-                  <div className="relative flex shrink-0 items-center gap-1">
+                  <div className="relative flex shrink-0 items-center gap-1" data-list-action-control="true">
+                    {tableProps.onCreateChildTask ? (
+                      <button
+                        aria-label={`Add step to ${task.title}`}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ece8f8] bg-white text-[#66718c] transition hover:border-[#d9cffb] hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          closeQuickPanel();
+                          setRowContextMenu(null);
+                          setCollapsedStepSectionsByTaskId((current) => ({
+                            ...current,
+                            [task.id]: false,
+                          }));
+                          setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
+                          setParentStepTitleDrafts((current) => ({ ...current, [task.id]: current[task.id] ?? "" }));
+                          setParentStepDraftTaskId(task.id);
+                        }}
+                        type="button"
+                      >
+                        <Footprints className="h-4 w-4" />
+                      </button>
+                    ) : null}
                     {tableProps.onOpenTaskHistory ? (
                       <button
                         aria-label={`Open history for ${task.title}`}
@@ -2051,57 +2285,6 @@ function TasksSimpleList({
                 </div>
               </div>
             </div>
-            {hasStepPreview && stepPreviewGroup ? (
-              <StepsCardPreview
-                activeQuickPanel={activeQuickPanel}
-                allTagOptions={tableProps.allTagOptions ?? []}
-                childTasksById={taskById}
-                closeQuickPanel={closeQuickPanel}
-                currentListLabel={currentListLabel}
-                group={stepPreviewGroup}
-                isExpanded={searchMatchedStepParentTaskIdSet.has(task.id) || !collapsedStepSectionsByTaskId[task.id]}
-                listDefinitions={rowContext.listDefinitions}
-                listMembershipsByTaskId={rowContext.listMembershipsByTaskId}
-                onCreateChildTask={tableProps.onCreateChildTask}
-                onDeleteStep={tableProps.onOpenDeleteTask}
-                onOpenHistory={tableProps.onOpenTaskHistory}
-                onOpenActualTime={tableProps.onOpenTaskActualTime}
-                onOpenStep={(taskId) => {
-                  setRowContextMenu(null);
-                  closeQuickPanel();
-                  if (tableProps.onOpenChildTask) {
-                    tableProps.onOpenChildTask(taskId);
-                    return;
-                  }
-                  tableProps.onOpenTaskEditor?.(taskId);
-                }}
-                onOpenQuickPanel={openQuickPanel}
-                onRenameStep={tableProps.onSetTitle}
-                onReorderStep={tableProps.onReorderChildTask}
-                onSetActualSeconds={tableProps.onSetActualSeconds}
-                onSetDue={tableProps.onSetDue}
-                onSetEnergy={tableProps.onSetEnergy}
-                onSetEstimatedMinutes={tableProps.onSetEstimatedMinutes}
-                onSetLink={tableProps.onSetLink}
-                onSetNotes={tableProps.onSetNotes}
-                onSetPriority={tableProps.onSetPriority}
-                onSetRepeat={tableProps.onSetRepeat}
-                onSetStatus={tableProps.onSetStatus}
-                onSetTags={tableProps.onSetTags}
-                onToggleTaskList={tableProps.onToggleTaskList}
-                onToggleExpanded={() => {
-                  if (searchMatchedStepParentTaskIdSet.has(task.id)) {
-                    return;
-                  }
-                  setCollapsedStepSectionsByTaskId((current) => ({
-                    ...current,
-                    [task.id]: !current[task.id],
-                  }));
-                }}
-                selectedBucket={selectedBucket}
-              />
-            ) : null}
-            </article>
             {activePanelMode === "status" ? (
               <QuickPanelShell onClose={closeQuickPanel} title={`Status · ${panelTitle}`}>
                 <div className="flex flex-wrap gap-2">
@@ -2156,6 +2339,9 @@ function TasksSimpleList({
                 repeatDaysOfWeek={task.repeat_days_of_week ?? []}
                 repeatFrequency={task.repeat_frequency}
                 repeatInterval={Math.max(1, task.repeat_interval ?? 1)}
+                repeatMonthlyMode={task.repeat_monthly_mode}
+                repeatMonthlyOrdinal={task.repeat_monthly_ordinal}
+                repeatMonthlyWeekday={task.repeat_monthly_weekday}
               />
             ) : null}
             {activePanelMode === "list" ? (
@@ -2203,6 +2389,72 @@ function TasksSimpleList({
                 onSave={(notes) => tableProps.onSetNotes?.(task.id, notes)}
               />
             ) : null}
+            {effectiveStepPreviewGroup ? (
+              <StepsCardPreview
+                activeQuickPanel={activeQuickPanel}
+                allTagOptions={tableProps.allTagOptions ?? []}
+                childTasksById={taskById}
+                closeQuickPanel={closeQuickPanel}
+                currentListLabel={currentListLabel}
+                group={effectiveStepPreviewGroup}
+                isExpanded={searchMatchedStepParentTaskIdSet.has(task.id) || parentStepDraftTaskId === task.id || collapsedStepSectionsByTaskId[task.id] === false}
+                listDefinitions={rowContext.listDefinitions}
+                listMembershipsByTaskId={rowContext.listMembershipsByTaskId}
+                onCreateChildTask={tableProps.onCreateChildTask}
+                onDeleteStep={tableProps.onOpenDeleteTask}
+                onOpenHistory={tableProps.onOpenTaskHistory}
+                onOpenActualTime={tableProps.onOpenTaskActualTime}
+                onOpenStep={(taskId) => {
+                  setRowContextMenu(null);
+                  closeQuickPanel();
+                  if (tableProps.onOpenChildTask) {
+                    tableProps.onOpenChildTask(taskId);
+                    return;
+                  }
+                  tableProps.onOpenTaskEditor?.(taskId);
+                }}
+                onOpenQuickPanel={openQuickPanel}
+                onRenameStep={tableProps.onSetTitle}
+                onReorderStep={tableProps.onReorderChildTask}
+                onSetActualSeconds={tableProps.onSetActualSeconds}
+                onSetDue={tableProps.onSetDue}
+                onSetEnergy={tableProps.onSetEnergy}
+                onSetEstimatedMinutes={tableProps.onSetEstimatedMinutes}
+                onSetLink={tableProps.onSetLink}
+                onSetNotes={tableProps.onSetNotes}
+                onSetPriority={tableProps.onSetPriority}
+                onSetRepeat={tableProps.onSetRepeat}
+                onSetStatus={tableProps.onSetStatus}
+                onSetTags={tableProps.onSetTags}
+                onToggleTaskList={tableProps.onToggleTaskList}
+                onToggleExpanded={() => {
+                  if (searchMatchedStepParentTaskIdSet.has(task.id)) {
+                    return;
+                  }
+                  setCollapsedStepSectionsByTaskId((current) => ({
+                    ...current,
+                    [task.id]: current[task.id] === false,
+                  }));
+                }}
+                parentStepCreationError={parentStepCreationErrors[task.id] ?? null}
+                parentStepDraftInputRef={parentStepDraftTaskId === task.id ? parentStepDraftInputRef : undefined}
+                parentStepDraftValue={parentStepTitleDrafts[task.id] ?? ""}
+                selectedBucket={selectedBucket}
+                showParentStepDraft={parentStepDraftTaskId === task.id}
+                onCancelParentStepDraft={() => {
+                  setParentStepDraftTaskId((current) => (current === task.id ? null : current));
+                  setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
+                }}
+                onCommitParentStepDraft={() => {
+                  void commitParentStepDraft(task.id);
+                }}
+                onParentStepDraftChange={(value) => {
+                  setParentStepTitleDrafts((current) => ({ ...current, [task.id]: value }));
+                  setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
+                }}
+              />
+            ) : null}
+            </article>
           </div>
         );
       })}

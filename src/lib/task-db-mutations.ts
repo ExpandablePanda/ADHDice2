@@ -49,6 +49,9 @@ const HIGH_RISK_TASK_UPDATE_FIELDS: TaskUpdateField[] = [
   "repeat_days_of_week",
   "repeat_frequency",
   "repeat_interval",
+  "repeat_monthly_mode",
+  "repeat_monthly_ordinal",
+  "repeat_monthly_weekday",
   "scheduled_on",
   "status",
 ];

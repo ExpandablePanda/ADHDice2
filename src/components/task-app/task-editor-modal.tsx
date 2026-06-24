@@ -39,6 +39,13 @@ import {
   ToggleField,
 } from "./task-editor-fields";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "./task-status-ui";
+import { CompactRepeatCadenceControls } from "@/components/ui/task-table-primitives";
+import {
+  formatRepeatFrequencyLabel,
+  REPEAT_MONTHLY_MODE_OPTIONS,
+  REPEAT_MONTHLY_ORDINAL_OPTIONS,
+  REPEAT_WEEKDAY_FULL_LABELS,
+} from "@/lib/task-repeat";
 
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
@@ -51,6 +58,7 @@ const repeatWeekdayOptions = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ] as const;
+const repeatMonthlyWeekdayOptions = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label, value }));
 
 function newSubtaskDraft(): TaskSubtaskDraft {
   return { id: `draft-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, title: "", status: "pending", children: [] };
@@ -477,7 +485,14 @@ export function TaskEditorModal({
     ? getSelectableTaskStatuses(task)
     : getSelectableTaskStatusesForRepeatFrequency(draft.repeatFrequency).filter((status) => status !== "complete" && status !== "trashed");
   const compactRepeatOptions = repeatFrequencyOptions;
-  const compactRepeatLabel = draft.repeatFrequency === "custom" ? "Custom cadence" : formatOptionLabel(draft.repeatFrequency);
+  const compactRepeatLabel = formatRepeatFrequencyLabel(
+    draft.repeatFrequency,
+    Math.max(1, parsePositiveInteger(draft.repeatInterval) ?? 1),
+    draft.repeatDaysOfWeek,
+    draft.repeatMonthlyMode,
+    draft.repeatMonthlyOrdinal,
+    draft.repeatMonthlyWeekday,
+  );
   const handleManualFocusEntryProxy = onLogActualTime;
 
   return (
@@ -512,7 +527,7 @@ export function TaskEditorModal({
         {isEditing ? (
           <button
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#fff1f3] text-[#f05566]"
-            onClick={() => onSave({ focusToday: draft.focusToday, linkedNoteIds: [], subtasks: [], values: { title: draft.title, notes: null, status: "trashed" as TaskStatus, priority: draft.priority, energy: draft.energy, is_urgent: false, is_important: false, due_on: null, due_time: null, estimated_minutes: null, tags: [], external_link_label: null, external_link_url: null, one_step_at_a_time: false, subtasks_auto_reset: false, repeat_frequency: "none", repeat_interval: 1, repeat_days_of_week: [], repeat_day_of_month: null, completed_at: null, trashed_at: new Date().toISOString() } })}
+            onClick={() => onSave({ focusToday: draft.focusToday, linkedNoteIds: [], subtasks: [], values: { title: draft.title, notes: null, status: "trashed" as TaskStatus, priority: draft.priority, energy: draft.energy, is_urgent: false, is_important: false, due_on: null, due_time: null, estimated_minutes: null, tags: [], external_link_label: null, external_link_url: null, one_step_at_a_time: false, subtasks_auto_reset: false, repeat_frequency: "none", repeat_interval: 1, repeat_days_of_week: [], repeat_day_of_month: null, repeat_monthly_mode: "day_of_month", repeat_monthly_ordinal: null, repeat_monthly_weekday: null, completed_at: null, trashed_at: new Date().toISOString() } })}
             type="button"
           >
             <Trash2 className="h-4 w-4" />
@@ -556,7 +571,16 @@ export function TaskEditorModal({
                 ? [...draftSnapshot.repeatDaysOfWeek].sort((a, b) => a - b)
                 : [],
               repeat_day_of_month: draftSnapshot.repeatFrequency === "monthly" || draftSnapshot.repeatFrequency === "custom"
-                ? parseDayOfMonth(draftSnapshot.repeatDayOfMonth)
+                ? (draftSnapshot.repeatMonthlyMode === "ordinal_weekday" ? null : parseDayOfMonth(draftSnapshot.repeatDayOfMonth))
+                : null,
+              repeat_monthly_mode: draftSnapshot.repeatFrequency === "monthly"
+                ? draftSnapshot.repeatMonthlyMode
+                : "day_of_month",
+              repeat_monthly_ordinal: draftSnapshot.repeatFrequency === "monthly" && draftSnapshot.repeatMonthlyMode === "ordinal_weekday"
+                ? draftSnapshot.repeatMonthlyOrdinal ?? "first"
+                : null,
+              repeat_monthly_weekday: draftSnapshot.repeatFrequency === "monthly" && draftSnapshot.repeatMonthlyMode === "ordinal_weekday"
+                ? draftSnapshot.repeatMonthlyWeekday ?? 1
                 : null,
               completed_at: isTaskFinishedStatusValue(draftSnapshot.status)
                 ? task?.completed_at ?? new Date().toISOString()
@@ -601,11 +625,18 @@ export function TaskEditorModal({
                   ...current,
                   repeatDayOfMonth: value === "daily_until_complete" ? "" : current.repeatDayOfMonth,
                   repeatDaysOfWeek: value === "daily_until_complete" ? [] : current.repeatDaysOfWeek,
+                  repeatMonthlyMode: value === "monthly" ? current.repeatMonthlyMode : "day_of_month",
+                  repeatMonthlyOrdinal: value === "monthly" && current.repeatMonthlyMode === "ordinal_weekday"
+                    ? (current.repeatMonthlyOrdinal ?? "first")
+                    : null,
+                  repeatMonthlyWeekday: value === "monthly" && current.repeatMonthlyMode === "ordinal_weekday"
+                    ? (current.repeatMonthlyWeekday ?? 1)
+                    : null,
                   repeatFrequency: value,
                   repeatInterval: value === "daily_until_complete" ? "1" : current.repeatInterval,
                 }))}
                 options={compactRepeatOptions}
-                renderValueLabel={(value) => value === "custom" ? "Custom cadence" : formatOptionLabel(value)}
+                renderValueLabel={(value) => value === draft.repeatFrequency ? compactRepeatLabel : formatOptionLabel(value)}
                 value={draft.repeatFrequency}
               />
             </div>
@@ -858,23 +889,71 @@ export function TaskEditorModal({
                   <LabeledInput label="Interval" onChange={(v) => setDraft((c) => ({ ...c, repeatInterval: v }))} placeholder="1" type="number" value={draft.repeatInterval} />
                 </div>
               ) : null}
-              {draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom" ? (
-                <div className="flex flex-wrap gap-2">
-                  {repeatWeekdayOptions.map((option) => {
-                    const selected = draft.repeatDaysOfWeek.includes(option.value);
-                    return (
-                      <Pill key={option.value} onClick={() => setDraft((c) => ({ ...c, repeatDaysOfWeek: selected ? c.repeatDaysOfWeek.filter((v) => v !== option.value) : [...c.repeatDaysOfWeek, option.value] }))} selected={selected}>
-                        {option.label}
-                      </Pill>
-                    );
-                  })}
-                </div>
-              ) : null}
-              {draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom" ? (
-                <div className="sm:max-w-[10rem]">
-                  <LabeledInput label="Day of month" onChange={(v) => setDraft((c) => ({ ...c, repeatDayOfMonth: v }))} placeholder="15" type="number" value={draft.repeatDayOfMonth} />
-                </div>
-              ) : null}
+              <CompactRepeatCadenceControls
+                activeToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                dayInputProps={{
+                  inputMode: "numeric",
+                  max: 31,
+                  min: 1,
+                  onChange: (event) => setDraft((current) => ({ ...current, repeatDayOfMonth: event.target.value.replace(/[^\d]/g, "").slice(0, 2) })),
+                  type: "text",
+                  value: draft.repeatDayOfMonth,
+                }}
+                inactiveToneClassName="border-[#e5e0f5] bg-white text-[#5a607a] dark:border-white/15 dark:bg-white/[0.04] dark:text-white/70"
+                intervalInputProps={{
+                  inputMode: "numeric",
+                  min: 1,
+                  onChange: (event) => setDraft((current) => ({ ...current, repeatInterval: event.target.value.replace(/[^\d]/g, "") })),
+                  type: "text",
+                  value: draft.repeatInterval,
+                }}
+                monthlyMode={draft.repeatMonthlyMode}
+                monthlyModeOptions={REPEAT_MONTHLY_MODE_OPTIONS}
+                monthlyOrdinal={draft.repeatMonthlyOrdinal}
+                monthlyOrdinalOptions={REPEAT_MONTHLY_ORDINAL_OPTIONS}
+                monthlyWeekday={draft.repeatMonthlyWeekday}
+                onMonthlyModeClick={(value) => setDraft((current) => ({
+                  ...current,
+                  repeatMonthlyMode: value,
+                  repeatMonthlyOrdinal: value === "ordinal_weekday" ? (current.repeatMonthlyOrdinal ?? "first") : null,
+                  repeatMonthlyWeekday: value === "ordinal_weekday" ? (current.repeatMonthlyWeekday ?? 1) : null,
+                }))}
+                onMonthlyOrdinalClick={(value) => setDraft((current) => ({
+                  ...current,
+                  repeatMonthlyMode: "ordinal_weekday",
+                  repeatMonthlyOrdinal: value,
+                  repeatMonthlyWeekday: current.repeatMonthlyWeekday ?? 1,
+                }))}
+                onMonthlyWeekdayClick={(value) => setDraft((current) => ({
+                  ...current,
+                  repeatMonthlyMode: "ordinal_weekday",
+                  repeatMonthlyOrdinal: current.repeatMonthlyOrdinal ?? "first",
+                  repeatMonthlyWeekday: value,
+                }))}
+                onRepeatUnitClick={(repeatUnit) => setDraft((current) => ({ ...current, repeatFrequency: repeatUnit }))}
+                onWeekdayClick={(weekday) => setDraft((current) => ({
+                  ...current,
+                  repeatDaysOfWeek: current.repeatDaysOfWeek.includes(weekday)
+                    ? current.repeatDaysOfWeek.filter((entry) => entry !== weekday)
+                    : [...current.repeatDaysOfWeek, weekday].sort((left, right) => left - right),
+                }))}
+                repeat={draft.repeatFrequency}
+                repeatDaysOfWeek={draft.repeatDaysOfWeek}
+                repeatUnits={[
+                  { label: "Days", value: "daily" },
+                  { label: "Weeks", value: "weekly" },
+                  { label: "Months", value: "monthly" },
+                ]}
+                showInterval={draft.repeatFrequency !== "daily_until_complete"}
+                showMonthDay={(draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom") && draft.repeatMonthlyMode !== "ordinal_weekday"}
+                showMonthlyMode={draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom"}
+                showMonthlyOrdinals={(draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom") && draft.repeatMonthlyMode === "ordinal_weekday"}
+                showMonthlyWeekdays={(draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom") && draft.repeatMonthlyMode === "ordinal_weekday"}
+                showWeekdays={draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom"}
+                weekdayOptions={(draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom") && draft.repeatMonthlyMode === "ordinal_weekday"
+                  ? repeatMonthlyWeekdayOptions
+                  : repeatWeekdayOptions}
+              />
             </div>
           ) : (
             <p className="text-sm text-[#7d88a1] dark:text-white/50">Set repeat to daily, weekly, monthly, or custom if this task should come back automatically.</p>

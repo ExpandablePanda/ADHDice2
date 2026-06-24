@@ -1,5 +1,5 @@
 import { formatDateKey, shiftDateKey } from "@/lib/task-grid-layout";
-import type { Task, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 
 type ResolveRecurringLiveStatusOptions = {
   currentDayKey: string;
@@ -9,7 +9,95 @@ type ResolveRecurringLiveStatusOptions = {
   timezone: string;
 };
 
-const REPEAT_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+export const REPEAT_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+export const REPEAT_WEEKDAY_FULL_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
+export const WEEKDAYS_REPEAT_DAYS = [1, 2, 3, 4, 5] as const;
+export const REPEAT_MONTHLY_MODE_OPTIONS: Array<{ label: string; value: TaskRepeatMonthlyMode }> = [
+  { label: "Day of month", value: "day_of_month" },
+  { label: "Ordinal weekday", value: "ordinal_weekday" },
+];
+export const REPEAT_MONTHLY_ORDINAL_OPTIONS: Array<{ label: string; value: TaskRepeatMonthlyOrdinal }> = [
+  { label: "First", value: "first" },
+  { label: "Second", value: "second" },
+  { label: "Third", value: "third" },
+  { label: "Fourth", value: "fourth" },
+  { label: "Last", value: "last" },
+];
+const MONTHLY_ORDINAL_OFFSETS: Record<Exclude<TaskRepeatMonthlyOrdinal, "last">, number> = {
+  first: 0,
+  second: 1,
+  third: 2,
+  fourth: 3,
+};
+
+export function formatMonthlyOrdinalLabel(ordinal: TaskRepeatMonthlyOrdinal | null | undefined) {
+  if (!ordinal) {
+    return null;
+  }
+  return REPEAT_MONTHLY_ORDINAL_OPTIONS.find((option) => option.value === ordinal)?.label ?? null;
+}
+
+export function formatWeekdayLongLabel(weekday: number | null | undefined) {
+  if (weekday === null || weekday === undefined) {
+    return null;
+  }
+  return REPEAT_WEEKDAY_FULL_LABELS[weekday] ?? null;
+}
+
+export function isOrdinalMonthlyRepeatTask(task: Pick<Task, "repeat_monthly_mode" | "repeat_monthly_ordinal" | "repeat_monthly_weekday">) {
+  return task.repeat_monthly_mode === "ordinal_weekday"
+    && task.repeat_monthly_ordinal !== null
+    && task.repeat_monthly_weekday !== null;
+}
+
+function getMonthlyOrdinalOccurrenceDate(year: number, monthIndex: number, ordinal: TaskRepeatMonthlyOrdinal, weekday: number) {
+  if (ordinal === "last") {
+    const date = new Date(year, monthIndex + 1, 0);
+    const daysBack = (date.getDay() - weekday + 7) % 7;
+    date.setDate(date.getDate() - daysBack);
+    return date;
+  }
+
+  const date = new Date(year, monthIndex, 1);
+  const daysForward = (weekday - date.getDay() + 7) % 7;
+  date.setDate(1 + daysForward + (MONTHLY_ORDINAL_OFFSETS[ordinal] * 7));
+  return date;
+}
+
+function getMonthlyOccurrenceDate(task: Pick<Task, "due_on" | "repeat_day_of_month" | "repeat_monthly_mode" | "repeat_monthly_ordinal" | "repeat_monthly_weekday">, year: number, monthIndex: number, fallbackDateKey: string) {
+  if (isOrdinalMonthlyRepeatTask(task)) {
+    return getMonthlyOrdinalOccurrenceDate(
+      year,
+      monthIndex,
+      task.repeat_monthly_ordinal,
+      task.repeat_monthly_weekday,
+    );
+  }
+
+  const fallbackDate = new Date(`${fallbackDateKey}T12:00:00`);
+  const maxDay = new Date(year, monthIndex + 1, 0).getDate();
+  const targetDay = task.repeat_day_of_month ?? new Date(`${task.due_on ?? fallbackDateKey}T12:00:00`).getDate();
+  return new Date(year, monthIndex, Math.min(targetDay, maxDay));
+}
+
+export function getMonthlyOccurrenceDateKey(
+  task: Pick<Task, "due_on" | "repeat_day_of_month" | "repeat_monthly_mode" | "repeat_monthly_ordinal" | "repeat_monthly_weekday">,
+  dateKey: string,
+) {
+  const date = new Date(`${dateKey}T12:00:00`);
+  return formatDateKey(getMonthlyOccurrenceDate(task, date.getFullYear(), date.getMonth(), dateKey));
+}
+
+function formatOrdinalMonthlySummary(task: Pick<Task, "repeat_interval" | "repeat_monthly_ordinal" | "repeat_monthly_weekday">) {
+  const ordinalLabel = formatMonthlyOrdinalLabel(task.repeat_monthly_ordinal);
+  const weekdayLabel = formatWeekdayLongLabel(task.repeat_monthly_weekday);
+  if (!ordinalLabel || !weekdayLabel) {
+    return null;
+  }
+  return task.repeat_interval > 1
+    ? `${ordinalLabel} ${weekdayLabel} every ${task.repeat_interval} months`
+    : `${ordinalLabel} ${weekdayLabel} monthly`;
+}
 
 export function isDailyUntilCompleteRepeatFrequency(repeatFrequency: Task["repeat_frequency"]) {
   return repeatFrequency === "daily_until_complete";
@@ -48,10 +136,9 @@ export function calcNextDueDateFromDate(task: Task, referenceDateKey: string): s
   }
 
   if (task.repeat_frequency === "monthly") {
-    const targetDay = task.repeat_day_of_month ?? base.getDate();
     base.setMonth(base.getMonth() + interval);
-    const maxDay = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
-    base.setDate(Math.min(targetDay, maxDay));
+    const occurrenceDate = getMonthlyOccurrenceDate(task, base.getFullYear(), base.getMonth(), referenceDateKey);
+    base.setDate(occurrenceDate.getDate());
     return formatDateKey(base);
   }
 
@@ -140,6 +227,14 @@ export function formatRepeatSummary(task: Task) {
   }
 
   if (task.repeat_frequency === "weekly") {
+    const isWeekdaysPreset = isWeekdaysRepeatSelection(
+      task.repeat_frequency,
+      task.repeat_days_of_week,
+      task.repeat_interval,
+    );
+    if (isWeekdaysPreset) {
+      return "Weekdays";
+    }
     const weekdayLabels = (task.repeat_days_of_week ?? [])
       .map((day) => REPEAT_WEEKDAY_LABELS[day] ?? null)
       .filter((value): value is (typeof REPEAT_WEEKDAY_LABELS)[number] => value !== null);
@@ -150,6 +245,9 @@ export function formatRepeatSummary(task: Task) {
   }
 
   if (task.repeat_frequency === "monthly") {
+    if (isOrdinalMonthlyRepeatTask(task)) {
+      return formatOrdinalMonthlySummary(task) ?? "Monthly";
+    }
     const daySummary = task.repeat_day_of_month ? ` on ${task.repeat_day_of_month}` : "";
     return task.repeat_interval > 1
       ? `Every ${task.repeat_interval} months${daySummary}`
@@ -157,6 +255,62 @@ export function formatRepeatSummary(task: Task) {
   }
 
   return "Custom repeat";
+}
+
+export function isWeekdaysRepeatSelection(
+  repeatFrequency: string | null | undefined,
+  repeatDaysOfWeek: number[] | null | undefined,
+  repeatInterval: number | null | undefined,
+) {
+  const normalizedDays = repeatDaysOfWeek ?? [];
+  return repeatFrequency === "weekly"
+    && Math.max(1, repeatInterval ?? 1) === 1
+    && normalizedDays.length === WEEKDAYS_REPEAT_DAYS.length
+    && WEEKDAYS_REPEAT_DAYS.every((day, index) => normalizedDays[index] === day);
+}
+
+export function formatRepeatFrequencyLabel(
+  repeatFrequency: string | null | undefined,
+  repeatInterval: number | null | undefined,
+  repeatDaysOfWeek?: number[] | null,
+  repeatMonthlyMode?: TaskRepeatMonthlyMode | null,
+  repeatMonthlyOrdinal?: TaskRepeatMonthlyOrdinal | null,
+  repeatMonthlyWeekday?: number | null,
+) {
+  if (repeatFrequency === "none") return "No Repeat";
+  if (repeatFrequency === "daily") {
+    return Math.max(1, repeatInterval ?? 1) > 1 ? `Daily · ${Math.max(1, repeatInterval ?? 1)}` : "Daily";
+  }
+  if (repeatFrequency === "daily_until_complete") {
+    return "Daily Until Complete";
+  }
+  if (repeatFrequency === "weekly") {
+    if (isWeekdaysRepeatSelection(repeatFrequency, repeatDaysOfWeek, repeatInterval)) {
+      return "Weekdays";
+    }
+    return Math.max(1, repeatInterval ?? 1) > 1 ? `Weekly · ${Math.max(1, repeatInterval ?? 1)}` : "Weekly";
+  }
+  if (repeatFrequency === "monthly") {
+    if (
+      repeatMonthlyMode === "ordinal_weekday"
+      && repeatMonthlyOrdinal
+      && repeatMonthlyWeekday !== null
+      && repeatMonthlyWeekday !== undefined
+    ) {
+      const ordinalLabel = formatMonthlyOrdinalLabel(repeatMonthlyOrdinal);
+      const weekdayLabel = formatWeekdayLongLabel(repeatMonthlyWeekday);
+      if (ordinalLabel && weekdayLabel) {
+        return Math.max(1, repeatInterval ?? 1) > 1
+          ? `${ordinalLabel} ${weekdayLabel} every ${Math.max(1, repeatInterval ?? 1)} months`
+          : `${ordinalLabel} ${weekdayLabel} monthly`;
+      }
+    }
+    return Math.max(1, repeatInterval ?? 1) > 1 ? `Monthly · ${Math.max(1, repeatInterval ?? 1)}` : "Monthly";
+  }
+  if (repeatFrequency === "custom") {
+    return "Custom Cadence";
+  }
+  return repeatFrequency ?? "No Repeat";
 }
 
 function compareDateKeys(left: string, right: string) {

@@ -1,5 +1,6 @@
 "use client";
 
+import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
 import type { ButtonHTMLAttributes, InputHTMLAttributes } from "react";
 
 function joinClasses(...values: Array<string | false | null | undefined>) {
@@ -34,6 +35,14 @@ type CompactRepeatCadenceControlsProps<TRepeat extends string> = {
   dayInputProps: InputHTMLAttributes<HTMLInputElement>;
   inactiveToneClassName: string;
   intervalInputProps: InputHTMLAttributes<HTMLInputElement>;
+  monthlyMode?: TaskRepeatMonthlyMode;
+  monthlyModeOptions?: Array<{ label: string; value: TaskRepeatMonthlyMode }>;
+  monthlyOrdinal?: TaskRepeatMonthlyOrdinal | null;
+  monthlyOrdinalOptions?: Array<{ label: string; value: TaskRepeatMonthlyOrdinal }>;
+  monthlyWeekday?: number | null;
+  onMonthlyModeClick?: (mode: TaskRepeatMonthlyMode) => void;
+  onMonthlyOrdinalClick?: (ordinal: TaskRepeatMonthlyOrdinal) => void;
+  onMonthlyWeekdayClick?: (weekday: number) => void;
   onRepeatUnitClick: (repeat: TRepeat) => void;
   onWeekdayClick: (weekday: number) => void;
   repeat: TRepeat;
@@ -41,6 +50,9 @@ type CompactRepeatCadenceControlsProps<TRepeat extends string> = {
   repeatUnits: Array<{ label: string; value: TRepeat }>;
   showInterval: boolean;
   showMonthDay: boolean;
+  showMonthlyMode?: boolean;
+  showMonthlyOrdinals?: boolean;
+  showMonthlyWeekdays?: boolean;
   showWeekdays: boolean;
   weekdayOptions: Array<{ label: string; value: number }>;
 };
@@ -79,6 +91,14 @@ export function CompactRepeatCadenceControls<TRepeat extends string>({
   dayInputProps,
   inactiveToneClassName,
   intervalInputProps,
+  monthlyMode,
+  monthlyModeOptions,
+  monthlyOrdinal,
+  monthlyOrdinalOptions,
+  monthlyWeekday,
+  onMonthlyModeClick,
+  onMonthlyOrdinalClick,
+  onMonthlyWeekdayClick,
   onRepeatUnitClick,
   onWeekdayClick,
   repeat,
@@ -86,6 +106,9 @@ export function CompactRepeatCadenceControls<TRepeat extends string>({
   repeatUnits,
   showInterval,
   showMonthDay,
+  showMonthlyMode,
+  showMonthlyOrdinals,
+  showMonthlyWeekdays,
   showWeekdays,
   weekdayOptions,
 }: CompactRepeatCadenceControlsProps<TRepeat>) {
@@ -122,6 +145,19 @@ export function CompactRepeatCadenceControls<TRepeat extends string>({
           ))}
         </div>
       ) : null}
+      {showMonthlyMode && monthlyModeOptions?.length ? (
+        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+          {monthlyModeOptions.map((option) => (
+            <TaskTableChipButton
+              key={`repeat-monthly-mode-${option.value}`}
+              onClick={() => onMonthlyModeClick?.(option.value)}
+              toneClassName={monthlyMode === option.value ? activeToneClassName : inactiveToneClassName}
+            >
+              {option.label}
+            </TaskTableChipButton>
+          ))}
+        </div>
+      ) : null}
       {showMonthDay ? (
         <div className="flex flex-nowrap items-center gap-1.5">
           <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>Day</span>
@@ -129,6 +165,32 @@ export function CompactRepeatCadenceControls<TRepeat extends string>({
             {...dayInputProps}
             className={joinClasses(TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS, dayInputProps.className)}
           />
+        </div>
+      ) : null}
+      {showMonthlyOrdinals && monthlyOrdinalOptions?.length ? (
+        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+          {monthlyOrdinalOptions.map((option) => (
+            <TaskTableChipButton
+              key={`repeat-monthly-ordinal-${option.value}`}
+              onClick={() => onMonthlyOrdinalClick?.(option.value)}
+              toneClassName={monthlyOrdinal === option.value ? activeToneClassName : inactiveToneClassName}
+            >
+              {option.label}
+            </TaskTableChipButton>
+          ))}
+        </div>
+      ) : null}
+      {showMonthlyWeekdays ? (
+        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+          {weekdayOptions.map((option) => (
+            <TaskTableChipButton
+              key={`repeat-monthly-weekday-${option.value}`}
+              onClick={() => onMonthlyWeekdayClick?.(option.value)}
+              toneClassName={monthlyWeekday === option.value ? activeToneClassName : inactiveToneClassName}
+            >
+              {option.label}
+            </TaskTableChipButton>
+          ))}
         </div>
       ) : null}
     </div>

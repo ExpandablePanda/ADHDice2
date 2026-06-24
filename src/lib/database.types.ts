@@ -12,6 +12,8 @@ export type TaskStatus =
 export type TaskPriority = "low" | "normal" | "high";
 export type TaskEnergy = "none" | "low" | "medium" | "high";
 export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
+export type TaskRepeatMonthlyMode = "day_of_month" | "ordinal_weekday";
+export type TaskRepeatMonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
 export type TaskSubtaskStatus =
   | "pending"
   | "in_progress"
@@ -165,6 +167,9 @@ export type Task = {
   repeat_interval: number;
   repeat_days_of_week: number[];
   repeat_day_of_month: number | null;
+  repeat_monthly_mode: TaskRepeatMonthlyMode;
+  repeat_monthly_ordinal: TaskRepeatMonthlyOrdinal | null;
+  repeat_monthly_weekday: number | null;
   sort_order: number;
   completed_at: string | null;
   trashed_at: string | null;
@@ -198,6 +203,9 @@ export type TaskInsert = {
   repeat_interval?: number;
   repeat_days_of_week?: number[];
   repeat_day_of_month?: number | null;
+  repeat_monthly_mode?: TaskRepeatMonthlyMode;
+  repeat_monthly_ordinal?: TaskRepeatMonthlyOrdinal | null;
+  repeat_monthly_weekday?: number | null;
   sort_order?: number;
   completed_at?: string | null;
   trashed_at?: string | null;
@@ -229,6 +237,9 @@ export type TaskUpdate = Partial<
     | "repeat_interval"
     | "repeat_days_of_week"
     | "repeat_day_of_month"
+    | "repeat_monthly_mode"
+    | "repeat_monthly_ordinal"
+    | "repeat_monthly_weekday"
     | "sort_order"
     | "completed_at"
     | "trashed_at"
@@ -1449,6 +1460,8 @@ export type Database = {
       adhdice_clean_task_energy: TaskEnergy;
       adhdice_clean_task_subtask_status: TaskSubtaskStatus;
       adhdice_clean_task_repeat_frequency: TaskRepeatFrequency;
+      adhdice_clean_task_repeat_monthly_mode: TaskRepeatMonthlyMode;
+      adhdice_clean_task_repeat_monthly_ordinal: TaskRepeatMonthlyOrdinal;
       adhdice_clean_focus_source: "timer" | "manual" | "import";
     };
     CompositeTypes: Record<string, never>;

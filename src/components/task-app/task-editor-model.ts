@@ -4,6 +4,8 @@ import type {
   TaskInsert,
   TaskPriority,
   TaskRepeatFrequency,
+  TaskRepeatMonthlyMode,
+  TaskRepeatMonthlyOrdinal,
   TaskStatus,
   TaskSubtask as DbTaskSubtask,
   TaskSubtaskStatus,
@@ -40,6 +42,9 @@ export type TaskEditorDraft = {
   repeatInterval: string;
   repeatDaysOfWeek: number[];
   repeatDayOfMonth: string;
+  repeatMonthlyMode: TaskRepeatMonthlyMode;
+  repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
+  repeatMonthlyWeekday: number | null;
   subtasksAutoReset: boolean;
   subtasks: TaskSubtaskDraft[];
 };
@@ -103,6 +108,9 @@ export function createTaskEditorDraft(task: Task | null, focusToday: boolean, su
     repeatInterval: String(task?.repeat_interval ?? 1),
     repeatDaysOfWeek: task?.repeat_days_of_week ?? [],
     repeatDayOfMonth: task?.repeat_day_of_month ? String(task.repeat_day_of_month) : "",
+    repeatMonthlyMode: task?.repeat_monthly_mode ?? "day_of_month",
+    repeatMonthlyOrdinal: task?.repeat_monthly_ordinal ?? null,
+    repeatMonthlyWeekday: task?.repeat_monthly_weekday ?? null,
     subtasks: buildTree(null),
   };
 }
@@ -120,6 +128,7 @@ export function applyTaskEditorDraftOverrides(
     ...overrides,
     linkedNoteIds: overrides.linkedNoteIds ?? draft.linkedNoteIds,
     repeatDaysOfWeek: overrides.repeatDaysOfWeek ?? draft.repeatDaysOfWeek,
+    repeatMonthlyOrdinal: overrides.repeatMonthlyOrdinal ?? draft.repeatMonthlyOrdinal,
     subtasks: overrides.subtasks ?? draft.subtasks,
     tags: overrides.tags ?? draft.tags,
   };

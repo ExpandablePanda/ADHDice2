@@ -28,13 +28,19 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import type { TaskActualTimeEntry, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import type { TaskActualTimeEntry, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
 import { getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
 import { shouldOptimisticallyPatchTaskStatus } from "@/lib/task-complete";
+import {
+  formatRepeatFrequencyLabel,
+  REPEAT_MONTHLY_MODE_OPTIONS,
+  REPEAT_MONTHLY_ORDINAL_OPTIONS,
+  isWeekdaysRepeatSelection,
+} from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
@@ -239,11 +245,14 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     priorities: row.priorities,
     currentStreak: row.currentStreak,
     missedStreak: row.missedStreak,
-    repeat: row.repeat,
-    repeatInterval: row.repeatInterval,
-    repeatDaysOfWeek: row.repeatDaysOfWeek,
-    repeatDayOfMonth: row.repeatDayOfMonth,
-    status: row.status,
+  repeat: row.repeat,
+  repeatInterval: row.repeatInterval,
+  repeatDaysOfWeek: row.repeatDaysOfWeek,
+  repeatDayOfMonth: row.repeatDayOfMonth,
+  repeatMonthlyMode: row.repeatMonthlyMode,
+  repeatMonthlyOrdinal: row.repeatMonthlyOrdinal,
+  repeatMonthlyWeekday: row.repeatMonthlyWeekday,
+  status: row.status,
     subtasks: buildPrototypeSubtaskSignature(row.subtasks),
     tags: row.tags,
     title: row.title,
@@ -257,6 +266,9 @@ function clonePrototypeTaskRow(task: PrototypeTaskRow): PrototypeTaskRow {
     lists: [...task.lists],
     priorities: [...task.priorities],
     repeatDaysOfWeek: [...task.repeatDaysOfWeek],
+    repeatMonthlyMode: task.repeatMonthlyMode,
+    repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
+    repeatMonthlyWeekday: task.repeatMonthlyWeekday,
     subtasks: task.subtasks.map(clonePrototypeSubtask),
     tags: [...task.tags],
   };
@@ -721,6 +733,9 @@ export type PrototypeTaskRow = {
   repeatInterval: number;
   repeatDaysOfWeek: number[];
   repeatDayOfMonth: number | null;
+  repeatMonthlyMode: TaskRepeatMonthlyMode;
+  repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
+  repeatMonthlyWeekday: number | null;
   subtasksAutoReset: boolean;
   status: TaskStatus;
   subtasks: PrototypeTaskSubtask[];
@@ -815,7 +830,7 @@ type TaskManagementTableV2Props = {
   onTaskPriorityChange?: (taskId: string, priorities: TaskPriority[]) => void;
   onRowClick?: (taskId: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
-  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">) => void;
+  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
   onTaskStatusChange?: (taskId: string, status: TaskStatus) => void;
   onTaskSubtaskAdd?: (taskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskAddChild?: (subtaskId: string) => string | null | Promise<string | null>;
@@ -868,6 +883,9 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatInterval: 1,
     repeatDaysOfWeek: [],
     repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
     subtasksAutoReset: false,
     status: "pending",
     subtasks: [
@@ -904,6 +922,9 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatInterval: 1,
     repeatDaysOfWeek: [1],
     repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
     subtasksAutoReset: false,
     status: "in_progress",
     subtasks: [
@@ -947,6 +968,9 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatInterval: 2,
     repeatDaysOfWeek: [1, 3, 5],
     repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
     subtasksAutoReset: false,
     status: "pending",
     subtasks: [],
@@ -1055,6 +1079,7 @@ const REPEAT_OPTIONS: Array<{ label: string; value: TaskRepeat }> = [
   { label: "Monthly", value: "monthly" },
   { label: "Custom Cadence", value: "custom" },
 ];
+const WEEKDAYS_REPEAT_DAYS = [1, 2, 3, 4, 5] as const;
 
 const REPEAT_WEEKDAY_OPTIONS = [
   { label: "Sun", value: 0 },
@@ -1065,6 +1090,16 @@ const REPEAT_WEEKDAY_OPTIONS = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ];
+const REPEAT_MONTHLY_WEEKDAY_OPTIONS = [
+  { label: "Sunday", value: 0 },
+  { label: "Monday", value: 1 },
+  { label: "Tuesday", value: 2 },
+  { label: "Wednesday", value: 3 },
+  { label: "Thursday", value: 4 },
+  { label: "Friday", value: 5 },
+  { label: "Saturday", value: 6 },
+];
+
 const COMPACT_REPEAT_UNITS: Array<{ label: string; value: TaskRepeat }> = [
   { label: "Days", value: "daily" },
   { label: "Weeks", value: "weekly" },
@@ -1316,11 +1351,14 @@ function formatChildTaskPreviewEstimate(minutes: number | null) {
 }
 
 function formatChildTaskPreviewRepeat(item: ChildTaskPreview) {
-  const repeatLabel = REPEAT_OPTIONS.find((option) => option.value === item.repeat)?.label ?? item.repeat;
-  if (item.repeat === "none") {
-    return repeatLabel;
-  }
-  return item.repeatInterval > 1 ? `${repeatLabel} · ${item.repeatInterval}` : repeatLabel;
+  return formatRepeatFrequencyLabel(
+    item.repeat,
+    item.repeatInterval,
+    item.repeatDaysOfWeek,
+    item.repeatMonthlyMode,
+    item.repeatMonthlyOrdinal,
+    item.repeatMonthlyWeekday,
+  );
 }
 
 function formatInvalidChildLinkCount(count: number) {
@@ -3121,7 +3159,7 @@ export function TaskManagementTableV2({
   function setTaskRepeat(
     taskId: string,
     repeat: TaskRepeat,
-    cadencePatch: Partial<Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval">> = {},
+    cadencePatch: Partial<Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">> = {},
   ) {
     const currentTask = getTaskById(taskId);
     if (!currentTask) {
@@ -3138,6 +3176,15 @@ export function TaskManagementTableV2({
       repeatInterval: repeat === "daily_until_complete"
         ? 1
         : cadencePatch.repeatInterval ?? currentTask.repeatInterval,
+      repeatMonthlyMode: repeat === "monthly"
+        ? cadencePatch.repeatMonthlyMode ?? currentTask.repeatMonthlyMode
+        : "day_of_month" as const,
+      repeatMonthlyOrdinal: repeat === "monthly" && (cadencePatch.repeatMonthlyMode ?? currentTask.repeatMonthlyMode) === "ordinal_weekday"
+        ? cadencePatch.repeatMonthlyOrdinal ?? currentTask.repeatMonthlyOrdinal
+        : null,
+      repeatMonthlyWeekday: repeat === "monthly" && (cadencePatch.repeatMonthlyMode ?? currentTask.repeatMonthlyMode) === "ordinal_weekday"
+        ? cadencePatch.repeatMonthlyWeekday ?? currentTask.repeatMonthlyWeekday
+        : null,
     };
     patchTasks(targetTaskIds, (task) => {
       return {
@@ -3169,6 +3216,30 @@ export function TaskManagementTableV2({
       ? task.repeatDaysOfWeek.filter((value) => value !== weekday)
       : [...task.repeatDaysOfWeek, weekday].sort((left, right) => left - right);
     setTaskRepeat(task.id, task.repeat, { repeatDaysOfWeek });
+  }
+
+  function setTaskRepeatMonthlyMode(task: PrototypeTaskRow, repeatMonthlyMode: TaskRepeatMonthlyMode) {
+    setTaskRepeat(task.id, "monthly", {
+      repeatMonthlyMode,
+      repeatMonthlyOrdinal: repeatMonthlyMode === "ordinal_weekday" ? (task.repeatMonthlyOrdinal ?? "first") : null,
+      repeatMonthlyWeekday: repeatMonthlyMode === "ordinal_weekday" ? (task.repeatMonthlyWeekday ?? 1) : null,
+    });
+  }
+
+  function setTaskRepeatMonthlyOrdinal(task: PrototypeTaskRow, repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal) {
+    setTaskRepeat(task.id, "monthly", {
+      repeatMonthlyMode: "ordinal_weekday",
+      repeatMonthlyOrdinal,
+      repeatMonthlyWeekday: task.repeatMonthlyWeekday ?? 1,
+    });
+  }
+
+  function setTaskRepeatMonthlyWeekday(task: PrototypeTaskRow, repeatMonthlyWeekday: number) {
+    setTaskRepeat(task.id, "monthly", {
+      repeatMonthlyMode: "ordinal_weekday",
+      repeatMonthlyOrdinal: task.repeatMonthlyOrdinal ?? "first",
+      repeatMonthlyWeekday,
+    });
   }
 
   function getRunningTimer(taskId: string) {
@@ -3686,6 +3757,9 @@ export function TaskManagementTableV2({
       repeatDayOfMonth: item.repeatDayOfMonth,
       repeatDaysOfWeek: [...item.repeatDaysOfWeek],
       repeatInterval: item.repeatInterval,
+      repeatMonthlyMode: item.repeatMonthlyMode,
+      repeatMonthlyOrdinal: item.repeatMonthlyOrdinal,
+      repeatMonthlyWeekday: item.repeatMonthlyWeekday,
       status: item.status,
       subtasks: [],
       subtasksAutoReset: false,
@@ -4025,6 +4099,18 @@ export function TaskManagementTableV2({
             <span className={inlineAccordionChipContentClass(effectiveRepeat === option.value ? repeatTone(option.value) : INACTIVE_CHIP_CLASS)}>{option.label}</span>
           </button>
         )),
+        <button
+          className={inlineAccordionButtonClass()}
+          key="repeat-option-weekdays"
+          onClick={() => {
+            setTaskRepeat(task.id, "weekly", { repeatDaysOfWeek: [...WEEKDAYS_REPEAT_DAYS], repeatInterval: 1 });
+            setRepeatIntervalDrafts((current) => ({ ...current, [task.id]: "1" }));
+            closeInspector();
+          }}
+          type="button"
+        >
+          <span className={inlineAccordionChipContentClass(isWeekdaysRepeatSelection(effectiveRepeat, task.repeatDaysOfWeek, task.repeatInterval) ? repeatTone("weekly") : INACTIVE_CHIP_CLASS)}>Weekdays</span>
+        </button>,
         ...(effectiveRepeat !== "none"
           ? [(
             <div className={inlineAccordionInputCardClass("w-fit max-w-full")} key="repeat-cadence">
@@ -4047,15 +4133,26 @@ export function TaskManagementTableV2({
                   type: "text",
                   value: repeatIntervalDrafts[task.id] ?? String(task.repeatInterval),
                 }}
+                monthlyMode={task.repeatMonthlyMode}
+                monthlyModeOptions={REPEAT_MONTHLY_MODE_OPTIONS}
+                monthlyOrdinal={task.repeatMonthlyOrdinal}
+                monthlyOrdinalOptions={REPEAT_MONTHLY_ORDINAL_OPTIONS}
+                monthlyWeekday={task.repeatMonthlyWeekday}
+                onMonthlyModeClick={(mode) => setTaskRepeatMonthlyMode(cadenceTask, mode)}
+                onMonthlyOrdinalClick={(ordinal) => setTaskRepeatMonthlyOrdinal(cadenceTask, ordinal)}
+                onMonthlyWeekdayClick={(weekday) => setTaskRepeatMonthlyWeekday(cadenceTask, weekday)}
                 onRepeatUnitClick={(repeatUnit) => setTaskRepeat(task.id, repeatUnit)}
                 onWeekdayClick={(weekday) => toggleTaskRepeatWeekday(cadenceTask, weekday)}
                 repeat={effectiveRepeat}
                 repeatDaysOfWeek={task.repeatDaysOfWeek}
                 repeatUnits={COMPACT_REPEAT_UNITS}
                 showInterval={effectiveRepeat !== "daily_until_complete"}
-                showMonthDay={effectiveRepeat === "monthly" || effectiveRepeat === "custom"}
+                showMonthDay={(effectiveRepeat === "monthly" || effectiveRepeat === "custom") && task.repeatMonthlyMode !== "ordinal_weekday"}
+                showMonthlyMode={effectiveRepeat === "monthly" || effectiveRepeat === "custom"}
+                showMonthlyOrdinals={(effectiveRepeat === "monthly" || effectiveRepeat === "custom") && task.repeatMonthlyMode === "ordinal_weekday"}
+                showMonthlyWeekdays={(effectiveRepeat === "monthly" || effectiveRepeat === "custom") && task.repeatMonthlyMode === "ordinal_weekday"}
                 showWeekdays={effectiveRepeat === "weekly" || effectiveRepeat === "custom"}
-                weekdayOptions={REPEAT_WEEKDAY_OPTIONS}
+                weekdayOptions={task.repeatMonthlyMode === "ordinal_weekday" ? REPEAT_MONTHLY_WEEKDAY_OPTIONS : REPEAT_WEEKDAY_OPTIONS}
               />
             </div>
           )]
@@ -5269,7 +5366,14 @@ export function TaskManagementTableV2({
         wrapMeasuredContent(
           <div>
             <span className={`${CHIP_BASE} ${repeatTone(task.repeat)}`}>
-              {REPEAT_OPTIONS.find((option) => option.value === task.repeat)?.label ?? task.repeat}
+              {formatRepeatFrequencyLabel(
+                task.repeat,
+                task.repeatInterval,
+                task.repeatDaysOfWeek,
+                task.repeatMonthlyMode,
+                task.repeatMonthlyOrdinal,
+                task.repeatMonthlyWeekday,
+              )}
             </span>
           </div>
         ),
@@ -5364,7 +5468,8 @@ export function TaskManagementTableV2({
                           className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                           onClick={(event) => {
                             event.stopPropagation();
-                            openTaskInCurrentEditor(item.id);
+                            setEditingTaskTitleId(item.id);
+                            setTitleDraft(item.id, item.title);
                           }}
                           onPointerDown={stopRowActionPointerEvent}
                           type="button"
@@ -6891,6 +6996,17 @@ export function TaskManagementTableV2({
                         (value) => setTaskRepeat(metadataTask.id, value),
                         (value, selected) => selected ? repeatTone(value) : INACTIVE_CHIP_CLASS,
                       )}
+                      <div className="mt-2">
+                        <TaskTableChipButton
+                          onClick={() => {
+                            setTaskRepeat(metadataTask.id, "weekly", { repeatDaysOfWeek: [...WEEKDAYS_REPEAT_DAYS], repeatInterval: 1 });
+                            setRepeatIntervalDrafts((current) => ({ ...current, [metadataTask.id]: "1" }));
+                          }}
+                          toneClassName={isWeekdaysRepeatSelection(metadataTask.repeat, metadataTask.repeatDaysOfWeek, metadataTask.repeatInterval) ? repeatTone("weekly") : INACTIVE_CHIP_CLASS}
+                        >
+                          Weekdays
+                        </TaskTableChipButton>
+                      </div>
                       {metadataTask.repeat !== "none" ? (
                         <div className="mt-3 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                           <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom cadence</p>
@@ -6913,15 +7029,26 @@ export function TaskManagementTableV2({
                               type: "text",
                               value: repeatIntervalDrafts[metadataTask.id] ?? String(metadataTask.repeatInterval),
                             }}
+                            monthlyMode={metadataTask.repeatMonthlyMode}
+                            monthlyModeOptions={REPEAT_MONTHLY_MODE_OPTIONS}
+                            monthlyOrdinal={metadataTask.repeatMonthlyOrdinal}
+                            monthlyOrdinalOptions={REPEAT_MONTHLY_ORDINAL_OPTIONS}
+                            monthlyWeekday={metadataTask.repeatMonthlyWeekday}
+                            onMonthlyModeClick={(mode) => setTaskRepeatMonthlyMode(metadataTask, mode)}
+                            onMonthlyOrdinalClick={(ordinal) => setTaskRepeatMonthlyOrdinal(metadataTask, ordinal)}
+                            onMonthlyWeekdayClick={(weekday) => setTaskRepeatMonthlyWeekday(metadataTask, weekday)}
                             onRepeatUnitClick={(repeatUnit) => setTaskRepeat(metadataTask.id, repeatUnit)}
                             onWeekdayClick={(weekday) => toggleTaskRepeatWeekday(metadataTask, weekday)}
                             repeat={metadataTask.repeat}
                             repeatDaysOfWeek={metadataTask.repeatDaysOfWeek}
                             repeatUnits={COMPACT_REPEAT_UNITS}
                             showInterval={metadataTask.repeat !== "daily_until_complete"}
-                            showMonthDay={metadataTask.repeat === "monthly" || metadataTask.repeat === "custom"}
+                            showMonthDay={(metadataTask.repeat === "monthly" || metadataTask.repeat === "custom") && metadataTask.repeatMonthlyMode !== "ordinal_weekday"}
+                            showMonthlyMode={metadataTask.repeat === "monthly" || metadataTask.repeat === "custom"}
+                            showMonthlyOrdinals={(metadataTask.repeat === "monthly" || metadataTask.repeat === "custom") && metadataTask.repeatMonthlyMode === "ordinal_weekday"}
+                            showMonthlyWeekdays={(metadataTask.repeat === "monthly" || metadataTask.repeat === "custom") && metadataTask.repeatMonthlyMode === "ordinal_weekday"}
                             showWeekdays={metadataTask.repeat === "weekly" || metadataTask.repeat === "custom"}
-                            weekdayOptions={REPEAT_WEEKDAY_OPTIONS}
+                            weekdayOptions={metadataTask.repeatMonthlyMode === "ordinal_weekday" ? REPEAT_MONTHLY_WEEKDAY_OPTIONS : REPEAT_WEEKDAY_OPTIONS}
                           />
                         </div>
                       ) : null}
@@ -7474,6 +7601,15 @@ export function TaskManagementTableV2({
 	                          {option.label}
 	                        </TaskTableChipButton>
 	                      ))}
+                        <TaskTableChipButton
+                          onClick={() => {
+                            setTaskRepeat(selectedTask.id, "weekly", { repeatDaysOfWeek: [...WEEKDAYS_REPEAT_DAYS], repeatInterval: 1 });
+                            setRepeatIntervalDrafts((current) => ({ ...current, [selectedTask.id]: "1" }));
+                          }}
+                          toneClassName={isWeekdaysRepeatSelection(selectedTask.repeat, selectedTask.repeatDaysOfWeek, selectedTask.repeatInterval) ? repeatTone("weekly") : INACTIVE_CHIP_CLASS}
+                        >
+                          Weekdays
+                        </TaskTableChipButton>
 	                    </div>
 	                    {selectedTask.repeat !== "none" ? (
 	                      <div className="mt-3 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
@@ -7496,15 +7632,26 @@ export function TaskManagementTableV2({
 	                            type: "text",
 	                            value: repeatIntervalDrafts[selectedTask.id] ?? String(selectedTask.repeatInterval),
 	                          }}
+                              monthlyMode={selectedTask.repeatMonthlyMode}
+                              monthlyModeOptions={REPEAT_MONTHLY_MODE_OPTIONS}
+                              monthlyOrdinal={selectedTask.repeatMonthlyOrdinal}
+                              monthlyOrdinalOptions={REPEAT_MONTHLY_ORDINAL_OPTIONS}
+                              monthlyWeekday={selectedTask.repeatMonthlyWeekday}
+                              onMonthlyModeClick={(mode) => setTaskRepeatMonthlyMode(selectedTask, mode)}
+                              onMonthlyOrdinalClick={(ordinal) => setTaskRepeatMonthlyOrdinal(selectedTask, ordinal)}
+                              onMonthlyWeekdayClick={(weekday) => setTaskRepeatMonthlyWeekday(selectedTask, weekday)}
 	                          onRepeatUnitClick={(repeatUnit) => setTaskRepeat(selectedTask.id, repeatUnit)}
 	                          onWeekdayClick={(weekday) => toggleTaskRepeatWeekday(selectedTask, weekday)}
 	                          repeat={selectedTask.repeat}
 	                          repeatDaysOfWeek={selectedTask.repeatDaysOfWeek}
 	                          repeatUnits={COMPACT_REPEAT_UNITS}
 	                          showInterval={selectedTask.repeat !== "daily_until_complete"}
-	                          showMonthDay={selectedTask.repeat === "monthly" || selectedTask.repeat === "custom"}
+	                          showMonthDay={(selectedTask.repeat === "monthly" || selectedTask.repeat === "custom") && selectedTask.repeatMonthlyMode !== "ordinal_weekday"}
+                              showMonthlyMode={selectedTask.repeat === "monthly" || selectedTask.repeat === "custom"}
+                              showMonthlyOrdinals={(selectedTask.repeat === "monthly" || selectedTask.repeat === "custom") && selectedTask.repeatMonthlyMode === "ordinal_weekday"}
+                              showMonthlyWeekdays={(selectedTask.repeat === "monthly" || selectedTask.repeat === "custom") && selectedTask.repeatMonthlyMode === "ordinal_weekday"}
 	                          showWeekdays={selectedTask.repeat === "weekly" || selectedTask.repeat === "custom"}
-	                          weekdayOptions={REPEAT_WEEKDAY_OPTIONS}
+	                          weekdayOptions={selectedTask.repeatMonthlyMode === "ordinal_weekday" ? REPEAT_MONTHLY_WEEKDAY_OPTIONS : REPEAT_WEEKDAY_OPTIONS}
 	                        />
 	                      </div>
 	                    ) : null}
