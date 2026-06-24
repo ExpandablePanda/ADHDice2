@@ -16,6 +16,7 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import type { TaskListDefinition } from "@/lib/task-lists";
+import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import { buildTaskTableRow } from "@/lib/task-table-row";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
@@ -186,6 +187,8 @@ type TasksTableSourceProps = {
     todayDateKey: string;
   };
   onRequestedOpenTaskHandled?: (taskId: string) => void;
+  taskTableLayoutPreferences?: TaskTableLayoutPreferences;
+  onTaskTableLayoutPreferencesChange?: (nextPreferences: TaskTableLayoutPreferences) => void;
 };
 
 type TasksTableAdapterProps = {
@@ -202,6 +205,7 @@ const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumn
   energy: "energy",
   estimated_time: "estimated",
   actual_time: "actual",
+  streak: "streak",
   tags: "tags",
   link: "link",
   notes: "notes",
@@ -354,6 +358,8 @@ export function TasksTableAdapter({
           visibleColumns={visibleColumns}
           activeTaskTimerIndex={tableProps.activeTaskTimerIndex}
           onRequestedOpenTaskHandled={tableProps.onRequestedOpenTaskHandled}
+          persistedLayoutPreferences={tableProps.taskTableLayoutPreferences}
+          onPersistedLayoutPreferencesChange={tableProps.onTaskTableLayoutPreferencesChange}
         />
       }
       filterRowsNode={filterRowsNode}

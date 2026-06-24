@@ -78,6 +78,7 @@ import { DailyPlanningPanel } from "./task-app/daily-planning-panel";
 import { TaskEditFlows } from "./task-app/task-edit-flows";
 import { TaskListSettingsModal } from "./task-app/task-list-settings-modal";
 import { TaskListRuleRowEditor } from "./task-app/task-list-rule-row-editor";
+import { PathsWorkspace } from "./task-app/paths-workspace";
 import { TaskRewardModal } from "./task-app/task-reward-modal";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
@@ -365,17 +366,9 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function getCollapsedHudTimerProgress(totalSeconds: number, isPaused: boolean) {
-  if (isPaused) {
-    return 1;
-  }
-  const secondsWithinMinute = totalSeconds % 60;
-  return secondsWithinMinute === 0 ? 1 : secondsWithinMinute / 60;
-}
-
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.9.11";
+const APP_VERSION = "6.10.20";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -691,6 +684,7 @@ const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   energy: "Energy",
   estimated_time: "Estimated Time",
   actual_time: "Actual Time",
+  streak: "Streak",
   tags: "Tags",
   link: "Link",
   notes: "Notes",
@@ -698,7 +692,7 @@ const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   repeat: "Repeat",
   signal: "Indicators",
 };
-const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "date_added", "due", "estimated_time", "actual_time", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
+const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "date_added", "due", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
 const TASK_KEYBOARD_SHORTCUTS: TaskKeyboardShortcut[] = [
   { action: "Search tasks", keys: ["/"] },
   { action: "New task", keys: ["N"], alternateKeys: ["A"] },
@@ -955,12 +949,14 @@ export function TaskApp() {
     setActivePage,
     setFocusedTaskIdsByDate,
     setHudUiState,
+    setTaskTableLayoutPreferences,
     setIsDailyPlanningCollapsed,
     setIsTaskFiltersOpen,
     setPendingTaskEditorRestore,
     setTaskGridLayout,
     setTaskRouting,
     setTaskUiState,
+    taskTableLayoutPreferences,
     taskGridLayout,
     taskRouting,
     taskUiState,
@@ -4037,7 +4033,7 @@ export function TaskApp() {
             <HudLoadingShell />
           ) : (
             <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
-              <HudRuntimeClock active={runningTaskTimers.length > 0 || (focusAlarmEnabled && focusAlarmNextRingAt !== null)}>
+              <HudRuntimeClock active={runningTaskTimers.length > 0 || Object.values(activeSessions).some((session) => session.isRunning) || (focusAlarmEnabled && focusAlarmNextRingAt !== null)}>
                 {(hudNow) => {
                   const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
                   const notificationInboxItems = [
@@ -4211,7 +4207,10 @@ export function TaskApp() {
                 taskHistoryFlow={taskHistoryFlow}
               />
             )}
+            onSurfaceChange={(surface) => setTaskUiState((prev) => ({ ...prev, tasksSurface: surface }))}
             operationsHeaderProps={taskOperationsHeaderProps}
+            pathsWorkspacePanel={<PathsWorkspace />}
+            surface={taskUiState.tasksSurface}
             view={duplicateTitleModeActive ? "table" : taskUiState.view}
             tableViewPanel={(
               duplicateTitleModeActive ? (
@@ -4364,6 +4363,8 @@ export function TaskApp() {
                     taskHistoryByTaskId,
                     todayDateKey: todayKey,
                   },
+                  taskTableLayoutPreferences,
+                  onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
                 }}
                 filterRowsNode={taskFilterRowsNode}
                 panelProps={listPanelProps}
@@ -4508,6 +4509,8 @@ export function TaskApp() {
                     taskHistoryByTaskId,
                     todayDateKey: todayKey,
                   },
+                  taskTableLayoutPreferences,
+                  onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
                 }}
               />
             )}
@@ -5643,92 +5646,48 @@ function CommandCenterHeader({
               </span>
             </button>
             {collapsedHudFocusTimer ? (
-              <div className="relative shrink-0">
-                <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 36">
-                  <rect fill="none" height="34" rx="17" stroke="rgba(111,87,246,0.14)" strokeWidth="1.5" width="98" x="1" y="1" />
-                  <rect
-                    fill="none"
-                    height="34"
-                    pathLength="100"
-                    rx="17"
-                    stroke="#6f57f6"
-                    strokeDasharray="100"
-                    strokeDashoffset={100 * (1 - getCollapsedHudTimerProgress(collapsedHudFocusTimer.seconds, collapsedHudFocusTimer.isPaused))}
-                    strokeLinecap="round"
-                    strokeWidth="1.75"
-                    style={{ opacity: collapsedHudFocusTimer.isPaused ? 0.55 : 0.8, transition: "stroke-dashoffset 1s linear, opacity 160ms ease" }}
-                    width="98"
-                    x="1"
-                    y="1"
-                  />
-                </svg>
-                <TaskTableChipButton
-                  aria-label={`${collapsedHudFocusTimer.isPaused ? "Resume" : "Pause"} timer for ${collapsedHudFocusTimer.title}`}
-                  className="relative shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
-                  onClick={() => onToggleFocusTimer(collapsedHudFocusTimer.categoryId)}
-                  toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
-                >
-                  {collapsedHudFocusTimer.isPaused ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
-                  <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
-                    {formatCollapsedHudTimerLabel(collapsedHudFocusTimer.seconds)}
-                  </span>
-                  <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudFocusTimer.title}</span>
-                  <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8174b8] dark:text-[#b4abdc]">
-                    {collapsedHudFocusTimer.isPaused ? "Paused" : "Running"}
-                  </span>
-                </TaskTableChipButton>
-              </div>
+              <TaskTableChipButton
+                aria-label={`${collapsedHudFocusTimer.isPaused ? "Resume" : "Pause"} timer for ${collapsedHudFocusTimer.title}`}
+                className="shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
+                onClick={() => onToggleFocusTimer(collapsedHudFocusTimer.categoryId)}
+                toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+              >
+                {collapsedHudFocusTimer.isPaused ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
+                <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
+                  {formatCollapsedHudTimerLabel(collapsedHudFocusTimer.seconds)}
+                </span>
+                <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudFocusTimer.title}</span>
+                <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8174b8] dark:text-[#b4abdc]">
+                  {collapsedHudFocusTimer.isPaused ? "Paused" : "Running"}
+                </span>
+              </TaskTableChipButton>
             ) : collapsedHudTaskTimer ? (
-              <div className="relative shrink-0">
-                <svg aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 36">
-                  <rect fill="none" height="34" rx="17" stroke="rgba(111,87,246,0.14)" strokeWidth="1.5" width="98" x="1" y="1" />
-                  <rect
-                    fill="none"
-                    height="34"
-                    pathLength="100"
-                    rx="17"
-                    stroke="#6f57f6"
-                    strokeDasharray="100"
-                    strokeDashoffset={100 * (1 - getCollapsedHudTimerProgress(getTaskTimerDisplaySeconds(collapsedHudTaskTimer, taskTimerNow), Boolean(collapsedHudTaskTimer.pausedAt)))}
-                    strokeLinecap="round"
-                    strokeWidth="1.75"
-                    style={{ opacity: collapsedHudTaskTimer.pausedAt ? 0.55 : 0.8, transition: "stroke-dashoffset 1s linear, opacity 160ms ease" }}
-                    width="98"
-                    x="1"
-                    y="1"
-                  />
-                </svg>
-                <TaskTableChipButton
-                  aria-label={`${collapsedHudTaskTimer.pausedAt ? "Resume" : "Pause"} timer for ${collapsedHudTaskTimer.title}`}
-                  className="relative shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
-                  onClick={() => collapsedHudTaskTimer.pausedAt ? onResumeTaskTimer(collapsedHudTaskTimer.taskId) : onPauseTaskTimer(collapsedHudTaskTimer.taskId)}
-                  toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
-                >
-                  {collapsedHudTaskTimer.pausedAt ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
-                  <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
-                    {formatCollapsedHudTimerLabel(getTaskTimerDisplaySeconds(collapsedHudTaskTimer, taskTimerNow))}
-                  </span>
-                  <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudTaskTimer.title}</span>
-                  <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8174b8] dark:text-[#b4abdc]">
-                    {collapsedHudTaskTimer.pausedAt ? "Paused" : "Running"}
-                  </span>
-                </TaskTableChipButton>
-              </div>
+              <TaskTableChipButton
+                aria-label={`${collapsedHudTaskTimer.pausedAt ? "Resume" : "Pause"} timer for ${collapsedHudTaskTimer.title}`}
+                className="shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
+                onClick={() => collapsedHudTaskTimer.pausedAt ? onResumeTaskTimer(collapsedHudTaskTimer.taskId) : onPauseTaskTimer(collapsedHudTaskTimer.taskId)}
+                toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+              >
+                {collapsedHudTaskTimer.pausedAt ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
+                <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
+                  {formatCollapsedHudTimerLabel(getTaskTimerDisplaySeconds(collapsedHudTaskTimer, taskTimerNow))}
+                </span>
+                <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudTaskTimer.title}</span>
+                <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8174b8] dark:text-[#b4abdc]">
+                  {collapsedHudTaskTimer.pausedAt ? "Paused" : "Running"}
+                </span>
+              </TaskTableChipButton>
             ) : null}
-            <span className="hidden shrink-0 sm:inline">
-              <span className={`${TASK_TABLE_CHIP_BASE_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
-                {activeHudPageTitle}
+            {currentHudPageId !== "overview" ? (
+              <span className="hidden shrink-0 sm:inline">
+                <span className={`${TASK_TABLE_CHIP_BASE_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
+                  {activeHudPageTitle}
+                </span>
               </span>
-            </span>
-            <div className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
+            ) : null}
+            <span className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
               Points {economy.points}
-            </div>
-            <div className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#e4deef] bg-[#faf7ff] text-[#7c73a0] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/55`}>
-              Today {todayTaskCount}
-            </div>
-            <div className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#ffd8be] bg-[#fff5eb] text-[#c06b1c] dark:border-[#65401d] dark:bg-[#3b2714] dark:text-[#ffbe87]`}>
-              Urgent {urgentTaskCount}
-            </div>
+            </span>
             {pendingRewardDiceCount > 0 ? (
               <TaskTableChipButton
                 aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}

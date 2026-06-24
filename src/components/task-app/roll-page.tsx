@@ -96,8 +96,8 @@ type RewardResolution =
     };
 
 const UNIVERSAL_ROLL_CONFIG = {
-  cost: 0,
-  description: "Universal d20 sandbox · Test mode · 0 pts",
+  cost: 100,
+  description: "Universal d20 board roll · Free rolls are spent first · 100 pts otherwise",
   layout: "d20" as const,
 };
 
@@ -573,16 +573,6 @@ export function RollPageComponent({
     }
 
     const newBalance = Math.max(0, points - cost);
-    void Promise.all([
-      persistProfileValues({ points: newBalance }),
-      client.from("adhdice_point_ledger").insert({
-        user_id: currentUser.id,
-        delta: -cost,
-        reason: "Dice roll",
-        balance_after: newBalance,
-        source: "roll",
-      }),
-    ]);
     setPoints(newBalance);
     onSpendPoints(-cost, "Dice roll");
     return cost;

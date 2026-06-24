@@ -3,6 +3,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
+import {
+  buildTaskUiSettingsEnvelope,
+  normalizeStoredTaskTableLayoutPreferences,
+  splitTaskUiSettingsEnvelope,
+  TASK_TABLE_LAYOUT_STORAGE_KEY,
+  taskTableLayoutPreferencesEqual,
+  type TaskTableLayoutPreferences,
+} from "@/lib/task-table-layout-persistence";
 import { isMissingHudUiSettingsTableError } from "@/lib/task-db-compat";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import {
@@ -119,11 +127,22 @@ export function useTaskUiState<TTaskGridItem>({
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
   const [taskGridLayout, setTaskGridLayout] = useState<TTaskGridItem[]>(taskGridStarterLayout);
   const [hudUiState, setHudUiStateState] = useState<HudUiState>(() => (userId ? readStoredHudState(userId) : createDefaultHudState()));
+  const [taskTableLayoutPreferences, setTaskTableLayoutPreferencesState] = useState<TaskTableLayoutPreferences>(() => (
+    userId
+      ? normalizeStoredTaskTableLayoutPreferences(
+        parseStoredJson<unknown>(
+          getUserScopedStorageKey(TASK_TABLE_LAYOUT_STORAGE_KEY, userId),
+          {},
+        ),
+      )
+      : {}
+  ));
   const [isTaskFiltersOpen, setIsTaskFiltersOpen] = useState(false);
   const [isDailyPlanningCollapsed, setIsDailyPlanningCollapsed] = useState(false);
   const [pendingTaskEditorRestore, setPendingTaskEditorRestore] = useState<PersistedTaskEditorUiState | null>(null);
   const [restoredUserId, setRestoredUserId] = useState<string | null>(null);
   const hudUiStateRef = useRef(hudUiState);
+  const taskTableLayoutPreferencesRef = useRef(taskTableLayoutPreferences);
   const hudSyncMetadataRef = useRef<HudSyncMetadata>({
     source: "restore",
     updatedAt: userId ? readStoredHudTimestamp(userId) : null,
@@ -139,6 +158,10 @@ export function useTaskUiState<TTaskGridItem>({
     hudUiStateRef.current = hudUiState;
   }, [hudUiState]);
 
+  useEffect(() => {
+    taskTableLayoutPreferencesRef.current = taskTableLayoutPreferences;
+  }, [taskTableLayoutPreferences]);
+
   useLayoutEffect(() => {
     if (!userId) {
       setActivePage("Home");
@@ -147,6 +170,7 @@ export function useTaskUiState<TTaskGridItem>({
       setFocusedTaskIdsByDate({});
       setTaskGridLayout(taskGridStarterLayout);
       setHudUiStateState(createDefaultHudState());
+      setTaskTableLayoutPreferencesState({});
       hudSyncMetadataRef.current = { source: "restore", updatedAt: null };
       hudCloudReadyRef.current = false;
       hudCloudSupportedRef.current = false;
@@ -184,6 +208,14 @@ export function useTaskUiState<TTaskGridItem>({
       ),
     );
     setHudUiStateState(readStoredHudState(userId));
+    setTaskTableLayoutPreferencesState(
+      normalizeStoredTaskTableLayoutPreferences(
+        parseStoredJson<unknown>(
+          getUserScopedStorageKey(TASK_TABLE_LAYOUT_STORAGE_KEY, userId),
+          {},
+        ),
+      ),
+    );
     hudSyncMetadataRef.current = {
       source: "restore",
       updatedAt: readStoredHudTimestamp(userId),
@@ -301,6 +333,16 @@ export function useTaskUiState<TTaskGridItem>({
       return;
     }
     window.localStorage.setItem(
+      getUserScopedStorageKey(TASK_TABLE_LAYOUT_STORAGE_KEY, userId),
+      JSON.stringify(taskTableLayoutPreferences),
+    );
+  }, [taskTableLayoutPreferences, userId]);
+
+  useEffect(() => {
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
       getUserScopedStorageKey(HUD_UI_STORAGE_KEY, userId),
       JSON.stringify(hudUiState),
     );
@@ -312,7 +354,7 @@ export function useTaskUiState<TTaskGridItem>({
     } else {
       window.localStorage.removeItem(getUserScopedStorageKey(HUD_UI_UPDATED_AT_STORAGE_KEY, userId));
     }
-  }, [hudUiState, userId]);
+  }, [hudUiState, taskTableLayoutPreferences, userId]);
 
   useEffect(() => {
     if (!userId || typeof window === "undefined") {
@@ -349,6 +391,22 @@ export function useTaskUiState<TTaskGridItem>({
     });
   }, []);
 
+  const setTaskTableLayoutPreferences = useCallback<Dispatch<SetStateAction<TaskTableLayoutPreferences>>>((updater) => {
+    setTaskTableLayoutPreferencesState((current) => {
+      const next = typeof updater === "function"
+        ? (updater as (value: TaskTableLayoutPreferences) => TaskTableLayoutPreferences)(current)
+        : updater;
+      if (taskTableLayoutPreferencesEqual(next, current)) {
+        return current;
+      }
+      hudSyncMetadataRef.current = {
+        source: "local",
+        updatedAt: new Date().toISOString(),
+      };
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (hudCloudWriteTimeoutRef.current !== null) {
       window.clearTimeout(hudCloudWriteTimeoutRef.current);
@@ -365,7 +423,7 @@ export function useTaskUiState<TTaskGridItem>({
     }
 
     const payloadTimestamp = metadata.updatedAt;
-    const payloadState = hudUiState;
+    const payloadState = buildTaskUiSettingsEnvelope(hudUiState, taskTableLayoutPreferences);
 
     hudCloudWriteTimeoutRef.current = window.setTimeout(() => {
       void supabase
@@ -399,7 +457,7 @@ export function useTaskUiState<TTaskGridItem>({
         hudCloudWriteTimeoutRef.current = null;
       }
     };
-  }, [hudUiState, supabase, userId]);
+  }, [hudUiState, supabase, taskTableLayoutPreferences, userId]);
 
   useEffect(() => {
     if (hudCloudWriteTimeoutRef.current !== null) {
@@ -439,9 +497,17 @@ export function useTaskUiState<TTaskGridItem>({
       });
     }
 
+    function applyRemoteTaskTableLayoutPreferences(nextPreferences: TaskTableLayoutPreferences) {
+      setTaskTableLayoutPreferencesState((current) => (
+        taskTableLayoutPreferencesEqual(current, nextPreferences) ? current : nextPreferences
+      ));
+    }
+
     async function pushLocalHudStateToCloud(updatedAt: string) {
       const currentHudState = hudUiStateRef.current;
-      const signature = `${updatedAt}:${JSON.stringify(currentHudState)}`;
+      const currentTaskTableLayoutPreferences = taskTableLayoutPreferencesRef.current;
+      const payloadState = buildTaskUiSettingsEnvelope(currentHudState, currentTaskTableLayoutPreferences);
+      const signature = `${updatedAt}:${JSON.stringify(payloadState)}`;
       if (hudCloudSignatureRef.current === signature) {
         return;
       }
@@ -450,7 +516,7 @@ export function useTaskUiState<TTaskGridItem>({
         .from("adhdice_hud_ui_settings")
         .upsert({
           client_updated_at: updatedAt,
-          hud_state: currentHudState as unknown as Record<string, unknown>,
+          hud_state: payloadState as unknown as Record<string, unknown>,
           user_id: currentUserId,
         });
 
@@ -507,7 +573,8 @@ export function useTaskUiState<TTaskGridItem>({
 
       hudCloudSupportedRef.current = true;
       const localTimestamp = hudSyncMetadataRef.current.updatedAt;
-      const localStateExists = hasStoredHudState(currentUserId);
+      const localStateExists = hasStoredHudState(currentUserId)
+        || window.localStorage.getItem(getUserScopedStorageKey(TASK_TABLE_LAYOUT_STORAGE_KEY, currentUserId)) !== null;
 
       if (!data) {
         hudCloudReadyRef.current = true;
@@ -516,13 +583,16 @@ export function useTaskUiState<TTaskGridItem>({
         }
       } else {
         const remoteTimestamp = normalizeStoredTimestamp(data.client_updated_at ?? data.updated_at);
-        const normalizedRemoteState = normalizeHudUiState(data.hud_state ?? DEFAULT_HUD_UI_STATE);
+        const splitRemoteState = splitTaskUiSettingsEnvelope(data.hud_state ?? DEFAULT_HUD_UI_STATE);
+        const normalizedRemoteState = normalizeHudUiState(splitRemoteState.hudUiStateValue ?? DEFAULT_HUD_UI_STATE);
         if (isRemoteNewerThanLocal(remoteTimestamp, localTimestamp)) {
           applyRemoteHudState(normalizedRemoteState, remoteTimestamp);
+          applyRemoteTaskTableLayoutPreferences(splitRemoteState.taskTableLayoutPreferences);
         } else if (localStateExists) {
           await pushLocalHudStateToCloud(localTimestamp ?? new Date().toISOString());
         } else {
           applyRemoteHudState(normalizedRemoteState, remoteTimestamp);
+          applyRemoteTaskTableLayoutPreferences(splitRemoteState.taskTableLayoutPreferences);
         }
         hudCloudReadyRef.current = true;
       }
@@ -587,12 +657,14 @@ export function useTaskUiState<TTaskGridItem>({
     setActivePage,
     setFocusedTaskIdsByDate,
     setHudUiState,
+    setTaskTableLayoutPreferences,
     setIsDailyPlanningCollapsed,
     setIsTaskFiltersOpen,
     setPendingTaskEditorRestore,
     setTaskGridLayout,
     setTaskRouting,
     setTaskUiState,
+    taskTableLayoutPreferences,
     taskGridLayout,
     taskRouting,
     taskUiState,

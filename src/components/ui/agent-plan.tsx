@@ -38,9 +38,9 @@ export type AgentPlanMetaPill = {
   tone?: AgentPlanMetaTone;
 };
 
-export type AgentPlanColumnId = "bucket" | "date_added" | "date_completed" | "due" | "energy" | "estimated_time" | "actual_time" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal";
+export type AgentPlanColumnId = "bucket" | "date_added" | "date_completed" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal";
 
-const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "date_added", "date_completed", "due", "energy", "estimated_time", "actual_time", "tags", "link", "notes", "priority", "repeat", "signal"];
+const REORDERABLE_COLUMN_IDS: AgentPlanColumnId[] = ["bucket", "date_added", "date_completed", "due", "energy", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "repeat", "signal"];
 
 export type AgentPlanSubtaskItem = {
   children: AgentPlanSubtaskItem[];
@@ -266,6 +266,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   energy: 132,
   estimated_time: 156,
   actual_time: 132,
+  streak: 112,
   tags: 156,
   link: 156,
   notes: 176,
@@ -283,6 +284,7 @@ const MIN_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   energy: 92,
   estimated_time: 92,
   actual_time: 108,
+  streak: 76,
   tags: 72,
   link: 68,
   notes: 80,
@@ -300,6 +302,7 @@ const COLUMN_HEADER_LABELS: Record<ResizableColumnId, string> = {
   energy: "Energy",
   estimated_time: "Est. Time",
   actual_time: "Actual time",
+  streak: "Streak",
   tags: "Tags",
   link: "Link",
   notes: "Notes",
@@ -323,7 +326,7 @@ type HorizontalScrollIndicator = {
   width: number;
 };
 
-type ResizableColumnId = "bucket" | "date_added" | "date_completed" | "due" | "energy" | "estimated_time" | "actual_time" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal" | "status" | "task";
+type ResizableColumnId = "bucket" | "date_added" | "date_completed" | "due" | "energy" | "estimated_time" | "actual_time" | "streak" | "tags" | "link" | "notes" | "priority" | "repeat" | "signal" | "status" | "task";
 
 function getPriorityTone(priority: AgentPlanPriorityValue): AgentPlanMetaTone {
   if (priority === "focus") return "accent";
@@ -1676,6 +1679,7 @@ export default function AgentPlan({
                       energy: energyValue,
                       estimated_time: estimatedTimeValue,
                       actual_time: actualTimeValue,
+                      streak: task.currentStreak > 0 ? String(task.currentStreak) : "",
                       priority: priorityValue,
                       repeat: repeatValue,
                     };

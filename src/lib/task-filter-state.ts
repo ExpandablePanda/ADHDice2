@@ -30,6 +30,7 @@ export function resetTaskFiltersPreservingView(state: TaskUiState): TaskUiState 
   return {
     ...DEFAULT_TASK_UI_STATE,
     selectedBucket: state.selectedBucket,
+    tasksSurface: state.tasksSurface,
     view: state.view,
     visibleColumnsByView: state.visibleColumnsByView,
   };

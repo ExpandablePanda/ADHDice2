@@ -68,7 +68,7 @@ export function TaskTableChipButton({
     <button
       className={joinClasses(
         TASK_TABLE_CONTROL_FONT_CLASS,
-        "shrink-0 appearance-none bg-transparent p-0 border-0 shadow-none",
+        "inline-flex shrink-0 items-center appearance-none bg-transparent p-0 border-0 shadow-none",
       )}
       type={type}
       {...props}

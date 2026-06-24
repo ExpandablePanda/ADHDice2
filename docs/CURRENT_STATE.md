@@ -1,17 +1,40 @@
 # Current State
 
-Last reviewed: 2026-06-23
+Last reviewed: 2026-06-24
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.9.11`.
-- Current release group: `6.9.x` task hierarchy and HUD controls.
+- Current working app version: `6.10.20`.
+- Current release group: `6.10.x` smart-list and collapsed HUD timer fixes.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 6.10 Checkpoint
+- `6.10.0` keeps Inbox as a built-in/default hybrid list, but saved Inbox smart rules now further constrain membership through the shared task-list evaluation path. Inbox without saved rules keeps the prior default behavior, `Due Date is empty` still means `!task.due_on`, manual list membership still excludes Inbox membership, and direct Inbox checks now agree with bulk membership generation without requiring a refresh after rule edits.
+- `6.10.1` keeps the collapsed HUD Focus and active-task timer chips on the existing timer source of truth, but now keeps the shared HUD runtime clock active for running Focus sessions and refreshes its current timestamp immediately when activation changes. The collapsed chip perimeter ring now renders in a padded overlay layer around the chip so the outline animation stays aligned and visibly on the chip without touching the separate Safari/public tab-return HUD repaint work.
+- `6.10.2` keeps the `6.10.1` timer behavior unchanged, but removes the collapsed HUD timer chip's double-pill look by dropping the padded outer wrapper and extra background border layer. The active accent now renders as one subtle animated perimeter stroke directly over the real chip frame.
+- `6.10.3` added a temporary dev-only diagnostic overlay to the collapsed HUD timer chip so the wrapper, SVG accent layer, and real chip span could be distinguished while investigating the remaining `Coding` chip background/layering issue.
+- `6.10.4` removes that temporary diagnostic and flattens the collapsed HUD timer chip into one real chip button with the animated accent rendered inside the same element. Timer behavior remains unchanged, but the active chip should now read as one unified pill instead of a nested button/span plus overlay stack.
+- `6.10.5` corrects the collapsed HUD timer trace geometry to the actual live chip height instead of the older taller overlay box, so the active perimeter stroke aligns with the real pill rather than appearing vertically distorted.
+- `6.10.6` removes the collapsed HUD timer chip's perimeter trace/SVG path entirely and replaces it with a quieter built-in chip accent using stronger native pill styling plus a subtle internal bottom highlight. Timer behavior, labels, and expanded Focus Timer cards remain unchanged.
+- `6.10.7` removes the remaining collapsed HUD timer chip accent treatment so the collapsed timer falls back to a plain live-counting pill with the existing pause/resume behavior and labels, while expanded Focus Timer cards remain unchanged.
+- `6.10.8` persists Table View column order plus the active sort column/direction across refreshes through the existing user-scoped UI settings path. Column visibility behavior stays unchanged, defaults remain valid for users without saved layout state, and malformed saved layout state falls back safely.
+- `6.10.9` adds a sortable Table View `Streak` column backed by existing `currentStreak` row data. Positive streaks render as compact chips, blank cells sort as `0`, new/default Table layouts include the column by default, and existing saved visible-column layouts keep their prior visibility while saved order and sort state continue to normalize safely.
+- `6.10.10` prevents Table View layout-persistence update loops by keeping overlay-only/secondary table instances out of the shared persisted-layout sync path. The primary Table View still owns saved column order and sort state, while inspector overlay tables no longer write back competing layout state.
+- `6.10.11` updates the Table View `Streak` column to match the existing streak chip language exactly: completed streaks show the fire chip, missed streaks also render in the same column with the skull chip, and blank cells still stay blank when neither streak is present.
+- `6.10.12` refines Table View `Streak` sorting so high-to-low orders by highest completed streak first, then for ties by lowest missed streak to highest missed streak. Ascending uses the inverse tie-break to stay predictable.
+- `6.10.13` keeps true no-streak rows pinned to the bottom of `Streak` sorting in both directions, while preserving the prior completed-streak and missed-streak ordering among rows that do have streak data.
+- `6.10.14` restores live Roll page spending: each board roll now costs 100 points when no free roll is banked, banked free rolls are always consumed first, and point spending routes through the shared economy path without double-deducting.
+- `6.10.15` removes the collapsed HUD `Overview`, `Today`, and `Urgent` chips from the collapsed render path only. The collapsed shell, expand/collapse behavior, Focus Timer/task timer chips, banked-roll chip, refresh control, and expanded HUD content remain unchanged.
+- `6.10.16` keeps the collapsed HUD chip set unchanged, but renders the collapsed `Scratch Paper` control as a direct chip button so its vertical alignment matches the surrounding collapsed HUD chips more closely.
+- `6.10.17` restores the collapsed HUD `Scratch Paper` control to the shared default chip-button primitive so its size and typography match the standard collapsed HUD chip treatment again.
+- `6.10.18` normalizes collapsed HUD chip sizing around the shared task-page chip primitive by making chip-button wrappers size to their visible pills and routing the collapsed timer chips through that same shared chip path. The collapsed HUD chip row should now read with one more uniform chip height and default chip typography treatment.
+- `6.10.19` adds a Tasks-local `Tasks | Paths` surface switch inside the existing Tasks page without changing app-level navigation, task view modes, table/list behavior, task filtering, or table layout persistence. The new `Paths` side currently renders a lightweight placeholder workspace for future guided reset/routine flows, while the `Tasks` side keeps the existing workspace behavior unchanged and the selected segment now persists through the existing user-scoped task UI state snapshot.
+- `6.10.20` adds a PATHS-only domain seam in `src/lib/paths-domain.ts`: independent `Path` and `PathNode` types, safe normalization helpers for malformed path/node payloads, and a clearly named storage adapter boundary with a local in-memory prototype implementation. The placeholder `Paths` workspace now reads mock data through that adapter boundary only, without reusing task rows, task history, recurrence, rewards, smart lists, Inbox, or linked-task mutations.
 
 ## 6.9 Checkpoint
 - `6.9.3` failed browser QA.

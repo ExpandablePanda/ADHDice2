@@ -344,6 +344,48 @@ test("did_my_best still counts as completed for streak calculations", () => {
   assert.equal(stats.missedStreak, 0);
 });
 
+test("missed history breaks a current streak for recurring tasks", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-03",
+    id: "missed-breaks-streak",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "done",
+    title: "Missed breaks streak",
+  });
+  const history = [
+    createHistoryEntry({ entryDate: "2026-06-02", id: "mb1", status: "done", taskId: task.id, wasCompleted: true }),
+    createHistoryEntry({ entryDate: "2026-06-03", id: "mb2", status: "missed", taskId: task.id, wasCompleted: false }),
+  ];
+
+  const stats = computeTaskSpecificHistoryStats(task, history, "2026-06-03");
+
+  assert.equal(stats.currentStreak, 0);
+  assert.equal(stats.missedStreak, 1);
+});
+
+test("one-off tasks show no streak without completed history and one streak with it", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-03",
+    id: "one-off-complete-history",
+    repeat_frequency: "none",
+    sort_order: 1,
+    status: "complete",
+    title: "One-off complete history",
+  });
+
+  assert.equal(computeTaskSpecificHistoryStats(task, [], "2026-06-03").currentStreak, 0);
+
+  const history = [
+    createHistoryEntry({ entryDate: "2026-06-03", id: "oc1", status: "complete", taskId: task.id, wasCompleted: true }),
+  ];
+
+  assert.equal(computeTaskSpecificHistoryStats(task, history, "2026-06-03").currentStreak, 1);
+});
+
 test("history facts use saved rows for completed and missed windows", () => {
   const facts = buildTaskHistoryFacts([
     createHistoryEntry({ entryDate: "2026-06-08", id: "f1", status: "done", wasCompleted: true }),

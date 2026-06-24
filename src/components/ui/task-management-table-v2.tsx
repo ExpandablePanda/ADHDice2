@@ -61,6 +61,7 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { mergeMeasuredColumnWidths } from "@/lib/task-table-measurements";
+import { type TaskTableLayoutPreferences, taskTableLayoutPreferencesEqual } from "@/lib/task-table-layout-persistence";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = "focus" | "important" | "urgent";
@@ -92,6 +93,7 @@ type SortColumnId =
   | "due"
   | "estimated"
   | "actual"
+  | "streak"
   | "tags"
   | "link"
   | "notes"
@@ -857,6 +859,8 @@ type TaskManagementTableV2Props = {
   getFollowTaskDestination?: (taskId: string) => TaskFollowDestination | null;
   hasMoreRows?: boolean;
   shrinkAllColumnsToken?: number;
+  persistedLayoutPreferences?: TaskTableLayoutPreferences;
+  onPersistedLayoutPreferencesChange?: (nextPreferences: TaskTableLayoutPreferences) => void;
 };
 
 const DEFAULT_ROWS: PrototypeTaskRow[] = [
@@ -1009,9 +1013,8 @@ function readTaskTablePreferences(): TaskTablePreferences | null {
   }
 }
 
-function getInitialSortState() {
-  const preferences = readTaskTablePreferences();
-  const nextSortState = preferences?.sortState;
+function normalizePersistedSortState(sortState: TaskTableLayoutPreferences["sortState"] | TaskTablePreferences["sortState"] | undefined) {
+  const nextSortState = sortState ?? null;
   if (!nextSortState) {
     return null;
   }
@@ -1020,6 +1023,11 @@ function getInitialSortState() {
   const matchingColumn = HEADER_COLUMNS.find((column) => column.id === nextSortState.columnId);
   const hasValidOption = matchingColumn?.options.some((option) => option.id === nextSortState.optionId) ?? false;
   return hasValidColumn && hasValidOption ? nextSortState : null;
+}
+
+function getInitialSortState(persistedLayoutPreferences?: TaskTableLayoutPreferences) {
+  const preferences = readTaskTablePreferences();
+  return normalizePersistedSortState(persistedLayoutPreferences?.sortState ?? preferences?.sortState);
 }
 
 function getInitialColumnWidths() {
@@ -1034,12 +1042,16 @@ function getInitialColumnWidths() {
   }, { ...DEFAULT_COLUMN_WIDTHS });
 }
 
-function getInitialColumnOrder() {
-  const preferences = readTaskTablePreferences();
-  const storedOrder = preferences?.columnOrder ?? [];
+function normalizePersistedColumnOrder(columnOrder: TaskTableLayoutPreferences["columnOrder"] | TaskTablePreferences["columnOrder"] | undefined) {
+  const storedOrder = columnOrder ?? [];
   const validStoredOrder = storedOrder.filter((columnId) => HEADER_COLUMNS.some((column) => column.id === columnId));
   const missingColumns = HEADER_COLUMNS.map((column) => column.id).filter((columnId) => !validStoredOrder.includes(columnId));
   return [...validStoredOrder, ...missingColumns];
+}
+
+function getInitialColumnOrder(persistedLayoutPreferences?: TaskTableLayoutPreferences) {
+  const preferences = readTaskTablePreferences();
+  return normalizePersistedColumnOrder(persistedLayoutPreferences?.columnOrder ?? preferences?.columnOrder);
 }
 
 function getInitialColumnAlignments() {
@@ -1136,6 +1148,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   due: 92,
   estimated: 76,
   actual: 76,
+  streak: 68,
   tags: 82,
   link: 80,
   notes: 92,
@@ -1153,6 +1166,7 @@ const MIN_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   due: 64,
   estimated: 60,
   actual: 60,
+  streak: 56,
   tags: 58,
   link: 58,
   notes: 70,
@@ -1170,6 +1184,7 @@ const COLUMN_WIDTH_BUFFER: Record<TaskManagementTableColumnId, number> = {
   due: 4,
   estimated: 4,
   actual: 4,
+  streak: 4,
   tags: 2,
   link: 2,
   notes: 4,
@@ -1190,6 +1205,7 @@ const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "due", label: "Due", menuLabel: "Due", options: [{ id: "due_asc", label: "Sort earliest first" }, { id: "due_desc", label: "Sort latest first" }] },
   { id: "estimated", label: "Est.", menuLabel: "Estimated time", options: [{ id: "number_asc", label: "Sort low-high" }, { id: "number_desc", label: "Sort high-low" }] },
   { id: "actual", label: "Actual", menuLabel: "Actual time", options: [{ id: "active_first", label: "Sort active timers first" }, { id: "number_asc", label: "Sort low-high" }, { id: "number_desc", label: "Sort high-low" }] },
+  { id: "streak", label: "Streak", menuLabel: "Streak", options: [{ id: "number_asc", label: "Sort low-high" }, { id: "number_desc", label: "Sort high-low" }] },
   { id: "tags", label: "Tags", menuLabel: "Tags", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search tags" },
   { id: "link", label: "Link", menuLabel: "Link", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search links" },
   { id: "notes", label: "Notes", menuLabel: "Notes", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search notes" },
@@ -1729,7 +1745,38 @@ function numberSortValue(
     return options?.liveActualSecondsByTaskId?.get(task.id) ?? task.actualSeconds;
   }
 
+  if (columnId === "streak") {
+    return task.currentStreak ?? 0;
+  }
+
   return task.actualSeconds;
+}
+
+function streakSortComparison(
+  left: PrototypeTaskRow,
+  right: PrototypeTaskRow,
+  optionId: "number_asc" | "number_desc",
+) {
+  const leftHasAnyStreak = (left.currentStreak ?? 0) > 0 || (left.missedStreak ?? 0) > 0;
+  const rightHasAnyStreak = (right.currentStreak ?? 0) > 0 || (right.missedStreak ?? 0) > 0;
+
+  if (leftHasAnyStreak !== rightHasAnyStreak) {
+    return leftHasAnyStreak ? -1 : 1;
+  }
+
+  if (optionId === "number_desc") {
+    const currentStreakComparison = (right.currentStreak ?? 0) - (left.currentStreak ?? 0);
+    if (currentStreakComparison !== 0) {
+      return currentStreakComparison;
+    }
+    return (left.missedStreak ?? 0) - (right.missedStreak ?? 0);
+  }
+
+  const currentStreakComparison = (left.currentStreak ?? 0) - (right.currentStreak ?? 0);
+  if (currentStreakComparison !== 0) {
+    return currentStreakComparison;
+  }
+  return (right.missedStreak ?? 0) - (left.missedStreak ?? 0);
 }
 
 function sortRows(
@@ -1755,6 +1802,8 @@ function sortRows(
       if (comparison === 0) {
         comparison = numberSortValue(right, "actual", options) - numberSortValue(left, "actual", options);
       }
+    } else if (columnId === "streak" && (optionId === "number_asc" || optionId === "number_desc")) {
+      comparison = streakSortComparison(left, right, optionId);
     } else if (optionId === "number_asc" || optionId === "number_desc") {
       comparison = numberSortValue(left, columnId, options) - numberSortValue(right, columnId, options);
     } else if (optionId === "date_asc" || optionId === "date_desc") {
@@ -1774,6 +1823,9 @@ function sortRows(
     }
 
     if (comparison !== 0) {
+      if (columnId === "streak" && (optionId === "number_asc" || optionId === "number_desc")) {
+        return comparison;
+      }
       return optionId.endsWith("desc") ? -comparison : comparison;
     }
 
@@ -1862,7 +1914,10 @@ export function TaskManagementTableV2({
   activeTaskTimerIndex,
   getFollowTaskDestination,
   hasMoreRows = false,
+  persistedLayoutPreferences,
+  onPersistedLayoutPreferencesChange,
 }: TaskManagementTableV2Props) {
+  const layoutPersistenceEnabled = !overlayOnly;
   const shouldReduceMotion = useReducedMotion();
   const [tasks, setTasks] = useState<PrototypeTaskRow[]>(rows);
   const [renderedTaskCount, setRenderedTaskCount] = useState(INITIAL_RENDERED_TASK_COUNT);
@@ -1908,12 +1963,12 @@ export function TaskManagementTableV2({
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [pendingCustomCadenceTaskId, setPendingCustomCadenceTaskId] = useState<string | null>(null);
   const [tableViewportMetrics, setTableViewportMetrics] = useState({ clientWidth: 0, scrollLeft: 0 });
-  const [sortState, setSortState] = useState<{ columnId: SortColumnId; optionId: SortOptionId } | null>(() => getInitialSortState());
+  const [sortState, setSortState] = useState<{ columnId: SortColumnId; optionId: SortOptionId } | null>(() => getInitialSortState(persistedLayoutPreferences));
   const [textFilters, setTextFilters] = useState<Partial<Record<TextFilterColumnId, string>>>({});
   const [structuredFilters, setStructuredFilters] = useState<StructuredFilters>(DEFAULT_STRUCTURED_FILTERS);
   const [columnWidths, setColumnWidths] = useState<Record<TaskManagementTableColumnId, number>>(() => getInitialColumnWidths());
   const [requiredColumnWidths, setRequiredColumnWidths] = useState<Record<TaskManagementTableColumnId, number>>(DEFAULT_COLUMN_WIDTHS);
-  const [columnOrder, setColumnOrder] = useState<TaskManagementTableColumnId[]>(() => getInitialColumnOrder());
+  const [columnOrder, setColumnOrder] = useState<TaskManagementTableColumnId[]>(() => getInitialColumnOrder(persistedLayoutPreferences));
   const [columnAlignments, setColumnAlignments] = useState<Partial<Record<TaskManagementTableColumnId, ColumnAlignment>>>(() => getInitialColumnAlignments());
   const [statusDisplayMode, setStatusDisplayMode] = useState<"chip" | "circle">(() => getInitialStatusDisplayMode());
 
@@ -2501,14 +2556,45 @@ export function TaskManagementTableV2({
   }, [effectiveRunningTimers.length, taskTimerNow]);
 
   useEffect(() => {
+    if (!layoutPersistenceEnabled || !persistedLayoutPreferences) {
+      return;
+    }
+
+    const nextSortState = normalizePersistedSortState(persistedLayoutPreferences.sortState);
+    setSortState((current) => {
+      if (
+        current?.columnId === nextSortState?.columnId
+        && current?.optionId === nextSortState?.optionId
+      ) {
+        return current;
+      }
+      return nextSortState;
+    });
+
+    const nextColumnOrder = normalizePersistedColumnOrder(persistedLayoutPreferences.columnOrder);
+    setColumnOrder((current) => (
+      current.length === nextColumnOrder.length
+      && current.every((columnId, index) => columnId === nextColumnOrder[index])
+        ? current
+        : nextColumnOrder
+    ));
+  }, [layoutPersistenceEnabled, persistedLayoutPreferences]);
+
+  useEffect(() => {
     setColumnOrder((current) => {
       const nextVisible: SortColumnId[] = visibleColumns && visibleColumns.length > 0
         ? ["status_icon", "title", ...visibleColumns.filter((columnId) => columnId !== "status_icon" && columnId !== "title")]
         : HEADER_COLUMNS.map((column) => column.id);
       const deduped = Array.from(new Set(nextVisible));
-      const preserved = current.filter((columnId) => deduped.includes(columnId));
-      const missing = deduped.filter((columnId) => !preserved.includes(columnId));
-      const nextOrder = [...preserved, ...missing];
+      const allColumnIds = HEADER_COLUMNS.map((column) => column.id);
+      const preserved = current.filter((columnId) => allColumnIds.includes(columnId));
+      const missingAllColumns = allColumnIds.filter((columnId) => !preserved.includes(columnId));
+      const nextOrder = [...preserved, ...missingAllColumns];
+      const hasAllVisibleColumns = deduped.every((columnId) => nextOrder.includes(columnId));
+      if (!hasAllVisibleColumns) {
+        const missingVisibleColumns = deduped.filter((columnId) => !nextOrder.includes(columnId));
+        return [...nextOrder, ...missingVisibleColumns];
+      }
       return nextOrder.length === current.length && nextOrder.every((columnId, index) => columnId === current[index])
         ? current
         : nextOrder;
@@ -2529,6 +2615,28 @@ export function TaskManagementTableV2({
     };
     window.localStorage.setItem(TASK_TABLE_PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
   }, [columnAlignments, columnOrder, columnWidths, sortState, statusDisplayMode]);
+
+  useEffect(() => {
+    if (!layoutPersistenceEnabled || !onPersistedLayoutPreferencesChange) {
+      return;
+    }
+
+    const nextPreferences: TaskTableLayoutPreferences = {
+      columnOrder,
+      sortState: sortState
+        ? {
+          columnId: sortState.columnId,
+          optionId: sortState.optionId,
+        }
+        : null,
+    };
+
+    if (persistedLayoutPreferences && taskTableLayoutPreferencesEqual(persistedLayoutPreferences, nextPreferences)) {
+      return;
+    }
+
+    onPersistedLayoutPreferencesChange(nextPreferences);
+  }, [columnOrder, layoutPersistenceEnabled, onPersistedLayoutPreferencesChange, persistedLayoutPreferences, sortState]);
 
   useEffect(() => {
     if (!selectedTask) {
@@ -4890,6 +4998,30 @@ export function TaskManagementTableV2({
         || columnId === "energy"
         || columnId === "repeat"
         || columnId === "status");
+
+    if (columnId === "streak") {
+      return wrapMeasuredContent(
+        task.currentStreak > 0 || task.missedStreak > 0 ? (
+          <span className="inline-flex flex-wrap items-center justify-center gap-1">
+            {task.currentStreak > 0 ? (
+              <span className={`${CHIP_BASE} gap-1 border-[#ffd8be] bg-[#fff1e7] px-2 text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]`}>
+                <Flame className="h-3 w-3" />
+                {task.currentStreak}
+              </span>
+            ) : null}
+            {task.missedStreak > 0 ? (
+              <span className={`${CHIP_BASE} gap-1 border-[#ffd6de] bg-[#fff1f3] px-2 text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]`}>
+                <Skull className="h-3 w-3" />
+                {task.missedStreak}
+              </span>
+            ) : null}
+          </span>
+        ) : (
+          <span aria-hidden="true" className="inline-block h-7 w-6" />
+        ),
+        "justify-center"
+      );
+    }
 
     const wrapInteractiveCell = (content: ReactNode, mode: OverlayMode) => {
       if (!canOpenInlineInspector) {

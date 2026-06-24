@@ -343,6 +343,9 @@ export function evaluateTaskListMemberships(
   const manualRuleMembershipCount = memberships.size;
   const ruleEvaluationStartedAt = canMeasure ? performance.now() : 0;
   for (const list of lookup.ruleLists) {
+    if (list.id === "inbox") {
+      continue;
+    }
     const current = memberships.get(list.id);
     if (matchesSpecificListRuleMembership(task, list, lists, context, new Set(), evaluationCache, lookup)) {
       memberships.set(list.id, {
@@ -353,7 +356,7 @@ export function evaluateTaskListMemberships(
     }
   }
   if (perf) {
-    perf.ruleListChecks += lookup.ruleLists.length;
+    perf.ruleListChecks += lookup.ruleLists.filter((list) => list.id !== "inbox").length;
     perf.matchedRuleMemberships += Math.max(0, memberships.size - manualRuleMembershipCount);
     if (canMeasure) {
       perf.ruleEvaluationMs += performance.now() - ruleEvaluationStartedAt;
@@ -361,7 +364,7 @@ export function evaluateTaskListMemberships(
   }
 
   const inboxCheckStartedAt = canMeasure ? performance.now() : 0;
-  if (shouldAppearInInbox(task, memberships, context)) {
+  if (shouldAppearInInbox(task, lists, memberships, context, new Set(["inbox"]), evaluationCache, lookup)) {
     const current = memberships.get("inbox");
     memberships.set("inbox", {
       id: "inbox",
@@ -468,22 +471,21 @@ export function isBuiltInTaskListId(value: string): value is BuiltInTaskListId {
 
 function shouldAppearInInbox(
   task: Task,
+  lists: TaskListDefinition[],
   memberships: Map<TaskListId, TaskListMembership>,
   context: TaskListEvaluationContext,
+  visitedListIds: Set<TaskListId> = new Set(),
+  evaluationCache: Map<string, boolean> = new Map(),
+  lookup: TaskListLookup = buildTaskListLookup(lists),
 ) {
-  if (!context.isOpen(task) || task.status === "archived" || task.status === "trashed") {
-    return false;
-  }
-
-  const hasManualMembership = (context.manualMembershipsByTaskId[task.id] ?? []).length > 0;
-  if (hasManualMembership) {
-    return false;
-  }
-
-  const hasNonInboxRuleMatch = Array.from(memberships.values()).some((membership) =>
-    membership.id !== "inbox" && membership.source === "rule",
-  );
-  return !hasNonInboxRuleMatch;
+  return matchesInboxMembership(task, lists, context, {
+    evaluationCache,
+    hasNonInboxRuleMatch: Array.from(memberships.values()).some((membership) =>
+      membership.id !== "inbox" && membership.source === "rule",
+    ),
+    lookup,
+    visitedListIds,
+  });
 }
 
 function matchesTaskListRule(
@@ -704,6 +706,49 @@ function matchesSpecificListRuleMembership(
   return matches;
 }
 
+function matchesInboxMembership(
+  task: Task,
+  lists: TaskListDefinition[],
+  context: TaskListEvaluationContext,
+  options: {
+    evaluationCache?: Map<string, boolean>;
+    hasNonInboxRuleMatch?: boolean;
+    lookup?: TaskListLookup;
+    visitedListIds?: Set<TaskListId>;
+  } = {},
+) {
+  const {
+    evaluationCache = new Map<string, boolean>(),
+    hasNonInboxRuleMatch,
+    lookup = buildTaskListLookup(lists),
+    visitedListIds = new Set<TaskListId>(),
+  } = options;
+
+  if (!context.isOpen(task) || task.status === "archived" || task.status === "trashed") {
+    return false;
+  }
+
+  const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
+  if (manualListIds.length > 0) {
+    return false;
+  }
+
+  const matchesBuiltInInbox = hasNonInboxRuleMatch
+    ?? lookup.nonInboxRuleLists.some((list) =>
+      matchesSpecificListRuleMembership(task, list, lists, context, visitedListIds, evaluationCache, lookup),
+    );
+  if (matchesBuiltInInbox) {
+    return false;
+  }
+
+  const inboxList = lookup.listById.get("inbox");
+  if (!inboxList?.rules) {
+    return true;
+  }
+
+  return matchesSpecificListRuleMembership(task, inboxList, lists, context, visitedListIds, evaluationCache, lookup);
+}
+
 function taskBelongsToSpecificList(
   task: Task,
   selectedListId: TaskListId,
@@ -730,23 +775,13 @@ function taskBelongsToSpecificList(
   }
 
   if (selectedListId === "inbox") {
-    if (!context.isOpen(task) || task.status === "archived" || task.status === "trashed") {
-      evaluationCache.set(cacheKey, false);
-      return false;
-    }
-
-    const hasAnyManualMembership = manualListIds.length > 0;
-    if (hasAnyManualMembership) {
-      evaluationCache.set(cacheKey, false);
-      return false;
-    }
-
     const nextVisited = new Set(visitedListIds);
     nextVisited.add("inbox");
-    const hasNonInboxRuleMatch = lookup.nonInboxRuleLists.some((list) =>
-      matchesSpecificListRuleMembership(task, list, lists, context, nextVisited, evaluationCache, lookup),
-    );
-    const belongsToInbox = !hasNonInboxRuleMatch;
+    const belongsToInbox = matchesInboxMembership(task, lists, context, {
+      evaluationCache,
+      lookup,
+      visitedListIds: nextVisited,
+    });
     evaluationCache.set(cacheKey, belongsToInbox);
     return belongsToInbox;
   }

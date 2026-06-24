@@ -148,6 +148,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const queuedTaskReloadRef = useRef(false);
   const taskChannelRef = useRef<RealtimeChannel | null>(null);
   const taskChannelStatusRef = useRef<string>("CLOSED");
+  const taskChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
   const taskResumeSyncTimeoutRef = useRef<number | null>(null);
   const taskResumeSyncQueuedRef = useRef(false);
   const lastTaskResumeSyncAtRef = useRef(0);
@@ -163,6 +164,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       queuedTaskReloadRef.current = false;
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
+      taskChannelRemovalPromiseRef.current = null;
       taskResumeSyncQueuedRef.current = false;
       lastTaskResumeSyncAtRef.current = 0;
       taskResumeSyncInFlightRef.current = false;
@@ -238,7 +240,22 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       );
     }
 
-    function subscribeTaskChannel() {
+    async function removeTaskChannel(channel: RealtimeChannel) {
+      try {
+        await client.removeChannel(channel);
+      } catch {
+        // Ignore cleanup races when visibility/focus events overlap.
+      }
+    }
+
+    async function subscribeTaskChannel() {
+      const previousRemoval = taskChannelRemovalPromiseRef.current ?? Promise.resolve();
+      await previousRemoval;
+
+      if (!isActive) {
+        return;
+      }
+
       taskChannelStatusRef.current = "SUBSCRIBING";
       const nextTaskChannel = client
         .channel(`adhdice_tasks:${userId}`)
@@ -268,10 +285,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         });
 
       taskChannelRef.current = nextTaskChannel;
+      taskChannelRemovalPromiseRef.current = null;
       taskChannel = nextTaskChannel;
     }
 
-    function ensureTaskChannelSubscribed() {
+    async function ensureTaskChannelSubscribed() {
       if (!shouldReconnectTaskChannel()) {
         return;
       }
@@ -280,12 +298,12 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
       if (previousChannel) {
-        void client.removeChannel(previousChannel);
+        taskChannelRemovalPromiseRef.current = removeTaskChannel(previousChannel);
         if (taskChannel === previousChannel) {
           taskChannel = null;
         }
       }
-      subscribeTaskChannel();
+      await subscribeTaskChannel();
     }
 
     function scheduleTaskResumeSync() {
@@ -628,7 +646,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       try {
-        ensureTaskChannelSubscribed();
+        await ensureTaskChannelSubscribed();
         await loadCoreWorkspaceData({ silent: true });
 
         if (includeSecondaryIfLoaded && (hasLoadedSecondaryDataRef.current || shouldLoadSecondaryForPage(activePage))) {
@@ -670,7 +688,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     };
 
     void loadCoreWorkspaceData();
-    subscribeTaskChannel();
+    void subscribeTaskChannel();
 
     function handleDocumentVisibilityChange() {
       if (document.visibilityState === "visible") {
@@ -855,8 +873,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       prepareTaskMutationRef.current = null;
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
+      taskChannelRemovalPromiseRef.current = null;
       if (taskChannel) {
-        void client.removeChannel(taskChannel);
+        taskChannelRemovalPromiseRef.current = removeTaskChannel(taskChannel);
       }
       void client.removeChannel(workspaceChannel);
     };

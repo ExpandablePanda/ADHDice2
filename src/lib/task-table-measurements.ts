@@ -4,7 +4,6 @@ export function mergeMeasuredColumnWidths<ColumnId extends string>(
   current: Record<ColumnId, number>,
   measured: Partial<Record<ColumnId, number>>,
   visibleColumnIds: readonly ColumnId[],
-  shrinkJitterTolerancePx = COLUMN_WIDTH_SHRINK_JITTER_TOLERANCE_PX,
 ): Record<ColumnId, number> {
   let changed = false;
   const next = { ...current };
@@ -16,7 +15,10 @@ export function mergeMeasuredColumnWidths<ColumnId extends string>(
       continue;
     }
 
-    if (measuredWidth > currentWidth || measuredWidth < currentWidth - shrinkJitterTolerancePx) {
+    // Passive measurement should only grow widths. Auto-shrinking can create a
+    // feedback loop where the table reflows, remeasures slightly smaller, and
+    // keeps setting state on every frame.
+    if (measuredWidth > currentWidth) {
       next[columnId] = measuredWidth;
       changed = true;
       continue;

@@ -1,8 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTaskHistoryFacts } from "../src/lib/task-history.ts";
-import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, parseTaskListRules } from "../src/lib/task-lists.ts";
+import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, parseTaskListRules, taskBelongsToList } from "../src/lib/task-lists.ts";
 import { createTask, getTaskBucket } from "../src/lib/task-buckets.ts";
+
+function createTaskListEvaluationContext(
+  overrides: Partial<Parameters<typeof evaluateTaskListMemberships>[2]> = {},
+): Parameters<typeof evaluateTaskListMemberships>[2] {
+  return {
+    currentStreakByTaskId: {},
+    focusedTaskIds: new Set<string>(),
+    hasStepsByTaskId: {},
+    historyFactsByTaskId: {},
+    isDueToday: (date) => date === "2026-06-24",
+    isDueTomorrow: (date) => date === "2026-06-25",
+    isLater: (date) => Boolean(date && date > "2026-06-24"),
+    isOpen: (candidate) => candidate.status !== "done" && candidate.status !== "did_my_best" && candidate.status !== "archived" && candidate.status !== "trashed",
+    isOverdue: (date) => Boolean(date && date < "2026-06-24"),
+    manualMembershipsByTaskId: {},
+    ...overrides,
+  };
+}
 
 test("task bucket logic keeps inbox and quick wins semantics", () => {
   const inboxTask = createTask({
@@ -67,6 +85,90 @@ test("task list evaluation honors manual memberships and date-added rules", () =
   assert.deepEqual(parsed, {
     rules: [{ connector: undefined, rule: { field: "date_added", op: "is_today" } }],
   });
+});
+
+test("inbox saved due-empty rule constrains both bulk and direct membership checks", () => {
+  const datedTask = createTask({
+    created_at: "2026-06-24T09:00:00.000Z",
+    due_on: "2026-06-24",
+    id: "task-inbox-dated",
+    sort_order: 1,
+    status: "pending",
+    title: "Inbox task with due date",
+  });
+  const undatedTask = createTask({
+    created_at: "2026-06-24T09:05:00.000Z",
+    id: "task-inbox-undated",
+    sort_order: 2,
+    status: "pending",
+    title: "Inbox task without due date",
+  });
+  const lists = getBuiltInTaskLists().map((list) =>
+    list.id === "inbox"
+      ? {
+        ...list,
+        rules: {
+          rules: [{ rule: { field: "due", op: "is_empty" } }],
+        },
+      }
+      : list,
+  );
+  const context = createTaskListEvaluationContext();
+
+  const datedMemberships = evaluateTaskListMemberships(datedTask, lists, context);
+  const undatedMemberships = evaluateTaskListMemberships(undatedTask, lists, context);
+
+  assert.equal(datedMemberships.some((membership) => membership.id === "inbox"), false);
+  assert.equal(undatedMemberships.some((membership) => membership.id === "inbox"), true);
+  assert.equal(taskBelongsToList(datedTask, "inbox", lists, context), false);
+  assert.equal(taskBelongsToList(undatedTask, "inbox", lists, context), true);
+});
+
+test("inbox saved rules still respect built-in inbox exclusion and manual membership exclusion", () => {
+  const urgentTask = createTask({
+    created_at: "2026-06-24T10:00:00.000Z",
+    id: "task-inbox-urgent",
+    is_urgent: true,
+    sort_order: 1,
+    status: "pending",
+    title: "Urgent task",
+  });
+  const manualTask = createTask({
+    created_at: "2026-06-24T10:05:00.000Z",
+    id: "task-inbox-manual",
+    sort_order: 2,
+    status: "pending",
+    title: "Manual list task",
+  });
+  const lists = getBuiltInTaskLists().map((list) =>
+    list.id === "inbox"
+      ? {
+        ...list,
+        rules: {
+          rules: [{ rule: { field: "due", op: "is_empty" } }],
+        },
+      }
+      : list,
+  );
+  const context = createTaskListEvaluationContext({
+    manualMembershipsByTaskId: buildManualMembershipMap([
+      {
+        created_at: "2026-06-24T10:10:00.000Z",
+        id: "membership-inbox-1",
+        list_id: "later",
+        task_id: manualTask.id,
+        user_id: "test-user",
+      },
+    ]),
+  });
+
+  const urgentMemberships = evaluateTaskListMemberships(urgentTask, lists, context);
+  const manualMemberships = evaluateTaskListMemberships(manualTask, lists, context);
+
+  assert.equal(urgentMemberships.some((membership) => membership.id === "inbox"), false);
+  assert.equal(manualMemberships.some((membership) => membership.id === "inbox"), false);
+  assert.equal(taskBelongsToList(urgentTask, "inbox", lists, context), false);
+  assert.equal(taskBelongsToList(manualTask, "inbox", lists, context), false);
 });
 
 test("task list evaluation keeps manual memberships while applying rule memberships", () => {

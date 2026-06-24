@@ -54,6 +54,7 @@ export function HudRuntimeClock({
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
+    setNow(Date.now());
     if (!active) {
       return;
     }

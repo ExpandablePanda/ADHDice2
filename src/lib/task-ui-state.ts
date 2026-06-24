@@ -4,6 +4,7 @@ import type { HudUiState } from "@/lib/task-hud-layout";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 
 export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "grid";
+export type TasksSurface = "tasks" | "paths";
 export type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
 export type AppPage =
   | "Home"
@@ -29,6 +30,7 @@ export type TaskUiState = {
   search: string;
   selectedBucket: string;
   statusFilters: TaskStatus[];
+  tasksSurface: TasksSurface;
   uiStateVersion: number;
   view: TaskViewMode;
   energyFilters: TaskEnergy[];
@@ -45,7 +47,7 @@ export const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
 export const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
 export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
-export const TASK_UI_SCHEMA_VERSION = 5;
+export const TASK_UI_SCHEMA_VERSION = 6;
 export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
@@ -54,6 +56,7 @@ export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "due",
   "estimated_time",
   "actual_time",
+  "streak",
   "tags",
   "link",
   "notes",
@@ -64,7 +67,7 @@ export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
 ];
 
 export const DEFAULT_TASK_TABLE_VISIBLE_COLUMNS: AgentPlanColumnId[] = [...VALID_LIST_COLUMN_IDS];
-const DEFAULT_NON_TABLE_VISIBLE_COLUMNS = DEFAULT_TASK_TABLE_VISIBLE_COLUMNS.filter((columnId) => columnId !== "date_completed");
+const DEFAULT_NON_TABLE_VISIBLE_COLUMNS = DEFAULT_TASK_TABLE_VISIBLE_COLUMNS.filter((columnId) => columnId !== "date_completed" && columnId !== "streak");
 export const DEFAULT_VISIBLE_COLUMNS_BY_VIEW: Record<TaskViewMode, AgentPlanColumnId[]> = {
   table: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
   list: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
@@ -79,6 +82,7 @@ export const DEFAULT_TASK_UI_STATE: TaskUiState = {
   search: "",
   selectedBucket: "today",
   statusFilters: [],
+  tasksSurface: "tasks",
   uiStateVersion: TASK_UI_SCHEMA_VERSION,
   view: "table",
   energyFilters: [],
@@ -178,6 +182,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     duplicateTitleMode: state.duplicateTitleMode === true,
     selectedBucket: nextBucket,
     statusFilters: Array.isArray(state.statusFilters) ? state.statusFilters : [],
+    tasksSurface: state.tasksSurface === "paths" ? "paths" : "tasks",
     view: nextView,
     uiStateVersion: TASK_UI_SCHEMA_VERSION,
     visibleColumnsByView: nextVisibleColumnsByView,

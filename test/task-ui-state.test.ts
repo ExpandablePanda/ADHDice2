@@ -22,7 +22,9 @@ test("task ui state migration repairs missing newer columns", () => {
     assert.equal(migrated.visibleColumnsByView[view].includes("notes"), true);
   }
   assert.equal(migrated.visibleColumnsByView.table.includes("date_completed"), true);
+  assert.equal(migrated.visibleColumnsByView.table.includes("streak"), false);
   assert.equal(migrated.visibleColumnsByView.list.includes("date_completed"), false);
+  assert.equal(migrated.visibleColumnsByView.list.includes("streak"), false);
 });
 
 test("task ui state migration drops invalid columns and repairs bucket/view/status filters", () => {
@@ -66,6 +68,13 @@ test("task ui state migration maps legacy list columns onto table view", () => {
 
   assert.equal(migrated.visibleColumnsByView.table.includes("bucket"), true);
   assert.equal(migrated.visibleColumnsByView.table.includes("due"), true);
+  assert.equal(migrated.visibleColumnsByView.table.includes("streak"), false);
+});
+
+test("default task ui state includes streak only for new table layouts", () => {
+  assert.equal(DEFAULT_TASK_UI_STATE.visibleColumnsByView.table.includes("streak"), true);
+  assert.equal(DEFAULT_TASK_UI_STATE.visibleColumnsByView.list.includes("streak"), false);
+  assert.equal(DEFAULT_TASK_UI_STATE.visibleColumnsByView.cards.includes("streak"), false);
 });
 
 test("persisted editor state normalization rejects invalid data", () => {
