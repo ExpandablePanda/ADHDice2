@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Check, ChevronDown, Search, Trash2 } from "lucide-react";
+import { BookOpen, Check, ChevronDown, Search, Trash2, X } from "lucide-react";
 import { startTransition, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { MouseEvent } from "react";
@@ -177,6 +177,7 @@ export function TaskOperationsHeader({
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const [searchDraft, setSearchDraft] = useState(search);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setSearchDraft(search);
@@ -211,6 +212,18 @@ export function TaskOperationsHeader({
     event.preventDefault();
     event.stopPropagation();
     onOpenFocusPlanner();
+  };
+
+  const handleSearchDraftChange = (nextValue: string) => {
+    setSearchDraft(nextValue);
+    startTransition(() => {
+      onSearchChange(nextValue);
+    });
+  };
+
+  const handleClearSearch = () => {
+    handleSearchDraftChange("");
+    searchInputRef.current?.focus();
   };
 
   return (
@@ -248,22 +261,29 @@ export function TaskOperationsHeader({
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
             {!hideSearch ? (
-            <label className="flex h-10 min-w-0 w-full items-center gap-2.5 rounded-[0.9rem] border border-[#efe9ff] bg-[#fbfaff] px-3.5 py-1 md:w-[24rem] md:max-w-[24rem] md:flex-none xl:w-[26rem] xl:max-w-[26rem] 2xl:w-[28rem] 2xl:max-w-[28rem] dark:border-white/10 dark:bg-white/[0.04]">
-              <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
-              <input
-                className="min-w-0 flex-1 bg-transparent text-[13px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
-                id="task-search-input"
-                onChange={(event) => {
-                  const nextValue = event.target.value;
-                  setSearchDraft(nextValue);
-                  startTransition(() => {
-                    onSearchChange(nextValue);
-                  });
-                }}
-                placeholder="Search tasks, or type duplicate:title"
-                value={searchDraft}
-              />
-            </label>
+              <label className="flex h-10 min-w-0 w-full items-center gap-2.5 rounded-[0.9rem] border border-[#efe9ff] bg-[#fbfaff] px-3.5 py-1 md:w-[24rem] md:max-w-[24rem] md:flex-none xl:w-[26rem] xl:max-w-[26rem] 2xl:w-[28rem] 2xl:max-w-[28rem] dark:border-white/10 dark:bg-white/[0.04]">
+                <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+                <input
+                  className="min-w-0 flex-1 bg-transparent text-[13px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+                  id="task-search-input"
+                  onChange={(event) => {
+                    handleSearchDraftChange(event.target.value);
+                  }}
+                  placeholder="Search tasks, or type duplicate:title"
+                  ref={searchInputRef}
+                  value={searchDraft}
+                />
+                {searchDraft.trim().length > 0 ? (
+                  <button
+                    aria-label="Clear search"
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#8d86ab] transition hover:bg-[#efe9ff] hover:text-[#6f57f6] dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-[#cabfff]"
+                    onClick={handleClearSearch}
+                    type="button"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </label>
             ) : null}
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
               <TaskChipButton onClick={onOpenImport}>
@@ -364,7 +384,6 @@ export function TaskOperationsHeader({
               <TaskChipButton onClick={onOpenListSettings}>
                 List settings
               </TaskChipButton>
-              {filterRowsNode}
             </div>
           </div>
           <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-0.5">
@@ -383,6 +402,7 @@ export function TaskOperationsHeader({
               </TaskTableChipButton>
             ))}
           </div>
+          {filterRowsNode}
         </div>
 
       </div>

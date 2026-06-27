@@ -5,13 +5,16 @@ Last reviewed: 2026-06-25
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.11.15`.
-- Current release group: `6.11.x` PATHS MVP.
+- Current working app version: `6.12.6`.
+- Current release group: `6.12.x` PATHS MVP.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 6.12 Checkpoint
+- `6.12.6` changes compact Tasks status filter chip selection from a shared purple ring to per-status inverted fills, so each selected rail chip now flips from a tinted white chip into a solid status-colored chip with white content while preserving behavior, counts, and the compact rail-specific circle layout.
 
 ## 6.11 Checkpoint
 - `6.11.15` is a narrow `6.11.14` History Calendar recurring-rollover parity pass: current-day History Calendar edits for active recurring occurrences now use the same next-due recurrence semantics as Table/List status completion, persisting the rolled-forward `due_on` and next active raw status without routing through reward/XP queuing, while older history edits do not roll the active task forward and future-due rows are not pulled back to `Done` or `Missed` by today's history facts.

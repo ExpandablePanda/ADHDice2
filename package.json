@@ -1,6 +1,6 @@
 {
   "name": "adhdice-clean-prototype",
-  "version": "6.11.15",
+  "version": "6.12.6",
   "private": true,
   "scripts": {
     "dev": "next dev",
