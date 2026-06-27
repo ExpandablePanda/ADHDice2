@@ -9,7 +9,7 @@ const nextConfig: any = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  allowedDevOrigins: ["127.0.0.1", "192.168.4.109"],
+  allowedDevOrigins: ["127.0.0.1", "192.168.4.109", "192.168.4.98"],
   env: {
     NEXT_PUBLIC_BASE_PATH: process.env.NODE_ENV === 'production' ? '/ADHDice2' : '',
   },

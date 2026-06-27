@@ -2076,7 +2076,14 @@ export function TaskManagementTableV2({
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const rowContextMenuRef = useRef<HTMLDivElement | null>(null);
   const loadMoreTasksRef = useRef<HTMLDivElement | null>(null);
-  const resizeStateRef = useRef<{ columnId: TaskManagementTableColumnId; pointerId: number; startWidth: number; startX: number } | null>(null);
+  const resizeStateRef = useRef<{
+    cleanup: () => void;
+    columnId: TaskManagementTableColumnId;
+    handle: HTMLSpanElement;
+    pointerId: number;
+    startWidth: number;
+    startX: number;
+  } | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const inspectorPanelRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -4683,10 +4690,46 @@ export function TaskManagementTableV2({
   function beginColumnResize(event: ReactPointerEvent<HTMLSpanElement>, columnId: TaskManagementTableColumnId) {
     event.preventDefault();
     event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (resizeStateRef.current?.pointerId !== pointerId) {
+        return;
+      }
+      moveEvent.preventDefault();
+      moveEvent.stopPropagation();
+      updateColumnResize(moveEvent.clientX);
+    };
+    const finishResize = (finishEvent: PointerEvent) => {
+      if (resizeStateRef.current?.pointerId !== pointerId) {
+        return;
+      }
+      finishEvent.preventDefault();
+      finishEvent.stopPropagation();
+      clearColumnResize();
+    };
+    const cancelResize = (cancelEvent: PointerEvent) => {
+      if (resizeStateRef.current?.pointerId !== pointerId) {
+        return;
+      }
+      cancelEvent.preventDefault();
+      cancelEvent.stopPropagation();
+      clearColumnResize();
+    };
+
+    handle.setPointerCapture(pointerId);
+    handle.addEventListener("pointermove", handlePointerMove);
+    handle.addEventListener("pointerup", finishResize);
+    handle.addEventListener("pointercancel", cancelResize);
     resizeStateRef.current = {
+      cleanup: () => {
+        handle.removeEventListener("pointermove", handlePointerMove);
+        handle.removeEventListener("pointerup", finishResize);
+        handle.removeEventListener("pointercancel", cancelResize);
+      },
       columnId,
-      pointerId: event.pointerId,
+      handle,
+      pointerId,
       startWidth: effectiveColumnWidths[columnId],
       startX: event.clientX,
     };
@@ -4709,8 +4752,21 @@ export function TaskManagementTableV2({
   }
 
   function clearColumnResize() {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState) {
+      return;
+    }
+
     resizeStateRef.current = null;
+    resizeState.cleanup();
+    if (resizeState.handle.hasPointerCapture(resizeState.pointerId)) {
+      resizeState.handle.releasePointerCapture(resizeState.pointerId);
+    }
   }
+
+  useEffect(() => () => {
+    clearColumnResize();
+  }, []);
 
   function getMeasuredColumnWidths(selector: string, maxCount?: number) {
     const measuredNodes = Array.from(
@@ -6764,31 +6820,9 @@ export function TaskManagementTableV2({
                         }));
                       }}
                       onPointerDown={(event) => beginColumnResize(event, column.id)}
-                      onPointerMove={(event) => {
+                      onLostPointerCapture={(event) => {
                         if (resizeStateRef.current?.pointerId !== event.pointerId) {
                           return;
-                        }
-                        event.preventDefault();
-                        event.stopPropagation();
-                        updateColumnResize(event.clientX);
-                      }}
-                      onPointerUp={(event) => {
-                        if (resizeStateRef.current?.pointerId !== event.pointerId) {
-                          return;
-                        }
-                        event.preventDefault();
-                        event.stopPropagation();
-                        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                          event.currentTarget.releasePointerCapture(event.pointerId);
-                        }
-                        clearColumnResize();
-                      }}
-                      onPointerCancel={(event) => {
-                        if (resizeStateRef.current?.pointerId !== event.pointerId) {
-                          return;
-                        }
-                        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                          event.currentTarget.releasePointerCapture(event.pointerId);
                         }
                         clearColumnResize();
                       }}
