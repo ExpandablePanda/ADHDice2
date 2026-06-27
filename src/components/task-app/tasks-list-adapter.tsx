@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/task-management-table-v2";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
-import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
+import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { Task, TaskActualTimeEntry, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
@@ -20,7 +20,7 @@ import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persist
 import { buildTaskTableRow } from "@/lib/task-table-row";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
-import { getTaskDisplayStatus, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
+import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen } from "@/lib/task-buckets";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusCircle } from "./task-status-ui";
 import {
@@ -201,6 +201,7 @@ const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumn
   bucket: "lists",
   date_added: "date_added",
   date_completed: "date_completed",
+  last_done: "last_done",
   due: "due",
   energy: "energy",
   estimated_time: "estimated",
@@ -446,6 +447,38 @@ function formatStepPreviewSchedule(item: ChildTaskPreview) {
     return `Scheduled ${formatDueLabel(item.scheduledOn)}`;
   }
   return "";
+}
+
+function StepLayerChip({ depth }: { depth: number }) {
+  return (
+    <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1 py-0 text-[10px] font-medium text-[#7a7592]`}>
+      <span>{Math.max(1, depth)}</span>
+      <Footprints className="h-2.5 w-2.5" />
+    </span>
+  );
+}
+
+function StepHistoryChips({ currentStreak, missedStreak }: { currentStreak: number; missedStreak: number }) {
+  if (currentStreak <= 0 && missedStreak <= 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {currentStreak > 0 ? (
+        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
+          <Flame className="h-3 w-3" />
+          {currentStreak}
+        </span>
+      ) : null}
+      {missedStreak > 0 ? (
+        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>
+          <Skull className="h-3 w-3" />
+          {missedStreak}
+        </span>
+      ) : null}
+    </>
+  );
 }
 
 function formatListDuration(minutes: number | null) {
@@ -740,7 +773,13 @@ function StepsCardPreview({
             const scheduleLabel = formatStepPreviewSchedule(item);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
             const activePanelMode = activeQuickPanel?.taskId === item.id ? activeQuickPanel.mode : null;
-            const displayStatus = childTask ? getTaskDisplayStatus(childTask) : item.status;
+            const displayStatus = childTask
+              ? getTaskDisplayStatusWithHistory(
+                childTask,
+                rowContext.taskHistoryByTaskId[childTask.id] ?? [],
+                rowContext.todayDateKey,
+              )
+              : item.status;
             const activePriorities = childTask ? buildTaskPrioritySelection(childTask, new Set(item.priorityFlags.includes("focus") ? [item.id] : [])) : item.priorityFlags;
             const categoryLabel = resolveTaskCategoryLabel({
               currentListLabel,
@@ -835,7 +874,7 @@ function StepsCardPreview({
                             value={titleDraft}
                           />
                         ) : (
-                          <div className="flex min-w-0 items-center gap-1">
+                          <div className="flex min-w-0 items-center gap-1.5">
                             <button
                               className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                               onClick={(event) => {
@@ -849,6 +888,8 @@ function StepsCardPreview({
                                 {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                               </p>
                             </button>
+                            <StepLayerChip depth={item.depth} />
+                            <StepHistoryChips currentStreak={item.currentStreak} missedStreak={item.missedStreak} />
                             {canCollapse ? (
                               <button
                                 aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
@@ -935,9 +976,6 @@ function StepsCardPreview({
                       ) : null}
                       </div>
                     </div>
-                    <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
-                      {formatChildTaskPreviewDepthLabel(item.depth)}
-                    </p>
                     <div className="mt-2 flex flex-wrap items-center gap-2" data-list-action-control="true">
                       <MetadataChipButton
                         active={activePanelMode === "status"}
@@ -949,18 +987,6 @@ function StepsCardPreview({
                       <MetadataChipButton active={activePanelMode === "due"} onClick={() => onOpenQuickPanel(item.id, "due")}>
                         {scheduleLabel || "No date"}
                       </MetadataChipButton>
-                      {item.currentStreak > 0 ? (
-                        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
-                          <Flame className="h-3 w-3" />
-                          {item.currentStreak}
-                        </span>
-                      ) : null}
-                      {item.missedStreak > 0 ? (
-                        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>
-                          <Skull className="h-3 w-3" />
-                          {item.missedStreak}
-                        </span>
-                      ) : null}
                       <MetadataChipButton active={activePanelMode === "priority"} onClick={() => onOpenQuickPanel(item.id, "priority")}>
                         {childTask ? formatPriorityChipLabel(childTask, new Set(activePriorities.includes("focus") ? [item.id] : [])) : activePriorities[0] ? formatPreviewPriorityLabel(activePriorities[0]) : "Normal priority"}
                       </MetadataChipButton>
@@ -1475,9 +1501,7 @@ function RepeatQuickPanel({
         ? (Number.isFinite(parsedDayOfMonth) && parsedDayOfMonth >= 1 && parsedDayOfMonth <= 31 ? parsedDayOfMonth : nextDayOfMonth ?? null)
         : null,
       repeatDaysOfWeek: nextRepeat === "weekly" || nextRepeat === "custom" ? nextDays : [],
-      repeatInterval: nextRepeat === "daily_until_complete"
-        ? 1
-        : Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1,
+      repeatInterval: Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1,
       repeatMonthlyMode: resolvedMonthlyMode,
       repeatMonthlyOrdinal: resolvedMonthlyOrdinal,
       repeatMonthlyWeekday: resolvedMonthlyWeekday,
@@ -1576,7 +1600,7 @@ function RepeatQuickPanel({
             repeat={repeatFrequency}
             repeatDaysOfWeek={repeatDaysOfWeek}
             repeatUnits={COMPACT_REPEAT_UNITS}
-            showInterval={repeatFrequency !== "daily_until_complete"}
+            showInterval
             showMonthDay={repeatFrequency === "monthly" && monthlyMode !== "ordinal_weekday"}
             showMonthlyMode={repeatFrequency === "monthly"}
             showMonthlyOrdinals={repeatFrequency === "monthly" && monthlyMode === "ordinal_weekday"}
@@ -1993,7 +2017,11 @@ function TasksSimpleList({
             />
           ) : null}
           {tasks.map((task) => {
-        const displayStatus = getTaskDisplayStatus(task);
+        const displayStatus = getTaskDisplayStatusWithHistory(
+          task,
+          rowContext.taskHistoryByTaskId[task.id] ?? [],
+          rowContext.todayDateKey,
+        );
         const dueLabel = formatDueLabel(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
         const dueMeta = dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;

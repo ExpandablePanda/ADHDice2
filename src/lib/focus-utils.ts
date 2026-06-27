@@ -1,5 +1,7 @@
 import type { ActiveFocusSession, FocusCategory } from "@/lib/types";
 
+export const SYSTEM_COUNTDOWN_CATEGORY_ID = "__adhdice_system_countdown__";
+
 export function sanitizeFocusLabel(value: string | null | undefined, fallback: string) {
   const trimmed = (value ?? "").trim();
   return trimmed || fallback;
@@ -58,4 +60,38 @@ export function adjustActiveFocusSession(
     accumulatedSeconds: adjustedSeconds,
     startTime: session.isRunning ? nowMs : null,
   };
+}
+
+export function isSystemCountdownCategoryId(categoryId: string | null | undefined) {
+  return categoryId === SYSTEM_COUNTDOWN_CATEGORY_ID;
+}
+
+export function getSystemCountdownCategory(): FocusCategory {
+  return {
+    id: SYSTEM_COUNTDOWN_CATEGORY_ID,
+    title: "Countdown",
+    focusType: "Work",
+    color: "#6f57f6",
+    icon: "Clock3",
+    dailyGoalSeconds: null,
+    weeklyGoalSeconds: null,
+  };
+}
+
+export function getDisplayFocusCategories(
+  categories: FocusCategory[],
+  activeSessions: Record<string, ActiveFocusSession>,
+) {
+  const visibleCategories = categories.filter((category) => !isSystemCountdownCategoryId(category.id));
+  if (!activeSessions[SYSTEM_COUNTDOWN_CATEGORY_ID]) {
+    return visibleCategories;
+  }
+  return [getSystemCountdownCategory(), ...visibleCategories];
+}
+
+export function resolveFocusCategory(categoryId: string, categories: FocusCategory[]) {
+  if (isSystemCountdownCategoryId(categoryId)) {
+    return getSystemCountdownCategory();
+  }
+  return categories.find((entry) => entry.id === categoryId) ?? null;
 }

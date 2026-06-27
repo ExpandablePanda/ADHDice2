@@ -1,11 +1,10 @@
-import type { Task } from "@/lib/database.types";
+import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
 import { isArchiveLikeTask } from "@/lib/task-complete";
 import {
   getTaskBucket,
   isTaskFinished,
   isTaskOpen,
   isTaskOpenStatus,
-  isTaskQuickWin,
   isTaskUrgent,
   type TaskBucket,
   type TaskBucketContext,
@@ -13,12 +12,20 @@ import {
 import type { TaskQuickFilter } from "@/lib/task-ui-state";
 import { todayISO } from "@/lib/utils";
 import { formatOptionLabel } from "@/lib/task-label-format";
+import { getLatestTaskHistoryEntryOnDate, isTaskHistoryStatus } from "@/lib/task-history";
 
 export type TaskDueDateBucket = "none" | "overdue" | "today" | "upcoming" | "not_due";
 
 export function daysUntil(date: string | null) {
   if (!date) return null;
   const start = new Date(`${todayISO()}T00:00:00`);
+  const end = new Date(`${date}T00:00:00`);
+  return Math.round((end.getTime() - start.getTime()) / 86_400_000);
+}
+
+function daysUntilFromDate(date: string | null, todayDateKey: string) {
+  if (!date) return null;
+  const start = new Date(`${todayDateKey}T00:00:00`);
   const end = new Date(`${date}T00:00:00`);
   return Math.round((end.getTime() - start.getTime()) / 86_400_000);
 }
@@ -59,12 +66,21 @@ export function getTaskDueDateBucket(task: Pick<Task, "due_on" | "status">): Tas
   return "not_due";
 }
 
-export function getTaskDisplayStatus(task: Task) {
+function getTaskDisplayStatusForDate(task: Task, todayDateKey: string) {
   if (task.status !== "upcoming" && task.status !== "not_due") {
     return task.status;
   }
 
-  const dueBucket = getTaskDueDateBucket(task);
+  const difference = daysUntilFromDate(task.due_on, todayDateKey);
+  const dueBucket: TaskDueDateBucket = difference === null
+    ? "none"
+    : difference < 0
+      ? "overdue"
+      : difference === 0
+        ? "today"
+        : difference <= 7
+          ? "upcoming"
+          : "not_due";
   if (dueBucket === "upcoming") {
     return "upcoming";
   }
@@ -78,6 +94,48 @@ export function getTaskDisplayStatus(task: Task) {
   }
 
   return "pending";
+}
+
+export function getTaskDisplayStatus(task: Task) {
+  return getTaskDisplayStatusForDate(task, todayISO());
+}
+
+function getTaskVisibleStatusOccurrenceDateKey(task: Task, todayDateKey: string) {
+  if (task.repeat_frequency === "none") {
+    return null;
+  }
+
+  if (!task.due_on) {
+    return todayDateKey;
+  }
+
+  if (task.due_on > todayDateKey) {
+    return null;
+  }
+
+  return task.due_on;
+}
+
+export function getTaskDisplayStatusWithHistory(
+  task: Task,
+  history: DbTaskHistory[],
+  todayDateKey: string,
+): TaskStatus {
+  if (task.repeat_frequency === "none" || history.length === 0) {
+    return getTaskDisplayStatusForDate(task, todayDateKey);
+  }
+
+  const currentOccurrenceDateKey = getTaskVisibleStatusOccurrenceDateKey(task, todayDateKey);
+  if (!currentOccurrenceDateKey) {
+    return getTaskDisplayStatusForDate(task, todayDateKey);
+  }
+
+  const currentOccurrenceStatus = getLatestTaskHistoryEntryOnDate(history, currentOccurrenceDateKey)?.status;
+  if (currentOccurrenceStatus && isTaskHistoryStatus(currentOccurrenceStatus)) {
+    return currentOccurrenceStatus;
+  }
+
+  return getTaskDisplayStatusForDate(task, todayDateKey);
 }
 
 export function formatDueLabel(date: string | null) {

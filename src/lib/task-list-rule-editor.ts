@@ -6,6 +6,7 @@ import { formatOptionLabel } from "@/lib/task-label-format";
 export type TaskListRuleField = TaskListRule["field"];
 export type TaskListRuleRowOperator = TaskListRule["op"];
 type TaskListRuleStreakValue = Extract<TaskListRule, { field: "streak" }>["value"];
+type TaskListHistoryStatusValue = Extract<TaskListRule, { field: "history_status" }>["value"];
 type TaskListHistoryRule = Extract<TaskListRule, { field: "completed_history" | "missed_history" }>;
 type TaskListHistoryRuleValue = TaskHistoryWindowPreset;
 type TaskListPresetStreakRule = Extract<TaskListRule, { field: "completed_streak" | "missed_streak" }>;
@@ -33,6 +34,8 @@ export function createDefaultTaskListRule(field: TaskListRuleField = "status"): 
       return { field: "date_added", op: "is_today" };
     case "due":
       return { field: "due", op: "is_today" };
+    case "history_status":
+      return { field: "history_status", op: "is_not", value: "handled_today" };
     case "completed_history":
       return { field: "completed_history", op: "is_today" };
     case "missed_history":
@@ -71,6 +74,7 @@ export function taskListRuleNeedsValue(rule: TaskListRule) {
     || rule.field === "energy"
     || rule.field === "streak"
     || rule.field === "list"
+    || rule.field === "history_status"
     || rule.field === "completed_streak"
     || rule.field === "missed_streak";
 }
@@ -119,6 +123,8 @@ export function formatTaskListRule(rule: TaskListRule, resolveListLabel?: (listI
       return "Due has a later date";
     case "date_added":
       return rule.op === "is_today" ? "Date added is today" : "Date added isn't today";
+    case "history_status":
+      return `History status ${rule.op === "is" ? "is" : "isn't"} ${formatHistoryStatusValue(rule.value)}`;
     case "completed_history":
       return formatHistoryRule("Completed", rule);
     case "missed_history":
@@ -215,6 +221,11 @@ export function updateTaskListRuleOperator(rule: TaskListRule, operator: TaskLis
         return { field: "date_added", op: operator };
       }
       return rule;
+    case "history_status":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "history_status", op: operator, value: rule.value };
+      }
+      return rule;
     case "completed_history":
     case "missed_history":
       if (operator === "is_today" || operator === "has_ever") {
@@ -259,6 +270,9 @@ export function updateTaskListRuleValue(rule: TaskListRule, value: string): Task
   if (rule.field === "streak") {
     return { ...rule, value: value as TaskListRuleStreakValue };
   }
+  if (rule.field === "history_status") {
+    return { ...rule, value: value as TaskListHistoryStatusValue };
+  }
   if (rule.field === "completed_history" || rule.field === "missed_history") {
     return { ...rule, value: value as TaskListHistoryRuleValue } satisfies TaskListHistoryRule;
   }
@@ -282,6 +296,19 @@ function formatHistoryRule(prefix: string, rule: TaskListHistoryRule) {
   return rule.op === "within_last"
     ? `${prefix} within last ${dayLabel}`
     : `Last ${prefix.toLowerCase()} within last ${dayLabel}`;
+}
+
+function formatHistoryStatusValue(value: TaskListHistoryStatusValue) {
+  switch (value) {
+    case "done_today":
+      return "Done today/current occurrence";
+    case "did_my_best_today":
+      return "Did My Best today/current occurrence";
+    case "missed_today":
+      return "Missed today/current occurrence";
+    default:
+      return "Handled today/current occurrence";
+  }
 }
 
 function formatPresetStreakOperator(op: TaskListPresetStreakRule["op"], value: TaskHistoryStreakPreset) {

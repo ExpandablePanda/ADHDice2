@@ -18,6 +18,7 @@ import {
   buildTaskHistoryCalendarDueDateSet,
   computeTaskSpecificHistoryStats,
   formatTaskHistoryEntryLabel,
+  getTaskHistoryLastDone,
   getTaskHistoryCalendarVirtualState,
   type TaskHistoryStats,
 } from "@/lib/task-history";
@@ -79,6 +80,17 @@ function formatCalendarDate(dateKey: string) {
     return dateKey;
   }
   return `${Number(month)}/${Number(day)}/${year}`;
+}
+
+function formatHistoryDateTime(timestamp: string) {
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp;
+  }
+  return parsed.toLocaleString(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }
 
 const HISTORY_STATUS_CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
@@ -543,6 +555,7 @@ export function TaskHistoryModal({
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
   const stats = computeTaskSpecificHistoryStats(task, taskHistory, today, days[0] ?? today);
+  const lastDone = getTaskHistoryLastDone(taskHistory);
   const sortedHistory = [...taskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));
   const selectedEntry = historyByDate.get(selectedDate) ?? null;
   const selectedDateSet = new Set(selectedDates);
@@ -815,6 +828,7 @@ export function TaskHistoryModal({
             <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Stats</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
               {[
+                { label: "Last Done", value: lastDone ? (lastDone.timestamp ? formatHistoryDateTime(lastDone.timestamp) : formatCalendarDate(lastDone.dateKey)) : "None", detail: "latest Done or Did My Best" },
                 { label: "Current Streak", value: stats.currentStreak, detail: "completed due dates in a row" },
                 { label: "Best Streak", value: stats.bestStreak, detail: "best completion streak" },
                 { label: "Missed Streak", value: stats.missedStreak, detail: "missed due dates in a row" },

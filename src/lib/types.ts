@@ -24,6 +24,8 @@ export type ActiveFocusSession = {
   startTime: number | null;
   accumulatedSeconds: number;
   isRunning: boolean;
+  mode?: "countdown" | "countup";
+  countdownTargetSeconds?: number | null;
 };
 
 export type HistoricalFocusSession = {

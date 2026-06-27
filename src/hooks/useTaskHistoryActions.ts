@@ -12,6 +12,7 @@ type Message = {
 };
 
 type UseTaskHistoryActionsOptions = {
+  calcNextDueDateFromDate?: (task: Task, referenceDateKey: string) => string | null;
   client: SupabaseClient;
   currentUserId: string;
   currentDayKey: string;
@@ -30,6 +31,7 @@ type UseTaskHistoryActionsOptions = {
 };
 
 export function useTaskHistoryActions({
+  calcNextDueDateFromDate,
   client,
   currentUserId,
   currentDayKey,
@@ -57,18 +59,27 @@ export function useTaskHistoryActions({
       dayStartTime,
       now,
       timezone,
-    });
+    }, { calcNextDueDateFromDate });
 
-    if (task.status === nextTaskState.status && task.completed_at === nextTaskState.completedAt) {
+    if (
+      task.status === nextTaskState.status
+      && task.completed_at === nextTaskState.completedAt
+      && (nextTaskState.dueOn === undefined || task.due_on === nextTaskState.dueOn)
+    ) {
       return true;
+    }
+
+    const updateValues: TaskUpdate = {
+      completed_at: nextTaskState.completedAt,
+      status: nextTaskState.status,
+    };
+    if (nextTaskState.dueOn !== undefined) {
+      updateValues.due_on = nextTaskState.dueOn;
     }
 
     const { conflict, data, error } = await updateTaskRowWithLegacyEnergyFallback(
       taskId,
-      {
-        completed_at: nextTaskState.completedAt,
-        status: nextTaskState.status,
-      },
+      updateValues,
       { expectedTask: task },
     );
 

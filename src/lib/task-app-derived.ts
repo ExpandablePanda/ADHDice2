@@ -2,7 +2,7 @@ import { buildTaskCollections } from "@/lib/task-selectors";
 import { buildTaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
 import { isArchiveLikeTask } from "@/lib/task-complete";
 import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
-import { getTaskDisplayStatus, sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
+import { getTaskDisplayStatusWithHistory, sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
 import type {
   Task,
   TaskHistory,
@@ -323,7 +323,11 @@ export function buildChildTaskPreviewLookup(
           repeatMonthlyOrdinal: descendant.repeat_monthly_ordinal,
           repeatMonthlyWeekday: descendant.repeat_monthly_weekday,
           scheduledOn: descendant.scheduled_on,
-          status: getTaskDisplayStatus(descendant),
+          status: getTaskDisplayStatusWithHistory(
+            descendant,
+            taskHistoryByTaskId[descendant.id] ?? [],
+            todayDateKey,
+          ),
           tags: descendant.tags ?? [],
           title: descendant.title,
           updatedAt: descendant.updated_at,
@@ -623,7 +627,10 @@ export function computeTaskAppDerivedData({
   });
 
   const collectionsStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const collections = buildTaskCollections(filteredTasksSorted, taskListMembershipsByTaskId, focusedTaskIds);
+  const collections = buildTaskCollections(filteredTasksSorted, taskListMembershipsByTaskId, focusedTaskIds, {
+    taskHistoryByTaskId,
+    todayDateKey,
+  });
   logTaskDeriveStep("base bucket/list splitting", collectionsStartedAt, {
     focusTasks: collections.filteredFocusTasks.length,
     inboxTasks: collections.inboxTasks.length,

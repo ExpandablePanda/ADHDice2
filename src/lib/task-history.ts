@@ -28,6 +28,8 @@ export type TaskHistoryWindowPreset = typeof TASK_HISTORY_WINDOW_PRESETS[number]
 export type TaskHistoryStreakPreset = typeof TASK_HISTORY_STREAK_PRESETS[number];
 
 export type TaskHistoryFacts = {
+  handledToday: boolean;
+  lastDone: TaskHistoryLastDone | null;
   completedToday: boolean;
   completedWithinLast: Record<TaskHistoryWindowPreset, boolean>;
   currentCompletedStreak: number;
@@ -38,6 +40,11 @@ export type TaskHistoryFacts = {
   lastMissedWithinLast: Record<TaskHistoryWindowPreset, boolean>;
   missedToday: boolean;
   missedWithinLast: Record<TaskHistoryWindowPreset, boolean>;
+};
+
+export type TaskHistoryLastDone = {
+  dateKey: string;
+  timestamp: string | null;
 };
 
 export function mapTaskHistoryRow(row: DbTaskHistory) {
@@ -119,6 +126,8 @@ function createHistoryWindowFlags(initialValue = false): Record<TaskHistoryWindo
 
 export function buildEmptyTaskHistoryFacts(): TaskHistoryFacts {
   return {
+    handledToday: false,
+    lastDone: null,
     completedToday: false,
     completedWithinLast: createHistoryWindowFlags(),
     currentCompletedStreak: 0,
@@ -132,11 +141,125 @@ export function buildEmptyTaskHistoryFacts(): TaskHistoryFacts {
   };
 }
 
+function isLastDoneHistoryEntry(entry: Pick<DbTaskHistory, "status">) {
+  return entry.status === "done" || entry.status === "did_my_best";
+}
+
+function isHandledTodayHistoryEntry(entry: Pick<DbTaskHistory, "status">) {
+  return entry.status === "done" || entry.status === "did_my_best" || entry.status === "missed";
+}
+
+function getHistoryTimestamp(entry: Pick<DbTaskHistory, "created_at" | "entry_date" | "updated_at">) {
+  return entry.updated_at || entry.created_at || null;
+}
+
+function compareLastDoneEntries(left: DbTaskHistory, right: DbTaskHistory) {
+  const leftTimestamp = getHistoryTimestamp(left);
+  const rightTimestamp = getHistoryTimestamp(right);
+  if (leftTimestamp && rightTimestamp && leftTimestamp !== rightTimestamp) {
+    return leftTimestamp < rightTimestamp ? -1 : 1;
+  }
+  if (leftTimestamp && !rightTimestamp) {
+    const dateOrder = compareDateKeys(left.entry_date, right.entry_date);
+    return dateOrder !== 0 ? dateOrder : 1;
+  }
+  if (!leftTimestamp && rightTimestamp) {
+    const dateOrder = compareDateKeys(left.entry_date, right.entry_date);
+    return dateOrder !== 0 ? dateOrder : -1;
+  }
+  const dateOrder = compareDateKeys(left.entry_date, right.entry_date);
+  return dateOrder !== 0 ? dateOrder : left.id.localeCompare(right.id);
+}
+
+export function getTaskHistoryLastDone(history: DbTaskHistory[]): TaskHistoryLastDone | null {
+  const latestEntry = history
+    .filter(isLastDoneHistoryEntry)
+    .sort(compareLastDoneEntries)
+    .at(-1);
+
+  return latestEntry
+    ? {
+      dateKey: latestEntry.entry_date,
+      timestamp: getHistoryTimestamp(latestEntry),
+    }
+    : null;
+}
+
+export function isTaskHandledOnDate(history: DbTaskHistory[], dateKey: string) {
+  return history.some((entry) => entry.entry_date === dateKey && isHandledTodayHistoryEntry(entry));
+}
+
+export function isTaskMissedOnDate(history: DbTaskHistory[], dateKey: string) {
+  return history.some((entry) => entry.entry_date === dateKey && entry.status === "missed");
+}
+
+export const FOCUS_HANDLED_HISTORY_STATUSES = ["done", "did_my_best", "missed"] as const;
+export type FocusHandledHistoryStatus = typeof FOCUS_HANDLED_HISTORY_STATUSES[number];
+
+function compareHistoryEntriesByTimestamp(left: DbTaskHistory, right: DbTaskHistory) {
+  const leftTimestamp = getHistoryTimestamp(left) ?? `${left.entry_date}T00:00:00.000Z`;
+  const rightTimestamp = getHistoryTimestamp(right) ?? `${right.entry_date}T00:00:00.000Z`;
+  if (leftTimestamp !== rightTimestamp) {
+    return leftTimestamp < rightTimestamp ? -1 : 1;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+export function getLatestTaskHistoryEntryOnDate(history: DbTaskHistory[], dateKey: string) {
+  return history
+    .filter((entry) => entry.entry_date === dateKey)
+    .sort(compareHistoryEntriesByTimestamp)
+    .at(-1) ?? null;
+}
+
+export function getTaskHandledHistoryStatusOnDate(history: DbTaskHistory[], dateKey: string): FocusHandledHistoryStatus | null {
+  const latestEntry = getLatestTaskHistoryEntryOnDate(history, dateKey);
+  if (!latestEntry) {
+    return null;
+  }
+  return FOCUS_HANDLED_HISTORY_STATUSES.includes(latestEntry.status as FocusHandledHistoryStatus)
+    ? latestEntry.status as FocusHandledHistoryStatus
+    : null;
+}
+
+export function getTaskCurrentFocusOccurrenceDateKey(
+  task: Pick<Task, "due_on" | "repeat_frequency">,
+  todayDateKey: string,
+) {
+  if (!task.due_on || task.due_on > todayDateKey) {
+    return todayDateKey;
+  }
+  if (task.repeat_frequency === "none") {
+    return todayDateKey;
+  }
+  return task.due_on;
+}
+
+export function getTaskFocusFilterFacts(task: Pick<Task, "due_on" | "repeat_frequency">, history: DbTaskHistory[], todayDateKey: string) {
+  const currentOccurrenceDateKey = getTaskCurrentFocusOccurrenceDateKey(task, todayDateKey);
+  const currentOccurrenceStatus = getTaskHandledHistoryStatusOnDate(history, currentOccurrenceDateKey);
+  const todayStatus = currentOccurrenceDateKey === todayDateKey
+    ? currentOccurrenceStatus
+    : getTaskHandledHistoryStatusOnDate(history, todayDateKey);
+
+  return {
+    currentOccurrenceDateKey,
+    currentOccurrenceStatus,
+    handledToday: currentOccurrenceStatus !== null || todayStatus !== null,
+    missedToday: currentOccurrenceStatus === "missed" || todayStatus === "missed",
+    todayStatus,
+  };
+}
+
 type TaskHistoryLiveStatusContext = {
   currentDayKey: string;
   dayStartTime: string;
   now: Date;
   timezone: string;
+};
+
+type TaskHistoryLiveStatusOptions = {
+  calcNextDueDateFromDate?: (task: Task, referenceDateKey: string) => string | null;
 };
 
 function getSortedHistoryThroughDay(history: DbTaskHistory[], currentDayKey: string) {
@@ -154,9 +277,46 @@ export function resolveLiveTaskStatusFromHistory(
     now,
     timezone,
   }: TaskHistoryLiveStatusContext,
-): { completedAt: string | null; status: TaskStatus } {
+  options: TaskHistoryLiveStatusOptions = {},
+): { completedAt: string | null; dueOn?: string | null; status: TaskStatus } {
   const sortedHistory = getSortedHistoryThroughDay(history, currentDayKey);
   const latestEntry = sortedHistory.at(-1) ?? null;
+
+  if (task.repeat_frequency !== "none" && task.due_on && task.due_on > currentDayKey) {
+    return {
+      completedAt: null,
+      status: resolveRecurringLiveStatusFromNextDueDate(task, {
+        currentDayKey,
+        dayStartTime,
+        nextDueDate: task.due_on,
+        now,
+        timezone,
+      }),
+    };
+  }
+
+  if (
+    task.repeat_frequency !== "none"
+    && task.due_on
+    && task.due_on <= currentDayKey
+    && latestEntry?.entry_date === currentDayKey
+    && (latestEntry.status === "done" || latestEntry.status === "did_my_best" || latestEntry.status === "missed")
+  ) {
+    const nextDueDate = options.calcNextDueDateFromDate?.(task, currentDayKey) ?? null;
+    if (nextDueDate) {
+      return {
+        completedAt: null,
+        dueOn: nextDueDate,
+        status: resolveRecurringLiveStatusFromNextDueDate(task, {
+          currentDayKey,
+          dayStartTime,
+          nextDueDate,
+          now,
+          timezone,
+        }),
+      };
+    }
+  }
 
   if (latestEntry?.status === "missed") {
     return {
@@ -341,6 +501,8 @@ export function buildTaskHistoryFacts(history: DbTaskHistory[], todayDateKey: st
   }
 
   return {
+    handledToday: byDate.get(todayDateKey)?.completed === true || byDate.get(todayDateKey)?.missed === true,
+    lastDone: getTaskHistoryLastDone(history),
     completedToday: byDate.get(todayDateKey)?.completed ?? false,
     completedWithinLast,
     currentCompletedStreak,

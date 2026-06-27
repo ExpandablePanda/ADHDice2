@@ -1,5 +1,6 @@
-import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
-import { buildEmptyTaskHistoryFacts, type TaskHistoryFacts, type TaskHistoryStreakPreset, type TaskHistoryWindowPreset } from "@/lib/task-history";
+import type { Task, TaskEnergy, TaskHistory, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import { buildEmptyTaskHistoryFacts, getTaskFocusFilterFacts, type TaskHistoryFacts, type TaskHistoryStreakPreset, type TaskHistoryWindowPreset } from "@/lib/task-history";
+import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 
 export type BuiltInTaskListId =
   | "inbox"
@@ -30,6 +31,7 @@ export type TaskListRule =
   | { field: "streak"; op: "is" | "is_not"; value: "0" | "over_0" | "over_7" | "over_14" | "over_30" }
   | { field: "due"; op: "is_empty" | "is_overdue" | "is_today" | "is_tomorrow" | "is_future" | "is_not_today" | "is_not_overdue" }
   | { field: "date_added"; op: "is_today" | "is_not_today" }
+  | { field: "history_status"; op: "is" | "is_not"; value: "done_today" | "did_my_best_today" | "missed_today" | "handled_today" }
   | { field: "completed_history"; op: "is_today" | "within_last" | "last_within_last" | "has_ever"; value?: TaskHistoryWindowPreset }
   | { field: "missed_history"; op: "is_today" | "within_last" | "last_within_last" | "has_ever"; value?: TaskHistoryWindowPreset }
   | { field: "completed_streak"; op: "equals" | "at_least" | "less_than"; value: TaskHistoryStreakPreset }
@@ -85,6 +87,8 @@ export type TaskListEvaluationContext = {
   isOverdue: (date: string | null) => boolean;
   historyFactsByTaskId: Record<string, TaskHistoryFacts>;
   manualMembershipsByTaskId: Record<string, TaskListId[]>;
+  taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  todayDateKey: string;
 };
 
 export type TaskListEvaluationPerf = {
@@ -102,6 +106,14 @@ type TaskListLookup = {
   nonInboxRuleLists: TaskListDefinition[];
   ruleLists: TaskListDefinition[];
 };
+
+function getTaskRuleDisplayStatus(task: Task, context: TaskListEvaluationContext): TaskStatus {
+  return getTaskDisplayStatusWithHistory(
+    task,
+    context.taskHistoryByTaskId[task.id] ?? [],
+    context.todayDateKey,
+  );
+}
 
 export const BUILT_IN_TASK_LIST_IDS: BuiltInTaskListId[] = [
   "inbox",
@@ -506,6 +518,7 @@ function matchesTaskListRule(
     return currentStreak > 30;
   };
   const historyFacts = context.historyFactsByTaskId[task.id] ?? buildEmptyTaskHistoryFacts();
+  const taskHistory = context.taskHistoryByTaskId[task.id] ?? [];
   const matchesPresetStreak = (
     currentValue: number,
     op: Extract<TaskListRule, { field: "completed_streak" | "missed_streak" }>["op"],
@@ -519,8 +532,9 @@ function matchesTaskListRule(
 
   switch (rule.field) {
     case "status": {
+      const displayStatus = getTaskRuleDisplayStatus(task, context);
       const values = Array.isArray(rule.value) ? rule.value : [rule.value];
-      return rule.op === "is" ? values.includes(task.status) : !values.includes(task.status);
+      return rule.op === "is" ? values.includes(displayStatus) : !values.includes(displayStatus);
     }
     case "list": {
       const belongsToList = taskBelongsToSpecificList(task, rule.value, lists, context, visitedListIds, evaluationCache, lookup);
@@ -560,6 +574,16 @@ function matchesTaskListRule(
       const createdDate = task.created_at.slice(0, 10);
       if (rule.op === "is_today") return context.isDueToday(createdDate);
       return !context.isDueToday(createdDate);
+    }
+    case "history_status": {
+      const occurrenceFacts = getTaskFocusFilterFacts(task, taskHistory, context.todayDateKey);
+      const matchesHistoryStatus = rule.value === "handled_today"
+        ? occurrenceFacts.handledToday
+        : rule.value === "missed_today"
+          ? occurrenceFacts.missedToday
+          : occurrenceFacts.currentOccurrenceStatus === (rule.value === "done_today" ? "done" : "did_my_best")
+            || occurrenceFacts.todayStatus === (rule.value === "done_today" ? "done" : "did_my_best");
+      return rule.op === "is" ? matchesHistoryStatus : !matchesHistoryStatus;
     }
     case "completed_history":
       if (rule.op === "is_today") return historyFacts.completedToday;
@@ -628,6 +652,15 @@ function isTaskListRule(value: unknown): value is TaskListRule {
   }
   if (candidate.field === "date_added") {
     return candidate.op === "is_today" || candidate.op === "is_not_today";
+  }
+  if (candidate.field === "history_status") {
+    return (candidate.op === "is" || candidate.op === "is_not")
+      && (
+        candidate.value === "done_today"
+        || candidate.value === "did_my_best_today"
+        || candidate.value === "missed_today"
+        || candidate.value === "handled_today"
+      );
   }
   if (candidate.field === "completed_history" || candidate.field === "missed_history") {
     return candidate.op === "is_today"
@@ -824,7 +857,8 @@ function buildTaskListLookup(lists: TaskListDefinition[]): TaskListLookup {
 
 function ruleGroupUsesSavedHistory(group: TaskListRuleGroup) {
   return group.rules.some((entry) =>
-    entry.rule.field === "completed_history"
+    entry.rule.field === "history_status"
+    || entry.rule.field === "completed_history"
     || entry.rule.field === "missed_history"
     || entry.rule.field === "completed_streak"
     || entry.rule.field === "missed_streak",

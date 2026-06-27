@@ -527,7 +527,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       let nextCategories = mergeStoredFocusCategories((categoryResult.data ?? []).map(mapFocusCategoryRow));
-      let nextActiveSessions = mapActiveSessions(activeResult.data ?? []);
+      let nextActiveSessions = mapActiveSessions(activeResult.data ?? [], userId);
       let nextFocusHistory = mergeStoredFocusHistory((historyResult.data ?? []).map((row) => mapFocusSessionRow(row)));
       let nextFocusedTaskIdsByDate = mapTaskFocusDayRows(focusDayResult.data ?? [], taskResult.data ?? []);
       const nextTaskLists = (taskListsResult.error && isMissingTaskListsTableError(taskListsResult.error.message))
@@ -569,7 +569,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             nextCategories = mergeStoredFocusCategories(freshCategories.data.map(mapFocusCategoryRow));
           }
           if (!freshActive.error && freshActive.data) {
-            nextActiveSessions = mapActiveSessions(freshActive.data);
+            nextActiveSessions = mapActiveSessions(freshActive.data, userId);
           }
           if (!freshHistory.error && freshHistory.data) {
             nextFocusHistory = mergeStoredFocusHistory(freshHistory.data.map((row) => mapFocusSessionRow(row)));

@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from "react";
+import { Clock3 } from "lucide-react";
 import {
   type FocusCategory,
   type ActiveFocusSession,
@@ -11,6 +12,7 @@ import {
   DEFAULT_PRIMARY_SUBTYPES,
   DEFAULT_SECONDARY_SUBTYPES,
 } from "@/lib/types";
+import { getDisplayFocusCategories, isSystemCountdownCategoryId, SYSTEM_COUNTDOWN_CATEGORY_ID } from "@/lib/focus-utils";
 import { FocusClockRow, FocusClockRowDesktop } from "./focus-clocks";
 import { CategoryManager } from "./category-manager";
 import { DailyHistoryGallery } from "./focus-history";
@@ -22,10 +24,12 @@ function FocusTimerPicker({
   categories,
   activeSessions,
   onSelect,
+  onSelectCountdown,
 }: {
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
-  onSelect: (categoryId: string) => void;
+  onSelect: (categoryId: string, options?: { countdownTargetSeconds?: number | null; mode?: "countdown" | "countup" }) => void;
+  onSelectCountdown: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -33,10 +37,22 @@ function FocusTimerPicker({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
   const normalizedQuery = query.trim().toLowerCase();
-  const options = categories
+  const categoryOptions = categories
     .filter((category) => !activeSessions[category.id])
     .filter((category) => !normalizedQuery || category.title.toLowerCase().includes(normalizedQuery))
     .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+  const options: Array<
+    | { id: string; kind: "countdown"; label: string }
+    | { id: string; kind: "category"; label: string; category: FocusCategory }
+  > = [
+    { id: "countdown", kind: "countdown", label: "Countdown" },
+    ...categoryOptions.map((category) => ({
+      id: category.id,
+      kind: "category" as const,
+      label: category.title,
+      category,
+    })),
+  ];
   const safeHighlightedIndex = Math.min(highlightedIndex, Math.max(0, options.length - 1));
 
   useEffect(() => {
@@ -49,11 +65,19 @@ function FocusTimerPicker({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
-  const selectCategory = (category: FocusCategory) => {
-    onSelect(category.id);
+  const closePicker = () => {
     setQuery("");
     setHighlightedIndex(0);
     setIsOpen(false);
+  };
+
+  const selectOption = (option: typeof options[number]) => {
+    if (option.kind === "countdown") {
+      onSelectCountdown();
+    } else {
+      onSelect(option.category.id, { mode: "countup" });
+    }
+    closePicker();
   };
 
   return (
@@ -84,7 +108,7 @@ function FocusTimerPicker({
               setHighlightedIndex((current) => options.length ? (current - 1 + options.length) % options.length : 0);
             } else if (event.key === "Enter" && isOpen && options[safeHighlightedIndex]) {
               event.preventDefault();
-              selectCategory(options[safeHighlightedIndex]);
+              selectOption(options[safeHighlightedIndex]);
             } else if (event.key === "Escape") {
               setIsOpen(false);
             }
@@ -93,7 +117,7 @@ function FocusTimerPicker({
           role="combobox"
           type="text"
           value={query}
-        />
+          />
         <svg aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8d82b2]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
           <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -105,19 +129,23 @@ function FocusTimerPicker({
           id={listboxId}
           role="listbox"
         >
-          {options.length ? options.map((category, index) => (
+          {options.length ? options.map((option, index) => (
             <div
               aria-selected={index === safeHighlightedIndex}
               className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${index === safeHighlightedIndex ? "bg-[#f1ecff] text-[#6249e8] dark:bg-[#2b214d] dark:text-[#cabfff]" : "text-[#5f5879] hover:bg-[#f8f6fd] dark:text-white/70 dark:hover:bg-white/[0.06]"}`}
-              id={`${listboxId}-option-${category.id}`}
-              key={category.id}
-              onClick={() => selectCategory(category)}
+              id={`${listboxId}-option-${option.id}`}
+              key={option.id}
+              onClick={() => selectOption(option)}
               onMouseDown={(event) => event.preventDefault()}
               onMouseEnter={() => setHighlightedIndex(index)}
               role="option"
             >
-              <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
-              <span className="truncate">{category.title}</span>
+              {option.kind === "countdown" ? (
+                <Clock3 aria-hidden="true" className="h-4 w-4 shrink-0 text-[#7b68ee] dark:text-[#cabfff]" />
+              ) : (
+                <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: option.category.color }} />
+              )}
+              <span className="truncate">{option.label}</span>
             </div>
           )) : (
             <p className="px-3 py-3 text-center text-sm text-[var(--text-muted)]">
@@ -135,6 +163,7 @@ export function FocusPage({
   activeSessions,
   history,
   onToggleTimer,
+  onSetCountdownTarget,
   onFinishTimer,
   onAdjustTimer,
   onResetTimer,
@@ -147,7 +176,8 @@ export function FocusPage({
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
   history: HistoricalFocusSession[];
-  onToggleTimer: (catId: string) => void;
+  onToggleTimer: (catId: string, options?: { countdownTargetSeconds?: number | null; mode?: "countdown" | "countup" }) => void;
+  onSetCountdownTarget: (catId: string, targetSeconds: number, options?: { start?: boolean }) => void;
   onFinishTimer: (catId: string, data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string }) => void;
   onAdjustTimer: (catId: string, deltaSeconds: number) => void;
   onResetTimer: (catId: string) => void;
@@ -162,8 +192,13 @@ export function FocusPage({
   const [finishingCatId, setFinishingCatId] = useState<string | null>(null);
   const [finishingDurationSeconds, setFinishingDurationSeconds] = useState(0);
   const [showGoalsEditor, setShowGoalsEditor] = useState(false);
+  const userCategories = categories.filter((category) => !isSystemCountdownCategoryId(category.id));
+  const displayCategories = getDisplayFocusCategories(categories, activeSessions);
 
   const handleFinishClick = (catId: string) => {
+    if (isSystemCountdownCategoryId(catId)) {
+      return;
+    }
     const activeSession = activeSessions[catId];
     const durationSeconds = activeSession
       ? activeSession.accumulatedSeconds + (activeSession.isRunning && activeSession.startTime ? Math.floor((Date.now() - activeSession.startTime) / 1000) : 0)
@@ -180,9 +215,9 @@ export function FocusPage({
   };
 
   const activeFinishingSession = finishingCatId ? activeSessions[finishingCatId] : null;
-  const activeFinishingCategory = finishingCatId ? categories.find(c => c.id === finishingCatId) : null;
-  const labelOptions = buildFocusLabelOptions(categories, history);
-  const activeCategories = categories.filter((category) => Boolean(activeSessions[category.id]));
+  const activeFinishingCategory = finishingCatId ? displayCategories.find(c => c.id === finishingCatId) : null;
+  const labelOptions = buildFocusLabelOptions(userCategories, history);
+  const activeCategories = displayCategories.filter((category) => Boolean(activeSessions[category.id]));
 
   return (
     <>
@@ -210,7 +245,8 @@ export function FocusPage({
 
         <FocusTimerPicker
           activeSessions={activeSessions}
-          categories={categories}
+          categories={userCategories}
+          onSelectCountdown={() => onToggleTimer(SYSTEM_COUNTDOWN_CATEGORY_ID, { mode: "countdown" })}
           onSelect={onToggleTimer}
         />
       </section>
@@ -222,6 +258,7 @@ export function FocusPage({
           onAdjust={onAdjustTimer}
           onFinish={handleFinishClick}
           onReset={onResetTimer}
+          onSetCountdownTarget={onSetCountdownTarget}
           onToggle={onToggleTimer}
         />
         <FocusClockRowDesktop
@@ -230,13 +267,14 @@ export function FocusPage({
           onAdjust={onAdjustTimer}
           onFinish={handleFinishClick}
           onReset={onResetTimer}
+          onSetCountdownTarget={onSetCountdownTarget}
           onToggle={onToggleTimer}
         />
       </div> : null}
 
       <div className="mt-6 w-full pb-40 sm:mt-10 sm:pb-44 lg:pb-28">
         <DailyHistoryGallery
-          categories={categories}
+          categories={userCategories}
           history={history}
           labelOptions={labelOptions}
           onDeleteEntry={onDeleteHistoryEntry}
@@ -247,7 +285,7 @@ export function FocusPage({
 
       {showCategoryManager && (
         <CategoryManager
-          categories={categories}
+          categories={userCategories}
           history={history}
           labelOptions={labelOptions}
           onClose={() => setShowCategoryManager(false)}
@@ -258,7 +296,7 @@ export function FocusPage({
 
       {showManualEntry && (
         <ManualEntryModal
-          categories={categories}
+          categories={userCategories}
           labelOptions={labelOptions}
           onClose={() => setShowManualEntry(false)}
           onSave={async (data) => {
@@ -284,7 +322,7 @@ export function FocusPage({
 
       {showGoalsEditor ? (
         <CategoryGoalsModal
-          categories={categories}
+          categories={userCategories}
           onClose={() => setShowGoalsEditor(false)}
           onSave={async (nextCategories) => {
             const saved = await onUpdateCategories(nextCategories);

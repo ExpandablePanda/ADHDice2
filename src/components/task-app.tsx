@@ -101,7 +101,13 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
-import { ScrollUpButton, TASK_TABLE_CHIP_BASE_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
+import {
+  ScrollUpButton,
+  TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
+  TASK_TABLE_CHIP_BASE_CLASS,
+  TASK_TABLE_INACTIVE_CHIP_CLASS,
+  TaskTableChipButton,
+} from "@/components/ui/task-table-primitives";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievements } from "@/hooks/useAchievements";
@@ -122,6 +128,7 @@ import { useTaskPriorityRoutingController } from "@/hooks/useTaskPriorityRouting
 import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportController";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import {
+  getDisplayFocusCategories,
   sanitizeFocusLabel,
   sanitizeOptionalFocusLabel,
 } from "@/lib/focus-utils";
@@ -318,7 +325,14 @@ function getFocusSessionDisplaySeconds(activeSession: ActiveFocusSession | undef
 
   if (activeSession.isRunning && activeSession.startTime) {
     const elapsed = Math.max(0, Math.floor((nowMs - activeSession.startTime) / 1000));
+    if (activeSession.mode === "countdown" && activeSession.countdownTargetSeconds) {
+      return Math.max(0, activeSession.countdownTargetSeconds - activeSession.accumulatedSeconds - elapsed);
+    }
     return Math.max(0, activeSession.accumulatedSeconds + elapsed);
+  }
+
+  if (activeSession.mode === "countdown" && activeSession.countdownTargetSeconds) {
+    return Math.max(0, activeSession.countdownTargetSeconds - activeSession.accumulatedSeconds);
   }
 
   return Math.max(0, activeSession.accumulatedSeconds);
@@ -329,7 +343,8 @@ function resolveCollapsedHudFocusTimer(
   activeSessions: Record<string, ActiveFocusSession>,
   nowMs: number,
 ) {
-  for (const category of categories) {
+  const displayCategories = getDisplayFocusCategories(categories, activeSessions);
+  for (const category of displayCategories) {
     const activeSession = activeSessions[category.id];
     if (activeSession?.isRunning) {
       return {
@@ -341,7 +356,7 @@ function resolveCollapsedHudFocusTimer(
     }
   }
 
-  for (const category of categories) {
+  for (const category of displayCategories) {
     const activeSession = activeSessions[category.id];
     if (activeSession && getFocusSessionDisplaySeconds(activeSession, nowMs) > 0) {
       return {
@@ -368,7 +383,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.10.20";
+const APP_VERSION = "6.11.15";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -680,6 +695,7 @@ const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   bucket: "Lists",
   date_added: "Date Added",
   date_completed: "Date Completed",
+  last_done: "Last Done",
   due: "Due",
   energy: "Energy",
   estimated_time: "Estimated Time",
@@ -692,7 +708,7 @@ const LIST_COLUMN_LABELS: Record<AgentPlanColumnId, string> = {
   repeat: "Repeat",
   signal: "Indicators",
 };
-const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "date_added", "due", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
+const LIST_COLUMN_PICKER_ORDER: AgentPlanColumnId[] = ["bucket", "date_added", "last_done", "due", "estimated_time", "actual_time", "streak", "tags", "link", "notes", "priority", "energy", "repeat", "signal"];
 const TASK_KEYBOARD_SHORTCUTS: TaskKeyboardShortcut[] = [
   { action: "Search tasks", keys: ["/"] },
   { action: "New task", keys: ["N"], alternateKeys: ["A"] },
@@ -730,6 +746,7 @@ const TASK_LIST_RULE_FIELD_OPTIONS: Array<{ label: string; value: TaskListRuleFi
   { label: "Completed Streak", value: "completed_streak" },
   { label: "Missed Streak", value: "missed_streak" },
   { label: "Date Added", value: "date_added" },
+  { label: "History Status", value: "history_status" },
   { label: "Due", value: "due" },
   { label: "Energy", value: "energy" },
   { label: "Focus", value: "focus" },
@@ -749,6 +766,10 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
   date_added: [
     { label: "is today", value: "is_today" },
     { label: "isn't today", value: "is_not_today" },
+  ],
+  history_status: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
   ],
   due: [
     { label: "is today", value: "is_today" },
@@ -902,7 +923,7 @@ export function TaskApp() {
     activeSessions, setActiveSessions,
     focusHistory, setFocusHistory,
     suppressCategoryReload,
-    handleToggleTimer, handleFinishTimer, handleAdjustTimer, handleResetTimer,
+    handleToggleTimer, handleSetCountdownTarget, handleFinishTimer, handleAdjustTimer, handleResetTimer,
     handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory,
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
   } = useFocus(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent);
@@ -1706,7 +1727,7 @@ export function TaskApp() {
         .select("*")
         .eq("user_id", userId);
       if (!error && data) {
-        setActiveSessions(mapActiveSessions(data));
+        setActiveSessions(mapActiveSessions(data, userId));
       }
     }
 
@@ -1958,7 +1979,9 @@ export function TaskApp() {
     isOverdue,
     historyFactsByTaskId: taskHistoryFactsByTaskId,
     manualMembershipsByTaskId,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, taskHistoryFactsByTaskId, todayKey]);
+    taskHistoryByTaskId,
+    todayDateKey: todayKey,
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -2350,6 +2373,7 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     history: {
+      calcNextDueDateFromDate,
       client,
       currentUserId: currentUserIdText,
       currentDayKey: todayKey,
@@ -3830,36 +3854,38 @@ export function TaskApp() {
     todayDateKey: todayKey,
   } : null;
   const taskFilterRowsNode = (
-    <FilterRows
-      compact
-      duplicateTitleMode={duplicateTitleModeActive}
-      hasActiveFilters={hasActiveTaskFilters(effectiveTaskUiState)}
-      isOpen={isTaskFiltersOpen}
-      matchAny={taskUiState.matchAny}
-      onReset={() => setTaskUiState((prev) => resetTaskFiltersPreservingView(prev))}
-      onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
-      onToggleEnergy={(energy) =>
-        setTaskUiState((prev) => ({
-          ...prev,
-          energyFilters: prev.energyFilters.includes(energy)
-            ? prev.energyFilters.filter((value) => value !== energy)
-            : [...prev.energyFilters, energy],
-        }))
-      }
-      onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
-      onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
-      onToggleStatusFilter={(status) =>
-        setTaskUiState((prev) => ({
-          ...prev,
-          statusFilters: prev.statusFilters.includes(status)
-            ? prev.statusFilters.filter((value) => value !== status)
-            : [...prev.statusFilters, status],
-        }))
-      }
-      statusCounts={taskStatusCounts}
-      selectedStatuses={taskUiState.statusFilters}
-      selectedEnergies={taskUiState.energyFilters}
-    />
+    <div className="space-y-2">
+      <FilterRows
+        compact
+        duplicateTitleMode={duplicateTitleModeActive}
+        hasActiveFilters={hasActiveTaskFilters(effectiveTaskUiState)}
+        isOpen={isTaskFiltersOpen}
+        matchAny={taskUiState.matchAny}
+        onReset={() => setTaskUiState((prev) => resetTaskFiltersPreservingView(prev))}
+        onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
+        onToggleEnergy={(energy) =>
+          setTaskUiState((prev) => ({
+            ...prev,
+            energyFilters: prev.energyFilters.includes(energy)
+              ? prev.energyFilters.filter((value) => value !== energy)
+              : [...prev.energyFilters, energy],
+          }))
+        }
+        onToggleMatchMode={() => setTaskUiState((prev) => ({ ...prev, matchAny: !prev.matchAny }))}
+        onToggleOpen={() => setIsTaskFiltersOpen((current) => !current)}
+        onToggleStatusFilter={(status) =>
+          setTaskUiState((prev) => ({
+            ...prev,
+            statusFilters: prev.statusFilters.includes(status)
+              ? prev.statusFilters.filter((value) => value !== status)
+              : [...prev.statusFilters, status],
+          }))
+        }
+        statusCounts={taskStatusCounts}
+        selectedStatuses={taskUiState.statusFilters}
+        selectedEnergies={taskUiState.energyFilters}
+      />
+    </div>
   );
   const listPanelProps = {
     draggedListColumnId,
@@ -3897,6 +3923,17 @@ export function TaskApp() {
     if (task) {
       openExistingTaskEditor(task);
     }
+  };
+  const openTaskInSharedTasksEditorFromPaths = (taskId: string) => {
+    setSuppressDetachedListNoticeTaskId(null);
+    setRequestedListOverlayTaskId(taskId);
+    startTransition(() => {
+      setTaskUiState((prev) => ({
+        ...prev,
+        tasksSurface: "tasks",
+        view: prev.view === "table" || prev.view === "list" ? prev.view : "table",
+      }));
+    });
   };
   const scratchPaperData: ScratchPaperData = {
     error: scratchNotes.error,
@@ -4209,7 +4246,20 @@ export function TaskApp() {
             )}
             onSurfaceChange={(surface) => setTaskUiState((prev) => ({ ...prev, tasksSurface: surface }))}
             operationsHeaderProps={taskOperationsHeaderProps}
-            pathsWorkspacePanel={<PathsWorkspace />}
+            pathsWorkspacePanel={(
+              <PathsWorkspace
+                onOpenTask={openTaskInSharedTasksEditorFromPaths}
+                onSetTaskStatus={(taskId, status) => {
+                  const task = tasks.find((entry) => entry.id === taskId);
+                  if (!task) {
+                    return;
+                  }
+                  void updateTaskStatus(task, status);
+                }}
+                tasks={tasks}
+                userId={currentUserId}
+              />
+            )}
             surface={taskUiState.tasksSurface}
             view={duplicateTitleModeActive ? "table" : taskUiState.view}
             tableViewPanel={(
@@ -4532,7 +4582,7 @@ export function TaskApp() {
         ) : activePage === "Focus" ? (
           <FocusPage
             activeSessions={activeSessions}
-            categories={focusCategories}
+            categories={getDisplayFocusCategories(focusCategories, activeSessions)}
             history={focusHistory}
             onAdjustTimer={(categoryId, deltaSeconds) => {
               void handleAdjustTimer(categoryId, deltaSeconds);
@@ -4542,8 +4592,11 @@ export function TaskApp() {
             }}
             onFinishTimer={handleFinishTimer}
             onLogManual={handleManualFocusEntry}
-            onToggleTimer={(categoryId) => {
-              void handleToggleTimer(categoryId);
+            onSetCountdownTarget={(categoryId, targetSeconds, options) => {
+              void handleSetCountdownTarget(categoryId, targetSeconds, options);
+            }}
+            onToggleTimer={(categoryId, options) => {
+              void handleToggleTimer(categoryId, options);
             }}
             onUpdateHistoryEntry={handleUpdateFocusHistoryEntry}
             onDeleteHistoryEntry={handleDeleteFocusHistoryEntry}

@@ -90,6 +90,7 @@ type SortColumnId =
   | "lists"
   | "date_added"
   | "date_completed"
+  | "last_done"
   | "due"
   | "estimated"
   | "actual"
@@ -233,6 +234,8 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
     actualSeconds: row.actualSeconds,
     completedAt: row.completedAt,
     createdAt: row.createdAt,
+    lastDoneAt: row.lastDoneAt,
+    lastDoneDate: row.lastDoneDate,
     updatedAt: row.updatedAt,
     dueOn: row.dueOn,
     dueTime: row.dueTime,
@@ -725,6 +728,8 @@ export type PrototypeTaskRow = {
   id: string;
   linkLabel: string;
   linkUrl: string;
+  lastDoneAt: string | null;
+  lastDoneDate: string | null;
   lists: string[];
   linkedNotes: Array<{ id: string; title: string }>;
   notes: string;
@@ -1145,6 +1150,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   lists: 92,
   date_added: 116,
   date_completed: 132,
+  last_done: 116,
   due: 92,
   estimated: 76,
   actual: 76,
@@ -1163,6 +1169,7 @@ const MIN_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   lists: 62,
   date_added: 92,
   date_completed: 104,
+  last_done: 92,
   due: 64,
   estimated: 60,
   actual: 60,
@@ -1181,6 +1188,7 @@ const COLUMN_WIDTH_BUFFER: Record<TaskManagementTableColumnId, number> = {
   lists: 4,
   date_added: 8,
   date_completed: 8,
+  last_done: 8,
   due: 4,
   estimated: 4,
   actual: 4,
@@ -1202,6 +1210,7 @@ const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "lists", label: "Lists", menuLabel: "Lists", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search lists" },
   { id: "date_added", label: "Date Added", menuLabel: "Date Added", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
   { id: "date_completed", label: "Date Completed", menuLabel: "Date Completed", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
+  { id: "last_done", label: "Last Done", menuLabel: "Last Done", options: [{ id: "date_desc", label: "Newest first" }, { id: "date_asc", label: "Oldest first" }] },
   { id: "due", label: "Due", menuLabel: "Due", options: [{ id: "due_asc", label: "Sort earliest first" }, { id: "due_desc", label: "Sort latest first" }] },
   { id: "estimated", label: "Est.", menuLabel: "Estimated time", options: [{ id: "number_asc", label: "Sort low-high" }, { id: "number_desc", label: "Sort high-low" }] },
   { id: "actual", label: "Actual", menuLabel: "Actual time", options: [{ id: "active_first", label: "Sort active timers first" }, { id: "number_asc", label: "Sort low-high" }, { id: "number_desc", label: "Sort high-low" }] },
@@ -1271,6 +1280,38 @@ function formatDuration(minutes: number | null) {
   const hours = Math.floor(minutes / 60);
   const remainder = minutes % 60;
   return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
+}
+
+function renderStepLayerChip(depth: number) {
+  return (
+    <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS} gap-0.5 px-1 py-0 text-[10px]`}>
+      <span>{Math.max(1, depth)}</span>
+      <Footprints className="h-2.5 w-2.5" />
+    </span>
+  );
+}
+
+function renderStepHistoryChips(currentStreak: number, missedStreak: number) {
+  if (currentStreak <= 0 && missedStreak <= 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {currentStreak > 0 ? (
+        <span className={`${CHIP_BASE} border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e] gap-1 px-2`}>
+          <Flame className="h-3 w-3" />
+          {currentStreak}
+        </span>
+      ) : null}
+      {missedStreak > 0 ? (
+        <span className={`${CHIP_BASE} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] gap-1 px-2`}>
+          <Skull className="h-3 w-3" />
+          {missedStreak}
+        </span>
+      ) : null}
+    </>
+  );
 }
 
 function formatActual(seconds: number) {
@@ -1610,6 +1651,15 @@ function dateCompletedSortValue(task: PrototypeTaskRow) {
   return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
 }
 
+function lastDoneSortValue(task: PrototypeTaskRow) {
+  const value = task.lastDoneAt ?? task.lastDoneDate;
+  if (!value) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const timestamp = Date.parse(value.includes("T") ? value : `${value}T12:00:00`);
+  return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
+}
+
 function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLElement>) {
   event.stopPropagation();
 }
@@ -1792,6 +1842,10 @@ function sortRows(
       return left.completedAt ? -1 : 1;
     }
 
+    if (columnId === "last_done" && Boolean(left.lastDoneAt ?? left.lastDoneDate) !== Boolean(right.lastDoneAt ?? right.lastDoneDate)) {
+      return left.lastDoneAt || left.lastDoneDate ? -1 : 1;
+    }
+
     let comparison = 0;
 
     if (optionId === "text_asc" || optionId === "text_desc") {
@@ -1807,8 +1861,16 @@ function sortRows(
     } else if (optionId === "number_asc" || optionId === "number_desc") {
       comparison = numberSortValue(left, columnId, options) - numberSortValue(right, columnId, options);
     } else if (optionId === "date_asc" || optionId === "date_desc") {
-      const leftDate = columnId === "date_completed" ? dateCompletedSortValue(left) : dateAddedSortValue(left);
-      const rightDate = columnId === "date_completed" ? dateCompletedSortValue(right) : dateAddedSortValue(right);
+      const leftDate = columnId === "date_completed"
+        ? dateCompletedSortValue(left)
+        : columnId === "last_done"
+          ? lastDoneSortValue(left)
+          : dateAddedSortValue(left);
+      const rightDate = columnId === "date_completed"
+        ? dateCompletedSortValue(right)
+        : columnId === "last_done"
+          ? lastDoneSortValue(right)
+          : dateAddedSortValue(right);
       comparison = leftDate - rightDate;
     } else if (optionId === "due_asc" || optionId === "due_desc") {
       comparison = dueSortValue(left) - dueSortValue(right);
@@ -3281,9 +3343,7 @@ export function TaskManagementTableV2({
       repeatDaysOfWeek: repeat === "daily_until_complete"
         ? []
         : cadencePatch.repeatDaysOfWeek ?? currentTask.repeatDaysOfWeek,
-      repeatInterval: repeat === "daily_until_complete"
-        ? 1
-        : cadencePatch.repeatInterval ?? currentTask.repeatInterval,
+      repeatInterval: cadencePatch.repeatInterval ?? currentTask.repeatInterval,
       repeatMonthlyMode: repeat === "monthly"
         ? cadencePatch.repeatMonthlyMode ?? currentTask.repeatMonthlyMode
         : "day_of_month" as const,
@@ -4198,7 +4258,7 @@ export function TaskManagementTableV2({
             onClick={() => {
               setTaskRepeat(task.id, option.value);
               setPendingCustomCadenceTaskId(option.value === "custom" ? task.id : null);
-              if (option.value !== "custom") {
+              if (option.value === "none") {
                 closeInspector();
               }
             }}
@@ -4213,7 +4273,6 @@ export function TaskManagementTableV2({
           onClick={() => {
             setTaskRepeat(task.id, "weekly", { repeatDaysOfWeek: [...WEEKDAYS_REPEAT_DAYS], repeatInterval: 1 });
             setRepeatIntervalDrafts((current) => ({ ...current, [task.id]: "1" }));
-            closeInspector();
           }}
           type="button"
         >
@@ -4254,7 +4313,7 @@ export function TaskManagementTableV2({
                 repeat={effectiveRepeat}
                 repeatDaysOfWeek={task.repeatDaysOfWeek}
                 repeatUnits={COMPACT_REPEAT_UNITS}
-                showInterval={effectiveRepeat !== "daily_until_complete"}
+                showInterval
                 showMonthDay={(effectiveRepeat === "monthly" || effectiveRepeat === "custom") && task.repeatMonthlyMode !== "ordinal_weekday"}
                 showMonthlyMode={effectiveRepeat === "monthly" || effectiveRepeat === "custom"}
                 showMonthlyOrdinals={(effectiveRepeat === "monthly" || effectiveRepeat === "custom") && task.repeatMonthlyMode === "ordinal_weekday"}
@@ -5316,6 +5375,17 @@ export function TaskManagementTableV2({
       );
     }
 
+    if (columnId === "last_done") {
+      const lastDoneValue = task.lastDoneAt ?? task.lastDoneDate;
+      return wrapMeasuredContent(
+        <div>
+          <span className={`${CHIP_BASE} ${lastDoneValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
+            {task.lastDoneAt ? formatEntryTimestamp(task.lastDoneAt) : task.lastDoneDate ? formatCalendarDate(task.lastDoneDate) : "No done yet"}
+          </span>
+        </div>
+      );
+    }
+
     if (columnId === "estimated") {
       return wrapInteractiveCell(
         wrapMeasuredContent(
@@ -5863,7 +5933,7 @@ export function TaskManagementTableV2({
                 />
               </span>
             ) : (
-              <div className="flex min-w-0 items-center gap-1">
+              <div className="flex min-w-0 items-center gap-1.5">
                 <button
                   className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                   onClick={(event) => {
@@ -5877,6 +5947,8 @@ export function TaskManagementTableV2({
                     {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                   </p>
                 </button>
+                {renderStepLayerChip(item.depth)}
+                {renderStepHistoryChips(item.currentStreak, item.missedStreak)}
                 {canCollapse ? (
                   <button
                     aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
@@ -5901,25 +5973,6 @@ export function TaskManagementTableV2({
                 ) : null}
               </div>
             )}
-            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
-              {formatChildTaskPreviewDepthLabel(item.depth)}
-            </p>
-            {item.currentStreak > 0 || item.missedStreak > 0 ? (
-              <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                {item.currentStreak > 0 ? (
-                  <span className={`${CHIP_BASE} border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e] gap-1 px-2`}>
-                    <Flame className="h-3 w-3" />
-                    {item.currentStreak}
-                  </span>
-                ) : null}
-                {item.missedStreak > 0 ? (
-                  <span className={`${CHIP_BASE} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] gap-1 px-2`}>
-                    <Skull className="h-3 w-3" />
-                    {item.missedStreak}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
           </div>
           {onCreateChildTask ? (
             <button
@@ -5984,6 +6037,16 @@ export function TaskManagementTableV2({
         <div>
           <span className={`${CHIP_BASE} ${LIST_CHIP_CLASS}`}>
             {formatEntryTimestamp(item.createdAt)}
+          </span>
+        </div>
+      );
+    }
+
+    if (columnId === "date_completed" || columnId === "last_done") {
+      return (
+        <div>
+          <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>
+            {columnId === "last_done" ? "No done yet" : "Not completed"}
           </span>
         </div>
       );
@@ -6379,13 +6442,11 @@ export function TaskManagementTableV2({
       return (
         <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: `${0.2 + depthIndent}rem` }}>
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
             <p className="min-w-0 truncate text-[13px] font-medium text-[#27304c] dark:text-white">
               {subtask.title || (depth > 1 ? "Untitled substep" : "Untitled step")}
             </p>
-            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">
-              {formatChildTaskPreviewDepthLabel(depth)}
-            </p>
+            {renderStepLayerChip(depth)}
           </div>
         </div>
       );
@@ -7174,7 +7235,7 @@ export function TaskManagementTableV2({
                             repeat={metadataTask.repeat}
                             repeatDaysOfWeek={metadataTask.repeatDaysOfWeek}
                             repeatUnits={COMPACT_REPEAT_UNITS}
-                            showInterval={metadataTask.repeat !== "daily_until_complete"}
+                            showInterval
                             showMonthDay={(metadataTask.repeat === "monthly" || metadataTask.repeat === "custom") && metadataTask.repeatMonthlyMode !== "ordinal_weekday"}
                             showMonthlyMode={metadataTask.repeat === "monthly" || metadataTask.repeat === "custom"}
                             showMonthlyOrdinals={(metadataTask.repeat === "monthly" || metadataTask.repeat === "custom") && metadataTask.repeatMonthlyMode === "ordinal_weekday"}
@@ -7777,7 +7838,7 @@ export function TaskManagementTableV2({
 	                          repeat={selectedTask.repeat}
 	                          repeatDaysOfWeek={selectedTask.repeatDaysOfWeek}
 	                          repeatUnits={COMPACT_REPEAT_UNITS}
-	                          showInterval={selectedTask.repeat !== "daily_until_complete"}
+	                          showInterval
 	                          showMonthDay={(selectedTask.repeat === "monthly" || selectedTask.repeat === "custom") && selectedTask.repeatMonthlyMode !== "ordinal_weekday"}
                               showMonthlyMode={selectedTask.repeat === "monthly" || selectedTask.repeat === "custom"}
                               showMonthlyOrdinals={(selectedTask.repeat === "monthly" || selectedTask.repeat === "custom") && selectedTask.repeatMonthlyMode === "ordinal_weekday"}

@@ -4,8 +4,8 @@ import type {
   TaskHistory,
   TaskSubtask,
 } from "@/lib/database.types";
-import { getTaskDisplayStatus } from "@/lib/task-cockpit";
-import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
+import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
+import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone } from "@/lib/task-history";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 
@@ -33,6 +33,7 @@ function buildTaskTableSubtasks(subtasks: TaskSubtask[], parentId: string | null
 
 export function buildTaskTableRow(task: Task, context: TaskTableRowContext): PrototypeTaskRow {
   const historyStats = computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
+  const lastDone = getTaskHistoryLastDone(context.taskHistory);
   const priorities: PrototypeTaskRow["priorities"] = [];
 
   if (context.focusedTaskIdSet.has(task.id)) priorities.push("focus");
@@ -58,6 +59,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     id: task.id,
     linkLabel: task.external_link_label ?? "",
     linkUrl: task.external_link_url ?? "",
+    lastDoneAt: lastDone?.timestamp ?? null,
+    lastDoneDate: lastDone?.dateKey ?? null,
     lists: listLabels,
     linkedNotes: context.linkedNotes.map((note) => ({ id: note.id, title: note.title })),
     notes: task.notes ?? "",
@@ -72,7 +75,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     repeatMonthlyOrdinal: task.repeat_monthly_ordinal,
     repeatMonthlyWeekday: task.repeat_monthly_weekday,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
-    status: getTaskDisplayStatus(task),
+    status: getTaskDisplayStatusWithHistory(task, context.taskHistory, context.todayDateKey),
     subtasks: buildTaskTableSubtasks(context.subtasks),
     tags: task.tags ?? [],
     title: task.title,

@@ -13,6 +13,7 @@ import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "../src/lib
 import {
   formatDueTimeLabel,
   getTaskDisplayStatus,
+  getTaskDisplayStatusWithHistory,
   getTaskDueDateBucket,
   getListPriorityLabel,
   matchesTaskQuickFilter,
@@ -107,6 +108,8 @@ function computeDerivedForHierarchyDiagnostics(
       isOpen: (task) => task.status === "pending" || task.status === "in_progress",
       isOverdue: () => false,
       manualMembershipsByTaskId: {},
+      taskHistoryByTaskId: overrides.taskHistoryByTaskId ?? {},
+      todayDateKey: "2026-06-18",
     },
     taskSubtasksByTaskId: {},
     taskUiState: DEFAULT_TASK_UI_STATE,
@@ -114,6 +117,48 @@ function computeDerivedForHierarchyDiagnostics(
     tasks,
   });
 }
+
+test("focus collections follow normal open-task visibility without extra focus filter tabs", () => {
+  const today = "2026-06-25";
+  const openFocusTask = createTask({
+    created_at: `${today}T09:00:00.000Z`,
+    due_on: today,
+    id: "focus-open-parent",
+    repeat_frequency: "daily",
+    sort_order: 1,
+    status: "pending",
+    title: "Open focus parent",
+  });
+  const doneFocusTask = createTask({
+    created_at: `${today}T09:05:00.000Z`,
+    due_on: today,
+    id: "focus-done-parent",
+    repeat_frequency: "daily",
+    sort_order: 2,
+    status: "done",
+    title: "Handled parent",
+  });
+  const missedFocusTask = createTask({
+    created_at: `${today}T09:10:00.000Z`,
+    due_on: "2026-06-20",
+    id: "focus-missed-parent",
+    repeat_frequency: "none",
+    sort_order: 3,
+    status: "missed",
+    title: "Missed focus parent",
+  });
+
+  const collections = buildTaskCollections(
+    [openFocusTask, doneFocusTask, missedFocusTask],
+    {},
+    [openFocusTask.id, doneFocusTask.id, missedFocusTask.id],
+  );
+
+  assert.deepEqual(
+    collections.filteredFocusTasks.map((task) => task.id),
+    [openFocusTask.id, missedFocusTask.id],
+  );
+});
 
 test("normal task UI keeps Steps unified without migration-source labels", async () => {
   const taskUiSources = await Promise.all([
@@ -148,7 +193,6 @@ test("normal task UI keeps Steps unified without migration-source labels", async
   assert.equal(combinedTaskUiSource.includes("data-task-table-source-step-rows"), true);
   assert.equal(tableSource.includes("metadataContextLabel"), true);
   assert.equal(tableSource.includes("Choose a field to edit."), false);
-  assert.equal(tableSource.includes("selectEditorMetadataTask(item.id)"), true);
   assert.equal(tableSource.includes("data-step-metadata-controls"), false);
   assert.equal(tableSource.includes("data-step-row-controls"), true);
   assert.equal(tableSource.includes("data-step-row-add"), true);
@@ -162,7 +206,6 @@ test("normal task UI keeps Steps unified without migration-source labels", async
   assert.equal(listSource.includes("data-same-table-step-add"), true);
   assert.equal(tableSource.includes("data-table-step-draft-row"), true);
   assert.equal(tableSource.includes("setEditingTaskTitleId(item.id)"), true);
-  assert.equal(tableSource.includes("openTableStepActions(item.id, \"status\")"), true);
   assert.equal(tableSource.includes("childPreviewToPrototypeTaskRow(item)"), true);
   assert.equal(tableSource.includes("renderInlineActionRow(task)"), true);
   assert.equal(tableSource.includes("renderInlineActionRow(inlineStepTask)"), true);
@@ -530,6 +573,115 @@ test("date bucket helpers classify due_on windows and normalize stale future sta
   assert.equal(getTaskDisplayStatus(noDueDateTask), "not_due");
 });
 
+test("recurring display status follows current-occurrence history without treating older history as the current row", () => {
+  const recurringTask = createTask({
+    created_at: "2026-06-20T09:00:00.000Z",
+    due_on: "2026-06-24",
+    id: "task-recurring-history-visible-status",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    sort_order: 21,
+    status: "pending",
+    title: "Recurring history status",
+  });
+
+  const baseEntry = {
+    created_at: "2026-06-24T09:00:00.000Z",
+    event_type: null,
+    id: "history-entry",
+    note: null,
+    task_id: recurringTask.id,
+    updated_at: "2026-06-24T09:00:00.000Z",
+    user_id: "user-1",
+    was_completed: true,
+  };
+
+  const doneTodayHistory: TaskHistory[] = [
+    {
+      ...baseEntry,
+      entry_date: "2026-06-24",
+      id: "history-done-today",
+      status: "done",
+    },
+  ];
+  const didMyBestTodayHistory: TaskHistory[] = [
+    {
+      ...baseEntry,
+      entry_date: "2026-06-24",
+      id: "history-dmb-today",
+      status: "did_my_best",
+    },
+  ];
+  const missedTodayHistory: TaskHistory[] = [
+    {
+      ...baseEntry,
+      entry_date: "2026-06-24",
+      id: "history-missed-today",
+      status: "missed",
+      was_completed: false,
+    },
+  ];
+  const olderDoneOnlyHistory: TaskHistory[] = [
+    {
+      ...baseEntry,
+      entry_date: "2026-06-23",
+      id: "history-done-yesterday",
+      status: "done",
+    },
+  ];
+
+  assert.equal(getTaskDisplayStatusWithHistory(recurringTask, doneTodayHistory, "2026-06-24"), "done");
+  assert.equal(getTaskDisplayStatusWithHistory(recurringTask, didMyBestTodayHistory, "2026-06-24"), "did_my_best");
+  assert.equal(getTaskDisplayStatusWithHistory(recurringTask, missedTodayHistory, "2026-06-24"), "missed");
+  assert.equal(getTaskDisplayStatusWithHistory(recurringTask, olderDoneOnlyHistory, "2026-06-24"), "pending");
+});
+
+test("rolled-forward recurring display status ignores today history for future active occurrences", () => {
+  const baseTask = createTask({
+    created_at: "2026-06-24T09:00:00.000Z",
+    due_on: "2026-07-01",
+    id: "task-recurring-rolled-forward",
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 22,
+    status: "upcoming",
+    title: "Rolled forward recurring task",
+  });
+  const baseEntry = {
+    created_at: "2026-06-24T09:00:00.000Z",
+    entry_date: "2026-06-24",
+    event_type: null,
+    id: "history-rolled-forward",
+    note: null,
+    status: "done" as const,
+    task_id: baseTask.id,
+    updated_at: "2026-06-24T09:00:00.000Z",
+    user_id: "user-1",
+    was_completed: true,
+  };
+
+  assert.equal(getTaskDisplayStatusWithHistory(baseTask, [baseEntry], "2026-06-24"), "upcoming");
+  assert.equal(getTaskDisplayStatusWithHistory({
+    ...baseTask,
+    due_on: "2026-06-25",
+    id: "task-daily-rolled-forward",
+    repeat_frequency: "daily",
+  }, [baseEntry], "2026-06-24"), "upcoming");
+  assert.equal(getTaskDisplayStatusWithHistory({
+    ...baseTask,
+    due_on: "2026-07-02",
+    id: "task-daily-until-complete-rolled-forward",
+    repeat_frequency: "daily",
+    status: "not_due",
+  }, [baseEntry], "2026-06-24"), "not_due");
+  assert.equal(getTaskDisplayStatusWithHistory(baseTask, [{
+    ...baseEntry,
+    id: "history-rolled-forward-missed",
+    status: "missed",
+    was_completed: false,
+  }], "2026-06-24"), "upcoming");
+});
+
 test("grid layout helpers normalize, reorder, move, and date utilities behave consistently", () => {
   const isWidgetType = (value: string): value is "urgent" | "import" => value === "urgent" || value === "import";
   const layout = normalizeTaskGridLayout([
@@ -581,10 +733,13 @@ test("task list counts preserve built-in bucket memberships", () => {
     hasStepsByTaskId: {},
     historyFactsByTaskId: {},
     isDueToday: (date) => date === today,
+    isDueTomorrow: () => false,
     isLater: () => false,
     isOpen: (task) => task.status === "pending" || task.status === "in_progress",
     isOverdue: () => false,
     manualMembershipsByTaskId: {},
+    taskHistoryByTaskId: {},
+    todayDateKey: today,
   });
 
   assert.equal(counts.inbox, 1);
@@ -1594,6 +1749,9 @@ test("child task preview lookup exposes direct same-table children", () => {
     repeatDayOfMonth: null,
     repeatDaysOfWeek: [1, 3],
     repeatInterval: 2,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
     scheduledOn: "2026-06-20",
     status: "in_progress",
     tags: ["setup", "draft"],

@@ -11,6 +11,7 @@ import {
   computeTaskHistoryStats,
   computeTaskSpecificHistoryStats,
   formatTaskHistoryEntryLabel,
+  getTaskFocusFilterFacts,
   getTaskHistoryCalendarVirtualState,
   resolveLiveTaskStatusFromHistory,
 } from "../src/lib/task-history.ts";
@@ -443,6 +444,68 @@ test("recurring live status may remain missed while today still has no saved his
   assert.equal(history.some((entry) => entry.entry_date === "2026-06-12"), false);
 });
 
+test("current-day recurring history edit resolves to the next active occurrence", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-24",
+    due_time: null,
+    id: "calendar-rollover-task",
+    repeat_days_of_week: [3],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "pending",
+    title: "Calendar rollover task",
+  });
+  const history = [
+    createHistoryEntry({ entryDate: "2026-06-24", id: "done-today", status: "done", taskId: task.id, wasCompleted: true }),
+  ];
+
+  const result = resolveLiveTaskStatusFromHistory(task, history, {
+    currentDayKey: "2026-06-24",
+    dayStartTime: "06:00",
+    now: new Date("2026-06-24T12:00:00.000Z"),
+    timezone: "America/New_York",
+  }, {
+    calcNextDueDateFromDate: (candidate, referenceDateKey) => {
+      assert.equal(candidate.id, task.id);
+      assert.equal(referenceDateKey, "2026-06-24");
+      return "2026-07-01";
+    },
+  });
+
+  assert.equal(result.dueOn, "2026-07-01");
+  assert.equal(result.status, "not_due");
+  assert.equal(result.completedAt, null);
+});
+
+test("future-due recurring live status ignores today history facts", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-25",
+    id: "future-due-history-task",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "missed",
+    title: "Future due history task",
+  });
+  const history = [
+    createHistoryEntry({ entryDate: "2026-06-24", id: "missed-today", status: "missed", taskId: task.id, wasCompleted: false }),
+  ];
+
+  const result = resolveLiveTaskStatusFromHistory(task, history, {
+    currentDayKey: "2026-06-24",
+    dayStartTime: "06:00",
+    now: new Date("2026-06-24T12:00:00.000Z"),
+    timezone: "America/New_York",
+  });
+
+  assert.equal(result.dueOn, undefined);
+  assert.equal(result.status, "not_due");
+  assert.equal(result.completedAt, null);
+});
+
 test("permanent complete history rows render as marked complete", () => {
   const completeEntry = createHistoryEntry({
     entryDate: "2026-06-20",
@@ -461,4 +524,45 @@ test("permanent complete history rows render as marked complete", () => {
   assert.equal(formatTaskHistoryEntryLabel(completeEntry), "Marked Complete");
   assert.equal(formatTaskHistoryEntryLabel(doneEntry), "Done");
   assert.equal(completeEntry.counted_as_due_occurrence, false);
+});
+
+test("focus filter facts use today for one-off current occurrence and ignore stale raw missed state", () => {
+  const oneOffTask = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-06-20",
+    id: "focus-one-off",
+    repeat_frequency: "none",
+    sort_order: 1,
+    status: "missed",
+    title: "One-off focus task",
+  });
+
+  const staleFacts = getTaskFocusFilterFacts(oneOffTask, [
+    createHistoryEntry({
+      entryDate: "2026-06-20",
+      id: "focus-stale-missed",
+      status: "missed",
+      taskId: oneOffTask.id,
+      wasCompleted: false,
+    }),
+  ], "2026-06-25");
+
+  assert.equal(staleFacts.currentOccurrenceDateKey, "2026-06-25");
+  assert.equal(staleFacts.handledToday, false);
+  assert.equal(staleFacts.missedToday, false);
+
+  const handledTodayFacts = getTaskFocusFilterFacts(oneOffTask, [
+    createHistoryEntry({
+      entryDate: "2026-06-25",
+      id: "focus-done-today",
+      status: "done",
+      taskId: oneOffTask.id,
+      wasCompleted: true,
+    }),
+  ], "2026-06-25");
+
+  assert.equal(handledTodayFacts.currentOccurrenceDateKey, "2026-06-25");
+  assert.equal(handledTodayFacts.currentOccurrenceStatus, "done");
+  assert.equal(handledTodayFacts.handledToday, true);
+  assert.equal(handledTodayFacts.missedToday, false);
 });

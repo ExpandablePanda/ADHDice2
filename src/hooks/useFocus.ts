@@ -6,6 +6,8 @@ import type { AppendEconomyEventOpts } from "@/hooks/useEconomy";
 import {
   adjustActiveFocusSession,
   dedupeCategoriesByName,
+  isSystemCountdownCategoryId,
+  resolveFocusCategory,
   isUuid,
   normalizeCategoryTitle,
   preferStoredOptionalValue,
@@ -23,6 +25,10 @@ type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | nu
 
 const FOCUS_CATEGORIES_STORAGE_KEY = "adhdice_focus_categories";
 const FOCUS_HISTORY_STORAGE_KEY = "adhdice_focus_history";
+const FOCUS_COUNTDOWN_META_STORAGE_KEY = "adhdice_focus_countdown_meta";
+const FOCUS_LOCAL_ACTIVE_SESSION_STORAGE_KEY = "adhdice_focus_local_active_session";
+
+type CountdownMetadata = Record<string, { mode?: "countdown" | "countup"; targetSeconds?: number | null }>;
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -36,6 +42,51 @@ function parseStoredJson<T>(key: string, fallback: T): T {
     window.localStorage.removeItem(key);
     return fallback;
   }
+}
+
+function readCountdownMetadata(): CountdownMetadata {
+  return parseStoredJson<CountdownMetadata>(FOCUS_COUNTDOWN_META_STORAGE_KEY, {});
+}
+
+function writeCountdownMetadata(metadata: CountdownMetadata) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(FOCUS_COUNTDOWN_META_STORAGE_KEY, JSON.stringify(metadata));
+}
+
+function getLocalActiveSessionStorageKey(userId: string) {
+  return `${FOCUS_LOCAL_ACTIVE_SESSION_STORAGE_KEY}:${userId}`;
+}
+
+function readLocalActiveSession(userId: string | null | undefined): ActiveFocusSession | null {
+  if (!userId) return null;
+  const session = parseStoredJson<ActiveFocusSession | null>(getLocalActiveSessionStorageKey(userId), null);
+  if (!session || !isSystemCountdownCategoryId(session.categoryId)) {
+    return null;
+  }
+  return session;
+}
+
+function writeLocalActiveSession(userId: string | null | undefined, session: ActiveFocusSession | null) {
+  if (typeof window === "undefined" || !userId) return;
+  const storageKey = getLocalActiveSessionStorageKey(userId);
+  if (!session) {
+    window.localStorage.removeItem(storageKey);
+    return;
+  }
+  window.localStorage.setItem(storageKey, JSON.stringify(session));
+}
+
+function persistCountdownMetadata(categoryId: string, session: Pick<ActiveFocusSession, "countdownTargetSeconds" | "mode"> | null) {
+  const metadata = readCountdownMetadata();
+  if (!session || session.mode !== "countdown" || !session.countdownTargetSeconds) {
+    delete metadata[categoryId];
+  } else {
+    metadata[categoryId] = {
+      mode: "countdown",
+      targetSeconds: session.countdownTargetSeconds,
+    };
+  }
+  writeCountdownMetadata(metadata);
 }
 
 export function saveFocusCategories(categories: FocusCategory[]) {
@@ -69,16 +120,26 @@ export function mapActiveSessions(
     accumulated_seconds: number;
     is_running: boolean;
   }>,
+  userId?: string | null,
 ): Record<string, ActiveFocusSession> {
-  return rows.reduce<Record<string, ActiveFocusSession>>((accumulator, row) => {
+  const countdownMetadata = readCountdownMetadata();
+  const sessions = rows.reduce<Record<string, ActiveFocusSession>>((accumulator, row) => {
+    const metadata = countdownMetadata[row.category_id];
     accumulator[row.category_id] = {
       categoryId: row.category_id,
       startTime: row.start_time ? Date.parse(row.start_time) : null,
       accumulatedSeconds: row.accumulated_seconds,
       isRunning: row.is_running,
+      mode: metadata?.mode === "countdown" ? "countdown" : "countup",
+      countdownTargetSeconds: metadata?.mode === "countdown" ? metadata.targetSeconds ?? null : null,
     };
     return accumulator;
   }, {});
+  const localCountdownSession = readLocalActiveSession(userId);
+  if (localCountdownSession) {
+    sessions[localCountdownSession.categoryId] = localCountdownSession;
+  }
+  return sessions;
 }
 
 export function mapFocusSessionRow(row: DbFocusSession): HistoricalFocusSession {
@@ -148,27 +209,17 @@ export function useFocus(
   const [focusHistory, setFocusHistory] = useState<HistoricalFocusSession[]>([]);
   const suppressCategoryReload = useRef(false);
 
-  async function handleToggleTimer(categoryId: string) {
-    if (!client || !userId) return;
+  async function persistActiveSession(categoryId: string, nextSession: ActiveFocusSession) {
+    if (!client || !userId) return false;
 
-    const current = activeSessions[categoryId] ?? {
-      categoryId,
-      startTime: null,
-      accumulatedSeconds: 0,
-      isRunning: false,
-    };
-    const now = Date.now();
-    const nextSession = current.isRunning
-      ? {
-          ...current,
-          isRunning: false,
-          startTime: null,
-          accumulatedSeconds: current.accumulatedSeconds +
-            (current.startTime ? Math.floor((now - current.startTime) / 1000) : 0),
-        }
-      : { ...current, isRunning: true, startTime: now };
-
-    setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
+    if (isSystemCountdownCategoryId(categoryId)) {
+      writeLocalActiveSession(userId, nextSession);
+      persistCountdownMetadata(categoryId, nextSession);
+      if (typeof BroadcastChannel !== "undefined") {
+        new BroadcastChannel("adhdice_focus_sync").postMessage("toggle");
+      }
+      return true;
+    }
 
     const { error } = await client
       .from("adhdice_focus_active_sessions")
@@ -185,8 +236,82 @@ export function useFocus(
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
-    } else if (typeof BroadcastChannel !== "undefined") {
+      return false;
+    }
+    persistCountdownMetadata(categoryId, nextSession);
+    if (typeof BroadcastChannel !== "undefined") {
       new BroadcastChannel("adhdice_focus_sync").postMessage("toggle");
+    }
+    return true;
+  }
+
+  async function handleToggleTimer(categoryId: string, options?: { countdownTargetSeconds?: number | null; mode?: "countdown" | "countup" }) {
+    if (!client || !userId) return;
+
+    const current = activeSessions[categoryId] ?? {
+      categoryId,
+      startTime: null,
+      accumulatedSeconds: 0,
+      isRunning: false,
+      mode: options?.mode ?? "countup",
+      countdownTargetSeconds: options?.countdownTargetSeconds ?? null,
+    };
+    const now = Date.now();
+    const shouldCreateCountdown = !activeSessions[categoryId] && options?.mode === "countdown";
+    const nextSession = shouldCreateCountdown
+      ? {
+          ...current,
+          isRunning: false,
+          startTime: null,
+          mode: "countdown" as const,
+          countdownTargetSeconds: options?.countdownTargetSeconds ?? null,
+        }
+      : current.isRunning
+      ? {
+          ...current,
+          isRunning: false,
+          startTime: null,
+          accumulatedSeconds: current.accumulatedSeconds +
+            (current.startTime ? Math.floor((now - current.startTime) / 1000) : 0),
+        }
+      : {
+          ...current,
+          isRunning: true,
+          startTime: now,
+          mode: shouldCreateCountdown ? "countdown" : current.mode ?? "countup",
+          countdownTargetSeconds: shouldCreateCountdown ? options.countdownTargetSeconds ?? null : current.countdownTargetSeconds ?? null,
+        };
+
+    setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
+    await persistActiveSession(categoryId, nextSession);
+  }
+
+  async function handleSetCountdownTarget(categoryId: string, targetSeconds: number, options?: { start?: boolean }) {
+    if (!client || !userId) return;
+
+    const current = activeSessions[categoryId];
+    if (!current) return;
+
+    const nextTargetSeconds = Math.max(60, targetSeconds);
+    const shouldStart = options?.start === true;
+    const nextStartTime = shouldStart ? Date.now() : current.isRunning ? Date.now() : null;
+    const nextSession: ActiveFocusSession = {
+      ...current,
+      mode: "countdown",
+      countdownTargetSeconds: nextTargetSeconds,
+      accumulatedSeconds: shouldStart
+        ? 0
+        : current.mode === "countdown"
+        ? Math.min(current.accumulatedSeconds, nextTargetSeconds)
+        : 0,
+      isRunning: shouldStart ? true : current.isRunning,
+      startTime: nextStartTime,
+    };
+
+    setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
+    const persisted = await persistActiveSession(categoryId, nextSession);
+    if (persisted) {
+      setMessage({ tone: "good", text: "Countdown updated." });
     }
   }
 
@@ -195,24 +320,28 @@ export function useFocus(
     data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string },
   ) {
     if (!client || !userId) return;
+    if (isSystemCountdownCategoryId(categoryId)) return;
 
     const activeSession = activeSessions[categoryId];
     if (!activeSession) return;
 
-    const category = focusCategories.find((entry) => entry.id === categoryId);
+    const category = resolveFocusCategory(categoryId, focusCategories);
     if (!category) return;
 
     const now = Date.now();
     const elapsed = activeSession.isRunning && activeSession.startTime
       ? Math.floor((now - activeSession.startTime) / 1000)
       : 0;
-    const totalSeconds = activeSession.accumulatedSeconds + elapsed;
+    const elapsedTotalSeconds = activeSession.accumulatedSeconds + elapsed;
+    const totalSeconds = activeSession.mode === "countdown" && activeSession.countdownTargetSeconds
+      ? Math.min(elapsedTotalSeconds, activeSession.countdownTargetSeconds)
+      : elapsedTotalSeconds;
     if (totalSeconds < 1) return;
 
     const completedAt = new Date(now).toISOString();
     const payload = {
       user_id: userId,
-      category_id: categoryId,
+      category_id: isSystemCountdownCategoryId(categoryId) ? null : categoryId,
       title_snapshot: sanitizeFocusLabel(data?.title ?? category.title, "Untitled Session"),
       focus_type_snapshot: sanitizeFocusLabel(data?.focusType ?? category.focusType, "Work"),
       focus_subtype_snapshot: sanitizeOptionalFocusLabel(data?.focusSubtype ?? category.focusSubtype),
@@ -234,13 +363,21 @@ export function useFocus(
     if (error) { setMessage({ tone: "warn", text: error.message }); return; }
     if (!inserted) { setMessage({ tone: "warn", text: "Focus session saved, but the response was empty." }); return; }
 
-    const { error: deleteError } = await client
-      .from("adhdice_focus_active_sessions")
-      .delete()
-      .eq("user_id", userId)
-      .eq("category_id", categoryId);
+    let deleteError: { message: string } | null = null;
+    if (!isSystemCountdownCategoryId(categoryId)) {
+      const deleteResult = await client
+        .from("adhdice_focus_active_sessions")
+        .delete()
+        .eq("user_id", userId)
+        .eq("category_id", categoryId);
+      deleteError = deleteResult.error;
+    }
 
     if (deleteError) { setMessage({ tone: "warn", text: deleteError.message }); return; }
+    persistCountdownMetadata(categoryId, null);
+    if (isSystemCountdownCategoryId(categoryId)) {
+      writeLocalActiveSession(userId, null);
+    }
 
     const nextEntry = mergeStoredFocusHistory([
       {
@@ -289,6 +426,25 @@ export function useFocus(
       accumulatedSeconds: 0,
       isRunning: false,
     };
+    if (current.mode === "countdown" && current.countdownTargetSeconds) {
+      const now = Date.now();
+      const elapsed = current.isRunning && current.startTime
+        ? Math.max(0, Math.floor((now - current.startTime) / 1000))
+        : 0;
+      const nextSession: ActiveFocusSession = {
+        ...current,
+        accumulatedSeconds: current.accumulatedSeconds + elapsed,
+        countdownTargetSeconds: Math.max(60, current.countdownTargetSeconds + deltaSeconds),
+        startTime: current.isRunning ? now : null,
+      };
+      setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
+      const persisted = await persistActiveSession(categoryId, nextSession);
+      if (persisted) {
+        setMessage({ tone: "good", text: "Timer adjusted." });
+      }
+      return;
+    }
+
     const nextSession = adjustActiveFocusSession(current, deltaSeconds, Date.now());
 
     setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
@@ -307,6 +463,7 @@ export function useFocus(
       );
 
     if (error) { setMessage({ tone: "warn", text: error.message }); return; }
+    persistCountdownMetadata(categoryId, nextSession);
 
     setMessage({ tone: "good", text: "Timer adjusted." });
     if (typeof BroadcastChannel !== "undefined") {
@@ -316,6 +473,18 @@ export function useFocus(
 
   async function handleResetTimer(categoryId: string) {
     if (!client || !userId) return;
+
+    if (isSystemCountdownCategoryId(categoryId)) {
+      setActiveSessions((prev) => {
+        const next = { ...prev };
+        delete next[categoryId];
+        return next;
+      });
+      persistCountdownMetadata(categoryId, null);
+      writeLocalActiveSession(userId, null);
+      setMessage({ tone: "good", text: "Timer reset." });
+      return;
+    }
 
     const { error } = await client
       .from("adhdice_focus_active_sessions")
@@ -330,6 +499,7 @@ export function useFocus(
       delete next[categoryId];
       return next;
     });
+    persistCountdownMetadata(categoryId, null);
     setMessage({ tone: "good", text: "Timer reset." });
   }
 
@@ -473,6 +643,7 @@ export function useFocus(
       delete next[category.id];
       return next;
     });
+    persistCountdownMetadata(category.id, null);
     setMessage({ tone: "good", text: "Focus category deleted." });
     return true;
   }
@@ -560,6 +731,7 @@ export function useFocus(
     setFocusHistory,
     suppressCategoryReload,
     handleToggleTimer,
+    handleSetCountdownTarget,
     handleFinishTimer,
     handleAdjustTimer,
     handleResetTimer,

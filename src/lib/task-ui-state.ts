@@ -53,6 +53,7 @@ export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
   "date_added",
   "date_completed",
+  "last_done",
   "due",
   "estimated_time",
   "actual_time",
@@ -67,7 +68,7 @@ export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
 ];
 
 export const DEFAULT_TASK_TABLE_VISIBLE_COLUMNS: AgentPlanColumnId[] = [...VALID_LIST_COLUMN_IDS];
-const DEFAULT_NON_TABLE_VISIBLE_COLUMNS = DEFAULT_TASK_TABLE_VISIBLE_COLUMNS.filter((columnId) => columnId !== "date_completed" && columnId !== "streak");
+const DEFAULT_NON_TABLE_VISIBLE_COLUMNS = DEFAULT_TASK_TABLE_VISIBLE_COLUMNS.filter((columnId) => columnId !== "date_completed" && columnId !== "last_done" && columnId !== "streak");
 export const DEFAULT_VISIBLE_COLUMNS_BY_VIEW: Record<TaskViewMode, AgentPlanColumnId[]> = {
   table: [...DEFAULT_TASK_TABLE_VISIBLE_COLUMNS],
   list: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
@@ -161,7 +162,8 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
       : [];
     const deduped = normalized.length > 0 ? Array.from(new Set(normalized)) : [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW[view]];
     const withDateCompleted = view === "table" && !deduped.includes("date_completed") ? [...deduped, "date_completed" as const] : deduped;
-    const withDateAdded: AgentPlanColumnId[] = withDateCompleted.includes("date_added") ? withDateCompleted : [...withDateCompleted, "date_added"];
+    const withLastDone = view === "table" && !withDateCompleted.includes("last_done") ? [...withDateCompleted, "last_done" as const] : withDateCompleted;
+    const withDateAdded: AgentPlanColumnId[] = withLastDone.includes("date_added") ? withLastDone : [...withLastDone, "date_added"];
     const withEstimated: AgentPlanColumnId[] = withDateAdded.includes("estimated_time") ? withDateAdded : [...withDateAdded, "estimated_time"];
     const withActual: AgentPlanColumnId[] = withEstimated.includes("actual_time") ? withEstimated : [...withEstimated, "actual_time"];
     const withTags: AgentPlanColumnId[] = withActual.includes("tags") ? withActual : [...withActual, "tags"];

@@ -86,6 +86,13 @@ export function TaskListRuleRowEditor({
         label: formatOptionLabel(option),
         value: option,
       }))
+      : rule.field === "history_status"
+        ? [
+          { label: "Done Today", value: "done_today" },
+          { label: "Did My Best Today", value: "did_my_best_today" },
+          { label: "Missed Today", value: "missed_today" },
+          { label: "Handled", value: "handled_today" },
+        ]
       : rule.field === "completed_history" || rule.field === "missed_history"
         ? TASK_HISTORY_WINDOW_PRESETS.map((preset) => ({
           label: `${preset} day${preset === "1" ? "" : "s"}`,
@@ -127,6 +134,7 @@ export function TaskListRuleRowEditor({
               selectedValue={
                 rule.field === "streak"
                   || rule.field === "list"
+                  || rule.field === "history_status"
                   || rule.field === "completed_history"
                   || rule.field === "missed_history"
                   || rule.field === "completed_streak"

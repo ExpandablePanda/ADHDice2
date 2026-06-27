@@ -89,11 +89,41 @@ export function HomePage({
       </div>
 
       <div className="mt-5 flex flex-wrap items-start justify-center gap-5">
+        <HomeMilestonesDirectionCard />
         <HomeAchievementPreview achievementSummary={achievementSummary} onClick={() => setActivePage("Achievements")} />
         <HomeUrgentPreview tasks={urgentTasks.slice(0, 3)} onClick={() => setActivePage("Tasks")} />
         <HomeLowEnergyPreview tasks={lowEnergyTasks} onClick={() => setActivePage("Tasks")} />
       </div>
     </>
+  );
+}
+
+function HomeMilestonesDirectionCard() {
+  return (
+    <section className="w-full rounded-[2rem] border border-[#ece8f8] bg-white p-4 shadow-[0_18px_50px_rgba(81,61,168,0.07)] sm:w-fit sm:min-w-[440px] dark:border-white/10 dark:bg-white/6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white">Milestones</h2>
+          <p className="mt-2 max-w-[24rem] text-sm leading-6 text-[#6c7590] dark:text-white/55">
+            Milestones are being moved out of Home. The safe direction is a task-child model beside Steps and Substeps, not a separate collectible card system here.
+          </p>
+        </div>
+        <span className="rounded-full border border-[#f2df9b] bg-[#fff6df] px-3 py-1 text-sm font-semibold text-[#b77900] dark:border-[#6b5317] dark:bg-[#44350d] dark:text-[#ffd56b]">
+          Deferred
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3">
+        {[
+          "The incorrect Home-local milestone MVP is no longer active.",
+          "Milestones need task-level child-item design instead of standalone Home state.",
+          "This correction pass keeps the product honest until the task UI model is designed safely.",
+        ].map((line) => (
+          <div className="rounded-[1.2rem] border border-[#eee9fb] bg-[#fcfbff] px-4 py-3 text-sm text-[#5f5879] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/65" key={line}>
+            {line}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

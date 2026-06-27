@@ -564,9 +564,7 @@ export function TaskEditorModal({
               one_step_at_a_time: draftSnapshot.oneStepAtATime,
               subtasks_auto_reset: draftSnapshot.subtasksAutoReset,
               repeat_frequency: draftSnapshot.repeatFrequency,
-              repeat_interval: draftSnapshot.repeatFrequency === "daily_until_complete"
-                ? 1
-                : Math.max(1, parsePositiveInteger(draftSnapshot.repeatInterval) ?? 1),
+              repeat_interval: Math.max(1, parsePositiveInteger(draftSnapshot.repeatInterval) ?? 1),
               repeat_days_of_week: draftSnapshot.repeatFrequency === "weekly" || draftSnapshot.repeatFrequency === "custom"
                 ? [...draftSnapshot.repeatDaysOfWeek].sort((a, b) => a - b)
                 : [],
@@ -633,7 +631,7 @@ export function TaskEditorModal({
                     ? (current.repeatMonthlyWeekday ?? 1)
                     : null,
                   repeatFrequency: value,
-                  repeatInterval: value === "daily_until_complete" ? "1" : current.repeatInterval,
+                  repeatInterval: current.repeatInterval,
                 }))}
                 options={compactRepeatOptions}
                 renderValueLabel={(value) => value === draft.repeatFrequency ? compactRepeatLabel : formatOptionLabel(value)}
@@ -944,7 +942,7 @@ export function TaskEditorModal({
                   { label: "Weeks", value: "weekly" },
                   { label: "Months", value: "monthly" },
                 ]}
-                showInterval={draft.repeatFrequency !== "daily_until_complete"}
+                showInterval
                 showMonthDay={(draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom") && draft.repeatMonthlyMode !== "ordinal_weekday"}
                 showMonthlyMode={draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom"}
                 showMonthlyOrdinals={(draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom") && draft.repeatMonthlyMode === "ordinal_weekday"}

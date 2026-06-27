@@ -74,7 +74,6 @@ function getMonthlyOccurrenceDate(task: Pick<Task, "due_on" | "repeat_day_of_mon
     );
   }
 
-  const fallbackDate = new Date(`${fallbackDateKey}T12:00:00`);
   const maxDay = new Date(year, monthIndex + 1, 0).getDate();
   const targetDay = task.repeat_day_of_month ?? new Date(`${task.due_on ?? fallbackDateKey}T12:00:00`).getDate();
   return new Date(year, monthIndex, Math.min(targetDay, maxDay));
@@ -219,7 +218,7 @@ export function formatRepeatSummary(task: Task) {
   if (task.repeat_frequency === "none") return null;
 
   if (task.repeat_frequency === "daily_until_complete") {
-    return "Daily Until Complete";
+    return task.repeat_interval > 1 ? `Every ${task.repeat_interval} days until complete` : "Daily Until Complete";
   }
 
   if (task.repeat_frequency === "daily") {
@@ -282,7 +281,7 @@ export function formatRepeatFrequencyLabel(
     return Math.max(1, repeatInterval ?? 1) > 1 ? `Daily · ${Math.max(1, repeatInterval ?? 1)}` : "Daily";
   }
   if (repeatFrequency === "daily_until_complete") {
-    return "Daily Until Complete";
+    return Math.max(1, repeatInterval ?? 1) > 1 ? `Daily Until Complete · ${Math.max(1, repeatInterval ?? 1)}` : "Daily Until Complete";
   }
   if (repeatFrequency === "weekly") {
     if (isWeekdaysRepeatSelection(repeatFrequency, repeatDaysOfWeek, repeatInterval)) {

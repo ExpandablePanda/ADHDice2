@@ -368,7 +368,9 @@ test("task list rule evaluation memoizes duplicate list references", () => {
         currentStreakByTaskId: {},
         focusedTaskIds: new Set<string>(),
         hasStepsByTaskId: {},
+        historyFactsByTaskId: {},
         isDueToday: () => false,
+        isDueTomorrow: () => false,
         isLater: () => false,
         isOpen: () => {
           isOpenChecks += 1;
@@ -376,6 +378,8 @@ test("task list rule evaluation memoizes duplicate list references", () => {
         },
         isOverdue: () => false,
         manualMembershipsByTaskId: {},
+        taskHistoryByTaskId: {},
+        todayDateKey: "2026-05-20",
       },
     ),
     true,
