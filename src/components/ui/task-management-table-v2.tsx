@@ -1730,6 +1730,7 @@ function TaskTitleDraftInput({
         onDraftChange(taskId, nextValue);
       }}
       onKeyDown={(event) => {
+        event.stopPropagation();
         if (event.key === "Enter") {
           event.preventDefault();
           onDraftChange(taskId, draft);
@@ -5767,11 +5768,12 @@ export function TaskManagementTableV2({
                       <span onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
                         <TaskTitleDraftInput
                           autoFocus
-                          className="min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1.5 py-1 text-sm font-semibold text-[#27304c] outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+                          className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                           initialValue={item.title}
                           onCommit={commitTaskTitle}
                           onDone={() => setEditingTaskTitleId((current) => (current === item.id ? null : current))}
                           onDraftChange={setTitleDraft}
+                          style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                           taskId={item.id}
                         />
                       </span>
@@ -6035,11 +6037,12 @@ export function TaskManagementTableV2({
               <span onClick={(event) => event.stopPropagation()}>
                 <TaskTitleDraftInput
                   autoFocus
-                  className="h-[24px] min-h-0 w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 text-[13px] font-medium text-[#27304c] outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+                  className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                   initialValue={item.title}
                   onCommit={commitTaskTitle}
                   onDone={() => setEditingTaskTitleId((current) => (current === item.id ? null : current))}
                   onDraftChange={setTitleDraft}
+                  style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                   taskId={item.id}
                 />
               </span>
@@ -6476,6 +6479,9 @@ export function TaskManagementTableV2({
                     openRowContextMenu(item.id, event.clientX, event.clientY);
                   }}
                   onKeyDown={canOpenStepActions ? (event) => {
+                    if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                      return;
+                    }
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       event.stopPropagation();

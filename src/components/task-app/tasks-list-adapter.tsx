@@ -110,7 +110,24 @@ function statusTone(status: TaskStatus) {
 
 function shouldIgnoreListOverlayOpen(target: EventTarget | null) {
   return target instanceof HTMLElement
-    && Boolean(target.closest("button, input, textarea, select, a, [data-list-action-control='true']"));
+    && Boolean(target.closest("button, input, textarea, select, a, [data-list-action-control='true'], [contenteditable=''], [contenteditable='true'], [role='textbox'], [role='searchbox'], [role='combobox'], [role='spinbutton'], [aria-multiline='true']"));
+}
+
+function isKeyboardEventFromEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable || target.closest('[contenteditable=""], [contenteditable="true"]')) {
+    return true;
+  }
+
+  const editableRoleSelector = '[role="textbox"], [role="searchbox"], [role="combobox"], [role="spinbutton"], [aria-multiline="true"]';
+  if (target.matches(editableRoleSelector) || target.closest(editableRoleSelector)) {
+    return true;
+  }
+
+  return target.matches("input, textarea, select") || Boolean(target.closest("input, textarea, select"));
 }
 
 type TasksTableSourceProps = {
@@ -886,6 +903,9 @@ function StepsCardPreview({
                   onOpenStep(item.id);
                 }}
                 onKeyDown={(event) => {
+                  if (isKeyboardEventFromEditableTarget(event.target)) {
+                    return;
+                  }
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     event.stopPropagation();
@@ -2233,6 +2253,9 @@ function TasksSimpleList({
               <div
                 className="min-w-0 flex-1 cursor-pointer"
                 onKeyDown={(event) => {
+                  if (isKeyboardEventFromEditableTarget(event.target)) {
+                    return;
+                  }
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     setRowContextMenu(null);
