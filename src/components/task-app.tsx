@@ -457,7 +457,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.12.17";
+const APP_VERSION = "6.12.21";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -2551,6 +2551,7 @@ export function TaskApp() {
     deleteTaskSubtask,
     deleteTasks,
     importTasks,
+    reorderCustomTaskLists,
     renameTaskSubtask,
     routeTask,
     saveTaskEditor,
@@ -4157,6 +4158,7 @@ export function TaskApp() {
     onOpenComposer: openInlineNewListTaskComposer,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
+    onReorderCustomLists: (orderedCustomListIds: string[]) => { void reorderCustomTaskLists(orderedCustomListIds as TaskListId[]); },
     onSelectBucket: setSelectedBucket,
     onReorderListColumns: reorderListColumns,
     onSetDraggedListColumnId: setDraggedListColumnId,
@@ -4845,6 +4847,7 @@ export function TaskApp() {
                 listNode={null}
                 lists={listRailOptions}
                 matrixNode={matrixContentNode}
+                onReorderCustomLists={(orderedCustomListIds) => { void reorderCustomTaskLists(orderedCustomListIds as TaskListId[]); }}
                 onSelectBucket={setSelectedBucket}
                 selectedBucket={taskUiState.selectedBucket}
                 view={taskUiState.view}

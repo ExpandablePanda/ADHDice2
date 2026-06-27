@@ -5,7 +5,7 @@ Last reviewed: 2026-06-25
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.12.17`.
+- Current working app version: `6.12.21`.
 - Current release group: `6.12.x` PATHS MVP.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,7 +14,7 @@ Role: active working
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
 ## 6.12 Checkpoint
-- `6.12.17` is a narrow `6.12.16` QA correction pass: Step/Substep rename inputs now reuse the same visible rename input scale, line-height, height, padding, border, and focus treatment as the parent task rename input while preserving existing rename keyboard behavior and row placement.
+- `6.12.21` is a narrow follow-up pass on List Settings rail reordering: the visible app version surfaces are synced again, the List Settings cards keep one consistent top-right action cluster, Inbox and Today stay pinned, and the remaining visible rail lists can use the shared reorder controls through the existing persisted `sortOrder` path while delete stays custom-list-only.
 - `6.12.14` is a narrow `6.12.13` QA correction pass: the Focus countdown control wiring is split again so the trash icon deletes the local countdown timer while the reverse-arrows control resets it back to the selected duration and restarts it. Tasks search highlight behavior stays unchanged.
 - `6.12.8` is a narrow `6.12.7` highlight-search correction pass: the Tasks-local `highlight:` search path now scans the flat legacy/source subtask rows by their real database shape instead of assuming a nested `children` tree, so highlight mode no longer crashes on source Steps/Substeps and still highlights matching legacy step titles.
 - `6.12.7` adds rail-order controls to List Settings so task lists can move earlier or later in the Tasks rail through the persisted `sortOrder` path, and it fixes mobile Table View column resizing by keeping the resize handle on the active pointer stream with touch-safe pointer capture instead of losing the drag during touch/pan interactions.

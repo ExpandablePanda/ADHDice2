@@ -24,6 +24,12 @@ type CustomTaskListInput = {
   rules: unknown;
 };
 
+type PersistTaskListDefinitionsOptions = {
+  missingTableMessage: string;
+  nextDefinitions: TaskListDefinition[];
+  successMessage: string;
+};
+
 type UseTaskListActionsOptions = {
   availableTaskLists?: TaskListDefinition[];
   builtInTaskLists?: TaskListDefinition[];
@@ -54,6 +60,60 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
     setTaskLists = NOOP_SETTER as Dispatch<SetStateAction<TaskListDefinition[]>>,
     taskLists = [],
   } = options;
+
+  async function persistTaskListDefinitions({
+    missingTableMessage,
+    nextDefinitions,
+    successMessage,
+  }: PersistTaskListDefinitionsOptions) {
+    setTaskLists(nextDefinitions);
+
+    if (!client || !currentUserId) {
+      setMessage({ tone: "warn", text: "Task list settings are unavailable right now." });
+      return false;
+    }
+
+    const payloads: TaskListInsert[] = nextDefinitions.map((definition) => ({
+      built_in_key: isBuiltInTaskListId(definition.id) ? definition.id : null,
+      id: definition.id,
+      is_deletable: definition.isDeletable,
+      is_editable: definition.isEditable,
+      is_visible: definition.isVisible,
+      list_type: definition.type,
+      membership_mode: definition.membershipMode,
+      name: definition.name,
+      rules_json: definition.rules ? JSON.stringify(definition.rules) : null,
+      sort_order: definition.sortOrder,
+      user_id: currentUserId,
+    }));
+
+    const { data, error } = await client
+      .from("adhdice_task_lists")
+      .upsert(payloads, { onConflict: "id" })
+      .select("*");
+
+    if (error) {
+      if (isMissingTaskListsTableError(error.message)) {
+        setMessage({ tone: "warn", text: missingTableMessage });
+        return true;
+      }
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if (data) {
+      const mappedRows = data
+        .map((row) => mapTaskListRow(row))
+        .filter((row): row is TaskListDefinition => Boolean(row));
+      if (mappedRows.length > 0) {
+        mappedRows.sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
+        setTaskLists(mappedRows);
+      }
+    }
+
+    setMessage({ tone: "good", text: successMessage });
+    return true;
+  }
 
   async function saveTaskListDefinition(input: TaskListSaveInput) {
     if (!client || !currentUserId) {
@@ -92,49 +152,47 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       };
     });
     const savedDefinition = nextDefinitions.find((list) => list.id === input.id) ?? baseline;
+    return persistTaskListDefinitions({
+      missingTableMessage: "Task list settings are not migrated yet, so these changes will only last for this session.",
+      nextDefinitions,
+      successMessage: `${savedDefinition.name} settings saved.`,
+    });
+  }
 
-    setTaskLists(nextDefinitions);
-
-    const payloads: TaskListInsert[] = nextDefinitions.map((definition) => ({
-      built_in_key: isBuiltInTaskListId(definition.id) ? definition.id : null,
-      id: definition.id,
-      is_deletable: definition.isDeletable,
-      is_editable: definition.isEditable,
-      is_visible: definition.isVisible,
-      list_type: definition.type,
-      membership_mode: definition.membershipMode,
-      name: definition.name,
-      rules_json: definition.rules ? JSON.stringify(definition.rules) : null,
-      sort_order: definition.sortOrder,
-      user_id: currentUserId,
-    }));
-
-    const { data, error } = await client
-      .from("adhdice_task_lists")
-      .upsert(payloads, { onConflict: "id" })
-      .select("*");
-
-    if (error) {
-      if (isMissingTaskListsTableError(error.message)) {
-        setMessage({ tone: "warn", text: "Task list settings are not migrated yet, so these changes will only last for this session." });
-        return true;
-      }
-      setMessage({ tone: "warn", text: error.message });
+  async function reorderCustomTaskLists(orderedCustomListIds: TaskListId[]) {
+    if (!client || !currentUserId) {
+      setMessage({ tone: "warn", text: "Task list settings are unavailable right now." });
       return false;
     }
 
-    if (data) {
-      const mappedRows = data
-        .map((row) => mapTaskListRow(row))
-        .filter((row): row is TaskListDefinition => Boolean(row));
-      if (mappedRows.length > 0) {
-        mappedRows.sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
-        setTaskLists(mappedRows);
-      }
+    const customLists = availableTaskLists.filter((list) => list.type === "custom");
+    if (customLists.length <= 1) {
+      return true;
     }
 
-    setMessage({ tone: "good", text: `${savedDefinition.name} settings saved.` });
-    return true;
+    const customListIds = new Set(customLists.map((list) => list.id));
+    const normalizedCustomListIds = [
+      ...orderedCustomListIds.filter((listId, index, listIds) => customListIds.has(listId) && listIds.indexOf(listId) === index),
+      ...customLists.map((list) => list.id).filter((listId) => !orderedCustomListIds.includes(listId)),
+    ];
+
+    let customListIndex = 0;
+    const nextDefinitions = availableTaskLists.map((list, index) => {
+      const nextList = list.type === "custom"
+        ? availableTaskLists.find((entry) => entry.id === normalizedCustomListIds[customListIndex++]) ?? list
+        : list;
+
+      return {
+        ...nextList,
+        sortOrder: index,
+      };
+    });
+
+    return persistTaskListDefinitions({
+      missingTableMessage: "Task lists are not migrated yet, so this rail order will only last for this session.",
+      nextDefinitions,
+      successMessage: "Custom list order saved.",
+    });
   }
 
   async function createCustomTaskList(input: CustomTaskListInput) {
@@ -254,6 +312,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
   return {
     createCustomTaskList,
     deleteTaskList,
+    reorderCustomTaskLists,
     saveTaskListDefinition,
   };
 }

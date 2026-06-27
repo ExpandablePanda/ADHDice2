@@ -109,6 +109,13 @@ export type ChildTaskPreviewGroup = {
 };
 
 export type ChildTaskPreviewLookup = Record<string, ChildTaskPreviewGroup>;
+export type TaskRailListOption = {
+  count: number;
+  description: string;
+  id: string;
+  isCustom: boolean;
+  label: string;
+};
 
 const EMPTY_TASKS: Task[] = [];
 const isDevelopment = process.env.NODE_ENV !== "production";
@@ -692,19 +699,21 @@ export function computeTaskAppDerivedData({
   const visibleTaskLists = activePage !== "Tasks"
     ? []
     : availableTaskLists.filter((list) => list.isVisible && (list.id !== "missed" || (visibleListCounts[list.id] ?? 0) > 0));
-  const listRailOptions = activePage !== "Tasks"
+  const listRailOptions: TaskRailListOption[] = activePage !== "Tasks"
     ? []
     : [
       {
         count: filteredTasksSorted.length,
         description: "Everything that matches the current search and filters.",
         id: "all",
+        isCustom: false,
         label: "All",
       },
       ...visibleTaskLists.map((list) => ({
         count: visibleListCounts[list.id] ?? 0,
         description: list.description,
         id: list.id,
+        isCustom: list.type === "custom",
         label: list.name,
       })),
     ];

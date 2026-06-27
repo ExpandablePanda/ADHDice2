@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { TasksNonListContent } from "./tasks-non-list-content";
 import { TasksNonListViewPanel } from "./tasks-page";
+import type { TaskRailListOption } from "@/lib/task-app-derived";
 import type { TaskViewMode } from "@/lib/task-ui-state";
 
 type TasksNonListShellProps = {
@@ -11,8 +12,9 @@ type TasksNonListShellProps = {
   filterRowsNode: ReactNode;
   gridNode: ReactNode;
   listNode: ReactNode;
-  lists: Array<{ count: number; description: string; id: string; label: string }>;
+  lists: TaskRailListOption[];
   matrixNode: ReactNode;
+  onReorderCustomLists?: (orderedCustomListIds: string[]) => void;
   onSelectBucket: (bucket: string) => void;
   selectedBucket: string;
   view: TaskViewMode;
@@ -26,6 +28,7 @@ export function TasksNonListShell({
   listNode,
   lists,
   matrixNode,
+  onReorderCustomLists,
   onSelectBucket,
   selectedBucket,
   view,
@@ -44,6 +47,7 @@ export function TasksNonListShell({
       dailyPlanningNode={dailyPlanningNode}
       filterRowsNode={filterRowsNode}
       lists={lists}
+      onReorderCustomLists={onReorderCustomLists}
       onSelectBucket={onSelectBucket}
       selectedBucket={selectedBucket}
     />

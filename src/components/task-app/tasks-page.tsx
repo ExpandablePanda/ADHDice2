@@ -3,7 +3,7 @@
 import { BookOpen, Check, ChevronDown, Search, Trash2, X } from "lucide-react";
 import { startTransition, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
-import type { MouseEvent } from "react";
+import type { DragEvent, MouseEvent } from "react";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
@@ -12,12 +12,101 @@ import {
 } from "@/components/ui/task-table-primitives";
 
 import type { Task } from "@/lib/database.types";
+import type { TaskRailListOption } from "@/lib/task-app-derived";
 import type { TaskViewMode } from "@/lib/task-ui-state";
 
 const SHARED_CHIP_MUTED_CLASS = TASK_TABLE_LIST_CHIP_CLASS;
 const SHARED_CHIP_ACTIVE_CLASS = TASK_TABLE_ACTIVE_LIST_CHIP_CLASS;
 const SHARED_CHIP_PRIMARY_CLASS = "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]";
 const SHARED_CHIP_SOFT_PURPLE_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
+
+function reorderCustomRailLists(lists: TaskRailListOption[], sourceListId: string, targetListId: string) {
+  if (sourceListId === targetListId) {
+    return null;
+  }
+
+  const customLists = lists.filter((list) => list.isCustom);
+  const sourceIndex = customLists.findIndex((list) => list.id === sourceListId);
+  const targetIndex = customLists.findIndex((list) => list.id === targetListId);
+  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+    return null;
+  }
+
+  const nextCustomLists = [...customLists];
+  const [movedList] = nextCustomLists.splice(sourceIndex, 1);
+  if (!movedList) {
+    return null;
+  }
+  nextCustomLists.splice(targetIndex, 0, movedList);
+  return nextCustomLists.map((list) => list.id);
+}
+
+function ReorderableTaskChipRail({
+  lists,
+  onReorderCustomLists,
+  onSelectBucket,
+  selectedBucket,
+}: {
+  lists: TaskRailListOption[];
+  onReorderCustomLists?: (orderedCustomListIds: string[]) => void;
+  onSelectBucket: (bucket: string) => void;
+  selectedBucket: string;
+}) {
+  const [draggedListId, setDraggedListId] = useState<string | null>(null);
+
+  const handleDrop = (targetListId: string) => {
+    if (!draggedListId || !onReorderCustomLists) {
+      return;
+    }
+    const nextOrderedCustomListIds = reorderCustomRailLists(lists, draggedListId, targetListId);
+    setDraggedListId(null);
+    if (nextOrderedCustomListIds) {
+      onReorderCustomLists(nextOrderedCustomListIds);
+    }
+  };
+
+  return (
+    <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-0.5">
+      {lists.map((list) => (
+        <TaskTableChipButton
+          aria-pressed={list.id === selectedBucket}
+          className={list.isCustom && draggedListId === list.id ? "opacity-60" : undefined}
+          draggable={list.isCustom && Boolean(onReorderCustomLists)}
+          key={list.id}
+          onClick={() => {
+            startTransition(() => {
+              onSelectBucket(list.id);
+            });
+          }}
+          onDragEnd={() => setDraggedListId(null)}
+          onDragOver={(event: DragEvent<HTMLButtonElement>) => {
+            if (!draggedListId || !list.isCustom) {
+              return;
+            }
+            event.preventDefault();
+          }}
+          onDragStart={(event: DragEvent<HTMLButtonElement>) => {
+            if (!list.isCustom) {
+              return;
+            }
+            event.dataTransfer.effectAllowed = "move";
+            setDraggedListId(list.id);
+          }}
+          onDrop={(event: DragEvent<HTMLButtonElement>) => {
+            if (!list.isCustom) {
+              return;
+            }
+            event.preventDefault();
+            handleDrop(list.id);
+          }}
+          toneClassName={list.id === selectedBucket ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
+        >
+          {list.label} <span className="ml-1 opacity-70">{list.count}</span>
+        </TaskTableChipButton>
+      ))}
+    </div>
+  );
+}
 
 function TaskChipButton({
   active,
@@ -117,6 +206,7 @@ export function TaskOperationsHeader({
   onOpenListSettings,
   onOpenMomentumDetails,
   onOpenTrash,
+  onReorderCustomLists,
   onSelectBucket,
   onShrinkAllColumns,
   onSearchChange,
@@ -144,7 +234,7 @@ export function TaskOperationsHeader({
   listColumnMenuRef: RefObject<HTMLDivElement | null>;
   listColumnPickerColumns: AgentPlanColumnId[];
   listVisibleColumns: AgentPlanColumnId[];
-  lists: Array<{ count: number; description: string; id: string; label: string }>;
+  lists: TaskRailListOption[];
   metric: {
     doneTasks: Task[];
     label: string;
@@ -161,6 +251,7 @@ export function TaskOperationsHeader({
   onOpenListSettings: () => void;
   onOpenMomentumDetails: () => void;
   onOpenTrash: () => void;
+  onReorderCustomLists?: (orderedCustomListIds: string[]) => void;
   onSelectBucket: (bucket: string) => void;
   onShrinkAllColumns: () => void;
   onSearchChange: (search: string) => void;
@@ -395,22 +486,12 @@ export function TaskOperationsHeader({
               </TaskChipButton>
             </div>
           </div>
-          <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-0.5">
-            {lists.map((list) => (
-              <TaskTableChipButton
-                aria-pressed={list.id === selectedBucket}
-                key={list.id}
-                onClick={() => {
-                  startTransition(() => {
-                    onSelectBucket(list.id);
-                  });
-                }}
-                toneClassName={list.id === selectedBucket ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
-              >
-                {list.label} <span className="ml-1 opacity-70">{list.count}</span>
-              </TaskTableChipButton>
-            ))}
-          </div>
+          <ReorderableTaskChipRail
+            lists={lists}
+            onReorderCustomLists={onReorderCustomLists}
+            onSelectBucket={onSelectBucket}
+            selectedBucket={selectedBucket}
+          />
           {filterRowsNode}
         </div>
 
@@ -430,12 +511,13 @@ export function TasksListViewPanel(props: {
   listColumnLabels: Record<AgentPlanColumnId, string>;
   listColumnMenuRef: RefObject<HTMLDivElement | null>;
   listColumnPickerColumns: AgentPlanColumnId[];
-  lists: Array<{ count: number; description: string; id: string; label: string }>;
+  lists: TaskRailListOption[];
   listVisibleColumns: AgentPlanColumnId[];
   onOpenListSettings: () => void;
   onOpenArchive: () => void;
   onOpenComposer: () => void;
   onOpenImport: () => void;
+  onReorderCustomLists?: (orderedCustomListIds: string[]) => void;
   onSelectBucket: (bucket: string) => void;
   onReorderListColumns: (columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) => void;
   onSetDraggedListColumnId: (columnId: AgentPlanColumnId | null) => void;
@@ -466,13 +548,15 @@ export function TasksNonListViewPanel({
   dailyPlanningNode,
   filterRowsNode,
   lists,
+  onReorderCustomLists,
   onSelectBucket,
   selectedBucket,
 }: {
   contentNode: ReactNode;
   dailyPlanningNode: ReactNode;
   filterRowsNode: ReactNode;
-  lists: Array<{ count: number; description: string; id: string; label: string }>;
+  lists: TaskRailListOption[];
+  onReorderCustomLists?: (orderedCustomListIds: string[]) => void;
   onSelectBucket: (bucket: string) => void;
   selectedBucket: string;
 }) {
@@ -480,6 +564,7 @@ export function TasksNonListViewPanel({
     <section className="mt-4 grid gap-4 xl:grid-cols-[15.5rem_minmax(0,1fr)]">
       <TaskBucketRail
         lists={lists}
+        onReorderCustomLists={onReorderCustomLists}
         onSelectBucket={onSelectBucket}
         selectedBucket={selectedBucket}
       />
@@ -494,10 +579,12 @@ export function TasksNonListViewPanel({
 
 function TaskBucketRail({
   lists,
+  onReorderCustomLists,
   onSelectBucket,
   selectedBucket,
 }: {
-  lists: Array<{ count: number; description: string; id: string; label: string }>;
+  lists: TaskRailListOption[];
+  onReorderCustomLists?: (orderedCustomListIds: string[]) => void;
   onSelectBucket: (bucket: string) => void;
   selectedBucket: string;
 }) {
@@ -536,21 +623,13 @@ function TaskBucketRail({
           })}
         </div>
       </aside>
-      <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-0.5 xl:hidden">
-        {lists.map((list) => (
-          <TaskTableChipButton
-            aria-pressed={list.id === selectedBucket}
-            key={list.id}
-            onClick={() => {
-              startTransition(() => {
-                onSelectBucket(list.id);
-              });
-            }}
-            toneClassName={list.id === selectedBucket ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
-          >
-            {list.label} <span className="ml-1 opacity-70">{list.count}</span>
-          </TaskTableChipButton>
-        ))}
+      <div className="xl:hidden">
+        <ReorderableTaskChipRail
+          lists={lists}
+          onReorderCustomLists={onReorderCustomLists}
+          onSelectBucket={onSelectBucket}
+          selectedBucket={selectedBucket}
+        />
       </div>
     </>
   );
