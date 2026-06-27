@@ -129,6 +129,7 @@ import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportContro
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import {
   getDisplayFocusCategories,
+  isSystemCountdownCategoryId,
   sanitizeFocusLabel,
   sanitizeOptionalFocusLabel,
 } from "@/lib/focus-utils";
@@ -191,7 +192,7 @@ import {
   calcNextDueDateFromDate,
   shouldReconcileOverdueTaskMisses,
 } from "@/lib/task-repeat";
-import { computeTaskAppDerivedData } from "@/lib/task-app-derived";
+import { computeTaskAppDerivedData, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import {
   buildCompleteHistoryPayload,
   canTaskBeMarkedComplete,
@@ -338,6 +339,79 @@ function getFocusSessionDisplaySeconds(activeSession: ActiveFocusSession | undef
   return Math.max(0, activeSession.accumulatedSeconds);
 }
 
+function doesTaskHighlightTextMatch(value: string | null | undefined, normalizedQuery: string) {
+  return (value ?? "").toLowerCase().includes(normalizedQuery);
+}
+
+function collectMatchingSourceSubtaskIds(
+  subtasks: DbTaskSubtask[],
+  normalizedQuery: string,
+  matches: string[],
+) {
+  for (const subtask of subtasks) {
+    if (doesTaskHighlightTextMatch(subtask.title, normalizedQuery)) {
+      matches.push(subtask.id);
+    }
+  }
+}
+
+function buildTaskHighlightMatchState({
+  childTaskPreviewByParentTaskId,
+  query,
+  selectedBucketTasks,
+  taskSubtasksByTaskId,
+}: {
+  childTaskPreviewByParentTaskId: ChildTaskPreviewLookup;
+  query: string;
+  selectedBucketTasks: Task[];
+  taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
+}) {
+  if (query.length === 0) {
+    return {
+      matchedRowIds: [] as string[],
+      matchedStepParentTaskIds: [] as string[],
+    };
+  }
+
+  const matchedRowIds: string[] = [];
+  const matchedRowIdSet = new Set<string>();
+  const matchedStepParentTaskIdSet = new Set<string>();
+  const addMatch = (taskId: string) => {
+    if (!matchedRowIdSet.has(taskId)) {
+      matchedRowIdSet.add(taskId);
+      matchedRowIds.push(taskId);
+    }
+  };
+
+  for (const task of selectedBucketTasks) {
+    if (doesTaskHighlightTextMatch(task.title, query)) {
+      addMatch(task.id);
+    }
+
+    const previewMatches = childTaskPreviewByParentTaskId[task.id]?.items.filter((item) => doesTaskHighlightTextMatch(item.title, query)) ?? [];
+    if (previewMatches.length > 0) {
+      matchedStepParentTaskIdSet.add(task.id);
+      for (const item of previewMatches) {
+        addMatch(item.id);
+      }
+    }
+
+    const sourceSubtaskMatches: string[] = [];
+    collectMatchingSourceSubtaskIds(taskSubtasksByTaskId[task.id] ?? [], query, sourceSubtaskMatches);
+    if (sourceSubtaskMatches.length > 0) {
+      matchedStepParentTaskIdSet.add(task.id);
+      for (const subtaskId of sourceSubtaskMatches) {
+        addMatch(subtaskId);
+      }
+    }
+  }
+
+  return {
+    matchedRowIds,
+    matchedStepParentTaskIds: Array.from(matchedStepParentTaskIdSet),
+  };
+}
+
 function resolveCollapsedHudFocusTimer(
   categories: FocusCategory[],
   activeSessions: Record<string, ActiveFocusSession>,
@@ -383,7 +457,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.12.6";
+const APP_VERSION = "6.12.15";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -898,6 +972,35 @@ function isSupabaseLoadFailure(error: unknown) {
     || message.includes("Network request failed");
 }
 
+function getCountdownAlertSessionKey(session: ActiveFocusSession | null) {
+  if (!session || session.mode !== "countdown" || !session.countdownTargetSeconds) {
+    return null;
+  }
+  return `${session.categoryId}:${session.startTime ?? "idle"}:${session.countdownTargetSeconds}`;
+}
+
+function getCountdownRemainingSeconds(session: ActiveFocusSession, nowMs: number) {
+  if (session.mode !== "countdown" || !session.countdownTargetSeconds) {
+    return null;
+  }
+
+  if (session.isRunning && session.startTime) {
+    const elapsed = Math.max(0, Math.floor((nowMs - session.startTime) / 1000));
+    return Math.max(0, session.countdownTargetSeconds - session.accumulatedSeconds - elapsed);
+  }
+
+  return Math.max(0, session.countdownTargetSeconds - session.accumulatedSeconds);
+}
+
+function findFinishedCountdownSession(activeSessions: Record<string, ActiveFocusSession>, nowMs: number) {
+  return Object.values(activeSessions).find((session) => (
+    isSystemCountdownCategoryId(session.categoryId)
+      && session.mode === "countdown"
+      && Boolean(session.countdownTargetSeconds)
+      && getCountdownRemainingSeconds(session, nowMs) === 0
+  )) ?? null;
+}
+
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const profileSettingsHydratedRef = useRef(false);
@@ -914,16 +1017,22 @@ export function TaskApp() {
   const [focusAlarmEnabled, setFocusAlarmEnabled] = useState(false);
   const [focusAlarmIntervalMinutes, setFocusAlarmIntervalMinutes] = useState(DEFAULT_FOCUS_ALARM_INTERVAL_MINUTES);
   const [focusAlarmNextRingAt, setFocusAlarmNextRingAt] = useState<number | null>(null);
+  const [activeCountdownAlertSessionKey, setActiveCountdownAlertSessionKey] = useState<string | null>(null);
+  const [dismissedCountdownAlertSessionKey, setDismissedCountdownAlertSessionKey] = useState<string | null>(null);
   const [mobileZoom, setMobileZoom] = useState<(typeof MOBILE_ZOOM_LEVELS)[number]>(1);
   const [isHudAppearanceReady, setIsHudAppearanceReady] = useState(false);
   const [hasCompletedInitialAppBoot, setHasCompletedInitialAppBoot] = useState(false);
+  const countdownAlarmAudioContextRef = useRef<AudioContext | null>(null);
+  const countdownAlarmGainRef = useRef<GainNode | null>(null);
+  const countdownAlarmOscillatorRef = useRef<OscillatorNode | null>(null);
+  const countdownAlarmPulseIntervalRef = useRef<number | null>(null);
   const { economy, setEconomy, appendEconomyEvent, commitTaskReward, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
     focusCategories, setFocusCategories,
     activeSessions, setActiveSessions,
     focusHistory, setFocusHistory,
     suppressCategoryReload,
-    handleToggleTimer, handleSetCountdownTarget, handleFinishTimer, handleAdjustTimer, handleResetTimer,
+    handleToggleTimer, handleSetCountdownTarget, handleFinishTimer, handleAdjustTimer, handleResetTimer, handleDeleteTimer,
     handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory,
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
   } = useFocus(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent);
@@ -1004,6 +1113,119 @@ export function TaskApp() {
   const [availableTaskNotes, setAvailableTaskNotes] = useState<TaskEditorLinkedNote[]>([]);
   const [supportsNestedSubtasks, setSupportsNestedSubtasks] = useState(true);
   const [isGridEditMode, setIsGridEditMode] = useState(false);
+
+  useEffect(() => {
+    const checkFinishedCountdown = () => {
+      const finishedSession = findFinishedCountdownSession(activeSessions, Date.now());
+      const nextSessionKey = getCountdownAlertSessionKey(finishedSession);
+      if (!nextSessionKey) {
+        setActiveCountdownAlertSessionKey(null);
+        return;
+      }
+      if (nextSessionKey === dismissedCountdownAlertSessionKey) {
+        setActiveCountdownAlertSessionKey(null);
+        return;
+      }
+      setActiveCountdownAlertSessionKey((current) => current ?? nextSessionKey);
+    };
+
+    checkFinishedCountdown();
+
+    const hasRunningCountdown = Object.values(activeSessions).some((session) => (
+      isSystemCountdownCategoryId(session.categoryId)
+        && session.mode === "countdown"
+        && session.isRunning
+        && Boolean(session.countdownTargetSeconds)
+    ));
+    if (!hasRunningCountdown) {
+      return;
+    }
+
+    const intervalId = window.setInterval(checkFinishedCountdown, 250);
+    return () => window.clearInterval(intervalId);
+  }, [activeSessions, dismissedCountdownAlertSessionKey]);
+
+  useEffect(() => {
+    if (!activeCountdownAlertSessionKey) {
+      if (countdownAlarmPulseIntervalRef.current !== null) {
+        window.clearInterval(countdownAlarmPulseIntervalRef.current);
+        countdownAlarmPulseIntervalRef.current = null;
+      }
+      if (countdownAlarmOscillatorRef.current) {
+        countdownAlarmOscillatorRef.current.stop();
+        countdownAlarmOscillatorRef.current.disconnect();
+        countdownAlarmOscillatorRef.current = null;
+      }
+      if (countdownAlarmGainRef.current) {
+        countdownAlarmGainRef.current.disconnect();
+        countdownAlarmGainRef.current = null;
+      }
+      if (countdownAlarmAudioContextRef.current) {
+        void countdownAlarmAudioContextRef.current.close();
+        countdownAlarmAudioContextRef.current = null;
+      }
+      return;
+    }
+
+    const audioWindow = window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
+    const AudioContextCtor = window.AudioContext ?? audioWindow.webkitAudioContext;
+    if (!AudioContextCtor) {
+      return;
+    }
+
+    const audioContext = new AudioContextCtor();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.type = "square";
+    oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+    gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime);
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    oscillator.start();
+    void audioContext.resume();
+
+    let pulseOn = false;
+    const pulse = () => {
+      pulseOn = !pulseOn;
+      const atTime = audioContext.currentTime;
+      oscillator.frequency.cancelScheduledValues(atTime);
+      oscillator.frequency.setValueAtTime(pulseOn ? 880 : 660, atTime);
+      gainNode.gain.cancelScheduledValues(atTime);
+      gainNode.gain.setValueAtTime(pulseOn ? 0.18 : 0.0001, atTime);
+    };
+
+    pulse();
+    countdownAlarmAudioContextRef.current = audioContext;
+    countdownAlarmOscillatorRef.current = oscillator;
+    countdownAlarmGainRef.current = gainNode;
+    countdownAlarmPulseIntervalRef.current = window.setInterval(pulse, 450);
+
+    return () => {
+      if (countdownAlarmPulseIntervalRef.current !== null) {
+        window.clearInterval(countdownAlarmPulseIntervalRef.current);
+        countdownAlarmPulseIntervalRef.current = null;
+      }
+      oscillator.stop();
+      oscillator.disconnect();
+      gainNode.disconnect();
+      void audioContext.close();
+      if (countdownAlarmOscillatorRef.current === oscillator) {
+        countdownAlarmOscillatorRef.current = null;
+      }
+      if (countdownAlarmGainRef.current === gainNode) {
+        countdownAlarmGainRef.current = null;
+      }
+      if (countdownAlarmAudioContextRef.current === audioContext) {
+        countdownAlarmAudioContextRef.current = null;
+      }
+    };
+  }, [activeCountdownAlertSessionKey]);
+
+  const dismissCountdownFinishedAlert = useCallback(() => {
+    setDismissedCountdownAlertSessionKey(activeCountdownAlertSessionKey);
+    setActiveCountdownAlertSessionKey(null);
+  }, [activeCountdownAlertSessionKey]);
   const [selectedGridWidgetId, setSelectedGridWidgetId] = useState<string | null>(null);
   const [draggedGridWidgetId, setDraggedGridWidgetId] = useState<string | null>(null);
   const [showFocusPlanner, setShowFocusPlanner] = useState(false);
@@ -2153,6 +2375,41 @@ export function TaskApp() {
   const visibleListTaskIds = useMemo(
     () => selectedBucketTasks.map((task) => task.id),
     [selectedBucketTasks],
+  );
+  const taskHighlightMatches = useMemo(
+    () => buildTaskHighlightMatchState({
+      childTaskPreviewByParentTaskId,
+      query: deferredSearchQuery,
+      selectedBucketTasks,
+      taskSubtasksByTaskId,
+    }),
+    [childTaskPreviewByParentTaskId, deferredSearchQuery, selectedBucketTasks, taskSubtasksByTaskId],
+  );
+  const [taskHighlightActiveMatchIndex, setTaskHighlightActiveMatchIndex] = useState(0);
+  const [taskHighlightScrollToken, setTaskHighlightScrollToken] = useState(0);
+  useEffect(() => {
+    setTaskHighlightActiveMatchIndex(0);
+  }, [deferredSearchQuery]);
+  useEffect(() => {
+    if (deferredSearchQuery.length === 0 || taskHighlightMatches.matchedRowIds.length === 0) {
+      setTaskHighlightActiveMatchIndex(0);
+      return;
+    }
+
+    setTaskHighlightActiveMatchIndex((current) => (
+      current >= taskHighlightMatches.matchedRowIds.length ? 0 : current
+    ));
+  }, [deferredSearchQuery, taskHighlightMatches.matchedRowIds.length]);
+  useEffect(() => {
+    if (deferredSearchQuery.length > 0 && taskHighlightMatches.matchedRowIds.length > 0) {
+      setTaskHighlightScrollToken((current) => current + 1);
+    }
+  }, [deferredSearchQuery, taskHighlightMatches.matchedRowIds]);
+  const activeHighlightedTaskId = deferredSearchQuery.length > 0
+    ? (taskHighlightMatches.matchedRowIds[taskHighlightActiveMatchIndex] ?? taskHighlightMatches.matchedRowIds[0] ?? null)
+    : null;
+  const highlightedSearchMatchedStepParentTaskIds = Array.from(
+    new Set([...searchMatchedStepParentTaskIds, ...taskHighlightMatches.matchedStepParentTaskIds]),
   );
   const selectedBucketLabel = useMemo(() => {
     if (taskUiState.selectedBucket in TASK_BUCKET_LABELS) {
@@ -3978,6 +4235,15 @@ export function TaskApp() {
     onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onSelectBucket: setSelectedBucket,
+    onSearchSubmit: () => {
+      if (taskHighlightMatches.matchedRowIds.length === 0) {
+        return;
+      }
+      setTaskHighlightActiveMatchIndex((current) => (
+        current + 1 >= taskHighlightMatches.matchedRowIds.length ? 0 : current + 1
+      ));
+      setTaskHighlightScrollToken((current) => current + 1);
+    },
     onShrinkAllColumns: () => setShrinkAllColumnsToken((current) => current + 1),
     onSearchChange: (search: string) => setTaskUiState((prev) => ({ ...prev, search })),
     onViewChange: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
@@ -4288,7 +4554,10 @@ export function TaskApp() {
                   allTasks: tasks,
                   childTaskPreviewByParentTaskId,
                   childTaskCreationBlockedTaskIds,
-                  searchMatchedStepParentTaskIds,
+                  highlightedActiveTaskId: activeHighlightedTaskId,
+                  highlightedScrollToken: taskHighlightScrollToken,
+                  highlightedTaskIds: taskHighlightMatches.matchedRowIds,
+                  searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
@@ -4434,7 +4703,10 @@ export function TaskApp() {
                   allTasks: tasks,
                   childTaskPreviewByParentTaskId,
                   childTaskCreationBlockedTaskIds,
-                  searchMatchedStepParentTaskIds,
+                  highlightedActiveTaskId: activeHighlightedTaskId,
+                  highlightedScrollToken: taskHighlightScrollToken,
+                  highlightedTaskIds: taskHighlightMatches.matchedRowIds,
+                  searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
@@ -4587,7 +4859,16 @@ export function TaskApp() {
             onAdjustTimer={(categoryId, deltaSeconds) => {
               void handleAdjustTimer(categoryId, deltaSeconds);
             }}
+            onDeleteTimer={(categoryId) => {
+              if (isSystemCountdownCategoryId(categoryId) && activeCountdownAlertSessionKey) {
+                dismissCountdownFinishedAlert();
+              }
+              void handleDeleteTimer(categoryId);
+            }}
             onResetTimer={(categoryId) => {
+              if (isSystemCountdownCategoryId(categoryId) && activeCountdownAlertSessionKey) {
+                dismissCountdownFinishedAlert();
+              }
               void handleResetTimer(categoryId);
             }}
             onFinishTimer={handleFinishTimer}
@@ -4720,8 +5001,44 @@ export function TaskApp() {
           <ArrowUp className="h-4 w-4" />
         </ScrollUpButton>
       ) : null}
+      {activeCountdownAlertSessionKey ? (
+        <CountdownFinishedAlertOverlay onDismiss={dismissCountdownFinishedAlert} />
+      ) : null}
       <AchievementCelebrationOverlay onDismiss={dismissAchievementCelebration} unlock={activeAchievementCelebration} />
     </main>
+  );
+}
+
+function CountdownFinishedAlertOverlay({
+  onDismiss,
+}: {
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="pointer-events-auto fixed inset-0 z-[140] flex items-center justify-center">
+      <div aria-hidden="true" className="absolute inset-0 animate-pulse bg-[rgba(255,88,110,0.22)] dark:bg-[rgba(255,120,150,0.22)]" />
+      <div aria-hidden="true" className="absolute inset-0 animate-pulse bg-white/35 mix-blend-screen dark:bg-white/12" />
+      <div className="relative z-10 mx-4 flex w-full max-w-sm flex-col items-center gap-4 rounded-[2rem] border border-[#ffd6dc] bg-white px-6 py-7 text-center shadow-[0_30px_90px_rgba(214,75,95,0.28)] dark:border-[#5a2432] dark:bg-[#1a1220]">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#fff1f2] text-[#d64b5f] dark:bg-[#311b23] dark:text-[#ffb0be]">
+          <Bell className="h-7 w-7" />
+        </div>
+        <div className="space-y-1">
+          <p className="text-[11px] font-black uppercase tracking-[0.22em] text-[#d64b5f] dark:text-[#ffb0be]">
+            Countdown Finished
+          </p>
+          <p className="text-lg font-semibold text-[#1f2746] dark:text-white">
+            Time&apos;s up.
+          </p>
+        </div>
+        <button
+          className="min-w-[10rem] rounded-full border border-[#f4b7c0] bg-[#d64b5f] px-5 py-3 text-sm font-black text-white transition hover:scale-[1.02] dark:border-[#7a3042] dark:bg-[#ff8ea2] dark:text-[#2b1120]"
+          onClick={onDismiss}
+          type="button"
+        >
+          Stop Alarm
+        </button>
+      </div>
+    </div>
   );
 }
 

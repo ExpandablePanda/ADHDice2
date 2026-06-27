@@ -10,18 +10,22 @@ const COUNTDOWN_DURATION_PRESETS = [10, 20, 30, 60] as const;
 export function FocusClock({
   category,
   activeSession,
+  autoOpenCountdownRequest,
   onToggle,
   onSetCountdownTarget,
   onFinish,
   onAdjust,
+  onDelete,
   onReset,
 }: {
   category: FocusCategory;
   activeSession?: ActiveFocusSession;
+  autoOpenCountdownRequest?: number;
   onToggle: (catId: string) => void;
   onSetCountdownTarget: (catId: string, targetSeconds: number, options?: { start?: boolean }) => void;
   onFinish: (catId: string) => void;
   onAdjust: (catId: string, deltaSeconds: number) => void;
+  onDelete: (catId: string) => void;
   onReset: (catId: string) => void;
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -33,6 +37,7 @@ export function FocusClock({
   const [countdownMinutes, setCountdownMinutes] = useState(() =>
     String(Math.max(1, Math.round((activeSession?.countdownTargetSeconds ?? 10 * 60) / 60))),
   );
+  const handledAutoOpenCountdownRequestRef = useRef(0);
   const isRunning = activeSession?.isRunning ?? false;
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const clockFaceRef = useRef<HTMLDivElement | null>(null);
@@ -86,6 +91,21 @@ export function FocusClock({
     onSetCountdownTarget(category.id, nextMinutes * 60, { start: true });
     setShowAdjustMenu(false);
   };
+
+  useEffect(() => {
+    if (
+      !autoOpenCountdownRequest
+      || handledAutoOpenCountdownRequestRef.current === autoOpenCountdownRequest
+      || !isCountdown
+      || hasCountdownTarget
+      || isRunning
+    ) {
+      return;
+    }
+
+    handledAutoOpenCountdownRequestRef.current = autoOpenCountdownRequest;
+    openCountdownDurationPicker();
+  }, [autoOpenCountdownRequest, hasCountdownTarget, isCountdown, isRunning]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -154,7 +174,7 @@ export function FocusClock({
               {category.title}
             </p>
             <div className="mt-5 flex max-w-[11rem] flex-wrap items-center justify-center gap-2">
-              <button className="rounded-full border border-[#f8d9dc] bg-[#fff1f2] px-3 py-1.5 text-xs font-black text-[#d64b5f]" onClick={() => onReset(category.id)} type="button">Trash</button>
+              <button className="rounded-full border border-[#f8d9dc] bg-[#fff1f2] px-3 py-1.5 text-xs font-black text-[#d64b5f]" onClick={() => onDelete(category.id)} type="button">Trash</button>
               <button className="rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-3 py-1.5 text-xs font-black text-[#6f57f6]" onClick={() => onAdjust(category.id, 5 * 60)} type="button">Extend</button>
               <button
                 className="rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-3 py-1.5 text-xs font-black text-[#6f57f6]"
@@ -373,7 +393,7 @@ export function FocusClock({
                   className="flex h-12 w-12 items-center justify-center rounded-full border border-[#f8d9dc] bg-[#fff1f2] text-[#d64b5f] transition hover:scale-110 dark:border-[#5a2432] dark:bg-[#2e1820] dark:text-[#ff9fbc]"
                   onClick={() => {
                     setShowSettingsMenu(false);
-                    onReset(category.id);
+                    onDelete(category.id);
                   }}
                   type="button"
                 >
@@ -472,18 +492,22 @@ function compareFocusClockCategories(a: FocusCategory, b: FocusCategory, activeS
 export function FocusClockRow({
   categories,
   activeSessions,
+  autoOpenCountdownRequest,
   onToggle,
   onSetCountdownTarget,
   onFinish,
   onAdjust,
+  onDelete,
   onReset,
 }: {
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
+  autoOpenCountdownRequest?: number;
   onToggle: (catId: string) => void;
   onSetCountdownTarget: (catId: string, targetSeconds: number, options?: { start?: boolean }) => void;
   onFinish: (catId: string) => void;
   onAdjust: (catId: string, deltaSeconds: number) => void;
+  onDelete: (catId: string) => void;
   onReset: (catId: string) => void;
 }) {
   const sortedCategories = [...categories].sort((a, b) => compareFocusClockCategories(a, b, activeSessions));
@@ -518,8 +542,10 @@ export function FocusClockRow({
           >
             <FocusClock
               activeSession={activeSessions[cat.id]}
+              autoOpenCountdownRequest={isSystemCountdownCategoryId(cat.id) ? autoOpenCountdownRequest : undefined}
               category={cat}
               onAdjust={onAdjust}
+              onDelete={onDelete}
               onFinish={onFinish}
               onReset={onReset}
               onSetCountdownTarget={onSetCountdownTarget}
@@ -535,18 +561,22 @@ export function FocusClockRow({
 export function FocusClockRowDesktop({
   categories,
   activeSessions,
+  autoOpenCountdownRequest,
   onToggle,
   onSetCountdownTarget,
   onFinish,
   onAdjust,
+  onDelete,
   onReset,
 }: {
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
+  autoOpenCountdownRequest?: number;
   onToggle: (catId: string) => void;
   onSetCountdownTarget: (catId: string, targetSeconds: number, options?: { start?: boolean }) => void;
   onFinish: (catId: string) => void;
   onAdjust: (catId: string, deltaSeconds: number) => void;
+  onDelete: (catId: string) => void;
   onReset: (catId: string) => void;
 }) {
   const sortedCategories = [...categories].sort((a, b) => compareFocusClockCategories(a, b, activeSessions));
@@ -583,8 +613,10 @@ export function FocusClockRowDesktop({
                     >
                       <FocusClock
                         activeSession={activeSessions[cat.id]}
+                        autoOpenCountdownRequest={isSystemCountdownCategoryId(cat.id) ? autoOpenCountdownRequest : undefined}
                         category={cat}
                         onAdjust={onAdjust}
+                        onDelete={onDelete}
                         onFinish={onFinish}
                         onReset={onReset}
                         onSetCountdownTarget={onSetCountdownTarget}

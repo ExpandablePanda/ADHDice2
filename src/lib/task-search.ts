@@ -1,15 +1,21 @@
 "use client";
 
 export const DUPLICATE_TITLE_SEARCH_OPERATORS = ["duplicate:title", "has:duplicate-title"] as const;
+export const HIGHLIGHT_SEARCH_PREFIX = "highlight:";
 
 export type ParsedTaskSearchInput = {
   cleanedQuery: string;
   duplicateTitleMode: boolean;
+  highlightMode: boolean;
 };
 
 export function parseTaskSearchInput(rawSearch: string, duplicateTitleMode: boolean): ParsedTaskSearchInput {
-  const tokens = rawSearch
-    .trim()
+  const trimmedSearch = rawSearch.trim();
+  const normalizedHighlightlessSearch = trimmedSearch.toLowerCase().startsWith(HIGHLIGHT_SEARCH_PREFIX)
+    ? trimmedSearch.slice(HIGHLIGHT_SEARCH_PREFIX.length).trim()
+    : trimmedSearch;
+
+  const tokens = normalizedHighlightlessSearch
     .split(/\s+/)
     .filter(Boolean);
 
@@ -27,6 +33,7 @@ export function parseTaskSearchInput(rawSearch: string, duplicateTitleMode: bool
   return {
     cleanedQuery: remainingTokens.join(" ").trim().toLowerCase(),
     duplicateTitleMode: nextDuplicateTitleMode,
+    highlightMode: false,
   };
 }
 

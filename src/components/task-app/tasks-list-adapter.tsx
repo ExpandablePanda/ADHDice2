@@ -120,6 +120,9 @@ type TasksTableSourceProps = {
   allTasks?: Task[];
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
+  highlightedActiveTaskId?: string | null;
+  highlightedScrollToken?: number;
+  highlightedTaskIds?: string[];
   searchMatchedStepParentTaskIds?: string[];
   currentListLabel?: string | null;
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
@@ -286,6 +289,9 @@ export function TasksTableAdapter({
           allTagOptions={tableProps.allTagOptions}
           childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
+          highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
+          highlightedScrollToken={tableProps.highlightedScrollToken}
+          highlightedTaskIds={tableProps.highlightedTaskIds}
           searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
           className="max-w-none p-0"
           currentListLabel={tableProps.currentListLabel}
@@ -514,6 +520,33 @@ function formatEnergyChipLabel(energy: PrototypeTaskRow["energy"]) {
   return energy === "none" ? "No energy" : `${energy.charAt(0).toUpperCase()}${energy.slice(1)} energy`;
 }
 
+function getHighlightedListRowClassName(
+  taskId: string,
+  highlightedActiveTaskId: string | null | undefined,
+  highlightedTaskIdSet: Set<string>,
+) {
+  if (highlightedActiveTaskId === taskId) {
+    return "border-[#ddd2ff] bg-[#efe6ff] dark:border-[#5a458f] dark:bg-[#2b1d46]";
+  }
+  return "";
+}
+
+function findPreviewAncestorIdsForTask(group: ChildTaskPreviewGroup, taskId: string) {
+  const previewById = new Map(group.items.map((item) => [item.id, item] as const));
+  if (!previewById.has(taskId)) {
+    return null;
+  }
+
+  const ancestorIds: string[] = [];
+  let currentPreview = previewById.get(taskId) ?? null;
+  while (currentPreview?.parentTaskId && previewById.has(currentPreview.parentTaskId)) {
+    ancestorIds.push(currentPreview.parentTaskId);
+    currentPreview = previewById.get(currentPreview.parentTaskId) ?? null;
+  }
+
+  return ancestorIds;
+}
+
 function StepsCardPreview({
   activeQuickPanel,
   allTagOptions,
@@ -552,6 +585,8 @@ function StepsCardPreview({
   onCancelParentStepDraft,
   onCommitParentStepDraft,
   onParentStepDraftChange,
+  highlightedActiveTaskId,
+  highlightedTaskIds,
 }: {
   activeQuickPanel: { mode: ListQuickPanelMode; taskId: string } | null;
   allTagOptions: string[];
@@ -590,6 +625,8 @@ function StepsCardPreview({
   onCancelParentStepDraft?: () => void;
   onCommitParentStepDraft?: () => void;
   onParentStepDraftChange?: (value: string) => void;
+  highlightedActiveTaskId?: string | null;
+  highlightedTaskIds?: string[];
 }) {
   const [editingStepTitleId, setEditingStepTitleId] = useState<string | null>(null);
   const [collapsedStepIds, setCollapsedStepIds] = useState<Record<string, boolean>>({});
@@ -601,6 +638,7 @@ function StepsCardPreview({
   const [substepDraftParentId, setSubstepDraftParentId] = useState<string | null>(null);
   const [substepTitleDrafts, setSubstepTitleDrafts] = useState<Record<string, string>>({});
   const [substepCreationErrors, setSubstepCreationErrors] = useState<Record<string, string | null>>({});
+  const highlightedTaskIdSet = useMemo(() => new Set(highlightedTaskIds ?? []), [highlightedTaskIds]);
   const collapsedStepIdSet = useMemo(
     () => new Set(Object.entries(collapsedStepIds).flatMap(([taskId, isCollapsed]) => (isCollapsed ? [taskId] : []))),
     [collapsedStepIds],
@@ -609,6 +647,29 @@ function StepsCardPreview({
     () => buildChildTaskPreviewVisibility(group.items, collapsedStepIdSet),
     [collapsedStepIdSet, group.items],
   );
+
+  useEffect(() => {
+    if (!highlightedActiveTaskId) {
+      return;
+    }
+
+    const ancestorIds = findPreviewAncestorIdsForTask(group, highlightedActiveTaskId);
+    if (!ancestorIds || ancestorIds.length === 0) {
+      return;
+    }
+
+    setCollapsedStepIds((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const ancestorId of ancestorIds) {
+        if (next[ancestorId]) {
+          delete next[ancestorId];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [group, highlightedActiveTaskId]);
 
   if (expandedItems.length === 0 && !group.summary.hasInvalidDescendants && !showParentStepDraft) {
     return null;
@@ -815,7 +876,7 @@ function StepsCardPreview({
 
             return (
               <li
-                className={`cursor-pointer rounded-[0.95rem] border border-transparent bg-transparent px-1.5 py-2.5 transition hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90 ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                className={`cursor-pointer rounded-[0.95rem] border px-1.5 py-2.5 transition hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90 ${getHighlightedListRowClassName(item.id, highlightedActiveTaskId, highlightedTaskIdSet) || "border-transparent bg-transparent"} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                 data-same-table-step-row={item.id}
                 key={item.id}
                 onDragOver={(event) => updateChildTaskDropTarget(event, item)}
@@ -1835,6 +1896,7 @@ function TasksSimpleList({
   const rowContext = tableProps.rowContext;
   const visibleTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
   const selectedTaskIdSet = useMemo(() => new Set(tableProps.selectedTaskIds), [tableProps.selectedTaskIds]);
+  const highlightedTaskIdSet = useMemo(() => new Set(tableProps.highlightedTaskIds ?? []), [tableProps.highlightedTaskIds]);
   const searchMatchedStepParentTaskIdSet = useMemo(
     () => new Set(tableProps.searchMatchedStepParentTaskIds ?? []),
     [tableProps.searchMatchedStepParentTaskIds],
@@ -1883,6 +1945,54 @@ function TasksSimpleList({
       parentStepDraftInputRef.current?.focus();
     }
   }, [parentStepDraftTaskId]);
+
+  useEffect(() => {
+    if (!tableProps.highlightedActiveTaskId) {
+      return;
+    }
+
+    const parentTaskWithMatch = tasks.find((task) => {
+      const group = tableProps.childTaskPreviewByParentTaskId?.[task.id];
+      return group ? Boolean(findPreviewAncestorIdsForTask(group, tableProps.highlightedActiveTaskId ?? "")) : false;
+    });
+    if (!parentTaskWithMatch) {
+      return;
+    }
+
+    setCollapsedStepSectionsByTaskId((current) => (
+      current[parentTaskWithMatch.id] === false
+        ? current
+        : { ...current, [parentTaskWithMatch.id]: false }
+    ));
+  }, [tableProps.childTaskPreviewByParentTaskId, tableProps.highlightedActiveTaskId, tasks]);
+
+  useEffect(() => {
+    if (!tableProps.highlightedActiveTaskId) {
+      return;
+    }
+
+    const shellElement = listShellRef.current;
+    if (!shellElement) {
+      return;
+    }
+
+    const selector = `[data-task-list-row="${tableProps.highlightedActiveTaskId}"], [data-same-table-step-row="${tableProps.highlightedActiveTaskId}"]`;
+    let secondFrameId = 0;
+    const revealTarget = () => {
+      const target = shellElement.querySelector<HTMLElement>(selector);
+      target?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+
+    const firstFrameId = window.requestAnimationFrame(() => {
+      revealTarget();
+      secondFrameId = window.requestAnimationFrame(revealTarget);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrameId);
+      window.cancelAnimationFrame(secondFrameId);
+    };
+  }, [tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken]);
 
   function openRowContextMenu(taskId: string, clientX: number, clientY: number) {
     const nextMenu = buildTaskRowContextMenuState(listShellRef.current, taskId, clientX, clientY);
@@ -1953,6 +2063,9 @@ function TasksSimpleList({
               allTagOptions={tableProps.allTagOptions}
               childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
               childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
+              highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
+              highlightedScrollToken={tableProps.highlightedScrollToken}
+              highlightedTaskIds={tableProps.highlightedTaskIds}
               className="m-0 max-w-none p-0"
               currentListLabel={tableProps.currentListLabel}
               enableInspector
@@ -2073,11 +2186,18 @@ function TasksSimpleList({
         return (
           <div className="space-y-3" key={task.id}>
             <article
-              className={`rounded-[1.35rem] border bg-white/92 p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition dark:bg-white/[0.05] ${
+              className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${
+                tableProps.highlightedActiveTaskId === task.id
+                  ? "border-[#ddd2ff] bg-[#efe6ff] dark:border-[#5a458f] dark:bg-[#2b1d46]"
+                  : "border-[#ece8f8] bg-white/92 dark:border-white/10 dark:bg-white/[0.05]"
+              } ${
                 isQuickPanelOpen
-                  ? "border-[#cfc2ff] bg-[#fcfbff] dark:border-[#4f3d86] dark:bg-[#18112d]"
-                  : "border-[#ece8f8] hover:border-[#ddd2fb] hover:bg-white dark:border-white/10 dark:hover:border-white/15"
+                  ? "border-[#cfc2ff] dark:border-[#4f3d86]"
+                  : tableProps.highlightedActiveTaskId !== task.id
+                    ? "hover:border-[#ddd2fb] hover:bg-white dark:hover:border-white/15"
+                    : ""
               }`}
+              data-task-list-row={task.id}
               onClick={(event) => {
                 if (shouldIgnoreListOverlayOpen(event.target)) {
                   return;
@@ -2486,6 +2606,8 @@ function TasksSimpleList({
                   setParentStepTitleDrafts((current) => ({ ...current, [task.id]: value }));
                   setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));
                 }}
+                highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
+                highlightedTaskIds={tableProps.highlightedTaskIds}
               />
             ) : null}
             </article>

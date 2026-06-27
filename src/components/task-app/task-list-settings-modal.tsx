@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Plus, X } from "lucide-react";
 import { useState } from "react";
 import { ModalShell } from "@/components/modal-shell";
 import { TaskTableChipButton, TASK_TABLE_INACTIVE_CHIP_CLASS, TASK_TABLE_TAG_CHIP_CLASS } from "@/components/ui/task-table-primitives";
@@ -29,6 +29,7 @@ export type TaskListSaveInput = {
   id: TaskListId;
   isVisible: boolean;
   name: string;
+  orderedListIds: TaskListId[];
   rules: ReturnType<typeof parseTaskListRules>;
 };
 
@@ -65,6 +66,21 @@ function buildInitialDrafts(lists: TaskListDefinition[]) {
   ) as Record<string, TaskListSettingsDraft>;
 }
 
+function moveListId(listIds: TaskListId[], listId: TaskListId, direction: "up" | "down") {
+  const currentIndex = listIds.indexOf(listId);
+  if (currentIndex < 0) {
+    return listIds;
+  }
+  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+  if (targetIndex < 0 || targetIndex >= listIds.length) {
+    return listIds;
+  }
+
+  const nextListIds = [...listIds];
+  [nextListIds[currentIndex], nextListIds[targetIndex]] = [nextListIds[targetIndex]!, nextListIds[currentIndex]!];
+  return nextListIds;
+}
+
 export function TaskListSettingsModal({
   energyOptions,
   fieldOptions,
@@ -83,6 +99,7 @@ export function TaskListSettingsModal({
   }));
   const listLabelById = Object.fromEntries(listOptions.map((list) => [list.value, list.label])) as Partial<Record<TaskListId, string>>;
   const [drafts, setDrafts] = useState<Record<string, TaskListSettingsDraft>>(() => buildInitialDrafts(lists));
+  const [orderedListIds, setOrderedListIds] = useState<TaskListId[]>(() => lists.map((list) => list.id));
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [newListName, setNewListName] = useState("");
   const [newListMode, setNewListMode] = useState<"manual" | "rules">("manual");
@@ -129,6 +146,7 @@ export function TaskListSettingsModal({
       id: list.id,
       isVisible: draft.isVisible,
       name: draft.name.trim() || list.name,
+      orderedListIds,
       rules: parsedRules,
     });
 
@@ -254,7 +272,9 @@ export function TaskListSettingsModal({
         </section>
 
         <div className="space-y-4">
-          {lists.map((list) => {
+          {orderedListIds.map((listId, listIndex) => {
+            const list = lists.find((entry) => entry.id === listId);
+            if (!list) return null;
             const draft = drafts[list.id];
             if (!draft) return null;
             return (
@@ -268,9 +288,28 @@ export function TaskListSettingsModal({
                     </div>
                     <p className="mt-2 text-sm text-[#68738f] dark:text-white/55">{list.description}</p>
                     <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/35">{listCounts[list.id] ?? 0} task{(listCounts[list.id] ?? 0) === 1 ? "" : "s"} currently visible</p>
+                    <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/35">Rail order: {listIndex + 1}</p>
                     {draft.isCollapsed ? <p className="mt-2 text-xs text-[#7a7397] dark:text-white/45">{list.membershipMode === "manual" ? "Manual list membership." : summarizeTaskListRules(draft.rules, (listId) => listLabelById[listId] ?? "")}</p> : null}
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      aria-label={`Move ${list.name} earlier in the rail`}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                      disabled={listIndex === 0}
+                      onClick={() => setOrderedListIds((current) => moveListId(current, list.id, "up"))}
+                      type="button"
+                    >
+                      <ArrowUp className="h-4 w-4" />
+                    </button>
+                    <button
+                      aria-label={`Move ${list.name} later in the rail`}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                      disabled={listIndex === orderedListIds.length - 1}
+                      onClick={() => setOrderedListIds((current) => moveListId(current, list.id, "down"))}
+                      type="button"
+                    >
+                      <ArrowDown className="h-4 w-4" />
+                    </button>
                     <button aria-label={draft.isCollapsed ? `Expand ${list.name}` : `Collapse ${list.name}`} className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]" onClick={() => updateDraft(list.id, { isCollapsed: !draft.isCollapsed })} type="button">
                       {draft.isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
                     </button>

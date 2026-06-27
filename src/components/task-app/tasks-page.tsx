@@ -120,6 +120,7 @@ export function TaskOperationsHeader({
   onSelectBucket,
   onShrinkAllColumns,
   onSearchChange,
+  onSearchSubmit,
   onViewChange,
   onToggleKeyboardShortcutsMenu,
   onToggleListColumn,
@@ -163,6 +164,7 @@ export function TaskOperationsHeader({
   onSelectBucket: (bucket: string) => void;
   onShrinkAllColumns: () => void;
   onSearchChange: (search: string) => void;
+  onSearchSubmit?: () => void;
   onViewChange: (view: TaskViewMode) => void;
   onToggleKeyboardShortcutsMenu: () => void;
   onToggleListColumn: (columnId: AgentPlanColumnId) => void;
@@ -268,6 +270,13 @@ export function TaskOperationsHeader({
                   id="task-search-input"
                   onChange={(event) => {
                     handleSearchDraftChange(event.target.value);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" || !onSearchSubmit) {
+                      return;
+                    }
+                    event.preventDefault();
+                    onSearchSubmit();
                   }}
                   placeholder="Search tasks, or type duplicate:title"
                   ref={searchInputRef}

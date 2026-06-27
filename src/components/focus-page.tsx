@@ -167,6 +167,7 @@ export function FocusPage({
   onFinishTimer,
   onAdjustTimer,
   onResetTimer,
+  onDeleteTimer,
   onLogManual,
   onUpdateHistoryEntry,
   onDeleteHistoryEntry,
@@ -181,12 +182,14 @@ export function FocusPage({
   onFinishTimer: (catId: string, data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string }) => void;
   onAdjustTimer: (catId: string, deltaSeconds: number) => void;
   onResetTimer: (catId: string) => void;
+  onDeleteTimer: (catId: string) => void;
   onLogManual: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<boolean>;
   onUpdateHistoryEntry: (entryId: string, data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<void>;
   onDeleteHistoryEntry: (entryId: string) => Promise<void>;
   onUpdateCategories: (categories: FocusCategory[]) => Promise<boolean>;
   onDeleteCategory: (category: FocusCategory) => Promise<boolean>;
 }) {
+  const [countdownPickerOpenRequest, setCountdownPickerOpenRequest] = useState(0);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [finishingCatId, setFinishingCatId] = useState<string | null>(null);
@@ -246,7 +249,10 @@ export function FocusPage({
         <FocusTimerPicker
           activeSessions={activeSessions}
           categories={userCategories}
-          onSelectCountdown={() => onToggleTimer(SYSTEM_COUNTDOWN_CATEGORY_ID, { mode: "countdown" })}
+          onSelectCountdown={() => {
+            setCountdownPickerOpenRequest((current) => current + 1);
+            onToggleTimer(SYSTEM_COUNTDOWN_CATEGORY_ID, { mode: "countdown" });
+          }}
           onSelect={onToggleTimer}
         />
       </section>
@@ -254,8 +260,10 @@ export function FocusPage({
       {activeCategories.length ? <div className="mt-5">
         <FocusClockRow
           activeSessions={activeSessions}
+          autoOpenCountdownRequest={countdownPickerOpenRequest}
           categories={activeCategories}
           onAdjust={onAdjustTimer}
+          onDelete={onDeleteTimer}
           onFinish={handleFinishClick}
           onReset={onResetTimer}
           onSetCountdownTarget={onSetCountdownTarget}
@@ -263,8 +271,10 @@ export function FocusPage({
         />
         <FocusClockRowDesktop
           activeSessions={activeSessions}
+          autoOpenCountdownRequest={countdownPickerOpenRequest}
           categories={activeCategories}
           onAdjust={onAdjustTimer}
+          onDelete={onDeleteTimer}
           onFinish={handleFinishClick}
           onReset={onResetTimer}
           onSetCountdownTarget={onSetCountdownTarget}

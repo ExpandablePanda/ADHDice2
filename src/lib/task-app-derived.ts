@@ -472,26 +472,23 @@ export function computeTaskAppDerivedData({
       return false;
     }
 
-    const subtaskTitles = (taskSubtasksByTaskId[task.id] ?? []).map((subtask) => subtask.title);
-    const haystacks = [
-      task.title,
-      task.notes ?? "",
-      task.external_link_label ?? "",
-      task.external_link_url ?? "",
-      ...subtaskTitles,
-      ...(task.tags ?? []),
-    ].map((value) => value.toLowerCase());
-    if (normalizedSearchQuery.length === 0 || haystacks.some((value) => value.includes(normalizedSearchQuery))) {
+    if (normalizedSearchQuery.length === 0) {
       return true;
     }
 
-    const matchingChildSearch = childTaskPreviewByParentTaskId[task.id]?.items.some((item) => [
-      item.title,
-      item.notes,
-      item.linkLabel,
-      item.linkUrl,
-      ...item.tags,
-    ].some((value) => value.toLowerCase().includes(normalizedSearchQuery))) ?? false;
+    if (task.title.toLowerCase().includes(normalizedSearchQuery)) {
+      return true;
+    }
+
+    const sourceSubtaskTitleMatch = (taskSubtasksByTaskId[task.id] ?? []).some((subtask) => (
+      subtask.title.toLowerCase().includes(normalizedSearchQuery)
+    ));
+    if (sourceSubtaskTitleMatch) {
+      searchMatchedStepParentTaskIds.add(task.id);
+      return true;
+    }
+
+    const matchingChildSearch = childTaskPreviewByParentTaskId[task.id]?.items.some((item) => item.title.toLowerCase().includes(normalizedSearchQuery)) ?? false;
     if (matchingChildSearch) {
       searchMatchedStepParentTaskIds.add(task.id);
       return true;

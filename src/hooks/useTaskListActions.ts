@@ -14,6 +14,7 @@ type TaskListSaveInput = {
   id: TaskListId;
   isVisible: boolean;
   name: string;
+  orderedListIds: TaskListId[];
   rules: unknown;
 };
 
@@ -67,37 +68,51 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       return false;
     }
 
-    const nextDefinition: TaskListDefinition = {
-      ...baseline,
-      isVisible: input.isVisible,
-      name: baseline.type === "custom" ? input.name : baseline.name,
-      rules: baseline.membershipMode === "manual" ? null : (input.rules as TaskListDefinition["rules"]),
-    };
+    const allDefinitionsById = new Map<TaskListId, TaskListDefinition>(availableTaskLists.map((list) => [list.id, list]));
+    const normalizedOrderedListIds = [
+      ...input.orderedListIds.filter((listId, index, listIds) => allDefinitionsById.has(listId) && listIds.indexOf(listId) === index),
+      ...availableTaskLists.map((list) => list.id).filter((listId) => !input.orderedListIds.includes(listId)),
+    ];
 
-    setTaskLists((current) => [
-      ...current.filter((list) => list.id !== nextDefinition.id),
-      nextDefinition,
-    ]);
+    const nextDefinitions = normalizedOrderedListIds.map((listId, index) => {
+      const currentDefinition = allDefinitionsById.get(listId)!;
+      if (listId !== input.id) {
+        return {
+          ...currentDefinition,
+          sortOrder: index,
+        };
+      }
 
-    const payload: TaskListInsert = {
-      built_in_key: isBuiltInTaskListId(nextDefinition.id) ? nextDefinition.id : null,
-      id: nextDefinition.id,
-      is_deletable: nextDefinition.isDeletable,
-      is_editable: nextDefinition.isEditable,
-      is_visible: nextDefinition.isVisible,
-      list_type: nextDefinition.type,
-      membership_mode: nextDefinition.membershipMode,
-      name: nextDefinition.name,
-      rules_json: nextDefinition.rules ? JSON.stringify(nextDefinition.rules) : null,
-      sort_order: nextDefinition.sortOrder,
+      return {
+        ...currentDefinition,
+        isVisible: input.isVisible,
+        name: currentDefinition.type === "custom" ? input.name : currentDefinition.name,
+        rules: currentDefinition.membershipMode === "manual" ? null : (input.rules as TaskListDefinition["rules"]),
+        sortOrder: index,
+      };
+    });
+    const savedDefinition = nextDefinitions.find((list) => list.id === input.id) ?? baseline;
+
+    setTaskLists(nextDefinitions);
+
+    const payloads: TaskListInsert[] = nextDefinitions.map((definition) => ({
+      built_in_key: isBuiltInTaskListId(definition.id) ? definition.id : null,
+      id: definition.id,
+      is_deletable: definition.isDeletable,
+      is_editable: definition.isEditable,
+      is_visible: definition.isVisible,
+      list_type: definition.type,
+      membership_mode: definition.membershipMode,
+      name: definition.name,
+      rules_json: definition.rules ? JSON.stringify(definition.rules) : null,
+      sort_order: definition.sortOrder,
       user_id: currentUserId,
-    };
+    }));
 
     const { data, error } = await client
       .from("adhdice_task_lists")
-      .upsert(payload, { onConflict: "id" })
-      .select("*")
-      .single();
+      .upsert(payloads, { onConflict: "id" })
+      .select("*");
 
     if (error) {
       if (isMissingTaskListsTableError(error.message)) {
@@ -109,16 +124,16 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
     }
 
     if (data) {
-      const mapped = mapTaskListRow(data);
-      if (mapped) {
-        setTaskLists((current) => [
-          ...current.filter((list) => list.id !== mapped.id),
-          mapped,
-        ]);
+      const mappedRows = data
+        .map((row) => mapTaskListRow(row))
+        .filter((row): row is TaskListDefinition => Boolean(row));
+      if (mappedRows.length > 0) {
+        mappedRows.sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
+        setTaskLists(mappedRows);
       }
     }
 
-    setMessage({ tone: "good", text: `${nextDefinition.name} settings saved.` });
+    setMessage({ tone: "good", text: `${savedDefinition.name} settings saved.` });
     return true;
   }
 
@@ -139,7 +154,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       membershipMode: input.membershipMode,
       name: input.name,
       rules: input.membershipMode === "rules" ? (input.rules as TaskListDefinition["rules"]) : null,
-      sortOrder: availableTaskLists.length + taskLists.length + 1,
+      sortOrder: availableTaskLists.reduce((maxSortOrder, list) => Math.max(maxSortOrder, list.sortOrder), -1) + 1,
       type: "custom",
     };
 

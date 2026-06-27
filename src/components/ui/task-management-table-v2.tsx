@@ -220,6 +220,29 @@ function revealTargetInScrollableContainer(
   scrollContainer.scrollBy({ top: scrollDelta, behavior });
 }
 
+function findPreviewAncestorIdsForTask(
+  childTaskPreviewByParentTaskId: ChildTaskPreviewLookup,
+  taskId: string,
+) {
+  for (const [parentTaskId, group] of Object.entries(childTaskPreviewByParentTaskId)) {
+    const previewById = new Map(group.items.map((item) => [item.id, item] as const));
+    if (!previewById.has(taskId)) {
+      continue;
+    }
+
+    const ancestorIds: string[] = [];
+    let currentPreview = previewById.get(taskId) ?? null;
+    while (currentPreview?.parentTaskId && previewById.has(currentPreview.parentTaskId)) {
+      ancestorIds.push(currentPreview.parentTaskId);
+      currentPreview = previewById.get(currentPreview.parentTaskId) ?? null;
+    }
+
+    return { ancestorIds, parentTaskId };
+  }
+
+  return null;
+}
+
 function buildPrototypeSubtaskSignature(subtasks: PrototypeTaskSubtask[]): string {
   return JSON.stringify(subtasks.map((subtask) => ({
     children: buildPrototypeSubtaskSignature(subtask.children),
@@ -791,6 +814,9 @@ type TaskManagementTableV2Props = {
   allTagOptions?: string[];
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
+  highlightedActiveTaskId?: string | null;
+  highlightedScrollToken?: number;
+  highlightedTaskIds?: string[];
   searchMatchedStepParentTaskIds?: string[];
   className?: string;
   currentListLabel?: string | null;
@@ -1904,6 +1930,9 @@ export function TaskManagementTableV2({
   allTagOptions = [],
   childTaskCreationBlockedTaskIds = [],
   childTaskPreviewByParentTaskId = {},
+  highlightedActiveTaskId = null,
+  highlightedScrollToken = 0,
+  highlightedTaskIds = [],
   className = "",
   currentListLabel = null,
   enableInspector = true,
@@ -2046,7 +2075,7 @@ export function TaskManagementTableV2({
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const rowContextMenuRef = useRef<HTMLDivElement | null>(null);
   const loadMoreTasksRef = useRef<HTMLDivElement | null>(null);
-  const resizeStateRef = useRef<{ columnId: TaskManagementTableColumnId; startWidth: number; startX: number } | null>(null);
+  const resizeStateRef = useRef<{ columnId: TaskManagementTableColumnId; pointerId: number; startWidth: number; startX: number } | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const inspectorPanelRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -2884,6 +2913,78 @@ export function TaskManagementTableV2({
   }, [pendingTableReveal]);
 
   useEffect(() => {
+    if (!highlightedActiveTaskId) {
+      return;
+    }
+
+    const previewRevealTarget = findPreviewAncestorIdsForTask(childTaskPreviewByParentTaskId, highlightedActiveTaskId);
+    if (!previewRevealTarget) {
+      return;
+    }
+
+    setExpandedStepsByTaskId((current) => (
+      current[previewRevealTarget.parentTaskId]
+        ? current
+        : { ...current, [previewRevealTarget.parentTaskId]: true }
+    ));
+    if (previewRevealTarget.ancestorIds.length === 0) {
+      return;
+    }
+    setCollapsedChildTaskIds((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const ancestorId of previewRevealTarget.ancestorIds) {
+        if (next[ancestorId]) {
+          delete next[ancestorId];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [childTaskPreviewByParentTaskId, highlightedActiveTaskId]);
+
+  useEffect(() => {
+    if (!highlightedActiveTaskId) {
+      return;
+    }
+
+    const shellElement = shellRef.current;
+    if (!shellElement) {
+      return;
+    }
+
+    const selector = `[data-task-table-row="${highlightedActiveTaskId}"], [data-same-table-step-row="${highlightedActiveTaskId}"]`;
+    let secondFrameId = 0;
+    const revealTarget = () => {
+      const target = shellElement.querySelector<HTMLElement>(selector);
+      if (!target) {
+        return;
+      }
+      revealTargetInScrollableContainer(target, {
+        fallbackContainer: tableScrollContainerRef.current,
+        minVisibleHeight: TABLE_REVEAL_INLINE_MIN_VISIBLE_HEIGHT,
+      });
+    };
+
+    const firstFrameId = window.requestAnimationFrame(() => {
+      revealTarget();
+      secondFrameId = window.requestAnimationFrame(revealTarget);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrameId);
+      window.cancelAnimationFrame(secondFrameId);
+    };
+  }, [highlightedActiveTaskId, highlightedScrollToken]);
+
+  const getHighlightedRowClassName = (taskId: string) => {
+    if (highlightedActiveTaskId === taskId) {
+      return "border-[#ddd2ff] bg-[#efe6ff] dark:border-[#5a458f] dark:bg-[#2b1d46]";
+    }
+    return "";
+  };
+
+  useEffect(() => {
     if (!selectedTaskId || !allowInlineInspector || !isInlineAccordionMode(overlayMode)) {
       return;
     }
@@ -2928,23 +3029,11 @@ export function TaskManagementTableV2({
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
-      const resizeState = resizeStateRef.current;
-      if (!resizeState) {
-        return;
-      }
-
-      const nextWidth = Math.max(
-        MIN_COLUMN_WIDTHS[resizeState.columnId],
-        resizeState.startWidth + (event.clientX - resizeState.startX),
-      );
-      setColumnWidths((current) => ({
-        ...current,
-        [resizeState.columnId]: nextWidth,
-      }));
+      updateColumnResize(event.clientX);
     };
 
     const handlePointerUp = () => {
-      resizeStateRef.current = null;
+      clearColumnResize();
     };
 
     window.addEventListener("pointermove", handlePointerMove);
@@ -4593,11 +4682,33 @@ export function TaskManagementTableV2({
   function beginColumnResize(event: ReactPointerEvent<HTMLSpanElement>, columnId: TaskManagementTableColumnId) {
     event.preventDefault();
     event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
     resizeStateRef.current = {
       columnId,
+      pointerId: event.pointerId,
       startWidth: effectiveColumnWidths[columnId],
       startX: event.clientX,
     };
+  }
+
+  function updateColumnResize(clientX: number) {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState) {
+      return;
+    }
+
+    const nextWidth = Math.max(
+      MIN_COLUMN_WIDTHS[resizeState.columnId],
+      resizeState.startWidth + (clientX - resizeState.startX),
+    );
+    setColumnWidths((current) => ({
+      ...current,
+      [resizeState.columnId]: nextWidth,
+    }));
+  }
+
+  function clearColumnResize() {
+    resizeStateRef.current = null;
   }
 
   function getMeasuredColumnWidths(selector: string, maxCount?: number) {
@@ -6307,7 +6418,7 @@ export function TaskManagementTableV2({
     }
 
     return (
-      <div className="-mt-1 ml-[10px] w-max min-w-full" data-task-table-step-rows={task.id}>
+      <div className="-mt-1 w-max min-w-full" data-task-table-step-rows={task.id}>
         {group?.summary.hasInvalidDescendants ? (
           <div className="rounded-[0.95rem] border border-[#f1dfaa] bg-[#fff9e8] px-3 py-2 text-left text-xs font-medium text-[#9a7a24] dark:border-[#6b5317] dark:bg-[#44350d]/55 dark:text-[#f3d38a]">
             {formatInvalidChildLinkCount(group?.summary.invalidChildLinkCount ?? 0)}
@@ -6339,70 +6450,74 @@ export function TaskManagementTableV2({
           return (
             <Fragment key={item.id}>
               <div
-                className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-2 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-[#ddd2ff] bg-[#f7f2ff] ring-2 ring-[#6f57f6]/15 dark:border-[#42306f] dark:bg-[#201733] dark:ring-[#cabfff]/12" : "border-transparent bg-white dark:bg-[#181226]"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${highlightedActiveTaskId === item.id ? "bg-[#efe6ff] dark:bg-[#2b1d46]" : ""}`}
                 data-same-table-step-row={item.id}
-                onDragOver={(event) => updateChildTaskDropTarget(event, item)}
-                onDrop={(event) => dropChildTaskOnItem(event, item)}
-                onClick={canOpenStepActions ? (event) => {
-                  event.stopPropagation();
-                  if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
-                    startTaskSelection(item.id, { additive: true, range: event.shiftKey });
-                    return;
-                  }
-                  openTaskInCurrentEditor(item.id);
-                } : undefined}
-                onDoubleClick={onToggleTaskSelection ? (event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  startTaskSelection(item.id, { additive: true });
-                } : undefined}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  openRowContextMenu(item.id, event.clientX, event.clientY);
-                }}
-                onKeyDown={canOpenStepActions ? (event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
+              >
+                <div
+                  className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-2 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-[#ddd2ff] bg-[#f7f2ff] ring-2 ring-[#6f57f6]/15 dark:border-[#42306f] dark:bg-[#201733] dark:ring-[#cabfff]/12" : "border-transparent bg-white dark:bg-[#181226]"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                  onDragOver={(event) => updateChildTaskDropTarget(event, item)}
+                  onDrop={(event) => dropChildTaskOnItem(event, item)}
+                  onClick={canOpenStepActions ? (event) => {
                     event.stopPropagation();
                     if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
                       startTaskSelection(item.id, { additive: true, range: event.shiftKey });
                       return;
                     }
                     openTaskInCurrentEditor(item.id);
-                  }
-                } : undefined}
-                role={canOpenStepActions ? "button" : undefined}
-                style={{ gridTemplateColumns }}
-                tabIndex={canOpenStepActions ? 0 : undefined}
-              >
-                {visibleHeaderColumns.map((column) => (
-                  <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${item.id}-${column.id}`}>
-                    {column.id === "title" ? (
-                      <div className="flex min-w-0 flex-1 items-center gap-1">
-                        {renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
-                        {onReorderChildTask ? (
-                          <span className="ml-auto flex shrink-0 items-center" onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
-                            <button
-                              aria-label={`Drag to reorder ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent text-[#8a79d6] opacity-70 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
-                              draggable
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                              }}
-                              onDragEnd={clearChildTaskDragState}
-                              onDragStart={(event) => beginChildTaskDrag(event, item)}
-                              type="button"
-                            ><GripVertical className="h-3.5 w-3.5" /></button>
-                            <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex <= 0} onClick={() => onReorderChildTask(item.id, "up")} type="button"><ArrowUp className="h-3.5 w-3.5" /></button>
-                            <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1} onClick={() => onReorderChildTask(item.id, "down")} type="button"><ArrowDown className="h-3.5 w-3.5" /></button>
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
-                  </div>
-                ))}
+                  } : undefined}
+                  onDoubleClick={onToggleTaskSelection ? (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    startTaskSelection(item.id, { additive: true });
+                  } : undefined}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openRowContextMenu(item.id, event.clientX, event.clientY);
+                  }}
+                  onKeyDown={canOpenStepActions ? (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
+                        startTaskSelection(item.id, { additive: true, range: event.shiftKey });
+                        return;
+                      }
+                      openTaskInCurrentEditor(item.id);
+                    }
+                  } : undefined}
+                  role={canOpenStepActions ? "button" : undefined}
+                  style={{ gridTemplateColumns }}
+                  tabIndex={canOpenStepActions ? 0 : undefined}
+                >
+                  {visibleHeaderColumns.map((column) => (
+                    <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${item.id}-${column.id}`}>
+                      {column.id === "title" ? (
+                        <div className="flex min-w-0 flex-1 items-center gap-1">
+                          {renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
+                          {onReorderChildTask ? (
+                            <span className="ml-auto flex shrink-0 items-center" onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
+                              <button
+                                aria-label={`Drag to reorder ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent text-[#8a79d6] opacity-70 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                                draggable
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                }}
+                                onDragEnd={clearChildTaskDragState}
+                                onDragStart={(event) => beginChildTaskDrag(event, item)}
+                                type="button"
+                              ><GripVertical className="h-3.5 w-3.5" /></button>
+                              <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex <= 0} onClick={() => onReorderChildTask(item.id, "up")} type="button"><ArrowUp className="h-3.5 w-3.5" /></button>
+                              <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1} onClick={() => onReorderChildTask(item.id, "down")} type="button"><ArrowDown className="h-3.5 w-3.5" /></button>
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
+                    </div>
+                  ))}
+                </div>
               </div>
               {renderInlineActionRow(inlineStepTask)}
               {tableStepDraftParentId === item.id ? (
@@ -6471,19 +6586,24 @@ export function TaskManagementTableV2({
     }
 
     return (
-      <div className="ml-[10px] w-max min-w-full" data-task-table-source-step-rows={task.id}>
+      <div className="w-max min-w-full" data-task-table-source-step-rows={task.id}>
         {rows.map((row) => (
           <div
-            className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-3 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+            className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${highlightedActiveTaskId === row.subtask.id ? "bg-[#efe6ff] dark:bg-[#2b1d46]" : ""}`}
+            data-same-table-step-row={row.subtask.id}
             key={row.subtask.id}
             onClick={(event) => event.stopPropagation()}
-            style={{ gridTemplateColumns }}
           >
-            {visibleHeaderColumns.map((column) => (
-              <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${row.subtask.id}-${column.id}`}>
-                {renderSourceStepMiniCell(row, column.id)}
-              </div>
-            ))}
+            <div
+              className="ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-3 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+              style={{ gridTemplateColumns }}
+            >
+              {visibleHeaderColumns.map((column) => (
+                <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${row.subtask.id}-${column.id}`}>
+                  {renderSourceStepMiniCell(row, column.id)}
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -6627,7 +6747,7 @@ export function TaskManagementTableV2({
                     </button>
                     <span
                       aria-label={`Resize ${column.label} column`}
-                      className="group absolute right-0 top-1/2 flex h-10 w-4 -translate-y-1/2 translate-x-1/2 cursor-col-resize items-center justify-center"
+                      className="group absolute right-0 top-1/2 flex h-10 w-4 -translate-y-1/2 translate-x-1/2 touch-none cursor-col-resize items-center justify-center"
                       data-resize-handle
                       onDoubleClick={(event) => {
                         event.preventDefault();
@@ -6638,6 +6758,34 @@ export function TaskManagementTableV2({
                         }));
                       }}
                       onPointerDown={(event) => beginColumnResize(event, column.id)}
+                      onPointerMove={(event) => {
+                        if (resizeStateRef.current?.pointerId !== event.pointerId) {
+                          return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        updateColumnResize(event.clientX);
+                      }}
+                      onPointerUp={(event) => {
+                        if (resizeStateRef.current?.pointerId !== event.pointerId) {
+                          return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                          event.currentTarget.releasePointerCapture(event.pointerId);
+                        }
+                        clearColumnResize();
+                      }}
+                      onPointerCancel={(event) => {
+                        if (resizeStateRef.current?.pointerId !== event.pointerId) {
+                          return;
+                        }
+                        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                          event.currentTarget.releasePointerCapture(event.pointerId);
+                        }
+                        clearColumnResize();
+                      }}
                       role="separator"
                     >
                       <span className="h-8 w-[3px] rounded-full bg-transparent opacity-0" />
@@ -6720,7 +6868,9 @@ export function TaskManagementTableV2({
               return (
                 <Fragment key={getPrototypeTaskRowKey(task)}>
                   <motion.div
-                    className={`${CONTROL_FONT_CLASS} block w-max min-w-full text-center focus:outline-none`}
+                    className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${
+                      highlightedActiveTaskId === task.id ? "bg-[#efe6ff] dark:bg-[#2b1d46]" : ""
+                    }`}
                     data-task-table-row={task.id}
                     initial={shouldAnimateRows ? undefined : false}
                     onClick={(event) => {

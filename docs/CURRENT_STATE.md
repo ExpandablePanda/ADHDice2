@@ -5,7 +5,7 @@ Last reviewed: 2026-06-25
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.12.6`.
+- Current working app version: `6.12.15`.
 - Current release group: `6.12.x` PATHS MVP.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,7 +14,12 @@ Role: active working
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
 ## 6.12 Checkpoint
-- `6.12.6` changes compact Tasks status filter chip selection from a shared purple ring to per-status inverted fills, so each selected rail chip now flips from a tinted white chip into a solid status-colored chip with white content while preserving behavior, counts, and the compact rail-specific circle layout.
+- `6.12.15` is a narrow `6.12.14` QA correction pass: Tasks search active-row highlighting now uses one shared full-width row band in Table View, so parent rows no longer double-highlight and active Step/Substep matches extend from the left gutter across the visible row instead of starting at the indented child content area.
+- `6.12.14` is a narrow `6.12.13` QA correction pass: the Focus countdown control wiring is split again so the trash icon deletes the local countdown timer while the reverse-arrows control resets it back to the selected duration and restarts it. Tasks search highlight behavior stays unchanged.
+- `6.12.8` is a narrow `6.12.7` highlight-search correction pass: the Tasks-local `highlight:` search path now scans the flat legacy/source subtask rows by their real database shape instead of assuming a nested `children` tree, so highlight mode no longer crashes on source Steps/Substeps and still highlights matching legacy step titles.
+- `6.12.7` adds rail-order controls to List Settings so task lists can move earlier or later in the Tasks rail through the persisted `sortOrder` path, and it fixes mobile Table View column resizing by keeping the resize handle on the active pointer stream with touch-safe pointer capture instead of losing the drag during touch/pan interactions.
+- `6.12.6` adds a countdown-finished app alert for the local-only Focus countdown path: when the countdown reaches `0`, the app now plays an alarm tone, flashes a full-screen alert overlay, and exposes a clear `Stop Alarm` dismiss control that stops both the sound and flashing without creating fake task/category UUIDs or touching task/task-history state.
+- `6.12.5` adds a Tasks-local `highlight:` search mode on the shared search path. In highlight mode, Tasks search no longer filters the current visible bucket; it instead finds matching visible task, Step, and Substep rows by title/text, scrolls to the first match, highlights matching rows, advances to the next match on Enter, and clears the mode and highlights through the existing search clear action. Normal non-`highlight:` search behavior stays unchanged.
 
 ## 6.11 Checkpoint
 - `6.11.15` is a narrow `6.11.14` History Calendar recurring-rollover parity pass: current-day History Calendar edits for active recurring occurrences now use the same next-due recurrence semantics as Table/List status completion, persisting the rolled-forward `due_on` and next active raw status without routing through reward/XP queuing, while older history edits do not roll the active task forward and future-due rows are not pulled back to `Done` or `Missed` by today's history facts.

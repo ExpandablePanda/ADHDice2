@@ -475,14 +475,20 @@ export function useFocus(
     if (!client || !userId) return;
 
     if (isSystemCountdownCategoryId(categoryId)) {
-      setActiveSessions((prev) => {
-        const next = { ...prev };
-        delete next[categoryId];
-        return next;
-      });
-      persistCountdownMetadata(categoryId, null);
-      writeLocalActiveSession(userId, null);
-      setMessage({ tone: "good", text: "Timer reset." });
+      const current = activeSessions[categoryId];
+      if (!current) return;
+
+      const nextSession: ActiveFocusSession = {
+        ...current,
+        accumulatedSeconds: 0,
+        isRunning: current.mode === "countdown" && Boolean(current.countdownTargetSeconds),
+        startTime: current.mode === "countdown" && current.countdownTargetSeconds ? Date.now() : null,
+      };
+      setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
+      const persisted = await persistActiveSession(categoryId, nextSession);
+      if (persisted) {
+        setMessage({ tone: "good", text: "Timer reset." });
+      }
       return;
     }
 
@@ -501,6 +507,25 @@ export function useFocus(
     });
     persistCountdownMetadata(categoryId, null);
     setMessage({ tone: "good", text: "Timer reset." });
+  }
+
+  async function handleDeleteTimer(categoryId: string) {
+    if (!client || !userId) return;
+
+    if (isSystemCountdownCategoryId(categoryId)) {
+      setActiveSessions((prev) => {
+        const next = { ...prev };
+        delete next[categoryId];
+        return next;
+      });
+      persistCountdownMetadata(categoryId, null);
+      writeLocalActiveSession(userId, null);
+      setMessage({ tone: "good", text: "Timer deleted." });
+      if (typeof BroadcastChannel !== "undefined") {
+        new BroadcastChannel("adhdice_focus_sync").postMessage("toggle");
+      }
+      return;
+    }
   }
 
   async function handleManualFocusEntry(data: {
@@ -735,6 +760,7 @@ export function useFocus(
     handleFinishTimer,
     handleAdjustTimer,
     handleResetTimer,
+    handleDeleteTimer,
     handleManualFocusEntry,
     handleSaveCategories,
     handleDeleteFocusCategory,
