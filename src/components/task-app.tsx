@@ -457,7 +457,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.12.22";
+const APP_VERSION = "6.12.27";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -2209,6 +2209,7 @@ export function TaskApp() {
     [taskUiState.duplicateTitleMode, taskUiState.search],
   );
   const deferredSearchQuery = useDeferredValue(parsedTaskSearch.cleanedQuery);
+  const effectiveSearchQuery = taskUiState.search.trim().length === 0 ? "" : deferredSearchQuery;
   const duplicateTitleModeActive = parsedTaskSearch.duplicateTitleMode;
   const taskUiStateForDerivedData = useMemo(() => ({
     duplicateTitleMode: duplicateTitleModeActive,
@@ -2235,7 +2236,7 @@ export function TaskApp() {
       availableTaskLists,
       availableTaskNotes,
       bucketContext,
-      deferredSearchQuery,
+      deferredSearchQuery: effectiveSearchQuery,
       focusedTaskIds,
       listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
       listVisibleColumns: taskUiState.visibleColumnsByView.table,
@@ -2260,7 +2261,7 @@ export function TaskApp() {
       availableTaskLists,
       availableTaskNotes,
       bucketContext,
-      deferredSearchQuery,
+      effectiveSearchQuery,
       focusedTaskIds,
       taskActualTimeEntryTaskId,
       taskEditorTaskId,
@@ -2367,7 +2368,7 @@ export function TaskApp() {
     energyFilters: taskUiState.energyFilters,
     matchAny: taskUiState.matchAny,
     quickFilters: taskUiState.quickFilters,
-    search: deferredSearchQuery,
+    search: effectiveSearchQuery,
     selectedBucket: taskUiState.selectedBucket,
     statusFilters: taskUiState.statusFilters,
     view: taskUiState.view,
@@ -2379,19 +2380,29 @@ export function TaskApp() {
   const taskHighlightMatches = useMemo(
     () => buildTaskHighlightMatchState({
       childTaskPreviewByParentTaskId,
-      query: deferredSearchQuery,
+      query: effectiveSearchQuery,
       selectedBucketTasks,
       taskSubtasksByTaskId,
     }),
-    [childTaskPreviewByParentTaskId, deferredSearchQuery, selectedBucketTasks, taskSubtasksByTaskId],
+    [childTaskPreviewByParentTaskId, effectiveSearchQuery, selectedBucketTasks, taskSubtasksByTaskId],
   );
   const [taskHighlightActiveMatchIndex, setTaskHighlightActiveMatchIndex] = useState(0);
   const [taskHighlightScrollToken, setTaskHighlightScrollToken] = useState(0);
+  const pendingTaskHighlightSubmitSearchRef = useRef<string | null>(null);
+  const advanceTaskHighlightMatch = useCallback(() => {
+    if (taskHighlightMatches.matchedRowIds.length === 0) {
+      return;
+    }
+    setTaskHighlightActiveMatchIndex((current) => (
+      current + 1 >= taskHighlightMatches.matchedRowIds.length ? 0 : current + 1
+    ));
+    setTaskHighlightScrollToken((current) => current + 1);
+  }, [taskHighlightMatches.matchedRowIds.length]);
   useEffect(() => {
     setTaskHighlightActiveMatchIndex(0);
-  }, [deferredSearchQuery]);
+  }, [effectiveSearchQuery]);
   useEffect(() => {
-    if (deferredSearchQuery.length === 0 || taskHighlightMatches.matchedRowIds.length === 0) {
+    if (effectiveSearchQuery.length === 0 || taskHighlightMatches.matchedRowIds.length === 0) {
       setTaskHighlightActiveMatchIndex(0);
       return;
     }
@@ -2399,13 +2410,20 @@ export function TaskApp() {
     setTaskHighlightActiveMatchIndex((current) => (
       current >= taskHighlightMatches.matchedRowIds.length ? 0 : current
     ));
-  }, [deferredSearchQuery, taskHighlightMatches.matchedRowIds.length]);
+  }, [effectiveSearchQuery, taskHighlightMatches.matchedRowIds.length]);
   useEffect(() => {
-    if (deferredSearchQuery.length > 0 && taskHighlightMatches.matchedRowIds.length > 0) {
+    if (effectiveSearchQuery.length > 0 && taskHighlightMatches.matchedRowIds.length > 0) {
       setTaskHighlightScrollToken((current) => current + 1);
     }
-  }, [deferredSearchQuery, taskHighlightMatches.matchedRowIds]);
-  const activeHighlightedTaskId = deferredSearchQuery.length > 0
+  }, [effectiveSearchQuery, taskHighlightMatches.matchedRowIds]);
+  useEffect(() => {
+    if (pendingTaskHighlightSubmitSearchRef.current !== taskUiState.search) {
+      return;
+    }
+    pendingTaskHighlightSubmitSearchRef.current = null;
+    advanceTaskHighlightMatch();
+  }, [advanceTaskHighlightMatch, taskUiState.search]);
+  const activeHighlightedTaskId = effectiveSearchQuery.length > 0
     ? (taskHighlightMatches.matchedRowIds[taskHighlightActiveMatchIndex] ?? taskHighlightMatches.matchedRowIds[0] ?? null)
     : null;
   const highlightedSearchMatchedStepParentTaskIds = Array.from(
@@ -3165,6 +3183,21 @@ export function TaskApp() {
     setSuppressDetachedListNoticeTaskId(null);
     setRequestedListOverlayTaskId(taskId);
   }, []);
+  const handleTaskOperationsSearchChange = useCallback((search: string) => {
+    startTransition(() => {
+      setTaskUiState((prev) => ({ ...prev, search }));
+    });
+  }, [setTaskUiState]);
+  const handleTaskOperationsSearchSubmit = useCallback((search: string) => {
+    if (search !== taskUiState.search) {
+      pendingTaskHighlightSubmitSearchRef.current = search;
+      startTransition(() => {
+        setTaskUiState((prev) => ({ ...prev, search }));
+      });
+      return;
+    }
+    advanceTaskHighlightMatch();
+  }, [advanceTaskHighlightMatch, setTaskUiState, taskUiState.search]);
 
   useEffect(() => {
     if (!session?.user) {
@@ -4237,17 +4270,9 @@ export function TaskApp() {
     onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onSelectBucket: setSelectedBucket,
-    onSearchSubmit: () => {
-      if (taskHighlightMatches.matchedRowIds.length === 0) {
-        return;
-      }
-      setTaskHighlightActiveMatchIndex((current) => (
-        current + 1 >= taskHighlightMatches.matchedRowIds.length ? 0 : current + 1
-      ));
-      setTaskHighlightScrollToken((current) => current + 1);
-    },
+    onSearchSubmit: handleTaskOperationsSearchSubmit,
     onShrinkAllColumns: () => setShrinkAllColumnsToken((current) => current + 1),
-    onSearchChange: (search: string) => setTaskUiState((prev) => ({ ...prev, search })),
+    onSearchChange: handleTaskOperationsSearchChange,
     onViewChange: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
     onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
     onToggleListColumn: toggleListColumn,

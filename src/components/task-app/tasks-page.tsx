@@ -1,7 +1,7 @@
 "use client";
 
 import { BookOpen, Check, ChevronDown, Search, Trash2, X } from "lucide-react";
-import { startTransition, useEffect, useRef, useState } from "react";
+import { memo, startTransition, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
@@ -19,6 +19,120 @@ const SHARED_CHIP_MUTED_CLASS = TASK_TABLE_LIST_CHIP_CLASS;
 const SHARED_CHIP_ACTIVE_CLASS = TASK_TABLE_ACTIVE_LIST_CHIP_CLASS;
 const SHARED_CHIP_PRIMARY_CLASS = "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]";
 const SHARED_CHIP_SOFT_PURPLE_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
+const TASK_SEARCH_COMMIT_DELAY_MS = 180;
+
+const TaskSearchBox = memo(function TaskSearchBox({
+  hidden,
+  onSearchChange,
+  onSearchSubmit,
+  search,
+}: {
+  hidden?: boolean;
+  onSearchChange: (search: string) => void;
+  onSearchSubmit?: (search: string) => void;
+  search: string;
+}) {
+  const searchCommitTimeoutRef = useRef<number | null>(null);
+  const isFocusedRef = useRef(false);
+  const lastCommittedSearchRef = useRef(search);
+  const [searchDraft, setSearchDraft] = useState(search);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (isFocusedRef.current) {
+      return;
+    }
+    if (search === searchDraft) {
+      lastCommittedSearchRef.current = search;
+      return;
+    }
+    if (searchCommitTimeoutRef.current !== null) {
+      window.clearTimeout(searchCommitTimeoutRef.current);
+      searchCommitTimeoutRef.current = null;
+    }
+    lastCommittedSearchRef.current = search;
+    setSearchDraft(search);
+  }, [search, searchDraft]);
+
+  useEffect(() => {
+    return () => {
+      if (searchCommitTimeoutRef.current !== null) {
+        window.clearTimeout(searchCommitTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleSearchDraftChange = (nextValue: string) => {
+    setSearchDraft(nextValue);
+    if (searchCommitTimeoutRef.current !== null) {
+      window.clearTimeout(searchCommitTimeoutRef.current);
+    }
+    searchCommitTimeoutRef.current = window.setTimeout(() => {
+      lastCommittedSearchRef.current = nextValue;
+      onSearchChange(nextValue);
+      searchCommitTimeoutRef.current = null;
+    }, TASK_SEARCH_COMMIT_DELAY_MS);
+  };
+
+  const handleClearSearch = () => {
+    if (searchCommitTimeoutRef.current !== null) {
+      window.clearTimeout(searchCommitTimeoutRef.current);
+      searchCommitTimeoutRef.current = null;
+    }
+    lastCommittedSearchRef.current = "";
+    setSearchDraft("");
+    onSearchChange("");
+    searchInputRef.current?.focus();
+  };
+
+  if (hidden) {
+    return null;
+  }
+
+  return (
+    <label className="flex h-10 min-w-0 w-full items-center gap-2.5 rounded-[0.9rem] border border-[#efe9ff] bg-[#fbfaff] px-3.5 py-1 md:w-[24rem] md:max-w-[24rem] md:flex-none xl:w-[26rem] xl:max-w-[26rem] 2xl:w-[28rem] 2xl:max-w-[28rem] dark:border-white/10 dark:bg-white/[0.04]">
+      <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+      <input
+        className="min-w-0 flex-1 bg-transparent text-[13px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+        id="task-search-input"
+        onChange={(event) => {
+          handleSearchDraftChange(event.target.value);
+        }}
+        onBlur={() => {
+          isFocusedRef.current = false;
+        }}
+        onFocus={() => {
+          isFocusedRef.current = true;
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || !onSearchSubmit) {
+            return;
+          }
+          event.preventDefault();
+          if (searchCommitTimeoutRef.current !== null) {
+            window.clearTimeout(searchCommitTimeoutRef.current);
+            searchCommitTimeoutRef.current = null;
+          }
+          lastCommittedSearchRef.current = searchDraft;
+          onSearchSubmit(searchDraft);
+        }}
+        placeholder="Search tasks, or type duplicate:title"
+        ref={searchInputRef}
+        value={searchDraft}
+      />
+      {searchDraft.trim().length > 0 ? (
+        <button
+          aria-label="Clear search"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#8d86ab] transition hover:bg-[#efe9ff] hover:text-[#6f57f6] dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-[#cabfff]"
+          onClick={handleClearSearch}
+          type="button"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </label>
+  );
+});
 
 function reorderCustomRailLists(lists: TaskRailListOption[], sourceListId: string, targetListId: string) {
   if (sourceListId === targetListId) {
@@ -255,7 +369,7 @@ export function TaskOperationsHeader({
   onSelectBucket: (bucket: string) => void;
   onShrinkAllColumns: () => void;
   onSearchChange: (search: string) => void;
-  onSearchSubmit?: () => void;
+  onSearchSubmit?: (search: string) => void;
   onViewChange: (view: TaskViewMode) => void;
   onToggleKeyboardShortcutsMenu: () => void;
   onToggleListColumn: (columnId: AgentPlanColumnId) => void;
@@ -269,13 +383,6 @@ export function TaskOperationsHeader({
 }) {
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
-  const [searchDraft, setSearchDraft] = useState(search);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    setSearchDraft(search);
-  }, [search]);
-
   const clearLongPress = () => {
     if (longPressTimerRef.current !== null) {
       window.clearTimeout(longPressTimerRef.current);
@@ -305,18 +412,6 @@ export function TaskOperationsHeader({
     event.preventDefault();
     event.stopPropagation();
     onOpenFocusPlanner();
-  };
-
-  const handleSearchDraftChange = (nextValue: string) => {
-    setSearchDraft(nextValue);
-    startTransition(() => {
-      onSearchChange(nextValue);
-    });
-  };
-
-  const handleClearSearch = () => {
-    handleSearchDraftChange("");
-    searchInputRef.current?.focus();
   };
 
   return (
@@ -353,38 +448,12 @@ export function TaskOperationsHeader({
 
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            {!hideSearch ? (
-              <label className="flex h-10 min-w-0 w-full items-center gap-2.5 rounded-[0.9rem] border border-[#efe9ff] bg-[#fbfaff] px-3.5 py-1 md:w-[24rem] md:max-w-[24rem] md:flex-none xl:w-[26rem] xl:max-w-[26rem] 2xl:w-[28rem] 2xl:max-w-[28rem] dark:border-white/10 dark:bg-white/[0.04]">
-                <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
-                <input
-                  className="min-w-0 flex-1 bg-transparent text-[13px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
-                  id="task-search-input"
-                  onChange={(event) => {
-                    handleSearchDraftChange(event.target.value);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" || !onSearchSubmit) {
-                      return;
-                    }
-                    event.preventDefault();
-                    onSearchSubmit();
-                  }}
-                  placeholder="Search tasks, or type duplicate:title"
-                  ref={searchInputRef}
-                  value={searchDraft}
-                />
-                {searchDraft.trim().length > 0 ? (
-                  <button
-                    aria-label="Clear search"
-                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#8d86ab] transition hover:bg-[#efe9ff] hover:text-[#6f57f6] dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-[#cabfff]"
-                    onClick={handleClearSearch}
-                    type="button"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                ) : null}
-              </label>
-            ) : null}
+            <TaskSearchBox
+              hidden={hideSearch}
+              onSearchChange={onSearchChange}
+              onSearchSubmit={onSearchSubmit}
+              search={search}
+            />
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
               <TaskChipButton onClick={onOpenImport}>
                 Import

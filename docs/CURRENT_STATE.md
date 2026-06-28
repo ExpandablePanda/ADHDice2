@@ -5,7 +5,7 @@ Last reviewed: 2026-06-27
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.12.22`.
+- Current working app version: `6.12.27`.
 - Current release group: `6.12.x` PATHS MVP.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
 ## 6.12 Checkpoint
+- `6.12.27` is a narrow Tasks search-input source-of-truth pass: while the Tasks search field is focused, the memoized SearchBox now keeps local draft text as the only input value source and ignores parent committed-query updates until focus leaves or a true external reset occurs, so debounced commits, Enter, and clear still update parent search/highlight behavior without letting stale parent search overwrite active typing.
+- `6.12.26` is a narrow Tasks search-input render-isolation pass: the Tasks search field now renders through its own memoized local-draft SearchBox with stable parent callbacks, so keystrokes and clear actions stay immediate while the committed query still debounces into the heavier derived-data path and existing highlight, clear, and Enter-to-next-match behavior remain unchanged.
+- `6.12.25` is a narrow Tasks search-input stability fix: the Tasks search field now keeps immediate local text separate from the committed query, cancels pending debounce work on clear and Enter, and clears highlight-mode state immediately when search is cleared without changing matching, filtering, or next-match semantics.
+- `6.12.23` is a narrow derived-data performance pass: `computeTaskAppDerivedData` now reuses one per-derive task-list lookup plus cached visible-status/current-occurrence facts during smart-list membership evaluation, and it folds visible list counts plus base bucket/list splitting into one ordered pass so manual dev timing comparisons stay intact while task behavior remains unchanged.
 - `6.12.22` is a narrow mobile Table resize correction pass: the header-edge resize handle now keeps touch/pointer ownership on the handle itself with pointer capture plus handle-local pointer listeners, so mobile drag-resize stays active without changing desktop mouse resize behavior, column order/visibility/sort, or persisted widths.
 - `6.12.21` is a narrow follow-up pass on List Settings rail reordering: the visible app version surfaces are synced again, the List Settings cards keep one consistent top-right action cluster, Inbox and Today stay pinned, and the remaining visible rail lists can use the shared reorder controls through the existing persisted `sortOrder` path while delete stays custom-list-only.
 - `6.12.14` is a narrow `6.12.13` QA correction pass: the Focus countdown control wiring is split again so the trash icon deletes the local countdown timer while the reverse-arrows control resets it back to the selected duration and restarts it. Tasks search highlight behavior stays unchanged.
