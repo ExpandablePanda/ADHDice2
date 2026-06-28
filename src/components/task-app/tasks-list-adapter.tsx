@@ -139,8 +139,9 @@ type TasksTableSourceProps = {
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
   highlightedActiveTaskId?: string | null;
-  highlightedScrollToken?: number;
+  highlightedScrollToken?: number | null;
   highlightedTaskIds?: string[];
+  onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
   currentListLabel?: string | null;
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
@@ -310,6 +311,7 @@ export function TasksTableAdapter({
           highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
           highlightedScrollToken={tableProps.highlightedScrollToken}
           highlightedTaskIds={tableProps.highlightedTaskIds}
+          onVisibleSearchMatchIdsChange={tableProps.onVisibleSearchMatchIdsChange}
           searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
           className="max-w-none p-0"
           currentListLabel={tableProps.currentListLabel}
@@ -600,6 +602,8 @@ function StepsCardPreview({
   parentStepDraftValue,
   selectedBucket,
   showParentStepDraft,
+  taskHistoryByTaskId,
+  todayDateKey,
   onCancelParentStepDraft,
   onCommitParentStepDraft,
   onParentStepDraftChange,
@@ -640,6 +644,8 @@ function StepsCardPreview({
   parentStepDraftValue: string;
   selectedBucket: string;
   showParentStepDraft: boolean;
+  taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  todayDateKey: string;
   onCancelParentStepDraft?: () => void;
   onCommitParentStepDraft?: () => void;
   onParentStepDraftChange?: (value: string) => void;
@@ -855,8 +861,8 @@ function StepsCardPreview({
             const displayStatus = childTask
               ? getTaskDisplayStatusWithHistory(
                 childTask,
-                rowContext.taskHistoryByTaskId[childTask.id] ?? [],
-                rowContext.todayDateKey,
+                taskHistoryByTaskId[childTask.id] ?? [],
+                todayDateKey,
               )
               : item.status;
             const activePriorities = childTask ? buildTaskPrioritySelection(childTask, new Set(item.priorityFlags.includes("focus") ? [item.id] : [])) : item.priorityFlags;
@@ -1984,7 +1990,7 @@ function TasksSimpleList({
   }, [parentStepDraftTaskId]);
 
   useEffect(() => {
-    if (!tableProps.highlightedActiveTaskId) {
+    if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
       return;
     }
 
@@ -2001,10 +2007,10 @@ function TasksSimpleList({
         ? current
         : { ...current, [parentTaskWithMatch.id]: false }
     ));
-  }, [tableProps.childTaskPreviewByParentTaskId, tableProps.highlightedActiveTaskId, tasks]);
+  }, [tableProps.childTaskPreviewByParentTaskId, tableProps.highlightedActiveTaskId, tableProps.highlightedScrollToken, tasks]);
 
   useEffect(() => {
-    if (!tableProps.highlightedActiveTaskId) {
+    if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
       return;
     }
 
@@ -2635,6 +2641,8 @@ function TasksSimpleList({
                 parentStepDraftValue={parentStepTitleDrafts[task.id] ?? ""}
                 selectedBucket={selectedBucket}
                 showParentStepDraft={parentStepDraftTaskId === task.id}
+                taskHistoryByTaskId={rowContext.taskHistoryByTaskId}
+                todayDateKey={rowContext.todayDateKey}
                 onCancelParentStepDraft={() => {
                   setParentStepDraftTaskId((current) => (current === task.id ? null : current));
                   setParentStepCreationErrors((current) => ({ ...current, [task.id]: null }));

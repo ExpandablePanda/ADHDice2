@@ -457,7 +457,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.12.28";
+const APP_VERSION = "6.12.35";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -2080,6 +2080,8 @@ export function TaskApp() {
     todayKey,
   });
   const focusedTaskIds = focusedTaskIdsByDate[todayKey] ?? EMPTY_TASK_IDS;
+  const focusedTaskIdsRef = useRef(focusedTaskIds);
+  focusedTaskIdsRef.current = focusedTaskIds;
   const focusedTaskIdSet = useMemo(() => new Set(focusedTaskIds), [focusedTaskIds]);
   const builtInTaskLists = useMemo(() => getBuiltInTaskLists(), []);
   const availableTaskLists = useMemo(() => {
@@ -2386,36 +2388,72 @@ export function TaskApp() {
     }),
     [childTaskPreviewByParentTaskId, effectiveSearchQuery, selectedBucketTasks, taskSubtasksByTaskId],
   );
+  const [tableVisibleSearchMatchIds, setTableVisibleSearchMatchIds] = useState<string[] | null>(null);
+  const handleTableVisibleSearchMatchIdsChange = useCallback((taskIds: string[]) => {
+    setTableVisibleSearchMatchIds((current) => {
+      if (current && current.length === taskIds.length && current.every((taskId, index) => taskId === taskIds[index])) {
+        return current;
+      }
+      return taskIds;
+    });
+  }, []);
+  const activeTaskHighlightMatchIds = taskUiState.view === "table" && !duplicateTitleModeActive
+    ? (tableVisibleSearchMatchIds ?? taskHighlightMatches.matchedRowIds)
+    : taskHighlightMatches.matchedRowIds;
   const [taskHighlightActiveMatchIndex, setTaskHighlightActiveMatchIndex] = useState(0);
-  const [taskHighlightScrollToken, setTaskHighlightScrollToken] = useState(0);
+  const [taskHighlightScrollToken, setTaskHighlightScrollToken] = useState<number | null>(null);
+  const taskHighlightScrollSequenceRef = useRef(0);
+  const pendingTaskHighlightCommittedSearchRef = useRef<string | null>(null);
   const pendingTaskHighlightSubmitSearchRef = useRef<string | null>(null);
+  const queueTaskHighlightScrollIntent = useCallback(() => {
+    taskHighlightScrollSequenceRef.current += 1;
+    setTaskHighlightScrollToken(taskHighlightScrollSequenceRef.current);
+  }, []);
   const advanceTaskHighlightMatch = useCallback(() => {
-    if (taskHighlightMatches.matchedRowIds.length === 0) {
+    if (activeTaskHighlightMatchIds.length === 0) {
       return;
     }
     setTaskHighlightActiveMatchIndex((current) => (
-      current + 1 >= taskHighlightMatches.matchedRowIds.length ? 0 : current + 1
+      current + 1 >= activeTaskHighlightMatchIds.length ? 0 : current + 1
     ));
-    setTaskHighlightScrollToken((current) => current + 1);
-  }, [taskHighlightMatches.matchedRowIds.length]);
+    queueTaskHighlightScrollIntent();
+  }, [activeTaskHighlightMatchIds.length, queueTaskHighlightScrollIntent]);
   useEffect(() => {
     setTaskHighlightActiveMatchIndex(0);
   }, [effectiveSearchQuery]);
   useEffect(() => {
-    if (effectiveSearchQuery.length === 0 || taskHighlightMatches.matchedRowIds.length === 0) {
+    if (effectiveSearchQuery.length === 0 || activeTaskHighlightMatchIds.length === 0) {
       setTaskHighlightActiveMatchIndex(0);
       return;
     }
 
     setTaskHighlightActiveMatchIndex((current) => (
-      current >= taskHighlightMatches.matchedRowIds.length ? 0 : current
+      current >= activeTaskHighlightMatchIds.length ? 0 : current
     ));
-  }, [effectiveSearchQuery, taskHighlightMatches.matchedRowIds.length]);
+  }, [activeTaskHighlightMatchIds.length, effectiveSearchQuery]);
   useEffect(() => {
-    if (effectiveSearchQuery.length > 0 && taskHighlightMatches.matchedRowIds.length > 0) {
-      setTaskHighlightScrollToken((current) => current + 1);
+    if (taskHighlightScrollToken === null) {
+      return;
     }
-  }, [effectiveSearchQuery, taskHighlightMatches.matchedRowIds]);
+
+    const frameId = window.requestAnimationFrame(() => {
+      setTaskHighlightScrollToken((current) => (current === taskHighlightScrollToken ? null : current));
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [taskHighlightScrollToken]);
+  useEffect(() => {
+    if (pendingTaskHighlightCommittedSearchRef.current !== taskUiState.search) {
+      return;
+    }
+    pendingTaskHighlightCommittedSearchRef.current = null;
+    if (taskUiState.search.length === 0) {
+      return;
+    }
+    queueTaskHighlightScrollIntent();
+  }, [queueTaskHighlightScrollIntent, taskUiState.search]);
   useEffect(() => {
     if (pendingTaskHighlightSubmitSearchRef.current !== taskUiState.search) {
       return;
@@ -2424,7 +2462,7 @@ export function TaskApp() {
     advanceTaskHighlightMatch();
   }, [advanceTaskHighlightMatch, taskUiState.search]);
   const activeHighlightedTaskId = effectiveSearchQuery.length > 0
-    ? (taskHighlightMatches.matchedRowIds[taskHighlightActiveMatchIndex] ?? taskHighlightMatches.matchedRowIds[0] ?? null)
+    ? (activeTaskHighlightMatchIds[taskHighlightActiveMatchIndex] ?? activeTaskHighlightMatchIds[0] ?? null)
     : null;
   const highlightedSearchMatchedStepParentTaskIds = Array.from(
     new Set([...searchMatchedStepParentTaskIds, ...taskHighlightMatches.matchedStepParentTaskIds]),
@@ -2831,6 +2869,17 @@ export function TaskApp() {
       await updateTask(taskId, updates);
     },
   });
+  const applyTaskPriorityChange = useCallback((taskId: string, priorities: TaskPriority[]) => {
+    void updateTask(taskId, {
+      is_important: priorities.includes("important"),
+      is_urgent: priorities.includes("urgent"),
+    });
+    const nextFocusedTaskIds = priorities.includes("focus")
+      ? Array.from(new Set([...focusedTaskIdsRef.current, taskId]))
+      : focusedTaskIdsRef.current.filter((id) => id !== taskId);
+    focusedTaskIdsRef.current = nextFocusedTaskIds;
+    void saveFocusSelection(nextFocusedTaskIds);
+  }, [saveFocusSelection, updateTask]);
 
   const openBlankTaskEditor = useCallback(() => {
     setSuppressDetachedListNoticeTaskId(null);
@@ -3184,12 +3233,18 @@ export function TaskApp() {
     setRequestedListOverlayTaskId(taskId);
   }, []);
   const handleTaskOperationsSearchChange = useCallback((search: string) => {
+    pendingTaskHighlightSubmitSearchRef.current = null;
+    pendingTaskHighlightCommittedSearchRef.current = search.length > 0 ? search : null;
+    if (search.length === 0) {
+      setTaskHighlightScrollToken(null);
+    }
     startTransition(() => {
       setTaskUiState((prev) => ({ ...prev, search }));
     });
   }, [setTaskUiState]);
   const handleTaskOperationsSearchSubmit = useCallback((search: string) => {
     if (search !== taskUiState.search) {
+      pendingTaskHighlightCommittedSearchRef.current = null;
       pendingTaskHighlightSubmitSearchRef.current = search;
       startTransition(() => {
         setTaskUiState((prev) => ({ ...prev, search }));
@@ -4584,6 +4639,7 @@ export function TaskApp() {
                   highlightedActiveTaskId: activeHighlightedTaskId,
                   highlightedScrollToken: taskHighlightScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
+                  onVisibleSearchMatchIdsChange: handleTableVisibleSearchMatchIdsChange,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
@@ -4640,16 +4696,7 @@ export function TaskApp() {
                   },
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
-                  onSetPriority: (taskId, priorities) => {
-                    void updateTask(taskId, {
-                      is_important: priorities.includes("important"),
-                      is_urgent: priorities.includes("urgent"),
-                    });
-                    const nextFocusedTaskIds = priorities.includes("focus")
-                      ? Array.from(new Set([...focusedTaskIds, taskId]))
-                      : focusedTaskIds.filter((id) => id !== taskId);
-                    void saveFocusSelection(nextFocusedTaskIds);
-                  },
+                  onSetPriority: applyTaskPriorityChange,
                   onSetRepeat: (taskId, repeat, cadence) => {
                     void updateTask(taskId, {
                       repeat_frequency: repeat,
@@ -4789,16 +4836,7 @@ export function TaskApp() {
                   },
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
-                  onSetPriority: (taskId, priorities) => {
-                    void updateTask(taskId, {
-                      is_important: priorities.includes("important"),
-                      is_urgent: priorities.includes("urgent"),
-                    });
-                    const nextFocusedTaskIds = priorities.includes("focus")
-                      ? Array.from(new Set([...focusedTaskIds, taskId]))
-                      : focusedTaskIds.filter((id) => id !== taskId);
-                    void saveFocusSelection(nextFocusedTaskIds);
-                  },
+                  onSetPriority: applyTaskPriorityChange,
                   onSetRepeat: (taskId, repeat, cadence) => {
                     void updateTask(taskId, {
                       repeat_frequency: repeat,

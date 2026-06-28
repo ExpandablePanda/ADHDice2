@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, Fragment, startTransition, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Children, Fragment, startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowUp,
@@ -34,7 +34,6 @@ import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
 import { getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
-import { shouldOptimisticallyPatchTaskStatus } from "@/lib/task-complete";
 import {
   formatRepeatFrequencyLabel,
   REPEAT_MONTHLY_MODE_OPTIONS,
@@ -815,8 +814,9 @@ type TaskManagementTableV2Props = {
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
   highlightedActiveTaskId?: string | null;
-  highlightedScrollToken?: number;
+  highlightedScrollToken?: number | null;
   highlightedTaskIds?: string[];
+  onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
   className?: string;
   currentListLabel?: string | null;
@@ -1932,8 +1932,9 @@ export function TaskManagementTableV2({
   childTaskCreationBlockedTaskIds = [],
   childTaskPreviewByParentTaskId = {},
   highlightedActiveTaskId = null,
-  highlightedScrollToken = 0,
+  highlightedScrollToken = null,
   highlightedTaskIds = [],
+  onVisibleSearchMatchIdsChange,
   className = "",
   currentListLabel = null,
   enableInspector = true,
@@ -2239,6 +2240,28 @@ export function TaskManagementTableV2({
 
     return nextDisplayedTasks;
   }, [activeTaskTimerIds, liveActualSecondsByTaskId, sortState, structuredFilters, tasks, textFilters]);
+  const [frozenDisplayedTaskIds, setFrozenDisplayedTaskIds] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (selectedTaskIds.length === 0) {
+      setFrozenDisplayedTaskIds(null);
+      return;
+    }
+
+    setFrozenDisplayedTaskIds((current) => current ?? displayedTasks.map((task) => task.id));
+  }, [displayedTasks, selectedTaskIds.length]);
+  const effectiveDisplayedTasks = useMemo(() => {
+    if (!frozenDisplayedTaskIds || frozenDisplayedTaskIds.length === 0) {
+      return displayedTasks;
+    }
+
+    const displayedTasksById = new Map(displayedTasks.map((task) => [task.id, task] as const));
+    const frozenTasks = frozenDisplayedTaskIds
+      .map((taskId) => displayedTasksById.get(taskId))
+      .filter((task): task is PrototypeTaskRow => Boolean(task));
+    const frozenTaskIdSet = new Set(frozenTasks.map((task) => task.id));
+    const appendedTasks = displayedTasks.filter((task) => !frozenTaskIdSet.has(task.id));
+    return [...frozenTasks, ...appendedTasks];
+  }, [displayedTasks, frozenDisplayedTaskIds]);
   const tableFilterSignature = useMemo(
     () => JSON.stringify({ sortState, structuredFilters, textFilters }),
     [sortState, structuredFilters, textFilters],
@@ -2251,12 +2274,79 @@ export function TaskManagementTableV2({
     () => new Set(searchMatchedStepParentTaskIds),
     [searchMatchedStepParentTaskIds],
   );
+  const highlightedTaskIdSet = useMemo(
+    () => new Set(highlightedTaskIds),
+    [highlightedTaskIds],
+  );
   const collapsedChildTaskIdSet = useMemo(
     () => new Set(Object.entries(collapsedChildTaskIds).flatMap(([taskId, isCollapsed]) => (isCollapsed ? [taskId] : []))),
     [collapsedChildTaskIds],
   );
+  const orderedVisibleSearchMatchIds = useMemo(() => {
+    if (highlightedTaskIdSet.size === 0) {
+      return [] as string[];
+    }
+
+    const orderedMatches: string[] = [];
+    for (const task of effectiveDisplayedTasks) {
+      if (highlightedTaskIdSet.has(task.id)) {
+        orderedMatches.push(task.id);
+      }
+
+      const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
+      const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
+      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || searchMatchedStepParentTaskIdSet.has(task.id);
+      if (hasStepPreview && stepsExpanded) {
+        const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(stepPreviewGroup?.items ?? [], collapsedChildTaskIdSet);
+        for (const item of childTaskPreviewVisibility.visibleItems) {
+          if (highlightedTaskIdSet.has(item.id)) {
+            orderedMatches.push(item.id);
+          }
+        }
+      }
+
+      const visibleSubtasks = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds);
+      const hasSourceStepRows = visibleSubtasks.length > 0;
+      const sourceStepsExpanded = hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false);
+      if (hasSourceStepRows && sourceStepsExpanded) {
+        const sourceRows = flattenPrototypeSubtasksForMiniRows(visibleSubtasks);
+        for (const row of sourceRows) {
+          if (highlightedTaskIdSet.has(row.subtask.id)) {
+            orderedMatches.push(row.subtask.id);
+          }
+        }
+      }
+    }
+
+    return orderedMatches;
+  }, [
+    childTaskPreviewByParentTaskId,
+    collapsedChildTaskIdSet,
+    effectiveDisplayedTasks,
+    expandedStepsByTaskId,
+    expandedSubtasksByTaskId,
+    hiddenSubtaskIds,
+    highlightedTaskIdSet,
+    searchMatchedStepParentTaskIdSet,
+  ]);
+  const lastReportedVisibleSearchMatchIdsRef = useRef<string[]>([]);
+  useLayoutEffect(() => {
+    if (!onVisibleSearchMatchIdsChange) {
+      return;
+    }
+
+    const previousIds = lastReportedVisibleSearchMatchIdsRef.current;
+    const isSame = previousIds.length === orderedVisibleSearchMatchIds.length
+      && previousIds.every((taskId, index) => taskId === orderedVisibleSearchMatchIds[index]);
+    if (isSame) {
+      return;
+    }
+
+    lastReportedVisibleSearchMatchIdsRef.current = orderedVisibleSearchMatchIds;
+    onVisibleSearchMatchIdsChange(orderedVisibleSearchMatchIds);
+  }, [onVisibleSearchMatchIdsChange, orderedVisibleSearchMatchIds]);
   const visibleTaskIds = useMemo(
-    () => displayedTasks.flatMap((task) => {
+    () => effectiveDisplayedTasks.flatMap((task) => {
       const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
       const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || searchMatchedStepParentTaskIdSet.has(task.id);
       if (!stepPreviewGroup || !stepsExpanded) {
@@ -2266,7 +2356,11 @@ export function TaskManagementTableV2({
       const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(stepPreviewGroup.items, collapsedChildTaskIdSet);
       return [task.id, ...childTaskPreviewVisibility.visibleItems.map((item) => item.id)];
     }),
-    [childTaskPreviewByParentTaskId, collapsedChildTaskIdSet, displayedTasks, expandedStepsByTaskId, searchMatchedStepParentTaskIdSet],
+    [childTaskPreviewByParentTaskId, collapsedChildTaskIdSet, effectiveDisplayedTasks, expandedStepsByTaskId, searchMatchedStepParentTaskIdSet],
+  );
+  const visibleTaskIdSet = useMemo(
+    () => new Set(visibleTaskIds),
+    [visibleTaskIds],
   );
 
   const clearChildTaskDragState = () => {
@@ -2352,10 +2446,10 @@ export function TaskManagementTableV2({
       : "shadow-[inset_0_-2px_0_rgba(111,87,246,0.75)]";
   };
   const renderedTasks = useMemo(
-    () => displayedTasks.slice(0, renderedTaskCount),
-    [displayedTasks, renderedTaskCount],
+    () => effectiveDisplayedTasks.slice(0, renderedTaskCount),
+    [effectiveDisplayedTasks, renderedTaskCount],
   );
-  const remainingRenderedTaskCount = Math.max(0, displayedTasks.length - renderedTasks.length);
+  const remainingRenderedTaskCount = Math.max(0, effectiveDisplayedTasks.length - renderedTasks.length);
   const hasActiveFilters = useMemo(
     () => Object.values(textFilters).some((value) => Boolean(value?.trim()))
       || structuredFilters.status.length > 0
@@ -2374,7 +2468,7 @@ export function TaskManagementTableV2({
     [rowContextMenu, selectedTaskIdSet, selectedTaskIds],
   );
   const rowContextMenuHasBatchQuickEdit = rowContextMenuQuickEditTargetIds.length > 1;
-  const shouldAnimateRows = !shouldReduceMotion && displayedTasks.length <= 80;
+  const shouldAnimateRows = !shouldReduceMotion && effectiveDisplayedTasks.length <= 80;
   const tableRowVariants: Variants | undefined = shouldAnimateRows
     ? {
         hidden: {
@@ -2396,13 +2490,13 @@ export function TaskManagementTableV2({
       }
     : undefined;
   const measurementSignature = useMemo(
-    () => buildPrototypeRowsSignature(displayedTasks.slice(0, 12)),
-    [displayedTasks],
+    () => buildPrototypeRowsSignature(effectiveDisplayedTasks.slice(0, 12)),
+    [effectiveDisplayedTasks],
   );
 
   useEffect(() => {
-    setRenderedTaskCount(Math.min(INITIAL_RENDERED_TASK_COUNT, displayedTasks.length));
-  }, [displayedTasks.length, sourceRowsKey, tableFilterSignature]);
+    setRenderedTaskCount(Math.min(INITIAL_RENDERED_TASK_COUNT, effectiveDisplayedTasks.length));
+  }, [effectiveDisplayedTasks.length, sourceRowsKey, tableFilterSignature]);
 
   useEffect(() => {
     if (remainingRenderedTaskCount <= 0 && !hasMoreRows) {
@@ -2417,7 +2511,7 @@ export function TaskManagementTableV2({
     const loadNextBatch = () => {
       if (remainingRenderedTaskCount > 0) {
         startTransition(() => {
-          setRenderedTaskCount((current) => Math.min(current + RENDERED_TASK_BATCH_SIZE, displayedTasks.length));
+          setRenderedTaskCount((current) => Math.min(current + RENDERED_TASK_BATCH_SIZE, effectiveDisplayedTasks.length));
         });
         return;
       }
@@ -2433,7 +2527,7 @@ export function TaskManagementTableV2({
     observer.observe(sentinel);
 
     return () => observer.disconnect();
-  }, [displayedTasks.length, hasMoreRows, onLoadMoreRows, remainingRenderedTaskCount]);
+  }, [effectiveDisplayedTasks.length, hasMoreRows, onLoadMoreRows, remainingRenderedTaskCount]);
 
   useEffect(() => {
     if (!requestedOpenTaskId) {
@@ -2812,7 +2906,7 @@ export function TaskManagementTableV2({
       window.removeEventListener("resize", updateTableScrollButton);
       resizeObserver?.disconnect();
     };
-  }, [displayedTasks.length, renderedTaskCount, showHeader, sourceRowsKey, tableFilterSignature, visibleHeaderColumns.length]);
+  }, [effectiveDisplayedTasks.length, renderedTaskCount, showHeader, sourceRowsKey, tableFilterSignature, visibleHeaderColumns.length]);
 
   useEffect(() => {
     setLocalActiveTimerIndex((current) => {
@@ -2921,7 +3015,7 @@ export function TaskManagementTableV2({
   }, [pendingTableReveal]);
 
   useEffect(() => {
-    if (!highlightedActiveTaskId) {
+    if (!highlightedActiveTaskId || highlightedScrollToken === null) {
       return;
     }
 
@@ -2949,10 +3043,10 @@ export function TaskManagementTableV2({
       }
       return changed ? next : current;
     });
-  }, [childTaskPreviewByParentTaskId, highlightedActiveTaskId]);
+  }, [childTaskPreviewByParentTaskId, highlightedActiveTaskId, highlightedScrollToken]);
 
   useEffect(() => {
-    if (!highlightedActiveTaskId) {
+    if (!highlightedActiveTaskId || highlightedScrollToken === null) {
       return;
     }
 
@@ -3113,6 +3207,41 @@ export function TaskManagementTableV2({
   function getQuickEditTargetTaskIds(taskId: string) {
     const candidateIds = quickEditTargetTaskIds?.length ? quickEditTargetTaskIds : [taskId];
     return Array.from(new Set(candidateIds.filter((candidateId): candidateId is string => Boolean(candidateId))));
+  }
+
+  function resolveTableMetadataTargetTaskIds(clickedTaskId: string) {
+    if (quickEditTargetTaskIds?.length) {
+      return getQuickEditTargetTaskIds(clickedTaskId);
+    }
+    if (metadataTargetTaskId === clickedTaskId) {
+      return [clickedTaskId];
+    }
+    if (!selectedTaskIdSet.has(clickedTaskId) || selectedTaskIds.length <= 1) {
+      return [clickedTaskId];
+    }
+
+    const visibleSelectedTaskIds = selectedTaskIds.filter((taskId) => visibleTaskIdSet.has(taskId));
+    if (visibleSelectedTaskIds.length > 1) {
+      return Array.from(new Set(visibleSelectedTaskIds));
+    }
+
+    return [clickedTaskId];
+  }
+
+  function resolveTableActionTargetTaskIds(clickedTaskId: string) {
+    if (quickEditTargetTaskIds?.length) {
+      return getQuickEditTargetTaskIds(clickedTaskId);
+    }
+    if (!selectedTaskIdSet.has(clickedTaskId) || selectedTaskIds.length <= 1) {
+      return [clickedTaskId];
+    }
+
+    const visibleSelectedTaskIds = selectedTaskIds.filter((taskId) => visibleTaskIdSet.has(taskId));
+    if (visibleSelectedTaskIds.length > 1) {
+      return Array.from(new Set(visibleSelectedTaskIds));
+    }
+
+    return [clickedTaskId];
   }
 
   function getContextMenuQuickEditTargetTaskIds(taskId: string) {
@@ -3312,27 +3441,33 @@ export function TaskManagementTableV2({
       label: draft.label.trim(),
       url: draft.url.trim(),
     };
-    const currentTask = getTaskById(taskId);
-    if (currentTask && nextLink.label === currentTask.linkLabel && nextLink.url === currentTask.linkUrl) {
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    const changedTaskIds = targetTaskIds.filter((targetTaskId) => {
+      const currentTask = getTaskById(targetTaskId);
+      return !currentTask || nextLink.label !== currentTask.linkLabel || nextLink.url !== currentTask.linkUrl;
+    });
+    if (changedTaskIds.length === 0) {
       if (options?.closeAfterSave) {
         closeInspector({ skipLinkCommit: true });
       }
       return;
     }
     const nextLinkFingerprint = `${nextLink.label}\u0000${nextLink.url}`;
-    if (shouldSkipRecentInlineCommit(taskId, "link", nextLinkFingerprint)) {
+    if (changedTaskIds.length === 1 && shouldSkipRecentInlineCommit(taskId, "link", nextLinkFingerprint)) {
       if (options?.closeAfterSave) {
         closeInspector({ skipLinkCommit: true });
       }
       return;
     }
 
-    patchTask(taskId, (task) => ({
+    patchTasks(changedTaskIds, (task) => ({
       ...task,
       linkLabel: nextLink.label,
       linkUrl: nextLink.url,
     }));
-    onTaskLinkChange?.(taskId, nextLink);
+    for (const targetTaskId of changedTaskIds) {
+      onTaskLinkChange?.(targetTaskId, nextLink);
+    }
     if (options?.closeAfterSave) {
       closeInspector({ skipLinkCommit: true });
     }
@@ -3345,32 +3480,38 @@ export function TaskManagementTableV2({
     }
 
     const nextNotes = draft.trim();
-    const currentTask = getTaskById(taskId);
-    if (currentTask && nextNotes === currentTask.notes) {
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    const changedTaskIds = targetTaskIds.filter((targetTaskId) => {
+      const currentTask = getTaskById(targetTaskId);
+      return !currentTask || nextNotes !== currentTask.notes;
+    });
+    if (changedTaskIds.length === 0) {
       if (options?.closeAfterSave) {
         closeInspector({ skipNotesCommit: true });
       }
       return;
     }
-    if (shouldSkipRecentInlineCommit(taskId, "notes", nextNotes)) {
+    if (changedTaskIds.length === 1 && shouldSkipRecentInlineCommit(taskId, "notes", nextNotes)) {
       if (options?.closeAfterSave) {
         closeInspector({ skipNotesCommit: true });
       }
       return;
     }
 
-    patchTask(taskId, (task) => ({
+    patchTasks(changedTaskIds, (task) => ({
       ...task,
       notes: nextNotes,
     }));
-    onTaskNotesChange?.(taskId, nextNotes);
+    for (const targetTaskId of changedTaskIds) {
+      onTaskNotesChange?.(targetTaskId, nextNotes);
+    }
     if (options?.closeAfterSave) {
       closeInspector({ skipNotesCommit: true });
     }
   }
 
   function setTaskDue(taskId: string, dueOn: string, dueTime: string) {
-    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     patchTasks(targetTaskIds, (task) => ({
       ...task,
       dueOn,
@@ -3385,17 +3526,16 @@ export function TaskManagementTableV2({
   }
 
   function setTaskStatus(taskId: string, status: TaskStatus) {
-    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
-    if (shouldOptimisticallyPatchTaskStatus(status)) {
-      patchTasks(targetTaskIds, (task) => ({ ...task, status }));
-    }
+    // Status changes must reuse the app's per-task status action path so validation,
+    // completion, recurrence, rewards, and trash/archive side effects still run.
+    const targetTaskIds = resolveTableActionTargetTaskIds(taskId);
     for (const targetTaskId of targetTaskIds) {
       onTaskStatusChange?.(targetTaskId, status);
     }
   }
 
   function setTaskEstimatedMinutes(taskId: string, minutes: number | null) {
-    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, estimatedMinutes: minutes }));
     for (const targetTaskId of targetTaskIds) {
       onTaskEstimatedMinutesChange?.(targetTaskId, minutes);
@@ -3403,7 +3543,7 @@ export function TaskManagementTableV2({
   }
 
   function setTaskEnergy(taskId: string, energy: TaskEnergy) {
-    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, energy }));
     for (const targetTaskId of targetTaskIds) {
       onTaskEnergyChange?.(targetTaskId, energy);
@@ -3432,7 +3572,7 @@ export function TaskManagementTableV2({
     if (!currentTask) {
       return;
     }
-    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    const targetTaskIds = resolveTableActionTargetTaskIds(taskId);
     const nextCadence = {
       repeatDayOfMonth: repeat === "daily_until_complete"
         ? null
@@ -3451,13 +3591,8 @@ export function TaskManagementTableV2({
         ? cadencePatch.repeatMonthlyWeekday ?? currentTask.repeatMonthlyWeekday
         : null,
     };
-    patchTasks(targetTaskIds, (task) => {
-      return {
-        ...task,
-        repeat,
-        ...nextCadence,
-      };
-    });
+    // Repeat changes also fan out through the existing per-task save callback so
+    // recurrence/history behavior stays owned by the normal single-row path.
     for (const targetTaskId of targetTaskIds) {
       onTaskRepeatChange?.(targetTaskId, repeat, nextCadence);
     }
@@ -3645,7 +3780,7 @@ export function TaskManagementTableV2({
   }
 
   function setTaskPriorities(taskId: string, priorities: TaskPriority[]) {
-    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, priorities }));
     for (const targetTaskId of targetTaskIds) {
       onTaskPriorityChange?.(targetTaskId, priorities);
@@ -3653,7 +3788,7 @@ export function TaskManagementTableV2({
   }
 
   function setTaskTags(taskId: string, tags: string[]) {
-    const targetTaskIds = getQuickEditTargetTaskIds(taskId);
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, tags }));
     for (const targetTaskId of targetTaskIds) {
       onTaskTagsChange?.(targetTaskId, tags);
@@ -3672,21 +3807,27 @@ export function TaskManagementTableV2({
   }
 
   function clearTaskLink(taskId: string) {
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     setLinkDrafts((current) => ({
       ...current,
       [taskId]: { label: "", url: "" },
     }));
-    patchTask(taskId, (task) => ({ ...task, linkLabel: "", linkUrl: "" }));
-    onTaskLinkChange?.(taskId, { label: "", url: "" });
+    patchTasks(targetTaskIds, (task) => ({ ...task, linkLabel: "", linkUrl: "" }));
+    for (const targetTaskId of targetTaskIds) {
+      onTaskLinkChange?.(targetTaskId, { label: "", url: "" });
+    }
   }
 
   function clearTaskNotes(taskId: string) {
+    const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     setNotesDrafts((current) => ({
       ...current,
       [taskId]: "",
     }));
-    patchTask(taskId, (task) => ({ ...task, notes: "" }));
-    onTaskNotesChange?.(taskId, "");
+    patchTasks(targetTaskIds, (task) => ({ ...task, notes: "" }));
+    for (const targetTaskId of targetTaskIds) {
+      onTaskNotesChange?.(targetTaskId, "");
+    }
   }
 
   function commitSubtaskTitle(subtaskId: string) {
@@ -3726,7 +3867,7 @@ export function TaskManagementTableV2({
     if (!nextTag) {
       return;
     }
-    const targetTasks = getQuickEditTargetTaskIds(taskId)
+    const targetTasks = resolveTableMetadataTargetTaskIds(taskId)
       .map((targetTaskId) => getTaskById(targetTaskId))
       .filter((task): task is PrototypeTaskRow => Boolean(task));
     if (targetTasks.length === 0) {
@@ -3751,7 +3892,7 @@ export function TaskManagementTableV2({
     if (!task) return;
 
     const shouldRemove = task.tags.includes(tag);
-    const targetTasks = getQuickEditTargetTaskIds(taskId)
+    const targetTasks = resolveTableMetadataTargetTaskIds(taskId)
       .map((targetTaskId) => getTaskById(targetTaskId))
       .filter((candidate): candidate is PrototypeTaskRow => Boolean(candidate));
     const nextTagsByTaskId = new Map(
@@ -3772,7 +3913,7 @@ export function TaskManagementTableV2({
     const task = getTaskById(taskId);
     if (!task) return;
     const shouldRemove = taskHasList(task, listLabel);
-    const targetTasks = getQuickEditTargetTaskIds(taskId)
+    const targetTasks = resolveTableMetadataTargetTaskIds(taskId)
       .map((targetTaskId) => getTaskById(targetTaskId))
       .filter((candidate): candidate is PrototypeTaskRow => Boolean(candidate));
     const changedTasks = targetTasks.filter((candidate) => shouldRemove
@@ -3800,7 +3941,7 @@ export function TaskManagementTableV2({
     if (!draft) return;
     const created = await onCreateTaskList?.(draft);
     if (created !== false) {
-      const targetTasks = getQuickEditTargetTaskIds(taskId)
+      const targetTasks = resolveTableMetadataTargetTaskIds(taskId)
         .map((targetTaskId) => getTaskById(targetTaskId))
         .filter((candidate): candidate is PrototypeTaskRow => Boolean(candidate));
       const changedTasks = targetTasks.filter((candidate) => !taskHasList(candidate, draft));
@@ -5097,7 +5238,12 @@ export function TaskManagementTableV2({
 
   function openTaskOverlayFromContextMenu(taskId: string, mode: OverlayMode, sourceElement?: HTMLElement | null) {
     setRowContextMenu(null);
-    openInspector(taskId, mode, sourceElement, modeSupportsBatchQuickEdit(mode) ? getContextMenuQuickEditTargetTaskIds(taskId) : null);
+    const nextQuickEditTargetTaskIds = mode === "repeat" || mode === "status"
+      ? resolveTableActionTargetTaskIds(taskId)
+      : modeSupportsBatchQuickEdit(mode)
+        ? getContextMenuQuickEditTargetTaskIds(taskId)
+        : null;
+    openInspector(taskId, mode, sourceElement, nextQuickEditTargetTaskIds);
   }
 
   function openTaskDetailsFromContextMenu(taskId: string, sourceElement?: HTMLElement | null) {
@@ -6889,7 +7035,7 @@ export function TaskManagementTableV2({
               </div>
             ) : null}
 
-            {displayedTasks.length === 0 ? (
+            {effectiveDisplayedTasks.length === 0 ? (
               <div className={`ml-[10px] rounded-[1.25rem] border border-dashed border-[#ddd6fb] bg-[#fbfaff] px-6 py-10 text-center ${BODY_MUTED_VALUE_CLASS}`}>
                 No rows match the current table filters.
               </div>

@@ -125,6 +125,14 @@ export type TaskRailListOption = {
   label: string;
 };
 
+function matchesNormalizedSearchValue(value: string | null | undefined, normalizedSearchQuery: string) {
+  return typeof value === "string" && value.toLowerCase().includes(normalizedSearchQuery);
+}
+
+function matchesNormalizedSearchValues(values: readonly string[] | null | undefined, normalizedSearchQuery: string) {
+  return Array.isArray(values) && values.some((value) => matchesNormalizedSearchValue(value, normalizedSearchQuery));
+}
+
 const EMPTY_TASKS: Task[] = [];
 const isDevelopment = process.env.NODE_ENV !== "production";
 
@@ -538,19 +546,22 @@ export function computeTaskAppDerivedData({
       return true;
     }
 
-    if (task.title.toLowerCase().includes(normalizedSearchQuery)) {
+    if (matchesNormalizedSearchValue(task.title, normalizedSearchQuery) || matchesNormalizedSearchValues(task.tags, normalizedSearchQuery)) {
       return true;
     }
 
     const sourceSubtaskTitleMatch = (taskSubtasksByTaskId[task.id] ?? []).some((subtask) => (
-      subtask.title.toLowerCase().includes(normalizedSearchQuery)
+      matchesNormalizedSearchValue(subtask.title, normalizedSearchQuery)
     ));
     if (sourceSubtaskTitleMatch) {
       searchMatchedStepParentTaskIds.add(task.id);
       return true;
     }
 
-    const matchingChildSearch = childTaskPreviewByParentTaskId[task.id]?.items.some((item) => item.title.toLowerCase().includes(normalizedSearchQuery)) ?? false;
+    const matchingChildSearch = childTaskPreviewByParentTaskId[task.id]?.items.some((item) => (
+      matchesNormalizedSearchValue(item.title, normalizedSearchQuery)
+      || matchesNormalizedSearchValues(item.tags, normalizedSearchQuery)
+    )) ?? false;
     if (matchingChildSearch) {
       searchMatchedStepParentTaskIds.add(task.id);
       return true;

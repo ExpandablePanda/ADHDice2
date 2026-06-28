@@ -1543,6 +1543,37 @@ test("primary derived search returns the parent when only a child task matches",
   assert.deepEqual(derived.childTaskPreviewByParentTaskId.parent.items.map((item) => item.id), ["child", "sibling"]);
 });
 
+test("primary derived search matches task and child tags case-insensitively", () => {
+  const taggedParent = createTask({
+    id: "tagged-parent",
+    sort_order: 1,
+    status: "pending",
+    tags: ["Hygiene"],
+    title: "Brush teeth",
+  });
+  const taggedChildParent = createTask({
+    id: "tagged-child-parent",
+    sort_order: 2,
+    status: "pending",
+    title: "Evening reset",
+  });
+  const taggedChild = createTask({
+    id: "tagged-child",
+    parent_task_id: "tagged-child-parent",
+    sort_order: 1,
+    status: "pending",
+    tags: ["HYGIENE"],
+    title: "Wash face",
+  });
+
+  const derived = computeDerivedForHierarchyDiagnostics([taggedParent, taggedChildParent, taggedChild], {
+    deferredSearchQuery: "hygiene",
+  });
+
+  assert.deepEqual(derived.filteredTasksSorted.map((task) => task.id), ["tagged-parent", "tagged-child-parent"]);
+  assert.deepEqual(derived.searchMatchedStepParentTaskIds, ["tagged-child-parent"]);
+});
+
 test("task editor and actual-time lookup still find primary-hidden child tasks from full task data", () => {
   const parent = createTask({
     id: "parent",
