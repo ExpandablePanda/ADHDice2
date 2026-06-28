@@ -5,7 +5,7 @@ Last reviewed: 2026-06-27
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.12.27`.
+- Current working app version: `6.12.28`.
 - Current release group: `6.12.x` PATHS MVP.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,7 @@ Role: active working
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
 ## 6.12 Checkpoint
+- `6.12.28` is a narrow derived-data performance follow-up: `computeTaskAppDerivedData` now records one per-task visible classification fact set during the earlier primary/visible aggregation pass and reuses those cached open/done/overdue/urgent/today/low-energy facts during later full-list smart-list membership/count collection, reducing duplicate predicate work in no-query full-list derives without changing smart-list semantics, count semantics, task history/recurrence behavior, or UI ordering.
 - `6.12.27` is a narrow Tasks search-input source-of-truth pass: while the Tasks search field is focused, the memoized SearchBox now keeps local draft text as the only input value source and ignores parent committed-query updates until focus leaves or a true external reset occurs, so debounced commits, Enter, and clear still update parent search/highlight behavior without letting stale parent search overwrite active typing.
 - `6.12.26` is a narrow Tasks search-input render-isolation pass: the Tasks search field now renders through its own memoized local-draft SearchBox with stable parent callbacks, so keystrokes and clear actions stay immediate while the committed query still debounces into the heavier derived-data path and existing highlight, clear, and Enter-to-next-match behavior remain unchanged.
 - `6.12.25` is a narrow Tasks search-input stability fix: the Tasks search field now keeps immediate local text separate from the committed query, cancels pending debounce work on clear and Enter, and clears highlight-mode state immediately when search is cleared without changing matching, filtering, or next-match semantics.

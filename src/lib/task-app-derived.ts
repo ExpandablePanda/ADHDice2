@@ -1,4 +1,3 @@
-import { buildTaskCollections } from "@/lib/task-selectors";
 import { buildTaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
 import { isArchiveLikeTask } from "@/lib/task-complete";
 import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
@@ -9,7 +8,7 @@ import type {
   TaskStatus,
   TaskSubtask as DbTaskSubtask,
 } from "@/lib/database.types";
-import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
+import { computeTaskSpecificHistoryStats, getTaskFocusFilterFacts } from "@/lib/task-history";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
   TaskBucketContext,
@@ -20,7 +19,7 @@ import type {
   TaskListEvaluationContext,
   TaskListEvaluationPerf,
 } from "@/lib/task-lists";
-import { evaluateTaskListMemberships } from "@/lib/task-lists";
+import { buildTaskListLookup, evaluateTaskListMemberships } from "@/lib/task-lists";
 import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
 import { isDueToday, isOverdue } from "@/lib/task-cockpit";
 import { isTaskInRecentTrash } from "@/lib/task-trash";
@@ -28,6 +27,15 @@ import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
 type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "matchAny" | "quickFilters" | "statusFilters">;
+
+type VisibleTaskBaseFacts = {
+  isDoneTask: boolean;
+  isLowEnergyTask: boolean;
+  isOpenTask: boolean;
+  isOverdueTask: boolean;
+  isTodayTask: boolean;
+  isUrgentTask: boolean;
+};
 
 export type DuplicateTitleGroup = {
   count: number;
@@ -119,6 +127,24 @@ export type TaskRailListOption = {
 
 const EMPTY_TASKS: Task[] = [];
 const isDevelopment = process.env.NODE_ENV !== "production";
+
+function buildVisibleTaskBaseFacts(task: Task): VisibleTaskBaseFacts {
+  const isOpenTask = isTaskOpen(task);
+  const isDoneTask = isTaskFinished(task);
+  const isOverdueTask = isOpenTask && isOverdue(task.due_on);
+  const isUrgentTask = isOpenTask && isTaskUrgent(task);
+  const isLowEnergyTask = isOpenTask && task.energy === "low";
+  const isTodayTask = isOpenTask && task.status !== "missed" && isDueToday(task.due_on);
+
+  return {
+    isDoneTask,
+    isLowEnergyTask,
+    isOpenTask,
+    isOverdueTask,
+    isTodayTask,
+    isUrgentTask,
+  };
+}
 
 export function formatChildTaskPreviewDepthLabel(depth: number) {
   return depth > 1 ? "Substep" : "Step";
@@ -416,7 +442,7 @@ export function computeTaskAppDerivedData({
   const primaryTasks = tasks.filter((task) => !primaryHiddenChildTaskIds.has(task.id));
   const archiveTasks = primaryTasks.filter((task) => isArchiveLikeTask(task));
   const recentlyDeletedTasks = primaryTasks.filter((task) => isTaskInRecentTrash(task));
-  const visibleTasks = primaryTasks.filter(isTaskVisibleInPrimaryViews);
+  const visibleTasks: Task[] = [];
   const taskLinkedNotesByTaskId = availableTaskNotes.reduce<Record<string, TaskEditorLinkedNote[]>>((accumulator, note) => {
     for (const taskId of note.linked_task_ids) {
       if (!accumulator[taskId]) {
@@ -435,16 +461,43 @@ export function computeTaskAppDerivedData({
   });
 
   const aggregateStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const allTaskTags = [...new Set(visibleTasks.flatMap((task) => task.tags ?? []))].sort();
-  const activeTasks = visibleTasks.filter(isTaskOpen);
-  const doneTasks = visibleTasks.filter(isTaskFinished);
-  const overdueTasks = activeTasks.filter((task) => isOverdue(task.due_on));
-  const todayTasks = activeTasks.filter((task) => task.status !== "missed" && isDueToday(task.due_on));
-  const urgentFlaggedTasks = activeTasks.filter(isTaskUrgent);
-  const lowEnergyTasks = activeTasks.filter((task) => task.energy === "low").slice(0, 4);
-  const urgentTasks = urgentFlaggedTasks.slice(0, 6);
+  const taskTagSet = new Set<string>();
+  const visibleTaskBaseFactsByTaskId: Record<string, VisibleTaskBaseFacts> = {};
+  const activeTasks: Task[] = [];
+  const doneTasks: Task[] = [];
+  const overdueTasks: Task[] = [];
+  const todayTasks: Task[] = [];
+  const urgentFlaggedTasks: Task[] = [];
+  const lowEnergyTasks: Task[] = [];
   const taskStatusCounts = primaryTasks.reduce<Record<TaskStatus, number>>((accumulator, task) => {
     accumulator[task.status] += 1;
+    if (!isTaskVisibleInPrimaryViews(task)) {
+      return accumulator;
+    }
+    visibleTasks.push(task);
+    const baseFacts = buildVisibleTaskBaseFacts(task);
+    visibleTaskBaseFactsByTaskId[task.id] = baseFacts;
+    for (const tag of task.tags ?? []) {
+      taskTagSet.add(tag);
+    }
+    if (baseFacts.isOpenTask) {
+      activeTasks.push(task);
+      if (baseFacts.isOverdueTask) {
+        overdueTasks.push(task);
+      }
+      if (baseFacts.isUrgentTask) {
+        urgentFlaggedTasks.push(task);
+      }
+      if (baseFacts.isLowEnergyTask && lowEnergyTasks.length < 4) {
+        lowEnergyTasks.push(task);
+      }
+      if (baseFacts.isTodayTask) {
+        todayTasks.push(task);
+      }
+    }
+    if (baseFacts.isDoneTask) {
+      doneTasks.push(task);
+    }
     return accumulator;
   }, {
     pending: 0,
@@ -458,6 +511,8 @@ export function computeTaskAppDerivedData({
     archived: 0,
     trashed: 0,
   });
+  const allTaskTags = [...taskTagSet].sort();
+  const urgentTasks = urgentFlaggedTasks.slice(0, 6);
   logTaskDeriveStep("base bucket and count aggregation", aggregateStartedAt, {
     activeTasks: activeTasks.length,
     doneTasks: doneTasks.length,
@@ -600,10 +655,96 @@ export function computeTaskAppDerivedData({
     : undefined;
   const membershipStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const membershipSourceTasks = taskUiState.duplicateTitleMode ? duplicateGroupTasks : filteredTasksSorted;
+  const taskListLookup = buildTaskListLookup(availableTaskLists);
+  const taskDisplayStatusByTaskId = membershipSourceTasks.reduce<Record<string, TaskStatus>>((accumulator, task) => {
+    accumulator[task.id] = getTaskDisplayStatusWithHistory(
+      task,
+      taskHistoryByTaskId[task.id] ?? [],
+      todayDateKey,
+    );
+    return accumulator;
+  }, {});
+  const focusFilterFactsByTaskId = membershipSourceTasks.reduce<Record<string, ReturnType<typeof getTaskFocusFilterFacts>>>((accumulator, task) => {
+    accumulator[task.id] = getTaskFocusFilterFacts(
+      task,
+      taskHistoryByTaskId[task.id] ?? [],
+      todayDateKey,
+    );
+    return accumulator;
+  }, {});
+  const cachedTaskListEvaluationContext: TaskListEvaluationContext = {
+    ...taskListEvaluationContext,
+    focusFilterFactsByTaskId,
+    taskDisplayStatusByTaskId,
+  };
+  const canReuseMembershipScanForVisibleCounts = membershipSourceTasks === filteredTasksSorted;
+  const focusedTaskIdSet = new Set(focusedTaskIds);
+  const visibleListCounts: Record<string, number> = {};
+  const filteredActiveTasks: Task[] = [];
+  const filteredDoneTasks: Task[] = [];
+  const filteredOverdueTasks: Task[] = [];
+  const filteredUrgentTasks: Task[] = [];
+  const filteredFocusTasks: Task[] = [];
+  const filteredLowEnergyTasks: Task[] = [];
+  const filteredTodayTasks: Task[] = [];
+  const inboxTasks: Task[] = [];
+  const laterTasks: Task[] = [];
+  const missedTasks: Task[] = [];
+  const quickWinTasks: Task[] = [];
+  const recurringTasks: Task[] = [];
+  const waitingTasks: Task[] = [];
   const taskListMembershipsByTaskId = activePage !== "Tasks"
     ? {}
     : membershipSourceTasks.reduce<Record<string, ReturnType<typeof evaluateTaskListMemberships>>>((accumulator, task) => {
-      accumulator[task.id] = evaluateTaskListMemberships(task, availableTaskLists, taskListEvaluationContext, taskListMembershipPerf);
+      const memberships = evaluateTaskListMemberships(
+        task,
+        availableTaskLists,
+        cachedTaskListEvaluationContext,
+        taskListMembershipPerf,
+        taskListLookup,
+      );
+      accumulator[task.id] = memberships;
+      if (!canReuseMembershipScanForVisibleCounts) {
+        return accumulator;
+      }
+      const baseFacts = visibleTaskBaseFactsByTaskId[task.id] ?? buildVisibleTaskBaseFacts(task);
+      if (baseFacts.isOpenTask) {
+        filteredActiveTasks.push(task);
+        if (baseFacts.isOverdueTask) {
+          filteredOverdueTasks.push(task);
+        }
+        if (baseFacts.isUrgentTask) {
+          filteredUrgentTasks.push(task);
+        }
+        if (baseFacts.isLowEnergyTask && filteredLowEnergyTasks.length < 4) {
+          filteredLowEnergyTasks.push(task);
+        }
+        if (baseFacts.isTodayTask) {
+          filteredTodayTasks.push(task);
+        }
+      }
+      if (baseFacts.isDoneTask) {
+        filteredDoneTasks.push(task);
+      }
+      if (baseFacts.isOpenTask && focusedTaskIdSet.has(task.id)) {
+        filteredFocusTasks.push(task);
+      }
+      for (const membership of memberships) {
+        visibleListCounts[membership.id] = (visibleListCounts[membership.id] ?? 0) + 1;
+        if (membership.id === "inbox") {
+          inboxTasks.push(task);
+        } else if (membership.id === "later") {
+          laterTasks.push(task);
+        } else if (membership.id === "missed") {
+          missedTasks.push(task);
+        } else if (membership.id === "quick_wins") {
+          quickWinTasks.push(task);
+        } else if (membership.id === "recurring") {
+          recurringTasks.push(task);
+        } else if (membership.id === "waiting") {
+          waitingTasks.push(task);
+        }
+      }
       return accumulator;
     }, {});
   logTaskDeriveStep("smart-list membership evaluation", membershipStartedAt, {
@@ -617,24 +758,74 @@ export function computeTaskAppDerivedData({
   });
 
   const visibleCountStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const visibleListCounts = activePage !== "Tasks"
-    ? {}
-    : filteredTasksSorted.reduce<Record<string, number>>((accumulator, task) => {
-      for (const membership of taskListMembershipsByTaskId[task.id] ?? []) {
-        accumulator[membership.id] = (accumulator[membership.id] ?? 0) + 1;
+  if (activePage === "Tasks" && !canReuseMembershipScanForVisibleCounts) {
+    for (const task of filteredTasksSorted) {
+      const memberships = taskListMembershipsByTaskId[task.id] ?? [];
+      const baseFacts = visibleTaskBaseFactsByTaskId[task.id] ?? buildVisibleTaskBaseFacts(task);
+
+      if (baseFacts.isOpenTask) {
+        filteredActiveTasks.push(task);
+        if (baseFacts.isOverdueTask) {
+          filteredOverdueTasks.push(task);
+        }
+        if (baseFacts.isUrgentTask) {
+          filteredUrgentTasks.push(task);
+        }
+        if (baseFacts.isLowEnergyTask && filteredLowEnergyTasks.length < 4) {
+          filteredLowEnergyTasks.push(task);
+        }
+        if (baseFacts.isTodayTask) {
+          filteredTodayTasks.push(task);
+        }
       }
-      return accumulator;
-    }, {});
+
+      if (baseFacts.isDoneTask) {
+        filteredDoneTasks.push(task);
+      }
+
+      if (baseFacts.isOpenTask && focusedTaskIdSet.has(task.id)) {
+        filteredFocusTasks.push(task);
+      }
+
+      for (const membership of memberships) {
+        visibleListCounts[membership.id] = (visibleListCounts[membership.id] ?? 0) + 1;
+        if (membership.id === "inbox") {
+          inboxTasks.push(task);
+        } else if (membership.id === "later") {
+          laterTasks.push(task);
+        } else if (membership.id === "missed") {
+          missedTasks.push(task);
+        } else if (membership.id === "quick_wins") {
+          quickWinTasks.push(task);
+        } else if (membership.id === "recurring") {
+          recurringTasks.push(task);
+        } else if (membership.id === "waiting") {
+          waitingTasks.push(task);
+        }
+      }
+    }
+  }
   logTaskDeriveStep("task-list rail/count generation", visibleCountStartedAt, {
     listsWithCounts: Object.keys(visibleListCounts).length,
     tasks: filteredTasksSorted.length,
   });
 
   const collectionsStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const collections = buildTaskCollections(filteredTasksSorted, taskListMembershipsByTaskId, focusedTaskIds, {
-    taskHistoryByTaskId,
-    todayDateKey,
-  });
+  const collections = {
+    filteredActiveTasks,
+    filteredDoneTasks,
+    filteredFocusTasks,
+    filteredLowEnergyTasks,
+    filteredOverdueTasks,
+    filteredTodayTasks,
+    filteredUrgentTasks,
+    inboxTasks,
+    laterTasks,
+    missedTasks,
+    quickWinTasks,
+    recurringTasks,
+    waitingTasks,
+  };
   logTaskDeriveStep("base bucket/list splitting", collectionsStartedAt, {
     focusTasks: collections.filteredFocusTasks.length,
     inboxTasks: collections.inboxTasks.length,

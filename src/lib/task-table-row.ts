@@ -9,6 +9,9 @@ import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone } from "@/lib/t
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 
+const isDevelopment = process.env.NODE_ENV !== "production";
+let buildTaskTableRowDebugCount = 0;
+
 type TaskTableRowContext = {
   focusedTaskIdSet: Set<string>;
   linkedNotes: TaskEditorLinkedNote[];
@@ -31,7 +34,14 @@ function buildTaskTableSubtasks(subtasks: TaskSubtask[], parentId: string | null
     }));
 }
 
+export function snapshotBuildTaskTableRowDebugCount() {
+  return buildTaskTableRowDebugCount;
+}
+
 export function buildTaskTableRow(task: Task, context: TaskTableRowContext): PrototypeTaskRow {
+  if (isDevelopment) {
+    buildTaskTableRowDebugCount += 1;
+  }
   const historyStats = computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
   const lastDone = getTaskHistoryLastDone(context.taskHistory);
   const priorities: PrototypeTaskRow["priorities"] = [];

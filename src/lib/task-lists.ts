@@ -79,6 +79,7 @@ export type TaskListMembership = {
 export type TaskListEvaluationContext = {
   currentStreakByTaskId: Record<string, number>;
   focusedTaskIds: Set<string>;
+  focusFilterFactsByTaskId?: Record<string, ReturnType<typeof getTaskFocusFilterFacts>>;
   hasStepsByTaskId: Record<string, boolean>;
   isDueToday: (date: string | null) => boolean;
   isDueTomorrow: (date: string | null) => boolean;
@@ -87,6 +88,7 @@ export type TaskListEvaluationContext = {
   isOverdue: (date: string | null) => boolean;
   historyFactsByTaskId: Record<string, TaskHistoryFacts>;
   manualMembershipsByTaskId: Record<string, TaskListId[]>;
+  taskDisplayStatusByTaskId?: Record<string, TaskStatus>;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   todayDateKey: string;
 };
@@ -103,12 +105,32 @@ export type TaskListEvaluationPerf = {
 
 type TaskListLookup = {
   listById: Map<TaskListId, TaskListDefinition>;
+  nonInboxRuleListCount: number;
   nonInboxRuleLists: TaskListDefinition[];
   ruleLists: TaskListDefinition[];
+  usesSavedHistoryByListId: Map<TaskListId, boolean>;
 };
 
 function getTaskRuleDisplayStatus(task: Task, context: TaskListEvaluationContext): TaskStatus {
+  const cachedStatus = context.taskDisplayStatusByTaskId?.[task.id];
+  if (cachedStatus) {
+    return cachedStatus;
+  }
+
   return getTaskDisplayStatusWithHistory(
+    task,
+    context.taskHistoryByTaskId[task.id] ?? [],
+    context.todayDateKey,
+  );
+}
+
+function getTaskRuleFocusFacts(task: Task, context: TaskListEvaluationContext) {
+  const cachedFacts = context.focusFilterFactsByTaskId?.[task.id];
+  if (cachedFacts) {
+    return cachedFacts;
+  }
+
+  return getTaskFocusFilterFacts(
     task,
     context.taskHistoryByTaskId[task.id] ?? [],
     context.todayDateKey,
@@ -323,10 +345,10 @@ export function evaluateTaskListMemberships(
   lists: TaskListDefinition[],
   context: TaskListEvaluationContext,
   perf?: TaskListEvaluationPerf,
+  lookup: TaskListLookup = buildTaskListLookup(lists),
 ) {
   const memberships = new Map<TaskListId, TaskListMembership>();
   const evaluationCache = new Map<string, boolean>();
-  const lookup = buildTaskListLookup(lists);
   const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
   const canMeasure = Boolean(perf) && typeof performance !== "undefined";
 
@@ -353,6 +375,7 @@ export function evaluateTaskListMemberships(
   }
 
   const manualRuleMembershipCount = memberships.size;
+  let hasNonInboxRuleMatch = false;
   const ruleEvaluationStartedAt = canMeasure ? performance.now() : 0;
   for (const list of lookup.ruleLists) {
     if (list.id === "inbox") {
@@ -360,6 +383,7 @@ export function evaluateTaskListMemberships(
     }
     const current = memberships.get(list.id);
     if (matchesSpecificListRuleMembership(task, list, lists, context, new Set(), evaluationCache, lookup)) {
+      hasNonInboxRuleMatch = true;
       memberships.set(list.id, {
         id: list.id,
         isManual: current?.isManual ?? false,
@@ -368,7 +392,7 @@ export function evaluateTaskListMemberships(
     }
   }
   if (perf) {
-    perf.ruleListChecks += lookup.ruleLists.filter((list) => list.id !== "inbox").length;
+    perf.ruleListChecks += lookup.nonInboxRuleListCount;
     perf.matchedRuleMemberships += Math.max(0, memberships.size - manualRuleMembershipCount);
     if (canMeasure) {
       perf.ruleEvaluationMs += performance.now() - ruleEvaluationStartedAt;
@@ -376,7 +400,7 @@ export function evaluateTaskListMemberships(
   }
 
   const inboxCheckStartedAt = canMeasure ? performance.now() : 0;
-  if (shouldAppearInInbox(task, lists, memberships, context, new Set(["inbox"]), evaluationCache, lookup)) {
+  if (shouldAppearInInbox(task, lists, memberships, context, new Set(["inbox"]), evaluationCache, lookup, hasNonInboxRuleMatch)) {
     const current = memberships.get("inbox");
     memberships.set("inbox", {
       id: "inbox",
@@ -489,12 +513,11 @@ function shouldAppearInInbox(
   visitedListIds: Set<TaskListId> = new Set(),
   evaluationCache: Map<string, boolean> = new Map(),
   lookup: TaskListLookup = buildTaskListLookup(lists),
+  hasNonInboxRuleMatch?: boolean,
 ) {
   return matchesInboxMembership(task, lists, context, {
     evaluationCache,
-    hasNonInboxRuleMatch: Array.from(memberships.values()).some((membership) =>
-      membership.id !== "inbox" && membership.source === "rule",
-    ),
+    hasNonInboxRuleMatch,
     lookup,
     visitedListIds,
   });
@@ -518,7 +541,6 @@ function matchesTaskListRule(
     return currentStreak > 30;
   };
   const historyFacts = context.historyFactsByTaskId[task.id] ?? buildEmptyTaskHistoryFacts();
-  const taskHistory = context.taskHistoryByTaskId[task.id] ?? [];
   const matchesPresetStreak = (
     currentValue: number,
     op: Extract<TaskListRule, { field: "completed_streak" | "missed_streak" }>["op"],
@@ -576,7 +598,7 @@ function matchesTaskListRule(
       return !context.isDueToday(createdDate);
     }
     case "history_status": {
-      const occurrenceFacts = getTaskFocusFilterFacts(task, taskHistory, context.todayDateKey);
+      const occurrenceFacts = getTaskRuleFocusFacts(task, context);
       const matchesHistoryStatus = rule.value === "handled_today"
         ? occurrenceFacts.handledToday
         : rule.value === "missed_today"
@@ -730,7 +752,8 @@ function matchesSpecificListRuleMembership(
     evaluationCache.set(cacheKey, false);
     return false;
   }
-  if (!context.isOpen(task) && list.id !== "done" && !ruleGroupUsesSavedHistory(list.rules)) {
+  const usesSavedHistory = lookup.usesSavedHistoryByListId.get(list.id) ?? false;
+  if (!context.isOpen(task) && list.id !== "done" && !usesSavedHistory) {
     evaluationCache.set(cacheKey, false);
     return false;
   }
@@ -832,10 +855,11 @@ function taskBelongsToSpecificList(
   return belongsToList;
 }
 
-function buildTaskListLookup(lists: TaskListDefinition[]): TaskListLookup {
+export function buildTaskListLookup(lists: TaskListDefinition[]): TaskListLookup {
   const listById = new Map<TaskListId, TaskListDefinition>();
   const ruleLists: TaskListDefinition[] = [];
   const nonInboxRuleLists: TaskListDefinition[] = [];
+  const usesSavedHistoryByListId = new Map<TaskListId, boolean>();
 
   for (const list of lists) {
     listById.set(list.id, list);
@@ -843,6 +867,7 @@ function buildTaskListLookup(lists: TaskListDefinition[]): TaskListLookup {
       continue;
     }
     ruleLists.push(list);
+    usesSavedHistoryByListId.set(list.id, ruleGroupUsesSavedHistory(list.rules));
     if (list.id !== "inbox") {
       nonInboxRuleLists.push(list);
     }
@@ -850,8 +875,10 @@ function buildTaskListLookup(lists: TaskListDefinition[]): TaskListLookup {
 
   return {
     listById,
+    nonInboxRuleListCount: nonInboxRuleLists.length,
     nonInboxRuleLists,
     ruleLists,
+    usesSavedHistoryByListId,
   };
 }
 

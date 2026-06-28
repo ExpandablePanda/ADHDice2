@@ -17,7 +17,7 @@ import type { Task, TaskActualTimeEntry, TaskHistory, TaskRepeatMonthlyMode, Tas
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
-import { buildTaskTableRow } from "@/lib/task-table-row";
+import { buildTaskTableRow, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
@@ -81,6 +81,7 @@ const COMPACT_REPEAT_UNITS: Array<{ label: string; value: PrototypeTaskRow["repe
   { label: "Weeks", value: "weekly" },
   { label: "Months", value: "monthly" },
 ];
+const isDevelopment = process.env.NODE_ENV !== "production";
 function priorityTone(priority: "focus" | "important" | "urgent") {
   if (priority === "focus") return "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
   if (priority === "important") return "border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]";
@@ -1912,6 +1913,7 @@ function TasksSimpleList({
   const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
   const listShellRef = useRef<HTMLDivElement | null>(null);
   const parentStepDraftInputRef = useRef<HTMLInputElement | null>(null);
+  const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
   const tasks = tableProps.tasks;
   const rowContext = tableProps.rowContext;
   const visibleTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
@@ -1951,6 +1953,21 @@ function TasksSimpleList({
       : null,
     [tableProps.requestedOpenTask, tableProps.rowContext],
   );
+  useEffect(() => {
+    if (!isDevelopment) {
+      return;
+    }
+
+    const nextCount = snapshotBuildTaskTableRowDebugCount();
+    const delta = nextCount - lastBuildTaskTableRowCountRef.current;
+    lastBuildTaskTableRowCountRef.current = nextCount;
+    const message = `[tasks:list-switch] list row builds committed count=${delta} tasks=${tasks.length} overlayRows=${overlayRows.length} requestedOpenTask=${requestedOpenTaskRow ? 1 : 0}`;
+    console.info(message);
+    if (typeof window !== "undefined") {
+      window.__ADHDICE_TASK_LIST_SWITCH_LOGS__ ??= [];
+      window.__ADHDICE_TASK_LIST_SWITCH_LOGS__.push(message);
+    }
+  });
   const closeQuickPanel = () => setActiveQuickPanel(null);
   const openQuickPanel = (taskId: string, mode: ListQuickPanelMode) => {
     setRowContextMenu(null);

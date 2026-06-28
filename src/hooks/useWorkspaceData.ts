@@ -91,9 +91,21 @@ function shouldLoadSecondaryForPage(activePage: AppPage) {
 
 const TASK_RESUME_SYNC_DEBOUNCE_MS = 450;
 const TASK_RESUME_SYNC_COOLDOWN_MS = 1500;
+const isDevelopment = process.env.NODE_ENV !== "production";
 
 function keepCurrentIfStructurallyEqual<T>(current: T, next: T) {
   return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+}
+
+function logWorkspaceTiming(step: string, startedAt: number, details: Record<string, boolean | number | string> = {}) {
+  if (!isDevelopment || typeof performance === "undefined") {
+    return;
+  }
+
+  const detailString = Object.entries(details)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(" ");
+  console.info(`[workspace] ${step} in ${Math.round(performance.now() - startedAt)}ms${detailString ? ` ${detailString}` : ""}.`);
 }
 
 export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
@@ -249,6 +261,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     }
 
     async function subscribeTaskChannel() {
+      const subscribeStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
       const previousRemoval = taskChannelRemovalPromiseRef.current ?? Promise.resolve();
       await previousRemoval;
 
@@ -277,6 +290,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         )
         .subscribe((status) => {
           taskChannelStatusRef.current = status;
+          if (status === "SUBSCRIBED") {
+            logWorkspaceTiming("Task realtime subscribed", subscribeStartedAt, {
+              userId,
+            });
+          }
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
             console.warn(
               "[workspace] Task realtime subscription failed. If cross-client task sync stays stale, confirm Realtime is enabled and `adhdice_clean_tasks` is included in the Supabase realtime publication.",
@@ -294,6 +312,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         return;
       }
 
+      const reconnectStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
+      const previousStatus = taskChannelStatusRef.current;
+
       const previousChannel = taskChannelRef.current;
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
@@ -304,6 +325,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         }
       }
       await subscribeTaskChannel();
+      logWorkspaceTiming("Task channel reconnect path", reconnectStartedAt, {
+        previousStatus,
+      });
     }
 
     function scheduleTaskResumeSync() {
@@ -342,6 +366,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       secondaryLoadInFlightRef.current = true;
+      const secondaryStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
       const [taskHistoryResult, taskActualTimeEntriesResult, noteResult, historyResult] = await Promise.all([
         client
           .from("adhdice_task_history")
@@ -391,6 +416,13 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       setFocusHistory((current) => keepCurrentIfStructurallyEqual(current, nextFocusHistory));
       saveFocusHistory(nextFocusHistory);
       hasLoadedSecondaryDataRef.current = true;
+      logWorkspaceTiming("Secondary workspace details ready", secondaryStartedAt, {
+        focusHistory: nextFocusHistory.length,
+        notes: nextAvailableTaskNotes.length,
+        silent,
+        taskActualTimeEntries: nextTaskActualTimeEntries.length,
+        taskHistory: nextTaskHistory.length,
+      });
     }
 
     async function loadCoreWorkspaceData({ silent = false }: { silent?: boolean } = {}) {
@@ -399,6 +431,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       const loadStartedAt = performance.now();
+      const criticalCoreStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
       const taskRequest = createTaskRowsRequest();
       const taskSubtasksRequest = client
         .from("adhdice_task_subtasks")
@@ -480,6 +513,12 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         setIsWorkspaceLoading(false);
         return;
       }
+      logWorkspaceTiming("Critical workspace core ready", criticalCoreStartedAt, {
+        promotions: taskLegacySubtaskPromotionsResult.data?.length ?? 0,
+        silent,
+        subtasks: taskSubtasksResult.data?.length ?? 0,
+        tasks: taskResult.data?.length ?? 0,
+      });
 
       const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
       const nextTaskLegacySubtaskPromotions = taskLegacySubtaskPromotionsResult.data ?? [];
@@ -505,6 +544,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         console.info(`[workspace] Tasks ready in ${Math.round(performance.now() - loadStartedAt)}ms.`);
       }
 
+      const secondaryCoreStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
       const [categoryResult, activeResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult] = await secondaryCoreRequest;
 
       if (!isActive) {
@@ -611,6 +651,15 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       setTaskGridLayout((current) => keepCurrentIfStructurallyEqual(current, nextTaskGridLayout));
       saveFocusCategories(nextCategories);
       saveFocusHistory(nextFocusHistory);
+      logWorkspaceTiming("Secondary workspace core ready", secondaryCoreStartedAt, {
+        activeSessions: Object.keys(nextActiveSessions).length,
+        categories: nextCategories.length,
+        focusDays: Object.keys(nextFocusedTaskIdsByDate).length,
+        focusHistory: nextFocusHistory.length,
+        manualMemberships: nextTaskListManualMemberships.length,
+        silent,
+        taskLists: nextTaskLists.length,
+      });
 
       if (process.env.NODE_ENV !== "production") {
         console.info(`[workspace] Background details ready in ${Math.round(performance.now() - loadStartedAt)}ms.`);
@@ -645,6 +694,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         setIsTaskResumeSyncPending(true);
       }
 
+      const refreshStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
+
       try {
         await ensureTaskChannelSubscribed();
         await loadCoreWorkspaceData({ silent: true });
@@ -653,6 +704,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           await loadSecondaryWorkspaceData({ silent: true });
         }
       } finally {
+        logWorkspaceTiming("Soft workspace refresh complete", refreshStartedAt, {
+          includeSecondaryIfLoaded,
+          secondaryLoaded: hasLoadedSecondaryDataRef.current,
+          source,
+        });
         taskResumeSyncInFlightRef.current = false;
         taskResumeSyncQueuedRef.current = false;
         if (shouldExposeRefreshState) {
