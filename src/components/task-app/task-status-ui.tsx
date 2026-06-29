@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarClock, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
 
 import type { TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 
@@ -11,6 +11,7 @@ export const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {
   complete: "border border-[#5d9b76] bg-white text-[#256947]",
   upcoming: "border border-[#cfd6e4] bg-white text-[#68738c]",
   not_due: "border border-[#a9daf7] bg-white text-[#3388c9]",
+  delayed: "border border-[#d8c0ff] bg-white text-[#7d54d1]",
   archived: "border border-[#b7becd] bg-white text-[#5e687d]",
   trashed: "border border-[#f4afbc] bg-white text-[#d94e67]",
 };
@@ -71,6 +72,10 @@ export function renderTaskStatusGlyph(
         <span className={`block rounded-full bg-current ${size === "sm" ? "h-2.5 w-[2px]" : "h-3 w-[2px]"}`} />
       </span>
     );
+  }
+
+  if (status === "delayed") {
+    return <CalendarClock className={iconSize} />;
   }
 
   if (status === "trashed") {
@@ -150,6 +155,14 @@ export function renderTaskStatusCircle(
   if (status === "not_due") {
     return (
       <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-dashed border-[#57a9de] text-[#57a9de]`}>
+        {renderTaskStatusGlyph(status, size)}
+      </span>
+    );
+  }
+
+  if (status === "delayed") {
+    return (
+      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#7d54d1] text-[#7d54d1]`}>
         {renderTaskStatusGlyph(status, size)}
       </span>
     );

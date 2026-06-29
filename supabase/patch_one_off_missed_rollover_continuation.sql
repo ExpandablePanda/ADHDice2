@@ -71,7 +71,7 @@ begin
       order by due_on asc, created_at asc
   loop
     if v_task.repeat_frequency = 'none' then
-      if v_task.status not in ('pending', 'in_progress', 'missed', 'upcoming', 'not_due') then
+      if v_task.status not in ('pending', 'in_progress', 'delayed', 'missed', 'upcoming', 'not_due') then
         continue;
       end if;
 
@@ -146,7 +146,7 @@ begin
       continue;
     end if;
 
-    if v_task.status not in ('pending', 'in_progress', 'missed', 'upcoming', 'not_due') then
+    if v_task.status not in ('pending', 'in_progress', 'delayed', 'missed', 'upcoming', 'not_due') then
       continue;
     end if;
 

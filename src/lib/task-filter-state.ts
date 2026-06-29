@@ -7,6 +7,7 @@ import type { TaskStatus } from "@/lib/database.types";
 export const TASK_FILTER_STATUS_OPTIONS: TaskStatus[] = [
   "pending",
   "in_progress",
+  "delayed",
   "done",
   "did_my_best",
   "missed",

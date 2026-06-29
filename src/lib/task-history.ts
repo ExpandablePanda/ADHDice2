@@ -7,7 +7,7 @@ export function isTaskCompletedForHistory(status: TaskStatus) {
 }
 
 export function isTaskHistoryStatus(status: TaskStatus) {
-  return status === "done" || status === "did_my_best" || status === "missed" || status === "complete";
+  return status === "done" || status === "did_my_best" || status === "delayed" || status === "missed" || status === "complete";
 }
 
 export type TaskHistoryStats = {
@@ -82,16 +82,18 @@ export function formatTaskHistoryEntryLabel(entry: Pick<DbTaskHistory, "event_ty
     .join(" ");
 }
 
-export type TaskHistoryCalendarVirtualState = "due" | "not_due" | "upcoming";
+export type TaskHistoryCalendarVirtualState = "delayed" | "due" | "not_due" | "upcoming";
 
 export function getTaskHistoryCalendarVirtualState({
   dateKey,
+  delayedUntilDateKey,
   hasHistoryEntry,
   isDue,
   nextDueDateKey,
   todayDateKey,
 }: {
   dateKey: string;
+  delayedUntilDateKey?: string | null;
   hasHistoryEntry: boolean;
   isDue: boolean;
   nextDueDateKey: string | null;
@@ -99,6 +101,14 @@ export function getTaskHistoryCalendarVirtualState({
 }): TaskHistoryCalendarVirtualState | null {
   if (hasHistoryEntry) {
     return null;
+  }
+  if (
+    delayedUntilDateKey
+    && delayedUntilDateKey > todayDateKey
+    && dateKey >= todayDateKey
+    && dateKey < delayedUntilDateKey
+  ) {
+    return "delayed";
   }
   if (isDue) {
     return "due";
@@ -279,6 +289,13 @@ export function resolveLiveTaskStatusFromHistory(
   }: TaskHistoryLiveStatusContext,
   options: TaskHistoryLiveStatusOptions = {},
 ): { completedAt: string | null; dueOn?: string | null; status: TaskStatus } {
+  if (task.status === "delayed" && task.due_on && task.due_on > currentDayKey) {
+    return {
+      completedAt: null,
+      status: "delayed",
+    };
+  }
+
   const sortedHistory = getSortedHistoryThroughDay(history, currentDayKey);
   const latestEntry = sortedHistory.at(-1) ?? null;
 
@@ -664,6 +681,7 @@ export function buildTaskDueDateSet(task: Task, startDateKey: string, endDateKey
 function isUnresolvedTaskStatus(status: TaskStatus) {
   return status === "pending"
     || status === "in_progress"
+    || status === "delayed"
     || status === "missed"
     || status === "upcoming"
     || status === "not_due";

@@ -2,8 +2,11 @@
 import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Flame, Footprints, GripVertical, Skull, Tag, Trash2, X } from "lucide-react";
 import {
   buildTaskRowContextMenuState,
+  PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
   TaskManagementTableV2,
+  TaskTitleDraftInput,
   TaskRowContextMenu,
+  stopRowActionPointerEvent,
   type PrototypeTaskRow,
   type RowContextMenuState,
   type TaskManagementTableColumnId,
@@ -20,6 +23,7 @@ import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persist
 import { buildTaskTableRow, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
+import { TaskDelayPicker } from "./task-delay-picker";
 import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen } from "@/lib/task-buckets";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusCircle } from "./task-status-ui";
@@ -45,7 +49,7 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 
-type ListQuickPanelMode = "actual" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
+type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
 type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
 
@@ -75,6 +79,13 @@ const REPEAT_WEEKDAY_OPTIONS = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ];
+
+function getDelayAnchorDate(dueOn: string | null, todayDateKey: string) {
+  if (!dueOn) {
+    return todayDateKey;
+  }
+  return dueOn > todayDateKey ? dueOn : todayDateKey;
+}
 const REPEAT_MONTHLY_WEEKDAY_OPTIONS = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label, value }));
 const COMPACT_REPEAT_UNITS: Array<{ label: string; value: PrototypeTaskRow["repeat"] }> = [
   { label: "Days", value: "daily" },
@@ -155,10 +166,13 @@ type TasksTableSourceProps = {
   onOpenBatchEdit?: () => void;
   onOpenDeleteTask?: (taskId: string) => void;
   onDuplicateTask?: (taskId: string) => void;
+  onDelayTask?: (taskId: string, days: number) => Promise<boolean> | boolean;
+  onDelayTaskUntil?: (taskId: string, dueOn: string) => Promise<boolean> | boolean;
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
+  onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
   onReorderChildTask?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onFollowDetachedTask?: (taskId: string) => void;
   onDismissDetachedTask?: (taskId: string) => void;
@@ -175,7 +189,7 @@ type TasksTableSourceProps = {
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
-  onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null) => void;
+  onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null, scrollAnchorTaskIds?: string[]) => void;
   onAddTaskSubtask?: (taskId: string) => string | null | Promise<string | null>;
   onAddChildTaskSubtask?: (subtaskId: string) => string | null | Promise<string | null>;
   onDeleteTaskSubtask?: (subtaskId: string) => void;
@@ -211,12 +225,68 @@ type TasksTableSourceProps = {
   onRequestedOpenTaskHandled?: (taskId: string) => void;
   taskTableLayoutPreferences?: TaskTableLayoutPreferences;
   onTaskTableLayoutPreferencesChange?: (nextPreferences: TaskTableLayoutPreferences) => void;
+  statusChangeScrollAnchorTaskIds?: string[];
+  statusChangeScrollPreviousVisibleTaskIds?: string[];
+  statusChangeScrollSourceTaskId?: string | null;
+  statusChangeScrollToken?: number | null;
 };
 
 type TasksTableAdapterProps = {
   filterRowsNode: ReactNode;
   tableProps: TasksTableSourceProps;
   panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode">;
+};
+
+function isScrollableElement(element: HTMLElement) {
+  const computedStyle = window.getComputedStyle(element);
+  return /(auto|scroll|overlay)/.test(computedStyle.overflowY) && element.scrollHeight > element.clientHeight + 1;
+}
+
+function findNearestScrollableContainer(target: HTMLElement, fallbackContainer?: HTMLElement | null) {
+  if (fallbackContainer?.contains(target)) {
+    return fallbackContainer;
+  }
+
+  let current: HTMLElement | null = target.parentElement;
+  while (current) {
+    if (isScrollableElement(current)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+
+  return fallbackContainer ?? null;
+}
+
+function revealTargetInScrollableContainer(target: HTMLElement, fallbackContainer?: HTMLElement | null) {
+  const scrollContainer = findNearestScrollableContainer(target, fallbackContainer);
+  if (!scrollContainer) {
+    return;
+  }
+
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const visibleTop = containerRect.top + 14;
+  const visibleBottom = containerRect.bottom - 16;
+
+  let scrollDelta = 0;
+  if (targetRect.bottom > visibleBottom) {
+    scrollDelta = targetRect.bottom - visibleBottom;
+  } else if (targetRect.top < visibleTop) {
+    scrollDelta = targetRect.top - visibleTop;
+  }
+
+  if (Math.abs(scrollDelta) < 2) {
+    return;
+  }
+
+  scrollContainer.scrollBy({ top: scrollDelta, behavior: "smooth" });
+}
+
+type MeasuredStatusScrollAnchor = {
+  anchorOffsetTop: number;
+  candidateTaskIds: string[];
+  sourceTaskId: string;
 };
 
 const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumnId> = {
@@ -242,6 +312,19 @@ export function TasksTableAdapter({
   tableProps,
   panelProps,
 }: TasksTableAdapterProps) {
+  function buildStatusScrollAnchorTaskIds(taskId: string) {
+    const visibleTaskIds = tableProps.tasks.map((task) => task.id);
+    const taskIndex = visibleTaskIds.indexOf(taskId);
+    if (taskIndex < 0) {
+      return [taskId];
+    }
+    return [
+      ...visibleTaskIds.slice(taskIndex + 1),
+      ...visibleTaskIds.slice(0, taskIndex).reverse(),
+      taskId,
+    ];
+  }
+
   const rows = useMemo(
     () => {
       const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
@@ -325,6 +408,8 @@ export function TasksTableAdapter({
           onOpenBatchEdit={tableProps.onOpenBatchEdit}
           onOpenDeleteTask={tableProps.onOpenDeleteTask}
           onDuplicateTask={tableProps.onDuplicateTask}
+          onDelayTask={tableProps.onDelayTask}
+          onDelayTaskUntil={tableProps.onDelayTaskUntil}
           onRestoreTask={tableProps.onRestoreTask}
           onOpenTaskHistory={tableProps.onOpenTaskHistory}
           onOpenFocusTimer={tableProps.onOpenFocusTimer}
@@ -332,6 +417,7 @@ export function TasksTableAdapter({
           onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
           onOpenChildTask={tableProps.onOpenChildTask}
+          onUnlinkTask={tableProps.onUnlinkTask}
           onReorderChildTask={tableProps.onReorderChildTask}
           onFollowDetachedTask={tableProps.onFollowDetachedTask}
           onDismissDetachedTask={tableProps.onDismissDetachedTask}
@@ -358,6 +444,7 @@ export function TasksTableAdapter({
               taskId,
               status,
               expectedTask,
+              buildStatusScrollAnchorTaskIds(taskId),
             );
           }}
           onTaskSubtaskAdd={tableProps.onAddTaskSubtask}
@@ -380,7 +467,12 @@ export function TasksTableAdapter({
           secondaryBadgeLabel="Table view"
           selectedTaskIds={tableProps.selectedTaskIds}
           showHeader={false}
+          expandAllColumnsToken={panelProps.expandAllColumnsToken}
           shrinkAllColumnsToken={panelProps.shrinkAllColumnsToken}
+          statusChangeScrollAnchorTaskIds={tableProps.statusChangeScrollAnchorTaskIds}
+          statusChangeScrollPreviousVisibleTaskIds={tableProps.statusChangeScrollPreviousVisibleTaskIds}
+          statusChangeScrollSourceTaskId={tableProps.statusChangeScrollSourceTaskId}
+          statusChangeScrollToken={tableProps.statusChangeScrollToken}
           title="Tasks"
           visibleColumns={visibleColumns}
           activeTaskTimerIndex={tableProps.activeTaskTimerIndex}
@@ -394,6 +486,10 @@ export function TasksTableAdapter({
   );
 }
 
+function isStepTitleEditTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && Boolean(target.closest("[data-step-title-edit]"));
+}
+
 type TasksListAdapterProps = {
   currentListLabel: string;
   filterRowsNode: ReactNode;
@@ -405,6 +501,7 @@ type TasksListAdapterProps = {
 const SIMPLE_STATUS_STYLES: Record<TaskStatus, string> = {
   archived: "border-[#d8ddea] bg-white text-[#68738c] dark:border-white/15 dark:bg-white/[0.04] dark:text-white/55",
   complete: "border-[#5d9b76] bg-[#eef8f1] text-[#256947] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]",
+  delayed: "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]",
   did_my_best: "border-[#f2d36f] bg-[#fff9e7] text-[#9f7200] dark:border-[#65511a] dark:bg-[#3a2d10] dark:text-[#ffd56b]",
   done: "border-[#97dfc1] bg-[#ecfbf4] text-[#119a69] dark:border-[#245441] dark:bg-[#14362c] dark:text-[#7de4b8]",
   in_progress: "border-[#a9c2ff] bg-[#eef3ff] text-[#4473df] dark:border-[#29437c] dark:bg-[#17253f] dark:text-[#a9c2ff]",
@@ -585,6 +682,7 @@ function StepsCardPreview({
   onRenameStep,
   onReorderStep,
   onOpenActualTime,
+  onDelayTaskUntil,
   onSetActualSeconds,
   onSetDue,
   onSetEnergy,
@@ -627,6 +725,7 @@ function StepsCardPreview({
   onRenameStep?: (taskId: string, title: string) => void;
   onReorderStep?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onOpenActualTime?: (taskId: string) => void;
+  onDelayTaskUntil?: (taskId: string, dueOn: string) => Promise<boolean> | boolean;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
   onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }) => void;
   onSetEnergy?: (taskId: string, energy: PrototypeTaskRow["energy"]) => void;
@@ -635,7 +734,7 @@ function StepsCardPreview({
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
-  onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null) => void;
+  onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null, scrollAnchorTaskIds?: string[]) => void;
   onSetTags?: (taskId: string, tags: string[]) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
   onToggleExpanded?: () => void;
@@ -658,6 +757,7 @@ function StepsCardPreview({
   const [childTaskDropTarget, setChildTaskDropTarget] = useState<ChildTaskDropTarget | null>(null);
   const childTaskDragStateRef = useRef<ChildTaskDragState | null>(null);
   const childTaskDropTargetRef = useRef<ChildTaskDropTarget | null>(null);
+  const stepTitleDraftsRef = useRef<Record<string, string>>({});
   const [stepTitleDrafts, setStepTitleDrafts] = useState<Record<string, string>>({});
   const [substepDraftParentId, setSubstepDraftParentId] = useState<string | null>(null);
   const [substepTitleDrafts, setSubstepTitleDrafts] = useState<Record<string, string>>({});
@@ -721,6 +821,11 @@ function StepsCardPreview({
     childTaskDropTargetRef.current = null;
     setChildTaskDragState(null);
     setChildTaskDropTarget(null);
+  };
+
+  const setStepTitleDraft = (taskId: string, draft: string) => {
+    stepTitleDraftsRef.current[taskId] = draft;
+    setStepTitleDrafts((current) => ({ ...current, [taskId]: draft }));
   };
 
   const beginChildTaskDrag = (event: ReactDragEvent<HTMLElement>, item: ChildTaskPreview) => {
@@ -890,10 +995,10 @@ function StepsCardPreview({
             const titleDraft = stepTitleDrafts[item.id] ?? item.title;
             const canCollapse = collapsibleTaskIds.has(item.id);
             const isCollapsed = canCollapse && collapsedStepIds[item.id] === true;
-            const commitTitle = () => {
-              const nextTitle = titleDraft.trim();
+            const commitTitle = (taskId: string) => {
+              const nextTitle = (stepTitleDraftsRef.current[taskId] ?? item.title).trim();
               if (nextTitle && nextTitle !== item.title) {
-                onRenameStep?.(item.id, nextTitle);
+                onRenameStep?.(taskId, nextTitle);
               }
               setEditingStepTitleId((current) => (current === item.id ? null : current));
             };
@@ -906,10 +1011,16 @@ function StepsCardPreview({
                 onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                 onDrop={(event) => dropChildTaskOnItem(event, item)}
                 onClick={(event) => {
+                  if (isStepTitleEditTarget(event.target)) {
+                    return;
+                  }
                   event.stopPropagation();
                   onOpenStep(item.id);
                 }}
                 onKeyDown={(event) => {
+                  if (isStepTitleEditTarget(event.target)) {
+                    return;
+                  }
                   if (isKeyboardEventFromEditableTarget(event.target)) {
                     return;
                   }
@@ -941,35 +1052,29 @@ function StepsCardPreview({
                     <div className="flex min-w-0 items-start justify-between gap-2">
                       <div className="flex min-w-0 items-start gap-1.5">
                         {isRenaming ? (
-                          <input
-                            autoFocus
-                            className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
-                            onBlur={commitTitle}
-                            onChange={(event) => setStepTitleDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
-                            onClick={(event) => event.stopPropagation()}
-                            onKeyDown={(event) => {
-                              event.stopPropagation();
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                commitTitle();
-                              }
-                              if (event.key === "Escape") {
-                                event.preventDefault();
-                                setStepTitleDrafts((current) => ({ ...current, [item.id]: item.title }));
-                                setEditingStepTitleId(null);
-                              }
-                            }}
-                            value={titleDraft}
-                          />
+                          <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
+                            <TaskTitleDraftInput
+                              autoFocus
+                              className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                              initialValue={titleDraft}
+                              onCommit={commitTitle}
+                              onDone={() => setEditingStepTitleId((current) => (current === item.id ? null : current))}
+                              onDraftChange={setStepTitleDraft}
+                              style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                              taskId={item.id}
+                            />
+                          </span>
                         ) : (
                           <div className="flex min-w-0 items-center gap-1.5">
                             <button
+                              data-step-title-edit={item.id}
                               className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setEditingStepTitleId(item.id);
-                                setStepTitleDrafts((current) => ({ ...current, [item.id]: item.title }));
+                                setStepTitleDraft(item.id, item.title);
                               }}
+                              onPointerDown={(event) => event.stopPropagation()}
                               type="button"
                             >
                               <p className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
@@ -1172,8 +1277,15 @@ function StepsCardPreview({
                           className="gap-2"
                           key={status}
                           onClick={() => {
+                            if (status === "delayed" && item.dueOn && onDelayTaskUntil) {
+                              openQuickPanel(item.id, "delay");
+                              return;
+                            }
                             closeQuickPanel();
-                            onSetStatus?.(item.id, status, childTask);
+                            onSetStatus?.(item.id, status, childTask, [
+                              ...buildListStatusScrollAnchorTaskIds(task.id),
+                              item.id,
+                            ]);
                           }}
                           toneClassName={`${statusTone(status)}${status === displayStatus ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"}`}
                         >
@@ -1183,6 +1295,14 @@ function StepsCardPreview({
                       ))}
                     </div>
                   </QuickPanelShell>
+                ) : null}
+                {activePanelMode === "delay" ? (
+                  <DelayQuickPanel
+                    dueOn={item.dueOn}
+                    onClose={closeQuickPanel}
+                    onSave={(nextDueOn) => onDelayTaskUntil?.(item.id, nextDueOn) ?? false}
+                    todayDateKey={todayDateKey}
+                  />
                 ) : null}
                 {activePanelMode === "tags" ? (
                   <TagsQuickPanel
@@ -1488,6 +1608,40 @@ function DueQuickPanel({
         />
         <TaskTableChipButton onClick={() => onSave({ dueOn: dateDraft, dueTime: timeDraft })} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Apply</TaskTableChipButton>
       </div>
+    </QuickPanelShell>
+  );
+}
+
+function DelayQuickPanel({
+  dueOn,
+  onClose,
+  onSave,
+  todayDateKey,
+}: {
+  dueOn: string | null;
+  onClose: () => void;
+  onSave: (nextDueOn: string) => Promise<boolean> | boolean;
+  todayDateKey: string;
+}) {
+  const anchorDateKey = getDelayAnchorDate(dueOn, todayDateKey);
+
+  return (
+    <QuickPanelShell onClose={onClose} title="Delay Task">
+      <TaskDelayPicker
+        anchorDateKey={anchorDateKey}
+        description="Move this due date forward and keep the task visibly Delayed until that new date arrives."
+        inputClassName={QUICK_PANEL_TEXT_INPUT_CLASS}
+        onCancel={onClose}
+        onSave={async (nextDueOn) => {
+          const didSave = await onSave(nextDueOn);
+          if (didSave !== false) {
+            onClose();
+          }
+          return didSave;
+        }}
+        primaryToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
+        saveLabel="Apply delay"
+      />
     </QuickPanelShell>
   );
 }
@@ -1918,11 +2072,54 @@ function TasksSimpleList({
   const [parentStepCreationErrors, setParentStepCreationErrors] = useState<Record<string, string | null>>({});
   const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
   const listShellRef = useRef<HTMLDivElement | null>(null);
+  const pendingMeasuredStatusScrollAnchorRef = useRef<MeasuredStatusScrollAnchor | null>(null);
   const parentStepDraftInputRef = useRef<HTMLInputElement | null>(null);
   const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
   const tasks = tableProps.tasks;
   const rowContext = tableProps.rowContext;
   const visibleTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
+  const buildListStatusScrollAnchorTaskIds = (taskId: string) => {
+    const taskIndex = visibleTaskIds.indexOf(taskId);
+    if (taskIndex < 0) {
+      return [taskId];
+    }
+
+    return [
+      ...visibleTaskIds.slice(taskIndex + 1),
+      ...visibleTaskIds.slice(0, taskIndex).reverse(),
+      taskId,
+    ];
+  };
+  const queueMeasuredListStatusScrollAnchor = (taskId: string) => {
+    const shellElement = listShellRef.current;
+    const candidateTaskIds = buildListStatusScrollAnchorTaskIds(taskId);
+    if (!shellElement) {
+      pendingMeasuredStatusScrollAnchorRef.current = null;
+      return candidateTaskIds;
+    }
+
+    for (const candidateTaskId of candidateTaskIds) {
+      const target = shellElement.querySelector<HTMLElement>(`[data-task-list-row="${candidateTaskId}"], [data-same-table-step-row="${candidateTaskId}"]`);
+      if (!target) {
+        continue;
+      }
+      const scrollContainer = findNearestScrollableContainer(target, shellElement);
+      if (!scrollContainer) {
+        continue;
+      }
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      pendingMeasuredStatusScrollAnchorRef.current = {
+        anchorOffsetTop: targetRect.top - containerRect.top,
+        candidateTaskIds,
+        sourceTaskId: taskId,
+      };
+      return candidateTaskIds;
+    }
+
+    pendingMeasuredStatusScrollAnchorRef.current = null;
+    return candidateTaskIds;
+  };
   const selectedTaskIdSet = useMemo(() => new Set(tableProps.selectedTaskIds), [tableProps.selectedTaskIds]);
   const highlightedTaskIdSet = useMemo(() => new Set(tableProps.highlightedTaskIds ?? []), [tableProps.highlightedTaskIds]);
   const searchMatchedStepParentTaskIdSet = useMemo(
@@ -1988,6 +2185,72 @@ function TasksSimpleList({
       parentStepDraftInputRef.current?.focus();
     }
   }, [parentStepDraftTaskId]);
+
+  useEffect(() => {
+    if (!tableProps.statusChangeScrollAnchorTaskIds?.length || tableProps.statusChangeScrollToken == null) {
+      return;
+    }
+
+    const shellElement = listShellRef.current;
+    if (!shellElement) {
+      return;
+    }
+
+    const pendingAnchor = pendingMeasuredStatusScrollAnchorRef.current;
+    const matchesPendingAnchor = pendingAnchor
+      && pendingAnchor.sourceTaskId === tableProps.statusChangeScrollSourceTaskId
+      && pendingAnchor.candidateTaskIds.length === tableProps.statusChangeScrollAnchorTaskIds.length
+      && pendingAnchor.candidateTaskIds.every((taskId, index) => taskId === tableProps.statusChangeScrollAnchorTaskIds?.[index]);
+    if (!matchesPendingAnchor) {
+      return;
+    }
+    const confirmedPendingAnchor = pendingAnchor;
+
+    const previousVisibleTaskIds = tableProps.statusChangeScrollPreviousVisibleTaskIds ?? [];
+    const sourceTaskId = tableProps.statusChangeScrollSourceTaskId;
+    const hasRowsSettled = previousVisibleTaskIds.join("|") !== visibleTaskIds.join("|")
+      || (sourceTaskId ? !visibleTaskIds.includes(sourceTaskId) : false);
+
+    let frameId = 0;
+    let attemptCount = 0;
+    const revealTarget = () => {
+      attemptCount += 1;
+      if (!hasRowsSettled && attemptCount < 6) {
+        frameId = window.requestAnimationFrame(revealTarget);
+        return;
+      }
+
+      for (const candidateTaskId of confirmedPendingAnchor.candidateTaskIds) {
+        const target = shellElement.querySelector<HTMLElement>(`[data-task-list-row="${candidateTaskId}"], [data-same-table-step-row="${candidateTaskId}"]`);
+        if (!target) {
+          continue;
+        }
+        const scrollContainer = findNearestScrollableContainer(target, shellElement);
+        if (!scrollContainer) {
+          continue;
+        }
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        scrollContainer.scrollTop += (targetRect.top - containerRect.top) - confirmedPendingAnchor.anchorOffsetTop;
+        pendingMeasuredStatusScrollAnchorRef.current = null;
+        return;
+      }
+
+      pendingMeasuredStatusScrollAnchorRef.current = null;
+    };
+
+    frameId = window.requestAnimationFrame(revealTarget);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [
+    tableProps.statusChangeScrollAnchorTaskIds,
+    tableProps.statusChangeScrollPreviousVisibleTaskIds,
+    tableProps.statusChangeScrollSourceTaskId,
+    tableProps.statusChangeScrollToken,
+    visibleTaskIds,
+  ]);
 
   useEffect(() => {
     if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
@@ -2149,7 +2412,7 @@ function TasksSimpleList({
               onTaskRepeatChange={tableProps.onSetRepeat}
               onTaskStatusChange={(taskId, status) => {
                 const expectedTask = tableProps.tasks.find((task) => task.id === taskId) ?? null;
-                tableProps.onSetStatus?.(taskId, status, expectedTask);
+                tableProps.onSetStatus?.(taskId, status, expectedTask, queueMeasuredListStatusScrollAnchor(taskId));
               }}
               onTaskSubtaskAdd={tableProps.onAddTaskSubtask}
               onTaskSubtaskAddChild={tableProps.onAddChildTaskSubtask}
@@ -2169,6 +2432,12 @@ function TasksSimpleList({
               selectedTaskIds={tableProps.selectedTaskIds}
               suppressDetachedNoticeTaskId={tableProps.suppressDetachedNoticeTaskId}
               taskActualTimeEntriesByTaskId={tableProps.taskActualTimeEntriesByTaskId}
+              expandAllColumnsToken={panelProps.expandAllColumnsToken}
+              shrinkAllColumnsToken={panelProps.shrinkAllColumnsToken}
+              statusChangeScrollAnchorTaskIds={tableProps.statusChangeScrollAnchorTaskIds}
+              statusChangeScrollPreviousVisibleTaskIds={tableProps.statusChangeScrollPreviousVisibleTaskIds}
+              statusChangeScrollSourceTaskId={tableProps.statusChangeScrollSourceTaskId}
+              statusChangeScrollToken={tableProps.statusChangeScrollToken}
               visibleColumns={["status_icon", "title"]}
             />
           ) : null}
@@ -2493,8 +2762,12 @@ function TasksSimpleList({
                       className="gap-2"
                       key={status}
                       onClick={() => {
+                        if (status === "delayed" && task.due_on && tableProps.onDelayTaskUntil) {
+                          openQuickPanel(task.id, "delay");
+                          return;
+                        }
                         closeQuickPanel();
-                        tableProps.onSetStatus?.(task.id, status, task);
+                        tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
                       }}
                       toneClassName={`${statusTone(status)}${status === displayStatus ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"}`}
                     >
@@ -2504,6 +2777,14 @@ function TasksSimpleList({
                   ))}
                 </div>
               </QuickPanelShell>
+            ) : null}
+            {activePanelMode === "delay" ? (
+              <DelayQuickPanel
+                dueOn={task.due_on}
+                onClose={closeQuickPanel}
+                onSave={(nextDueOn) => tableProps.onDelayTaskUntil?.(task.id, nextDueOn) ?? false}
+                todayDateKey={rowContext.todayDateKey}
+              />
             ) : null}
             {activePanelMode === "tags" ? (
               <TagsQuickPanel
@@ -2604,6 +2885,7 @@ function TasksSimpleList({
                 onDeleteStep={tableProps.onOpenDeleteTask}
                 onOpenHistory={tableProps.onOpenTaskHistory}
                 onOpenActualTime={tableProps.onOpenTaskActualTime}
+                onDelayTaskUntil={tableProps.onDelayTaskUntil}
                 onOpenStep={(taskId) => {
                   setRowContextMenu(null);
                   closeQuickPanel();

@@ -28,6 +28,8 @@ export function renderTaskStatusIcon(status: TaskStatus) {
           <span className="block h-3 w-[2px] rounded-full bg-current" />
         </span>
       );
+    case "delayed":
+      return <Clock className={iconClassName} />;
     case "archived":
       return <BookOpen className={iconClassName} />;
     case "trashed":

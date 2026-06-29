@@ -24,7 +24,7 @@ export type TaskBucketContext = {
   routing: Record<string, TaskRoutingBucket>;
 };
 
-const OPEN_TASK_STATUSES: TaskStatus[] = ["pending", "in_progress", "upcoming", "not_due", "missed"];
+const OPEN_TASK_STATUSES: TaskStatus[] = ["pending", "in_progress", "delayed", "upcoming", "not_due", "missed"];
 const FINISHED_TASK_STATUSES: TaskStatus[] = ["done", "did_my_best", "complete"];
 
 export function isTaskOpenStatus(status: TaskStatus) {

@@ -19,6 +19,7 @@ const FILTER_ACTIVE_CHIP_CLASS = TASK_TABLE_ACTIVE_LIST_CHIP_CLASS;
 const COMPACT_ACTIVE_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {
   pending: "border-[#d96b1c] bg-[#d96b1c] text-white",
   in_progress: "border-[#4473df] bg-[#4473df] text-white",
+  delayed: "border-[#7d54d1] bg-[#7d54d1] text-white",
   done: "border-[#119a69] bg-[#119a69] text-white",
   missed: "border-[#d94e67] bg-[#d94e67] text-white",
   did_my_best: "border-[#b28700] bg-[#b28700] text-white",

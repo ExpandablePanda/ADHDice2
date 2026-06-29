@@ -7,6 +7,7 @@ import { BottomDockComponent } from "./bottom-dock";
 import { FilterRowsComponent } from "./task-filter-rows";
 import { FocusPlannerModalComponent } from "./focus-planner-modal";
 import { Select } from "./task-status-select";
+import { TaskDelayPicker } from "./task-delay-picker";
 import { formatTaskStatusLabel, renderTaskStatusCircle, TASK_STATUS_CHIP_STYLES } from "./task-status-ui";
 import {
   TASK_TABLE_CHIP_BASE_CLASS,
@@ -526,6 +527,7 @@ export function MomentumTaskModal({
 
 export function TaskHistoryModal({
   onClose,
+  onSetDelayedStatus,
   onSetStatuses,
   task,
   taskHistory,
@@ -534,6 +536,7 @@ export function TaskHistoryModal({
 }: {
   onClose: () => void;
   onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<void>;
+  onSetDelayedStatus?: (entryDate: string, nextDueOn: string) => Promise<void>;
   task: Task;
   taskHistory: DbTaskHistory[];
   taskTitle: string;
@@ -550,6 +553,7 @@ export function TaskHistoryModal({
   const [selectedDates, setSelectedDates] = useState<string[]>([initialSelectedDate]);
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [showDelayEditor, setShowDelayEditor] = useState(false);
   const weeks: string[][] = [];
   const dueDates = buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, taskHistory);
   const sortedDueDates = [...dueDates].sort();
@@ -564,14 +568,16 @@ export function TaskHistoryModal({
   const selectedIsDue = dueDates.has(selectedDate);
   const selectedVirtualState = getTaskHistoryCalendarVirtualState({
     dateKey: selectedDate,
+    delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
     hasHistoryEntry: selectedEntry !== null,
     isDue: selectedIsDue,
     nextDueDateKey: getNextDueDateKey(selectedDate),
     todayDateKey: today,
   });
   const calendarActionStatuses = getTaskHistoryCalendarActionStatuses(task);
+  const canDelaySelectedDate = !isMultiSelect && selectedDate === today && Boolean(task.due_on) && Boolean(onSetDelayedStatus);
   const visibleCalendarActionStatuses = isMultiSelect
-    ? calendarActionStatuses.filter((status) => status !== "complete")
+    ? calendarActionStatuses.filter((status) => status !== "complete" && status !== "delayed")
     : calendarActionStatuses;
 
   for (let weekIndex = 0; weekIndex < Math.ceil(totalDays / 7); weekIndex += 1) {
@@ -583,11 +589,15 @@ export function TaskHistoryModal({
     if (!entry) {
       const virtualState = getTaskHistoryCalendarVirtualState({
         dateKey,
+        delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
         hasHistoryEntry: false,
         isDue: dueDates.has(dateKey),
         nextDueDateKey: getNextDueDateKey(dateKey),
         todayDateKey: today,
       });
+      if (virtualState === "delayed") {
+        return "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]";
+      }
       if (virtualState === "upcoming") {
         return "border-[#cfd6e4] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60";
       }
@@ -602,6 +612,7 @@ export function TaskHistoryModal({
   }
 
   function selectDate(dateKey: string) {
+    setShowDelayEditor(false);
     if (!isMultiSelect) {
       setSelectedDate(dateKey);
       setSelectedDates([dateKey]);
@@ -625,6 +636,7 @@ export function TaskHistoryModal({
   }
 
   function toggleMultiSelect() {
+    setShowDelayEditor(false);
     if (isMultiSelect) {
       setSelectedDates([selectedDate]);
     } else if (selectedDate > today) {
@@ -647,6 +659,19 @@ export function TaskHistoryModal({
     }
   }
 
+  async function handleSaveDelayedStatus(nextDueOn: string) {
+    if (!onSetDelayedStatus) {
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await onSetDelayedStatus(selectedDate, nextDueOn);
+      setShowDelayEditor(false);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   function renderOfficialStatusChip(status: TaskStatus, label?: string) {
     return (
       <span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${statusTone(status)} gap-2`}>
@@ -656,8 +681,11 @@ export function TaskHistoryModal({
     );
   }
 
-  function renderStatusPill(entry: DbTaskHistory | null, virtualState: "due" | "not_due" | "upcoming" | null = null) {
+  function renderStatusPill(entry: DbTaskHistory | null, virtualState: "delayed" | "due" | "not_due" | "upcoming" | null = null) {
     if (!entry) {
+      if (virtualState === "delayed") {
+        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]`}>Delayed</span>;
+      }
       if (virtualState === "due") {
         return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]`}>Due</span>;
       }
@@ -718,6 +746,7 @@ export function TaskHistoryModal({
               <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
                 {renderOfficialStatusChip("done", "Done")}
                 {renderOfficialStatusChip("complete", "Marked Complete")}
+                {renderOfficialStatusChip("delayed", "Delayed")}
                 {renderOfficialStatusChip("did_my_best", "Did My Best")}
                 {renderOfficialStatusChip("missed", "Missed")}
                 <span className="flex items-center gap-1.5 text-[#d96b1c] dark:text-[#ffb47c]"><span className="inline-block h-3 w-3 rounded-sm border border-[#f6be96] bg-[#fff4eb] dark:border-[#7a4527] dark:bg-[#3a2418]" />Due</span>
@@ -799,9 +828,19 @@ export function TaskHistoryModal({
               {visibleCalendarActionStatuses.map((status) => (
                 <TaskTableChipButton
                   className="gap-2"
-                  disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && selectedIsFuture)}
+                  disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && (selectedIsFuture || (status === "delayed" && !canDelaySelectedDate)))}
                   key={status}
-                  onClick={() => { void handleSetStatus(status); }}
+                  onClick={() => {
+                    if (status === "delayed") {
+                      if (!canDelaySelectedDate) {
+                        return;
+                      }
+                      setShowDelayEditor(true);
+                      return;
+                    }
+                    setShowDelayEditor(false);
+                    void handleSetStatus(status);
+                  }}
                   toneClassName={`${statusTone(status)}${isSelectedStatus(status) ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"} disabled:opacity-50`}
                 >
                   {renderTaskStatusCircle(status, "sm")}
@@ -819,6 +858,19 @@ export function TaskHistoryModal({
                 </TaskTableChipButton>
               ) : null}
             </div>
+            {showDelayEditor && canDelaySelectedDate && task.due_on ? (
+              <div className="mt-4 rounded-[1.25rem] border border-[#efe9ff] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
+                <TaskDelayPicker
+                  anchorDateKey={task.due_on > today ? task.due_on : today}
+                  description="Delay today’s live task without changing past rewards or completion history."
+                  inputClassName="h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+                  onCancel={() => setShowDelayEditor(false)}
+                  onSave={(nextDueOn) => handleSaveDelayedStatus(nextDueOn)}
+                  primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  saveLabel="Save delayed status"
+                />
+              </div>
+            ) : null}
             <p className="mt-4 text-xs text-[#8d87a7] dark:text-white/40">
               Calendar edits update saved task history, streaks, and the live task status when the active unresolved state changes. They do not change past rewards or economy.
             </p>

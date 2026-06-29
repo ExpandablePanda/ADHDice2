@@ -364,6 +364,7 @@ export function shouldReconcileOverdueTaskMisses(
     && task.due_on < currentDayKey
     && (task.status === "pending"
       || task.status === "in_progress"
+      || task.status === "delayed"
       || task.status === "missed"
       || task.status === "upcoming"
       || task.status === "not_due"),

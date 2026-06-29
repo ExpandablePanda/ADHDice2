@@ -66,7 +66,7 @@ export function TaskBatchEditModal({
   const [isSaving, setIsSaving] = useState(false);
   const isDirty = serializeBatchTaskEditDraft(draft) !== serializeBatchTaskEditDraft(createEmptyBatchTaskEditDraft());
 
-  const statusOptions = ["unchanged", "pending", "in_progress", "done", "missed", "did_my_best", "upcoming", "not_due"] as const;
+  const statusOptions = ["unchanged", "pending", "in_progress", "delayed", "done", "missed", "did_my_best", "upcoming", "not_due"] as const;
   const routeOptions = ["unchanged", "inbox", "today", "focus", "waiting", "later", "clear"] as const;
   const priorityOptionsWithUnchanged = ["unchanged", ...priorityOptions] as const;
   const energyOptionsWithUnchanged = ["unchanged", ...energyOptions] as const;

@@ -322,6 +322,7 @@ export function TaskOperationsHeader({
   onOpenTrash,
   onReorderCustomLists,
   onSelectBucket,
+  onExpandAllColumns,
   onShrinkAllColumns,
   onSearchChange,
   onSearchSubmit,
@@ -367,6 +368,7 @@ export function TaskOperationsHeader({
   onOpenTrash: () => void;
   onReorderCustomLists?: (orderedCustomListIds: string[]) => void;
   onSelectBucket: (bucket: string) => void;
+  onExpandAllColumns: () => void;
   onShrinkAllColumns: () => void;
   onSearchChange: (search: string) => void;
   onSearchSubmit?: (search: string) => void;
@@ -514,8 +516,11 @@ export function TaskOperationsHeader({
                   </div>
                 ) : null}
               </div>
-              <TaskChipButton onClick={onShrinkAllColumns}>
-                Shrink all
+              <TaskChipButton onClick={onExpandAllColumns} tone="purple">
+                Expand columns
+              </TaskChipButton>
+              <TaskChipButton onClick={onShrinkAllColumns} tone="purple">
+                Shrink columns
               </TaskChipButton>
               <div className="relative" ref={keyboardShortcutsMenuRef}>
                 <TaskTableChipButton
@@ -598,6 +603,7 @@ export function TasksListViewPanel(props: {
   onUpdateSearch: (search: string) => void;
   search: string;
   selectedBucket: string;
+  expandAllColumnsToken: number;
   shrinkAllColumnsToken: number;
   shortcuts: Array<{ action: string; alternateKeys?: string[]; keys: string[] }>;
   trashCount: number;

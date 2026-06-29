@@ -6,6 +6,7 @@ export type TaskStatus =
   | "did_my_best"
   | "upcoming"
   | "not_due"
+  | "delayed"
   | "archived"
   | "trashed"
   | "complete";

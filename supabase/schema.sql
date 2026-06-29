@@ -1,6 +1,6 @@
 create extension if not exists pgcrypto;
 
-create type public.adhdice_clean_task_status as enum ('pending', 'in_progress', 'done', 'missed', 'did_my_best', 'upcoming', 'not_due', 'archived');
+create type public.adhdice_clean_task_status as enum ('pending', 'in_progress', 'done', 'missed', 'did_my_best', 'upcoming', 'not_due', 'delayed', 'archived');
 create type public.adhdice_clean_task_priority as enum ('low', 'normal', 'high');
 create type public.adhdice_clean_task_energy as enum ('none', 'low', 'medium', 'high');
 create type public.adhdice_clean_task_repeat_frequency as enum ('none', 'daily', 'weekly', 'monthly', 'custom');

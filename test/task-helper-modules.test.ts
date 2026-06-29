@@ -557,6 +557,22 @@ test("date bucket helpers classify due_on windows and normalize stale future sta
     status: "upcoming",
     title: "No due date task",
   });
+  const delayedFutureTask = createTask({
+    created_at: `${today}T07:36:00.000Z`,
+    due_on: tomorrow,
+    id: "task-delayed-future",
+    sort_order: 17,
+    status: "delayed",
+    title: "Delayed future task",
+  });
+  const delayedTodayTask = createTask({
+    created_at: `${today}T07:37:00.000Z`,
+    due_on: today,
+    id: "task-delayed-today",
+    sort_order: 18,
+    status: "delayed",
+    title: "Delayed today task",
+  });
 
   assert.equal(getTaskDueDateBucket(todayTask), "today");
   assert.equal(getTaskDueDateBucket(tomorrowTask), "upcoming");
@@ -571,6 +587,8 @@ test("date bucket helpers classify due_on windows and normalize stale future sta
   assert.equal(getTaskDisplayStatus(eightDaysTask), "not_due");
   assert.equal(getTaskDisplayStatus(overdueTask), "missed");
   assert.equal(getTaskDisplayStatus(noDueDateTask), "not_due");
+  assert.equal(getTaskDisplayStatus(delayedFutureTask), "delayed");
+  assert.equal(getTaskDisplayStatus(delayedTodayTask), "pending");
 });
 
 test("recurring display status follows current-occurrence history without treating older history as the current row", () => {

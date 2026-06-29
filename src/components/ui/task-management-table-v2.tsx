@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, Fragment, startTransition, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Children, Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowUp,
@@ -32,6 +32,7 @@ import type { TaskActualTimeEntry, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdin
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
+import { TaskDelayPicker } from "@/components/task-app/task-delay-picker";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
 import { getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
 import {
@@ -117,9 +118,9 @@ type StructuredFilters = {
   repeat: TaskRepeat[];
   status: TaskStatus[];
 };
-type OverlayMode = "actual" | "due" | "energy" | "estimated" | "full" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
+type OverlayMode = "actual" | "delay" | "due" | "energy" | "estimated" | "full" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "tags";
-type MetadataPanelId = "actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
+type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type ColumnAlignment = "center" | "left" | "right";
 export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
@@ -217,6 +218,86 @@ function revealTargetInScrollableContainer(
   }
 
   scrollContainer.scrollBy({ top: scrollDelta, behavior });
+}
+
+function describeActiveElement() {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLElement)) {
+    return activeElement?.tagName?.toLowerCase() ?? null;
+  }
+
+  return {
+    ariaLabel: activeElement.getAttribute("aria-label"),
+    dataInlineEditor: activeElement.getAttribute("data-task-table-inline-editor"),
+    dataRow: activeElement.getAttribute("data-task-table-row"),
+    id: activeElement.id || null,
+    role: activeElement.getAttribute("role"),
+    tag: activeElement.tagName.toLowerCase(),
+    text: activeElement.textContent?.trim().slice(0, 80) ?? "",
+  };
+}
+
+type TableScrollAnchorState = {
+  awaitRowsSettlement: boolean;
+  candidateTaskIds: string[];
+  previousVisibleTaskIds: string[];
+  sourceTaskId: string;
+  token: number;
+};
+
+type MeasuredTableScrollAnchor = {
+  anchorOffsetTop: number;
+  awaitRowsSettlement: boolean;
+  candidateTaskIds: string[];
+  sourceTaskId: string;
+};
+
+function buildViewportStableTableAnchorTaskIds(
+  shellElement: HTMLElement,
+  scrollContainer: HTMLElement,
+  visibleTaskIds: string[],
+  sourceTaskId: string,
+) {
+  const containerRect = scrollContainer.getBoundingClientRect();
+  const visibleEntries = Array.from(
+    shellElement.querySelectorAll<HTMLElement>("[data-task-table-row], [data-same-table-step-row]"),
+  )
+    .map((element) => {
+      const taskId = element.getAttribute("data-task-table-row") ?? element.getAttribute("data-same-table-step-row");
+      if (!taskId) {
+        return null;
+      }
+      const rect = element.getBoundingClientRect();
+      const visibleTop = Math.max(rect.top, containerRect.top);
+      const visibleBottom = Math.min(rect.bottom, containerRect.bottom);
+      const visibleHeight = visibleBottom - visibleTop;
+      if (visibleHeight <= 1) {
+        return null;
+      }
+      return {
+        taskId,
+        top: rect.top,
+      };
+    })
+    .filter((entry): entry is { taskId: string; top: number } => Boolean(entry))
+    .sort((left, right) => left.top - right.top);
+
+  const prioritizedTaskIds = visibleEntries.map((entry) => entry.taskId);
+  const fallbackTaskIds = visibleTaskIds.filter((taskId) => !prioritizedTaskIds.includes(taskId));
+  const candidateTaskIds = Array.from(new Set([
+    ...prioritizedTaskIds,
+    ...fallbackTaskIds,
+    sourceTaskId,
+  ]));
+
+  return {
+    anchorTaskId: prioritizedTaskIds[0] ?? candidateTaskIds[0] ?? sourceTaskId,
+    candidateTaskIds,
+  };
 }
 
 function findPreviewAncestorIdsForTask(
@@ -349,6 +430,7 @@ type TaskRowContextMenuProps = {
   menu: RowContextMenuState;
   onClearSelection?: () => void;
   onDeleteTask?: () => void;
+  onDelayTask?: (sourceElement?: HTMLElement | null) => void;
   onDismiss: () => void;
   onDuplicateTask?: () => void;
   onEditTask?: () => void;
@@ -359,6 +441,7 @@ type TaskRowContextMenuProps = {
   onRestoreTask?: () => void;
   onSelectAllVisible?: () => void;
   onToggleTaskSelection?: () => void;
+  onUnlinkTask?: () => void;
   quickEditItems?: TaskRowContextMenuQuickEditItem[];
   quickEditTitle?: string;
   selectedTaskCount: number;
@@ -373,6 +456,7 @@ export function TaskRowContextMenu({
   menu,
   onClearSelection,
   onDeleteTask,
+  onDelayTask,
   onDismiss,
   onDuplicateTask,
   onEditTask,
@@ -383,6 +467,7 @@ export function TaskRowContextMenu({
   onRestoreTask,
   onSelectAllVisible,
   onToggleTaskSelection,
+  onUnlinkTask,
   quickEditItems = [],
   quickEditTitle = "Quick edit",
   selectedTaskCount,
@@ -451,6 +536,24 @@ export function TaskRowContextMenu({
             >
               <span>Open time log</span>
               <Clock3 className="h-3.5 w-3.5" />
+            </TaskTableChipButton>
+          ) : null}
+          {onDelayTask ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={(event) => onDelayTask(event.currentTarget)}
+            >
+              <span>Delay task</span>
+              <CalendarDays className="h-3.5 w-3.5" />
+            </TaskTableChipButton>
+          ) : null}
+          {onUnlinkTask ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onUnlinkTask()}
+            >
+              <span>Unlink step</span>
+              <MoveLeft className="h-3.5 w-3.5" />
             </TaskTableChipButton>
           ) : null}
           {onToggleTaskSelection ? (
@@ -574,7 +677,7 @@ const SUBTASK_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
   letterSpacing: "normal",
   lineHeight: "13px",
 };
-const PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
+export const PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE: CSSProperties = {
   color: "rgb(122, 117, 146)",
   fontFamily: "inherit",
   fontSize: "13px",
@@ -832,6 +935,8 @@ type TaskManagementTableV2Props = {
   onOpenBatchEdit?: () => void;
   onOpenDeleteTask?: (taskId: string) => void;
   onDuplicateTask?: (taskId: string) => void;
+  onDelayTask?: (taskId: string, days: number) => Promise<boolean> | boolean;
+  onDelayTaskUntil?: (taskId: string, dueOn: string) => Promise<boolean> | boolean;
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenFocusTimer?: (taskId: string) => void;
@@ -839,6 +944,7 @@ type TaskManagementTableV2Props = {
   onOpenTaskActualTime?: (taskId: string, options?: { durationSeconds?: number; title?: string }) => void;
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
+  onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
   onReorderChildTask?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   overlayOnly?: boolean;
   onLoadMoreRows?: () => void;
@@ -864,7 +970,7 @@ type TaskManagementTableV2Props = {
   onRowClick?: (taskId: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
   onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
-  onTaskStatusChange?: (taskId: string, status: TaskStatus) => void;
+  onTaskStatusChange?: (taskId: string, status: TaskStatus, scrollAnchorTaskIds?: string[]) => void;
   onTaskSubtaskAdd?: (taskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskAddChild?: (subtaskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskDelete?: (subtaskId: string) => void;
@@ -889,7 +995,12 @@ type TaskManagementTableV2Props = {
   activeTaskTimerIndex?: number;
   getFollowTaskDestination?: (taskId: string) => TaskFollowDestination | null;
   hasMoreRows?: boolean;
+  expandAllColumnsToken?: number;
   shrinkAllColumnsToken?: number;
+  statusChangeScrollAnchorTaskIds?: string[];
+  statusChangeScrollPreviousVisibleTaskIds?: string[];
+  statusChangeScrollSourceTaskId?: string | null;
+  statusChangeScrollToken?: number | null;
   persistedLayoutPreferences?: TaskTableLayoutPreferences;
   onPersistedLayoutPreferencesChange?: (nextPreferences: TaskTableLayoutPreferences) => void;
 };
@@ -1152,6 +1263,7 @@ const COMPACT_REPEAT_UNITS: Array<{ label: string; value: TaskRepeat }> = [
 const STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
   { label: "Pending", value: "pending" },
   { label: "In Progress", value: "in_progress" },
+  { label: "Delayed", value: "delayed" },
   { label: "Done", value: "done" },
   { label: "Did My Best", value: "did_my_best" },
   { label: "Missed", value: "missed" },
@@ -1267,6 +1379,7 @@ const REPEAT_SORT_ORDER: TaskRepeat[] = ["none", "daily", "weekly", "monthly", "
 const STATUS_SORT_ORDER: TaskStatus[] = [
   "pending",
   "in_progress",
+  "delayed",
   "done",
   "did_my_best",
   "missed",
@@ -1281,6 +1394,14 @@ function offsetDate(days: number) {
   date.setHours(12, 0, 0, 0);
   date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function getDelayAnchorDate(dueOn: string | null) {
+  const todayDateKey = offsetDate(0);
+  if (!dueOn) {
+    return todayDateKey;
+  }
+  return dueOn > todayDateKey ? dueOn : todayDateKey;
 }
 
 function nextWeekdayIso(targetDay: number) {
@@ -1532,18 +1653,17 @@ function SameTableStepCreationControl({
     }
 
     return (
-      <TaskTableChipButton
+      <button
+        aria-label="Add Step"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
         onClick={() => {
           setCreationError(null);
           setIsCreating(true);
         }}
-        toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+        type="button"
       >
-        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-[#ddd2ff] bg-white text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" aria-hidden="true">
-          <Footprints className="h-3 w-3" />
-        </span>
-        Add Step
-      </TaskTableChipButton>
+        <Footprints className="h-3.5 w-3.5" />
+      </button>
     );
   }
 
@@ -1686,11 +1806,11 @@ function lastDoneSortValue(task: PrototypeTaskRow) {
   return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp;
 }
 
-function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLElement>) {
+export function stopRowActionPointerEvent(event: ReactPointerEvent<HTMLElement>) {
   event.stopPropagation();
 }
 
-function TaskTitleDraftInput({
+export function TaskTitleDraftInput({
   autoFocus = false,
   className,
   initialValue,
@@ -1947,12 +2067,15 @@ export function TaskManagementTableV2({
   onOpenBatchEdit,
   onOpenDeleteTask,
   onDuplicateTask,
+  onDelayTask,
+  onDelayTaskUntil,
   onRestoreTask,
   onOpenTaskHistory,
   onOpenNote,
   onOpenTaskActualTime,
   onOpenTaskEditor,
   onOpenChildTask,
+  onUnlinkTask,
   onReorderChildTask,
   overlayOnly = false,
   onLoadMoreRows,
@@ -2000,7 +2123,12 @@ export function TaskManagementTableV2({
   selectedTaskIds = [],
   secondaryBadgeLabel = "Test page only",
   showHeader = true,
+  expandAllColumnsToken = 0,
   shrinkAllColumnsToken = 0,
+  statusChangeScrollAnchorTaskIds = [],
+  statusChangeScrollPreviousVisibleTaskIds = [],
+  statusChangeScrollSourceTaskId = null,
+  statusChangeScrollToken = null,
   taskTimerNow,
   title = "Table #2 Prototype",
   visibleColumns,
@@ -2027,6 +2155,7 @@ export function TaskManagementTableV2({
   const [dueDrafts, setDueDrafts] = useState<Record<string, { dueOn: string; dueTime: string }>>({});
   const [estimatedMinutesDrafts, setEstimatedMinutesDrafts] = useState<Record<string, string>>({});
   const titleDraftsRef = useRef<Record<string, string>>({});
+  const pendingEditorChildTitleRenameRef = useRef<{ taskId: string; title: string } | null>(null);
   const [subtaskTitleDrafts, setSubtaskTitleDrafts] = useState<Record<string, string>>({});
   const [linkDrafts, setLinkDrafts] = useState<Record<string, { label: string; url: string }>>({});
   const [notesDrafts, setNotesDrafts] = useState<Record<string, string>>({});
@@ -2064,6 +2193,16 @@ export function TaskManagementTableV2({
   const [columnOrder, setColumnOrder] = useState<TaskManagementTableColumnId[]>(() => getInitialColumnOrder(persistedLayoutPreferences));
   const [columnAlignments, setColumnAlignments] = useState<Partial<Record<TaskManagementTableColumnId, ColumnAlignment>>>(() => getInitialColumnAlignments());
   const [statusDisplayMode, setStatusDisplayMode] = useState<"chip" | "circle">(() => getInitialStatusDisplayMode());
+  const logTableTodayScrollDiag = useCallback((label: string, details: Record<string, unknown>) => {
+    if (process.env.NODE_ENV === "production") {
+      return;
+    }
+    if (!currentListLabel?.toLowerCase().includes("today")) {
+      return;
+    }
+    console.info("[TABLE_TODAY_SCROLL_DIAG]", label, details);
+  }, [currentListLabel]);
+  const [localTableScrollAnchor, setLocalTableScrollAnchor] = useState<TableScrollAnchorState | null>(null);
 
   useEffect(() => {
     if (tableStepDraftParentId) {
@@ -2077,6 +2216,7 @@ export function TaskManagementTableV2({
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const rowContextMenuRef = useRef<HTMLDivElement | null>(null);
   const loadMoreTasksRef = useRef<HTMLDivElement | null>(null);
+  const pendingMeasuredTableScrollAnchorRef = useRef<MeasuredTableScrollAnchor | null>(null);
   const resizeStateRef = useRef<{
     cleanup: () => void;
     columnId: TaskManagementTableColumnId;
@@ -2093,6 +2233,7 @@ export function TaskManagementTableV2({
   const [quickEditTargetTaskIds, setQuickEditTargetTaskIds] = useState<string[] | null>(null);
   const [pendingTableReveal, setPendingTableReveal] = useState<PendingTableReveal | null>(null);
   const hasSeenSelectedTaskInCurrentListRef = useRef(false);
+  const lastExpandAllColumnsTokenRef = useRef(0);
   const lastShrinkAllColumnsTokenRef = useRef(0);
   const lastRowsSignatureRef = useRef(buildPrototypeRowsSignature(rows));
   const pendingRowClickTimeoutRef = useRef<number | null>(null);
@@ -2362,6 +2503,73 @@ export function TaskManagementTableV2({
     () => new Set(visibleTaskIds),
     [visibleTaskIds],
   );
+  const queueMeasuredTableScrollAnchor = useCallback((taskId: string, options?: { awaitRowsSettlement?: boolean }) => {
+    const awaitRowsSettlement = options?.awaitRowsSettlement ?? false;
+    const fallbackTaskIds = visibleTaskIds.includes(taskId) ? visibleTaskIds : [...visibleTaskIds, taskId];
+    if (overlayOnly) {
+      pendingMeasuredTableScrollAnchorRef.current = null;
+      setLocalTableScrollAnchor(null);
+      return fallbackTaskIds;
+    }
+
+    const shellElement = shellRef.current;
+    const scrollContainer = tableScrollContainerRef.current ?? shellElement;
+    const measuredAnchor = shellElement && scrollContainer
+      ? buildViewportStableTableAnchorTaskIds(shellElement, scrollContainer, visibleTaskIds, taskId)
+      : null;
+    const candidateTaskIds = measuredAnchor?.candidateTaskIds ?? fallbackTaskIds;
+    let didMeasureAnchor = false;
+    if (shellElement && measuredAnchor) {
+      const target = shellElement.querySelector<HTMLElement>(`[data-task-table-row="${measuredAnchor.anchorTaskId}"], [data-same-table-step-row="${measuredAnchor.anchorTaskId}"]`);
+      if (target) {
+        const measuredScrollContainer = findNearestScrollableContainer(target, scrollContainer);
+        if (measuredScrollContainer) {
+          const containerRect = measuredScrollContainer.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          pendingMeasuredTableScrollAnchorRef.current = {
+            anchorOffsetTop: targetRect.top - containerRect.top,
+            awaitRowsSettlement,
+            candidateTaskIds,
+            sourceTaskId: taskId,
+          };
+          didMeasureAnchor = true;
+        }
+      }
+    }
+
+    if (!didMeasureAnchor) {
+      logTableTodayScrollDiag("anchor_queue_unmeasured", {
+        activeElement: describeActiveElement(),
+        candidateTaskIds: candidateTaskIds.slice(0, 8),
+        metadataTargetTaskId,
+        scrollTop: scrollContainer?.scrollTop ?? null,
+        selectedTaskId,
+        sourceTaskId: taskId,
+      });
+      pendingMeasuredTableScrollAnchorRef.current = null;
+      setLocalTableScrollAnchor(null);
+      return candidateTaskIds;
+    }
+
+    logTableTodayScrollDiag("anchor_queue_measured", {
+      activeElement: describeActiveElement(),
+      anchorTaskId: measuredAnchor?.anchorTaskId ?? null,
+      awaitRowsSettlement,
+      candidateTaskIds: candidateTaskIds.slice(0, 8),
+      metadataTargetTaskId,
+      scrollTop: scrollContainer?.scrollTop ?? null,
+      selectedTaskId,
+      sourceTaskId: taskId,
+    });
+    setLocalTableScrollAnchor((current) => ({
+      awaitRowsSettlement,
+      candidateTaskIds,
+      previousVisibleTaskIds: visibleTaskIds,
+      sourceTaskId: taskId,
+      token: (current?.token ?? 0) + 1,
+    }));
+    return candidateTaskIds;
+  }, [logTableTodayScrollDiag, metadataTargetTaskId, overlayOnly, selectedTaskId, visibleTaskIds]);
 
   const clearChildTaskDragState = () => {
     childTaskDragStateRef.current = null;
@@ -2994,6 +3202,12 @@ export function TaskManagementTableV2({
       if (!target) {
         return;
       }
+      logTableTodayScrollDiag("pending_reveal", {
+        activeElement: describeActiveElement(),
+        key: pendingTableReveal.key,
+        scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
+        targetTaskId: pendingTableReveal.taskId,
+      });
       revealTargetInScrollableContainer(target, {
         fallbackContainer: tableScrollContainerRef.current,
         minVisibleHeight: pendingTableReveal.minVisibleHeight,
@@ -3012,7 +3226,178 @@ export function TaskManagementTableV2({
       window.cancelAnimationFrame(firstFrameId);
       window.cancelAnimationFrame(secondFrameId);
     };
-  }, [pendingTableReveal]);
+  }, [logTableTodayScrollDiag, pendingTableReveal]);
+
+  useLayoutEffect(() => {
+    if (overlayOnly || !localTableScrollAnchor) {
+      return;
+    }
+
+    const shellElement = shellRef.current;
+    if (!shellElement) {
+      return;
+    }
+
+    const activeScrollAnchor = localTableScrollAnchor;
+    const previousVisibleSignature = activeScrollAnchor.previousVisibleTaskIds.join("|");
+    const currentVisibleSignature = visibleTaskIds.join("|");
+    const hasRowsSettled = previousVisibleSignature !== currentVisibleSignature
+      || (activeScrollAnchor.sourceTaskId ? !visibleTaskIds.includes(activeScrollAnchor.sourceTaskId) : false);
+    const anchorTaskId = activeScrollAnchor.candidateTaskIds.find((candidateTaskId) => visibleTaskIdSet.has(candidateTaskId)) ?? null;
+    if (!anchorTaskId) {
+      pendingMeasuredTableScrollAnchorRef.current = null;
+      setLocalTableScrollAnchor(null);
+      return;
+    }
+
+    const anchorTaskIndex = visibleTaskIds.indexOf(anchorTaskId);
+    if (anchorTaskIndex >= renderedTaskCount) {
+      startTransition(() => {
+        setRenderedTaskCount((current) => Math.max(current, anchorTaskIndex + 1));
+      });
+      return;
+    }
+
+    let frameId = 0;
+    let attemptCount = 0;
+    const pendingMeasuredAnchor = pendingMeasuredTableScrollAnchorRef.current;
+    const matchesMeasuredAnchor = pendingMeasuredAnchor
+      && pendingMeasuredAnchor.sourceTaskId === activeScrollAnchor.sourceTaskId
+      && pendingMeasuredAnchor.candidateTaskIds.length === activeScrollAnchor.candidateTaskIds.length
+      && pendingMeasuredAnchor.candidateTaskIds.every((taskId, index) => taskId === activeScrollAnchor.candidateTaskIds[index]);
+    const restoreAnchor = () => {
+      attemptCount += 1;
+      const maxAttemptCount = matchesMeasuredAnchor && pendingMeasuredAnchor.awaitRowsSettlement ? 30 : 6;
+      if (!hasRowsSettled && attemptCount < maxAttemptCount) {
+        frameId = window.requestAnimationFrame(restoreAnchor);
+        return;
+      }
+
+      const target = shellElement.querySelector<HTMLElement>(`[data-task-table-row="${anchorTaskId}"], [data-same-table-step-row="${anchorTaskId}"]`);
+      if (!target) {
+        if (matchesMeasuredAnchor) {
+          logTableTodayScrollDiag("anchor_restore_missing_target", {
+            anchorTaskId,
+            candidateTaskIds: activeScrollAnchor.candidateTaskIds.slice(0, 8),
+            scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
+            sourceTaskId: activeScrollAnchor.sourceTaskId,
+          });
+          pendingMeasuredTableScrollAnchorRef.current = null;
+          setLocalTableScrollAnchor(null);
+        }
+        return;
+      }
+
+      if (!matchesMeasuredAnchor) {
+        return;
+      }
+
+      const scrollContainer = findNearestScrollableContainer(target, tableScrollContainerRef.current ?? shellElement);
+      if (!scrollContainer) {
+        pendingMeasuredTableScrollAnchorRef.current = null;
+        setLocalTableScrollAnchor(null);
+        return;
+      }
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const previousScrollTop = scrollContainer.scrollTop;
+      scrollContainer.scrollTop += (targetRect.top - containerRect.top) - pendingMeasuredAnchor.anchorOffsetTop;
+      logTableTodayScrollDiag("anchor_restore_applied", {
+        activeElement: describeActiveElement(),
+        anchorOffsetTop: pendingMeasuredAnchor.anchorOffsetTop,
+        anchorTaskId,
+        nextScrollTop: scrollContainer.scrollTop,
+        previousScrollTop,
+        sourceTaskId: activeScrollAnchor.sourceTaskId,
+        targetTop: targetRect.top - containerRect.top,
+      });
+      pendingMeasuredTableScrollAnchorRef.current = null;
+      setLocalTableScrollAnchor(null);
+    };
+
+    restoreAnchor();
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [
+    logTableTodayScrollDiag,
+    localTableScrollAnchor,
+    overlayOnly,
+    renderedTaskCount,
+    visibleTaskIdSet,
+    visibleTaskIds,
+  ]);
+
+  useEffect(() => {
+    if (!overlayOnly || statusChangeScrollAnchorTaskIds.length === 0 || statusChangeScrollToken === null) {
+      return;
+    }
+
+    const shellElement = shellRef.current;
+    if (!shellElement) {
+      return;
+    }
+
+    const activeScrollAnchor = {
+      awaitRowsSettlement: false,
+      candidateTaskIds: statusChangeScrollAnchorTaskIds,
+      previousVisibleTaskIds: statusChangeScrollPreviousVisibleTaskIds,
+      sourceTaskId: statusChangeScrollSourceTaskId ?? "",
+      token: statusChangeScrollToken,
+    };
+    const previousVisibleSignature = activeScrollAnchor.previousVisibleTaskIds.join("|");
+    const currentVisibleSignature = visibleTaskIds.join("|");
+    const hasRowsSettled = previousVisibleSignature !== currentVisibleSignature
+      || (activeScrollAnchor.sourceTaskId ? !visibleTaskIds.includes(activeScrollAnchor.sourceTaskId) : false);
+    const anchorTaskId = activeScrollAnchor.candidateTaskIds.find((candidateTaskId) => visibleTaskIdSet.has(candidateTaskId)) ?? null;
+    if (!anchorTaskId) {
+      return;
+    }
+
+    const anchorTaskIndex = visibleTaskIds.indexOf(anchorTaskId);
+    if (anchorTaskIndex >= renderedTaskCount) {
+      startTransition(() => {
+        setRenderedTaskCount((current) => Math.max(current, anchorTaskIndex + 1));
+      });
+      return;
+    }
+
+    let frameId = 0;
+    let attemptCount = 0;
+    const revealTarget = () => {
+      attemptCount += 1;
+      if (!hasRowsSettled && attemptCount < 6) {
+        frameId = window.requestAnimationFrame(revealTarget);
+        return;
+      }
+
+      const target = shellElement.querySelector<HTMLElement>(`[data-task-table-row="${anchorTaskId}"], [data-same-table-step-row="${anchorTaskId}"]`);
+      if (!target) {
+        return;
+      }
+
+      revealTargetInScrollableContainer(target, {
+        fallbackContainer: tableScrollContainerRef.current,
+        minVisibleHeight: TABLE_REVEAL_INLINE_MIN_VISIBLE_HEIGHT,
+      });
+    };
+
+    frameId = window.requestAnimationFrame(revealTarget);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [
+    overlayOnly,
+    renderedTaskCount,
+    statusChangeScrollAnchorTaskIds,
+    statusChangeScrollPreviousVisibleTaskIds,
+    statusChangeScrollSourceTaskId,
+    statusChangeScrollToken,
+    visibleTaskIdSet,
+    visibleTaskIds,
+  ]);
 
   useEffect(() => {
     if (!highlightedActiveTaskId || highlightedScrollToken === null) {
@@ -3326,6 +3711,12 @@ export function TaskManagementTableV2({
     skipNotesCommit?: boolean;
     skipTitleCommit?: boolean;
   }) {
+    logTableTodayScrollDiag("close_inspector_start", {
+      activeElement: describeActiveElement(),
+      metadataTargetTaskId,
+      scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
+      selectedTaskId,
+    });
     if (selectedTaskId) {
       if (!options?.skipTitleCommit) {
         commitTaskTitle(selectedTaskId);
@@ -3382,6 +3773,14 @@ export function TaskManagementTableV2({
     setOverlayMode("full");
     setOverlayAnchor(null);
     onInspectorClose?.();
+    window.requestAnimationFrame(() => {
+      logTableTodayScrollDiag("close_inspector_after_frame", {
+        activeElement: describeActiveElement(),
+        metadataTargetTaskId: null,
+        scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
+        selectedTaskId: null,
+      });
+    });
   }
 
   function shouldSkipRecentInlineCommit(taskId: string, field: "link" | "notes" | "title", value: string) {
@@ -3460,6 +3859,7 @@ export function TaskManagementTableV2({
       return;
     }
 
+    queueMeasuredTableScrollAnchor(taskId);
     patchTasks(changedTaskIds, (task) => ({
       ...task,
       linkLabel: nextLink.label,
@@ -3498,6 +3898,7 @@ export function TaskManagementTableV2({
       return;
     }
 
+    queueMeasuredTableScrollAnchor(taskId);
     patchTasks(changedTaskIds, (task) => ({
       ...task,
       notes: nextNotes,
@@ -3512,6 +3913,7 @@ export function TaskManagementTableV2({
 
   function setTaskDue(taskId: string, dueOn: string, dueTime: string) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    queueMeasuredTableScrollAnchor(taskId);
     patchTasks(targetTaskIds, (task) => ({
       ...task,
       dueOn,
@@ -3525,17 +3927,46 @@ export function TaskManagementTableV2({
     }
   }
 
+  function canDelayTask(task: PrototypeTaskRow) {
+    return Boolean(
+      task.dueOn
+      && task.status !== "archived"
+      && task.status !== "complete"
+      && task.status !== "did_my_best"
+      && task.status !== "done"
+      && task.status !== "trashed",
+    );
+  }
+
+  async function applyTaskDelay(taskId: string, nextDueOn: string) {
+    const didDelay = await onDelayTaskUntil?.(taskId, nextDueOn);
+    if (didDelay !== false) {
+      closeInspector();
+    }
+  }
+
   function setTaskStatus(taskId: string, status: TaskStatus) {
     // Status changes must reuse the app's per-task status action path so validation,
     // completion, recurrence, rewards, and trash/archive side effects still run.
+    const scrollAnchorTaskIds = queueMeasuredTableScrollAnchor(taskId, { awaitRowsSettlement: true });
+    logTableTodayScrollDiag("set_task_status", {
+      activeElement: describeActiveElement(),
+      metadataTargetTaskId,
+      scrollAnchorTaskIds: scrollAnchorTaskIds.slice(0, 8),
+      scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
+      selectedTaskId,
+      sourceTaskId: taskId,
+      status,
+    });
     const targetTaskIds = resolveTableActionTargetTaskIds(taskId);
     for (const targetTaskId of targetTaskIds) {
-      onTaskStatusChange?.(targetTaskId, status);
+      onTaskStatusChange?.(targetTaskId, status, scrollAnchorTaskIds);
     }
   }
 
   function setTaskEstimatedMinutes(taskId: string, minutes: number | null) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    queueMeasuredTableScrollAnchor(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, estimatedMinutes: minutes }));
     for (const targetTaskId of targetTaskIds) {
       onTaskEstimatedMinutesChange?.(targetTaskId, minutes);
@@ -3544,6 +3975,7 @@ export function TaskManagementTableV2({
 
   function setTaskEnergy(taskId: string, energy: TaskEnergy) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    queueMeasuredTableScrollAnchor(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, energy }));
     for (const targetTaskId of targetTaskIds) {
       onTaskEnergyChange?.(targetTaskId, energy);
@@ -3781,6 +4213,7 @@ export function TaskManagementTableV2({
 
   function setTaskPriorities(taskId: string, priorities: TaskPriority[]) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    queueMeasuredTableScrollAnchor(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, priorities }));
     for (const targetTaskId of targetTaskIds) {
       onTaskPriorityChange?.(targetTaskId, priorities);
@@ -3789,6 +4222,7 @@ export function TaskManagementTableV2({
 
   function setTaskTags(taskId: string, tags: string[]) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
+    queueMeasuredTableScrollAnchor(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, tags }));
     for (const targetTaskId of targetTaskIds) {
       onTaskTagsChange?.(targetTaskId, tags);
@@ -3812,6 +4246,7 @@ export function TaskManagementTableV2({
       ...current,
       [taskId]: { label: "", url: "" },
     }));
+    queueMeasuredTableScrollAnchor(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, linkLabel: "", linkUrl: "" }));
     for (const targetTaskId of targetTaskIds) {
       onTaskLinkChange?.(targetTaskId, { label: "", url: "" });
@@ -3824,6 +4259,7 @@ export function TaskManagementTableV2({
       ...current,
       [taskId]: "",
     }));
+    queueMeasuredTableScrollAnchor(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, notes: "" }));
     for (const targetTaskId of targetTaskIds) {
       onTaskNotesChange?.(targetTaskId, "");
@@ -4260,6 +4696,18 @@ export function TaskManagementTableV2({
           className={inlineAccordionButtonClass()}
           key={`${status || "status-option"}-${optionIndex}`}
           onClick={() => {
+            logTableTodayScrollDiag("status_option_click", {
+              activeElement: describeActiveElement(),
+              metadataTargetTaskId,
+              scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
+              selectedTaskId,
+              sourceTaskId: task.id,
+              status,
+            });
+            if (status === "delayed" && canDelayTask(task)) {
+              setOverlayMode("delay");
+              return;
+            }
             setTaskStatus(task.id, status);
             closeInspector();
           }}
@@ -4953,6 +5401,40 @@ export function TaskManagementTableV2({
     }, { ...current }));
   }
 
+  function autoExpandAllColumns() {
+    if (!shellRef.current) {
+      return;
+    }
+
+    setColumnWidths((current) => visibleHeaderColumns.reduce<Record<TaskManagementTableColumnId, number>>((next, column) => {
+      next[column.id] = Math.max(current[column.id], getAutoShrinkWidth(column.id));
+      return next;
+    }, { ...current }));
+  }
+
+  function isStepTitleEditTarget(target: EventTarget | null) {
+    return target instanceof HTMLElement && Boolean(target.closest("[data-step-title-edit]"));
+  }
+
+  function beginInlineTaskTitleRename(taskId: string, title: string) {
+    setEditingTaskTitleId(taskId);
+    setTitleDraft(taskId, title);
+  }
+
+  function handoffEditorChildTitleRename(taskId: string, title: string) {
+    pendingEditorChildTitleRenameRef.current = null;
+    beginInlineTaskTitleRename(taskId, title);
+  }
+
+  useEffect(() => {
+    if (expandAllColumnsToken === 0 || expandAllColumnsToken === lastExpandAllColumnsTokenRef.current) {
+      return;
+    }
+
+    lastExpandAllColumnsTokenRef.current = expandAllColumnsToken;
+    autoExpandAllColumns();
+  }, [expandAllColumnsToken, visibleHeaderColumns]);
+
   useEffect(() => {
     if (shrinkAllColumnsToken === 0 || shrinkAllColumnsToken === lastShrinkAllColumnsTokenRef.current) {
       return;
@@ -5184,6 +5666,18 @@ export function TaskManagementTableV2({
             >
               Auto shrink
             </button>
+            {column.id === "status_icon" ? (
+              <button
+                className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} gap-2`}
+                onClick={() => {
+                  autoShrinkAllColumns();
+                  setOpenColumnMenuId(null);
+                }}
+                type="button"
+              >
+                Fit visible columns
+              </button>
+            ) : null}
             <button
               className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} gap-2`}
               onClick={() => moveColumnToFront(column.id)}
@@ -5945,10 +6439,16 @@ export function TaskManagementTableV2({
               onDragOver={(event) => updateChildTaskDropTarget(event, item)}
               onDrop={(event) => dropChildTaskOnItem(event, item)}
               onClick={canSelectChildTask ? (event) => {
+                if (isStepTitleEditTarget(event.target)) {
+                  return;
+                }
                 event.stopPropagation();
                 openTaskInCurrentEditor(item.id);
               } : undefined}
               onKeyDown={canSelectChildTask ? (event) => {
+                if (isStepTitleEditTarget(event.target)) {
+                  return;
+                }
                 if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                   return;
                 }
@@ -5967,13 +6467,21 @@ export function TaskManagementTableV2({
                 <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
                     {isRenamingStepTitle ? (
-                      <span onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
+                      <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
                         <TaskTitleDraftInput
                           autoFocus
                           className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
                           initialValue={item.title}
                           onCommit={commitTaskTitle}
-                          onDone={() => setEditingTaskTitleId((current) => (current === item.id ? null : current))}
+                          onDone={() => {
+                            const pendingRename = pendingEditorChildTitleRenameRef.current;
+                            if (pendingRename && pendingRename.taskId !== item.id) {
+                              handoffEditorChildTitleRename(pendingRename.taskId, pendingRename.title);
+                              return;
+                            }
+                            pendingEditorChildTitleRenameRef.current = null;
+                            setEditingTaskTitleId((current) => (current === item.id ? null : current));
+                          }}
                           onDraftChange={setTitleDraft}
                           style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
                           taskId={item.id}
@@ -5982,13 +6490,16 @@ export function TaskManagementTableV2({
                     ) : (
                       <div className="flex min-w-0 items-center gap-1">
                         <button
+                          data-step-title-edit={item.id}
                           className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                           onClick={(event) => {
                             event.stopPropagation();
-                            setEditingTaskTitleId(item.id);
-                            setTitleDraft(item.id, item.title);
+                            handoffEditorChildTitleRename(item.id, item.title);
                           }}
-                          onPointerDown={stopRowActionPointerEvent}
+                          onPointerDown={(event) => {
+                            event.stopPropagation();
+                            pendingEditorChildTitleRenameRef.current = { taskId: item.id, title: item.title };
+                          }}
                           type="button"
                         >
                           <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
@@ -6145,7 +6656,13 @@ export function TaskManagementTableV2({
                               : "opacity-78 hover:opacity-100"
                           }`}
                           key={status}
-                          onClick={() => setTaskStatus(item.id, status)}
+                          onClick={() => {
+                            if (status === "delayed" && canDelayTask(item)) {
+                              setActiveMetadataPanelByTaskId((current) => ({ ...current, [item.id]: "delay" }));
+                              return;
+                            }
+                            setTaskStatus(item.id, status);
+                          }}
                           type="button"
                         >
                           {renderTaskStatusCircle(status, "sm")}
@@ -6236,7 +6753,7 @@ export function TaskManagementTableV2({
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
           <div className="min-w-0 flex-1">
             {isRenamingStepTitle ? (
-              <span onClick={(event) => event.stopPropagation()}>
+              <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()}>
                 <TaskTitleDraftInput
                   autoFocus
                   className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 w-full min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
@@ -6249,43 +6766,51 @@ export function TaskManagementTableV2({
                 />
               </span>
             ) : (
-              <div className="flex min-w-0 items-center gap-1.5">
-                <button
-                  className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setEditingTaskTitleId(item.id);
-                    setTitleDraft(item.id, item.title);
-                  }}
-                  type="button"
-                >
-                  <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
-                    {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
-                  </p>
-                </button>
-                {renderStepLayerChip(item.depth)}
-                {renderStepHistoryChips(item.currentStreak, item.missedStreak)}
-                {canCollapse ? (
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-1.5">
                   <button
-                    aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
-                    className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#8a79d6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                    data-step-title-edit={item.id}
+                    className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                     onClick={(event) => {
                       event.stopPropagation();
-                      if (isCollapsed) {
-                        setPendingTableReveal({
-                          key: `child-branch:${item.id}`,
-                          kind: "child-branch",
-                          minVisibleHeight: TABLE_REVEAL_STEPS_MIN_VISIBLE_HEIGHT,
-                          taskId: item.id,
-                        });
-                      }
-                      setCollapsedChildTaskIds((current) => ({ ...current, [item.id]: !isCollapsed }));
+                      setEditingTaskTitleId(item.id);
+                      setTitleDraft(item.id, item.title);
                     }}
-                    onPointerDown={stopRowActionPointerEvent}
                     type="button"
                   >
-                    {isCollapsed ? <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg]" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
+                      {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                    </p>
                   </button>
+                  {renderStepLayerChip(item.depth)}
+                  {renderStepHistoryChips(item.currentStreak, item.missedStreak)}
+                  {canCollapse ? (
+                    <button
+                      aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                      className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#8a79d6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (isCollapsed) {
+                          setPendingTableReveal({
+                            key: `child-branch:${item.id}`,
+                            kind: "child-branch",
+                            minVisibleHeight: TABLE_REVEAL_STEPS_MIN_VISIBLE_HEIGHT,
+                            taskId: item.id,
+                          });
+                        }
+                        setCollapsedChildTaskIds((current) => ({ ...current, [item.id]: !isCollapsed }));
+                      }}
+                      onPointerDown={stopRowActionPointerEvent}
+                      type="button"
+                    >
+                      {isCollapsed ? <ChevronDown className="h-3.5 w-3.5 rotate-[-90deg]" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    </button>
+                  ) : null}
+                </div>
+                {hasNotes ? (
+                  <p className="mt-1 truncate text-left text-[12px] font-medium text-[#8d87a7] dark:text-white/40">
+                    {item.notes.trim()}
+                  </p>
                 ) : null}
               </div>
             )}
@@ -6851,6 +7376,20 @@ export function TaskManagementTableV2({
               <span className={`${CHIP_BASE} bg-[#f4f5f8] text-[#68738c] dark:bg-white/8 dark:text-white/60`}>
                 {secondaryBadgeLabel}
               </span>
+              <button
+                className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2a204c]`}
+                onClick={autoExpandAllColumns}
+                type="button"
+              >
+                Expand columns
+              </button>
+              <button
+                className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-white text-[#6f57f6] transition hover:bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2a204c]`}
+                onClick={autoShrinkAllColumns}
+                type="button"
+              >
+                Shrink columns
+              </button>
               {hasActiveFilters ? (
                 <button
                   className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border border-[#ddd6fb] bg-white text-[#5f6983] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]`}
@@ -6895,6 +7434,7 @@ export function TaskManagementTableV2({
                 },
               },
             }}
+            style={{ overflowAnchor: "none" }}
           >
             <div className="min-w-max space-y-1.5 pb-2">
             <div className={`sticky top-0 z-20 ml-[10px] grid w-max min-w-full gap-0 bg-white/95 pl-[3px] pr-0 py-1 text-center shadow-[0_10px_24px_rgba(111,87,246,0.06)] backdrop-blur ${HEADER_TEXT_CLASS} dark:bg-[#140f26]/95 dark:shadow-[0_10px_24px_rgba(0,0,0,0.24)]`} style={{ gridTemplateColumns }}>
@@ -7212,6 +7752,10 @@ export function TaskManagementTableV2({
                 setRowContextMenu(null);
                 onOpenDeleteTask(rowContextMenuTask.id);
               } : undefined}
+              onDelayTask={(onDelayTaskUntil || onDelayTask) && canDelayTask(rowContextMenuTask) ? (sourceElement) => {
+                setRowContextMenu(null);
+                openInspector(rowContextMenuTask.id, "delay", sourceElement);
+              } : undefined}
               onDismiss={() => setRowContextMenu(null)}
               onDuplicateTask={onDuplicateTask ? () => {
                 setRowContextMenu(null);
@@ -7234,6 +7778,10 @@ export function TaskManagementTableV2({
               onRestoreTask={onRestoreTask ? () => {
                 setRowContextMenu(null);
                 onRestoreTask(rowContextMenuTask.id);
+              } : undefined}
+              onUnlinkTask={onUnlinkTask && childTaskParentInfoByTaskId.has(rowContextMenuTask.id) ? () => {
+                setRowContextMenu(null);
+                void onUnlinkTask(rowContextMenuTask.id);
               } : undefined}
               onSelectAllVisible={onSelectAllVisible ? () => {
                 onSelectAllVisible(visibleTaskIds);
@@ -7294,6 +7842,8 @@ export function TaskManagementTableV2({
               {(() => {
                 const overlayTitle = overlayMode === "full"
                   ? "Edit Task"
+                  : overlayMode === "delay"
+                    ? "Delay task"
                   : overlayMode === "status"
                     ? "Status actions"
                     : overlayMode === "due"
@@ -7334,6 +7884,7 @@ export function TaskManagementTableV2({
                 const metadataContextLabel = `${metadataTask.title || "Untitled task"} | ${isEditingStepMetadata ? formatChildTaskPreviewDepthLabel(childTaskParentInfoByTaskId.get(metadataTask.id)?.depth ?? 1) : "Parent"}`;
                 const titleDraft = titleDraftsRef.current[selectedTask.id] ?? selectedTask.title;
                 const selectedTaskNotesDraft = notesDrafts[selectedTask.id] ?? selectedTask.notes;
+                const metadataDescriptionDraft = notesDrafts[metadataTask.id] ?? metadataTask.notes;
                 const metadataLinkDraft = linkDrafts[metadataTask.id] ?? { label: metadataTask.linkLabel, url: metadataTask.linkUrl };
                 const metadataNotesDraft = notesDrafts[metadataTask.id] ?? metadataTask.notes;
                 const metadataLinkedNoteDraft = linkedNoteDrafts[metadataTask.id] ?? metadataTask.linkedNotes.map((note) => note.id);
@@ -7353,6 +7904,7 @@ export function TaskManagementTableV2({
                   ? activeMetadataPanel
                   : overlayMode;
                 const metadataPanelOptions: Array<{ id: MetadataPanelId; label: string }> = [
+                  { id: "delay", label: "Delay" },
                   { id: "due", label: "Due" },
                   { id: "estimated", label: "Estimated Time" },
                   { id: "actual", label: "Actual Time" },
@@ -7366,6 +7918,8 @@ export function TaskManagementTableV2({
                 ];
                 function metadataFieldHasValue(id: MetadataPanelId) {
                   switch (id) {
+                    case "delay":
+                      return metadataTask.status === "delayed";
                     case "due":
                       return Boolean(metadataTask.dueOn || metadataTask.dueTime);
                     case "estimated":
@@ -7394,7 +7948,7 @@ export function TaskManagementTableV2({
                 }
                 const activeMetadataPanelLabel = metadataPanelId === "status"
                   ? "Status"
-                  : metadataPanelOptions.find((option) => option.id === activeMetadataPanel)?.label ?? "Meta Data";
+                  : metadataPanelOptions.find((option) => option.id === metadataPanelId)?.label ?? "Meta Data";
                 function renderInlineTextChoices<T extends string>(
                   options: Array<{ label: string; value: T }>,
                   selectedValues: T[],
@@ -7462,6 +8016,17 @@ export function TaskManagementTableV2({
                         }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save date + time</TaskTableChipButton>
                       </div>
                     </>
+                  );
+                } else if (metadataPanelId === "delay") {
+                  metadataPanelContent = (
+                    <TaskDelayPicker
+                      anchorDateKey={getDelayAnchorDate(metadataTask.dueOn)}
+                      description="Move this due date forward without recording a history action."
+                      inputClassName={OVERLAY_INPUT_CLASS}
+                      onSave={(nextDueOn) => applyTaskDelay(metadataTask.id, nextDueOn)}
+                      primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                      saveLabel="Apply delay"
+                    />
                   );
                 } else if (metadataPanelId === "estimated") {
                   metadataPanelContent = (
@@ -7595,7 +8160,13 @@ export function TaskManagementTableV2({
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
                       {getSelectableTaskStatusesForRepeatFrequency(metadataTask.repeat).map((status, optionIndex) => (
-                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${metadataTask.status === status ? statusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}`} key={`${status || "status-option"}-${optionIndex}`} onClick={() => setTaskStatus(metadataTask.id, status)} type="button">{renderTaskStatusCircle(status, "sm")}<span>{formatTaskStatusLabel(status)}</span></button>
+                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${metadataTask.status === status ? statusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}`} key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
+                          if (status === "delayed" && canDelayTask(metadataTask)) {
+                            setActiveMetadataPanelByTaskId((current) => ({ ...current, [metadataTask.id]: "delay" }));
+                            return;
+                          }
+                          setTaskStatus(metadataTask.id, status);
+                        }} type="button">{renderTaskStatusCircle(status, "sm")}<span>{formatTaskStatusLabel(status)}</span></button>
                       ))}
                     </div>
                   );
@@ -7654,6 +8225,7 @@ export function TaskManagementTableV2({
                         </TaskTableChipButton>
                         <SameTableStepCreationControl
                           creationBlocked={childTaskCreationBlockedTaskIds.includes(selectedTask.id)}
+                          iconOnly
                           onCreateChildTask={onCreateChildTask}
                           parentTaskId={selectedTask.id}
                         />
@@ -7795,6 +8367,23 @@ export function TaskManagementTableV2({
                           ) : null}
                         </div>
                       </div>
+                      {isEditingStepMetadata ? (
+                        <label className="mt-3 block">
+                          <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">
+                            Description
+                          </span>
+                          <textarea
+                            className={`${OVERLAY_INPUT_CLASS} min-h-[88px] resize-none py-3 text-sm leading-6`}
+                            onBlur={() => commitTaskNotes(metadataTask.id)}
+                            onChange={(event) => setNotesDrafts((current) => ({
+                              ...current,
+                              [metadataTask.id]: event.target.value,
+                            }))}
+                            placeholder="Add a short description"
+                            value={metadataDescriptionDraft}
+                          />
+                        </label>
+                      ) : null}
                       <div className="mt-3 flex flex-wrap items-center gap-y-1.5 text-sm">
                         {metadataPanelOptions.map((option, index) => (
                           <div className="flex items-center" key={`${option.id || "metadata-panel"}-${index}`}>
@@ -8216,6 +8805,14 @@ export function TaskManagementTableV2({
                           className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selectedTask.status === status ? statusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}`}
                           key={`${status || "status-option"}-${optionIndex}`}
                           onClick={() => {
+                            if (status === "delayed" && canDelayTask(selectedTask)) {
+                              if (overlayMode === "status") {
+                                setOverlayMode("delay");
+                              } else {
+                                setActiveMetadataPanelByTaskId((current) => ({ ...current, [selectedTask.id]: "delay" }));
+                              }
+                              return;
+                            }
                             setTaskStatus(selectedTask.id, status);
                             if (overlayMode === "status") {
                               closeInspector();

@@ -177,6 +177,7 @@ import {
   isMissingTaskListsTableError,
 } from "@/lib/task-db-compat";
 import {
+  buildTaskUpdateConflictMessage,
   deleteTaskRow,
   insertTaskRowWithLegacyEnergyFallback,
   updateTaskRowWithLegacyEnergyFallback,
@@ -412,6 +413,13 @@ function buildTaskHighlightMatchState({
   };
 }
 
+type StatusChangeScrollAnchorState = {
+  candidateTaskIds: string[];
+  previousVisibleTaskIds: string[];
+  sourceTaskId: string;
+  token: number;
+};
+
 function resolveCollapsedHudFocusTimer(
   categories: FocusCategory[],
   activeSessions: Record<string, ActiveFocusSession>,
@@ -457,7 +465,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.12.35";
+const APP_VERSION = "6.13.19";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -907,7 +915,7 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
 };
 const priorityOptions: TaskPriority[] = ["normal", "high", "low"];
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
-const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "done", "did_my_best", "missed", "complete", "upcoming", "not_due", "archived", "trashed"];
+const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "delayed", "done", "did_my_best", "missed", "complete", "upcoming", "not_due", "archived", "trashed"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
 const repeatWeekdayOptions = [
   { label: "Sun", value: 0 },
@@ -1242,6 +1250,7 @@ export function TaskApp() {
   const [isImportWidgetMenuOpen, setIsImportWidgetMenuOpen] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>("idle");
   const [draggedListColumnId, setDraggedListColumnId] = useState<AgentPlanColumnId | null>(null);
+  const [expandAllColumnsToken, setExpandAllColumnsToken] = useState(0);
   const [shrinkAllColumnsToken, setShrinkAllColumnsToken] = useState(0);
   const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
@@ -2388,7 +2397,14 @@ export function TaskApp() {
     }),
     [childTaskPreviewByParentTaskId, effectiveSearchQuery, selectedBucketTasks, taskSubtasksByTaskId],
   );
+  const selectedBucketLabel = useMemo(() => {
+    if (taskUiState.selectedBucket in TASK_BUCKET_LABELS) {
+      return TASK_BUCKET_LABELS[taskUiState.selectedBucket as TaskBucket];
+    }
+    return availableTaskLists.find((list) => list.id === taskUiState.selectedBucket)?.name ?? taskUiState.selectedBucket;
+  }, [availableTaskLists, taskUiState.selectedBucket]);
   const [tableVisibleSearchMatchIds, setTableVisibleSearchMatchIds] = useState<string[] | null>(null);
+  const [statusChangeScrollAnchor, setStatusChangeScrollAnchor] = useState<StatusChangeScrollAnchorState | null>(null);
   const handleTableVisibleSearchMatchIdsChange = useCallback((taskIds: string[]) => {
     setTableVisibleSearchMatchIds((current) => {
       if (current && current.length === taskIds.length && current.every((taskId, index) => taskId === taskIds[index])) {
@@ -2397,6 +2413,40 @@ export function TaskApp() {
       return taskIds;
     });
   }, []);
+  const queueStatusChangeScrollAnchor = useCallback((taskId: string, candidateTaskIds?: string[]) => {
+    const fallbackTaskIds = selectedBucketTasks.map((task) => task.id);
+    const nextCandidateTaskIds = Array.from(new Set(
+      candidateTaskIds && candidateTaskIds.length > 0
+        ? candidateTaskIds
+        : [taskId, ...fallbackTaskIds.filter((visibleTaskId) => visibleTaskId !== taskId)],
+    ));
+    if (process.env.NODE_ENV !== "production" && selectedBucketLabel.toLowerCase().includes("today")) {
+      console.info("[TABLE_TODAY_SCROLL_DIAG]", "app_queue_status_scroll_anchor", {
+        candidateTaskIds: nextCandidateTaskIds.slice(0, 8),
+        sourceTaskId: taskId,
+      });
+    }
+    setStatusChangeScrollAnchor((current) => ({
+      candidateTaskIds: nextCandidateTaskIds,
+      previousVisibleTaskIds: fallbackTaskIds,
+      sourceTaskId: taskId,
+      token: (current?.token ?? 0) + 1,
+    }));
+  }, [selectedBucketLabel, selectedBucketTasks]);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production" || !selectedBucketLabel.toLowerCase().includes("today")) {
+      return;
+    }
+    console.info("[TABLE_TODAY_SCROLL_DIAG]", "today_bucket_tasks_update", {
+      bucketLabel: selectedBucketLabel,
+      count: selectedBucketTasks.length,
+      firstTasks: selectedBucketTasks.slice(0, 8).map((task) => ({
+        id: task.id,
+        status: task.status,
+        title: task.title,
+      })),
+    });
+  }, [selectedBucketLabel, selectedBucketTasks]);
   const activeTaskHighlightMatchIds = taskUiState.view === "table" && !duplicateTitleModeActive
     ? (tableVisibleSearchMatchIds ?? taskHighlightMatches.matchedRowIds)
     : taskHighlightMatches.matchedRowIds;
@@ -2467,12 +2517,6 @@ export function TaskApp() {
   const highlightedSearchMatchedStepParentTaskIds = Array.from(
     new Set([...searchMatchedStepParentTaskIds, ...taskHighlightMatches.matchedStepParentTaskIds]),
   );
-  const selectedBucketLabel = useMemo(() => {
-    if (taskUiState.selectedBucket in TASK_BUCKET_LABELS) {
-      return TASK_BUCKET_LABELS[taskUiState.selectedBucket as TaskBucket];
-    }
-    return availableTaskLists.find((list) => list.id === taskUiState.selectedBucket)?.name ?? taskUiState.selectedBucket;
-  }, [availableTaskLists, taskUiState.selectedBucket]);
   const visibleTaskListOrder = useMemo(
     () => new Map(
       availableTaskLists
@@ -3264,6 +3308,79 @@ export function TaskApp() {
     }
   }, [isAuthenticatedAppBootReady, session?.user]);
 
+  const unlinkSameTableTask = useCallback(async (taskId: string) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task || !task.parent_task_id) {
+      return false;
+    }
+
+    const didUnlink = await applyTaskMutationWithoutHistory(
+      taskId,
+      { parent_task_id: null },
+      { expectedTask: task },
+    );
+    if (!didUnlink) {
+      return false;
+    }
+
+    setMessage({
+      tone: "good",
+      text: `"${task.title}" is now a top-level task.`,
+    });
+    return true;
+  }, [applyTaskMutationWithoutHistory, setMessage, tasks]);
+
+  const getTaskDelayAnchorDate = useCallback((task: Task) => (
+    task.due_on && task.due_on > todayKey ? task.due_on : todayKey
+  ), [todayKey]);
+
+  const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (
+      !task
+      || !task.due_on
+      || task.status === "archived"
+      || task.status === "complete"
+      || task.status === "did_my_best"
+      || task.status === "done"
+      || task.status === "trashed"
+    ) {
+      return false;
+    }
+
+    const delayAnchorDate = getTaskDelayAnchorDate(task);
+    if (nextDueOn <= delayAnchorDate) {
+      return false;
+    }
+
+    const didDelay = await applyTaskMutationWithoutHistory(
+      taskId,
+      {
+        due_on: nextDueOn,
+        status: "delayed",
+      },
+      { expectedTask: task },
+    );
+    if (!didDelay) {
+      return false;
+    }
+
+    setMessage({
+      tone: "good",
+      text: `"${task.title}" was delayed until ${nextDueOn}.`,
+    });
+    return true;
+  }, [applyTaskMutationWithoutHistory, getTaskDelayAnchorDate, setMessage, tasks]);
+
+  const delaySameTableTask = useCallback(async (taskId: string, days: number) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task || days <= 0) {
+      return false;
+    }
+
+    return delayTaskToDate(taskId, shiftDateKey(getTaskDelayAnchorDate(task), days));
+  }, [delayTaskToDate, getTaskDelayAnchorDate, tasks]);
+
   if (!supabase) {
     return <ConfigSplash />;
   }
@@ -3981,6 +4098,55 @@ export function TaskApp() {
     );
   }
 
+  async function applyTaskMutationWithoutHistory(taskId: string, values: TaskUpdate, options?: { expectedTask?: Task | null }) {
+    markPendingTaskMutations?.([taskId]);
+    const previousTask = options?.expectedTask ?? tasks.find((task) => task.id === taskId) ?? null;
+    const result = await runGuardedTaskRowUpdate(taskId, values, { expectedTask: previousTask });
+    clearPendingTaskMutations?.([taskId]);
+
+    if (result.error) {
+      setMessage({ tone: "warn", text: result.error.message });
+      return false;
+    }
+
+    if (result.conflict) {
+      if (result.conflict.latestTask) {
+        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? result.conflict.latestTask ?? task : task)));
+        if (
+          result.conflict.latestTask.status === "done"
+          || result.conflict.latestTask.status === "did_my_best"
+          || result.conflict.latestTask.status === "complete"
+          || result.conflict.latestTask.status === "archived"
+          || result.conflict.latestTask.status === "trashed"
+        ) {
+          routeTask(taskId, null);
+        }
+      }
+      setMessage({ tone: "warn", text: buildTaskUpdateConflictMessage(result.conflict) });
+      return false;
+    }
+
+    if (!result.data) {
+      return false;
+    }
+
+    const nextData = result.usedActualSecondsFallback && typeof values.actual_seconds === "number"
+      ? { ...result.data, actual_seconds: values.actual_seconds }
+      : result.data;
+    setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
+    if (
+      nextData.status === "done"
+      || nextData.status === "did_my_best"
+      || nextData.status === "complete"
+      || nextData.status === "archived"
+      || nextData.status === "trashed"
+    ) {
+      routeTask(taskId, null);
+    }
+
+    return true;
+  }
+
   function optimisticallyMoveTaskToTrash(taskId: string) {
     const nextTrashedAt = new Date().toISOString();
     setTasks((current) => sortTasksForUi(current.map((task) => (
@@ -4194,6 +4360,21 @@ export function TaskApp() {
         { syncLiveTask: true },
       );
     },
+    onSetDelayedStatus: async (entryDate: string, nextDueOn: string) => {
+      if (!taskHistoryModalTaskId) {
+        return;
+      }
+      const didDelay = await delayTaskToDate(taskHistoryModalTaskId, nextDueOn);
+      if (!didDelay) {
+        return;
+      }
+      await syncTaskHistoryEntries(
+        taskHistoryModalTaskId,
+        "delayed",
+        [entryDate],
+        { syncLiveTask: false },
+      );
+    },
     task: taskHistoryModalTask,
     taskHistory: taskHistory.filter((entry) => entry.task_id === taskHistoryModalTaskId),
     taskTitle: taskHistoryModalTask.title,
@@ -4259,6 +4440,7 @@ export function TaskApp() {
     onUpdateSearch: (search: string) => setTaskUiState((prev) => ({ ...prev, search })),
     search: taskUiState.search,
     selectedBucket: taskUiState.selectedBucket,
+    expandAllColumnsToken,
     shrinkAllColumnsToken,
     shortcuts: TASK_KEYBOARD_SHORTCUTS,
     archiveCount: archiveFilteredTasksSorted.length,
@@ -4326,6 +4508,7 @@ export function TaskApp() {
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onSelectBucket: setSelectedBucket,
     onSearchSubmit: handleTaskOperationsSearchSubmit,
+    onExpandAllColumns: () => setExpandAllColumnsToken((current) => current + 1),
     onShrinkAllColumns: () => setShrinkAllColumnsToken((current) => current + 1),
     onSearchChange: handleTaskOperationsSearchChange,
     onViewChange: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
@@ -4691,6 +4874,8 @@ export function TaskApp() {
                       void duplicateTaskInPlace(task);
                     }
                   },
+                  onDelayTask: (taskId, days) => delaySameTableTask(taskId, days),
+                  onDelayTaskUntil: (taskId, dueOn) => delayTaskToDate(taskId, dueOn),
                   onRequestedOpenTaskHandled: (taskId) => {
                     setRequestedListOverlayTaskId((current) => (current === taskId ? null : current));
                   },
@@ -4724,11 +4909,12 @@ export function TaskApp() {
                         }),
                     });
                   },
-                  onSetStatus: (taskId, status, expectedTask) => {
+                  onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
                     if (!task) {
                       return;
                     }
+                    queueStatusChangeScrollAnchor(taskId, scrollAnchorTaskIds);
                     void updateTaskStatus(task, status);
                   },
                   onAddTaskSubtask: (taskId) => addTaskSubtask(taskId),
@@ -4741,6 +4927,7 @@ export function TaskApp() {
                   onSetTitle: (taskId, title) => { void updateTask(taskId, { title }); },
                   onToggleTaskSelection: toggleListTaskSelection,
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
+                  onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
                   requestedOpenTask: requestedOpenListTask,
                   requestedOpenTaskId: requestedListOverlayTaskId,
                   suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
@@ -4758,6 +4945,10 @@ export function TaskApp() {
                   },
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
+                  statusChangeScrollAnchorTaskIds: statusChangeScrollAnchor?.candidateTaskIds,
+                  statusChangeScrollPreviousVisibleTaskIds: statusChangeScrollAnchor?.previousVisibleTaskIds,
+                  statusChangeScrollSourceTaskId: statusChangeScrollAnchor?.sourceTaskId ?? null,
+                  statusChangeScrollToken: statusChangeScrollAnchor?.token ?? null,
                 }}
                 filterRowsNode={taskFilterRowsNode}
                 panelProps={listPanelProps}
@@ -4831,6 +5022,8 @@ export function TaskApp() {
                       void duplicateTaskInPlace(task);
                     }
                   },
+                  onDelayTask: (taskId, days) => delaySameTableTask(taskId, days),
+                  onDelayTaskUntil: (taskId, dueOn) => delayTaskToDate(taskId, dueOn),
                   onRequestedOpenTaskHandled: (taskId) => {
                     setRequestedListOverlayTaskId((current) => (current === taskId ? null : current));
                   },
@@ -4864,11 +5057,12 @@ export function TaskApp() {
                         }),
                     });
                   },
-                  onSetStatus: (taskId, status, expectedTask) => {
+                  onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
                     if (!task) {
                       return;
                     }
+                    queueStatusChangeScrollAnchor(taskId, scrollAnchorTaskIds);
                     void updateTaskStatus(task, status);
                   },
                   onAddTaskSubtask: (taskId) => addTaskSubtask(taskId),
@@ -4881,6 +5075,7 @@ export function TaskApp() {
                   onSetTitle: (taskId, title) => { void updateTask(taskId, { title }); },
                   onToggleTaskSelection: toggleListTaskSelection,
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
+                  onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
                   requestedOpenTask: requestedOpenListTask,
                   requestedOpenTaskId: requestedListOverlayTaskId,
                   suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
@@ -4898,6 +5093,10 @@ export function TaskApp() {
                   },
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
+                  statusChangeScrollAnchorTaskIds: statusChangeScrollAnchor?.candidateTaskIds,
+                  statusChangeScrollPreviousVisibleTaskIds: statusChangeScrollAnchor?.previousVisibleTaskIds,
+                  statusChangeScrollSourceTaskId: statusChangeScrollAnchor?.sourceTaskId ?? null,
+                  statusChangeScrollToken: statusChangeScrollAnchor?.token ?? null,
                 }}
               />
             )}

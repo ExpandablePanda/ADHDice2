@@ -67,6 +67,29 @@ export function getTaskDueDateBucket(task: Pick<Task, "due_on" | "status">): Tas
 }
 
 function getTaskDisplayStatusForDate(task: Task, todayDateKey: string) {
+  if (task.status === "delayed") {
+    const difference = daysUntilFromDate(task.due_on, todayDateKey);
+    const dueBucket: TaskDueDateBucket = difference === null
+      ? "none"
+      : difference < 0
+        ? "overdue"
+        : difference === 0
+          ? "today"
+          : difference <= 7
+            ? "upcoming"
+            : "not_due";
+
+    if (dueBucket === "upcoming" || dueBucket === "not_due") {
+      return "delayed";
+    }
+
+    if (dueBucket === "overdue") {
+      return "missed";
+    }
+
+    return "pending";
+  }
+
   if (task.status !== "upcoming" && task.status !== "not_due") {
     return task.status;
   }

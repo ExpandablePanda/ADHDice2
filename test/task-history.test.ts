@@ -48,6 +48,7 @@ function createHistoryEntry({
 test("calendar virtual states distinguish upcoming and not-due dates without overriding history", () => {
   assert.equal(getTaskHistoryCalendarVirtualState({
     dateKey: "2026-06-21",
+    delayedUntilDateKey: null,
     hasHistoryEntry: false,
     isDue: true,
     nextDueDateKey: "2026-06-21",
@@ -55,6 +56,7 @@ test("calendar virtual states distinguish upcoming and not-due dates without ove
   }), "due");
   assert.equal(getTaskHistoryCalendarVirtualState({
     dateKey: "2026-06-22",
+    delayedUntilDateKey: null,
     hasHistoryEntry: false,
     isDue: true,
     nextDueDateKey: "2026-06-22",
@@ -62,6 +64,7 @@ test("calendar virtual states distinguish upcoming and not-due dates without ove
   }), "due");
   assert.equal(getTaskHistoryCalendarVirtualState({
     dateKey: "2026-06-22",
+    delayedUntilDateKey: null,
     hasHistoryEntry: false,
     isDue: false,
     nextDueDateKey: "2026-06-28",
@@ -69,11 +72,39 @@ test("calendar virtual states distinguish upcoming and not-due dates without ove
   }), "upcoming");
   assert.equal(getTaskHistoryCalendarVirtualState({
     dateKey: "2026-06-22",
+    delayedUntilDateKey: null,
     hasHistoryEntry: true,
     isDue: true,
     nextDueDateKey: "2026-06-22",
     todayDateKey: "2026-06-21",
   }), null);
+});
+
+test("calendar virtual states show delayed spans for delayed future tasks until the due date", () => {
+  assert.equal(getTaskHistoryCalendarVirtualState({
+    dateKey: "2026-06-21",
+    delayedUntilDateKey: "2026-06-25",
+    hasHistoryEntry: false,
+    isDue: false,
+    nextDueDateKey: "2026-06-25",
+    todayDateKey: "2026-06-21",
+  }), "delayed");
+  assert.equal(getTaskHistoryCalendarVirtualState({
+    dateKey: "2026-06-24",
+    delayedUntilDateKey: "2026-06-25",
+    hasHistoryEntry: false,
+    isDue: false,
+    nextDueDateKey: "2026-06-25",
+    todayDateKey: "2026-06-21",
+  }), "delayed");
+  assert.equal(getTaskHistoryCalendarVirtualState({
+    dateKey: "2026-06-25",
+    delayedUntilDateKey: "2026-06-25",
+    hasHistoryEntry: false,
+    isDue: true,
+    nextDueDateKey: "2026-06-25",
+    todayDateKey: "2026-06-21",
+  }), "due");
 });
 
 test("overdue missed backfill uses one-off and recurring due opportunities only", () => {
@@ -147,9 +178,9 @@ test("monthly calendar dates distinguish scheduled upcoming dates from non-due d
 
   assert.equal(dueDates.has("2026-07-21"), true);
   assert.equal(dueDates.has("2026-07-20"), false);
-  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-21", hasHistoryEntry: false, isDue: true, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "due");
-  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-13", hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "not_due");
-  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-14", hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "upcoming");
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-21", delayedUntilDateKey: null, hasHistoryEntry: false, isDue: true, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "due");
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-13", delayedUntilDateKey: null, hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "not_due");
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-14", delayedUntilDateKey: null, hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-21", todayDateKey: "2026-06-21" }), "upcoming");
 });
 
 test("ordinal monthly due dates use the configured weekday occurrence in calendar/history helpers", () => {
@@ -171,8 +202,8 @@ test("ordinal monthly due dates use the configured weekday occurrence in calenda
 
   assert.equal(dueDates.has("2026-07-07"), true);
   assert.equal(dueDates.has("2026-07-02"), false);
-  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-07", hasHistoryEntry: false, isDue: true, nextDueDateKey: "2026-07-07", todayDateKey: "2026-06-21" }), "due");
-  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-06", hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-07", todayDateKey: "2026-06-21" }), "upcoming");
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-07", delayedUntilDateKey: null, hasHistoryEntry: false, isDue: true, nextDueDateKey: "2026-07-07", todayDateKey: "2026-06-21" }), "due");
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-06", delayedUntilDateKey: null, hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-07", todayDateKey: "2026-06-21" }), "upcoming");
 });
 
 test("aggregate missed streak stays active when today has not been logged yet", () => {

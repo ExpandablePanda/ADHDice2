@@ -510,6 +510,7 @@ export function computeTaskAppDerivedData({
   }, {
     pending: 0,
     in_progress: 0,
+    delayed: 0,
     done: 0,
     missed: 0,
     did_my_best: 0,

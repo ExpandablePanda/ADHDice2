@@ -19,6 +19,7 @@ test("one-off status options include missed and complete but exclude occurrence-
   assert.deepEqual(getSelectableTaskStatusesForRepeatFrequency("none"), [
     "pending",
     "in_progress",
+    "delayed",
     "missed",
     "complete",
     "upcoming",
@@ -32,6 +33,7 @@ test("recurring status options keep occurrence statuses and add complete", () =>
   assert.deepEqual(getSelectableTaskStatusesForRepeatFrequency("daily"), [
     "pending",
     "in_progress",
+    "delayed",
     "done",
     "did_my_best",
     "missed",
