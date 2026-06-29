@@ -82,15 +82,6 @@ export function useTaskUpdateAction({
         ? { ...data, actual_seconds: values.actual_seconds }
         : data;
 
-      if (process.env.NODE_ENV !== "production" && nextData.due_on === currentDayKey) {
-        console.info("[TABLE_TODAY_SCROLL_DIAG]", "status_save_start", {
-          nextStatus: nextData.status,
-          previousStatus: previousTask?.status ?? null,
-          sourceTaskId: taskId,
-          title: nextData.title,
-        });
-      }
-
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
       if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {
         routeTask(taskId, null);

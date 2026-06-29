@@ -134,6 +134,9 @@ type PendingTableReveal = {
   minVisibleHeight: number;
   taskId: string;
 };
+type TableStatusChangeOptions = {
+  suppressSharedScrollAnchor?: boolean;
+};
 export type TaskRowContextMenuQuickEditItem = {
   label: string;
   mode: TaskRowContextMenuQuickEditMode;
@@ -218,86 +221,6 @@ function revealTargetInScrollableContainer(
   }
 
   scrollContainer.scrollBy({ top: scrollDelta, behavior });
-}
-
-function describeActiveElement() {
-  if (typeof document === "undefined") {
-    return null;
-  }
-
-  const activeElement = document.activeElement;
-  if (!(activeElement instanceof HTMLElement)) {
-    return activeElement?.tagName?.toLowerCase() ?? null;
-  }
-
-  return {
-    ariaLabel: activeElement.getAttribute("aria-label"),
-    dataInlineEditor: activeElement.getAttribute("data-task-table-inline-editor"),
-    dataRow: activeElement.getAttribute("data-task-table-row"),
-    id: activeElement.id || null,
-    role: activeElement.getAttribute("role"),
-    tag: activeElement.tagName.toLowerCase(),
-    text: activeElement.textContent?.trim().slice(0, 80) ?? "",
-  };
-}
-
-type TableScrollAnchorState = {
-  awaitRowsSettlement: boolean;
-  candidateTaskIds: string[];
-  previousVisibleTaskIds: string[];
-  sourceTaskId: string;
-  token: number;
-};
-
-type MeasuredTableScrollAnchor = {
-  anchorOffsetTop: number;
-  awaitRowsSettlement: boolean;
-  candidateTaskIds: string[];
-  sourceTaskId: string;
-};
-
-function buildViewportStableTableAnchorTaskIds(
-  shellElement: HTMLElement,
-  scrollContainer: HTMLElement,
-  visibleTaskIds: string[],
-  sourceTaskId: string,
-) {
-  const containerRect = scrollContainer.getBoundingClientRect();
-  const visibleEntries = Array.from(
-    shellElement.querySelectorAll<HTMLElement>("[data-task-table-row], [data-same-table-step-row]"),
-  )
-    .map((element) => {
-      const taskId = element.getAttribute("data-task-table-row") ?? element.getAttribute("data-same-table-step-row");
-      if (!taskId) {
-        return null;
-      }
-      const rect = element.getBoundingClientRect();
-      const visibleTop = Math.max(rect.top, containerRect.top);
-      const visibleBottom = Math.min(rect.bottom, containerRect.bottom);
-      const visibleHeight = visibleBottom - visibleTop;
-      if (visibleHeight <= 1) {
-        return null;
-      }
-      return {
-        taskId,
-        top: rect.top,
-      };
-    })
-    .filter((entry): entry is { taskId: string; top: number } => Boolean(entry))
-    .sort((left, right) => left.top - right.top);
-
-  const prioritizedTaskIds = visibleEntries.map((entry) => entry.taskId);
-  const fallbackTaskIds = visibleTaskIds.filter((taskId) => !prioritizedTaskIds.includes(taskId));
-  const candidateTaskIds = Array.from(new Set([
-    ...prioritizedTaskIds,
-    ...fallbackTaskIds,
-    sourceTaskId,
-  ]));
-
-  return {
-    anchorTaskId: prioritizedTaskIds[0] ?? candidateTaskIds[0] ?? sourceTaskId,
-    candidateTaskIds,
-  };
 }
 
 function findPreviewAncestorIdsForTask(
@@ -970,7 +893,7 @@ type TaskManagementTableV2Props = {
   onRowClick?: (taskId: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
   onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
-  onTaskStatusChange?: (taskId: string, status: TaskStatus, scrollAnchorTaskIds?: string[]) => void;
+  onTaskStatusChange?: (taskId: string, status: TaskStatus, scrollAnchorTaskIds?: string[], options?: TableStatusChangeOptions) => void;
   onTaskSubtaskAdd?: (taskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskAddChild?: (subtaskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskDelete?: (subtaskId: string) => void;
@@ -2193,16 +2116,6 @@ export function TaskManagementTableV2({
   const [columnOrder, setColumnOrder] = useState<TaskManagementTableColumnId[]>(() => getInitialColumnOrder(persistedLayoutPreferences));
   const [columnAlignments, setColumnAlignments] = useState<Partial<Record<TaskManagementTableColumnId, ColumnAlignment>>>(() => getInitialColumnAlignments());
   const [statusDisplayMode, setStatusDisplayMode] = useState<"chip" | "circle">(() => getInitialStatusDisplayMode());
-  const logTableTodayScrollDiag = useCallback((label: string, details: Record<string, unknown>) => {
-    if (process.env.NODE_ENV === "production") {
-      return;
-    }
-    if (!currentListLabel?.toLowerCase().includes("today")) {
-      return;
-    }
-    console.info("[TABLE_TODAY_SCROLL_DIAG]", label, details);
-  }, [currentListLabel]);
-  const [localTableScrollAnchor, setLocalTableScrollAnchor] = useState<TableScrollAnchorState | null>(null);
 
   useEffect(() => {
     if (tableStepDraftParentId) {
@@ -2216,7 +2129,6 @@ export function TaskManagementTableV2({
   const columnMenuRef = useRef<HTMLDivElement | null>(null);
   const rowContextMenuRef = useRef<HTMLDivElement | null>(null);
   const loadMoreTasksRef = useRef<HTMLDivElement | null>(null);
-  const pendingMeasuredTableScrollAnchorRef = useRef<MeasuredTableScrollAnchor | null>(null);
   const resizeStateRef = useRef<{
     cleanup: () => void;
     columnId: TaskManagementTableColumnId;
@@ -2228,6 +2140,9 @@ export function TaskManagementTableV2({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const inspectorPanelRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const tableUserScrollIntentRef = useRef(false);
+  const tableScrollTopHoldFrameRef = useRef<number | null>(null);
+  const tableScrollTopHoldValueRef = useRef<number | null>(null);
   const activeInlineActionRowRef = useRef<HTMLDivElement | null>(null);
   const [showTableScrollUp, setShowTableScrollUp] = useState(false);
   const [quickEditTargetTaskIds, setQuickEditTargetTaskIds] = useState<string[] | null>(null);
@@ -2381,6 +2296,38 @@ export function TaskManagementTableV2({
 
     return nextDisplayedTasks;
   }, [activeTaskTimerIds, liveActualSecondsByTaskId, sortState, structuredFilters, tasks, textFilters]);
+  const cancelTableScrollTopHold = useCallback(() => {
+    if (tableScrollTopHoldFrameRef.current !== null) {
+      window.cancelAnimationFrame(tableScrollTopHoldFrameRef.current);
+      tableScrollTopHoldFrameRef.current = null;
+    }
+    tableScrollTopHoldValueRef.current = null;
+  }, []);
+  const startTableScrollTopHoldFrames = useCallback((clearWhenDone: boolean) => {
+    const heldScrollTop = tableScrollTopHoldValueRef.current;
+    if (heldScrollTop === null) {
+      return;
+    }
+    if (tableScrollTopHoldFrameRef.current !== null) {
+      window.cancelAnimationFrame(tableScrollTopHoldFrameRef.current);
+    }
+    let remainingFrames = 6;
+    const holdScrollTop = () => {
+      const currentHeldScrollTop = tableScrollTopHoldValueRef.current;
+      const currentScrollContainer = tableScrollContainerRef.current;
+      if (currentHeldScrollTop === null || !currentScrollContainer || remainingFrames <= 0) {
+        tableScrollTopHoldFrameRef.current = null;
+        if (clearWhenDone) {
+          tableScrollTopHoldValueRef.current = null;
+        }
+        return;
+      }
+      currentScrollContainer.scrollTop = currentHeldScrollTop;
+      remainingFrames -= 1;
+      tableScrollTopHoldFrameRef.current = window.requestAnimationFrame(holdScrollTop);
+    };
+    tableScrollTopHoldFrameRef.current = window.requestAnimationFrame(holdScrollTop);
+  }, []);
   const [frozenDisplayedTaskIds, setFrozenDisplayedTaskIds] = useState<string[] | null>(null);
   useEffect(() => {
     if (selectedTaskIds.length === 0) {
@@ -2390,18 +2337,23 @@ export function TaskManagementTableV2({
 
     setFrozenDisplayedTaskIds((current) => current ?? displayedTasks.map((task) => task.id));
   }, [displayedTasks, selectedTaskIds.length]);
+  useEffect(() => {
+    if (selectedTaskIds.length > 0) {
+      cancelTableScrollTopHold();
+    }
+  }, [selectedTaskIds.length]);
   const effectiveDisplayedTasks = useMemo(() => {
-    if (!frozenDisplayedTaskIds || frozenDisplayedTaskIds.length === 0) {
-      return displayedTasks;
+    const displayedTasksById = new Map(displayedTasks.map((task) => [task.id, task] as const));
+    if (frozenDisplayedTaskIds && frozenDisplayedTaskIds.length > 0) {
+      const frozenTasks = frozenDisplayedTaskIds
+        .map((taskId) => displayedTasksById.get(taskId))
+        .filter((task): task is PrototypeTaskRow => Boolean(task));
+      const frozenTaskIdSet = new Set(frozenTasks.map((task) => task.id));
+      const appendedTasks = displayedTasks.filter((task) => !frozenTaskIdSet.has(task.id));
+      return [...frozenTasks, ...appendedTasks];
     }
 
-    const displayedTasksById = new Map(displayedTasks.map((task) => [task.id, task] as const));
-    const frozenTasks = frozenDisplayedTaskIds
-      .map((taskId) => displayedTasksById.get(taskId))
-      .filter((task): task is PrototypeTaskRow => Boolean(task));
-    const frozenTaskIdSet = new Set(frozenTasks.map((task) => task.id));
-    const appendedTasks = displayedTasks.filter((task) => !frozenTaskIdSet.has(task.id));
-    return [...frozenTasks, ...appendedTasks];
+    return displayedTasks;
   }, [displayedTasks, frozenDisplayedTaskIds]);
   const tableFilterSignature = useMemo(
     () => JSON.stringify({ sortState, structuredFilters, textFilters }),
@@ -2503,73 +2455,21 @@ export function TaskManagementTableV2({
     () => new Set(visibleTaskIds),
     [visibleTaskIds],
   );
-  const queueMeasuredTableScrollAnchor = useCallback((taskId: string, options?: { awaitRowsSettlement?: boolean }) => {
-    const awaitRowsSettlement = options?.awaitRowsSettlement ?? false;
-    const fallbackTaskIds = visibleTaskIds.includes(taskId) ? visibleTaskIds : [...visibleTaskIds, taskId];
+  const queueTableMutationScrollTopHold = useCallback((taskId: string) => {
     if (overlayOnly) {
-      pendingMeasuredTableScrollAnchorRef.current = null;
-      setLocalTableScrollAnchor(null);
-      return fallbackTaskIds;
+      return;
     }
-
-    const shellElement = shellRef.current;
-    const scrollContainer = tableScrollContainerRef.current ?? shellElement;
-    const measuredAnchor = shellElement && scrollContainer
-      ? buildViewportStableTableAnchorTaskIds(shellElement, scrollContainer, visibleTaskIds, taskId)
-      : null;
-    const candidateTaskIds = measuredAnchor?.candidateTaskIds ?? fallbackTaskIds;
-    let didMeasureAnchor = false;
-    if (shellElement && measuredAnchor) {
-      const target = shellElement.querySelector<HTMLElement>(`[data-task-table-row="${measuredAnchor.anchorTaskId}"], [data-same-table-step-row="${measuredAnchor.anchorTaskId}"]`);
-      if (target) {
-        const measuredScrollContainer = findNearestScrollableContainer(target, scrollContainer);
-        if (measuredScrollContainer) {
-          const containerRect = measuredScrollContainer.getBoundingClientRect();
-          const targetRect = target.getBoundingClientRect();
-          pendingMeasuredTableScrollAnchorRef.current = {
-            anchorOffsetTop: targetRect.top - containerRect.top,
-            awaitRowsSettlement,
-            candidateTaskIds,
-            sourceTaskId: taskId,
-          };
-          didMeasureAnchor = true;
-        }
-      }
+    const scrollContainer = tableScrollContainerRef.current;
+    if (scrollContainer) {
+      tableScrollTopHoldValueRef.current = scrollContainer.scrollTop;
+      startTableScrollTopHoldFrames(false);
     }
-
-    if (!didMeasureAnchor) {
-      logTableTodayScrollDiag("anchor_queue_unmeasured", {
-        activeElement: describeActiveElement(),
-        candidateTaskIds: candidateTaskIds.slice(0, 8),
-        metadataTargetTaskId,
-        scrollTop: scrollContainer?.scrollTop ?? null,
-        selectedTaskId,
-        sourceTaskId: taskId,
-      });
-      pendingMeasuredTableScrollAnchorRef.current = null;
-      setLocalTableScrollAnchor(null);
-      return candidateTaskIds;
-    }
-
-    logTableTodayScrollDiag("anchor_queue_measured", {
-      activeElement: describeActiveElement(),
-      anchorTaskId: measuredAnchor?.anchorTaskId ?? null,
-      awaitRowsSettlement,
-      candidateTaskIds: candidateTaskIds.slice(0, 8),
-      metadataTargetTaskId,
-      scrollTop: scrollContainer?.scrollTop ?? null,
-      selectedTaskId,
-      sourceTaskId: taskId,
-    });
-    setLocalTableScrollAnchor((current) => ({
-      awaitRowsSettlement,
-      candidateTaskIds,
-      previousVisibleTaskIds: visibleTaskIds,
-      sourceTaskId: taskId,
-      token: (current?.token ?? 0) + 1,
-    }));
-    return candidateTaskIds;
-  }, [logTableTodayScrollDiag, metadataTargetTaskId, overlayOnly, selectedTaskId, visibleTaskIds]);
+    setPendingTableReveal((current) => (
+      current?.kind === "inline" && current.taskId === taskId
+        ? null
+        : current
+    ));
+  }, [overlayOnly, startTableScrollTopHoldFrames]);
 
   const clearChildTaskDragState = () => {
     childTaskDragStateRef.current = null;
@@ -2657,6 +2557,9 @@ export function TaskManagementTableV2({
     () => effectiveDisplayedTasks.slice(0, renderedTaskCount),
     [effectiveDisplayedTasks, renderedTaskCount],
   );
+  useLayoutEffect(() => {
+    startTableScrollTopHoldFrames(true);
+  }, [displayedTasks, renderedTasks.length, startTableScrollTopHoldFrames]);
   const remainingRenderedTaskCount = Math.max(0, effectiveDisplayedTasks.length - renderedTasks.length);
   const hasActiveFilters = useMemo(
     () => Object.values(textFilters).some((value) => Boolean(value?.trim()))
@@ -2704,7 +2607,15 @@ export function TaskManagementTableV2({
 
   useEffect(() => {
     setRenderedTaskCount(Math.min(INITIAL_RENDERED_TASK_COUNT, effectiveDisplayedTasks.length));
-  }, [effectiveDisplayedTasks.length, sourceRowsKey, tableFilterSignature]);
+  }, [tableFilterSignature]);
+
+  useEffect(() => {
+    cancelTableScrollTopHold();
+  }, [cancelTableScrollTopHold, columnAlignments, columnOrder, columnWidths, sortState, statusDisplayMode, structuredFilters, textFilters, visibleColumns]);
+
+  useEffect(() => {
+    return cancelTableScrollTopHold;
+  }, [cancelTableScrollTopHold]);
 
   useEffect(() => {
     if (remainingRenderedTaskCount <= 0 && !hasMoreRows) {
@@ -3092,9 +3003,16 @@ export function TaskManagementTableV2({
       const hasMeaningfulTableScroll = availableScroll > Math.max(180, scrollContainer.clientHeight * 0.75);
       setShowTableScrollUp(hasMeaningfulTableScroll && scrollContainer.scrollTop > scrollContainer.clientHeight * 2);
     };
+    const handleUserScroll = () => {
+      updateTableScrollButton();
+      if (tableUserScrollIntentRef.current) {
+        tableUserScrollIntentRef.current = false;
+        cancelTableScrollTopHold();
+      }
+    };
 
     updateTableScrollButton();
-    scrollContainer.addEventListener("scroll", updateTableScrollButton, { passive: true });
+    scrollContainer.addEventListener("scroll", handleUserScroll, { passive: true });
     window.addEventListener("resize", updateTableScrollButton);
 
     let resizeObserver: ResizeObserver | null = null;
@@ -3110,11 +3028,11 @@ export function TaskManagementTableV2({
     }
 
     return () => {
-      scrollContainer.removeEventListener("scroll", updateTableScrollButton);
+      scrollContainer.removeEventListener("scroll", handleUserScroll);
       window.removeEventListener("resize", updateTableScrollButton);
       resizeObserver?.disconnect();
     };
-  }, [effectiveDisplayedTasks.length, renderedTaskCount, showHeader, sourceRowsKey, tableFilterSignature, visibleHeaderColumns.length]);
+  }, [cancelTableScrollTopHold, effectiveDisplayedTasks.length, renderedTaskCount, showHeader, sourceRowsKey, tableFilterSignature, visibleHeaderColumns.length]);
 
   useEffect(() => {
     setLocalActiveTimerIndex((current) => {
@@ -3170,6 +3088,7 @@ export function TaskManagementTableV2({
     if (!pendingTableReveal) {
       return;
     }
+    cancelTableScrollTopHold();
 
     const resolveRevealTarget = () => {
       const shellElement = shellRef.current;
@@ -3202,12 +3121,6 @@ export function TaskManagementTableV2({
       if (!target) {
         return;
       }
-      logTableTodayScrollDiag("pending_reveal", {
-        activeElement: describeActiveElement(),
-        key: pendingTableReveal.key,
-        scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
-        targetTaskId: pendingTableReveal.taskId,
-      });
       revealTargetInScrollableContainer(target, {
         fallbackContainer: tableScrollContainerRef.current,
         minVisibleHeight: pendingTableReveal.minVisibleHeight,
@@ -3226,108 +3139,7 @@ export function TaskManagementTableV2({
       window.cancelAnimationFrame(firstFrameId);
       window.cancelAnimationFrame(secondFrameId);
     };
-  }, [logTableTodayScrollDiag, pendingTableReveal]);
-
-  useLayoutEffect(() => {
-    if (overlayOnly || !localTableScrollAnchor) {
-      return;
-    }
-
-    const shellElement = shellRef.current;
-    if (!shellElement) {
-      return;
-    }
-
-    const activeScrollAnchor = localTableScrollAnchor;
-    const previousVisibleSignature = activeScrollAnchor.previousVisibleTaskIds.join("|");
-    const currentVisibleSignature = visibleTaskIds.join("|");
-    const hasRowsSettled = previousVisibleSignature !== currentVisibleSignature
-      || (activeScrollAnchor.sourceTaskId ? !visibleTaskIds.includes(activeScrollAnchor.sourceTaskId) : false);
-    const anchorTaskId = activeScrollAnchor.candidateTaskIds.find((candidateTaskId) => visibleTaskIdSet.has(candidateTaskId)) ?? null;
-    if (!anchorTaskId) {
-      pendingMeasuredTableScrollAnchorRef.current = null;
-      setLocalTableScrollAnchor(null);
-      return;
-    }
-
-    const anchorTaskIndex = visibleTaskIds.indexOf(anchorTaskId);
-    if (anchorTaskIndex >= renderedTaskCount) {
-      startTransition(() => {
-        setRenderedTaskCount((current) => Math.max(current, anchorTaskIndex + 1));
-      });
-      return;
-    }
-
-    let frameId = 0;
-    let attemptCount = 0;
-    const pendingMeasuredAnchor = pendingMeasuredTableScrollAnchorRef.current;
-    const matchesMeasuredAnchor = pendingMeasuredAnchor
-      && pendingMeasuredAnchor.sourceTaskId === activeScrollAnchor.sourceTaskId
-      && pendingMeasuredAnchor.candidateTaskIds.length === activeScrollAnchor.candidateTaskIds.length
-      && pendingMeasuredAnchor.candidateTaskIds.every((taskId, index) => taskId === activeScrollAnchor.candidateTaskIds[index]);
-    const restoreAnchor = () => {
-      attemptCount += 1;
-      const maxAttemptCount = matchesMeasuredAnchor && pendingMeasuredAnchor.awaitRowsSettlement ? 30 : 6;
-      if (!hasRowsSettled && attemptCount < maxAttemptCount) {
-        frameId = window.requestAnimationFrame(restoreAnchor);
-        return;
-      }
-
-      const target = shellElement.querySelector<HTMLElement>(`[data-task-table-row="${anchorTaskId}"], [data-same-table-step-row="${anchorTaskId}"]`);
-      if (!target) {
-        if (matchesMeasuredAnchor) {
-          logTableTodayScrollDiag("anchor_restore_missing_target", {
-            anchorTaskId,
-            candidateTaskIds: activeScrollAnchor.candidateTaskIds.slice(0, 8),
-            scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
-            sourceTaskId: activeScrollAnchor.sourceTaskId,
-          });
-          pendingMeasuredTableScrollAnchorRef.current = null;
-          setLocalTableScrollAnchor(null);
-        }
-        return;
-      }
-
-      if (!matchesMeasuredAnchor) {
-        return;
-      }
-
-      const scrollContainer = findNearestScrollableContainer(target, tableScrollContainerRef.current ?? shellElement);
-      if (!scrollContainer) {
-        pendingMeasuredTableScrollAnchorRef.current = null;
-        setLocalTableScrollAnchor(null);
-        return;
-      }
-      const containerRect = scrollContainer.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
-      const previousScrollTop = scrollContainer.scrollTop;
-      scrollContainer.scrollTop += (targetRect.top - containerRect.top) - pendingMeasuredAnchor.anchorOffsetTop;
-      logTableTodayScrollDiag("anchor_restore_applied", {
-        activeElement: describeActiveElement(),
-        anchorOffsetTop: pendingMeasuredAnchor.anchorOffsetTop,
-        anchorTaskId,
-        nextScrollTop: scrollContainer.scrollTop,
-        previousScrollTop,
-        sourceTaskId: activeScrollAnchor.sourceTaskId,
-        targetTop: targetRect.top - containerRect.top,
-      });
-      pendingMeasuredTableScrollAnchorRef.current = null;
-      setLocalTableScrollAnchor(null);
-    };
-
-    restoreAnchor();
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [
-    logTableTodayScrollDiag,
-    localTableScrollAnchor,
-    overlayOnly,
-    renderedTaskCount,
-    visibleTaskIdSet,
-    visibleTaskIds,
-  ]);
+  }, [cancelTableScrollTopHold, pendingTableReveal]);
 
   useEffect(() => {
     if (!overlayOnly || statusChangeScrollAnchorTaskIds.length === 0 || statusChangeScrollToken === null) {
@@ -3398,6 +3210,12 @@ export function TaskManagementTableV2({
     visibleTaskIdSet,
     visibleTaskIds,
   ]);
+
+  useEffect(() => {
+    if (highlightedScrollToken !== null) {
+      cancelTableScrollTopHold();
+    }
+  }, [cancelTableScrollTopHold, highlightedScrollToken]);
 
   useEffect(() => {
     if (!highlightedActiveTaskId || highlightedScrollToken === null) {
@@ -3711,12 +3529,6 @@ export function TaskManagementTableV2({
     skipNotesCommit?: boolean;
     skipTitleCommit?: boolean;
   }) {
-    logTableTodayScrollDiag("close_inspector_start", {
-      activeElement: describeActiveElement(),
-      metadataTargetTaskId,
-      scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
-      selectedTaskId,
-    });
     if (selectedTaskId) {
       if (!options?.skipTitleCommit) {
         commitTaskTitle(selectedTaskId);
@@ -3773,14 +3585,6 @@ export function TaskManagementTableV2({
     setOverlayMode("full");
     setOverlayAnchor(null);
     onInspectorClose?.();
-    window.requestAnimationFrame(() => {
-      logTableTodayScrollDiag("close_inspector_after_frame", {
-        activeElement: describeActiveElement(),
-        metadataTargetTaskId: null,
-        scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
-        selectedTaskId: null,
-      });
-    });
   }
 
   function shouldSkipRecentInlineCommit(taskId: string, field: "link" | "notes" | "title", value: string) {
@@ -3859,7 +3663,7 @@ export function TaskManagementTableV2({
       return;
     }
 
-    queueMeasuredTableScrollAnchor(taskId);
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(changedTaskIds, (task) => ({
       ...task,
       linkLabel: nextLink.label,
@@ -3898,7 +3702,7 @@ export function TaskManagementTableV2({
       return;
     }
 
-    queueMeasuredTableScrollAnchor(taskId);
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(changedTaskIds, (task) => ({
       ...task,
       notes: nextNotes,
@@ -3913,7 +3717,7 @@ export function TaskManagementTableV2({
 
   function setTaskDue(taskId: string, dueOn: string, dueTime: string) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
-    queueMeasuredTableScrollAnchor(taskId);
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTaskIds, (task) => ({
       ...task,
       dueOn,
@@ -3948,25 +3752,16 @@ export function TaskManagementTableV2({
   function setTaskStatus(taskId: string, status: TaskStatus) {
     // Status changes must reuse the app's per-task status action path so validation,
     // completion, recurrence, rewards, and trash/archive side effects still run.
-    const scrollAnchorTaskIds = queueMeasuredTableScrollAnchor(taskId, { awaitRowsSettlement: true });
-    logTableTodayScrollDiag("set_task_status", {
-      activeElement: describeActiveElement(),
-      metadataTargetTaskId,
-      scrollAnchorTaskIds: scrollAnchorTaskIds.slice(0, 8),
-      scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
-      selectedTaskId,
-      sourceTaskId: taskId,
-      status,
-    });
+    queueTableMutationScrollTopHold(taskId);
     const targetTaskIds = resolveTableActionTargetTaskIds(taskId);
     for (const targetTaskId of targetTaskIds) {
-      onTaskStatusChange?.(targetTaskId, status, scrollAnchorTaskIds);
+      onTaskStatusChange?.(targetTaskId, status, undefined, { suppressSharedScrollAnchor: true });
     }
   }
 
   function setTaskEstimatedMinutes(taskId: string, minutes: number | null) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
-    queueMeasuredTableScrollAnchor(taskId);
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, estimatedMinutes: minutes }));
     for (const targetTaskId of targetTaskIds) {
       onTaskEstimatedMinutesChange?.(targetTaskId, minutes);
@@ -3975,7 +3770,7 @@ export function TaskManagementTableV2({
 
   function setTaskEnergy(taskId: string, energy: TaskEnergy) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
-    queueMeasuredTableScrollAnchor(taskId);
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, energy }));
     for (const targetTaskId of targetTaskIds) {
       onTaskEnergyChange?.(targetTaskId, energy);
@@ -4213,7 +4008,7 @@ export function TaskManagementTableV2({
 
   function setTaskPriorities(taskId: string, priorities: TaskPriority[]) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
-    queueMeasuredTableScrollAnchor(taskId);
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, priorities }));
     for (const targetTaskId of targetTaskIds) {
       onTaskPriorityChange?.(targetTaskId, priorities);
@@ -4222,7 +4017,7 @@ export function TaskManagementTableV2({
 
   function setTaskTags(taskId: string, tags: string[]) {
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
-    queueMeasuredTableScrollAnchor(taskId);
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, tags }));
     for (const targetTaskId of targetTaskIds) {
       onTaskTagsChange?.(targetTaskId, tags);
@@ -4246,7 +4041,7 @@ export function TaskManagementTableV2({
       ...current,
       [taskId]: { label: "", url: "" },
     }));
-    queueMeasuredTableScrollAnchor(taskId);
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, linkLabel: "", linkUrl: "" }));
     for (const targetTaskId of targetTaskIds) {
       onTaskLinkChange?.(targetTaskId, { label: "", url: "" });
@@ -4259,7 +4054,7 @@ export function TaskManagementTableV2({
       ...current,
       [taskId]: "",
     }));
-    queueMeasuredTableScrollAnchor(taskId);
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTaskIds, (task) => ({ ...task, notes: "" }));
     for (const targetTaskId of targetTaskIds) {
       onTaskNotesChange?.(targetTaskId, "");
@@ -4313,6 +4108,7 @@ export function TaskManagementTableV2({
     const nextTagsByTaskId = new Map(
       targetTasks.map((task) => [task.id, Array.from(new Set([...task.tags, nextTag]))] as const),
     );
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTasks.map((task) => task.id), (task) => ({
       ...task,
       tags: nextTagsByTaskId.get(task.id) ?? task.tags,
@@ -4336,6 +4132,7 @@ export function TaskManagementTableV2({
         ? candidate.tags.filter((entry) => entry !== tag)
         : Array.from(new Set([...candidate.tags, tag]))] as const),
     );
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTasks.map((candidate) => candidate.id), (candidate) => ({
       ...candidate,
       tags: nextTagsByTaskId.get(candidate.id) ?? candidate.tags,
@@ -4360,6 +4157,7 @@ export function TaskManagementTableV2({
         ? candidate.lists.filter((entry) => normalizeTaskListLabel(entry) !== normalizeTaskListLabel(listLabel))
         : [...candidate.lists, listLabel]] as const),
     );
+    queueTableMutationScrollTopHold(taskId);
     patchTasks(changedTasks.map((candidate) => candidate.id), (candidate) => ({
       ...candidate,
       lists: nextListsByTaskId.get(candidate.id) ?? candidate.lists,
@@ -4381,6 +4179,7 @@ export function TaskManagementTableV2({
         .map((targetTaskId) => getTaskById(targetTaskId))
         .filter((candidate): candidate is PrototypeTaskRow => Boolean(candidate));
       const changedTasks = targetTasks.filter((candidate) => !taskHasList(candidate, draft));
+      queueTableMutationScrollTopHold(taskId);
       patchTasks(changedTasks.map((candidate) => candidate.id), (candidate) => ({
         ...candidate,
         lists: [...candidate.lists, draft],
@@ -4423,6 +4222,7 @@ export function TaskManagementTableV2({
 
     const nextTask = getTaskById(taskId);
     const isTaskInRows = tasks.some((task) => task.id === taskId);
+    cancelTableScrollTopHold();
     setEditingTaskTitleId(null);
     setMetadataTargetTaskId(null);
     setRetainedMetadataTargetTask(null);
@@ -4696,14 +4496,6 @@ export function TaskManagementTableV2({
           className={inlineAccordionButtonClass()}
           key={`${status || "status-option"}-${optionIndex}`}
           onClick={() => {
-            logTableTodayScrollDiag("status_option_click", {
-              activeElement: describeActiveElement(),
-              metadataTargetTaskId,
-              scrollTop: tableScrollContainerRef.current?.scrollTop ?? null,
-              selectedTaskId,
-              sourceTaskId: task.id,
-              status,
-            });
             if (status === "delayed" && canDelayTask(task)) {
               setOverlayMode("delay");
               return;
@@ -7403,11 +7195,17 @@ export function TaskManagementTableV2({
           </div>
         ) : null}
 
-        <div className={`${showHeader ? "mt-1" : ""} overflow-hidden rounded-[1.7rem]`}>
+        <div className={`${showHeader ? "mt-1" : ""} overflow-hidden rounded-[1.7rem]`} style={{ overflowAnchor: "none" }}>
           <motion.div
             animate="visible"
             className="adhdice-scrollbar relative min-h-[min(28rem,65vh)] max-h-[65vh] overflow-x-auto overflow-y-auto"
             initial="hidden"
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget) {
+                tableUserScrollIntentRef.current = true;
+                cancelTableScrollTopHold();
+              }
+            }}
             ref={tableScrollContainerRef}
             onScroll={() => {
               const scrollElement = tableScrollContainerRef.current;
@@ -7425,6 +7223,14 @@ export function TaskManagementTableV2({
               if (rowContextMenu) {
                 setRowContextMenu(null);
               }
+            }}
+            onTouchStart={() => {
+              tableUserScrollIntentRef.current = true;
+              cancelTableScrollTopHold();
+            }}
+            onWheel={() => {
+              tableUserScrollIntentRef.current = true;
+              cancelTableScrollTopHold();
             }}
             variants={{
               visible: {

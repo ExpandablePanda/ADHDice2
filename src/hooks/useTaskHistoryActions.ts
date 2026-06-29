@@ -114,14 +114,6 @@ export function useTaskHistoryActions({
     entryDate: string,
     options?: { syncLiveTask?: boolean },
   ) {
-    if (process.env.NODE_ENV !== "production") {
-      console.info("[TABLE_TODAY_SCROLL_DIAG]", "history_sync_start", {
-        entryDate,
-        sourceTaskId: taskId,
-        status,
-        syncLiveTask: options?.syncLiveTask ?? false,
-      });
-    }
     const shouldKeepEntry = isTaskHistoryStatus(status);
 
     if (!shouldKeepEntry) {

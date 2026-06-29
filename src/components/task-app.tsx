@@ -465,7 +465,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.13.19";
+const APP_VERSION = "6.13.25";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -1599,6 +1599,15 @@ export function TaskApp() {
 
     function handleSessionLockRejection(event: PromiseRejectionEvent) {
       if (!isSupabaseSessionLockError(event.reason)) {
+        if (!isAuthResolved && isSupabaseLoadFailure(event.reason)) {
+          event.preventDefault();
+          setSession(null);
+          setIsAuthResolved(true);
+          setMessage((current) => current ?? {
+            tone: "warn",
+            text: "Could not reach Supabase to restore your session. Check your connection and Supabase settings, then try again.",
+          });
+        }
         return;
       }
 
@@ -1645,7 +1654,7 @@ export function TaskApp() {
       window.removeEventListener("unhandledrejection", handleSessionLockRejection);
       unsubscribe();
     };
-  }, [supabase]);
+  }, [isAuthResolved, supabase]);
 
   useEffect(() => {
     if (!message || message.tone !== "good") {
@@ -2420,33 +2429,13 @@ export function TaskApp() {
         ? candidateTaskIds
         : [taskId, ...fallbackTaskIds.filter((visibleTaskId) => visibleTaskId !== taskId)],
     ));
-    if (process.env.NODE_ENV !== "production" && selectedBucketLabel.toLowerCase().includes("today")) {
-      console.info("[TABLE_TODAY_SCROLL_DIAG]", "app_queue_status_scroll_anchor", {
-        candidateTaskIds: nextCandidateTaskIds.slice(0, 8),
-        sourceTaskId: taskId,
-      });
-    }
     setStatusChangeScrollAnchor((current) => ({
       candidateTaskIds: nextCandidateTaskIds,
       previousVisibleTaskIds: fallbackTaskIds,
       sourceTaskId: taskId,
       token: (current?.token ?? 0) + 1,
     }));
-  }, [selectedBucketLabel, selectedBucketTasks]);
-  useEffect(() => {
-    if (process.env.NODE_ENV === "production" || !selectedBucketLabel.toLowerCase().includes("today")) {
-      return;
-    }
-    console.info("[TABLE_TODAY_SCROLL_DIAG]", "today_bucket_tasks_update", {
-      bucketLabel: selectedBucketLabel,
-      count: selectedBucketTasks.length,
-      firstTasks: selectedBucketTasks.slice(0, 8).map((task) => ({
-        id: task.id,
-        status: task.status,
-        title: task.title,
-      })),
-    });
-  }, [selectedBucketLabel, selectedBucketTasks]);
+  }, [selectedBucketTasks]);
   const activeTaskHighlightMatchIds = taskUiState.view === "table" && !duplicateTitleModeActive
     ? (tableVisibleSearchMatchIds ?? taskHighlightMatches.matchedRowIds)
     : taskHighlightMatches.matchedRowIds;
@@ -4909,12 +4898,14 @@ export function TaskApp() {
                         }),
                     });
                   },
-                  onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds) => {
+                  onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
                     if (!task) {
                       return;
                     }
-                    queueStatusChangeScrollAnchor(taskId, scrollAnchorTaskIds);
+                    if (!options?.suppressSharedScrollAnchor) {
+                      queueStatusChangeScrollAnchor(taskId, scrollAnchorTaskIds);
+                    }
                     void updateTaskStatus(task, status);
                   },
                   onAddTaskSubtask: (taskId) => addTaskSubtask(taskId),
@@ -4945,10 +4936,6 @@ export function TaskApp() {
                   },
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
-                  statusChangeScrollAnchorTaskIds: statusChangeScrollAnchor?.candidateTaskIds,
-                  statusChangeScrollPreviousVisibleTaskIds: statusChangeScrollAnchor?.previousVisibleTaskIds,
-                  statusChangeScrollSourceTaskId: statusChangeScrollAnchor?.sourceTaskId ?? null,
-                  statusChangeScrollToken: statusChangeScrollAnchor?.token ?? null,
                 }}
                 filterRowsNode={taskFilterRowsNode}
                 panelProps={listPanelProps}
@@ -5057,12 +5044,14 @@ export function TaskApp() {
                         }),
                     });
                   },
-                  onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds) => {
+                  onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
                     if (!task) {
                       return;
                     }
-                    queueStatusChangeScrollAnchor(taskId, scrollAnchorTaskIds);
+                    if (!options?.suppressSharedScrollAnchor) {
+                      queueStatusChangeScrollAnchor(taskId, scrollAnchorTaskIds);
+                    }
                     void updateTaskStatus(task, status);
                   },
                   onAddTaskSubtask: (taskId) => addTaskSubtask(taskId),
@@ -6440,12 +6429,13 @@ function BrandMark({
     <Image
       alt="ADHDice logo"
       className={compact
-        ? "h-9 w-auto max-w-none object-contain object-left pl-[3px]"
-        : "h-[50px] w-auto max-w-none object-contain object-left pl-[3px]"}
+        ? "h-9 max-w-none object-contain object-left pl-[3px]"
+        : "h-[50px] max-w-none object-contain object-left pl-[3px]"}
       height={compact ? 36 : 56}
       onError={() => setErrored(true)}
       priority
       src={withBasePath(logoSrc)}
+      style={{ width: "auto" }}
       unoptimized={logoSrc.startsWith("data:")}
       width={compact ? 122 : 190}
     />

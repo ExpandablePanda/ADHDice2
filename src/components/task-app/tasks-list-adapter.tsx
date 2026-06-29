@@ -189,7 +189,13 @@ type TasksTableSourceProps = {
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
-  onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null, scrollAnchorTaskIds?: string[]) => void;
+  onSetStatus?: (
+    taskId: string,
+    status: TaskStatus,
+    expectedTask?: Task | null,
+    scrollAnchorTaskIds?: string[],
+    options?: { suppressSharedScrollAnchor?: boolean },
+  ) => void;
   onAddTaskSubtask?: (taskId: string) => string | null | Promise<string | null>;
   onAddChildTaskSubtask?: (subtaskId: string) => string | null | Promise<string | null>;
   onDeleteTaskSubtask?: (subtaskId: string) => void;
@@ -438,13 +444,14 @@ export function TasksTableAdapter({
           onTaskNotesChange={tableProps.onSetNotes}
           onTaskPriorityChange={tableProps.onSetPriority}
           onTaskRepeatChange={tableProps.onSetRepeat}
-          onTaskStatusChange={(taskId, status) => {
+          onTaskStatusChange={(taskId, status, scrollAnchorTaskIds, options) => {
             const expectedTask = tableProps.tasks.find((task) => task.id === taskId) ?? null;
             tableProps.onSetStatus?.(
               taskId,
               status,
               expectedTask,
-              buildStatusScrollAnchorTaskIds(taskId),
+              scrollAnchorTaskIds ?? buildStatusScrollAnchorTaskIds(taskId),
+              options,
             );
           }}
           onTaskSubtaskAdd={tableProps.onAddTaskSubtask}
@@ -469,10 +476,6 @@ export function TasksTableAdapter({
           showHeader={false}
           expandAllColumnsToken={panelProps.expandAllColumnsToken}
           shrinkAllColumnsToken={panelProps.shrinkAllColumnsToken}
-          statusChangeScrollAnchorTaskIds={tableProps.statusChangeScrollAnchorTaskIds}
-          statusChangeScrollPreviousVisibleTaskIds={tableProps.statusChangeScrollPreviousVisibleTaskIds}
-          statusChangeScrollSourceTaskId={tableProps.statusChangeScrollSourceTaskId}
-          statusChangeScrollToken={tableProps.statusChangeScrollToken}
           title="Tasks"
           visibleColumns={visibleColumns}
           activeTaskTimerIndex={tableProps.activeTaskTimerIndex}
