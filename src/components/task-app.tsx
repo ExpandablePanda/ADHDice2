@@ -344,6 +344,10 @@ function doesTaskHighlightTextMatch(value: string | null | undefined, normalized
   return (value ?? "").toLowerCase().includes(normalizedQuery);
 }
 
+function doesTaskHighlightTagMatch(values: readonly string[] | null | undefined, normalizedQuery: string) {
+  return Array.isArray(values) && values.some((value) => doesTaskHighlightTextMatch(value, normalizedQuery));
+}
+
 function collectMatchingSourceSubtaskIds(
   subtasks: DbTaskSubtask[],
   normalizedQuery: string,
@@ -385,11 +389,13 @@ function buildTaskHighlightMatchState({
   };
 
   for (const task of selectedBucketTasks) {
-    if (doesTaskHighlightTextMatch(task.title, query)) {
+    if (doesTaskHighlightTextMatch(task.title, query) || doesTaskHighlightTagMatch(task.tags, query)) {
       addMatch(task.id);
     }
 
-    const previewMatches = childTaskPreviewByParentTaskId[task.id]?.items.filter((item) => doesTaskHighlightTextMatch(item.title, query)) ?? [];
+    const previewMatches = childTaskPreviewByParentTaskId[task.id]?.items.filter((item) => (
+      doesTaskHighlightTextMatch(item.title, query) || doesTaskHighlightTagMatch(item.tags, query)
+    )) ?? [];
     if (previewMatches.length > 0) {
       matchedStepParentTaskIdSet.add(task.id);
       for (const item of previewMatches) {
@@ -465,7 +471,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.13.25";
+const APP_VERSION = "6.14.1";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -3318,6 +3324,44 @@ export function TaskApp() {
     });
     return true;
   }, [applyTaskMutationWithoutHistory, setMessage, tasks]);
+  const moveTaskIntoParent = useCallback(async (taskId: string, parentTaskId: string) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    const parentTask = tasks.find((entry) => entry.id === parentTaskId);
+    if (!task || !parentTask) {
+      return false;
+    }
+    if (task.id === parentTask.id) {
+      setMessage({ tone: "warn", text: "A task cannot become its own parent." });
+      return false;
+    }
+
+    const hierarchy = buildTaskHierarchyAdapter(tasks);
+    if (hierarchy.invalidTaskIds.has(task.id) || hierarchy.invalidTaskIds.has(parentTask.id)) {
+      setMessage({ tone: "warn", text: "This task move is blocked until the current hierarchy issues are fixed." });
+      return false;
+    }
+
+    const descendantIds = new Set(hierarchy.getDescendants(task.id).map((entry) => entry.id));
+    if (descendantIds.has(parentTask.id)) {
+      setMessage({ tone: "warn", text: "A task cannot move into one of its own descendants." });
+      return false;
+    }
+
+    const didMove = await applyTaskMutationWithoutHistory(
+      taskId,
+      { parent_task_id: parentTaskId },
+      { expectedTask: task },
+    );
+    if (!didMove) {
+      return false;
+    }
+
+    setMessage({
+      tone: "good",
+      text: `"${task.title}" now lives under "${parentTask.title}".`,
+    });
+    return true;
+  }, [applyTaskMutationWithoutHistory, setMessage, tasks]);
 
   const getTaskDelayAnchorDate = useCallback((task: Task) => (
     task.due_on && task.due_on > todayKey ? task.due_on : todayKey
@@ -4854,6 +4898,7 @@ export function TaskApp() {
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: openTaskEditorFromId,
                   onOpenChildTask: openChildTaskFromPreview,
+                  onMoveTaskIntoParent: moveTaskIntoParent,
                   onReorderChildTask: (taskId, direction) => { void reorderChildTask(taskId, direction); },
                   onFollowDetachedTask: followDetachedTask,
                   onDismissDetachedTask: dismissDetachedTask,
@@ -5000,6 +5045,7 @@ export function TaskApp() {
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: (taskId) => setRequestedListOverlayTaskId(taskId),
                   onOpenChildTask: openChildTaskFromPreview,
+                  onMoveTaskIntoParent: moveTaskIntoParent,
                   onReorderChildTask: (taskId, direction) => { void reorderChildTask(taskId, direction); },
                   onFollowDetachedTask: followDetachedTask,
                   onDismissDetachedTask: dismissDetachedTask,

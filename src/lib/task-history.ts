@@ -251,11 +251,12 @@ export function getTaskFocusFilterFacts(task: Pick<Task, "due_on" | "repeat_freq
   const todayStatus = currentOccurrenceDateKey === todayDateKey
     ? currentOccurrenceStatus
     : getTaskHandledHistoryStatusOnDate(history, todayDateKey);
+  const isCurrentOccurrenceToday = currentOccurrenceDateKey === todayDateKey;
 
   return {
     currentOccurrenceDateKey,
     currentOccurrenceStatus,
-    handledToday: currentOccurrenceStatus !== null || todayStatus !== null,
+    handledToday: isCurrentOccurrenceToday ? currentOccurrenceStatus !== null : todayStatus !== null,
     missedToday: currentOccurrenceStatus === "missed" || todayStatus === "missed",
     todayStatus,
   };

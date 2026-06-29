@@ -38,6 +38,7 @@ import {
   TagChipInput,
   ToggleField,
 } from "./task-editor-fields";
+import { TaskDelayPicker } from "./task-delay-picker";
 import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "./task-status-ui";
 import { CompactRepeatCadenceControls } from "@/components/ui/task-table-primitives";
 import {
@@ -46,6 +47,7 @@ import {
   REPEAT_MONTHLY_ORDINAL_OPTIONS,
   REPEAT_WEEKDAY_FULL_LABELS,
 } from "@/lib/task-repeat";
+import { shiftDateKey } from "@/lib/task-grid-layout";
 
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
@@ -465,6 +467,10 @@ export function TaskEditorModal({
     : parsePositiveInteger(draft.estimatedMinutes);
   const customEstimatedHoursValue = customEstimatedMinutes === null ? "" : String(Math.floor(customEstimatedMinutes / 60));
   const customEstimatedMinuteValue = customEstimatedMinutes === null ? "" : String(customEstimatedMinutes % 60);
+  const todayDateKey = new Date().toISOString().slice(0, 10);
+  const delayAnchorDateKey = task?.due_on && task.due_on > todayDateKey ? task.due_on : todayDateKey;
+  const requiresDelayedDueDate = draft.status === "delayed";
+  const hasValidDelayedDueDate = Boolean(draft.dueOn && draft.dueOn > delayAnchorDateKey);
 
   function updateEstimatedTimeParts(hoursPart: string, minutesPart: string) {
     const normalizedHours = hoursPart.replace(/[^\d]/g, "");
@@ -541,7 +547,9 @@ export function TaskEditorModal({
           event.preventDefault();
           const draftSnapshot = draftRef.current;
           const trimmedSnapshotTitle = draftSnapshot.title.trim();
-          if (!trimmedSnapshotTitle || hasUrlError) return;
+          const delayedAnchorDateKey = task?.due_on && task.due_on > todayDateKey ? task.due_on : todayDateKey;
+          const hasDelayedDueDate = Boolean(draftSnapshot.dueOn && draftSnapshot.dueOn > delayedAnchorDateKey);
+          if (!trimmedSnapshotTitle || hasUrlError || (draftSnapshot.status === "delayed" && !hasDelayedDueDate)) return;
           setIsSaving(true);
           await onSave({
             focusToday: draftSnapshot.focusToday,
@@ -608,7 +616,13 @@ export function TaskEditorModal({
             <div className="grid gap-3 sm:grid-cols-3">
               <CompactSelectField
                 label="Status"
-                onChange={(value) => setDraft((c) => ({ ...c, status: value }))}
+                onChange={(value) => setDraft((current) => ({
+                  ...current,
+                  dueOn: value === "delayed" && (!current.dueOn || current.dueOn <= delayAnchorDateKey)
+                    ? shiftDateKey(delayAnchorDateKey, 1)
+                    : current.dueOn,
+                  status: value,
+                }))}
                 optionButtonClassName={(status, selected) => `${TASK_STATUS_CHIP_STYLES[status as TaskStatus]} ${selected ? "" : "hover:opacity-90"}`}
                 options={visibleStatusOptions}
                 renderOption={(status) => renderTaskStatusChip(status as TaskStatus, { size: "sm" })}
@@ -638,6 +652,28 @@ export function TaskEditorModal({
                 value={draft.repeatFrequency}
               />
             </div>
+
+            {requiresDelayedDueDate ? (
+              <div className="rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] p-4 dark:border-[#41306c] dark:bg-[#18112d]">
+                <p className="mb-2 text-sm font-semibold text-[#392f66] dark:text-white">Delayed until</p>
+                <TaskDelayPicker
+                  anchorDateKey={delayAnchorDateKey}
+                  description="Choose a future date to keep this task visibly Delayed until it becomes due again."
+                  inputClassName="h-11 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
+                  onSave={async (nextDueOn) => {
+                    setDraft((current) => ({ ...current, dueOn: nextDueOn, status: "delayed" }));
+                    return true;
+                  }}
+                  primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                  saveLabel="Use delay date"
+                />
+                {!hasValidDelayedDueDate ? (
+                  <p className="mt-2 text-xs text-[#b24d67] dark:text-[#ffb0bc]">
+                    Delayed needs a future due date before this task can be saved.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="grid gap-4">
               <div className="grid gap-3 sm:grid-cols-[max-content_max-content] sm:justify-start sm:gap-6">

@@ -5,15 +5,16 @@ Last reviewed: 2026-06-27
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.13.25`.
-- Current release group: `6.13.x` PATHS MVP.
+- Current working app version: `6.14.1`.
+- Current release group: `6.14.x` stabilization.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
-## 6.13 Checkpoint
+## 6.14 Checkpoint
+- `6.14.1` is the one-pass stabilization pass for Delayed status consistency, tag-search highlight/navigation parity, Smart List `Handled` history correctness, multi-select `Daily Until Complete` cadence visibility, the new `Move into parent` hierarchy action, and lighter List selected-card styling. The committed `6.13.25` Table rendered-row cut-line preservation remains the protected baseline, so explicit Table sort/filter resets still behave as before while this pass avoids broad virtualization or derivation refactors.
 - `6.13.25` is a narrow Table View cut-line follow-up: normal full Table row data changes no longer reset the rendered row window back to the initial batch, so deeper scrolled Table views do not shrink/clamp during status or metadata reorder/removal before the raw scrollTop hold can preserve the viewport. Explicit Table sort/filter changes still reset the rendered window, and List View, overlay-only reveal behavior, selected-row freeze, Delayed, Smart Lists, repeat cadence, HUD, PATHS, Scratch Paper, rewards, auth, and styling otherwise stay unchanged.
 - `6.13.24` is a narrow Table View reorder-behavior correction: normal full Table status and metadata mutations no longer preserve same visible row ids or frozen row snapshots, and instead keep the raw Table scrollTop/cut-line steady for a short six-frame window while rows naturally reorder or disappear. Full Table status edits continue suppressing shared status-anchor restore, selected-row order freeze remains for selected rows, and List View, overlay-only reveal behavior, Delayed, Smart Lists, repeat cadence, HUD, PATHS, Scratch Paper, rewards, auth, and styling otherwise stay unchanged.
 - `6.13.23` is a narrow Table View rendered-row snapshot correction: normal full Table status and metadata mutations now freeze cloned rendered rows rather than only row ids, merge fresh current row data back into still-visible rows, and keep Today-filtered rows as inert visual snapshots until an explicit user boundary releases the freeze. The freeze no longer releases merely because the source row ids changed, while List View, overlay-only reveal behavior, Delayed, Smart Lists, repeat cadence, HUD, PATHS, Scratch Paper, rewards, auth, and styling otherwise stay unchanged.

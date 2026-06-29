@@ -1,6 +1,7 @@
 "use client";
 import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Flame, Footprints, GripVertical, Skull, Tag, Trash2, X } from "lucide-react";
 import {
+  buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
   PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
   TaskManagementTableV2,
@@ -172,6 +173,7 @@ type TasksTableSourceProps = {
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
+  onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
   onReorderChildTask?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onFollowDetachedTask?: (taskId: string) => void;
@@ -423,6 +425,7 @@ export function TasksTableAdapter({
           onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
           onOpenChildTask={tableProps.onOpenChildTask}
+          onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
           onUnlinkTask={tableProps.onUnlinkTask}
           onReorderChildTask={tableProps.onReorderChildTask}
           onFollowDetachedTask={tableProps.onFollowDetachedTask}
@@ -2183,6 +2186,16 @@ function TasksSimpleList({
     () => rowContextMenu ? tasks.find((task) => task.id === rowContextMenu.taskId) ?? null : null,
     [rowContextMenu, tasks],
   );
+  const rowContextMenuMoveIntoParentOptions = useMemo(
+    () => rowContextMenuTask
+      ? buildMoveIntoParentOptions({
+        childTaskPreviewByParentTaskId: tableProps.childTaskPreviewByParentTaskId ?? {},
+        sourceTaskId: rowContextMenuTask.id,
+        tasks: overlayRows,
+      })
+      : [],
+    [overlayRows, rowContextMenuTask, tableProps.childTaskPreviewByParentTaskId],
+  );
   useEffect(() => {
     if (parentStepDraftTaskId) {
       parentStepDraftInputRef.current?.focus();
@@ -2395,6 +2408,7 @@ function TasksSimpleList({
               onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
               onOpenTaskEditor={tableProps.onOpenTaskEditor}
               onOpenTaskHistory={tableProps.onOpenTaskHistory}
+              onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
               onPauseTaskTimer={tableProps.onPauseTaskTimer}
               onPreviousTaskTimer={tableProps.onPreviousTaskTimer}
               onReorderChildTask={tableProps.onReorderChildTask}
@@ -2504,7 +2518,9 @@ function TasksSimpleList({
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${
                 tableProps.highlightedActiveTaskId === task.id
                   ? "border-[#ddd2ff] bg-[#efe6ff] dark:border-[#5a458f] dark:bg-[#2b1d46]"
-                  : "border-[#ece8f8] bg-white/92 dark:border-white/10 dark:bg-white/[0.05]"
+                  : selectedTaskIdSet.has(task.id)
+                    ? "border-[#d8d1ef] bg-white/92 ring-2 ring-[#e7e0fb] ring-offset-0 dark:border-[#4f466d] dark:bg-white/[0.05] dark:ring-[#342b50]"
+                    : "border-[#ece8f8] bg-white/92 dark:border-white/10 dark:bg-white/[0.05]"
               } ${
                 isQuickPanelOpen
                   ? "border-[#cfc2ff] dark:border-[#4f3d86]"
@@ -2971,6 +2987,10 @@ function TasksSimpleList({
                 tableProps.onOpenTaskEditor?.(rowContextMenuTask.id);
                 setRowContextMenu(null);
               } : undefined}
+              onMoveIntoParent={tableProps.onMoveTaskIntoParent ? async (parentTaskId) => {
+                await tableProps.onMoveTaskIntoParent?.(rowContextMenuTask.id, parentTaskId);
+                setRowContextMenu(null);
+              } : undefined}
               onOpenDetails={() => {
                 setRowContextMenu(null);
                 closeQuickPanel();
@@ -3010,6 +3030,7 @@ function TasksSimpleList({
                 tableProps.onRestoreTask?.(rowContextMenuTask.id);
                 setRowContextMenu(null);
               } : undefined}
+              moveIntoParentOptions={rowContextMenuMoveIntoParentOptions}
               onSelectAllVisible={tableProps.onSelectAllVisible ? () => {
                 tableProps.onSelectAllVisible?.(visibleTaskIds);
                 setRowContextMenu(null);

@@ -43,6 +43,10 @@ export function getSelectableTaskStatuses(task: Pick<Task, "repeat_frequency">) 
   return getSelectableTaskStatusesForRepeatFrequency(task.repeat_frequency);
 }
 
+export function getBatchSelectableTaskStatuses() {
+  return RECURRING_SELECTABLE_STATUSES.filter((status) => status !== "delayed");
+}
+
 export function getTaskHistoryCalendarActionStatuses(task: Pick<Task, "repeat_frequency">) {
   return task.repeat_frequency === "none"
     ? (["delayed", "missed", "complete"] as const)

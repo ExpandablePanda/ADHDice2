@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { useState } from "react";
 
 import type { TaskEnergy, TaskPriority, TaskRepeatFrequency } from "@/lib/database.types";
+import { getBatchSelectableTaskStatuses } from "@/lib/task-complete";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 
 import { ModalShell } from "../modal-shell";
@@ -20,6 +21,8 @@ type BatchFieldMode = "clear" | "set" | "unchanged";
 type BatchBooleanChoice = "false" | "true" | "unchanged";
 type BatchRouteChoice = TaskRoutingBucket | "clear" | "focus" | "unchanged";
 type BatchTagsMode = "clear" | "replace" | "unchanged";
+const batchStatusOptions = ["unchanged", ...getBatchSelectableTaskStatuses()] as const;
+type BatchStatusChoice = typeof batchStatusOptions[number];
 
 export type BatchTaskEditDraft = {
   dueOn: string;
@@ -37,7 +40,7 @@ export type BatchTaskEditDraft = {
   repeatFrequency: TaskRepeatFrequency | "unchanged";
   repeatInterval: string;
   route: BatchRouteChoice;
-  status: "done" | "did_my_best" | "in_progress" | "missed" | "not_due" | "pending" | "unchanged" | "upcoming";
+  status: BatchStatusChoice;
   subtasksAutoReset: BatchBooleanChoice;
   tags: string[];
   tagsMode: BatchTagsMode;
@@ -66,7 +69,6 @@ export function TaskBatchEditModal({
   const [isSaving, setIsSaving] = useState(false);
   const isDirty = serializeBatchTaskEditDraft(draft) !== serializeBatchTaskEditDraft(createEmptyBatchTaskEditDraft());
 
-  const statusOptions = ["unchanged", "pending", "in_progress", "delayed", "done", "missed", "did_my_best", "upcoming", "not_due"] as const;
   const routeOptions = ["unchanged", "inbox", "today", "focus", "waiting", "later", "clear"] as const;
   const priorityOptionsWithUnchanged = ["unchanged", ...priorityOptions] as const;
   const energyOptionsWithUnchanged = ["unchanged", ...energyOptions] as const;
@@ -102,7 +104,7 @@ export function TaskBatchEditModal({
               <CompactSelectField
                 label="Status"
                 onChange={(value) => setDraft((current) => ({ ...current, status: value }))}
-                options={statusOptions}
+                options={batchStatusOptions}
                 renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : formatOptionLabel(value)}
                 value={draft.status}
               />

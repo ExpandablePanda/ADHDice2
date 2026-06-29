@@ -357,6 +357,7 @@ type TaskRowContextMenuProps = {
   onDismiss: () => void;
   onDuplicateTask?: () => void;
   onEditTask?: () => void;
+  onMoveIntoParent?: (parentTaskId: string) => void | Promise<void>;
   onOpenDetails?: (sourceElement?: HTMLElement | null) => void;
   onOpenHistory?: () => void;
   onOpenQuickEdit?: (mode: TaskRowContextMenuQuickEditMode, sourceElement?: HTMLElement | null) => void;
@@ -365,6 +366,7 @@ type TaskRowContextMenuProps = {
   onSelectAllVisible?: () => void;
   onToggleTaskSelection?: () => void;
   onUnlinkTask?: () => void;
+  moveIntoParentOptions?: MoveIntoParentOption[];
   quickEditItems?: TaskRowContextMenuQuickEditItem[];
   quickEditTitle?: string;
   selectedTaskCount: number;
@@ -383,6 +385,7 @@ export function TaskRowContextMenu({
   onDismiss,
   onDuplicateTask,
   onEditTask,
+  onMoveIntoParent,
   onOpenDetails,
   onOpenHistory,
   onOpenQuickEdit,
@@ -391,11 +394,22 @@ export function TaskRowContextMenu({
   onSelectAllVisible,
   onToggleTaskSelection,
   onUnlinkTask,
+  moveIntoParentOptions = [],
   quickEditItems = [],
   quickEditTitle = "Quick edit",
   selectedTaskCount,
   task,
 }: TaskRowContextMenuProps) {
+  const [isChoosingParent, setIsChoosingParent] = useState(false);
+  const [parentSearch, setParentSearch] = useState("");
+  const filteredMoveIntoParentOptions = useMemo(() => {
+    const normalizedSearch = parentSearch.trim().toLowerCase();
+    if (!normalizedSearch) {
+      return moveIntoParentOptions;
+    }
+    return moveIntoParentOptions.filter((option) => option.label.toLowerCase().includes(normalizedSearch));
+  }, [moveIntoParentOptions, parentSearch]);
+
   return (
     <div
       className="absolute inset-0 z-40"
@@ -410,13 +424,53 @@ export function TaskRowContextMenu({
       >
         <div className="border-b border-[#f0ebfb] px-2 pb-2 dark:border-white/10">
           <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-            Task actions
+            {isChoosingParent ? "Choose parent" : "Task actions"}
           </p>
           <p className={`${UNIFIED_TABLE_TEXT_CLASS} mt-1 truncate text-[#2f294a] dark:text-white`}>
             {task.title}
           </p>
         </div>
 
+        {isChoosingParent ? (
+          <div className="space-y-2 px-1 py-2">
+            <input
+              autoFocus
+              className="w-full rounded-[1rem] border border-[#e5def8] bg-[#fbfaff] px-3 py-2 text-sm text-[#2f294a] outline-none focus:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.04] dark:text-white"
+              onChange={(event) => setParentSearch(event.target.value)}
+              placeholder="Search parent tasks"
+              type="text"
+              value={parentSearch}
+            />
+            <div className="max-h-60 space-y-1 overflow-y-auto pr-1">
+              {filteredMoveIntoParentOptions.map((option) => (
+                <TaskTableChipButton
+                  className="w-full justify-between gap-2"
+                  key={option.id}
+                  onClick={() => {
+                    void onMoveIntoParent?.(option.id);
+                    onDismiss();
+                  }}
+                >
+                  <span className="truncate">{option.label}</span>
+                </TaskTableChipButton>
+              ))}
+              {filteredMoveIntoParentOptions.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-[#8d87a7] dark:text-white/45">No eligible parent tasks found.</p>
+              ) : null}
+            </div>
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => {
+                setIsChoosingParent(false);
+                setParentSearch("");
+              }}
+            >
+              <span>Back to actions</span>
+            </TaskTableChipButton>
+          </div>
+        ) : null}
+
+        {!isChoosingParent ? (
         <div className="space-y-1 px-1 py-2">
           {(enableInspector || onOpenDetails) ? (
             <TaskTableChipButton
@@ -479,6 +533,14 @@ export function TaskRowContextMenu({
               <MoveLeft className="h-3.5 w-3.5" />
             </TaskTableChipButton>
           ) : null}
+          {onMoveIntoParent && moveIntoParentOptions.length > 0 ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => setIsChoosingParent(true)}
+            >
+              <span>Move into parent</span>
+            </TaskTableChipButton>
+          ) : null}
           {onToggleTaskSelection ? (
             <TaskTableChipButton
               className="w-full justify-between gap-2"
@@ -525,6 +587,7 @@ export function TaskRowContextMenu({
             </>
           ) : null}
         </div>
+        ) : null}
 
         {(enableInspector || allowInlineInspector) && onOpenQuickEdit && quickEditItems.length > 0 ? (
           <div className="border-t border-[#f0ebfb] px-1 pt-2 dark:border-white/10">
@@ -803,6 +866,70 @@ type TaskFollowDestination = {
   label: string;
 };
 
+export type MoveIntoParentOption = {
+  id: string;
+  label: string;
+};
+
+export function buildMoveIntoParentOptions({
+  childTaskPreviewByParentTaskId,
+  sourceTaskId,
+  tasks,
+}: {
+  childTaskPreviewByParentTaskId: ChildTaskPreviewLookup;
+  sourceTaskId: string;
+  tasks: PrototypeTaskRow[];
+}) {
+  const previewById = new Map<string, ChildTaskPreview>();
+  const childIdsByParentId = new Map<string, string[]>();
+
+  for (const [groupParentTaskId, group] of Object.entries(childTaskPreviewByParentTaskId)) {
+    for (const item of group.items) {
+      previewById.set(item.id, item);
+      const parentTaskId = item.parentTaskId ?? groupParentTaskId;
+      const currentChildren = childIdsByParentId.get(parentTaskId) ?? [];
+      currentChildren.push(item.id);
+      childIdsByParentId.set(parentTaskId, currentChildren);
+    }
+  }
+
+  const excludedTaskIds = new Set<string>([sourceTaskId]);
+  const queue = [sourceTaskId];
+  while (queue.length > 0) {
+    const currentTaskId = queue.shift() ?? null;
+    if (!currentTaskId) {
+      continue;
+    }
+    for (const childTaskId of childIdsByParentId.get(currentTaskId) ?? []) {
+      if (excludedTaskIds.has(childTaskId)) {
+        continue;
+      }
+      excludedTaskIds.add(childTaskId);
+      queue.push(childTaskId);
+    }
+  }
+
+  const options: MoveIntoParentOption[] = [];
+  for (const task of tasks) {
+    if (!excludedTaskIds.has(task.id)) {
+      options.push({ id: task.id, label: task.title || "Untitled task" });
+    }
+  }
+
+  for (const preview of previewById.values()) {
+    if (excludedTaskIds.has(preview.id)) {
+      continue;
+    }
+    const depthLabel = formatChildTaskPreviewDepthLabel(preview.depth);
+    options.push({
+      id: preview.id,
+      label: `${preview.title || "Untitled task"} · ${depthLabel}`,
+    });
+  }
+
+  return options.sort((left, right) => left.label.localeCompare(right.label));
+}
+
 function isKeyboardEventFromEditableTarget(
   target: EventTarget | null,
   options?: { isTextEditingActive?: boolean },
@@ -867,6 +994,7 @@ type TaskManagementTableV2Props = {
   onOpenTaskActualTime?: (taskId: string, options?: { durationSeconds?: number; title?: string }) => void;
   onOpenTaskEditor?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
+  onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
   onReorderChildTask?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   overlayOnly?: boolean;
@@ -1998,6 +2126,7 @@ export function TaskManagementTableV2({
   onOpenTaskActualTime,
   onOpenTaskEditor,
   onOpenChildTask,
+  onMoveTaskIntoParent,
   onUnlinkTask,
   onReorderChildTask,
   overlayOnly = false,
@@ -2579,6 +2708,16 @@ export function TaskManagementTableV2({
     [rowContextMenu, selectedTaskIdSet, selectedTaskIds],
   );
   const rowContextMenuHasBatchQuickEdit = rowContextMenuQuickEditTargetIds.length > 1;
+  const rowContextMenuMoveIntoParentOptions = useMemo(
+    () => rowContextMenuTask
+      ? buildMoveIntoParentOptions({
+        childTaskPreviewByParentTaskId,
+        sourceTaskId: rowContextMenuTask.id,
+        tasks,
+      })
+      : [],
+    [childTaskPreviewByParentTaskId, rowContextMenuTask, tasks],
+  );
   const shouldAnimateRows = !shouldReduceMotion && effectiveDisplayedTasks.length <= 80;
   const tableRowVariants: Variants | undefined = shouldAnimateRows
     ? {
@@ -3818,6 +3957,20 @@ export function TaskManagementTableV2({
         ? cadencePatch.repeatMonthlyWeekday ?? currentTask.repeatMonthlyWeekday
         : null,
     };
+    patchTasks(targetTaskIds, (task) => ({
+      ...task,
+      repeat,
+      repeatDayOfMonth: repeat === "daily_until_complete"
+        ? null
+        : nextCadence.repeatDayOfMonth,
+      repeatDaysOfWeek: repeat === "daily_until_complete"
+        ? []
+        : nextCadence.repeatDaysOfWeek,
+      repeatInterval: nextCadence.repeatInterval,
+      repeatMonthlyMode: nextCadence.repeatMonthlyMode,
+      repeatMonthlyOrdinal: nextCadence.repeatMonthlyOrdinal,
+      repeatMonthlyWeekday: nextCadence.repeatMonthlyWeekday,
+    }));
     // Repeat changes also fan out through the existing per-task save callback so
     // recurrence/history behavior stays owned by the normal single-row path.
     for (const targetTaskId of targetTaskIds) {
@@ -7571,6 +7724,10 @@ export function TaskManagementTableV2({
                 setRowContextMenu(null);
                 onOpenTaskEditor(rowContextMenuTask.id);
               } : undefined}
+              onMoveIntoParent={onMoveTaskIntoParent ? async (parentTaskId) => {
+                setRowContextMenu(null);
+                await onMoveTaskIntoParent(rowContextMenuTask.id, parentTaskId);
+              } : undefined}
               onOpenDetails={(sourceElement) => openTaskDetailsFromContextMenu(rowContextMenuTask.id, sourceElement)}
               onOpenHistory={onOpenTaskHistory ? () => {
                 setRowContextMenu(null);
@@ -7589,6 +7746,7 @@ export function TaskManagementTableV2({
                 setRowContextMenu(null);
                 void onUnlinkTask(rowContextMenuTask.id);
               } : undefined}
+              moveIntoParentOptions={rowContextMenuMoveIntoParentOptions}
               onSelectAllVisible={onSelectAllVisible ? () => {
                 onSelectAllVisible(visibleTaskIds);
                 setRowContextMenu(null);
