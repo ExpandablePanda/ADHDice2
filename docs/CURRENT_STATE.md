@@ -1,17 +1,20 @@
 # Current State
 
-Last reviewed: 2026-06-27
+Last reviewed: 2026-06-30
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.15.5`.
-- Current release group: `6.15.x` feature work.
+- Current working app version: `6.16.1`.
+- Current release group: `6.16.x` feature work.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 6.16 Checkpoint
+- `6.16.1` adds the first Task Interaction focus bundle: tasks now support DB-backed Pin Mode through `pinned_at` / `pin_order` without changing status, history, rewards, recurrence, or ordering, Table and List both expose a compact pin toggle plus a shared `Pinned` filter chip, and mobile Table View now presents the existing full Edit Task inspector in a focused top-of-viewport overlay shell with background scroll lock, internal overlay scrolling, and a mobile-only close affordance instead of the cramped in-table treatment. Desktop/tablet Table edit behavior, List edit behavior, Focus/HUD/PATHS/Scratch Paper, delayed logic, task history persistence, search navigation, and broad table virtualization/scroll anchoring behavior otherwise stay unchanged.
 
 ## 6.15 Checkpoint
 - `6.15.5` is a tiny stabilization hotfix before Pin Mode: Delayed validation in the task editor now uses the app-local day key instead of a UTC date boundary, and saved Delayed entries in Task History now render with the matching purple delayed calendar tone instead of the green completed tone. No recurrence, history persistence, rewards, search, Table/List scroll, virtualization, HUD, PATHS, Scratch Paper, Focus, or Pin Mode behavior changes.

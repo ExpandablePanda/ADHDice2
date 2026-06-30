@@ -230,6 +230,7 @@ import {
 } from "@/lib/task-list-rule-editor";
 import { mapTaskListManualMembershipRow, mapTaskListRow } from "@/lib/task-list-mappers";
 import {
+  DEFAULT_TASK_UI_STATE,
   getUserScopedStorageKey,
   parseStoredJson,
   TASK_FOCUS_STORAGE_KEY,
@@ -471,7 +472,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.15.5";
+const APP_VERSION = "6.16.1";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -825,6 +826,10 @@ const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
   archive: "Archive",
   trash: "Trash",
 };
+
+function isTaskPinned(task: Task) {
+  return Boolean(task.pinned_at);
+}
 const TASK_LIST_RULE_FIELD_OPTIONS: Array<{ label: string; value: TaskListRuleField }> = [
   { label: "Status", value: "status" },
   { label: "List", value: "list" },
@@ -1128,6 +1133,7 @@ export function TaskApp() {
     setSelectedBucket,
     toggleListColumn,
   } = useTaskListViewStateController({ setTaskUiState });
+  const lastNonPinnedBucketRef = useRef(taskUiState.selectedBucket === "pinned" ? DEFAULT_TASK_UI_STATE.selectedBucket : taskUiState.selectedBucket);
   const [taskLists, setTaskLists] = useState<TaskListDefinition[]>([]);
   const [taskListManualMemberships, setTaskListManualMemberships] = useState<TaskListManualMembership[]>([]);
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
@@ -1137,6 +1143,12 @@ export function TaskApp() {
   const [availableTaskNotes, setAvailableTaskNotes] = useState<TaskEditorLinkedNote[]>([]);
   const [supportsNestedSubtasks, setSupportsNestedSubtasks] = useState(true);
   const [isGridEditMode, setIsGridEditMode] = useState(false);
+
+  useEffect(() => {
+    if (taskUiState.selectedBucket !== "pinned") {
+      lastNonPinnedBucketRef.current = taskUiState.selectedBucket;
+    }
+  }, [taskUiState.selectedBucket]);
 
   useEffect(() => {
     const checkFinishedCountdown = () => {
@@ -2383,6 +2395,8 @@ export function TaskApp() {
       nextTasks = trashFilteredTasksSorted;
     } else if (taskUiState.selectedBucket === "all") {
       nextTasks = filteredTasksSorted;
+    } else if (taskUiState.selectedBucket === "pinned") {
+      nextTasks = filteredTasksSorted.filter(isTaskPinned);
     } else {
       nextTasks = filteredTasksSorted.filter((task) =>
         (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === taskUiState.selectedBucket),
@@ -2398,6 +2412,14 @@ export function TaskApp() {
     return nextTasks;
   }, [activePage, archiveFilteredTasksSorted, filteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
+  const visiblePinnedTaskCount = useMemo(
+    () => filteredTasksSorted.filter(isTaskPinned).length,
+    [filteredTasksSorted],
+  );
+  const allOpenPinnedTaskCount = useMemo(
+    () => tasks.filter((task) => isTaskPinned(task) && task.status !== "archived" && task.status !== "trashed").length,
+    [tasks],
+  );
   const listVisibleColumns = taskUiState.visibleColumnsByView.table;
   const listSelectionResetKey = JSON.stringify({
     duplicateTitleMode: duplicateTitleModeActive,
@@ -2423,6 +2445,9 @@ export function TaskApp() {
     [childTaskPreviewByParentTaskId, effectiveSearchQuery, selectedBucketTasks, taskSubtasksByTaskId],
   );
   const selectedBucketLabel = useMemo(() => {
+    if (taskUiState.selectedBucket === "pinned") {
+      return "Pinned";
+    }
     if (taskUiState.selectedBucket in TASK_BUCKET_LABELS) {
       return TASK_BUCKET_LABELS[taskUiState.selectedBucket as TaskBucket];
     }
@@ -3673,7 +3698,10 @@ export function TaskApp() {
       hasActiveFilters={hasActiveTaskFilters(effectiveTaskUiState)}
       isOpen={isTaskFiltersOpen}
       matchAny={taskUiState.matchAny}
+      pinnedCount={visiblePinnedTaskCount}
+      pinnedFilterActive={taskUiState.selectedBucket === "pinned"}
       onReset={() => setTaskUiState((prev) => resetTaskFiltersPreservingView(prev))}
+      onTogglePinnedFilter={togglePinnedFilter}
       onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
       onToggleEnergy={(energy) =>
         setTaskUiState((prev) => ({
@@ -4141,6 +4169,19 @@ export function TaskApp() {
     );
   }
 
+  async function toggleTaskPinned(taskId: string) {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) {
+      return false;
+    }
+
+    const nextPinnedAt = task.pinned_at ? null : new Date().toISOString();
+    return applyTaskMutationWithoutHistory(taskId, {
+      pin_order: nextPinnedAt ? task.pin_order ?? null : null,
+      pinned_at: nextPinnedAt,
+    }, { expectedTask: task });
+  }
+
   async function applyTaskMutationWithoutHistory(taskId: string, values: TaskUpdate, options?: { expectedTask?: Task | null }) {
     markPendingTaskMutations?.([taskId]);
     const previousTask = options?.expectedTask ?? tasks.find((task) => task.id === taskId) ?? null;
@@ -4423,6 +4464,17 @@ export function TaskApp() {
     taskTitle: taskHistoryModalTask.title,
     todayDateKey: todayKey,
   } : null;
+  function togglePinnedFilter() {
+    setTaskUiState((prev) => ({
+      ...prev,
+      selectedBucket: prev.selectedBucket === "pinned"
+        ? (lastNonPinnedBucketRef.current === "pinned" ? DEFAULT_TASK_UI_STATE.selectedBucket : lastNonPinnedBucketRef.current)
+        : "pinned",
+    }));
+  }
+  const pinnedEmptyStateMessage = taskUiState.selectedBucket === "pinned"
+    ? (allOpenPinnedTaskCount === 0 ? "No pinned tasks yet." : "No pinned tasks match this view right now.")
+    : "No tasks match this view right now.";
   const taskFilterRowsNode = (
     <div className="space-y-2">
       <FilterRows
@@ -4431,7 +4483,10 @@ export function TaskApp() {
         hasActiveFilters={hasActiveTaskFilters(effectiveTaskUiState)}
         isOpen={isTaskFiltersOpen}
         matchAny={taskUiState.matchAny}
+        pinnedCount={visiblePinnedTaskCount}
+        pinnedFilterActive={taskUiState.selectedBucket === "pinned"}
         onReset={() => setTaskUiState((prev) => resetTaskFiltersPreservingView(prev))}
+        onTogglePinnedFilter={togglePinnedFilter}
         onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
         onToggleEnergy={(energy) =>
           setTaskUiState((prev) => ({
@@ -4941,6 +4996,7 @@ export function TaskApp() {
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
                   onSetPriority: applyTaskPriorityChange,
+                  onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
                     void updateTask(taskId, {
                       repeat_frequency: repeat,
@@ -5006,6 +5062,7 @@ export function TaskApp() {
                   },
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
+                  emptyStateMessage: pinnedEmptyStateMessage,
                 }}
                 filterRowsNode={taskFilterRowsNode}
                 panelProps={listPanelProps}
@@ -5088,6 +5145,7 @@ export function TaskApp() {
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
                   onSetPriority: applyTaskPriorityChange,
+                  onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
                     void updateTask(taskId, {
                       repeat_frequency: repeat,
@@ -5153,6 +5211,7 @@ export function TaskApp() {
                   },
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
+                  emptyStateMessage: pinnedEmptyStateMessage,
                   statusChangeScrollAnchorTaskIds: statusChangeScrollAnchor?.candidateTaskIds,
                   statusChangeScrollPreviousVisibleTaskIds: statusChangeScrollAnchor?.previousVisibleTaskIds,
                   statusChangeScrollSourceTaskId: statusChangeScrollAnchor?.sourceTaskId ?? null,

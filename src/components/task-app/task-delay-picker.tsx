@@ -1,5 +1,6 @@
 "use client";
 
+import { CalendarDays } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import { shiftDateKey } from "@/lib/task-grid-layout";
@@ -12,7 +13,12 @@ function daysBetweenDateKeys(startDateKey: string, endDateKey: string) {
 
 type TaskDelayPickerProps = {
   anchorDateKey: string;
+  dateAdornment?: ReactNode;
+  dateInputClassName?: string;
+  dateFieldWrapperClass?: string;
   description?: ReactNode;
+  daysFieldWrapperClass?: string;
+  daysInputClassName?: string;
   inputClassName: string;
   onCancel?: () => void;
   onSave: (nextDueOn: string, days: number) => Promise<boolean | void> | boolean | void;
@@ -22,7 +28,12 @@ type TaskDelayPickerProps = {
 
 export function TaskDelayPicker({
   anchorDateKey,
+  dateAdornment,
+  dateInputClassName,
+  dateFieldWrapperClass,
   description,
+  daysFieldWrapperClass,
+  daysInputClassName,
   inputClassName,
   onCancel,
   onSave,
@@ -48,46 +59,55 @@ export function TaskDelayPicker({
           {description}
         </p>
       ) : null}
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-        <input
-          className={inputClassName}
-          inputMode="numeric"
-          min="1"
-          onChange={(event) => {
-            const nextDays = event.target.value.replace(/[^\d]/g, "");
-            setDaysDraft(nextDays);
-            if (!nextDays) {
-              return;
-            }
-            const parsedDays = Number.parseInt(nextDays, 10);
-            if (!Number.isFinite(parsedDays) || parsedDays <= 0) {
-              return;
-            }
-            setDateDraft(shiftDateKey(anchorDateKey, parsedDays));
-          }}
-          placeholder="Days"
-          type="text"
-          value={daysDraft}
-        />
-        <input
-          className={inputClassName}
-          min={minimumDateKey}
-          onChange={(event) => {
-            const nextDate = event.target.value;
-            setDateDraft(nextDate);
-            if (!nextDate || nextDate <= anchorDateKey) {
-              return;
-            }
-            setDaysDraft(String(daysBetweenDateKeys(anchorDateKey, nextDate)));
-          }}
-          type="date"
-          value={dateDraft}
-        />
+      <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <div className={daysFieldWrapperClass ?? "min-w-0 max-w-full"}>
+          <input
+            className={`${daysInputClassName ?? inputClassName} min-w-0 w-full max-w-full box-border`}
+            inputMode="numeric"
+            min="1"
+            onChange={(event) => {
+              const nextDays = event.target.value.replace(/[^\d]/g, "");
+              setDaysDraft(nextDays);
+              if (!nextDays) {
+                return;
+              }
+              const parsedDays = Number.parseInt(nextDays, 10);
+              if (!Number.isFinite(parsedDays) || parsedDays <= 0) {
+                return;
+              }
+              setDateDraft(shiftDateKey(anchorDateKey, parsedDays));
+            }}
+            placeholder="Days"
+            type="text"
+            value={daysDraft}
+          />
+        </div>
+        <div className={dateFieldWrapperClass ?? "min-w-0 max-w-full"}>
+          <div className="relative min-w-0 max-w-full">
+            <input
+              className={`${dateInputClassName ?? inputClassName} min-w-0 w-full max-w-full box-border`}
+              min={minimumDateKey}
+              onChange={(event) => {
+                const nextDate = event.target.value;
+                setDateDraft(nextDate);
+                if (!nextDate || nextDate <= anchorDateKey) {
+                  return;
+                }
+                setDaysDraft(String(daysBetweenDateKeys(anchorDateKey, nextDate)));
+              }}
+              type="date"
+              value={dateDraft}
+            />
+            {dateAdornment ?? (
+              <CalendarDays className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6f57f6] dark:text-[#cabfff]" />
+            )}
+          </div>
+        </div>
       </div>
       <p className="text-xs text-[#8d87a7] dark:text-white/40">
         Choose a date after {anchorDateKey}.
       </p>
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         {onCancel ? (
           <TaskTableChipButton
             disabled={isSaving}

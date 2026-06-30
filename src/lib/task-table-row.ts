@@ -74,6 +74,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     lists: listLabels,
     linkedNotes: context.linkedNotes.map((note) => ({ id: note.id, title: note.title })),
     notes: task.notes ?? "",
+    pinOrder: task.pin_order ?? null,
+    pinnedAt: task.pinned_at,
     priorities,
     currentStreak: historyStats.currentStreak,
     missedStreak: historyStats.missedStreak,

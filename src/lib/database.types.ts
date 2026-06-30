@@ -171,6 +171,8 @@ export type Task = {
   repeat_monthly_mode: TaskRepeatMonthlyMode;
   repeat_monthly_ordinal: TaskRepeatMonthlyOrdinal | null;
   repeat_monthly_weekday: number | null;
+  pinned_at: string | null;
+  pin_order: number | null;
   sort_order: number;
   completed_at: string | null;
   trashed_at: string | null;
@@ -207,6 +209,8 @@ export type TaskInsert = {
   repeat_monthly_mode?: TaskRepeatMonthlyMode;
   repeat_monthly_ordinal?: TaskRepeatMonthlyOrdinal | null;
   repeat_monthly_weekday?: number | null;
+  pinned_at?: string | null;
+  pin_order?: number | null;
   sort_order?: number;
   completed_at?: string | null;
   trashed_at?: string | null;
@@ -241,6 +245,8 @@ export type TaskUpdate = Partial<
     | "repeat_monthly_mode"
     | "repeat_monthly_ordinal"
     | "repeat_monthly_weekday"
+    | "pinned_at"
+    | "pin_order"
     | "sort_order"
     | "completed_at"
     | "trashed_at"

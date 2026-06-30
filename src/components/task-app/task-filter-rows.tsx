@@ -84,7 +84,10 @@ type FilterRowsProps = {
   hasActiveFilters: boolean;
   isOpen: boolean;
   matchAny: boolean;
+  pinnedCount?: number;
+  pinnedFilterActive?: boolean;
   onReset: () => void;
+  onTogglePinnedFilter?: () => void;
   onToggleDuplicateTitleMode: () => void;
   onToggleEnergy: (energy: TaskEnergy) => void;
   onToggleMatchMode: () => void;
@@ -101,7 +104,10 @@ export function FilterRowsComponent({
   hasActiveFilters,
   isOpen,
   matchAny,
+  pinnedCount = 0,
+  pinnedFilterActive = false,
   onReset,
+  onTogglePinnedFilter,
   onToggleDuplicateTitleMode,
   onToggleEnergy,
   onToggleMatchMode,
@@ -129,6 +135,11 @@ export function FilterRowsComponent({
             >
               <span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${FILTER_LABEL_CHIP_CLASS}`}>Reset</span>
             </button>
+          ) : null}
+          {onTogglePinnedFilter ? (
+            <FilterChip active={pinnedFilterActive} onClick={onTogglePinnedFilter}>
+              Pinned{pinnedCount > 0 ? ` ${pinnedCount}` : ""}
+            </FilterChip>
           ) : null}
           <FilterChip active={duplicateTitleMode} onClick={onToggleDuplicateTitleMode}>Duplicates</FilterChip>
           {TASK_FILTER_STATUS_OPTIONS.map((status) => (
@@ -176,6 +187,11 @@ export function FilterRowsComponent({
                 ) : null}
               </div>
               <div className="flex flex-wrap gap-3">
+                {onTogglePinnedFilter ? (
+                  <FilterChip active={pinnedFilterActive} onClick={onTogglePinnedFilter}>
+                    Pinned{pinnedCount > 0 ? ` ${pinnedCount}` : ""}
+                  </FilterChip>
+                ) : null}
                 <FilterChip active={duplicateTitleMode} onClick={onToggleDuplicateTitleMode}>Duplicates</FilterChip>
               </div>
             </div>

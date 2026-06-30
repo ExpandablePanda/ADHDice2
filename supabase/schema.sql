@@ -38,6 +38,8 @@ create table public.adhdice_clean_tasks (
   repeat_monthly_mode public.adhdice_clean_task_repeat_monthly_mode not null default 'day_of_month',
   repeat_monthly_ordinal public.adhdice_clean_task_repeat_monthly_ordinal,
   repeat_monthly_weekday smallint check (repeat_monthly_weekday is null or (repeat_monthly_weekday >= 0 and repeat_monthly_weekday <= 6)),
+  pinned_at timestamptz,
+  pin_order integer,
   sort_order bigint not null default 0,
   completed_at timestamptz,
   created_at timestamptz not null default now(),
@@ -323,6 +325,8 @@ create index adhdice_clean_tasks_user_due_idx
   on public.adhdice_clean_tasks (user_id, due_on, due_time);
 create index adhdice_clean_tasks_parent_task_idx
   on public.adhdice_clean_tasks (parent_task_id);
+create index adhdice_clean_tasks_user_pinned_idx
+  on public.adhdice_clean_tasks (user_id, pinned_at desc nulls last, pin_order asc nulls last);
 create index adhdice_user_profiles_updated_at_idx
   on public.adhdice_user_profiles (updated_at desc);
 create index adhdice_focus_categories_user_sort_idx

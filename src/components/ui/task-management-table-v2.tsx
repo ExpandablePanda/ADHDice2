@@ -18,6 +18,7 @@ import {
   Link2,
   ExternalLink,
   MoveLeft,
+  Pin,
   Plus,
   Repeat2,
   Skull,
@@ -844,6 +845,8 @@ export type PrototypeTaskRow = {
   lists: string[];
   linkedNotes: Array<{ id: string; title: string }>;
   notes: string;
+  pinOrder: number | null;
+  pinnedAt: string | null;
   priorities: TaskPriority[];
   currentStreak: number;
   missedStreak: number;
@@ -1018,6 +1021,7 @@ type TaskManagementTableV2Props = {
   onTaskLinkedNoteIdsChange?: (taskId: string, linkedNoteIds: string[]) => void;
   onTaskNotesChange?: (taskId: string, notes: string) => void;
   onTaskPriorityChange?: (taskId: string, priorities: TaskPriority[]) => void;
+  onTaskPinToggle?: (taskId: string) => void;
   onRowClick?: (taskId: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
   onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
@@ -1073,6 +1077,8 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     lists: ["Inbox", "Quick Wins"],
     linkedNotes: [{ id: "note-1", title: "Morning brief" }],
     notes: "Needs a lighter first pass before turning into a bigger work block.",
+    pinOrder: null,
+    pinnedAt: null,
     priorities: ["focus"],
     currentStreak: 1,
     missedStreak: 0,
@@ -1112,6 +1118,8 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     lists: ["Today"],
     linkedNotes: [{ id: "note-2", title: "Client sync notes" }],
     notes: "Follow up with the client and tighten the timeline assumptions.",
+    pinOrder: null,
+    pinnedAt: new Date(Date.now() - 1_800_000).toISOString(),
     priorities: ["important", "urgent"],
     currentStreak: 2,
     missedStreak: 0,
@@ -1158,6 +1166,8 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     lists: ["Later"],
     linkedNotes: [],
     notes: "Custom cadence draft for a longer-term maintenance loop.",
+    pinOrder: null,
+    pinnedAt: null,
     priorities: ["important"],
     currentStreak: 0,
     missedStreak: 1,
@@ -2150,6 +2160,7 @@ export function TaskManagementTableV2({
   onTaskLinkedNoteIdsChange,
   onTaskNotesChange,
   onTaskPriorityChange,
+  onTaskPinToggle,
   onRowClick,
   onSelectAllVisible,
   onTaskRepeatChange,
@@ -2200,6 +2211,7 @@ export function TaskManagementTableV2({
   const [retainedMetadataTargetTask, setRetainedMetadataTargetTask] = useState<PrototypeTaskRow | null>(null);
   const [selectedTaskLeftCurrentList, setSelectedTaskLeftCurrentList] = useState(false);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>("full");
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [overlayAnchor, setOverlayAnchor] = useState<{ left: number; top: number } | null>(null);
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
@@ -2271,6 +2283,12 @@ export function TaskManagementTableV2({
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const tableUserScrollIntentRef = useRef(false);
   const tableScrollTopHoldFrameRef = useRef<number | null>(null);
+  const isMobileFullOverlayOpen = Boolean(
+    selectedTaskId
+    && overlayMode === "full"
+    && isCompactViewport
+    && (enableInspector || allowInlineInspector),
+  );
   const tableScrollTopHoldValueRef = useRef<number | null>(null);
   const activeInlineActionRowRef = useRef<HTMLDivElement | null>(null);
   const [showTableScrollUp, setShowTableScrollUp] = useState(false);
@@ -3030,6 +3048,42 @@ export function TaskManagementTableV2({
         : nextColumnOrder
     ));
   }, [layoutPersistenceEnabled, persistedLayoutPreferences]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 639px)");
+    const handleChange = () => setIsCompactViewport(mediaQuery.matches);
+    handleChange();
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileFullOverlayOpen || typeof document === "undefined") {
+      return;
+    }
+
+    const { body, documentElement } = document;
+    const previousBodyOverflow = body.style.overflow;
+    const previousBodyOverscrollBehavior = body.style.overscrollBehavior;
+    const previousDocumentOverflow = documentElement.style.overflow;
+    const previousDocumentOverscrollBehavior = documentElement.style.overscrollBehavior;
+
+    body.style.overflow = "hidden";
+    body.style.overscrollBehavior = "none";
+    documentElement.style.overflow = "hidden";
+    documentElement.style.overscrollBehavior = "none";
+
+    return () => {
+      body.style.overflow = previousBodyOverflow;
+      body.style.overscrollBehavior = previousBodyOverscrollBehavior;
+      documentElement.style.overflow = previousDocumentOverflow;
+      documentElement.style.overscrollBehavior = previousDocumentOverscrollBehavior;
+    };
+  }, [isMobileFullOverlayOpen]);
 
   useEffect(() => {
     setColumnOrder((current) => {
@@ -5894,6 +5948,7 @@ export function TaskManagementTableV2({
       const hasSecondaryContent = hasDescription || hasStepPreview || hasSubtasks;
       const isRenamingTitle = editingTaskTitleId === task.id;
       const titleDraft = titleDraftsRef.current[task.id] ?? task.title;
+      const isPinned = Boolean(task.pinnedAt);
       return (
         <div className="relative min-w-0 w-full pl-[5px]">
           <span
@@ -5963,6 +6018,21 @@ export function TaskManagementTableV2({
                   type="button"
                 >
                   <MoveLeft className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+              {onTaskPinToggle ? (
+                <button
+                  aria-label={isPinned ? "Unpin task" : "Pin task"}
+                  aria-pressed={isPinned}
+                  className={isPinned ? `${ROW_ACTION_ICON_BUTTON_CLASS} border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]` : ROW_ACTION_ICON_BUTTON_CLASS}
+                  onPointerDown={stopRowActionPointerEvent}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onTaskPinToggle(task.id);
+                  }}
+                  type="button"
+                >
+                  <Pin className={`h-3.5 w-3.5 ${isPinned ? "fill-current" : ""}`} />
                 </button>
               ) : null}
               {onCreateChildTask ? (
@@ -7796,7 +7866,9 @@ export function TaskManagementTableV2({
           {(enableInspector || allowInlineInspector) && selectedTask && !(allowInlineInspector && isInlineAccordionMode(overlayMode)) ? (
             <motion.div
               animate={{ opacity: 1 }}
-              className="absolute inset-0 z-20 flex flex-col rounded-[2rem] bg-white/78 backdrop-blur-sm dark:bg-[#140f26]/92"
+              className={overlayMode === "full" && isCompactViewport
+                ? "fixed inset-0 z-[150] flex flex-col bg-[#f7f3ff]/82 backdrop-blur-[10px] dark:bg-[#100b1d]/84"
+                : "absolute inset-0 z-20 flex flex-col rounded-[2rem] bg-white/78 backdrop-blur-sm dark:bg-[#140f26]/92"}
               onClick={() => closeInspector()}
               exit={{ opacity: 0 }}
               initial={{ opacity: 0 }}
@@ -7936,6 +8008,12 @@ export function TaskManagementTableV2({
                     </div>
                   );
                 }
+                const useMobileFullOverlay = overlayMode === "full" && isCompactViewport;
+                const mobileDueNumericInputClass = `${OVERLAY_INPUT_CLASS} block h-10 min-w-0 w-full max-w-full rounded-[1rem] box-border px-2.5 py-0 text-[13px] leading-none`;
+                const mobileDueInputClass = `${OVERLAY_INPUT_CLASS} block h-10 min-w-0 w-full max-w-full rounded-[1rem] box-border px-3 pr-9 py-0 text-[13px] leading-none appearance-none`;
+                const mobileDateFieldWrapperClass = "min-w-0 w-full max-w-[11.5rem]";
+                const mobileTimeFieldWrapperClass = "min-w-0 w-full max-w-[9rem]";
+                const mobileDaysFieldWrapperClass = "min-w-0 w-full max-w-[6.5rem]";
                 let metadataPanelContent: ReactNode = null;
                 if (metadataPanelId === "due") {
                   metadataPanelContent = (
@@ -7945,33 +8023,73 @@ export function TaskManagementTableV2({
                         metadataTask.dueOn ? [metadataTask.dueOn] : [],
                         (value) => setTaskDue(metadataTask.id, value, value ? metadataTask.dueTime : ""),
                       )}
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                        <input
-                          className={OVERLAY_INPUT_CLASS}
-                          onChange={(event) => setDueDrafts((current) => ({
-                            ...current,
-                            [metadataTask.id]: {
-                              dueOn: event.target.value,
-                              dueTime: current[metadataTask.id]?.dueTime ?? metadataTask.dueTime,
-                            },
-                          }))}
-                          type="date"
-                          value={(dueDrafts[metadataTask.id]?.dueOn ?? metadataTask.dueOn) || ""}
-                        />
-                        <input
-                          className={OVERLAY_INPUT_CLASS}
-                          onChange={(event) => setDueDrafts((current) => ({
-                            ...current,
-                            [metadataTask.id]: {
-                              dueOn: current[metadataTask.id]?.dueOn ?? metadataTask.dueOn,
-                              dueTime: event.target.value,
-                            },
-                          }))}
-                          type="time"
-                          value={(dueDrafts[metadataTask.id]?.dueTime ?? metadataTask.dueTime) || ""}
-                        />
+                      <div className={`mt-3 grid min-w-0 gap-2 ${useMobileFullOverlay ? "grid-cols-1 justify-items-start" : "sm:grid-cols-2"}`}>
+                        <div className={useMobileFullOverlay ? mobileDateFieldWrapperClass : "min-w-0 max-w-full"}>
+                          {useMobileFullOverlay ? (
+                            <div className="relative min-w-0 max-w-full">
+                              <input
+                                className={mobileDueInputClass}
+                                onChange={(event) => setDueDrafts((current) => ({
+                                  ...current,
+                                  [metadataTask.id]: {
+                                    dueOn: event.target.value,
+                                    dueTime: current[metadataTask.id]?.dueTime ?? metadataTask.dueTime,
+                                  },
+                                }))}
+                                type="date"
+                                value={(dueDrafts[metadataTask.id]?.dueOn ?? metadataTask.dueOn) || ""}
+                              />
+                              <CalendarDays className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6f57f6] dark:text-[#cabfff]" />
+                            </div>
+                          ) : (
+                            <input
+                              className={`${OVERLAY_INPUT_CLASS} min-w-0 w-full box-border`}
+                              onChange={(event) => setDueDrafts((current) => ({
+                                ...current,
+                                [metadataTask.id]: {
+                                  dueOn: event.target.value,
+                                  dueTime: current[metadataTask.id]?.dueTime ?? metadataTask.dueTime,
+                                },
+                              }))}
+                              type="date"
+                              value={(dueDrafts[metadataTask.id]?.dueOn ?? metadataTask.dueOn) || ""}
+                            />
+                          )}
+                        </div>
+                        <div className={useMobileFullOverlay ? mobileTimeFieldWrapperClass : "min-w-0 max-w-full"}>
+                          {useMobileFullOverlay ? (
+                            <div className="relative min-w-0 max-w-full">
+                              <input
+                                className={mobileDueInputClass}
+                                onChange={(event) => setDueDrafts((current) => ({
+                                  ...current,
+                                  [metadataTask.id]: {
+                                    dueOn: current[metadataTask.id]?.dueOn ?? metadataTask.dueOn,
+                                    dueTime: event.target.value,
+                                  },
+                                }))}
+                                type="time"
+                                value={(dueDrafts[metadataTask.id]?.dueTime ?? metadataTask.dueTime) || ""}
+                              />
+                              <Clock3 className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6f57f6] dark:text-[#cabfff]" />
+                            </div>
+                          ) : (
+                            <input
+                              className={`${OVERLAY_INPUT_CLASS} min-w-0 w-full box-border`}
+                              onChange={(event) => setDueDrafts((current) => ({
+                                ...current,
+                                [metadataTask.id]: {
+                                  dueOn: current[metadataTask.id]?.dueOn ?? metadataTask.dueOn,
+                                  dueTime: event.target.value,
+                                },
+                              }))}
+                              type="time"
+                              value={(dueDrafts[metadataTask.id]?.dueTime ?? metadataTask.dueTime) || ""}
+                            />
+                          )}
+                        </div>
                       </div>
-                      <div className="mt-3 flex justify-end gap-2">
+                      <div className="mt-3 flex flex-wrap justify-end gap-2">
                         <TaskTableChipButton onClick={() => setTaskDue(metadataTask.id, "", "")} toneClassName={INACTIVE_CHIP_CLASS}>Clear</TaskTableChipButton>
                         <TaskTableChipButton onClick={() => {
                           const draft = dueDrafts[metadataTask.id];
@@ -7986,7 +8104,11 @@ export function TaskManagementTableV2({
                     <TaskDelayPicker
                       anchorDateKey={getDelayAnchorDate(metadataTask.dueOn)}
                       description="Move this due date forward without recording a history action."
-                      inputClassName={OVERLAY_INPUT_CLASS}
+                      dateInputClassName={useMobileFullOverlay ? mobileDueInputClass : undefined}
+                      dateFieldWrapperClass={mobileDateFieldWrapperClass}
+                      daysFieldWrapperClass={mobileDaysFieldWrapperClass}
+                      daysInputClassName={useMobileFullOverlay ? mobileDueNumericInputClass : undefined}
+                      inputClassName={useMobileFullOverlay ? mobileDueInputClass : OVERLAY_INPUT_CLASS}
                       onSave={(nextDueOn) => applyTaskDelay(metadataTask.id, nextDueOn)}
                       primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
                       saveLabel="Apply delay"
@@ -8261,9 +8383,25 @@ export function TaskManagementTableV2({
                     </div>
                   </div>
                 ) : null;
+                const fullEditorGridClass = useMobileFullOverlay
+                  ? "grid gap-3"
+                  : "grid gap-3 lg:grid-cols-[1.05fr_0.95fr]";
+                const fullEditorCardClass = useMobileFullOverlay
+                  ? "min-w-0 w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
+                  : "rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]";
+                const fullMetadataCardClass = useMobileFullOverlay
+                  ? "min-w-0 w-full max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
+                  : "rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start";
+                const titleInputClass = `${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] ${useMobileFullOverlay ? "text-[17px]" : "text-[18px]"}`;
+                const metadataTabRowClass = useMobileFullOverlay
+                  ? "mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-2 text-[13px] leading-5"
+                  : "mt-3 flex flex-wrap items-center gap-y-1.5 text-sm";
+                const metadataPanelClass = useMobileFullOverlay
+                  ? "mt-5 min-w-0 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"
+                  : "mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]";
                 const fullDesktopEditorContent = (
-                  <div className="grid gap-3 lg:grid-cols-[1.05fr_0.95fr]">
-                    <div className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]">
+                  <div className={fullEditorGridClass}>
+                    <div className={fullEditorCardClass}>
                       {selectedTaskParentInfo ? (
                         <div className="mb-3 flex flex-wrap items-center gap-2">
                           <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium ${INACTIVE_CHIP_CLASS}`}>
@@ -8275,12 +8413,31 @@ export function TaskManagementTableV2({
                           </span>
                         </div>
                       ) : null}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
-                        {batchQuickEditLabel ? (
-                          <p className="mt-1 text-[11px] leading-5 text-[#7f6af7] dark:text-[#cabfff]">{batchQuickEditLabel}</p>
-                        ) : null}
-                      </div>
+                      {useMobileFullOverlay ? (
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
+                            {batchQuickEditLabel ? (
+                              <p className="mt-1 text-[11px] leading-5 text-[#7f6af7] dark:text-[#cabfff]">{batchQuickEditLabel}</p>
+                            ) : null}
+                          </div>
+                          <button
+                            aria-label="Close edit task"
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#e4deef] bg-white/92 text-[#8a82a7] shadow-sm transition hover:text-[#6f57f6] dark:border-white/10 dark:bg-[#201936]/92 dark:text-white/55 dark:hover:text-[#cabfff]"
+                            onClick={() => closeInspector()}
+                            type="button"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{overlayTitle}</p>
+                          {batchQuickEditLabel ? (
+                            <p className="mt-1 text-[11px] leading-5 text-[#7f6af7] dark:text-[#cabfff]">{batchQuickEditLabel}</p>
+                          ) : null}
+                        </div>
+                      )}
                       <div className="mt-2 flex items-center gap-2">
                         <button
                           aria-label="Edit status"
@@ -8293,7 +8450,7 @@ export function TaskManagementTableV2({
                         <label className="block min-w-0 flex-1">
                           <span className="sr-only">Rename task</span>
                           <TaskTitleDraftInput
-                            className={`${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] text-[18px]`}
+                            className={titleInputClass}
                             initialValue={titleDraft}
                             onCommit={commitTaskTitle}
                             onDraftChange={setTitleDraft}
@@ -8319,7 +8476,7 @@ export function TaskManagementTableV2({
                       {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
                       {stepsEditorNode}
                     </div>
-                    <section className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start">
+                    <section className={fullMetadataCardClass}>
                       <div>
                         <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">Meta Data</p>
                         <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -8348,12 +8505,12 @@ export function TaskManagementTableV2({
                           />
                         </label>
                       ) : null}
-                      <div className="mt-3 flex flex-wrap items-center gap-y-1.5 text-sm">
+                      <div className={metadataTabRowClass}>
                         {metadataPanelOptions.map((option, index) => (
-                          <div className="flex items-center" key={`${option.id || "metadata-panel"}-${index}`}>
-                            {index > 0 ? <span className="px-2 text-[#c9c0e2] dark:text-white/18">|</span> : null}
+                          <div className={useMobileFullOverlay ? "min-w-0" : "flex items-center"} key={`${option.id || "metadata-panel"}-${index}`}>
+                            {!useMobileFullOverlay && index > 0 ? <span className="px-2 text-[#c9c0e2] dark:text-white/18">|</span> : null}
                             <button
-                              className={`inline-flex items-center gap-1.5 transition ${
+                              className={`inline-flex min-w-0 items-center gap-1.5 transition ${
                                 activeMetadataPanel === option.id
                                   ? "text-[#6f57f6] dark:text-[#cabfff]"
                                   : "text-[#8d87a7] hover:text-[#6f57f6] dark:text-white/45 dark:hover:text-[#cabfff]"
@@ -8369,7 +8526,7 @@ export function TaskManagementTableV2({
                           </div>
                         ))}
                       </div>
-                      <div className="mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                      <div className={metadataPanelClass}>
                         <div className="mb-3 text-xs font-medium uppercase tracking-[0.16em] text-[#9b92be] dark:text-white/35">
                           {activeMetadataPanelLabel}
                         </div>
@@ -8380,12 +8537,14 @@ export function TaskManagementTableV2({
                 );
 
                 const fullDesktopEditorNode = (
-                  <div className="w-full max-w-[60rem]" ref={isFocusedOverlay ? undefined : inspectorPanelRef}>
+                  <div className="w-full max-w-[60rem]" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
                     {fullDesktopEditorContent}
                   </div>
                 );
                 const overlayContentClass = isFocusedOverlay
                   ? "relative flex-1 px-5 py-5"
+                  : useMobileFullOverlay
+                    ? "flex min-h-0 flex-1 items-start justify-center overscroll-none px-3 pt-[calc(env(safe-area-inset-top)+0.25rem)] pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5"
                   : overlayMode === "full"
                     ? "flex flex-1 items-start justify-center overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
                     : "grid flex-1 gap-3 overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:grid-cols-[1.1fr_0.9fr]";
@@ -8475,6 +8634,20 @@ export function TaskManagementTableV2({
                           <div className="mt-4">{metadataPanelContent}</div>
                         </section>
                       )}
+                    </div>
+                  </div>
+                ) : useMobileFullOverlay ? (
+                  <div
+                    className="w-full max-w-[60rem]"
+                    onClick={(event) => event.stopPropagation()}
+                    ref={inspectorPanelRef}
+                  >
+                    <div className="relative flex max-h-[calc(100dvh-1.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden overscroll-contain rounded-[1.6rem] border border-[#e7defc] bg-white shadow-[0_26px_70px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]">
+                      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                        <div className="px-0 pb-3">
+                          {fullDesktopEditorContent}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ) : overlayMode === "full" ? (

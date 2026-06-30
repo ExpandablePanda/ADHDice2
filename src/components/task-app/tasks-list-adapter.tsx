@@ -1,5 +1,5 @@
 "use client";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Flame, Footprints, GripVertical, Skull, Tag, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Flame, Footprints, GripVertical, Pin, Skull, Tag, Trash2, X } from "lucide-react";
 import {
   buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
@@ -190,6 +190,7 @@ type TasksTableSourceProps = {
   onSetLinkedNoteIds?: (taskId: string, linkedNoteIds: string[]) => void;
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
+  onTogglePinned?: (taskId: string) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
   onSetStatus?: (
     taskId: string,
@@ -233,6 +234,7 @@ type TasksTableSourceProps = {
   onRequestedOpenTaskHandled?: (taskId: string) => void;
   taskTableLayoutPreferences?: TaskTableLayoutPreferences;
   onTaskTableLayoutPreferencesChange?: (nextPreferences: TaskTableLayoutPreferences) => void;
+  emptyStateMessage?: string;
   statusChangeScrollAnchorTaskIds?: string[];
   statusChangeScrollPreviousVisibleTaskIds?: string[];
   statusChangeScrollSourceTaskId?: string | null;
@@ -388,6 +390,20 @@ export function TasksTableAdapter({
     [tableProps.requestedOpenTask, tableProps.rowContext],
   );
 
+  if (tableProps.tasks.length === 0) {
+    return (
+      <TasksListViewPanel
+        {...panelProps}
+        filterRowsNode={filterRowsNode}
+        agentPlanNode={(
+          <div className="rounded-[1.4rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-4 py-10 text-center text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
+            {tableProps.emptyStateMessage ?? "No tasks match this view right now."}
+          </div>
+        )}
+      />
+    );
+  }
+
   return (
     <TasksListViewPanel
       {...panelProps}
@@ -446,6 +462,7 @@ export function TasksTableAdapter({
           onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
           onTaskNotesChange={tableProps.onSetNotes}
           onTaskPriorityChange={tableProps.onSetPriority}
+          onTaskPinToggle={tableProps.onTogglePinned}
           onTaskRepeatChange={tableProps.onSetRepeat}
           onTaskStatusChange={(taskId, status, scrollAnchorTaskIds, options) => {
             const expectedTask = tableProps.tasks.find((task) => task.id === taskId) ?? null;
@@ -2364,7 +2381,7 @@ function TasksSimpleList({
         filterRowsNode={filterRowsNode}
         agentPlanNode={(
           <div className="rounded-[1.4rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-4 py-10 text-center text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
-            No tasks match this view right now.
+            {tableProps.emptyStateMessage ?? "No tasks match this view right now."}
           </div>
         )}
       />
@@ -2426,6 +2443,7 @@ function TasksSimpleList({
               onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
               onTaskNotesChange={tableProps.onSetNotes}
               onTaskPriorityChange={tableProps.onSetPriority}
+              onTaskPinToggle={tableProps.onTogglePinned}
               onTaskRepeatChange={tableProps.onSetRepeat}
               onTaskStatusChange={(taskId, status) => {
                 const expectedTask = tableProps.tasks.find((task) => task.id === taskId) ?? null;
@@ -2500,6 +2518,7 @@ function TasksSimpleList({
         const isQuickPanelOpen = activePanelMode !== null;
         const panelTitle = task.title;
         const listMemberships = rowContext.listMembershipsByTaskId[task.id] ?? [];
+        const isPinned = Boolean(task.pinned_at);
         const stepPreviewGroup = tableProps.childTaskPreviewByParentTaskId?.[task.id];
         const effectiveStepPreviewGroup = stepPreviewGroup ?? (parentStepDraftTaskId === task.id
           ? {
@@ -2716,6 +2735,26 @@ function TasksSimpleList({
                   </div>
 
                   <div className="relative flex shrink-0 items-center gap-1" data-list-action-control="true">
+                    {tableProps.onTogglePinned ? (
+                      <button
+                        aria-label={isPinned ? `Unpin ${task.title}` : `Pin ${task.title}`}
+                        aria-pressed={isPinned}
+                        className={`inline-flex h-10 w-10 items-center justify-center rounded-full border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 ${
+                          isPinned
+                            ? "border-[#d9cffb] bg-[#f7f3ff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+                            : "border-[#ece8f8] bg-white text-[#66718c] hover:border-[#d9cffb] hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
+                        }`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          closeQuickPanel();
+                          setRowContextMenu(null);
+                          tableProps.onTogglePinned?.(task.id);
+                        }}
+                        type="button"
+                      >
+                        <Pin className={`h-4 w-4 ${isPinned ? "fill-current" : ""}`} />
+                      </button>
+                    ) : null}
                     {tableProps.onCreateChildTask ? (
                       <button
                         aria-label={`Add step to ${task.title}`}
