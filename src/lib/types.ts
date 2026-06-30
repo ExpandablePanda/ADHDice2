@@ -48,3 +48,25 @@ export type FocusLabelOptions = {
   secondarySubtypes: string[];
   allSubtypes: string[];
 };
+
+export type FocusCounter = {
+  id: string;
+  title: string;
+  color: string;
+  icon: string;
+  value: number;
+  step: number;
+  goal: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FocusCounterHistoryEntry = {
+  id: string;
+  counterId: string;
+  counterTitleSnapshot: string;
+  delta: number;
+  nextValue: number;
+  stepSnapshot: number;
+  createdAt: string;
+};

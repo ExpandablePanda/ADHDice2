@@ -1,6 +1,6 @@
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
-import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusType, FocusSubtype } from "@/lib/types";
+import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusSession as DbFocusSession } from "@/lib/database.types";
 import type { AppendEconomyEventOpts } from "@/hooks/useEconomy";
 import {
@@ -27,6 +27,8 @@ const FOCUS_CATEGORIES_STORAGE_KEY = "adhdice_focus_categories";
 const FOCUS_HISTORY_STORAGE_KEY = "adhdice_focus_history";
 const FOCUS_COUNTDOWN_META_STORAGE_KEY = "adhdice_focus_countdown_meta";
 const FOCUS_LOCAL_ACTIVE_SESSION_STORAGE_KEY = "adhdice_focus_local_active_session";
+const FOCUS_COUNTERS_STORAGE_KEY = "adhdice_focus_counters";
+const FOCUS_COUNTER_HISTORY_STORAGE_KEY = "adhdice_focus_counter_history";
 
 type CountdownMetadata = Record<string, { mode?: "countdown" | "countup"; targetSeconds?: number | null }>;
 
@@ -55,6 +57,14 @@ function writeCountdownMetadata(metadata: CountdownMetadata) {
 
 function getLocalActiveSessionStorageKey(userId: string) {
   return `${FOCUS_LOCAL_ACTIVE_SESSION_STORAGE_KEY}:${userId}`;
+}
+
+function getFocusCountersStorageKey(userId: string) {
+  return `${FOCUS_COUNTERS_STORAGE_KEY}:${userId}`;
+}
+
+function getFocusCounterHistoryStorageKey(userId: string) {
+  return `${FOCUS_COUNTER_HISTORY_STORAGE_KEY}:${userId}`;
 }
 
 function readLocalActiveSession(userId: string | null | undefined): ActiveFocusSession | null {
@@ -97,6 +107,30 @@ export function saveFocusCategories(categories: FocusCategory[]) {
 export function saveFocusHistory(history: HistoricalFocusSession[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(FOCUS_HISTORY_STORAGE_KEY, JSON.stringify(history));
+}
+
+function saveFocusCounters(userId: string | null | undefined, counters: FocusCounter[]) {
+  if (typeof window === "undefined" || !userId) return;
+  window.localStorage.setItem(getFocusCountersStorageKey(userId), JSON.stringify(counters));
+}
+
+function saveFocusCounterHistory(userId: string | null | undefined, history: FocusCounterHistoryEntry[]) {
+  if (typeof window === "undefined" || !userId) return;
+  window.localStorage.setItem(getFocusCounterHistoryStorageKey(userId), JSON.stringify(history));
+}
+
+function readFocusCounters(userId: string | null | undefined) {
+  if (!userId) {
+    return [];
+  }
+  return parseStoredJson<FocusCounter[]>(getFocusCountersStorageKey(userId), []);
+}
+
+function readFocusCounterHistory(userId: string | null | undefined) {
+  if (!userId) {
+    return [];
+  }
+  return parseStoredJson<FocusCounterHistoryEntry[]>(getFocusCounterHistoryStorageKey(userId), []);
 }
 
 export function mapFocusCategoryRow(row: DbFocusCategory): FocusCategory {
@@ -207,7 +241,19 @@ export function useFocus(
   const [focusCategories, setFocusCategories] = useState<FocusCategory[]>([]);
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
   const [focusHistory, setFocusHistory] = useState<HistoricalFocusSession[]>([]);
+  const [focusCounters, setFocusCounters] = useState<FocusCounter[]>([]);
+  const [focusCounterHistory, setFocusCounterHistory] = useState<FocusCounterHistoryEntry[]>([]);
   const suppressCategoryReload = useRef(false);
+
+  useEffect(() => {
+    if (!userId) {
+      setFocusCounters([]);
+      setFocusCounterHistory([]);
+      return;
+    }
+    setFocusCounters(readFocusCounters(userId));
+    setFocusCounterHistory(readFocusCounterHistory(userId));
+  }, [userId]);
 
   async function persistActiveSession(categoryId: string, nextSession: ActiveFocusSession) {
     if (!client || !userId) return false;
@@ -747,9 +793,116 @@ export function useFocus(
     setMessage({ tone: "good", text: "Focus entry deleted." });
   }
 
+  function handleCreateFocusCounter(input: {
+    color: string;
+    goal: number;
+    icon: string;
+    initialValue: number;
+    step: number;
+    title: string;
+  }) {
+    const timestamp = new Date().toISOString();
+    const nextCounter: FocusCounter = {
+      color: input.color,
+      createdAt: timestamp,
+      goal: Math.max(1, Math.floor(input.goal)),
+      icon: input.icon.trim() || "Hash",
+      id: crypto.randomUUID(),
+      step: Math.max(1, Math.floor(input.step)),
+      title: input.title.trim() || "Counter",
+      updatedAt: timestamp,
+      value: Math.floor(input.initialValue),
+    };
+    setFocusCounters((prev) => {
+      const nextCounters = [nextCounter, ...prev];
+      saveFocusCounters(userId, nextCounters);
+      return nextCounters;
+    });
+    setMessage({ tone: "good", text: "Counter created." });
+  }
+
+  function handleUpdateFocusCounter(counterId: string, updates: Partial<Pick<FocusCounter, "color" | "goal" | "icon" | "step" | "title" | "value">>) {
+    setFocusCounters((prev) => {
+      const nextCounters = prev.map((counter) => (
+        counter.id === counterId
+          ? {
+              ...counter,
+              ...updates,
+              goal: updates.goal !== undefined ? Math.max(1, Math.floor(updates.goal)) : counter.goal,
+              step: updates.step !== undefined ? Math.max(1, Math.floor(updates.step)) : counter.step,
+              title: updates.title !== undefined ? (updates.title.trim() || counter.title) : counter.title,
+              value: updates.value !== undefined ? Math.floor(updates.value) : counter.value,
+              updatedAt: new Date().toISOString(),
+            }
+          : counter
+      ));
+      saveFocusCounters(userId, nextCounters);
+      return nextCounters;
+    });
+    setMessage({ tone: "good", text: "Counter updated." });
+  }
+
+  function handleDeleteFocusCounter(counterId: string) {
+    const targetCounter = focusCounters.find((counter) => counter.id === counterId);
+    if (!targetCounter) {
+      return;
+    }
+    if (!window.confirm(`Delete "${targetCounter.title}"? This cannot be undone.`)) {
+      return;
+    }
+    setFocusCounters((prev) => {
+      const nextCounters = prev.filter((counter) => counter.id !== counterId);
+      saveFocusCounters(userId, nextCounters);
+      return nextCounters;
+    });
+    setFocusCounterHistory((prev) => {
+      const nextHistory = prev.filter((entry) => entry.counterId !== counterId);
+      saveFocusCounterHistory(userId, nextHistory);
+      return nextHistory;
+    });
+    setMessage({ tone: "good", text: "Counter deleted." });
+  }
+
+  function handleAdjustFocusCounter(counterId: string, direction: 1 | -1) {
+    const targetCounter = focusCounters.find((counter) => counter.id === counterId);
+    if (!targetCounter) {
+      return;
+    }
+    const delta = targetCounter.step * direction;
+    const nextValue = targetCounter.value + delta;
+    const timestamp = new Date().toISOString();
+    const historyEntry: FocusCounterHistoryEntry = {
+      counterId,
+      counterTitleSnapshot: targetCounter.title,
+      createdAt: timestamp,
+      delta,
+      id: crypto.randomUUID(),
+      nextValue,
+      stepSnapshot: targetCounter.step,
+    };
+
+    setFocusCounters((prev) => {
+      const nextCounters = prev.map((counter) => (
+        counter.id === counterId
+          ? { ...counter, updatedAt: timestamp, value: nextValue }
+          : counter
+      ));
+      saveFocusCounters(userId, nextCounters);
+      return nextCounters;
+    });
+    setFocusCounterHistory((prev) => {
+      const nextHistory = [historyEntry, ...prev].slice(0, 120);
+      saveFocusCounterHistory(userId, nextHistory);
+      return nextHistory;
+    });
+  }
+
   return {
     focusCategories,
+    focusCounters,
+    focusCounterHistory,
     setFocusCategories,
+    setFocusCounters,
     activeSessions,
     setActiveSessions,
     focusHistory,
@@ -766,5 +919,9 @@ export function useFocus(
     handleDeleteFocusCategory,
     handleUpdateFocusHistoryEntry,
     handleDeleteFocusHistoryEntry,
+    handleAdjustFocusCounter,
+    handleCreateFocusCounter,
+    handleDeleteFocusCounter,
+    handleUpdateFocusCounter,
   };
 }

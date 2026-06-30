@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Check, ChevronDown, Search, Trash2, X } from "lucide-react";
+import { BookOpen, Check, ChevronDown, Eye, EyeOff, Search, Trash2, X } from "lucide-react";
 import { memo, startTransition, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { DragEvent, MouseEvent } from "react";
@@ -304,6 +304,7 @@ export function TaskOperationsHeader({
   filterRowsNode,
   hideSearch,
   isKeyboardShortcutsMenuOpen,
+  isRailHidden,
   isListColumnMenuOpen,
   keyboardShortcutsMenuRef,
   listColumnLabels,
@@ -322,6 +323,7 @@ export function TaskOperationsHeader({
   onOpenTrash,
   onReorderCustomLists,
   onSelectBucket,
+  onToggleRail,
   onExpandAllColumns,
   onShrinkAllColumns,
   onSearchChange,
@@ -343,6 +345,7 @@ export function TaskOperationsHeader({
   filterRowsNode: ReactNode;
   hideSearch?: boolean;
   isKeyboardShortcutsMenuOpen: boolean;
+  isRailHidden: boolean;
   isListColumnMenuOpen: boolean;
   keyboardShortcutsMenuRef: RefObject<HTMLDivElement | null>;
   listColumnLabels: Record<AgentPlanColumnId, string>;
@@ -368,6 +371,7 @@ export function TaskOperationsHeader({
   onOpenTrash: () => void;
   onReorderCustomLists?: (orderedCustomListIds: string[]) => void;
   onSelectBucket: (bucket: string) => void;
+  onToggleRail: () => void;
   onExpandAllColumns: () => void;
   onShrinkAllColumns: () => void;
   onSearchChange: (search: string) => void;
@@ -425,37 +429,39 @@ export function TaskOperationsHeader({
           </p>
         </div>
         <div className="flex justify-center">
-          <div className="flex w-full max-w-[42rem] items-center gap-3">
-            <TaskTableChipButton onClick={handleFocusChipClick} toneClassName={SHARED_CHIP_SOFT_PURPLE_CLASS}>
-              {actionLabel}
-            </TaskTableChipButton>
-            <span className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold leading-none bg-[#fff1f3] text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]">
-              {metric.label}
-            </span>
-            <button
-              className="block h-3.5 min-w-[10rem] flex-1 overflow-hidden rounded-full bg-[#e7e3f8] dark:bg-white/10"
-              onPointerCancel={clearLongPress}
-              onPointerDown={handleMomentumPressStart}
-              onPointerLeave={clearLongPress}
-              onPointerUp={handleMomentumPressEnd}
-              type="button"
-            >
-              <div
-                className="h-full rounded-full bg-[linear-gradient(90deg,#c5b4ff_0%,#7f6af7_100%)] dark:bg-[linear-gradient(90deg,#cabfff_0%,#8e79ff_100%)]"
-                style={{ width: `${Math.max(metric.percent, 8)}%` }}
-              />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex w-full max-w-[56rem] flex-wrap items-center gap-3">
             <TaskSearchBox
               hidden={hideSearch}
               onSearchChange={onSearchChange}
               onSearchSubmit={onSearchSubmit}
               search={search}
             />
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+              <TaskTableChipButton onClick={handleFocusChipClick} toneClassName={SHARED_CHIP_SOFT_PURPLE_CLASS}>
+                {actionLabel}
+              </TaskTableChipButton>
+              <span className="inline-flex items-center rounded-full bg-[#fff1f3] px-3 py-1.5 text-xs font-semibold leading-none text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]">
+                {metric.label}
+              </span>
+              <button
+                className="block h-3.5 min-w-[10rem] max-w-[22rem] flex-1 overflow-hidden rounded-full bg-[#e7e3f8] dark:bg-white/10"
+                onPointerCancel={clearLongPress}
+                onPointerDown={handleMomentumPressStart}
+                onPointerLeave={clearLongPress}
+                onPointerUp={handleMomentumPressEnd}
+                type="button"
+              >
+                <div
+                  className="h-full rounded-full bg-[linear-gradient(90deg,#c5b4ff_0%,#7f6af7_100%)] dark:bg-[linear-gradient(90deg,#cabfff_0%,#8e79ff_100%)]"
+                  style={{ width: `${Math.max(metric.percent, 8)}%` }}
+                />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
               <TaskChipButton onClick={onOpenImport}>
                 Import
@@ -478,6 +484,14 @@ export function TaskOperationsHeader({
                 </span>
               </TaskChipButton>
               <TaskViewsMenu onViewChange={onViewChange} view={view} />
+              {view === "table" ? (
+                <TaskChipButton onClick={onToggleRail}>
+                  <span className="inline-flex items-center gap-2">
+                    {isRailHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                    {isRailHidden ? "Show Lists" : "Hide Lists"}
+                  </span>
+                </TaskChipButton>
+              ) : null}
               <div className="relative" ref={listColumnMenuRef}>
                 <TaskTableChipButton
                   className="gap-2"
@@ -560,12 +574,14 @@ export function TaskOperationsHeader({
               </TaskChipButton>
             </div>
           </div>
-          <ReorderableTaskChipRail
-            lists={lists}
-            onReorderCustomLists={onReorderCustomLists}
-            onSelectBucket={onSelectBucket}
-            selectedBucket={selectedBucket}
-          />
+          {view === "table" && isRailHidden ? null : (
+            <ReorderableTaskChipRail
+              lists={lists}
+              onReorderCustomLists={onReorderCustomLists}
+              onSelectBucket={onSelectBucket}
+              selectedBucket={selectedBucket}
+            />
+          )}
           {filterRowsNode}
         </div>
 

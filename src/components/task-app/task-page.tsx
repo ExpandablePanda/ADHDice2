@@ -11,6 +11,7 @@ type TaskPageProps = {
   pathsWorkspacePanel: ReactNode;
   surface: TasksSurface;
   surfaceSwitch: ReactNode;
+  tabs: ReactNode;
   view: TaskViewMode;
   tableViewPanel: ReactNode;
 };
@@ -23,13 +24,17 @@ export function TaskPage({
   pathsWorkspacePanel,
   surface,
   surfaceSwitch,
+  tabs,
   tableViewPanel,
   view,
 }: TaskPageProps) {
   return (
     <>
       {flows}
-      {surfaceSwitch}
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+        {surfaceSwitch}
+        {tabs}
+      </div>
       {surface === "paths" ? (
         pathsWorkspacePanel
       ) : (

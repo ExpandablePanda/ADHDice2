@@ -6,6 +6,10 @@ import { formatDuration } from "@/lib/utils";
 export { formatDuration } from "@/lib/utils";
 
 const COUNTDOWN_DURATION_PRESETS = [10, 20, 30, 60] as const;
+export const FOCUS_CLOCK_BASE_WIDTH_PX = 272;
+export const FOCUS_CLOCK_BASE_HEIGHT_PX = 344;
+export const FOCUS_CLOCK_MOBILE_SCALE = 0.58;
+export const FOCUS_CLOCK_DESKTOP_SCALE_CLASSNAME = "[--clock-scale:0.54] md:[--clock-scale:0.58] lg:[--clock-scale:0.62] xl:[--clock-scale:0.68] 2xl:[--clock-scale:0.72]";
 
 export function FocusClock({
   category,
@@ -533,10 +537,10 @@ export function FocusClockRow({
           <div
             key={cat.id}
             style={{
-              transform: "scale(0.58)",
+              transform: `scale(${FOCUS_CLOCK_MOBILE_SCALE})`,
               transformOrigin: "top center",
-              width: 272 * 0.58,
-              height: (272 + 72) * 0.58,
+              width: FOCUS_CLOCK_BASE_WIDTH_PX * FOCUS_CLOCK_MOBILE_SCALE,
+              height: FOCUS_CLOCK_BASE_HEIGHT_PX * FOCUS_CLOCK_MOBILE_SCALE,
               flexShrink: 0,
             }}
           >
@@ -562,6 +566,7 @@ export function FocusClockRowDesktop({
   categories,
   activeSessions,
   autoOpenCountdownRequest,
+  embedded = false,
   onToggle,
   onSetCountdownTarget,
   onFinish,
@@ -572,6 +577,7 @@ export function FocusClockRowDesktop({
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
   autoOpenCountdownRequest?: number;
+  embedded?: boolean;
   onToggle: (catId: string) => void;
   onSetCountdownTarget: (catId: string, targetSeconds: number, options?: { start?: boolean }) => void;
   onFinish: (catId: string) => void;
@@ -588,48 +594,60 @@ export function FocusClockRowDesktop({
     return rows;
   }, []);
 
-  return (
-    <div className="hidden sm:block">
-      <div className="mx-auto max-w-[86rem] overflow-hidden rounded-[2rem] border border-[#ebe4fb] bg-white/82 shadow-[0_18px_48px_rgba(81,61,168,0.08)] backdrop-blur [--clock-scale:0.54] md:[--clock-scale:0.58] lg:[--clock-scale:0.62] xl:[--clock-scale:0.68] 2xl:[--clock-scale:0.72] h-[calc(344px*var(--clock-scale)+3.75rem)] dark:border-white/10 dark:bg-white/[0.05]">
-        <div className={`adhdice-scrollbar h-full px-4 pt-5 pb-3 ${categoryRows.length > 1 ? "overflow-y-auto snap-y snap-mandatory" : "overflow-y-hidden"}`}>
-        <div className="flex flex-col gap-14">
-          {categoryRows.map((row, rowIndex) => (
-            <div
-              key={`focus-clock-row-${rowIndex}`}
-              className="flex snap-start items-start justify-center gap-x-6 pt-5"
-            >
-              {row.map((cat) => (
-                <div
-                  key={cat.id}
-                  className="relative h-[calc(344px*var(--clock-scale))] w-[calc(272px*var(--clock-scale))]"
-                >
-                  <div className="absolute left-1/2 top-0 h-[344px] w-[272px] -translate-x-1/2">
-                    <div
-                      className="h-[344px] w-[272px]"
-                      style={{
-                        transform: "scale(var(--clock-scale))",
-                        transformOrigin: "top center",
-                      }}
-                    >
-                      <FocusClock
-                        activeSession={activeSessions[cat.id]}
-                        autoOpenCountdownRequest={isSystemCountdownCategoryId(cat.id) ? autoOpenCountdownRequest : undefined}
-                        category={cat}
-                        onAdjust={onAdjust}
-                        onDelete={onDelete}
-                        onFinish={onFinish}
-                        onReset={onReset}
-                        onSetCountdownTarget={onSetCountdownTarget}
-                        onToggle={onToggle}
-                      />
-                    </div>
+  const content = (
+    <div className={`adhdice-scrollbar h-full px-4 pb-3 pt-5 ${categoryRows.length > 1 ? "overflow-y-auto snap-y snap-mandatory" : "overflow-y-hidden"}`}>
+      <div className="flex flex-col gap-14">
+        {categoryRows.map((row, rowIndex) => (
+          <div
+            key={`focus-clock-row-${rowIndex}`}
+            className="flex snap-start items-start justify-center gap-x-6 pt-5"
+          >
+            {row.map((cat) => (
+              <div
+                key={cat.id}
+                className="relative h-[calc(344px*var(--clock-scale))] w-[calc(272px*var(--clock-scale))]"
+              >
+                <div className="absolute left-1/2 top-0 h-[344px] w-[272px] -translate-x-1/2">
+                  <div
+                    className="h-[344px] w-[272px]"
+                    style={{
+                      transform: "scale(var(--clock-scale))",
+                      transformOrigin: "top center",
+                    }}
+                  >
+                    <FocusClock
+                      activeSession={activeSessions[cat.id]}
+                      autoOpenCountdownRequest={isSystemCountdownCategoryId(cat.id) ? autoOpenCountdownRequest : undefined}
+                      category={cat}
+                      onAdjust={onAdjust}
+                      onDelete={onDelete}
+                      onFinish={onFinish}
+                      onReset={onReset}
+                      onSetCountdownTarget={onSetCountdownTarget}
+                      onToggle={onToggle}
+                    />
                   </div>
                 </div>
-              ))}
-            </div>
-          ))}
-        </div>
-        </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <div className={`hidden h-[calc(344px*var(--clock-scale)+3.75rem)] sm:block ${FOCUS_CLOCK_DESKTOP_SCALE_CLASSNAME}`}>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <div className="hidden sm:block">
+      <div className={`mx-auto max-w-[86rem] overflow-hidden rounded-[2rem] border border-[#ebe4fb] bg-white/82 shadow-[0_18px_48px_rgba(81,61,168,0.08)] backdrop-blur ${FOCUS_CLOCK_DESKTOP_SCALE_CLASSNAME} h-[calc(344px*var(--clock-scale)+3.75rem)] dark:border-white/10 dark:bg-white/[0.05]`}>
+        {content}
       </div>
     </div>
   );

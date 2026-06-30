@@ -5,13 +5,19 @@ Last reviewed: 2026-06-27
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.14.1`.
-- Current release group: `6.14.x` stabilization.
+- Current working app version: `6.15.4`.
+- Current release group: `6.15.x` feature work.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 6.15 Checkpoint
+- `6.15.4` is a narrow follow-up on those same visual seams: the task search bar now sits inline to the left of the Focus/Momentum row instead of stacking above it, workspace tab utility controls are tightened again so the strip reads closer to the Tasks/Paths chip scale, `Add Counter` is forced onto a single matching chip line, and the counter icon chooser now dedupes icon names and uses a compact wrapped palette to avoid the broken single-column modal layout.
+- `6.15.3` is an exact visual matching pass on the same Focus counter and Task workspace seams: Focus counters now reuse the timer sandbox scaling footprint directly, `Add Counter` matches the existing strong Focus chip styling, the counter editor is shorter with a naturally scrolling body and a compact icon palette, workspace tabs reuse the Tasks/Paths chip group and active/inactive treatments directly, and the task search bar now sits on its own row above the Focus/Momentum row while the broader toolbar stays below.
+- `6.15.2` is a visual integration pass for the new Focus counters and Task workspace tabs: Focus counters now live inside the shared Focus sandbox with timer-matched scale, integrated in-face controls, a preview-based icon chooser, and responsive counter-activity cards, while the Task workspace tabs now sit inline with the Tasks/Paths toggle, use compact chip sizing, rename inline without browser prompts, and the table rail toggle copy collapses to the single `Hide Lists` / `Show Lists` toolbar chip.
+- `6.15.1` adds persistent Task workspace tabs with per-tab Tasks/Paths context and table-rail hide/show state, upgrades Focus Activity Lines with hover/click point inspection, and introduces separate local Focus counters plus counter-history tracking without mixing count events into Focus-minute analytics.
 
 ## 6.14 Checkpoint
 - `6.14.1` is the one-pass stabilization pass for Delayed status consistency, tag-search highlight/navigation parity, Smart List `Handled` history correctness, multi-select `Daily Until Complete` cadence visibility, the new `Move into parent` hierarchy action, and lighter List selected-card styling. The committed `6.13.25` Table rendered-row cut-line preservation remains the protected baseline, so explicit Table sort/filter resets still behave as before while this pass avoids broad virtualization or derivation refactors.

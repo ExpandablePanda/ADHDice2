@@ -1,6 +1,5 @@
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
-import type { HudUiState } from "@/lib/task-hud-layout";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 
 export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "grid";
@@ -37,6 +36,19 @@ export type TaskUiState = {
   visibleColumnsByView: Record<TaskViewMode, AgentPlanColumnId[]>;
 };
 
+export type TaskWorkspaceTab = {
+  id: string;
+  isRailHidden: boolean;
+  label: string;
+  taskUiState: TaskUiState;
+};
+
+export type TaskWorkspaceTabsState = {
+  activeTabId: string;
+  tabs: TaskWorkspaceTab[];
+  uiStateVersion: number;
+};
+
 export const TASK_UI_STORAGE_KEY = "adhdice-task-ui";
 export const ACTIVE_PAGE_STORAGE_KEY = "adhdice-active-page";
 export const TASK_ROUTING_STORAGE_KEY = "adhdice-task-routing";
@@ -47,7 +59,8 @@ export const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
 export const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
 export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
-export const TASK_UI_SCHEMA_VERSION = 6;
+export const TASK_UI_SCHEMA_VERSION = 7;
+export const DEFAULT_TASK_WORKSPACE_TAB_ID = "workspace-1";
 export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
@@ -88,6 +101,17 @@ export const DEFAULT_TASK_UI_STATE: TaskUiState = {
   view: "table",
   energyFilters: [],
   visibleColumnsByView: DEFAULT_VISIBLE_COLUMNS_BY_VIEW,
+};
+
+export const DEFAULT_TASK_WORKSPACE_TABS_STATE: TaskWorkspaceTabsState = {
+  activeTabId: DEFAULT_TASK_WORKSPACE_TAB_ID,
+  tabs: [{
+    id: DEFAULT_TASK_WORKSPACE_TAB_ID,
+    isRailHidden: false,
+    label: "Tab 1",
+    taskUiState: DEFAULT_TASK_UI_STATE,
+  }],
+  uiStateVersion: TASK_UI_SCHEMA_VERSION,
 };
 
 export { DEFAULT_HUD_UI_STATE, normalizeHudUiState };
@@ -188,5 +212,65 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     view: nextView,
     uiStateVersion: TASK_UI_SCHEMA_VERSION,
     visibleColumnsByView: nextVisibleColumnsByView,
+  };
+}
+
+function normalizeTaskWorkspaceTab(value: unknown, index: number): TaskWorkspaceTab | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<TaskWorkspaceTab> & { taskUiState?: Partial<TaskUiState> };
+  const id = typeof candidate.id === "string" && candidate.id.trim().length > 0
+    ? candidate.id.trim()
+    : `workspace-${index + 1}`;
+  const label = typeof candidate.label === "string" && candidate.label.trim().length > 0
+    ? candidate.label.trim()
+    : `Tab ${index + 1}`;
+
+  return {
+    id,
+    isRailHidden: candidate.isRailHidden === true,
+    label,
+    taskUiState: migrateLegacyTaskUiState(candidate.taskUiState ?? {}),
+  };
+}
+
+export function normalizeTaskWorkspaceTabsState(value: unknown): TaskWorkspaceTabsState {
+  if (!value || typeof value !== "object") {
+    return DEFAULT_TASK_WORKSPACE_TABS_STATE;
+  }
+
+  const candidate = value as Partial<TaskWorkspaceTabsState> & Partial<TaskUiState> & { tabs?: unknown[] };
+  if (!Array.isArray(candidate.tabs)) {
+    const migratedTaskUiState = migrateLegacyTaskUiState(candidate as Partial<TaskUiState>);
+    return {
+      activeTabId: DEFAULT_TASK_WORKSPACE_TAB_ID,
+      tabs: [{
+        id: DEFAULT_TASK_WORKSPACE_TAB_ID,
+        isRailHidden: false,
+        label: "Tab 1",
+        taskUiState: migratedTaskUiState,
+      }],
+      uiStateVersion: TASK_UI_SCHEMA_VERSION,
+    };
+  }
+
+  const tabs = candidate.tabs
+    .map((tab, index) => normalizeTaskWorkspaceTab(tab, index))
+    .filter((tab): tab is TaskWorkspaceTab => Boolean(tab));
+
+  if (tabs.length === 0) {
+    return DEFAULT_TASK_WORKSPACE_TABS_STATE;
+  }
+
+  const activeTabId = typeof candidate.activeTabId === "string" && tabs.some((tab) => tab.id === candidate.activeTabId)
+    ? candidate.activeTabId
+    : tabs[0].id;
+
+  return {
+    activeTabId,
+    tabs,
+    uiStateVersion: TASK_UI_SCHEMA_VERSION,
   };
 }

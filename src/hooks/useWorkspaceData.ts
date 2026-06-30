@@ -34,7 +34,7 @@ type Message = {
 type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   activePage: AppPage;
   currentUser: User | null | undefined;
-  mapActiveSessions: (rows: Array<{ accumulated_seconds: number; category_id: string; is_running: boolean; start_time: string | null }>) => Record<string, {
+  mapActiveSessions: (rows: Array<{ accumulated_seconds: number; category_id: string; is_running: boolean; start_time: string | null }>, userId?: string | null) => Record<string, {
     accumulatedSeconds: number;
     categoryId: string;
     isRunning: boolean;

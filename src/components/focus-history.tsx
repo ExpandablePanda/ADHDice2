@@ -83,6 +83,17 @@ type ActivityLineSeries = {
   totalSeconds: number;
 };
 
+type InteractiveActivityPoint = {
+  color: string;
+  key: string;
+  label: string;
+  pointLabel: string;
+  pointKey: string;
+  seconds: number;
+  x: number;
+  y: number;
+};
+
 type CategoryBreakdownRow = {
   color: string;
   detail: string;
@@ -842,6 +853,7 @@ function buildActivityCategoryBars(
   if (otherSeconds > 0) {
     bars.push({
       color: "var(--text-muted)",
+      goalSeconds: undefined,
       key: "__other__",
       label: "Other",
       shortLabel: "Other",
@@ -1683,6 +1695,49 @@ function FocusActivityLineCard({
   const axisPoints = series[0]?.points ?? [];
   const labelStep = Math.max(1, Math.ceil(axisPoints.length / 6));
   const hasData = series.length > 0 && axisPoints.length > 0;
+  const [hoveredPointKey, setHoveredPointKey] = useState<string | null>(null);
+  const [pinnedPointKey, setPinnedPointKey] = useState<string | null>(null);
+  const interactivePoints = useMemo(() => (
+    series.flatMap((item) => (
+      item.points.map((point, index) => {
+        const position = getLinePointPosition(index, item.points.length, point.seconds, maxSeconds, plotWidth, plotHeight);
+        return {
+          color: item.color,
+          key: item.key,
+          label: item.label,
+          pointLabel: point.label,
+          pointKey: `${item.key}:${point.key}`,
+          seconds: point.seconds,
+          x: padding.left + position.x,
+          y: padding.top + position.y,
+        } satisfies InteractiveActivityPoint;
+      })
+    ))
+  ), [maxSeconds, padding.left, padding.top, plotHeight, plotWidth, series]);
+  const activePoint = interactivePoints.find((point) => point.pointKey === (hoveredPointKey ?? pinnedPointKey))
+    ?? interactivePoints.find((point) => point.pointKey === pinnedPointKey)
+    ?? null;
+
+  const setNearestPointFromPointer = (clientX: number, clientY: number, bounds: DOMRect) => {
+    if (!interactivePoints.length) {
+      return null;
+    }
+    const localX = clientX - bounds.left;
+    const localY = clientY - bounds.top;
+    let nearestPoint = interactivePoints[0];
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const point of interactivePoints) {
+      const distance = Math.hypot(point.x - localX, point.y - localY);
+      if (distance < nearestDistance) {
+        nearestPoint = point;
+        nearestDistance = distance;
+      }
+    }
+
+    setHoveredPointKey(nearestPoint.pointKey);
+    return nearestPoint.pointKey;
+  };
 
   return (
     <div
@@ -1722,9 +1777,44 @@ function FocusActivityLineCard({
 
           {hasData ? (
             <div className="min-w-0 overflow-x-auto pb-2">
+              {activePoint ? (
+                <motion.div
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-3 flex flex-wrap items-center gap-3 rounded-[1.2rem] border border-[#e9e2fb] bg-white/90 px-4 py-3 text-left shadow-[0_12px_30px_rgba(81,61,168,0.08)] dark:border-white/10 dark:bg-white/[0.04]"
+                  initial={{ opacity: 0, y: 6 }}
+                >
+                  <span className="inline-flex items-center gap-2 rounded-full bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]">
+                    <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activePoint.color }} />
+                    {activePoint.label}
+                  </span>
+                  <span className="text-sm font-semibold text-[var(--text-primary)]">{activePoint.pointLabel}</span>
+                  <span className="text-sm text-[var(--text-secondary)]">{activePoint.label}</span>
+                  <span className="text-sm font-black text-[var(--text-primary)]">{formatCompactDuration(activePoint.seconds)}</span>
+                  <span className="text-xs text-[var(--text-muted)]">{activePoint.pointLabel} • {range.label}</span>
+                  {pinnedPointKey ? (
+                    <button
+                      className="ml-auto rounded-full border border-[#e4deef] px-3 py-1 text-xs font-semibold text-[#68738c] dark:border-white/10 dark:text-white/70"
+                      onClick={() => setPinnedPointKey(null)}
+                      type="button"
+                    >
+                      Clear pin
+                    </button>
+                  ) : null}
+                </motion.div>
+              ) : null}
               <svg
                 aria-label="Category focus line graph"
                 className="block min-w-[42rem]"
+                onPointerLeave={() => setHoveredPointKey(null)}
+                onPointerMove={(event) => {
+                  setNearestPointFromPointer(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
+                }}
+                onPointerUp={(event) => {
+                  const nextPointKey = setNearestPointFromPointer(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
+                  if (nextPointKey) {
+                    setPinnedPointKey(nextPointKey);
+                  }
+                }}
                 role="img"
                 viewBox={`0 0 ${chartWidth} ${chartHeight}`}
               >
@@ -1779,14 +1869,40 @@ function FocusActivityLineCard({
                           cy={padding.top + point.y}
                           fill="var(--surface-elevated)"
                           key={`${item.key}-${item.points[index]?.key ?? index}`}
-                          r={item.points[index]?.seconds ? 4 : 2.5}
+                          onClick={() => setPinnedPointKey(`${item.key}:${item.points[index]?.key ?? index}`)}
+                          r={(hoveredPointKey === `${item.key}:${item.points[index]?.key ?? index}` || pinnedPointKey === `${item.key}:${item.points[index]?.key ?? index}`)
+                            ? 6
+                            : item.points[index]?.seconds ? 4 : 2.5}
                           stroke={item.color}
                           strokeWidth="2"
+                          style={{ cursor: "pointer", transition: "r 180ms ease" }}
                         />
                       ))}
                     </g>
                   );
                 })}
+
+                {activePoint ? (
+                  <g>
+                    <line
+                      stroke={activePoint.color}
+                      strokeDasharray="5 7"
+                      strokeWidth="1.5"
+                      x1={activePoint.x}
+                      x2={activePoint.x}
+                      y1={padding.top}
+                      y2={padding.top + plotHeight}
+                    />
+                    <circle
+                      cx={activePoint.x}
+                      cy={activePoint.y}
+                      fill={activePoint.color}
+                      r={6}
+                      stroke="white"
+                      strokeWidth="2.5"
+                    />
+                  </g>
+                ) : null}
 
                 {axisPoints.map((point, index) => {
                   if (index !== 0 && index !== axisPoints.length - 1 && index % labelStep !== 0) {

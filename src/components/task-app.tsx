@@ -471,7 +471,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.14.1";
+const APP_VERSION = "6.15.4";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -1043,12 +1043,15 @@ export function TaskApp() {
   const { economy, setEconomy, appendEconomyEvent, commitTaskReward, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
     focusCategories, setFocusCategories,
+    focusCounters,
+    focusCounterHistory,
     activeSessions, setActiveSessions,
     focusHistory, setFocusHistory,
     suppressCategoryReload,
     handleToggleTimer, handleSetCountdownTarget, handleFinishTimer, handleAdjustTimer, handleResetTimer, handleDeleteTimer,
     handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory,
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
+    handleAdjustFocusCounter, handleCreateFocusCounter, handleDeleteFocusCounter, handleUpdateFocusCounter,
   } = useFocus(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent);
   const {
     awards: healthAwards,
@@ -1083,16 +1086,22 @@ export function TaskApp() {
     [],
   );
   const {
+    activeTaskWorkspaceTab,
     activePage,
+    closeTaskWorkspaceTab,
+    createTaskWorkspaceTab,
     focusedTaskIdsByDate,
     hudUiState,
     isDailyPlanningCollapsed,
     isRestoringPersistedUiState,
     isTaskFiltersOpen,
     pendingTaskEditorRestore,
+    renameTaskWorkspaceTab,
     setActivePage,
+    setActiveTaskWorkspaceTab,
     setFocusedTaskIdsByDate,
     setHudUiState,
+    setTaskWorkspaceRailHidden,
     setTaskTableLayoutPreferences,
     setIsDailyPlanningCollapsed,
     setIsTaskFiltersOpen,
@@ -1103,6 +1112,7 @@ export function TaskApp() {
     taskTableLayoutPreferences,
     taskGridLayout,
     taskRouting,
+    taskWorkspaceTabsState,
     taskUiState,
   } = useTaskUiState({
     isTaskEditorOpen,
@@ -4523,6 +4533,7 @@ export function TaskApp() {
     filterRowsNode: taskFilterRowsNode,
     hideSearch: duplicateTitleModeActive,
     isKeyboardShortcutsMenuOpen,
+    isRailHidden: activeTaskWorkspaceTab.isRailHidden,
     isListColumnMenuOpen,
     keyboardShortcutsMenuRef,
     listColumnLabels: LIST_COLUMN_LABELS,
@@ -4540,6 +4551,7 @@ export function TaskApp() {
     onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onSelectBucket: setSelectedBucket,
+    onToggleRail: () => setTaskWorkspaceRailHidden(!activeTaskWorkspaceTab.isRailHidden),
     onSearchSubmit: handleTaskOperationsSearchSubmit,
     onExpandAllColumns: () => setExpandAllColumnsToken((current) => current + 1),
     onShrinkAllColumns: () => setShrinkAllColumnsToken((current) => current + 1),
@@ -4555,6 +4567,10 @@ export function TaskApp() {
     trashCount: trashFilteredTasksSorted.length,
     todayCount: filteredTodayTasks.length,
     view: taskUiState.view,
+  };
+
+  const handleRenameTaskWorkspaceTab = (tabId: string, nextLabel: string) => {
+    renameTaskWorkspaceTab(tabId, nextLabel);
   };
 
   return (
@@ -4777,6 +4793,7 @@ export function TaskApp() {
           />
         ) : activePage === "Tasks" ? (
           <TasksWorkspace
+            activeTabId={taskWorkspaceTabsState.activeTabId}
             flows={(
               <TaskEditFlows
                 actualTimeEntryFlow={actualTimeEntryFlow}
@@ -4808,7 +4825,14 @@ export function TaskApp() {
                 taskHistoryFlow={taskHistoryFlow}
               />
             )}
+            onAddTab={() => createTaskWorkspaceTab({
+              isRailHidden: false,
+              taskUiState: taskUiState,
+            })}
+            onCloseTab={closeTaskWorkspaceTab}
+            onRenameTab={handleRenameTaskWorkspaceTab}
             onSurfaceChange={(surface) => setTaskUiState((prev) => ({ ...prev, tasksSurface: surface }))}
+            onTabChange={setActiveTaskWorkspaceTab}
             operationsHeaderProps={taskOperationsHeaderProps}
             pathsWorkspacePanel={(
               <PathsWorkspace
@@ -4825,6 +4849,7 @@ export function TaskApp() {
               />
             )}
             surface={taskUiState.tasksSurface}
+            tabs={taskWorkspaceTabsState.tabs}
             view={duplicateTitleModeActive ? "table" : taskUiState.view}
             tableViewPanel={(
               duplicateTitleModeActive ? (
@@ -5155,10 +5180,15 @@ export function TaskApp() {
           <FocusPage
             activeSessions={activeSessions}
             categories={getDisplayFocusCategories(focusCategories, activeSessions)}
+            counters={focusCounters}
+            counterHistory={focusCounterHistory}
             history={focusHistory}
+            onAdjustCounter={handleAdjustFocusCounter}
             onAdjustTimer={(categoryId, deltaSeconds) => {
               void handleAdjustTimer(categoryId, deltaSeconds);
             }}
+            onCreateCounter={handleCreateFocusCounter}
+            onDeleteCounter={handleDeleteFocusCounter}
             onDeleteTimer={(categoryId) => {
               if (isSystemCountdownCategoryId(categoryId) && activeCountdownAlertSessionKey) {
                 dismissCountdownFinishedAlert();
@@ -5179,6 +5209,7 @@ export function TaskApp() {
             onToggleTimer={(categoryId, options) => {
               void handleToggleTimer(categoryId, options);
             }}
+            onUpdateCounter={handleUpdateFocusCounter}
             onUpdateHistoryEntry={handleUpdateFocusHistoryEntry}
             onDeleteHistoryEntry={handleDeleteFocusHistoryEntry}
             onDeleteCategory={handleDeleteFocusCategory}
