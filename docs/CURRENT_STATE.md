@@ -5,7 +5,7 @@ Last reviewed: 2026-06-27
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.15.4`.
+- Current working app version: `6.15.5`.
 - Current release group: `6.15.x` feature work.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,7 @@ Role: active working
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
 ## 6.15 Checkpoint
+- `6.15.5` is a tiny stabilization hotfix before Pin Mode: Delayed validation in the task editor now uses the app-local day key instead of a UTC date boundary, and saved Delayed entries in Task History now render with the matching purple delayed calendar tone instead of the green completed tone. No recurrence, history persistence, rewards, search, Table/List scroll, virtualization, HUD, PATHS, Scratch Paper, Focus, or Pin Mode behavior changes.
 - `6.15.4` is a narrow follow-up on those same visual seams: the task search bar now sits inline to the left of the Focus/Momentum row instead of stacking above it, workspace tab utility controls are tightened again so the strip reads closer to the Tasks/Paths chip scale, `Add Counter` is forced onto a single matching chip line, and the counter icon chooser now dedupes icon names and uses a compact wrapped palette to avoid the broken single-column modal layout.
 - `6.15.3` is an exact visual matching pass on the same Focus counter and Task workspace seams: Focus counters now reuse the timer sandbox scaling footprint directly, `Add Counter` matches the existing strong Focus chip styling, the counter editor is shorter with a naturally scrolling body and a compact icon palette, workspace tabs reuse the Tasks/Paths chip group and active/inactive treatments directly, and the task search bar now sits on its own row above the Focus/Momentum row while the broader toolbar stays below.
 - `6.15.2` is a visual integration pass for the new Focus counters and Task workspace tabs: Focus counters now live inside the shared Focus sandbox with timer-matched scale, integrated in-face controls, a preview-based icon chooser, and responsive counter-activity cards, while the Task workspace tabs now sit inline with the Tasks/Paths toggle, use compact chip sizing, rename inline without browser prompts, and the table rail toggle copy collapses to the single `Hide Lists` / `Show Lists` toolbar chip.

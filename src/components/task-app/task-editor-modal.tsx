@@ -48,6 +48,7 @@ import {
   REPEAT_WEEKDAY_FULL_LABELS,
 } from "@/lib/task-repeat";
 import { shiftDateKey } from "@/lib/task-grid-layout";
+import { todayISO } from "@/lib/utils";
 
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
@@ -467,7 +468,7 @@ export function TaskEditorModal({
     : parsePositiveInteger(draft.estimatedMinutes);
   const customEstimatedHoursValue = customEstimatedMinutes === null ? "" : String(Math.floor(customEstimatedMinutes / 60));
   const customEstimatedMinuteValue = customEstimatedMinutes === null ? "" : String(customEstimatedMinutes % 60);
-  const todayDateKey = new Date().toISOString().slice(0, 10);
+  const todayDateKey = todayISO();
   const delayAnchorDateKey = task?.due_on && task.due_on > todayDateKey ? task.due_on : todayDateKey;
   const requiresDelayedDueDate = draft.status === "delayed";
   const hasValidDelayedDueDate = Boolean(draft.dueOn && draft.dueOn > delayAnchorDateKey);
