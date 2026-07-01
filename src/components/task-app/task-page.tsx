@@ -9,6 +9,7 @@ type TaskPageProps = {
   listViewPanel: ReactNode;
   operationsHeader: ReactNode;
   pathsWorkspacePanel: ReactNode;
+  reportWorkspaceActive?: boolean;
   surface: TasksSurface;
   surfaceSwitch: ReactNode;
   tabs: ReactNode;
@@ -22,6 +23,7 @@ export function TaskPage({
   listViewPanel,
   operationsHeader,
   pathsWorkspacePanel,
+  reportWorkspaceActive = false,
   surface,
   surfaceSwitch,
   tabs,
@@ -39,8 +41,10 @@ export function TaskPage({
         pathsWorkspacePanel
       ) : (
         <>
-          {operationsHeader}
-          {view === "table"
+          {reportWorkspaceActive ? null : operationsHeader}
+          {reportWorkspaceActive
+            ? tableViewPanel
+            : view === "table"
             ? tableViewPanel
             : view === "list"
               ? listViewPanel

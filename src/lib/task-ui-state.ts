@@ -37,6 +37,7 @@ export type TaskUiState = {
 };
 
 export type TaskWorkspaceTab = {
+  kind?: "report" | "tasks";
   id: string;
   isRailHidden: boolean;
   label: string;
@@ -61,6 +62,7 @@ export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
 export const TASK_UI_SCHEMA_VERSION = 7;
 export const DEFAULT_TASK_WORKSPACE_TAB_ID = "workspace-1";
+export const REPORT_TASK_WORKSPACE_TAB_ID = "workspace-report";
 export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
@@ -105,12 +107,22 @@ export const DEFAULT_TASK_UI_STATE: TaskUiState = {
 
 export const DEFAULT_TASK_WORKSPACE_TABS_STATE: TaskWorkspaceTabsState = {
   activeTabId: DEFAULT_TASK_WORKSPACE_TAB_ID,
-  tabs: [{
-    id: DEFAULT_TASK_WORKSPACE_TAB_ID,
-    isRailHidden: false,
-    label: "Tab 1",
-    taskUiState: DEFAULT_TASK_UI_STATE,
-  }],
+  tabs: [
+    {
+      id: DEFAULT_TASK_WORKSPACE_TAB_ID,
+      isRailHidden: false,
+      kind: "tasks",
+      label: "Tab 1",
+      taskUiState: DEFAULT_TASK_UI_STATE,
+    },
+    {
+      id: REPORT_TASK_WORKSPACE_TAB_ID,
+      isRailHidden: true,
+      kind: "report",
+      label: "Report",
+      taskUiState: DEFAULT_TASK_UI_STATE,
+    },
+  ],
   uiStateVersion: TASK_UI_SCHEMA_VERSION,
 };
 
@@ -231,7 +243,8 @@ function normalizeTaskWorkspaceTab(value: unknown, index: number): TaskWorkspace
   return {
     id,
     isRailHidden: candidate.isRailHidden === true,
-    label,
+    kind: candidate.kind === "report" || id === REPORT_TASK_WORKSPACE_TAB_ID ? "report" : "tasks",
+    label: candidate.kind === "report" || id === REPORT_TASK_WORKSPACE_TAB_ID ? "Report" : label,
     taskUiState: migrateLegacyTaskUiState(candidate.taskUiState ?? {}),
   };
 }
@@ -246,12 +259,22 @@ export function normalizeTaskWorkspaceTabsState(value: unknown): TaskWorkspaceTa
     const migratedTaskUiState = migrateLegacyTaskUiState(candidate as Partial<TaskUiState>);
     return {
       activeTabId: DEFAULT_TASK_WORKSPACE_TAB_ID,
-      tabs: [{
-        id: DEFAULT_TASK_WORKSPACE_TAB_ID,
-        isRailHidden: false,
-        label: "Tab 1",
-        taskUiState: migratedTaskUiState,
-      }],
+      tabs: [
+        {
+          id: DEFAULT_TASK_WORKSPACE_TAB_ID,
+          isRailHidden: false,
+          kind: "tasks",
+          label: "Tab 1",
+          taskUiState: migratedTaskUiState,
+        },
+        {
+          id: REPORT_TASK_WORKSPACE_TAB_ID,
+          isRailHidden: true,
+          kind: "report",
+          label: "Report",
+          taskUiState: DEFAULT_TASK_UI_STATE,
+        },
+      ],
       uiStateVersion: TASK_UI_SCHEMA_VERSION,
     };
   }
@@ -259,6 +282,16 @@ export function normalizeTaskWorkspaceTabsState(value: unknown): TaskWorkspaceTa
   const tabs = candidate.tabs
     .map((tab, index) => normalizeTaskWorkspaceTab(tab, index))
     .filter((tab): tab is TaskWorkspaceTab => Boolean(tab));
+
+  if (!tabs.some((tab) => tab.kind === "report" || tab.id === REPORT_TASK_WORKSPACE_TAB_ID)) {
+    tabs.push({
+      id: REPORT_TASK_WORKSPACE_TAB_ID,
+      isRailHidden: true,
+      kind: "report",
+      label: "Report",
+      taskUiState: DEFAULT_TASK_UI_STATE,
+    });
+  }
 
   if (tabs.length === 0) {
     return DEFAULT_TASK_WORKSPACE_TABS_STATE;

@@ -79,6 +79,7 @@ import { TaskEditFlows } from "./task-app/task-edit-flows";
 import { TaskListSettingsModal } from "./task-app/task-list-settings-modal";
 import { TaskListRuleRowEditor } from "./task-app/task-list-rule-row-editor";
 import { PathsWorkspace } from "./task-app/paths-workspace";
+import { TaskReportWorkspace } from "./task-app/task-report-workspace";
 import { TaskRewardModal } from "./task-app/task-reward-modal";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
@@ -472,7 +473,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.16.1";
+const APP_VERSION = "6.17.5";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
@@ -4849,6 +4850,7 @@ export function TaskApp() {
         ) : activePage === "Tasks" ? (
           <TasksWorkspace
             activeTabId={taskWorkspaceTabsState.activeTabId}
+            activeTabKind={activeTaskWorkspaceTab.kind}
             flows={(
               <TaskEditFlows
                 actualTimeEntryFlow={actualTimeEntryFlow}
@@ -4907,7 +4909,17 @@ export function TaskApp() {
             tabs={taskWorkspaceTabsState.tabs}
             view={duplicateTitleModeActive ? "table" : taskUiState.view}
             tableViewPanel={(
-              duplicateTitleModeActive ? (
+              activeTaskWorkspaceTab.kind === "report" ? (
+                <TaskReportWorkspace
+                  appVersion={APP_VERSION}
+                  availableTaskLists={availableTaskLists}
+                  taskHistory={taskHistory}
+                  taskListEvaluationContext={taskListEvaluationContext}
+                  tasks={tasks}
+                  todayDateKey={todayKey}
+                  userId={currentUserId}
+                />
+              ) : duplicateTitleModeActive ? (
                 <DuplicateTaskGroupsAdapter
                   duplicateGroups={duplicateTitleGroups}
                   filterRowsNode={taskFilterRowsNode}

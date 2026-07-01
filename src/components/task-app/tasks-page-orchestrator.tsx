@@ -15,6 +15,7 @@ import type { TaskWorkspaceTab, TasksSurface, TaskViewMode } from "@/lib/task-ui
 
 type TasksPageOrchestratorProps = {
   activeTabId: string;
+  activeTabKind?: TaskWorkspaceTab["kind"];
   alternateViewPanel: ReactNode;
   flows: ReactNode;
   listViewPanel: ReactNode;
@@ -33,6 +34,7 @@ type TasksPageOrchestratorProps = {
 
 export function TasksWorkspace({
   activeTabId,
+  activeTabKind,
   alternateViewPanel,
   flows,
   listViewPanel,
@@ -84,12 +86,13 @@ export function TasksWorkspace({
             {tabs.map((tab) => {
               const isActive = tab.id === activeTabId;
               const isEditing = tab.id === editingTabId;
+              const isReportTab = tab.kind === "report";
               return (
                 <div
                   className="inline-flex items-center gap-0.5"
                   key={tab.id}
                 >
-                  {isEditing ? (
+                  {isEditing && !isReportTab ? (
                     <input
                       ref={renameInputRef}
                       className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} h-[26px] min-w-[6rem] rounded-full border px-2 py-0 outline-none transition focus:border-[#b7a7ff] ${isActive ? "border-[#6f57f6] bg-[#6f57f6] text-white placeholder:text-white/70 dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431] dark:placeholder:text-[#1a1431]/65" : "border-[#e4deef] bg-[#fbfaff] text-[#5f6983] placeholder:text-[#8d96ae] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/72 dark:placeholder:text-white/45"} dark:focus:border-[#6d56d6]`}
@@ -132,18 +135,20 @@ export function TasksWorkspace({
                       {tab.label}
                     </TaskTableChipButton>
                   )}
-                  <button
-                    aria-label={`Rename ${tab.label}`}
-                    className="flex h-5 w-5 items-center justify-center rounded-full text-[#8b84aa] transition hover:bg-white/70 hover:text-[#6f57f6] dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-[#cabfff]"
-                    onClick={() => {
-                      setEditingTabId(tab.id);
-                      setRenameDraft(tab.label);
-                    }}
-                    type="button"
-                  >
-                    <Pencil className="h-2.5 w-2.5" />
-                  </button>
-                  {tabs.length > 1 ? (
+                  {!isReportTab ? (
+                    <button
+                      aria-label={`Rename ${tab.label}`}
+                      className="flex h-5 w-5 items-center justify-center rounded-full text-[#8b84aa] transition hover:bg-white/70 hover:text-[#6f57f6] dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-[#cabfff]"
+                      onClick={() => {
+                        setEditingTabId(tab.id);
+                        setRenameDraft(tab.label);
+                      }}
+                      type="button"
+                    >
+                      <Pencil className="h-2.5 w-2.5" />
+                    </button>
+                  ) : null}
+                  {tabs.length > 1 && !isReportTab ? (
                     <button
                       aria-label={`Close ${tab.label}`}
                       className="flex h-5 w-5 items-center justify-center rounded-full text-[#8b84aa] transition hover:bg-[#fff1f2] hover:text-[#d64b5f] dark:text-white/45 dark:hover:bg-[#2e1820] dark:hover:text-[#ff9fbc]"
@@ -166,6 +171,7 @@ export function TasksWorkspace({
             </TaskTableChipButton>
         </div>
       )}
+      reportWorkspaceActive={activeTabKind === "report"}
       tableViewPanel={tableViewPanel}
       view={view}
     />
