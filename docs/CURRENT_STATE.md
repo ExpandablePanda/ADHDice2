@@ -5,13 +5,17 @@ Last reviewed: 2026-06-30
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.17.5`.
-- Current release group: `6.17.x` feature work.
+- Current working app version: `6.18.2`.
+- Current release group: `6.18.x` UI system foundation work.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 6.18 Checkpoint
+- `6.18.2` is a narrow Table View column-reorder stabilization pass: Status and Task stay anchored, optional metadata columns now start drag from a dedicated grip instead of the whole header surface, and column menus plus resize handles no longer share the same native browser drag target that could glitch the public Tasks page during rearrangement. The UI system foundation work otherwise stays unchanged.
+- `6.18.1` starts the frontend UI system foundation from already-approved live ADHDice sources. The repo now includes `docs/FRONTEND_UI_RULES.md` and `docs/UI_SOURCE_MAP.md`, adds reusable `AdhdChip` and `AdhdDropdownPanel` primitives under `src/components/ui-system/`, adopts those primitives for the Tasks / Paths segmented toggle, the Tasks header dropdown shells (`Views`, `Columns`, and `Shortcuts`), and the mobile/list rail chip baseline in `tasks-page.tsx`, and explicitly defers `AdhdPanel`, `AdhdCard`, `AdhdIconButton`, Edit Task overlay extraction, and List View card extraction so unrelated tickets do not opportunistically restyle those surfaces.
 
 ## 6.17 Checkpoint
 - `6.17.5` removes the Report workspace's reliance on the already-loaded task-history slice: changing a report range now triggers a paginated Supabase fetch for the full selected date range (or all available history), the compact report header shows the actual fetched record count plus `History Source: Full selected date range fetch`, the old 1000-record incompleteness warning disappears on successful fetches, and the Report tab now shows a loading state with a safe loaded-history fallback warning if the full fetch fails. The pass stays read-only and does not change schema, task mutation behavior, priority categories, recurrence logic, HUD, Focus, PATHS, rewards, Archive, Trash, or smart-list behavior.

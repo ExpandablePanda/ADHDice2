@@ -1,6 +1,6 @@
 "use client";
 
-import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
+import { AdhdChip } from "@/components/ui-system";
 import type { TasksSurface } from "@/lib/task-ui-state";
 
 export const TASKS_SURFACE_ACTIVE_CHIP_CLASS = "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]";
@@ -17,20 +17,20 @@ export function TasksSurfaceSwitch({
   return (
     <div className="mt-1 flex justify-center">
       <div className={TASKS_SURFACE_GROUP_CLASS}>
-        <TaskTableChipButton
+        <AdhdChip
           aria-pressed={value === "tasks"}
           onClick={() => onChange("tasks")}
           toneClassName={value === "tasks" ? TASKS_SURFACE_ACTIVE_CHIP_CLASS : TASKS_SURFACE_INACTIVE_CHIP_CLASS}
         >
           Tasks
-        </TaskTableChipButton>
-        <TaskTableChipButton
+        </AdhdChip>
+        <AdhdChip
           aria-pressed={value === "paths"}
           onClick={() => onChange("paths")}
           toneClassName={value === "paths" ? TASKS_SURFACE_ACTIVE_CHIP_CLASS : TASKS_SURFACE_INACTIVE_CHIP_CLASS}
         >
           Paths
-        </TaskTableChipButton>
+        </AdhdChip>
       </div>
     </div>
   );

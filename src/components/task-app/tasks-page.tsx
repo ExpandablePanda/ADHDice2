@@ -8,8 +8,8 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
-  TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
+import { AdhdChip, AdhdDropdownPanel } from "@/components/ui-system";
 
 import type { Task } from "@/lib/database.types";
 import type { TaskRailListOption } from "@/lib/task-app-derived";
@@ -182,9 +182,10 @@ function ReorderableTaskChipRail({
   return (
     <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-0.5">
       {lists.map((list) => (
-        <TaskTableChipButton
+        <AdhdChip
           aria-pressed={list.id === selectedBucket}
           className={list.isCustom && draggedListId === list.id ? "opacity-60" : undefined}
+          count={list.count}
           draggable={list.isCustom && Boolean(onReorderCustomLists)}
           key={list.id}
           onClick={() => {
@@ -213,10 +214,11 @@ function ReorderableTaskChipRail({
             event.preventDefault();
             handleDrop(list.id);
           }}
+          selected={list.id === selectedBucket}
           toneClassName={list.id === selectedBucket ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
         >
-          {list.label} <span className="ml-1 opacity-70">{list.count}</span>
-        </TaskTableChipButton>
+          {list.label}
+        </AdhdChip>
       ))}
     </div>
   );
@@ -242,9 +244,9 @@ function TaskChipButton({
         : SHARED_CHIP_MUTED_CLASS;
 
   return (
-    <TaskTableChipButton aria-pressed={active} onClick={onClick} toneClassName={toneClassName}>
+    <AdhdChip aria-pressed={active} onClick={onClick} selected={active} toneClassName={toneClassName}>
       {children}
-    </TaskTableChipButton>
+    </AdhdChip>
   );
 }
 
@@ -266,7 +268,7 @@ function TaskViewsMenu({
 
   return (
     <div className="relative">
-      <TaskTableChipButton
+      <AdhdChip
         aria-expanded={isOpen}
         className="gap-2"
         onClick={() => setIsOpen((current) => !current)}
@@ -274,24 +276,25 @@ function TaskViewsMenu({
       >
         Views
         <ChevronDown className={`h-4 w-4 transition ${isOpen ? "rotate-180" : ""}`} />
-      </TaskTableChipButton>
+      </AdhdChip>
       {isOpen ? (
-        <div className="absolute left-0 top-[calc(100%+0.55rem)] z-30 min-w-40 rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95">
+        <AdhdDropdownPanel widthClassName="min-w-40">
           <div className="flex flex-col gap-1">
             {viewOptions.map((option) => (
-              <TaskTableChipButton
+              <AdhdChip
                 key={option.value}
                 onClick={() => {
                   onViewChange(option.value);
                   setIsOpen(false);
                 }}
+                selected={view === option.value}
                 toneClassName={view === option.value ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
               >
                 {option.label}
-              </TaskTableChipButton>
+              </AdhdChip>
             ))}
           </div>
-        </div>
+        </AdhdDropdownPanel>
       ) : null}
     </div>
   );
@@ -437,9 +440,9 @@ export function TaskOperationsHeader({
               search={search}
             />
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
-              <TaskTableChipButton onClick={handleFocusChipClick} toneClassName={SHARED_CHIP_SOFT_PURPLE_CLASS}>
+              <AdhdChip onClick={handleFocusChipClick} toneClassName={SHARED_CHIP_SOFT_PURPLE_CLASS}>
                 {actionLabel}
-              </TaskTableChipButton>
+              </AdhdChip>
               <span className="inline-flex items-center rounded-full bg-[#fff1f3] px-3 py-1.5 text-xs font-semibold leading-none text-[#f05566] dark:bg-[#44232f] dark:text-[#ff9eaf]">
                 {metric.label}
               </span>
@@ -493,7 +496,7 @@ export function TaskOperationsHeader({
                 </TaskChipButton>
               ) : null}
               <div className="relative" ref={listColumnMenuRef}>
-                <TaskTableChipButton
+                <AdhdChip
                   className="gap-2"
                   data-list-columns-menu
                   onClick={onToggleListColumnMenu}
@@ -501,9 +504,9 @@ export function TaskOperationsHeader({
                 >
                   Columns
                   <ChevronDown className={`h-4 w-4 transition ${isListColumnMenuOpen ? "rotate-180" : ""}`} />
-                </TaskTableChipButton>
+                </AdhdChip>
                 {isListColumnMenuOpen ? (
-                  <div className="absolute left-0 top-[calc(100%+0.55rem)] z-30 w-72 rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95">
+                  <AdhdDropdownPanel widthClassName="w-72">
                     <div className="border-b border-[#f0ebfb] px-3 pb-2 dark:border-white/10">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#938ab8] dark:text-white/42">Visible columns</p>
                       <p className="mt-1 text-sm text-[#7d7597] dark:text-white/55">Status and Task stay pinned. Everything else can be shown or hidden here.</p>
@@ -527,7 +530,7 @@ export function TaskOperationsHeader({
                         );
                       })}
                     </div>
-                  </div>
+                  </AdhdDropdownPanel>
                 ) : null}
               </div>
               <TaskChipButton onClick={onExpandAllColumns} tone="purple">
@@ -537,7 +540,7 @@ export function TaskOperationsHeader({
                 Shrink columns
               </TaskChipButton>
               <div className="relative" ref={keyboardShortcutsMenuRef}>
-                <TaskTableChipButton
+                <AdhdChip
                   className="gap-2"
                   data-keyboard-shortcuts-menu
                   onClick={onToggleKeyboardShortcutsMenu}
@@ -545,9 +548,9 @@ export function TaskOperationsHeader({
                 >
                   Shortcuts
                   <ChevronDown className={`h-4 w-4 transition ${isKeyboardShortcutsMenuOpen ? "rotate-180" : ""}`} />
-                </TaskTableChipButton>
+                </AdhdChip>
                 {isKeyboardShortcutsMenuOpen ? (
-                  <div className="absolute left-0 top-[calc(100%+0.55rem)] z-30 w-72 rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-2 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95">
+                  <AdhdDropdownPanel widthClassName="w-72">
                     <div className="border-b border-[#f0ebfb] px-3 pb-2 dark:border-white/10">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#938ab8] dark:text-white/42">Table controls</p>
                       <p className="mt-1 text-sm text-[#7d7597] dark:text-white/55">These are the interactions that are actually live on the new table.</p>
@@ -566,7 +569,7 @@ export function TaskOperationsHeader({
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </AdhdDropdownPanel>
                 ) : null}
               </div>
               <TaskChipButton onClick={onOpenListSettings}>

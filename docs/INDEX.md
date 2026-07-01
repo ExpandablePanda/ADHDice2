@@ -17,6 +17,8 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 
 - `README.md` - Setup and high-level repo overview.
 - `AGENTS.md` - Durable agent operating rules for this repo.
+- `docs/FRONTEND_UI_RULES.md` - Approved frontend reuse rules for chips, segmented toggles, and dropdown shells.
+- `docs/UI_SOURCE_MAP.md` - Practical source map for approved, deferred, and off-model ADHDice UI surfaces.
 - `docs/taskapp-behavior-contract.md` - Current TaskApp behavior contract.
 - `docs/taskapp-orchestrator-contract.md` - Current TaskApp orchestration and extraction boundary contract.
 - `docs/taskapp-quality-check-protocol.md` - Current TaskApp verification protocol.

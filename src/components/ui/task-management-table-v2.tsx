@@ -1252,6 +1252,10 @@ function normalizePersistedColumnOrder(columnOrder: TaskTableLayoutPreferences["
   return [...validStoredOrder, ...missingColumns];
 }
 
+function isReorderableHeaderColumn(columnId: TaskManagementTableColumnId) {
+  return columnId !== "status_icon" && columnId !== "title";
+}
+
 function getInitialColumnOrder(persistedLayoutPreferences?: TaskTableLayoutPreferences) {
   const preferences = readTaskTablePreferences();
   return normalizePersistedColumnOrder(persistedLayoutPreferences?.columnOrder ?? preferences?.columnOrder);
@@ -7476,22 +7480,26 @@ export function TaskManagementTableV2({
                     ? structuredFilters[column.id].length
                     : 0;
                 const isSorted = sortState?.columnId === column.id;
+                const isReorderable = isReorderableHeaderColumn(column.id);
 
                 return (
                   <div
                     className={`relative ${getColumnBoundaryClass(columnIndex, visibleHeaderColumns.length)}`}
-                    draggable
                     key={column.id}
                     onDragOver={(event) => {
+                      if (!isReorderable) {
+                        return;
+                      }
                       event.preventDefault();
-                    }}
-                    onDragStart={() => {
-                      draggedHeaderColumnIdRef.current = column.id;
                     }}
                     onDrop={(event) => {
+                      if (!isReorderable) {
+                        return;
+                      }
                       event.preventDefault();
                       const draggedId = draggedHeaderColumnIdRef.current;
-                      if (!draggedId || draggedId === column.id) {
+                      draggedHeaderColumnIdRef.current = null;
+                      if (!draggedId || draggedId === column.id || !isReorderableHeaderColumn(draggedId)) {
                         return;
                       }
                       setColumnOrder((current) => {
@@ -7515,6 +7523,32 @@ export function TaskManagementTableV2({
                         </span>
                       ) : (
                         <span className="inline-flex w-max max-w-none items-center gap-0" data-column-header-measure={column.id}>
+                          {isReorderable ? (
+                            <span
+                              aria-hidden="true"
+                              className="inline-flex h-5 w-5 flex-none cursor-grab items-center justify-center rounded-full text-current/55 transition hover:bg-current/10 hover:text-current active:cursor-grabbing"
+                              draggable
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                              }}
+                              onDragEnd={() => {
+                                draggedHeaderColumnIdRef.current = null;
+                              }}
+                              onDragStart={(event) => {
+                                event.stopPropagation();
+                                draggedHeaderColumnIdRef.current = column.id;
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", column.id);
+                              }}
+                              onPointerDown={(event) => {
+                                event.stopPropagation();
+                              }}
+                              title={`Reorder ${column.label} column`}
+                            >
+                              <GripVertical className="h-3 w-3" />
+                            </span>
+                          ) : null}
                           <span>{column.label}</span>
                           {isFiltered ? <span className="h-1.5 w-1.5 rounded-full bg-current" /> : null}
                           {activeStructuredCount > 0 ? <span className="rounded-full bg-current/12 px-1.5 py-0.5 leading-none">{activeStructuredCount}</span> : null}
