@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Copy } from "lucide-react";
 import type { Task, TaskHistory } from "@/lib/database.types";
+import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { mapTaskHistoryRow } from "@/lib/task-history";
-import type { TaskListDefinition, TaskListEvaluationContext } from "@/lib/task-lists";
+import { mapFocusSessionRow } from "@/hooks/useFocus";
+import type { TaskListDefinition } from "@/lib/task-lists";
 import {
   generateTaskReport,
   resolveTaskReportHistoryFetchRange,
@@ -19,8 +21,9 @@ import { TASK_TABLE_BODY_VALUE_CLASS, TaskTableChipButton } from "@/components/u
 type TaskReportWorkspaceProps = {
   appVersion: string;
   availableTaskLists: TaskListDefinition[];
+  focusCategories: FocusCategory[];
+  focusHistory: HistoricalFocusSession[];
   taskHistory: TaskHistory[];
-  taskListEvaluationContext: TaskListEvaluationContext;
   tasks: Task[];
   todayDateKey: string;
   userId: string | null;
@@ -33,12 +36,13 @@ const REPORT_FULL_HISTORY_SOURCE_LABEL = "Full selected date range fetch";
 const REPORT_FALLBACK_HISTORY_SOURCE_LABEL = "Loaded workspace history fallback";
 
 type ReportHistoryState = {
+  focusHistory: HistoricalFocusSession[];
   history: TaskHistory[];
   sourceLabel: string;
   warning: string | null;
 };
 
-async function fetchReportHistoryForRange({
+async function fetchTaskReportHistoryForRange({
   rangeId,
   todayDateKey,
   userId,
@@ -89,11 +93,63 @@ async function fetchReportHistoryForRange({
   return fullHistory;
 }
 
+async function fetchFocusReportHistoryForRange({
+  rangeId,
+  todayDateKey,
+  userId,
+}: {
+  rangeId: TaskReportRangeId;
+  todayDateKey: string;
+  userId: string;
+}) {
+  const client = createBrowserSupabaseClient();
+  if (!client) {
+    throw new Error("Supabase client is unavailable.");
+  }
+
+  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey);
+  const fullHistory: HistoricalFocusSession[] = [];
+  let offset = 0;
+
+  while (true) {
+    let query = client
+      .from("adhdice_focus_sessions")
+      .select("*")
+      .eq("user_id", userId)
+      .order("session_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + REPORT_HISTORY_PAGE_SIZE - 1);
+
+    if (fetchRange.startDateKey) {
+      query = query.gte("session_date", fetchRange.startDateKey);
+    }
+    if (fetchRange.endDateKey) {
+      query = query.lte("session_date", fetchRange.endDateKey);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+
+    const batch = (data ?? []).map(mapFocusSessionRow);
+    fullHistory.push(...batch);
+    if (batch.length < REPORT_HISTORY_PAGE_SIZE) {
+      break;
+    }
+    offset += REPORT_HISTORY_PAGE_SIZE;
+  }
+
+  return fullHistory;
+}
+
 export function TaskReportWorkspace({
   appVersion,
   availableTaskLists,
+  focusCategories,
+  focusHistory,
   taskHistory,
-  taskListEvaluationContext,
   tasks,
   todayDateKey,
   userId,
@@ -103,6 +159,7 @@ export function TaskReportWorkspace({
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [reportHistoryState, setReportHistoryState] = useState<ReportHistoryState>({
+    focusHistory,
     history: taskHistory,
     sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
     warning: null,
@@ -118,9 +175,10 @@ export function TaskReportWorkspace({
       if (!userId) {
         if (!cancelled) {
           setReportHistoryState({
+            focusHistory,
             history: taskHistory,
             sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
-            warning: "Full selected date range fetch is unavailable without an active signed-in user, so this report is using the loaded workspace history.",
+            warning: "Full selected date range fetch is unavailable without an active signed-in user, so this report is using the loaded workspace task and focus history.",
           });
           setIsLoadingHistory(false);
         }
@@ -128,15 +186,23 @@ export function TaskReportWorkspace({
       }
 
       try {
-        const fullHistory = await fetchReportHistoryForRange({
-          rangeId,
-          todayDateKey,
-          userId,
-        });
+        const [fullHistory, fullFocusHistory] = await Promise.all([
+          fetchTaskReportHistoryForRange({
+            rangeId,
+            todayDateKey,
+            userId,
+          }),
+          fetchFocusReportHistoryForRange({
+            rangeId,
+            todayDateKey,
+            userId,
+          }),
+        ]);
         if (cancelled) {
           return;
         }
         setReportHistoryState({
+          focusHistory: fullFocusHistory,
           history: fullHistory,
           sourceLabel: REPORT_FULL_HISTORY_SOURCE_LABEL,
           warning: null,
@@ -149,9 +215,10 @@ export function TaskReportWorkspace({
           ? error.message
           : "Unknown fetch error.";
         setReportHistoryState({
+          focusHistory,
           history: taskHistory,
           sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
-          warning: `Full selected date range fetch failed (${message}). Using the loaded workspace history instead, so this report may still be limited to the currently loaded records.`,
+          warning: `Full selected date range fetch failed (${message}). Using the loaded workspace task and focus history instead, so this report may still be limited to the currently loaded records.`,
         });
       } finally {
         if (!cancelled) {
@@ -165,23 +232,24 @@ export function TaskReportWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [rangeId, taskHistory, todayDateKey, userId]);
+  }, [focusHistory, rangeId, taskHistory, todayDateKey, userId]);
 
   const reportMarkdown = useMemo(
     () => generateTaskReport({
       appVersion,
       availableTaskLists,
       detailLevel,
+      focusCategories,
+      focusHistory: reportHistoryState.focusHistory,
       generatedAt: new Date(),
       historySourceLabel: reportHistoryState.sourceLabel,
       historyWarning: reportHistoryState.warning,
       rangeId,
       taskHistory: reportHistoryState.history,
-      taskListEvaluationContext,
       tasks,
       todayDateKey,
     }),
-    [appVersion, availableTaskLists, detailLevel, rangeId, reportHistoryState, taskListEvaluationContext, tasks, todayDateKey],
+    [appVersion, availableTaskLists, detailLevel, focusCategories, rangeId, reportHistoryState, tasks, todayDateKey],
   );
 
   async function handleCopyReport() {

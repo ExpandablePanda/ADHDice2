@@ -1,36 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTask } from "../src/lib/task-buckets.ts";
-import { getBuiltInTaskLists, type TaskListEvaluationContext } from "../src/lib/task-lists.ts";
+import { getBuiltInTaskLists } from "../src/lib/task-lists.ts";
 import { generateTaskReport } from "../src/lib/task-report.ts";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
-
-function createTaskListEvaluationContext(
-  taskHistory: TaskHistory[],
-  todayDateKey: string,
-): TaskListEvaluationContext {
-  const taskHistoryByTaskId = taskHistory.reduce<Record<string, TaskHistory[]>>((accumulator, entry) => {
-    const entries = accumulator[entry.task_id] ?? [];
-    entries.push(entry);
-    accumulator[entry.task_id] = entries;
-    return accumulator;
-  }, {});
-
-  return {
-    currentStreakByTaskId: {},
-    focusedTaskIds: new Set<string>(),
-    hasStepsByTaskId: {},
-    historyFactsByTaskId: {},
-    isDueToday: (date) => date === todayDateKey,
-    isDueTomorrow: (date) => Boolean(date && date === "2026-06-30"),
-    isLater: (date) => Boolean(date && date > todayDateKey),
-    isOpen: (task) => !["done", "did_my_best", "complete", "archived", "trashed"].includes(task.status),
-    isOverdue: (date) => Boolean(date && date < todayDateKey),
-    manualMembershipsByTaskId: {},
-    taskHistoryByTaskId,
-    todayDateKey,
-  };
-}
+import type { FocusCategory, HistoricalFocusSession } from "../src/lib/types.ts";
 
 function createHistoryEntry(params: Partial<TaskHistory> & Pick<TaskHistory, "entry_date" | "id" | "status" | "task_id">): TaskHistory {
   return {
@@ -48,10 +22,42 @@ function createHistoryEntry(params: Partial<TaskHistory> & Pick<TaskHistory, "en
   };
 }
 
-test("summary report includes cleanup metadata and excludes detailed sections", () => {
+function createFocusCategory(overrides: Partial<FocusCategory> = {}): FocusCategory {
+  return {
+    color: "#6f57f6",
+    dailyGoalSeconds: 1800,
+    focusSubtype: null,
+    focusSubtype2: null,
+    focusType: "Work",
+    icon: "brain",
+    id: "focus-category-1",
+    title: "Coding",
+    weeklyGoalSeconds: 7200,
+    ...overrides,
+  };
+}
+
+function createFocusSession(overrides: Partial<HistoricalFocusSession> = {}): HistoricalFocusSession {
+  return {
+    categoryId: "focus-category-1",
+    createdAt: "2026-06-30T12:00:00.000Z",
+    date: "2026-06-30",
+    durationSeconds: 1500,
+    focusSubtype: "Deep Work",
+    focusSubtype2: null,
+    focusType: "Work",
+    id: "focus-session-1",
+    notes: "Heads-down sprint",
+    title: "Morning sprint",
+    ...overrides,
+  };
+}
+
+test("summary report uses the current overall-stats structure and skips detailed sections", () => {
   const activeTask = createTask({
     created_at: "2026-06-20T09:00:00.000Z",
     id: "parent-summary",
+    repeat_frequency: "daily",
     sort_order: 1,
     status: "pending",
     title: "Summary task",
@@ -77,25 +83,27 @@ test("summary report includes cleanup metadata and excludes detailed sections", 
     appVersion: "6.17.3",
     availableTaskLists: getBuiltInTaskLists(),
     detailLevel: "summary",
+    focusCategories: [],
+    focusHistory: [],
     generatedAt: new Date("2026-06-30T15:00:00.000Z"),
+    historySourceLabel: "Loaded workspace history fallback",
+    historyWarning: null,
     rangeId: "last7",
     taskHistory,
-    taskListEvaluationContext: createTaskListEvaluationContext(taskHistory, "2026-06-29"),
     tasks: [activeTask, trashedTask],
     todayDateKey: "2026-06-29",
   });
 
-  assert.match(report, /Detail Level: Summary/);
-  assert.match(report, /Active tasks loaded: 1/);
-  assert.match(report, /Trashed tasks loaded: 1/);
-  assert.match(report, /## Excluded \/ Non-active Snapshot/);
-  assert.match(report, /Trashed tasks excluded from workload analysis: 1/);
-  assert.match(report, /### Priority and Flag Counts/);
-  assert.match(report, /### List \/ Bucket Memberships/);
-  assert.doesNotMatch(report, /## Detailed History Export/);
+  assert.match(report, /## Overall Stats/);
+  assert.match(report, /History Records Analyzed: 1/);
+  assert.match(report, /History Source: Loaded workspace history fallback/);
+  assert.match(report, /Active vs Trashed Loaded: 1 active, 1 trashed excluded/);
+  assert.match(report, /Current Status Snapshot: Done 1/);
+  assert.doesNotMatch(report, /## All Current Task History/);
+  assert.doesNotMatch(report, /## Day-by-Day Breakdown/);
 });
 
-test("detailed report adds warning, path context, and cleaned repeated sections", () => {
+test("detailed report uses the shipped detailed sections and current status lines", () => {
   const parentTask = createTask({
     created_at: "2026-06-01T09:00:00.000Z",
     id: "parent-1",
@@ -202,28 +210,216 @@ test("detailed report adds warning, path context, and cleaned repeated sections"
     appVersion: "6.17.3",
     availableTaskLists: getBuiltInTaskLists(),
     detailLevel: "detailed",
+    focusCategories: [],
+    focusHistory: [],
     generatedAt: new Date("2026-06-30T15:00:00.000Z"),
+    historySourceLabel: "Loaded workspace history fallback",
+    historyWarning: "this report is based on 1000 loaded history records and may be incomplete.",
     rangeId: "last90",
     taskHistory,
-    taskListEvaluationContext: createTaskListEvaluationContext(taskHistory, "2026-06-30"),
     tasks,
     todayDateKey: "2026-06-30",
   });
 
   assert.match(report, /Warning: this report is based on 1000 loaded history records and may be incomplete\./);
+  assert.match(report, /## Overall Stats/);
+  assert.match(report, /## All Current Task History/);
+  assert.match(report, /## Day-by-Day Breakdown/);
+  assert.match(report, /History Records Analyzed: 1000/);
   assert.match(report, /Path: Morning routine > Brush teeth > Floss/);
-  assert.match(report, /### Analysis-Ready Highlights/);
-  assert.match(report, /#### Daily Until Complete Tasks Still Unresolved/);
-  assert.match(report, /Invoice filing/);
-  assert.match(report, /Showing 25 of 28/);
-  assert.match(report, /#### High-signal repeated misses/);
-  assert.match(report, /Stretch · Missed: 3/);
-  assert.doesNotMatch(report, /Test inbox thing · Missed: 3/);
-  assert.doesNotMatch(report, /Old trashed task · Missed: 3/);
-  assert.match(report, /#### Parent-task wins/);
-  assert.match(report, /Morning routine · Handled\/Completed: 4/);
-  assert.match(report, /#### Step\/Substep wins/);
-  assert.match(report, /Floss · Handled\/Completed: 3/);
-  assert.match(report, /### Task-Level History Patterns/);
-  assert.match(report, /Current Status: Missed/);
+  assert.match(report, /Current Status Snapshot: Pending 2, Done 1, Missed 28/);
+  assert.match(report, /Morning routine.*Current Status: Done/);
+  assert.match(report, /Brush teeth.*Current Status: Pending/);
+  assert.match(report, /Floss.*Current Status: Pending/);
+  assert.match(report, /Invoice filing.*Current Status: Missed/);
+  assert.match(report, /Showing 25 of 27/);
+  assert.match(report, /### Mon, Jun 29, 2026/);
+  assert.match(report, /Summary: Parents handled 1; Steps\/Substeps handled 2; Combined handled 3; Missed 2/);
+  assert.match(report, /### Tue, Jun 30, 2026/);
+  assert.match(report, /Summary: Parents handled 1; Steps\/Substeps handled 1; Combined handled 2; Missed 27/);
+  assert.doesNotMatch(report, /Test inbox thing.*Current Status: Missed/);
+  assert.doesNotMatch(report, /Old trashed task.*Current Status: Missed/);
+});
+
+test("report status snapshot and task status lines use the passed history source", () => {
+  const recurringTask = createTask({
+    created_at: "2026-06-20T09:00:00.000Z",
+    id: "coherent-history-task",
+    repeat_frequency: "daily",
+    sort_order: 1,
+    status: "pending",
+    title: "Coherent history task",
+  });
+  const taskHistory = [
+    createHistoryEntry({
+      entry_date: "2026-06-30",
+      id: "coherent-history-done",
+      status: "done",
+      task_id: recurringTask.id,
+    }),
+  ];
+
+  const report = generateTaskReport({
+    appVersion: "6.17.3",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "detailed",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-06-30T15:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "all",
+    taskHistory,
+    tasks: [recurringTask],
+    todayDateKey: "2026-06-30",
+  });
+
+  assert.match(report, /History Source: Full selected date range fetch/);
+  assert.match(report, /Current Status Snapshot: Done 1/);
+  assert.match(report, /Coherent history task.*Current Status: Done/);
+});
+
+test("report includes focus goals and selected-range focus sessions", () => {
+  const recurringTask = createTask({
+    created_at: "2026-06-20T09:00:00.000Z",
+    id: "focus-report-task",
+    repeat_frequency: "daily",
+    sort_order: 1,
+    status: "pending",
+    title: "Focus report task",
+  });
+  const focusCategory = createFocusCategory();
+  const focusHistory = [
+    createFocusSession(),
+    createFocusSession({
+      createdAt: "2026-06-29T16:00:00.000Z",
+      date: "2026-06-29",
+      durationSeconds: 900,
+      id: "focus-session-2",
+      notes: "",
+      title: "Afternoon reset",
+    }),
+    createFocusSession({
+      createdAt: "2026-06-20T16:00:00.000Z",
+      date: "2026-06-20",
+      durationSeconds: 600,
+      id: "focus-session-out-of-range",
+      title: "Old session",
+    }),
+  ];
+
+  const report = generateTaskReport({
+    appVersion: "6.20.0",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "summary",
+    focusCategories: [focusCategory],
+    focusHistory,
+    generatedAt: new Date("2026-06-30T15:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "last7",
+    taskHistory: [],
+    tasks: [recurringTask],
+    todayDateKey: "2026-06-30",
+  });
+
+  assert.match(report, /## Focus Report/);
+  assert.match(report, /### Focus Goals/);
+  assert.match(report, /- Coding: Daily 30m; Weekly 2h/);
+  assert.match(report, /#### 2026-06-29/);
+  assert.match(report, /#### 2026-06-30/);
+  assert.match(report, /Morning sprint — Coding — 25m — Work \/ Deep Work — Notes: Heads-down sprint/);
+  assert.doesNotMatch(report, /Old session/);
+});
+
+test("all range uses the union of task history and focus session dates", () => {
+  const recurringTask = createTask({
+    created_at: "2026-06-20T09:00:00.000Z",
+    id: "focus-all-range-task",
+    repeat_frequency: "daily",
+    sort_order: 1,
+    status: "pending",
+    title: "Focus all range task",
+  });
+
+  const report = generateTaskReport({
+    appVersion: "6.20.1",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "summary",
+    focusCategories: [createFocusCategory()],
+    focusHistory: [
+      createFocusSession({
+        createdAt: "2026-06-10T12:00:00.000Z",
+        date: "2026-06-10",
+        durationSeconds: 1200,
+        id: "focus-earlier-than-history",
+        title: "Earlier focus session",
+      }),
+      createFocusSession({
+        createdAt: "2026-06-30T12:00:00.000Z",
+        date: "2026-06-30",
+        durationSeconds: 1500,
+        id: "focus-later-than-history",
+        title: "Later focus session",
+      }),
+    ],
+    generatedAt: new Date("2026-06-30T15:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "all",
+    taskHistory: [
+      createHistoryEntry({
+        entry_date: "2026-06-20",
+        id: "history-middle",
+        status: "done",
+        task_id: recurringTask.id,
+      }),
+    ],
+    tasks: [recurringTask],
+    todayDateKey: "2026-06-30",
+  });
+
+  assert.match(report, /Selected Date Range: All available \(Jun 10, 2026 to Jun 30, 2026\)/);
+  assert.match(report, /Earlier focus session/);
+  assert.match(report, /Later focus session/);
+});
+
+test("focus duration labels stay carry-safe near hour boundaries", () => {
+  const report = generateTaskReport({
+    appVersion: "6.20.1",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "summary",
+    focusCategories: [
+      createFocusCategory({
+        dailyGoalSeconds: 3599,
+        weeklyGoalSeconds: 7199,
+      }),
+    ],
+    focusHistory: [
+      createFocusSession({
+        durationSeconds: 3599,
+        id: "focus-59m-59s",
+        title: "Boundary under one hour",
+      }),
+      createFocusSession({
+        createdAt: "2026-06-30T16:00:00.000Z",
+        durationSeconds: 7199,
+        id: "focus-1h-59m-59s",
+        title: "Boundary under two hours",
+      }),
+    ],
+    generatedAt: new Date("2026-06-30T15:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "all",
+    taskHistory: [],
+    tasks: [],
+    todayDateKey: "2026-06-30",
+  });
+
+  assert.match(report, /- Coding: Daily 59m; Weekly 1h 59m/);
+  assert.match(report, /Boundary under one hour — Coding — 59m/);
+  assert.match(report, /Boundary under two hours — Coding — 1h 59m/);
+  assert.doesNotMatch(report, /60m/);
+  assert.doesNotMatch(report, /1h 60m/);
 });

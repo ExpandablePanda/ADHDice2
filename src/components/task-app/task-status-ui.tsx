@@ -16,6 +16,49 @@ export const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {
   trashed: "border border-[#f4afbc] bg-white text-[#d94e67]",
 };
 
+export const TASK_STATUS_INVERTED_CHIP_STYLES: Record<TaskStatus, string> = {
+  archived: "border border-[#68738c] bg-[#68738c] text-white dark:border-[#68738c] dark:bg-[#68738c] dark:text-white",
+  complete: "border border-[#256947] bg-[#256947] text-white dark:border-[#256947] dark:bg-[#256947] dark:text-white",
+  delayed: "border border-[#7d54d1] bg-[#7d54d1] text-white dark:border-[#7d54d1] dark:bg-[#7d54d1] dark:text-white",
+  did_my_best: "border border-[#b28700] bg-[#b28700] text-white dark:border-[#b28700] dark:bg-[#b28700] dark:text-white",
+  done: "border border-[#119a69] bg-[#119a69] text-white dark:border-[#119a69] dark:bg-[#119a69] dark:text-white",
+  in_progress: "border border-[#4473df] bg-[#4473df] text-white dark:border-[#4473df] dark:bg-[#4473df] dark:text-white",
+  missed: "border border-[#d94e67] bg-[#d94e67] text-white dark:border-[#d94e67] dark:bg-[#d94e67] dark:text-white",
+  not_due: "border border-[#3388c9] bg-[#3388c9] text-white dark:border-[#3388c9] dark:bg-[#3388c9] dark:text-white",
+  pending: "border border-[#d96b1c] bg-[#d96b1c] text-white dark:border-[#d96b1c] dark:bg-[#d96b1c] dark:text-white",
+  trashed: "border border-[#d94e67] bg-[#d94e67] text-white dark:border-[#d94e67] dark:bg-[#d94e67] dark:text-white",
+  upcoming: "border border-[#68738c] bg-[#68738c] text-white dark:border-[#68738c] dark:bg-[#68738c] dark:text-white",
+};
+
+export function getTaskStatusCircleClassName(
+  status: TaskStatus | TaskSubtaskStatus,
+  options: { inverted?: boolean } = {},
+) {
+  const key = (status === "trashed" ? "trashed" : status) as TaskStatus;
+  if (options.inverted) {
+    return TASK_STATUS_INVERTED_CHIP_STYLES[key] ?? "border border-[#6b738f] bg-[#6b738f] text-white dark:border-[#6b738f] dark:bg-[#6b738f] dark:text-white";
+  }
+  return TASK_STATUS_CHIP_STYLES[key] ?? "border border-[#6b738f] bg-white text-[#6b738f]";
+}
+
+export function getTaskStatusCircleHoverInvertedClassName(status: TaskStatus | TaskSubtaskStatus) {
+  const key = (status === "trashed" ? "trashed" : status) as TaskStatus;
+  const hoverClassMap: Record<TaskStatus, string> = {
+    archived: "group-hover:border-[#68738c] group-hover:bg-[#68738c] group-hover:text-white dark:group-hover:border-[#68738c] dark:group-hover:bg-[#68738c] dark:group-hover:text-white",
+    complete: "group-hover:border-[#256947] group-hover:bg-[#256947] group-hover:text-white dark:group-hover:border-[#256947] dark:group-hover:bg-[#256947] dark:group-hover:text-white",
+    delayed: "group-hover:border-[#7d54d1] group-hover:bg-[#7d54d1] group-hover:text-white dark:group-hover:border-[#7d54d1] dark:group-hover:bg-[#7d54d1] dark:group-hover:text-white",
+    did_my_best: "group-hover:border-[#b28700] group-hover:bg-[#b28700] group-hover:text-white dark:group-hover:border-[#b28700] dark:group-hover:bg-[#b28700] dark:group-hover:text-white",
+    done: "group-hover:border-[#119a69] group-hover:bg-[#119a69] group-hover:text-white dark:group-hover:border-[#119a69] dark:group-hover:bg-[#119a69] dark:group-hover:text-white",
+    in_progress: "group-hover:border-[#4473df] group-hover:bg-[#4473df] group-hover:text-white dark:group-hover:border-[#4473df] dark:group-hover:bg-[#4473df] dark:group-hover:text-white",
+    missed: "group-hover:border-[#d94e67] group-hover:bg-[#d94e67] group-hover:text-white dark:group-hover:border-[#d94e67] dark:group-hover:bg-[#d94e67] dark:group-hover:text-white",
+    not_due: "group-hover:border-[#3388c9] group-hover:bg-[#3388c9] group-hover:text-white dark:group-hover:border-[#3388c9] dark:group-hover:bg-[#3388c9] dark:group-hover:text-white",
+    pending: "group-hover:border-[#d96b1c] group-hover:bg-[#d96b1c] group-hover:text-white dark:group-hover:border-[#d96b1c] dark:group-hover:bg-[#d96b1c] dark:group-hover:text-white",
+    trashed: "group-hover:border-[#d94e67] group-hover:bg-[#d94e67] group-hover:text-white dark:group-hover:border-[#d94e67] dark:group-hover:bg-[#d94e67] dark:group-hover:text-white",
+    upcoming: "group-hover:border-[#68738c] group-hover:bg-[#68738c] group-hover:text-white dark:group-hover:border-[#68738c] dark:group-hover:bg-[#68738c] dark:group-hover:text-white",
+  };
+  return hoverClassMap[key] ?? "group-hover:border-[#6b738f] group-hover:bg-[#6b738f] group-hover:text-white dark:group-hover:border-[#6b738f] dark:group-hover:bg-[#6b738f] dark:group-hover:text-white";
+}
+
 export function formatTaskStatusLabel(value: string) {
   if (value === "archived") {
     return "Archived";
@@ -88,6 +131,7 @@ export function renderTaskStatusGlyph(
 export function renderTaskStatusCircle(
   status: TaskStatus | TaskSubtaskStatus,
   size: "sm" | "md" = "md",
+  options: { className?: string; inverted?: boolean } = {},
 ) {
   const sizeClasses = size === "sm" ? "h-5 w-5" : "h-5.5 w-5.5";
   const statusLabel = formatTaskStatusLabel(status);
@@ -95,89 +139,16 @@ export function renderTaskStatusCircle(
     "aria-label": statusLabel,
     title: statusLabel,
   };
-
-  if (status === "pending") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#d96b1c] text-[#d96b1c]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
-  if (status === "in_progress") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#4473df] text-[#4473df]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
-  if (status === "done") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#12a876] text-[#12a876]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
-  if (status === "missed") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#d94e67] text-[#d94e67]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
-  if (status === "did_my_best") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#b28700] text-[#b28700]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
-  if (status === "complete") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#256947] text-[#256947]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
-  if (status === "upcoming") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#8d97b0] text-[#8d97b0]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
-  if (status === "not_due") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-dashed border-[#57a9de] text-[#57a9de]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
-  if (status === "delayed") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#7d54d1] text-[#7d54d1]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
-  if (status === "trashed") {
-    return (
-      <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#d94e67] text-[#d94e67]`}>
-        {renderTaskStatusGlyph(status, size)}
-      </span>
-    );
-  }
-
   return (
-    <span {...badgeProps} className={`flex ${sizeClasses} items-center justify-center rounded-full border border-[#6b738f] text-[#6b738f]`}>
+    <span
+      {...badgeProps}
+      className={[
+        "flex items-center justify-center rounded-full transition-colors",
+        sizeClasses,
+        getTaskStatusCircleClassName(status, { inverted: options.inverted }),
+        options.className ?? "",
+      ].join(" ").trim()}
+    >
       {renderTaskStatusGlyph(status, size)}
     </span>
   );

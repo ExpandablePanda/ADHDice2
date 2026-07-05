@@ -34,7 +34,7 @@ import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTask
 import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TaskDelayPicker } from "@/components/task-app/task-delay-picker";
-import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
+import { TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
 import { getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
 import {
   formatRepeatFrequencyLabel,
@@ -741,15 +741,28 @@ function InlineSubtaskEditor({
   onSetStatus?: (subtaskId: string, nextStatus: TaskSubtaskStatus) => void;
   subtasks: PrototypeTaskSubtask[];
 }) {
+  const [openStatusPickerSubtaskId, setOpenStatusPickerSubtaskId] = useState<string | null>(null);
+
   return (
     <div className="space-y-2">
       {subtasks.map((subtask) => (
         <div className="space-y-2" key={subtask.id}>
           <div className="rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
             <div className="flex items-start gap-2">
-              <div className="mt-1 flex h-6 w-6 flex-none items-center justify-center">
-                {renderTaskStatusCircle(subtask.status, "sm")}
-              </div>
+              <button
+                aria-expanded={openStatusPickerSubtaskId === subtask.id}
+                aria-label={`Change status for ${subtask.title || "step"}`}
+                className="mt-1 flex h-6 w-6 flex-none items-center justify-center"
+                onClick={() => {
+                  setOpenStatusPickerSubtaskId((current) => current === subtask.id ? null : subtask.id);
+                }}
+                type="button"
+              >
+                {renderTaskStatusCircle(subtask.status, "sm", {
+                  className: openStatusPickerSubtaskId === subtask.id ? "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : undefined,
+                  inverted: openStatusPickerSubtaskId === subtask.id,
+                })}
+              </button>
               <input
                 autoFocus={autofocusSubtaskId === subtask.id}
                 className={`${SUBTASK_RENAME_INPUT_TEXT_CLASS} ${subtask.status === "done" ? "line-through opacity-60" : ""}`}
@@ -788,23 +801,24 @@ function InlineSubtaskEditor({
                 </button>
               </div>
             </div>
-            <div className="mt-2 flex flex-wrap gap-1.5 pl-8">
-              {STATUS_OPTIONS.map((option) => (
-                <button
-                  aria-label={`Set step status to ${option.label}`}
-                  className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${
-                    subtask.status === option.value
-                      ? "shadow-[0_0_0_1px_rgba(111,87,246,0.18)]"
-                      : "opacity-78 hover:opacity-100"
-                  }`}
-                  key={option.value}
-                  onClick={() => onSetStatus?.(subtask.id, option.value)}
-                  type="button"
-                >
-                  {renderTaskStatusCircle(option.value, "sm")}
-                </button>
-              ))}
-            </div>
+            {openStatusPickerSubtaskId === subtask.id ? (
+              <div className="mt-2 flex flex-wrap gap-1.5 pl-8">
+                {SUBTASK_STATUS_OPTIONS.map((option) => (
+                  <button
+                    aria-label={`Set step status to ${option.label}`}
+                    className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${subtask.status === option.value ? "" : "opacity-78 hover:opacity-100"}`}
+                    key={option.value}
+                    onClick={() => {
+                      onSetStatus?.(subtask.id, option.value);
+                      setOpenStatusPickerSubtaskId(null);
+                    }}
+                    type="button"
+                  >
+                    {renderTaskStatusCircle(option.value, "sm", { inverted: subtask.status === option.value })}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           {subtask.children.length > 0 ? (
             <div className="ml-5 border-l border-[#ede7f7] pl-3 dark:border-white/10">
@@ -1339,6 +1353,10 @@ const STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
   { label: "Trash", value: "trashed" },
 ];
 
+const SUBTASK_STATUS_OPTIONS: Array<{ label: string; value: TaskSubtaskStatus }> = STATUS_OPTIONS.filter(
+  (option): option is { label: string; value: TaskSubtaskStatus } => option.value !== "delayed",
+);
+
 const DUE_PRESETS = [
   { label: "No Date", value: "" },
   { label: "Today", value: offsetDate(0) },
@@ -1786,6 +1804,10 @@ function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? "bg-[#f4f5f8] border border-[#e4deef] text-[#6b7285] dark:bg-white/8 dark:border-white/10 dark:text-white/60";
 }
 
+function invertedStatusTone(status: TaskStatus) {
+  return TASK_STATUS_INVERTED_CHIP_STYLES[status] ?? ACTIVE_LIST_CHIP_CLASS;
+}
+
 function energyTone(energy: TaskEnergy) {
   if (energy === "high") return "border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]";
   if (energy === "medium") return "border-[#f2df9b] bg-[#fff6df] text-[#b77900] dark:border-[#6b5317] dark:bg-[#44350d] dark:text-[#ffd56b]";
@@ -1822,6 +1844,41 @@ function inlineAccordionInputCardClass(widthClass = "w-[15rem]") {
 
 function compareText(a: string, b: string) {
   return a.localeCompare(b, undefined, { sensitivity: "base" });
+}
+
+function cleanTaskTagLabel(value: string) {
+  return value.trim().replace(/^#+/, "").replace(/\s+/g, " ");
+}
+
+function normalizeTaskTagValue(value: string) {
+  return cleanTaskTagLabel(value).toLowerCase().replace(/\s+/g, "-");
+}
+
+function formatNewTaskTagLabel(value: string) {
+  return normalizeTaskTagValue(value);
+}
+
+function dedupeTaskTagLabels(tags: string[]) {
+  const seen = new Set<string>();
+  const nextTags: string[] = [];
+  for (const tag of tags) {
+    const cleanedTag = cleanTaskTagLabel(tag);
+    const normalizedTag = normalizeTaskTagValue(cleanedTag);
+    if (!normalizedTag || seen.has(normalizedTag)) {
+      continue;
+    }
+    seen.add(normalizedTag);
+    nextTags.push(cleanedTag);
+  }
+  return nextTags;
+}
+
+function chunkItems<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function formatStatusLabel(status: TaskStatus) {
@@ -2235,6 +2292,7 @@ export function TaskManagementTableV2({
   const [collapsedOverlaySectionsByTaskId, setCollapsedOverlaySectionsByTaskId] = useState<Record<string, Partial<Record<OverlaySectionId, boolean>>>>({});
   const [activeMetadataPanelByTaskId, setActiveMetadataPanelByTaskId] = useState<Record<string, MetadataPanelId>>({});
   const [notePickerOpenByTaskId, setNotePickerOpenByTaskId] = useState<Record<string, boolean>>({});
+  const [tagPickerOpenByTaskId, setTagPickerOpenByTaskId] = useState<Record<string, boolean>>({});
   const [expandedSubtasksByTaskId, setExpandedSubtasksByTaskId] = useState<Record<string, boolean>>({});
   const [expandedStepsByTaskId, setExpandedStepsByTaskId] = useState<Record<string, boolean>>({});
   const [collapsedChildTaskIds, setCollapsedChildTaskIds] = useState<Record<string, boolean>>({});
@@ -4227,11 +4285,12 @@ export function TaskManagementTableV2({
   }
 
   function setTaskTags(taskId: string, tags: string[]) {
+    const nextTags = dedupeTaskTagLabels(tags);
     const targetTaskIds = resolveTableMetadataTargetTaskIds(taskId);
     queueTableMutationScrollTopHold(taskId);
-    patchTasks(targetTaskIds, (task) => ({ ...task, tags }));
+    patchTasks(targetTaskIds, (task) => ({ ...task, tags: nextTags }));
     for (const targetTaskId of targetTaskIds) {
-      onTaskTagsChange?.(targetTaskId, tags);
+      onTaskTagsChange?.(targetTaskId, nextTags);
     }
   }
 
@@ -4305,7 +4364,7 @@ export function TaskManagementTableV2({
   }
 
   function addTaskTag(taskId: string, rawTag: string) {
-    const nextTag = rawTag.trim();
+    const nextTag = formatNewTaskTagLabel(rawTag);
     if (!nextTag) {
       return;
     }
@@ -4317,7 +4376,7 @@ export function TaskManagementTableV2({
     }
 
     const nextTagsByTaskId = new Map(
-      targetTasks.map((task) => [task.id, Array.from(new Set([...task.tags, nextTag]))] as const),
+      targetTasks.map((task) => [task.id, dedupeTaskTagLabels([...task.tags, nextTag])] as const),
     );
     queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTasks.map((task) => task.id), (task) => ({
@@ -4328,20 +4387,22 @@ export function TaskManagementTableV2({
       onTaskTagsChange?.(task.id, nextTagsByTaskId.get(task.id) ?? task.tags);
     }
     setTagDrafts((current) => ({ ...current, [taskId]: "" }));
+    setTagPickerOpenByTaskId((current) => ({ ...current, [taskId]: true }));
   }
 
   function toggleTaskTag(taskId: string, tag: string) {
     const task = getTaskById(taskId);
     if (!task) return;
 
-    const shouldRemove = task.tags.includes(tag);
+    const normalizedTargetTag = normalizeTaskTagValue(tag);
+    const shouldRemove = task.tags.some((entry) => normalizeTaskTagValue(entry) === normalizedTargetTag);
     const targetTasks = resolveTableMetadataTargetTaskIds(taskId)
       .map((targetTaskId) => getTaskById(targetTaskId))
       .filter((candidate): candidate is PrototypeTaskRow => Boolean(candidate));
     const nextTagsByTaskId = new Map(
       targetTasks.map((candidate) => [candidate.id, shouldRemove
-        ? candidate.tags.filter((entry) => entry !== tag)
-        : Array.from(new Set([...candidate.tags, tag]))] as const),
+        ? candidate.tags.filter((entry) => normalizeTaskTagValue(entry) !== normalizedTargetTag)
+        : dedupeTaskTagLabels([...candidate.tags, tag])] as const),
     );
     queueTableMutationScrollTopHold(taskId);
     patchTasks(targetTasks.map((candidate) => candidate.id), (candidate) => ({
@@ -4435,6 +4496,7 @@ export function TaskManagementTableV2({
     const isTaskInRows = tasks.some((task) => task.id === taskId);
     cancelTableScrollTopHold();
     setEditingTaskTitleId(null);
+    setActiveMetadataPanelByTaskId({});
     setMetadataTargetTaskId(null);
     setRetainedMetadataTargetTask(null);
     pendingMetadataTargetTaskIdRef.current = null;
@@ -4541,6 +4603,7 @@ export function TaskManagementTableV2({
 
     openInspector(parentTask.id, "full");
     setRetainedMetadataTargetTask(clonePrototypeTaskRow(metadataTask));
+    setActiveMetadataPanelByTaskId({});
     setMetadataTargetTaskId(taskId);
     pendingMetadataTargetTaskIdRef.current = null;
     return true;
@@ -4716,8 +4779,8 @@ export function TaskManagementTableV2({
           }}
           type="button"
         >
-          <span className={`${inlineAccordionChipContentClass(selectedTaskId === task.id && task.status === status ? statusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`)} inline-flex items-center gap-2 whitespace-nowrap`}>
-            {renderTaskStatusCircle(status, "sm")}
+          <span className={`${inlineAccordionChipContentClass(selectedTaskId === task.id && task.status === status ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`)} inline-flex items-center gap-2 whitespace-nowrap`}>
+            {renderTaskStatusCircle(status, "sm", { inverted: selectedTaskId === task.id && task.status === status })}
             <span>{formatTaskStatusLabel(status)}</span>
           </span>
         </button>
@@ -5018,30 +5081,65 @@ export function TaskManagementTableV2({
 
     if (overlayMode === "tags") {
       const tagDraft = tagDrafts[task.id] ?? "";
+      const normalizedDraft = normalizeTaskTagValue(tagDraft);
+      const selectedTagSet = new Set(task.tags.map((tag) => normalizeTaskTagValue(tag)));
+      const availableTags = dedupeTaskTagLabels(mergedTagOptions)
+        .filter((tag) => !selectedTagSet.has(normalizeTaskTagValue(tag)))
+        .filter((tag) => !normalizedDraft || normalizeTaskTagValue(tag).includes(normalizedDraft));
+      const exactMatchTag = dedupeTaskTagLabels(mergedTagOptions)
+        .find((tag) => normalizeTaskTagValue(tag) === normalizedDraft) ?? null;
+      const showAddAction = Boolean(normalizedDraft) && !exactMatchTag;
       return [
-        ...mergedTagOptions.map((tag, tagIndex) => (
-          <button
-            className={inlineAccordionButtonClass()}
-            key={`${task.id || "task"}-tag-choice-${tag || "blank"}-${tagIndex}`}
-            onClick={() => toggleTaskTag(task.id, tag)}
-            type="button"
-          >
-            <span className={inlineAccordionChipContentClass(task.tags.includes(tag) ? TAG_CHIP_CLASS : INACTIVE_CHIP_CLASS)}>#{tag}</span>
-          </button>
-        )),
         (
-          <div className={inlineAccordionInputCardClass("w-[16rem]")} key="tag-inputs">
-            <div className="flex gap-2">
-              <input
-                className={OVERLAY_INPUT_CLASS}
-                onChange={(event) => setTagDrafts((current) => ({ ...current, [task.id]: event.target.value.toLowerCase().replace(/\s+/g, "-") }))}
-                placeholder="new-tag"
-                type="text"
-                value={tagDraft}
-              />
-              <button className={inlineAccordionButtonClass()} onClick={() => addTaskTag(task.id, tagDraft)} type="button">
-                <span className={inlineAccordionChipContentClass("border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]")}>Add tag</span>
-              </button>
+          <div className={inlineAccordionInputCardClass("w-full max-w-full sm:w-full lg:min-w-[58rem] lg:max-w-[72rem]")} key="tag-inputs">
+            <div className="space-y-3">
+              <div>
+                <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">On this task</p>
+                <div className="flex flex-wrap gap-2">
+                  {task.tags.length > 0 ? task.tags.map((tag) => (
+                    <button className={inlineAccordionButtonClass()} key={`${task.id}-selected-tag-${tag}`} onClick={() => toggleTaskTag(task.id, tag)} type="button">
+                      <span className={inlineAccordionChipContentClass(ACTIVE_LIST_CHIP_CLASS)}>#{tag} <X className="h-3.5 w-3.5" /></span>
+                    </button>
+                  )) : (
+                    <span className={`${BODY_MUTED_VALUE_CLASS} text-xs`}>No tags on this task yet.</span>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-3">
+                <input
+                  className={OVERLAY_INPUT_CLASS}
+                  onChange={(event) => setTagDrafts((current) => ({ ...current, [task.id]: event.target.value }))}
+                  placeholder="Search or add a tag"
+                  type="text"
+                  value={tagDraft}
+                />
+                {exactMatchTag ? (
+                  <button className={inlineAccordionButtonClass()} onClick={() => addTaskTag(task.id, exactMatchTag)} type="button">
+                    <span className={inlineAccordionChipContentClass("border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]")}>Use #{exactMatchTag}</span>
+                  </button>
+                ) : null}
+                {showAddAction ? (
+                  <button className={inlineAccordionButtonClass()} onClick={() => addTaskTag(task.id, tagDraft)} type="button">
+                    <span className={inlineAccordionChipContentClass("border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]")}>{`Add "${formatNewTaskTagLabel(tagDraft)}"`}</span>
+                  </button>
+                ) : null}
+                {availableTags.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Saved tags</p>
+                    <div className="flex flex-wrap gap-2">
+                      {availableTags.map((tag) => (
+                        <button className={inlineAccordionButtonClass()} key={`${task.id}-tag-choice-${tag}`} onClick={() => toggleTaskTag(task.id, tag)} type="button">
+                          <span className={inlineAccordionChipContentClass(INACTIVE_CHIP_CLASS)}>#{tag}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <span className={`${BODY_MUTED_VALUE_CLASS} text-xs`}>
+                    {normalizedDraft ? "No matching saved tags." : "No saved tags yet."}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         ),
@@ -5176,7 +5274,7 @@ export function TaskManagementTableV2({
                   }}
                   type="button"
                 >
-                  <span className={inlineAccordionChipContentClass(linkedNoteDraft.includes(note.id) ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS)}>{note.title}</span>
+                  <span className={inlineAccordionChipContentClass(linkedNoteDraft.includes(note.id) ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS)}>{note.title}</span>
                 </button>
               ))}
             </div>
@@ -5269,8 +5367,8 @@ export function TaskManagementTableV2({
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
-          <div className="overflow-x-auto">
-            <div className="flex min-w-max items-start gap-1.5">
+          <div className={overlayMode === "tags" ? "overflow-visible" : "overflow-x-auto"}>
+            <div className={overlayMode === "tags" ? "flex w-full items-start gap-1.5" : "flex min-w-max items-start gap-1.5"}>
               {inlineAccordionContent}
             </div>
           </div>
@@ -6449,6 +6547,7 @@ export function TaskManagementTableV2({
           const isRenamingStepTitle = editingTaskTitleId === item.id;
           const canCollapse = collapsibleTaskIds.has(item.id);
           const isCollapsed = canCollapse && collapsedChildTaskIds[item.id] === true;
+          const activeStepPanel = activeMetadataPanelByTaskId[item.id] ?? null;
 
           return (
             <div
@@ -6481,7 +6580,27 @@ export function TaskManagementTableV2({
               style={{ marginLeft: `${depthIndent}rem` }}
               tabIndex={canSelectChildTask ? 0 : undefined}
             >
-              <span className="mt-1 flex-none">{renderTaskStatusCircle(item.status, "sm")}</span>
+              <button
+                aria-expanded={activeStepPanel === "status"}
+                aria-label={`Change status for ${item.title || (item.depth > 1 ? "substep" : "step")}`}
+                className="mt-1 flex flex-none items-center justify-center"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openTaskInCurrentEditor(item.id);
+                  setActiveMetadataPanelByTaskId((current) => {
+                    if (current[item.id] === "status") {
+                      const next = { ...current };
+                      delete next[item.id];
+                      return next;
+                    }
+                    return { ...current, [item.id]: "status" };
+                  });
+                }}
+                onPointerDown={stopRowActionPointerEvent}
+                type="button"
+              >
+                {renderTaskStatusCircle(item.status, "sm", { inverted: activeStepPanel === "status" })}
+              </button>
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -6669,11 +6788,7 @@ export function TaskManagementTableV2({
                       {getSelectableTaskStatusesForRepeatFrequency(item.repeat).map((status) => (
                         <button
                           aria-label={`Set step status to ${formatTaskStatusLabel(status)}`}
-                          className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${
-                            item.status === status
-                              ? "shadow-[0_0_0_1px_rgba(111,87,246,0.18)]"
-                              : "opacity-78 hover:opacity-100"
-                          }`}
+                          className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${item.status === status ? "" : "opacity-78 hover:opacity-100"}`}
                           key={status}
                           onClick={() => {
                             if (status === "delayed" && canDelayTask(item)) {
@@ -6684,7 +6799,7 @@ export function TaskManagementTableV2({
                           }}
                           type="button"
                         >
-                          {renderTaskStatusCircle(status, "sm")}
+                          {renderTaskStatusCircle(status, "sm", { inverted: item.status === status })}
                         </button>
                       ))}
                     </div>
@@ -7962,6 +8077,14 @@ export function TaskManagementTableV2({
                 const metadataTagDraft = tagDrafts[metadataTask.id] ?? "";
                 const metadataListDraft = listDrafts[metadataTask.id] ?? "";
                 const metadataTaskActualTimeEntries = taskActualTimeEntriesByTaskId?.[metadataTask.id] ?? [];
+                const normalizedMetadataTagDraft = normalizeTaskTagValue(metadataTagDraft);
+                const selectedMetadataTagSet = new Set(metadataTask.tags.map((tag) => normalizeTaskTagValue(tag)));
+                const dedupedMergedTagOptions = dedupeTaskTagLabels(mergedTagOptions);
+                const filteredMetadataTagOptions = dedupedMergedTagOptions
+                  .filter((tag) => !selectedMetadataTagSet.has(normalizeTaskTagValue(tag)))
+                  .filter((tag) => !normalizedMetadataTagDraft || normalizeTaskTagValue(tag).includes(normalizedMetadataTagDraft));
+                const exactMetadataTagMatch = dedupedMergedTagOptions.find((tag) => normalizeTaskTagValue(tag) === normalizedMetadataTagDraft) ?? null;
+                const metadataTagRows = chunkItems(filteredMetadataTagOptions, 6);
                 const linkDraft = metadataLinkDraft;
                 const notesDraft = selectedTaskNotesDraft;
                 const linkedNoteDraft = metadataLinkedNoteDraft;
@@ -7976,6 +8099,7 @@ export function TaskManagementTableV2({
                 const metadataPanelOptions: Array<{ id: MetadataPanelId; label: string }> = [
                   { id: "delay", label: "Delay" },
                   { id: "due", label: "Due" },
+                  { id: "status", label: "Status" },
                   { id: "estimated", label: "Estimated Time" },
                   { id: "actual", label: "Actual Time" },
                   { id: "priority", label: "Priority" },
@@ -8033,7 +8157,7 @@ export function TaskManagementTableV2({
                           <TaskTableChipButton
                             key={`${option.label || "inline-option"}-${option.value || "blank"}-${index}`}
                             onClick={() => onSelect(option.value)}
-                            toneClassName={toneForOption ? toneForOption(option.value, isSelected) : isSelected ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS}
+                            toneClassName={toneForOption ? toneForOption(option.value, isSelected) : isSelected ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}
                           >
                             {option.label}
                           </TaskTableChipButton>
@@ -8280,13 +8404,13 @@ export function TaskManagementTableV2({
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
                       {getSelectableTaskStatusesForRepeatFrequency(metadataTask.repeat).map((status, optionIndex) => (
-                        <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${metadataTask.status === status ? statusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}`} key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
+                        <TaskTableChipButton className="gap-1.5" key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
                           if (status === "delayed" && canDelayTask(metadataTask)) {
                             setActiveMetadataPanelByTaskId((current) => ({ ...current, [metadataTask.id]: "delay" }));
                             return;
                           }
                           setTaskStatus(metadataTask.id, status);
-                        }} type="button">{renderTaskStatusCircle(status, "sm")}<span>{formatTaskStatusLabel(status)}</span></button>
+                        }} toneClassName={metadataTask.status === status ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}>{renderTaskStatusCircle(status, "sm", { inverted: metadataTask.status === status })}<span>{formatTaskStatusLabel(status)}</span></TaskTableChipButton>
                       ))}
                     </div>
                   );
@@ -8297,17 +8421,59 @@ export function TaskManagementTableV2({
                         mergedListOptions.map((list) => ({ label: list.label, value: list.label })),
                         metadataTask.lists,
                         (value) => toggleTaskList(metadataTask.id, value),
-                        (_value, selected) => selected ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS,
+                        (_value, selected) => selected ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS,
                       )}
                       <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setListDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value }))} placeholder="Add custom list" type="text" value={metadataListDraft} /><TaskTableChipButton onClick={() => { void createTaskListForRow(metadataTask.id); }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Add</TaskTableChipButton></div>
                     </>
                   );
                 } else if (metadataPanelId === "tags") {
                   metadataPanelContent = (
-                    <>
-                      <div className="flex flex-wrap gap-2">{mergedTagOptions.map((tag, tagIndex) => <TaskTableChipButton key={`${metadataTask.id || "task"}-tag-choice-${tag || "blank"}-${tagIndex}`} onClick={() => toggleTaskTag(metadataTask.id, tag)} toneClassName={metadataTask.tags.includes(tag) ? TAG_CHIP_CLASS : INACTIVE_CHIP_CLASS}>#{tag}</TaskTableChipButton>)}</div>
-                      <div className="mt-3 flex gap-2"><input className={OVERLAY_INPUT_CLASS} onChange={(event) => setTagDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.toLowerCase().replace(/\s+/g, "-") }))} placeholder="new-tag" type="text" value={metadataTagDraft} /><TaskTableChipButton onClick={() => addTaskTag(metadataTask.id, metadataTagDraft)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Add tag</TaskTableChipButton></div>
-                    </>
+                    <div className="space-y-3">
+                      <div>
+                        <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">On this task</p>
+                        <div className="flex flex-wrap gap-2">
+                          {metadataTask.tags.length > 0 ? metadataTask.tags.map((tag, tagIndex) => (
+                            <TaskTableChipButton key={`${metadataTask.id || "task"}-active-tag-${tag || "blank"}-${tagIndex}`} onClick={() => toggleTaskTag(metadataTask.id, tag)} toneClassName={ACTIVE_LIST_CHIP_CLASS}>
+                              #{tag}
+                              <X className="h-3.5 w-3.5" />
+                            </TaskTableChipButton>
+                          )) : (
+                            <span className="text-sm text-[#7d7597] dark:text-white/55">No tags on this task yet.</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        <input className={OVERLAY_INPUT_CLASS} onChange={(event) => setTagDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value }))} placeholder="Search or add a tag" type="text" value={metadataTagDraft} />
+                        {exactMetadataTagMatch ? (
+                          <TaskTableChipButton onClick={() => addTaskTag(metadataTask.id, exactMetadataTagMatch)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
+                            Use #{exactMetadataTagMatch}
+                          </TaskTableChipButton>
+                        ) : null}
+                        {normalizedMetadataTagDraft && !exactMetadataTagMatch ? (
+                          <TaskTableChipButton onClick={() => addTaskTag(metadataTask.id, metadataTagDraft)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
+                            {`Add "${formatNewTaskTagLabel(metadataTagDraft)}"`}
+                          </TaskTableChipButton>
+                        ) : null}
+                        {metadataTagRows.length > 0 ? (
+                          <div className="space-y-2">
+                            <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-[#9b92be] dark:text-white/35">Saved tags</p>
+                            {metadataTagRows.map((row, rowIndex) => (
+                              <div className="flex flex-wrap gap-2" key={`${metadataTask.id || "task"}-saved-tag-row-${rowIndex}`}>
+                                {row.map((tag) => (
+                                  <TaskTableChipButton key={`${metadataTask.id || "task"}-saved-tag-${tag}`} onClick={() => toggleTaskTag(metadataTask.id, tag)} toneClassName={metadataTask.tags.includes(tag) ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}>
+                                    #{tag}
+                                  </TaskTableChipButton>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-sm text-[#7d7597] dark:text-white/55">
+                            {normalizedMetadataTagDraft ? "No matching saved tags." : "No saved tags yet."}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   );
                 } else if (metadataPanelId === "link") {
                   metadataPanelContent = (
@@ -8322,7 +8488,7 @@ export function TaskManagementTableV2({
                     <>
                       {metadataTask.linkedNotes.length > 0 ? <div className="mb-3 flex flex-wrap gap-2">{metadataTask.linkedNotes.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${LIST_CHIP_CLASS}`} key={`${note.id || "linked-note"}-${noteIndex}`} onClick={() => openLinkedNote(note.id)} type="button">{note.title}</button>)}</div> : null}
                       <TaskTableChipButton className="mb-3" onClick={() => setNotePickerOpenByTaskId((current) => ({ ...current, [metadataTask.id]: !current[metadataTask.id] }))} toneClassName={INACTIVE_CHIP_CLASS}>{notePickerOpenByTaskId[metadataTask.id] ? "Hide saved notes" : "Connect existing note"}</TaskTableChipButton>
-                      {notePickerOpenByTaskId[metadataTask.id] ? <div className="mb-3 flex flex-wrap gap-2">{allNoteOptions.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${metadataLinkedNoteDraft.includes(note.id) ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${note.id || "note-option"}-${noteIndex}`} onClick={() => { const nextLinked = metadataLinkedNoteDraft.includes(note.id) ? metadataLinkedNoteDraft.filter((id) => id !== note.id) : [...metadataLinkedNoteDraft, note.id]; setLinkedNoteDrafts((current) => ({ ...current, [metadataTask.id]: nextLinked })); setTaskLinkedNoteIds(metadataTask.id, nextLinked); }} type="button">{note.title}</button>)}</div> : null}
+                      {notePickerOpenByTaskId[metadataTask.id] ? <div className="mb-3 flex flex-wrap gap-2">{allNoteOptions.map((note, noteIndex) => <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${metadataLinkedNoteDraft.includes(note.id) ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${note.id || "note-option"}-${noteIndex}`} onClick={() => { const nextLinked = metadataLinkedNoteDraft.includes(note.id) ? metadataLinkedNoteDraft.filter((id) => id !== note.id) : [...metadataLinkedNoteDraft, note.id]; setLinkedNoteDrafts((current) => ({ ...current, [metadataTask.id]: nextLinked })); setTaskLinkedNoteIds(metadataTask.id, nextLinked); }} type="button">{note.title}</button>)}</div> : null}
                       <div className="space-y-2"><textarea className={`${OVERLAY_INPUT_CLASS} min-h-[120px] resize-none py-3`} onBlur={() => commitTaskNotes(metadataTask.id)} onChange={(event) => setNotesDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value }))} placeholder="Add notes" value={metadataNotesDraft} /><div className="flex justify-end gap-2"><TaskTableChipButton onClick={() => clearTaskNotes(metadataTask.id)} toneClassName={INACTIVE_CHIP_CLASS}>Clear notes</TaskTableChipButton><TaskTableChipButton onClick={() => commitTaskNotes(metadataTask.id)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Save notes</TaskTableChipButton></div></div>
                     </>
                   );
@@ -8972,8 +9138,8 @@ export function TaskManagementTableV2({
                     {overlayMode !== "energy" ? (
                     <div className={`${overlayMode === "status" ? "" : "mt-4"} flex flex-wrap gap-2`}>
                       {getSelectableTaskStatusesForRepeatFrequency(selectedTask.repeat).map((status, optionIndex) => (
-                        <button
-                          className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} gap-2 ${selectedTask.status === status ? statusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}`}
+                        <TaskTableChipButton
+                          className="gap-1.5"
                           key={`${status || "status-option"}-${optionIndex}`}
                           onClick={() => {
                             if (status === "delayed" && canDelayTask(selectedTask)) {
@@ -8989,11 +9155,11 @@ export function TaskManagementTableV2({
                               closeInspector();
                             }
                           }}
-                          type="button"
+                          toneClassName={selectedTask.status === status ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}
                         >
-                          {renderTaskStatusCircle(status, "sm")}
+                          {renderTaskStatusCircle(status, "sm", { inverted: selectedTask.status === status })}
                           <span>{formatTaskStatusLabel(status)}</span>
-                        </button>
+                        </TaskTableChipButton>
                       ))}
                     </div>
                     ) : null}
@@ -9114,7 +9280,7 @@ export function TaskManagementTableV2({
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {mergedTagOptions.map((tag, tagIndex) => (
-                            <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selectedTask.tags.includes(tag) ? TAG_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${selectedTask.id || "task"}-tag-choice-${tag || "blank"}-${tagIndex}`} onClick={() => toggleTaskTag(selectedTask.id, tag)} type="button">
+                            <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selectedTask.tags.includes(tag) ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${selectedTask.id || "task"}-tag-choice-${tag || "blank"}-${tagIndex}`} onClick={() => toggleTaskTag(selectedTask.id, tag)} type="button">
                               #{tag}
                             </button>
                           ))}
@@ -9207,7 +9373,7 @@ export function TaskManagementTableV2({
                         {notePickerOpenByTaskId[selectedTask.id] ? (
                           <div className="mb-3 flex flex-wrap gap-2">
                             {allNoteOptions.map((note, noteIndex) => (
-                              <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${linkedNoteDraft.includes(note.id) ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${note.id || "note-option"}-${noteIndex}`} onClick={() => { const nextLinked = linkedNoteDraft.includes(note.id) ? linkedNoteDraft.filter((id) => id !== note.id) : [...linkedNoteDraft, note.id]; setLinkedNoteDrafts((current) => ({ ...current, [selectedTask.id]: nextLinked })); setTaskLinkedNoteIds(selectedTask.id, nextLinked); }} type="button">{note.title}</button>
+                              <button className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${linkedNoteDraft.includes(note.id) ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`} key={`${note.id || "note-option"}-${noteIndex}`} onClick={() => { const nextLinked = linkedNoteDraft.includes(note.id) ? linkedNoteDraft.filter((id) => id !== note.id) : [...linkedNoteDraft, note.id]; setLinkedNoteDrafts((current) => ({ ...current, [selectedTask.id]: nextLinked })); setTaskLinkedNoteIds(selectedTask.id, nextLinked); }} type="button">{note.title}</button>
                             ))}
                           </div>
                         ) : null}

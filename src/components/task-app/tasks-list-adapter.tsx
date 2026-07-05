@@ -27,7 +27,7 @@ import { TasksListViewPanel } from "./tasks-page";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen } from "@/lib/task-buckets";
-import { TASK_STATUS_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusCircle } from "./task-status-ui";
+import { TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES, formatTaskStatusLabel, getTaskStatusCircleHoverInvertedClassName, renderTaskStatusCircle } from "./task-status-ui";
 import {
   formatRepeatFrequencyLabel,
   formatRepeatSummary,
@@ -49,6 +49,7 @@ import {
   CompactRepeatCadenceControls,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
+import { AdhdIconButton } from "@/components/ui-system";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
@@ -57,7 +58,6 @@ type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string
 const QUICK_PANEL_SHELL_CLASS = "mt-2.5 rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] px-4 py-3 shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-[#41306c] dark:bg-[#18112d]";
 const QUICK_PANEL_TEXT_INPUT_CLASS = "h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]";
 const QUICK_PANEL_PRIMARY_CHIP_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
-const ACTIVE_CHIP_RING_CLASS = "ring-2 ring-[#d7cbfb] ring-offset-1 dark:ring-[#6d56d6] dark:ring-offset-[#18112d]";
 const PRIORITY_OPTIONS = [
   { label: "Focus", value: "focus" as const },
   { label: "Important", value: "important" as const },
@@ -80,6 +80,7 @@ const REPEAT_WEEKDAY_OPTIONS = [
   { label: "Fri", value: 5 },
   { label: "Sat", value: 6 },
 ];
+const WEEKDAYS_REPEAT_DAYS = [1, 2, 3, 4, 5] as const;
 
 function getDelayAnchorDate(dueOn: string | null, todayDateKey: string) {
   if (!dueOn) {
@@ -117,8 +118,47 @@ function energyTone(energy: PrototypeTaskRow["energy"]) {
   return TASK_TABLE_INACTIVE_CHIP_CLASS;
 }
 
+function cleanTaskTagLabel(value: string) {
+  return value.trim().replace(/^#+/, "").replace(/\s+/g, " ");
+}
+
+function normalizeTaskTagValue(value: string) {
+  return cleanTaskTagLabel(value).toLowerCase().replace(/\s+/g, "-");
+}
+
+function formatNewTaskTagLabel(value: string) {
+  return normalizeTaskTagValue(value);
+}
+
+function dedupeTaskTagLabels(tags: string[]) {
+  const seen = new Set<string>();
+  const nextTags: string[] = [];
+  for (const tag of tags) {
+    const cleanedTag = cleanTaskTagLabel(tag);
+    const normalizedTag = normalizeTaskTagValue(cleanedTag);
+    if (!normalizedTag || seen.has(normalizedTag)) {
+      continue;
+    }
+    seen.add(normalizedTag);
+    nextTags.push(cleanedTag);
+  }
+  return nextTags;
+}
+
+function chunkItems<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
 function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
+}
+
+function invertedStatusTone(status: TaskStatus) {
+  return TASK_STATUS_INVERTED_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
 }
 
 function shouldIgnoreListOverlayOpen(target: EventTarget | null) {
@@ -627,6 +667,37 @@ function StepHistoryChips({ currentStreak, missedStreak }: { currentStreak: numb
   );
 }
 
+function TaskHistoryChips({
+  className,
+  currentStreak,
+  missedStreak,
+}: {
+  className?: string;
+  currentStreak: number;
+  missedStreak: number;
+}) {
+  if (currentStreak <= 0 && missedStreak <= 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {currentStreak > 0 ? (
+        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} ${className ?? ""} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
+          <Flame className="h-3 w-3" />
+          {currentStreak}
+        </span>
+      ) : null}
+      {missedStreak > 0 ? (
+        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} ${className ?? ""} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>
+          <Skull className="h-3 w-3" />
+          {missedStreak}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 function formatListDuration(minutes: number | null) {
   if (!minutes || minutes <= 0) return "No est";
   if (minutes < 60) return `${minutes}m`;
@@ -665,9 +736,6 @@ function getHighlightedListRowClassName(
   highlightedActiveTaskId: string | null | undefined,
   highlightedTaskIdSet: Set<string>,
 ) {
-  if (highlightedActiveTaskId === taskId) {
-    return "border-[#ddd2ff] bg-[#efe6ff] dark:border-[#5a458f] dark:bg-[#2b1d46]";
-  }
   return "";
 }
 
@@ -757,7 +825,13 @@ function StepsCardPreview({
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
-  onSetStatus?: (taskId: string, status: TaskStatus, expectedTask?: Task | null, scrollAnchorTaskIds?: string[]) => void;
+  onSetStatus?: (
+    taskId: string,
+    status: TaskStatus,
+    expectedTask?: Task | null,
+    scrollAnchorTaskIds?: string[],
+    options?: { suppressSharedScrollAnchor?: boolean },
+  ) => void;
   onSetTags?: (taskId: string, tags: string[]) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
   onToggleExpanded?: () => void;
@@ -995,7 +1069,7 @@ function StepsCardPreview({
               : item.status;
             const activePriorities = childTask ? buildTaskPrioritySelection(childTask, new Set(item.priorityFlags.includes("focus") ? [item.id] : [])) : item.priorityFlags;
             const categoryLabel = resolveTaskCategoryLabel({
-              currentListLabel,
+              currentListLabel: currentListLabel ?? "All tasks",
               listDefinitions,
               listMemberships: listMembershipsByTaskId[item.id] ?? [],
               selectedBucket,
@@ -1061,7 +1135,7 @@ function StepsCardPreview({
                   <button
                     aria-expanded={activePanelMode === "status"}
                     aria-label={`Change status for ${item.title || (item.depth > 1 ? "substep" : "step")}`}
-                    className="mt-0.5 inline-flex h-7 w-7 flex-none items-center justify-center rounded-full text-[#8d97b0] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45 dark:hover:bg-white/[0.06] dark:hover:text-[#cabfff]"
+                    className="group mt-0.5 inline-flex h-7 w-7 flex-none items-center justify-center rounded-full text-[#8d97b0] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45"
                     onClick={(event) => {
                       event.stopPropagation();
                       onOpenQuickPanel(item.id, "status");
@@ -1069,61 +1143,135 @@ function StepsCardPreview({
                     onPointerDown={(event) => event.stopPropagation()}
                     type="button"
                   >
-                    {renderTaskStatusCircle(displayStatus, "sm")}
+                    {renderTaskStatusCircle(displayStatus, "sm", {
+                      className: getTaskStatusCircleHoverInvertedClassName(displayStatus),
+                    })}
                   </button>
                   <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-start justify-between gap-2">
-                      <div className="flex min-w-0 items-start gap-1.5">
-                        {isRenaming ? (
-                          <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
-                            <TaskTitleDraftInput
-                              autoFocus
-                              className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
-                              initialValue={titleDraft}
-                              onCommit={commitTitle}
-                              onDone={() => setEditingStepTitleId((current) => (current === item.id ? null : current))}
-                              onDraftChange={setStepTitleDraft}
-                              style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
-                              taskId={item.id}
-                            />
-                          </span>
-                        ) : (
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <button
-                              data-step-title-edit={item.id}
-                              className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setEditingStepTitleId(item.id);
-                                setStepTitleDraft(item.id, item.title);
-                              }}
-                              onPointerDown={(event) => event.stopPropagation()}
-                              type="button"
-                            >
-                              <p className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
-                                {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
-                              </p>
-                            </button>
-                            <StepLayerChip depth={item.depth} />
-                            <StepHistoryChips currentStreak={item.currentStreak} missedStreak={item.missedStreak} />
-                            {canCollapse ? (
+                    <div className="flex min-w-0 flex-col gap-2">
+                      <div className="flex min-w-0 items-start justify-between gap-2">
+                        <div className="flex min-w-0 flex-wrap items-start gap-1.5">
+                          {isRenaming ? (
+                            <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
+                              <TaskTitleDraftInput
+                                autoFocus
+                                className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                                initialValue={titleDraft}
+                                onCommit={commitTitle}
+                                onDone={() => setEditingStepTitleId((current) => (current === item.id ? null : current))}
+                                onDraftChange={setStepTitleDraft}
+                                style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                                taskId={item.id}
+                              />
+                            </span>
+                          ) : (
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                               <button
-                                aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
-                                className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#8a79d6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                                data-step-title-edit={item.id}
+                                className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  setCollapsedStepIds((current) => ({ ...current, [item.id]: !isCollapsed }));
+                                  setEditingStepTitleId(item.id);
+                                  setStepTitleDraft(item.id, item.title);
                                 }}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 type="button"
                               >
-                                {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                                <p className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
+                                  {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                                </p>
+                              </button>
+                              <StepLayerChip depth={item.depth} />
+                              <StepHistoryChips currentStreak={item.currentStreak} missedStreak={item.missedStreak} />
+                              {canCollapse ? (
+                                <button
+                                  aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                                  className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#8a79d6] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setCollapsedStepIds((current) => ({ ...current, [item.id]: !isCollapsed }));
+                                  }}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  type="button"
+                                >
+                                  {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                                </button>
+                              ) : null}
+                            </div>
+                          )}
+                        </div>
+                        {!isRenaming ? (
+                          <div className="hidden shrink-0 items-center gap-1 sm:flex" data-list-action-control="true">
+                            {onReorderStep ? (
+                              <>
+                                <button
+                                  aria-label={`Drag to reorder ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#8a79d6] opacity-70 transition hover:bg-[#f3efff] hover:text-[#6f57f6] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:bg-[#22193f] dark:hover:text-[#cabfff]"
+                                  draggable
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                  }}
+                                  onDragEnd={clearChildTaskDragState}
+                                  onDragStart={(event) => beginChildTaskDrag(event, item)}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  type="button"
+                                >
+                                  <GripVertical className="h-3.5 w-3.5" />
+                                </button>
+                                <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] transition hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex <= 0} onClick={(event) => { event.stopPropagation(); onReorderStep(item.id, "up"); }} onPointerDown={(event) => event.stopPropagation()} type="button"><ArrowUp className="h-3.5 w-3.5" /></button>
+                                <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] transition hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1} onClick={(event) => { event.stopPropagation(); onReorderStep(item.id, "down"); }} onPointerDown={(event) => event.stopPropagation()} type="button"><ArrowDown className="h-3.5 w-3.5" /></button>
+                              </>
+                            ) : null}
+                            {onCreateChildTask ? (
+                              <button
+                                aria-label={`Add substep to ${item.title || "Untitled step"}`}
+                                className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#6f57f6] opacity-78 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                                data-same-table-step-add={item.id}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setSubstepCreationErrors((current) => ({ ...current, [item.id]: null }));
+                                  setSubstepDraftParentId(item.id);
+                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                type="button"
+                              >
+                                <Footprints className="h-3.5 w-3.5" />
+                              </button>
+                            ) : null}
+                            {onOpenHistory ? (
+                              <button
+                                aria-label={`Open history for step ${item.title || "Untitled step"}`}
+                                className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#6f57f6] opacity-75 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onOpenHistory(item.id);
+                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                type="button"
+                              >
+                                <CalendarDays className="h-3.5 w-3.5" />
+                              </button>
+                            ) : null}
+                            {onDeleteStep ? (
+                              <button
+                                aria-label={`Move step ${item.title || "Untitled step"} to trash`}
+                                className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent text-[#d94e67] opacity-70 transition hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f]"
+                                data-same-table-step-delete={item.id}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onDeleteStep(item.id);
+                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                type="button"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             ) : null}
                           </div>
-                        )}
+                        ) : null}
                       </div>
-                      <div className="flex flex-none items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-1 sm:hidden" data-list-action-control="true">
                         {onReorderStep ? (
                           <>
                             <button
@@ -1191,8 +1339,7 @@ function StepsCardPreview({
                         </button>
                       ) : null}
                       </div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2" data-list-action-control="true">
+                      <div className="-mx-1 -my-1 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]" data-list-action-control="true">
                       <MetadataChipButton
                         active={activePanelMode === "status"}
                         onClick={() => onOpenQuickPanel(item.id, "status")}
@@ -1211,47 +1358,52 @@ function StepsCardPreview({
                           {repeatSummary}
                         </MetadataChipButton>
                       ) : null}
-                      <MetadataChipButton active={activePanelMode === "list"} onClick={() => onOpenQuickPanel(item.id, "list")}>
-                        {categoryLabel}
-                      </MetadataChipButton>
-                      {visibleTags.map((tag) => (
-                        <MetadataChipButton active={activePanelMode === "tags"} key={tag} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
-                          #{tag}
-                        </MetadataChipButton>
-                      ))}
-                      {extraTagCount > 0 ? (
-                        <MetadataChipButton active={activePanelMode === "tags"} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
-                          +{extraTagCount} tag{extraTagCount === 1 ? "" : "s"}
-                        </MetadataChipButton>
-                      ) : null}
-                      {item.tags.length === 0 ? (
-                        <MetadataChipButton active={activePanelMode === "tags"} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
-                          <span className="inline-flex items-center gap-1">
-                            <Tag className="h-3 w-3" />
-                            Add tags
+                      </div>
+                      <div className="adhdice-scrollbar -mx-1 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1" data-list-action-control="true">
+                        <div className="flex min-w-max flex-nowrap items-center gap-2">
+                          <MetadataChipButton active={activePanelMode === "tags"} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
+                            <span className="inline-flex items-center gap-1">
+                              <Tag className="h-3 w-3" />
+                              {item.tags.length > 0 ? "Add Tag" : "New Tag"}
+                            </span>
+                          </MetadataChipButton>
+                          {visibleTags.map((tag) => (
+                            <MetadataChipButton active={activePanelMode === "tags"} key={tag} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
+                              #{tag}
+                            </MetadataChipButton>
+                          ))}
+                          {extraTagCount > 0 ? (
+                            <MetadataChipButton active={activePanelMode === "tags"} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
+                              +{extraTagCount} tag{extraTagCount === 1 ? "" : "s"}
+                            </MetadataChipButton>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="adhdice-scrollbar -mx-1 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1" data-list-action-control="true">
+                        <div className="flex min-w-max flex-nowrap items-center gap-2">
+                          <MetadataChipButton active={activePanelMode === "list"} onClick={() => onOpenQuickPanel(item.id, "list")}>
+                            {categoryLabel}
+                          </MetadataChipButton>
+                          <span className={`${TASK_TABLE_INACTIVE_CHIP_CLASS} inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[12px] font-medium`}>
+                            Added {formatDateAddedChip(item.createdAt)}
                           </span>
-                        </MetadataChipButton>
-                      ) : null}
-                    </div>
-                    <div className="mt-2 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]" data-list-action-control="true">
-                      <span className={`${TASK_TABLE_INACTIVE_CHIP_CLASS} inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[12px] font-medium`}>
-                        Added {formatDateAddedChip(item.createdAt)}
-                      </span>
-                      <MetadataChipButton active={activePanelMode === "estimated"} onClick={() => onOpenQuickPanel(item.id, "estimated")}>
-                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListDuration(item.estimatedMinutes)}</span>
-                      </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "actual"} onClick={() => onOpenQuickPanel(item.id, "actual")}>
-                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListActual(item.actualSeconds)}</span>
-                      </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "energy"} onClick={() => onOpenQuickPanel(item.id, "energy")} toneClassName={energyTone(item.energy)}>
-                        {formatEnergyChipLabel(item.energy)}
-                      </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "link"} onClick={() => onOpenQuickPanel(item.id, "link")}>
-                        {item.linkLabel || item.linkUrl ? item.linkLabel || "Link" : "No link"}
-                      </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "notes"} onClick={() => onOpenQuickPanel(item.id, "notes")}>
-                        {item.notes.trim() ? "Notes" : "No notes"}
-                      </MetadataChipButton>
+                          <MetadataChipButton active={activePanelMode === "estimated"} onClick={() => onOpenQuickPanel(item.id, "estimated")}>
+                            <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListDuration(item.estimatedMinutes)}</span>
+                          </MetadataChipButton>
+                          <MetadataChipButton active={activePanelMode === "actual"} onClick={() => onOpenQuickPanel(item.id, "actual")}>
+                            <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListActual(item.actualSeconds)}</span>
+                          </MetadataChipButton>
+                          <MetadataChipButton active={activePanelMode === "energy"} onClick={() => onOpenQuickPanel(item.id, "energy")} toneClassName={energyTone(item.energy)}>
+                            {formatEnergyChipLabel(item.energy)}
+                          </MetadataChipButton>
+                          <MetadataChipButton active={activePanelMode === "link"} onClick={() => onOpenQuickPanel(item.id, "link")}>
+                            {item.linkLabel || item.linkUrl ? item.linkLabel || "Link" : "No link"}
+                          </MetadataChipButton>
+                          <MetadataChipButton active={activePanelMode === "notes"} onClick={() => onOpenQuickPanel(item.id, "notes")}>
+                            {item.notes.trim() ? "Notes" : "No notes"}
+                          </MetadataChipButton>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1301,16 +1453,13 @@ function StepsCardPreview({
                           key={status}
                           onClick={() => {
                             if (status === "delayed" && item.dueOn && onDelayTaskUntil) {
-                              openQuickPanel(item.id, "delay");
+                              onOpenQuickPanel(item.id, "delay");
                               return;
                             }
                             closeQuickPanel();
-                            onSetStatus?.(item.id, status, childTask, [
-                              ...buildListStatusScrollAnchorTaskIds(task.id),
-                              item.id,
-                            ]);
+                            onSetStatus?.(item.id, status, childTask, [item.id]);
                           }}
-                          toneClassName={`${statusTone(status)}${status === displayStatus ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"}`}
+                          toneClassName={status === displayStatus ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}
                         >
                           {renderTaskStatusCircle(status, "sm")}
                           <span>{formatTaskStatusLabel(status)}</span>
@@ -1361,6 +1510,9 @@ function StepsCardPreview({
                     repeatDaysOfWeek={item.repeatDaysOfWeek}
                     repeatFrequency={item.repeat}
                     repeatInterval={Math.max(1, item.repeatInterval)}
+                    repeatMonthlyMode={item.repeatMonthlyMode}
+                    repeatMonthlyOrdinal={item.repeatMonthlyOrdinal}
+                    repeatMonthlyWeekday={item.repeatMonthlyWeekday}
                   />
                 ) : null}
                 {activePanelMode === "list" ? (
@@ -1441,8 +1593,7 @@ function MetadataChipButton({
         event.stopPropagation();
         onClick();
       }}
-      className={active ? ACTIVE_CHIP_RING_CLASS : undefined}
-      toneClassName={resolvedToneClassName}
+      toneClassName={active ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : resolvedToneClassName}
     >
       {children}
     </TaskTableChipButton>
@@ -1504,21 +1655,26 @@ function TagsQuickPanel({
   tags: string[];
 }) {
   const [tagDraft, setTagDraft] = useState("");
-  const normalizedSelectedTags = new Set(tags.map((tag) => tag.toLocaleLowerCase()));
-  const availableTagPool = allTagOptions
-    .filter((tag) => !normalizedSelectedTags.has(tag.toLocaleLowerCase()))
+  const normalizedSelectedTags = new Set(tags.map((tag) => normalizeTaskTagValue(tag)));
+  const dedupedTagOptions = dedupeTaskTagLabels(allTagOptions)
     .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" }));
+  const normalizedDraft = normalizeTaskTagValue(tagDraft);
+  const availableTagPool = dedupedTagOptions
+    .filter((tag) => !normalizedSelectedTags.has(normalizeTaskTagValue(tag)))
+    .filter((tag) => !normalizedDraft || normalizeTaskTagValue(tag).includes(normalizedDraft));
+  const exactMatchTag = dedupedTagOptions.find((tag) => normalizeTaskTagValue(tag) === normalizedDraft) ?? null;
+  const tagRows = chunkItems(availableTagPool, 6);
 
   const addTag = () => {
-    const normalized = tagDraft.trim().replace(/^#+/, "");
+    const normalized = formatNewTaskTagLabel(tagDraft);
     if (!normalized) {
       return;
     }
-    if (tags.some((tag) => tag.localeCompare(normalized, undefined, { sensitivity: "base" }) === 0)) {
+    if (tags.some((tag) => normalizeTaskTagValue(tag) === normalized)) {
       setTagDraft("");
       return;
     }
-    onSave([...tags, normalized]);
+    onSave(dedupeTaskTagLabels([...tags, normalized]));
     setTagDraft("");
   };
 
@@ -1533,7 +1689,7 @@ function TagsQuickPanel({
             {tags.length > 0 ? tags.map((tag) => (
               <TaskTableChipButton
                 key={tag}
-                onClick={() => onSave(tags.filter((entry) => entry !== tag))}
+                onClick={() => onSave(tags.filter((entry) => normalizeTaskTagValue(entry) !== normalizeTaskTagValue(tag)))}
                 toneClassName={TASK_TABLE_TAG_CHIP_CLASS}
               >
                 #{tag}
@@ -1544,42 +1700,56 @@ function TagsQuickPanel({
             )}
           </div>
         </div>
-        {availableTagPool.length > 0 ? (
-          <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">
-              Saved tags
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {availableTagPool.map((tag) => (
-                <TaskTableChipButton
-                  key={`pool-${tag}`}
-                  onClick={() => onSave([...tags, tag])}
-                  toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
-                >
-                  #{tag}
-                </TaskTableChipButton>
-              ))}
+        <div className="space-y-3">
+          <input
+            className={`${QUICK_PANEL_TEXT_INPUT_CLASS} w-full`}
+            onChange={(event) => setTagDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addTag();
+              }
+            }}
+            placeholder="Search or add a tag"
+            value={tagDraft}
+          />
+          {exactMatchTag ? (
+            <TaskTableChipButton onClick={() => onSave(dedupeTaskTagLabels([...tags, exactMatchTag]))} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+              Use #{exactMatchTag}
+            </TaskTableChipButton>
+          ) : null}
+          {normalizedDraft && !exactMatchTag ? (
+            <TaskTableChipButton onClick={addTag} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+              {`Add "${formatNewTaskTagLabel(tagDraft)}"`}
+            </TaskTableChipButton>
+          ) : null}
+          {tagRows.length > 0 ? (
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#938ab8] dark:text-white/45">
+                Saved tags
+              </p>
+              <div className="space-y-2">
+                {tagRows.map((row, rowIndex) => (
+                  <div className="flex flex-wrap gap-2" key={`tag-row-${rowIndex}`}>
+                    {row.map((tag) => (
+                      <TaskTableChipButton
+                        key={`pool-${tag}`}
+                        onClick={() => onSave(dedupeTaskTagLabels([...tags, tag]))}
+                        toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+                      >
+                        #{tag}
+                      </TaskTableChipButton>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        ) : null}
-        {tags.length === 0 && availableTagPool.length === 0 ? (
-          <span className="text-sm text-[#7d7597] dark:text-white/55">No saved tags yet.</span>
-        ) : null}
-      </div>
-      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-        <input
-          className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
-          onChange={(event) => setTagDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              addTag();
-            }
-          }}
-          placeholder="Add a tag"
-          value={tagDraft}
-        />
-        <TaskTableChipButton onClick={addTag} toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}>Add tag</TaskTableChipButton>
+          ) : (
+            <span className="text-sm text-[#7d7597] dark:text-white/55">
+              {normalizedDraft ? "No matching saved tags." : "No saved tags yet."}
+            </span>
+          )}
+        </div>
       </div>
     </QuickPanelShell>
   );
@@ -1692,7 +1862,7 @@ function PriorityQuickPanel({
           <TaskTableChipButton
             key={option.value}
             onClick={() => togglePriority(option.value)}
-            toneClassName={`${priorityTone(option.value)}${activePriorities.includes(option.value) ? ` ${ACTIVE_CHIP_RING_CLASS}` : ""}`}
+            toneClassName={activePriorities.includes(option.value) ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : priorityTone(option.value)}
           >
             {option.label}
           </TaskTableChipButton>
@@ -1898,7 +2068,7 @@ function ListQuickPanel({
         {listDefinitions.map((definition) => (
           <QuickChipOption
             active={activeListIds.has(definition.id)}
-            activeToneClassName={TASK_TABLE_LIST_CHIP_CLASS}
+            activeToneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}
             key={definition.id}
             onClick={() => onToggleList(definition.id)}
           >
@@ -2445,9 +2615,17 @@ function TasksSimpleList({
               onTaskPriorityChange={tableProps.onSetPriority}
               onTaskPinToggle={tableProps.onTogglePinned}
               onTaskRepeatChange={tableProps.onSetRepeat}
-              onTaskStatusChange={(taskId, status) => {
-                const expectedTask = tableProps.tasks.find((task) => task.id === taskId) ?? null;
-                tableProps.onSetStatus?.(taskId, status, expectedTask, queueMeasuredListStatusScrollAnchor(taskId));
+              onTaskStatusChange={(taskId, status, scrollAnchorTaskIds, options) => {
+                const expectedTask = tableProps.requestedOpenTask?.id === taskId
+                  ? tableProps.requestedOpenTask
+                  : tableProps.tasks.find((task) => task.id === taskId) ?? null;
+                tableProps.onSetStatus?.(
+                  taskId,
+                  status,
+                  expectedTask,
+                  scrollAnchorTaskIds ?? queueMeasuredListStatusScrollAnchor(taskId),
+                  options,
+                );
               }}
               onTaskSubtaskAdd={tableProps.onAddTaskSubtask}
               onTaskSubtaskAddChild={tableProps.onAddChildTaskSubtask}
@@ -2535,17 +2713,13 @@ function TasksSimpleList({
           <div className="space-y-3" key={task.id}>
             <article
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${
-                tableProps.highlightedActiveTaskId === task.id
-                  ? "border-[#ddd2ff] bg-[#efe6ff] dark:border-[#5a458f] dark:bg-[#2b1d46]"
-                  : selectedTaskIdSet.has(task.id)
-                    ? "border-[#d8d1ef] bg-white/92 ring-2 ring-[#e7e0fb] ring-offset-0 dark:border-[#4f466d] dark:bg-white/[0.05] dark:ring-[#342b50]"
-                    : "border-[#ece8f8] bg-white/92 dark:border-white/10 dark:bg-white/[0.05]"
+                selectedTaskIdSet.has(task.id)
+                  ? "border-[#d8d1ef] bg-white/92 ring-2 ring-[#e7e0fb] ring-offset-0 dark:border-[#4f466d] dark:bg-white/[0.05] dark:ring-[#342b50]"
+                  : "border-[#ece8f8] bg-white/92 dark:border-white/10 dark:bg-white/[0.05]"
               } ${
                 isQuickPanelOpen
                   ? "border-[#cfc2ff] dark:border-[#4f3d86]"
-                  : tableProps.highlightedActiveTaskId !== task.id
-                    ? "hover:border-[#ddd2fb] hover:bg-white dark:hover:border-white/15"
-                    : ""
+                  : "hover:border-[#ddd2fb] hover:bg-white dark:hover:border-white/15"
               }`}
               data-task-list-row={task.id}
               onClick={(event) => {
@@ -2568,7 +2742,7 @@ function TasksSimpleList({
                 <button
                   aria-expanded={activePanelMode === "status"}
                   aria-label={`Change status for ${task.title}`}
-                  className="mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[1rem] text-[#8d97b0] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45 dark:hover:bg-white/[0.06] dark:hover:text-[#cabfff]"
+                  className="group mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[1rem] text-[#8d97b0] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45"
                   onClick={(event) => {
                     event.stopPropagation();
                     setRowContextMenu(null);
@@ -2576,28 +2750,30 @@ function TasksSimpleList({
                   }}
                   type="button"
                 >
-                  {renderTaskStatusCircle(displayStatus, "md")}
+                  {renderTaskStatusCircle(displayStatus, "md", {
+                    className: getTaskStatusCircleHoverInvertedClassName(displayStatus),
+                  })}
                 </button>
               </div>
 
-              <div
-                className="min-w-0 flex-1 cursor-pointer"
-                onKeyDown={(event) => {
-                  if (isKeyboardEventFromEditableTarget(event.target)) {
-                    return;
-                  }
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    setRowContextMenu(null);
-                    closeQuickPanel();
-                    tableProps.onOpenTaskEditor?.(task.id);
-                  }
-                }}
-                role="button"
-                tabIndex={0}
-              >
+              <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+                  <div
+                    className="min-w-0 flex-1 cursor-pointer"
+                    onKeyDown={(event) => {
+                      if (isKeyboardEventFromEditableTarget(event.target)) {
+                        return;
+                      }
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setRowContextMenu(null);
+                        closeQuickPanel();
+                        tableProps.onOpenTaskEditor?.(task.id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                  >
                     <div className="flex flex-wrap items-center gap-2">
                       {isRenamingTaskTitle ? (
                         <input
@@ -2640,125 +2816,36 @@ function TasksSimpleList({
                           Urgent
                         </span>
                       ) : null}
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <MetadataChipButton
-                        active={activePanelMode === "status"}
-                        onClick={() => openQuickPanel(task.id, "status")}
-                        toneClassName={SIMPLE_STATUS_STYLES[displayStatus]}
-                      >
-                        {formatTaskStatusLabel(displayStatus)}
-                      </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "due"} onClick={() => openQuickPanel(task.id, "due")}>
-                        {dueMeta}
-                      </MetadataChipButton>
-                      {taskRow.currentStreak > 0 ? (
-                        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#dc6c1c]`}>
-                          <Flame className="h-3 w-3" />
-                          {taskRow.currentStreak}
-                        </span>
-                      ) : null}
-                      {taskRow.missedStreak > 0 ? (
-                        <span className={`${TASK_TABLE_LIST_CHIP_CLASS} inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium text-[#d94e67]`}>
-                          <Skull className="h-3 w-3" />
-                          {taskRow.missedStreak}
-                        </span>
-                      ) : null}
-                      <MetadataChipButton active={activePanelMode === "priority"} onClick={() => openQuickPanel(task.id, "priority")}>
-                        {formatPriorityChipLabel(task, rowContext.focusedTaskIdSet)}
-                      </MetadataChipButton>
-                      <MetadataChipButton
-                        active={activePanelMode === "repeat"}
-                        onClick={() => openQuickPanel(task.id, "repeat")}
-                        toneClassName={repeatTone(task.repeat_frequency)}
-                      >
-                        {repeatSummary ?? "No Repeat"}
-                      </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "list"} onClick={() => openQuickPanel(task.id, "list")}>
-                        {categoryLabel}
-                      </MetadataChipButton>
-                      {visibleTags.map((tag) => (
-                        <MetadataChipButton
-                          active={activePanelMode === "tags"}
-                          key={tag}
-                          onClick={() => openQuickPanel(task.id, "tags")}
-                          tone="tag"
-                        >
-                          #{tag}
-                        </MetadataChipButton>
-                      ))}
-                      {extraTagCount > 0 ? (
-                        <MetadataChipButton active={activePanelMode === "tags"} onClick={() => openQuickPanel(task.id, "tags")} tone="tag">
-                          +{extraTagCount} tag{extraTagCount === 1 ? "" : "s"}
-                        </MetadataChipButton>
-                      ) : null}
-                      {(task.tags ?? []).length === 0 ? (
-                        <MetadataChipButton active={activePanelMode === "tags"} onClick={() => openQuickPanel(task.id, "tags")} tone="tag">
-                          <span className="inline-flex items-center gap-1">
-                            <Tag className="h-3 w-3" />
-                            Add tags
-                          </span>
-                        </MetadataChipButton>
-                      ) : null}
-                    </div>
-                    <div className="mt-2 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
-                      <span className={`${TASK_TABLE_INACTIVE_CHIP_CLASS} inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[12px] font-medium`}>
-                        Added {formatDateAddedChip(task.created_at)}
-                      </span>
-                      <MetadataChipButton active={activePanelMode === "estimated"} onClick={() => openQuickPanel(task.id, "estimated")}>
-                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListDuration(task.estimated_minutes)}</span>
-                      </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "actual"} onClick={() => openQuickPanel(task.id, "actual")}>
-                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListActual(task.actual_seconds)}</span>
-                      </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "energy"} onClick={() => openQuickPanel(task.id, "energy")} toneClassName={energyTone(task.energy)}>
-                        {formatEnergyChipLabel(task.energy)}
-                      </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "link"} onClick={() => openQuickPanel(task.id, "link")}>
-                        {task.external_link_label || task.external_link_url ? task.external_link_label || "Link" : "No link"}
-                      </MetadataChipButton>
-                      {task.external_link_url ? (
-                        <TaskTableChipButton
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            window.open(task.external_link_url ?? "", "_blank", "noopener,noreferrer");
-                          }}
-                          toneClassName={TASK_TABLE_LIST_CHIP_CLASS}
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </TaskTableChipButton>
-                      ) : null}
-                      <MetadataChipButton active={activePanelMode === "notes"} onClick={() => openQuickPanel(task.id, "notes")}>
-                        {task.notes?.trim() ? "Notes" : "No notes"}
-                      </MetadataChipButton>
+                      <TaskHistoryChips
+                        className="hidden sm:inline-flex"
+                        currentStreak={taskRow.currentStreak}
+                        missedStreak={taskRow.missedStreak}
+                      />
                     </div>
                   </div>
 
                   <div className="relative flex shrink-0 items-center gap-1" data-list-action-control="true">
                     {tableProps.onTogglePinned ? (
-                      <button
+                      <AdhdIconButton
                         aria-label={isPinned ? `Unpin ${task.title}` : `Pin ${task.title}`}
                         aria-pressed={isPinned}
-                        className={`inline-flex h-10 w-10 items-center justify-center rounded-full border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 ${
-                          isPinned
-                            ? "border-[#d9cffb] bg-[#f7f3ff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
-                            : "border-[#ece8f8] bg-white text-[#66718c] hover:border-[#d9cffb] hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
-                        }`}
                         onClick={(event) => {
                           event.stopPropagation();
                           closeQuickPanel();
                           setRowContextMenu(null);
                           tableProps.onTogglePinned?.(task.id);
                         }}
-                        type="button"
+                        selected={isPinned}
+                        size="sm"
+                        tone="purple"
+                        variant="rowToolbar"
                       >
-                        <Pin className={`h-4 w-4 ${isPinned ? "fill-current" : ""}`} />
-                      </button>
+                        <Pin className={`h-3.5 w-3.5 ${isPinned ? "fill-current" : ""}`} />
+                      </AdhdIconButton>
                     ) : null}
                     {tableProps.onCreateChildTask ? (
-                      <button
+                      <AdhdIconButton
                         aria-label={`Add step to ${task.title}`}
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ece8f8] bg-white text-[#66718c] transition hover:border-[#d9cffb] hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
                         onClick={(event) => {
                           event.stopPropagation();
                           closeQuickPanel();
@@ -2771,30 +2858,30 @@ function TasksSimpleList({
                           setParentStepTitleDrafts((current) => ({ ...current, [task.id]: current[task.id] ?? "" }));
                           setParentStepDraftTaskId(task.id);
                         }}
-                        type="button"
+                        size="sm"
+                        variant="rowToolbar"
                       >
-                        <Footprints className="h-4 w-4" />
-                      </button>
+                        <Footprints className="h-3.5 w-3.5" />
+                      </AdhdIconButton>
                     ) : null}
                     {tableProps.onOpenTaskHistory ? (
-                      <button
+                      <AdhdIconButton
                         aria-label={`Open history for ${task.title}`}
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ece8f8] bg-white text-[#66718c] transition hover:border-[#d9cffb] hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
                         onClick={(event) => {
                           event.stopPropagation();
                           closeQuickPanel();
                           setRowContextMenu(null);
                           tableProps.onOpenTaskHistory?.(task.id);
                         }}
-                        type="button"
+                        size="sm"
+                        variant="rowToolbar"
                       >
-                        <CalendarDays className="h-4 w-4" />
-                      </button>
+                        <CalendarDays className="h-3.5 w-3.5" />
+                      </AdhdIconButton>
                     ) : null}
-                    <button
+                    <AdhdIconButton
                       aria-expanded={rowContextMenu?.taskId === task.id}
                       aria-label={`More actions for ${task.title}`}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ece8f8] bg-white text-[#66718c] transition hover:border-[#d9cffb] hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60 dark:hover:border-white/20 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
                       onClick={(event) => {
                         event.stopPropagation();
                         if (rowContextMenu?.taskId === task.id) {
@@ -2804,10 +2891,100 @@ function TasksSimpleList({
                         closeQuickPanel();
                         openRowContextMenu(task.id, event.clientX, event.clientY);
                       }}
-                      type="button"
+                      selected={rowContextMenu?.taskId === task.id}
+                      size="sm"
+                      variant="rowToolbar"
                     >
-                      <Ellipsis className="h-5 w-5" />
-                    </button>
+                      <Ellipsis className="h-3.5 w-3.5" />
+                    </AdhdIconButton>
+                  </div>
+                </div>
+                <div className="-mx-1 mt-2 -my-1 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]">
+                  <MetadataChipButton
+                    active={activePanelMode === "status"}
+                    onClick={() => openQuickPanel(task.id, "status")}
+                    toneClassName={SIMPLE_STATUS_STYLES[displayStatus]}
+                  >
+                    {formatTaskStatusLabel(displayStatus)}
+                  </MetadataChipButton>
+                  <TaskHistoryChips
+                    className="sm:hidden"
+                    currentStreak={taskRow.currentStreak}
+                    missedStreak={taskRow.missedStreak}
+                  />
+                  <MetadataChipButton active={activePanelMode === "due"} onClick={() => openQuickPanel(task.id, "due")}>
+                    {dueMeta}
+                  </MetadataChipButton>
+                  <MetadataChipButton active={activePanelMode === "priority"} onClick={() => openQuickPanel(task.id, "priority")}>
+                    {formatPriorityChipLabel(task, rowContext.focusedTaskIdSet)}
+                  </MetadataChipButton>
+                  <MetadataChipButton
+                    active={activePanelMode === "repeat"}
+                    onClick={() => openQuickPanel(task.id, "repeat")}
+                    toneClassName={repeatTone(task.repeat_frequency)}
+                  >
+                    {repeatSummary ?? "No Repeat"}
+                  </MetadataChipButton>
+                </div>
+                <div className="adhdice-scrollbar -mx-1 mt-2 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1">
+                  <div className="flex min-w-max flex-nowrap items-center gap-2">
+                    <MetadataChipButton active={activePanelMode === "tags"} onClick={() => openQuickPanel(task.id, "tags")} tone="tag">
+                      <span className="inline-flex items-center gap-1">
+                        <Tag className="h-3 w-3" />
+                        {(task.tags ?? []).length > 0 ? "Add Tag" : "New Tag"}
+                      </span>
+                    </MetadataChipButton>
+                    {visibleTags.map((tag) => (
+                      <MetadataChipButton
+                        active={activePanelMode === "tags"}
+                        key={tag}
+                        onClick={() => openQuickPanel(task.id, "tags")}
+                        tone="tag"
+                      >
+                        #{tag}
+                      </MetadataChipButton>
+                    ))}
+                    {extraTagCount > 0 ? (
+                      <MetadataChipButton active={activePanelMode === "tags"} onClick={() => openQuickPanel(task.id, "tags")} tone="tag">
+                        +{extraTagCount} tag{extraTagCount === 1 ? "" : "s"}
+                      </MetadataChipButton>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="adhdice-scrollbar -mx-1 mt-2 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1">
+                  <div className="flex min-w-max flex-nowrap items-center gap-2">
+                    <MetadataChipButton active={activePanelMode === "list"} onClick={() => openQuickPanel(task.id, "list")}>
+                      {categoryLabel}
+                    </MetadataChipButton>
+                    <span className={`${TASK_TABLE_INACTIVE_CHIP_CLASS} inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[12px] font-medium`}>
+                      Added {formatDateAddedChip(task.created_at)}
+                    </span>
+                    <MetadataChipButton active={activePanelMode === "estimated"} onClick={() => openQuickPanel(task.id, "estimated")}>
+                      <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListDuration(task.estimated_minutes)}</span>
+                    </MetadataChipButton>
+                    <MetadataChipButton active={activePanelMode === "actual"} onClick={() => openQuickPanel(task.id, "actual")}>
+                      <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListActual(task.actual_seconds)}</span>
+                    </MetadataChipButton>
+                    <MetadataChipButton active={activePanelMode === "energy"} onClick={() => openQuickPanel(task.id, "energy")} toneClassName={energyTone(task.energy)}>
+                      {formatEnergyChipLabel(task.energy)}
+                    </MetadataChipButton>
+                    <MetadataChipButton active={activePanelMode === "link"} onClick={() => openQuickPanel(task.id, "link")}>
+                      {task.external_link_label || task.external_link_url ? task.external_link_label || "Link" : "No link"}
+                    </MetadataChipButton>
+                    {task.external_link_url ? (
+                      <TaskTableChipButton
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          window.open(task.external_link_url ?? "", "_blank", "noopener,noreferrer");
+                        }}
+                        toneClassName={TASK_TABLE_LIST_CHIP_CLASS}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </TaskTableChipButton>
+                    ) : null}
+                    <MetadataChipButton active={activePanelMode === "notes"} onClick={() => openQuickPanel(task.id, "notes")}>
+                      {task.notes?.trim() ? "Notes" : "No notes"}
+                    </MetadataChipButton>
                   </div>
                 </div>
               </div>
@@ -2827,7 +3004,7 @@ function TasksSimpleList({
                         closeQuickPanel();
                         tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
                       }}
-                      toneClassName={`${statusTone(status)}${status === displayStatus ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"}`}
+                      toneClassName={status === displayStatus ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}
                     >
                       {renderTaskStatusCircle(status, "sm")}
                       <span>{formatTaskStatusLabel(status)}</span>

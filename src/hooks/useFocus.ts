@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusSession as DbFocusSession } from "@/lib/database.types";
@@ -31,6 +31,11 @@ const FOCUS_COUNTERS_STORAGE_KEY = "adhdice_focus_counters";
 const FOCUS_COUNTER_HISTORY_STORAGE_KEY = "adhdice_focus_counter_history";
 
 type CountdownMetadata = Record<string, { mode?: "countdown" | "countup"; targetSeconds?: number | null }>;
+type FocusCounterState = {
+  counters: FocusCounter[];
+  history: FocusCounterHistoryEntry[];
+  ownerUserId: string | null;
+};
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
@@ -241,18 +246,39 @@ export function useFocus(
   const [focusCategories, setFocusCategories] = useState<FocusCategory[]>([]);
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
   const [focusHistory, setFocusHistory] = useState<HistoricalFocusSession[]>([]);
-  const [focusCounters, setFocusCounters] = useState<FocusCounter[]>([]);
-  const [focusCounterHistory, setFocusCounterHistory] = useState<FocusCounterHistoryEntry[]>([]);
+  const [focusCounterState, setFocusCounterState] = useState<FocusCounterState>({ counters: [], history: [], ownerUserId: null });
   const suppressCategoryReload = useRef(false);
+  const focusCounters = focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
+  const focusCounterHistory = focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
+
+  const setFocusCounters: Dispatch<SetStateAction<FocusCounter[]>> = (updater) => {
+    setFocusCounterState((current) => {
+      const nextCounters = typeof updater === "function"
+        ? updater(current.counters)
+        : updater;
+      saveFocusCounters(userId, nextCounters);
+      return {
+        ...current,
+        counters: nextCounters,
+      };
+    });
+  };
 
   useEffect(() => {
-    if (!userId) {
-      setFocusCounters([]);
-      setFocusCounterHistory([]);
-      return;
-    }
-    setFocusCounters(readFocusCounters(userId));
-    setFocusCounterHistory(readFocusCounterHistory(userId));
+    const nextState = !userId
+      ? { counters: [], history: [], ownerUserId: null }
+      : {
+          counters: readFocusCounters(userId),
+          history: readFocusCounterHistory(userId),
+          ownerUserId: userId,
+        };
+    const timeoutId = window.setTimeout(() => {
+      setFocusCounterState(nextState);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [userId]);
 
   async function persistActiveSession(categoryId: string, nextSession: ActiveFocusSession) {
@@ -850,50 +876,58 @@ export function useFocus(
     if (!window.confirm(`Delete "${targetCounter.title}"? This cannot be undone.`)) {
       return;
     }
-    setFocusCounters((prev) => {
-      const nextCounters = prev.filter((counter) => counter.id !== counterId);
+    setFocusCounterState((current) => {
+      if (current.ownerUserId !== userId) {
+        return current;
+      }
+      const nextCounters = current.counters.filter((counter) => counter.id !== counterId);
+      const nextHistory = current.history.filter((entry) => entry.counterId !== counterId);
       saveFocusCounters(userId, nextCounters);
-      return nextCounters;
-    });
-    setFocusCounterHistory((prev) => {
-      const nextHistory = prev.filter((entry) => entry.counterId !== counterId);
       saveFocusCounterHistory(userId, nextHistory);
-      return nextHistory;
+      return {
+        counters: nextCounters,
+        history: nextHistory,
+        ownerUserId: current.ownerUserId,
+      };
     });
     setMessage({ tone: "good", text: "Counter deleted." });
   }
 
   function handleAdjustFocusCounter(counterId: string, direction: 1 | -1) {
-    const targetCounter = focusCounters.find((counter) => counter.id === counterId);
-    if (!targetCounter) {
-      return;
-    }
-    const delta = targetCounter.step * direction;
-    const nextValue = targetCounter.value + delta;
-    const timestamp = new Date().toISOString();
-    const historyEntry: FocusCounterHistoryEntry = {
-      counterId,
-      counterTitleSnapshot: targetCounter.title,
-      createdAt: timestamp,
-      delta,
-      id: crypto.randomUUID(),
-      nextValue,
-      stepSnapshot: targetCounter.step,
-    };
+    setFocusCounterState((current) => {
+      if (current.ownerUserId !== userId) {
+        return current;
+      }
+      const targetCounter = current.counters.find((counter) => counter.id === counterId);
+      if (!targetCounter) {
+        return current;
+      }
 
-    setFocusCounters((prev) => {
-      const nextCounters = prev.map((counter) => (
+      const delta = targetCounter.step * direction;
+      const nextValue = targetCounter.value + delta;
+      const timestamp = new Date().toISOString();
+      const nextCounters = current.counters.map((counter) => (
         counter.id === counterId
           ? { ...counter, updatedAt: timestamp, value: nextValue }
           : counter
       ));
+      const historyEntry: FocusCounterHistoryEntry = {
+        counterId,
+        counterTitleSnapshot: targetCounter.title,
+        createdAt: timestamp,
+        delta,
+        id: crypto.randomUUID(),
+        nextValue,
+        stepSnapshot: targetCounter.step,
+      };
+      const nextHistory = [historyEntry, ...current.history].slice(0, 120);
       saveFocusCounters(userId, nextCounters);
-      return nextCounters;
-    });
-    setFocusCounterHistory((prev) => {
-      const nextHistory = [historyEntry, ...prev].slice(0, 120);
       saveFocusCounterHistory(userId, nextHistory);
-      return nextHistory;
+      return {
+        counters: nextCounters,
+        history: nextHistory,
+        ownerUserId: current.ownerUserId,
+      };
     });
   }
 

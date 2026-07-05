@@ -1,8 +1,9 @@
 import type { Task, TaskHistory, TaskStatus } from "@/lib/database.types";
+import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
-import type { TaskListDefinition, TaskListEvaluationContext } from "@/lib/task-lists";
+import type { TaskListDefinition } from "@/lib/task-lists";
 import { formatRepeatSummary } from "@/lib/task-repeat";
 
 export const TASK_REPORT_RANGE_OPTIONS = [
@@ -28,9 +29,10 @@ type GenerateTaskReportInput = {
   generatedAt: Date;
   historySourceLabel: string;
   historyWarning: string | null;
+  focusCategories: FocusCategory[];
+  focusHistory: HistoricalFocusSession[];
   rangeId: TaskReportRangeId;
   taskHistory: TaskHistory[];
-  taskListEvaluationContext: TaskListEvaluationContext;
   tasks: Task[];
   todayDateKey: string;
 };
@@ -192,6 +194,19 @@ function formatTimeOnly(isoString: string | null | undefined) {
   }).format(date);
 }
 
+function formatDurationCompact(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  if (hours > 0 && minutes > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (hours > 0) {
+    return `${hours}h`;
+  }
+  return `${minutes}m`;
+}
+
 function incrementCount(map: Record<string, number>, key: string) {
   map[key] = (map[key] ?? 0) + 1;
 }
@@ -220,7 +235,12 @@ function resolveTaskReportHistoryFetchRange(rangeId: TaskReportRangeId, todayDat
   };
 }
 
-function buildRange(rangeId: TaskReportRangeId, todayDateKey: string, history: TaskHistory[]): ReportRange {
+function buildRange(
+  rangeId: TaskReportRangeId,
+  todayDateKey: string,
+  history: TaskHistory[],
+  focusHistory: HistoricalFocusSession[] = [],
+): ReportRange {
   const option = TASK_REPORT_RANGE_OPTIONS.find((entry) => entry.id === rangeId) ?? TASK_REPORT_RANGE_OPTIONS[0];
   const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey);
   if (option.days !== null) {
@@ -231,7 +251,7 @@ function buildRange(rangeId: TaskReportRangeId, todayDateKey: string, history: T
     };
   }
 
-  const sortedDates = history.map((entry) => entry.entry_date).sort();
+  const sortedDates = [...history.map((entry) => entry.entry_date), ...focusHistory.map((session) => session.date)].sort();
   const startDateKey = sortedDates[0] ?? null;
   const endDateKey = sortedDates.at(-1) ?? todayDateKey;
   let spanDays = 0;
@@ -250,7 +270,7 @@ function buildRange(rangeId: TaskReportRangeId, todayDateKey: string, history: T
   return {
     endDateKey,
     label: option.label,
-    spanDays: Math.max(spanDays, history.length > 0 ? 1 : 0),
+    spanDays: Math.max(spanDays, sortedDates.length > 0 ? 1 : 0),
     startDateKey,
   };
 }
@@ -287,10 +307,104 @@ function isTestLikeTaskTitle(title: string) {
   return title.trim().toLowerCase().includes("test");
 }
 
+function buildTaskHistoryByTaskId(taskHistory: TaskHistory[]) {
+  return taskHistory.reduce<Record<string, TaskHistory[]>>((accumulator, entry) => {
+    const entries = accumulator[entry.task_id] ?? [];
+    entries.push(entry);
+    accumulator[entry.task_id] = entries;
+    return accumulator;
+  }, {});
+}
+
+function isFocusSessionInRange(session: HistoricalFocusSession, range: ReportRange) {
+  if (range.startDateKey && session.date < range.startDateKey) {
+    return false;
+  }
+  if (range.endDateKey && session.date > range.endDateKey) {
+    return false;
+  }
+  return true;
+}
+
+function buildFocusSection(
+  range: ReportRange,
+  focusCategories: FocusCategory[],
+  focusHistory: HistoricalFocusSession[],
+) {
+  const sortedCategories = [...focusCategories].sort((left, right) => left.title.localeCompare(right.title, undefined, { sensitivity: "base" }));
+  const rangedSessions = focusHistory
+    .filter((session) => isFocusSessionInRange(session, range))
+    .sort((left, right) => {
+      if (left.date !== right.date) {
+        return left.date.localeCompare(right.date);
+      }
+      const leftCreatedAt = left.createdAt ?? "";
+      const rightCreatedAt = right.createdAt ?? "";
+      if (leftCreatedAt !== rightCreatedAt) {
+        return leftCreatedAt.localeCompare(rightCreatedAt);
+      }
+      return left.id.localeCompare(right.id);
+    });
+  const categoryById = new Map(sortedCategories.map((category) => [category.id, category] as const));
+  const sessionsByDate = rangedSessions.reduce<Map<string, HistoricalFocusSession[]>>((accumulator, session) => {
+    const sessions = accumulator.get(session.date) ?? [];
+    sessions.push(session);
+    accumulator.set(session.date, sessions);
+    return accumulator;
+  }, new Map());
+
+  const lines = ["## Focus Report"];
+
+  if (sortedCategories.length === 0 && rangedSessions.length === 0) {
+    lines.push("- No focus goals or focus sessions in the selected range.");
+    return lines;
+  }
+
+  lines.push("", "### Focus Goals");
+  if (sortedCategories.length === 0) {
+    lines.push("- No focus categories configured.");
+  } else {
+    for (const category of sortedCategories) {
+      const dailyGoal = category.dailyGoalSeconds ? formatDurationCompact(category.dailyGoalSeconds) : "None";
+      const weeklyGoal = category.weeklyGoalSeconds ? formatDurationCompact(category.weeklyGoalSeconds) : "None";
+      lines.push(`- ${category.title || "Untitled category"}: Daily ${dailyGoal}; Weekly ${weeklyGoal}`);
+    }
+  }
+
+  lines.push("", "### Focus Sessions by Day");
+  if (sessionsByDate.size === 0) {
+    lines.push("- No focus sessions in the selected range.");
+    return lines;
+  }
+
+  const chronologicalDates = [...sessionsByDate.keys()].sort((left, right) => left.localeCompare(right));
+  for (const dateKey of chronologicalDates) {
+    const sessions = sessionsByDate.get(dateKey) ?? [];
+    const totalSeconds = sessions.reduce((sum, session) => sum + Math.max(0, session.durationSeconds), 0);
+    lines.push(
+      "",
+      `#### ${dateKey}`,
+      `- Total: ${formatDurationCompact(totalSeconds)} across ${sessions.length} session${sessions.length === 1 ? "" : "s"}`,
+    );
+    for (const session of sessions) {
+      const category = session.categoryId ? categoryById.get(session.categoryId) ?? null : null;
+      const categoryLabel = category?.title || "Deleted/uncategorized category";
+      const sessionTitle = session.title.trim() || "Untitled session";
+      const typeParts = [session.focusType, session.focusSubtype, session.focusSubtype2].filter((value): value is string => Boolean(value));
+      const notesSuffix = session.notes?.trim() ? ` — Notes: ${session.notes.trim()}` : "";
+      lines.push(
+        `- ${sessionTitle} — ${categoryLabel} — ${formatDurationCompact(session.durationSeconds)}${typeParts.length > 0 ? ` — ${typeParts.join(" / ")}` : ""}${notesSuffix}`,
+      );
+    }
+  }
+
+  return lines;
+}
+
 function buildTaskMetadata(
   tasks: Task[],
   _availableTaskLists: TaskListDefinition[],
-  taskListEvaluationContext: TaskListEvaluationContext,
+  taskHistoryByTaskId: Record<string, TaskHistory[]>,
   todayDateKey: string,
 ) {
   const taskHierarchy = buildTaskHierarchyAdapter(tasks);
@@ -307,7 +421,7 @@ function buildTaskMetadata(
       cadenceLabel: formatRepeatSummary(task) ?? null,
       currentStatusLabel: STATUS_LABELS[getTaskDisplayStatusWithHistory(
         task,
-        taskListEvaluationContext.taskHistoryByTaskId[task.id] ?? [],
+        taskHistoryByTaskId[task.id] ?? [],
         todayDateKey,
       )] ?? task.status,
       isImportant: task.is_important,
@@ -328,9 +442,9 @@ function buildTaskSnapshotSections(
   tasks: Task[],
   todayDateKey: string,
   availableTaskLists: TaskListDefinition[],
-  taskListEvaluationContext: TaskListEvaluationContext,
+  taskHistoryByTaskId: Record<string, TaskHistory[]>,
 ) {
-  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, taskListEvaluationContext, todayDateKey);
+  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, taskHistoryByTaskId, todayDateKey);
   const workloadTasks = tasks.filter((task) => task.status !== "trashed");
   const currentStatusSnapshotCounts = workloadTasks.reduce<Record<string, number>>((accumulator, task) => {
     const metadata = metadataByTaskId.get(task.id);
@@ -417,10 +531,10 @@ function buildHistorySections(
   range: ReportRange,
   todayDateKey: string,
   availableTaskLists: TaskListDefinition[],
-  taskListEvaluationContext: TaskListEvaluationContext,
+  taskHistoryByTaskId: Record<string, TaskHistory[]>,
 ) {
   const tasksById = new Map(tasks.map((task) => [task.id, task] as const));
-  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, taskListEvaluationContext, todayDateKey);
+  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, taskHistoryByTaskId, todayDateKey);
   const rangedEntries = taskHistory.filter((entry) => isEntryInRange(entry, range));
   const latestEntries = buildLatestEntries(rangedEntries, tasksById, metadataByTaskId);
   const dayBreakdownsByDate = new Map<string, DayBreakdown>();
@@ -697,18 +811,21 @@ function generateTaskReport({
   appVersion,
   availableTaskLists,
   detailLevel,
+  focusCategories,
+  focusHistory,
   generatedAt,
   historySourceLabel,
   historyWarning,
   rangeId,
   taskHistory,
-  taskListEvaluationContext,
   tasks,
   todayDateKey,
 }: GenerateTaskReportInput) {
-  const range = buildRange(rangeId, todayDateKey, taskHistory);
-  const snapshot = buildTaskSnapshotSections(tasks, todayDateKey, availableTaskLists, taskListEvaluationContext);
-  const history = buildHistorySections(tasks, taskHistory, range, todayDateKey, availableTaskLists, taskListEvaluationContext);
+  const range = buildRange(rangeId, todayDateKey, taskHistory, focusHistory);
+  const taskHistoryByTaskId = buildTaskHistoryByTaskId(taskHistory);
+  const snapshot = buildTaskSnapshotSections(tasks, todayDateKey, availableTaskLists, taskHistoryByTaskId);
+  const history = buildHistorySections(tasks, taskHistory, range, todayDateKey, availableTaskLists, taskHistoryByTaskId);
+  const focusSection = buildFocusSection(range, focusCategories, focusHistory);
 
   const lines = [
     "# ADHDice Report",
@@ -770,6 +887,8 @@ function generateTaskReport({
   }
 
   lines.push(
+    "",
+    ...focusSection,
     "",
     "## Analysis Request",
     "Please analyze this ADHDice report and help me with the following:",

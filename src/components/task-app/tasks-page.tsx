@@ -20,6 +20,10 @@ const SHARED_CHIP_ACTIVE_CLASS = TASK_TABLE_ACTIVE_LIST_CHIP_CLASS;
 const SHARED_CHIP_PRIMARY_CLASS = "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]";
 const SHARED_CHIP_SOFT_PURPLE_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
 const TASK_SEARCH_COMMIT_DELAY_MS = 180;
+const MENU_SECTION_TITLE_CLASS = "text-[11px] font-semibold uppercase tracking-[0.18em] text-[#938ab8] dark:text-white/42";
+const MENU_SECTION_DETAIL_CLASS = "mt-1 text-[13px] leading-5 text-[#7d7597] dark:text-white/55";
+const MENU_ROW_ACTION_CLASS = "min-w-0 text-[13px] font-medium leading-5 text-[#4b4469] dark:text-white/82";
+const MENU_ROW_DETAIL_CLASS = "max-w-[11rem] text-right text-[12px] leading-5 text-[#7d7597] dark:text-white/55";
 
 const TaskSearchBox = memo(function TaskSearchBox({
   hidden,
@@ -250,6 +254,45 @@ function TaskChipButton({
   );
 }
 
+function DropdownSectionHeader({
+  detail,
+  title,
+}: {
+  detail: string;
+  title: string;
+}) {
+  return (
+    <div className="border-b border-[#f0ebfb] px-3 pb-2 dark:border-white/10">
+      <p className={MENU_SECTION_TITLE_CLASS}>{title}</p>
+      <p className={MENU_SECTION_DETAIL_CLASS}>{detail}</p>
+    </div>
+  );
+}
+
+function DropdownChipRow({
+  label,
+  onClick,
+  selected = false,
+}: {
+  label: string;
+  onClick: () => void;
+  selected?: boolean;
+}) {
+  return (
+    <AdhdChip
+      className="text-left"
+      contentClassName="items-center gap-[3px]"
+      count={selected ? <Check className="h-3.5 w-3.5" /> : undefined}
+      countClassName="ml-[3px] inline-flex items-center justify-center opacity-100"
+      onClick={onClick}
+      selected={selected}
+      toneClassName={selected ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
+    >
+      {label}
+    </AdhdChip>
+  );
+}
+
 function TaskViewsMenu({
   onViewChange,
   view,
@@ -278,20 +321,18 @@ function TaskViewsMenu({
         <ChevronDown className={`h-4 w-4 transition ${isOpen ? "rotate-180" : ""}`} />
       </AdhdChip>
       {isOpen ? (
-        <AdhdDropdownPanel widthClassName="min-w-40">
-          <div className="flex flex-col gap-1">
+        <AdhdDropdownPanel className="px-[2px] py-2" widthClassName="min-w-0">
+          <div className="flex flex-col items-start gap-1">
             {viewOptions.map((option) => (
-              <AdhdChip
+              <DropdownChipRow
                 key={option.value}
                 onClick={() => {
                   onViewChange(option.value);
                   setIsOpen(false);
                 }}
+                label={option.label}
                 selected={view === option.value}
-                toneClassName={view === option.value ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
-              >
-                {option.label}
-              </AdhdChip>
+              />
             ))}
           </div>
         </AdhdDropdownPanel>
@@ -507,26 +548,21 @@ export function TaskOperationsHeader({
                 </AdhdChip>
                 {isListColumnMenuOpen ? (
                   <AdhdDropdownPanel widthClassName="w-72">
-                    <div className="border-b border-[#f0ebfb] px-3 pb-2 dark:border-white/10">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#938ab8] dark:text-white/42">Visible columns</p>
-                      <p className="mt-1 text-sm text-[#7d7597] dark:text-white/55">Status and Task stay pinned. Everything else can be shown or hidden here.</p>
-                    </div>
+                    <DropdownSectionHeader
+                      detail="Status and Task stay pinned. Everything else can be shown or hidden here."
+                      title="Visible columns"
+                    />
                     <div className="mt-2 space-y-1">
                       {listColumnPickerColumns.map((columnId) => {
                         const isVisible = listVisibleColumns.includes(columnId);
 
                         return (
-                          <button
-                            className="flex w-full items-center justify-between rounded-[0.95rem] px-3 py-2 text-sm font-medium text-[#5f6983] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] dark:text-white/70 dark:hover:bg-white/8 dark:hover:text-[#cabfff]"
+                          <DropdownChipRow
                             key={columnId}
                             onClick={() => onToggleListColumn(columnId)}
-                            type="button"
-                          >
-                            <span>{listColumnLabels[columnId]}</span>
-                            <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${isVisible ? "border-[#d8cdfc] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : "border-[#e6e0f5] bg-white text-transparent dark:border-white/12 dark:bg-white/[0.05]"}`}>
-                              <Check className="h-3.5 w-3.5" />
-                            </span>
-                          </button>
+                            label={listColumnLabels[columnId]}
+                            selected={isVisible}
+                          />
                         );
                       })}
                     </div>
@@ -551,10 +587,10 @@ export function TaskOperationsHeader({
                 </AdhdChip>
                 {isKeyboardShortcutsMenuOpen ? (
                   <AdhdDropdownPanel widthClassName="w-72">
-                    <div className="border-b border-[#f0ebfb] px-3 pb-2 dark:border-white/10">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#938ab8] dark:text-white/42">Table controls</p>
-                      <p className="mt-1 text-sm text-[#7d7597] dark:text-white/55">These are the interactions that are actually live on the new table.</p>
-                    </div>
+                    <DropdownSectionHeader
+                      detail="These are the interactions that are actually live on the new table."
+                      title="Table controls"
+                    />
                     <div className="mt-2 space-y-1 px-1">
                       {[
                         { action: "Search tasks", detail: "Use the search bar above" },
@@ -563,9 +599,9 @@ export function TaskOperationsHeader({
                         { action: "Filter a column", detail: "Use the search field or chips in that menu" },
                         { action: "Reset filters", detail: "Use Clear all filters in the table header" },
                       ].map((item) => (
-                        <div className="flex items-start justify-between gap-3 rounded-[0.95rem] px-2 py-2" key={item.action}>
-                          <span className="text-sm font-medium text-[#352e55] dark:text-white/82">{item.action}</span>
-                          <span className="text-right text-sm text-[#7d7597] dark:text-white/55">{item.detail}</span>
+                        <div className="flex items-start justify-between gap-3 rounded-[0.95rem] px-2.5 py-2" key={item.action}>
+                          <span className={MENU_ROW_ACTION_CLASS}>{item.action}</span>
+                          <span className={MENU_ROW_DETAIL_CLASS}>{item.detail}</span>
                         </div>
                       ))}
                     </div>
