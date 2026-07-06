@@ -86,8 +86,11 @@ type FilterRowsProps = {
   matchAny: boolean;
   pinnedCount?: number;
   pinnedFilterActive?: boolean;
+  routineCount?: number;
+  routineFilterActive?: boolean;
   onReset: () => void;
   onTogglePinnedFilter?: () => void;
+  onToggleRoutineFilter?: () => void;
   onToggleDuplicateTitleMode: () => void;
   onToggleEnergy: (energy: TaskEnergy) => void;
   onToggleMatchMode: () => void;
@@ -106,8 +109,11 @@ export function FilterRowsComponent({
   matchAny,
   pinnedCount = 0,
   pinnedFilterActive = false,
+  routineCount = 0,
+  routineFilterActive = false,
   onReset,
   onTogglePinnedFilter,
+  onToggleRoutineFilter,
   onToggleDuplicateTitleMode,
   onToggleEnergy,
   onToggleMatchMode,
@@ -117,7 +123,9 @@ export function FilterRowsComponent({
   selectedStatuses,
   statusCounts,
 }: FilterRowsProps) {
-  const activeFilterCount = selectedStatuses.length + selectedEnergies.length + (duplicateTitleMode ? 1 : 0);
+  const bucketFilterCount = (pinnedFilterActive ? 1 : 0) + (routineFilterActive ? 1 : 0);
+  const activeFilterCount = selectedStatuses.length + selectedEnergies.length + bucketFilterCount + (duplicateTitleMode ? 1 : 0);
+  const searchModeActiveCount = bucketFilterCount + (duplicateTitleMode ? 1 : 0);
 
   return (
     <div className={`${compact ? "space-y-2" : "mt-5"}`}>
@@ -139,6 +147,11 @@ export function FilterRowsComponent({
           {onTogglePinnedFilter ? (
             <FilterChip active={pinnedFilterActive} onClick={onTogglePinnedFilter}>
               Pinned{pinnedCount > 0 ? ` ${pinnedCount}` : ""}
+            </FilterChip>
+          ) : null}
+          {onToggleRoutineFilter ? (
+            <FilterChip active={routineFilterActive} onClick={onToggleRoutineFilter}>
+              Routine{routineCount > 0 ? ` ${routineCount}` : ""}
             </FilterChip>
           ) : null}
           <FilterChip active={duplicateTitleMode} onClick={onToggleDuplicateTitleMode}>Duplicates</FilterChip>
@@ -182,14 +195,19 @@ export function FilterRowsComponent({
             <div>
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Search modes</p>
-                {duplicateTitleMode ? (
-                  <span className="text-xs font-semibold text-[#7c86a2] dark:text-white/50">1 active</span>
+                {searchModeActiveCount > 0 ? (
+                  <span className="text-xs font-semibold text-[#7c86a2] dark:text-white/50">{searchModeActiveCount} active</span>
                 ) : null}
               </div>
               <div className="flex flex-wrap gap-3">
                 {onTogglePinnedFilter ? (
                   <FilterChip active={pinnedFilterActive} onClick={onTogglePinnedFilter}>
                     Pinned{pinnedCount > 0 ? ` ${pinnedCount}` : ""}
+                  </FilterChip>
+                ) : null}
+                {onToggleRoutineFilter ? (
+                  <FilterChip active={routineFilterActive} onClick={onToggleRoutineFilter}>
+                    Routine{routineCount > 0 ? ` ${routineCount}` : ""}
                   </FilterChip>
                 ) : null}
                 <FilterChip active={duplicateTitleMode} onClick={onToggleDuplicateTitleMode}>Duplicates</FilterChip>

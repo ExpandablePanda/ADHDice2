@@ -31,6 +31,13 @@ export function TasksSurfaceSwitch({
         >
           Paths
         </AdhdChip>
+        <AdhdChip
+          aria-pressed={value === "report"}
+          onClick={() => onChange("report")}
+          toneClassName={value === "report" ? TASKS_SURFACE_ACTIVE_CHIP_CLASS : TASKS_SURFACE_INACTIVE_CHIP_CLASS}
+        >
+          Report
+        </AdhdChip>
       </div>
     </div>
   );

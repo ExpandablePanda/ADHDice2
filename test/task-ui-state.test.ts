@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_TASK_UI_STATE, migrateLegacyTaskUiState, normalizePersistedTaskEditorUiState } from "../src/lib/task-ui-state.ts";
+import { DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizePersistedTaskEditorUiState, normalizeTaskWorkspaceTabsState } from "../src/lib/task-ui-state.ts";
 
 test("task ui state migration repairs missing newer columns", () => {
   const migrated = migrateLegacyTaskUiState({
@@ -93,4 +93,77 @@ test("persisted editor state normalization rejects invalid data", () => {
     mode: "edit",
     taskId: "task-123",
   });
+});
+
+test("task workspace migration drops the legacy report tab and preserves report as the active surface", () => {
+  const normalized = normalizeTaskWorkspaceTabsState({
+    activeTabId: "workspace-report",
+    tabs: [
+      {
+        id: "workspace-1",
+        isRailHidden: false,
+        kind: "tasks",
+        label: "Tab 1",
+        taskUiState: {
+          ...DEFAULT_TASK_UI_STATE,
+          tasksSurface: "tasks",
+        },
+      },
+      {
+        id: "workspace-report",
+        isRailHidden: true,
+        kind: "report",
+        label: "Report",
+        taskUiState: {
+          ...DEFAULT_TASK_UI_STATE,
+          tasksSurface: "tasks",
+        },
+      },
+    ],
+  });
+
+  assert.equal(normalized.tabs.length, 1);
+  assert.equal(normalized.activeTabId, "workspace-1");
+  assert.equal(normalized.tabs[0].taskUiState.tasksSurface, "report");
+});
+
+test("task workspace migration rebuilds a task tab when a legacy report tab was the only saved tab", () => {
+  const normalized = normalizeTaskWorkspaceTabsState({
+    activeTabId: "workspace-report",
+    tabs: [
+      {
+        id: "workspace-report",
+        isRailHidden: true,
+        kind: "report",
+        label: "Report",
+        taskUiState: DEFAULT_TASK_UI_STATE,
+      },
+    ],
+  });
+
+  assert.equal(normalized.tabs.length, 1);
+  assert.equal(normalized.activeTabId, DEFAULT_TASK_WORKSPACE_TAB_ID);
+  assert.equal(normalized.tabs[0].taskUiState.tasksSurface, "report");
+});
+
+test("report workspace tabs are identified by their active surface", () => {
+  assert.equal(isReportTaskWorkspaceTab({
+    id: "workspace-report",
+    isRailHidden: false,
+    label: "Report",
+    taskUiState: {
+      ...DEFAULT_TASK_UI_STATE,
+      tasksSurface: "report",
+    },
+  }), true);
+
+  assert.equal(isReportTaskWorkspaceTab({
+    id: "workspace-1",
+    isRailHidden: false,
+    label: "Tab 1",
+    taskUiState: {
+      ...DEFAULT_TASK_UI_STATE,
+      tasksSurface: "tasks",
+    },
+  }), false);
 });

@@ -2,7 +2,7 @@
 
 import { X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { User } from "@supabase/supabase-js";
+import type { RealtimeChannel, User } from "@supabase/supabase-js";
 import { ErrorBoundary } from "../error-boundary";
 import { ModalShell } from "../modal-shell";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
@@ -221,6 +221,14 @@ export function RollPageComponent({
   const rollSettleTimeoutRef = useRef<number | null>(null);
   const rollResolveTimeoutRef = useRef<number | null>(null);
   const autoRollTimeoutRef = useRef<number | null>(null);
+  const applyProfileSnapshot = useCallback((profile: { free_roll_bank?: number | null; points?: number | null; tokens?: number | null } | null) => {
+    if (!profile) {
+      return;
+    }
+    setPoints(profile.points ?? 0);
+    setTokens(profile.tokens ?? 0);
+    setFreeRollBank(profile.free_roll_bank ?? 0);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -236,8 +244,24 @@ export function RollPageComponent({
     };
   }, []);
 
+  async function loadProfileSnapshot() {
+    const { data } = await client
+      .from("adhdice_user_profiles")
+      .select("points, tokens, free_roll_bank")
+      .eq("user_id", currentUser.id)
+      .single();
+    return data ?? null;
+  }
+
   async function persistProfileValues(updates: { free_roll_bank?: number; points?: number; tokens?: number }) {
-    await client.from("adhdice_user_profiles").update(updates).eq("user_id", currentUser.id);
+    const { data } = await client
+      .from("adhdice_user_profiles")
+      .update(updates)
+      .eq("user_id", currentUser.id)
+      .select("points, tokens, free_roll_bank")
+      .single();
+    applyProfileSnapshot(data ?? null);
+    return data ?? null;
   }
 
   async function persistDailyBoardState({
@@ -408,11 +432,7 @@ export function RollPageComponent({
         client.from("adhdice_roll_daily_boards").select("*").eq("user_id", currentUser.id).eq("board_date", today).maybeSingle(),
       ]);
 
-      if (profileRes.data) {
-        setPoints(profileRes.data.points);
-        setTokens(profileRes.data.tokens ?? 0);
-        setFreeRollBank(profileRes.data.free_roll_bank ?? 0);
-      }
+      applyProfileSnapshot(profileRes.data ?? null);
       if (historyRes.data) setHistory(historyRes.data as RollHistoryEntry[]);
       if (vaultRes.data) setVaultPrizes(vaultRes.data as VaultPrize[]);
       if (basketRes.data) setPrizeBasket(basketRes.data as RollPrizeBasketEntry[]);
@@ -461,7 +481,52 @@ export function RollPageComponent({
         });
       }
     })();
-  }, [client, createAndPersistDailyBoard, currentUser.id, masterPrizes]);
+  }, [applyProfileSnapshot, client, createAndPersistDailyBoard, currentUser.id, masterPrizes]);
+
+  useEffect(() => {
+    let isActive = true;
+    let profileChannel: RealtimeChannel | null = null;
+
+    void loadProfileSnapshot().then((profile) => {
+      if (!isActive) {
+        return;
+      }
+      applyProfileSnapshot(profile);
+    });
+
+    profileChannel = client
+      .channel(`adhdice_roll_profile:${currentUser.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "adhdice_user_profiles",
+          filter: `user_id=eq.${currentUser.id}`,
+        },
+        (payload) => {
+          const nextProfile = payload.new as { free_roll_bank?: number | null; points?: number | null; tokens?: number | null } | null;
+          if (nextProfile) {
+            applyProfileSnapshot(nextProfile);
+            return;
+          }
+          void loadProfileSnapshot().then((profile) => {
+            if (!isActive) {
+              return;
+            }
+            applyProfileSnapshot(profile);
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      isActive = false;
+      if (profileChannel) {
+        void client.removeChannel(profileChannel);
+      }
+    };
+  }, [applyProfileSnapshot, client, currentUser.id]);
 
   const smallPrizes = useMemo(
     () => rollRewardPrizes.filter((prize) => prize.tier === "small"),
@@ -565,14 +630,18 @@ export function RollPageComponent({
       return 0;
     }
 
-    if (freeRollBank > 0) {
-      const nextBank = freeRollBank - 1;
+    const latestProfile = await loadProfileSnapshot();
+    const latestPoints = latestProfile?.points ?? points;
+    const latestFreeRollBank = latestProfile?.free_roll_bank ?? freeRollBank;
+
+    if (latestFreeRollBank > 0) {
+      const nextBank = latestFreeRollBank - 1;
       setFreeRollBank(nextBank);
       await persistProfileValues({ free_roll_bank: nextBank });
       return 0;
     }
 
-    const newBalance = Math.max(0, points - cost);
+    const newBalance = Math.max(0, latestPoints - cost);
     setPoints(newBalance);
     onSpendPoints(-cost, "Dice roll");
     return cost;
@@ -685,13 +754,15 @@ export function RollPageComponent({
   }
 
   async function awardFreeRolls(amount: number) {
-    const nextBank = (freeRollBank ?? 0) + amount;
+    const latestProfile = await loadProfileSnapshot();
+    const nextBank = (latestProfile?.free_roll_bank ?? freeRollBank ?? 0) + amount;
     setFreeRollBank(nextBank);
     await persistProfileValues({ free_roll_bank: nextBank });
   }
 
   async function awardTokens(amount: number) {
-    const nextTokens = (tokens ?? 0) + amount;
+    const latestProfile = await loadProfileSnapshot();
+    const nextTokens = (latestProfile?.tokens ?? tokens ?? 0) + amount;
     setTokens(nextTokens);
     await persistProfileValues({ tokens: nextTokens });
   }

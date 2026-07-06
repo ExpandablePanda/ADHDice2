@@ -258,6 +258,25 @@ test("filter state helpers detect active filters and preserve key UI state on re
   assert.equal(reset.view, "matrix");
 });
 
+test("filter state helpers treat routine and pinned as resettable active filters", () => {
+  const routineState = {
+    ...DEFAULT_TASK_UI_STATE,
+    selectedBucket: "routine",
+    view: "list" as const,
+  };
+  const pinnedState = {
+    ...DEFAULT_TASK_UI_STATE,
+    selectedBucket: "pinned",
+  };
+
+  assert.equal(hasActiveTaskFilters(routineState), true);
+  assert.equal(hasActiveTaskFilters(pinnedState), true);
+
+  const resetRoutine = resetTaskFiltersPreservingView(routineState);
+  assert.equal(resetRoutine.selectedBucket, DEFAULT_TASK_UI_STATE.selectedBucket);
+  assert.equal(resetRoutine.view, "list");
+});
+
 test("task selectors build expected filtered collections and list memberships", () => {
   const today = todayISO();
   const openTask = createTask({

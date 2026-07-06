@@ -8,6 +8,7 @@ export type BuiltInTaskListId =
   | "focus"
   | "urgent"
   | "important"
+  | "routine"
   | "quick_wins"
   | "recurring"
   | "waiting"
@@ -143,6 +144,7 @@ export const BUILT_IN_TASK_LIST_IDS: BuiltInTaskListId[] = [
   "focus",
   "urgent",
   "important",
+  "routine",
   "quick_wins",
   "recurring",
   "waiting",
@@ -225,6 +227,18 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       type: "smart",
     },
     {
+      description: "Manual list for repeatable routines you want one tap away.",
+      id: "routine",
+      isDeletable: false,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: "manual",
+      name: "Routine",
+      rules: null,
+      sortOrder: 5,
+      type: "system",
+    },
+    {
       description: "Manual list for short, momentum-building tasks.",
       id: "quick_wins",
       isDeletable: false,
@@ -233,7 +247,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "manual",
       name: "Quick Wins",
       rules: null,
-      sortOrder: 5,
+      sortOrder: 6,
       type: "system",
     },
     {
@@ -247,7 +261,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "repeat", op: "is", value: true } }],
       },
-      sortOrder: 6,
+      sortOrder: 7,
       type: "system",
     },
     {
@@ -261,7 +275,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "status", op: "is", value: "upcoming" } }],
       },
-      sortOrder: 7,
+      sortOrder: 8,
       type: "system",
     },
     {
@@ -273,7 +287,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "manual",
       name: "Later",
       rules: null,
-      sortOrder: 8,
+      sortOrder: 9,
       type: "system",
     },
     {
@@ -290,7 +304,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
           { connector: "or", rule: { field: "status", op: "is", value: "did_my_best" } },
         ],
       },
-      sortOrder: 9,
+      sortOrder: 10,
       type: "system",
     },
     {
@@ -304,7 +318,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "status", op: "is", value: "missed" } }],
       },
-      sortOrder: 10,
+      sortOrder: 11,
       type: "system",
     },
   ];

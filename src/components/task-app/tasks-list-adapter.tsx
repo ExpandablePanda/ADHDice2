@@ -1,5 +1,5 @@
 "use client";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Flame, Footprints, GripVertical, Pin, Skull, Tag, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Flame, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, Trash2, X } from "lucide-react";
 import {
   buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
@@ -26,7 +26,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEve
 import { TasksListViewPanel } from "./tasks-page";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
-import { isTaskOpen } from "@/lib/task-buckets";
+import { isTaskOpen, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
 import { TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES, formatTaskStatusLabel, getTaskStatusCircleHoverInvertedClassName, renderTaskStatusCircle } from "./task-status-ui";
 import {
   formatRepeatFrequencyLabel,
@@ -212,6 +212,7 @@ type TasksTableSourceProps = {
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
+  onOpenTaskInNewTab?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
@@ -429,6 +430,20 @@ export function TasksTableAdapter({
       : null,
     [tableProps.requestedOpenTask, tableProps.rowContext],
   );
+  const allTaskRows = useMemo(
+    () => (tableProps.allTasks ?? [])
+      .filter(isTaskVisibleInPrimaryViews)
+      .map((task) => buildTaskTableRow(task, {
+        focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
+        linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
+        listDefinitions: tableProps.rowContext.listDefinitions,
+        listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
+        subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
+        taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+        todayDateKey: tableProps.rowContext.todayDateKey,
+      })),
+    [tableProps.allTasks, tableProps.rowContext],
+  );
 
   if (tableProps.tasks.length === 0) {
     return (
@@ -450,6 +465,7 @@ export function TasksTableAdapter({
       agentPlanNode={
         <TaskManagementTableV2
           allowInlineInspector
+          allRows={allTaskRows}
           allListOptions={tableProps.allListOptions}
           allNoteOptions={noteOptions}
           allTagOptions={tableProps.allTagOptions}
@@ -480,6 +496,7 @@ export function TasksTableAdapter({
           onOpenNote={tableProps.onOpenNote}
           onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
           onOpenTaskEditor={tableProps.onOpenTaskEditor}
+          onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
           onOpenChildTask={tableProps.onOpenChildTask}
           onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
           onUnlinkTask={tableProps.onUnlinkTask}
@@ -554,6 +571,7 @@ function isStepTitleEditTarget(target: EventTarget | null) {
 }
 
 type TasksListAdapterProps = {
+  allRows?: PrototypeTaskRow[];
   currentListLabel: string;
   filterRowsNode: ReactNode;
   panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode">;
@@ -613,6 +631,10 @@ function buildTaskPrioritySelection(task: Task, focusedTaskIdSet: Set<string>) {
   if (task.is_important) priorities.push("important");
   if (task.is_urgent) priorities.push("urgent");
   return priorities;
+}
+
+function hasTaskManualListMembership(listMemberships: Array<{ id: string }>, listId: string) {
+  return listMemberships.some((membership) => membership.id === listId);
 }
 
 function formatPriorityChipLabel(task: Task, focusedTaskIdSet: Set<string>) {
@@ -2250,6 +2272,7 @@ function NotesQuickPanel({
 }
 
 function TasksSimpleList({
+  allRows,
   currentListLabel,
   filterRowsNode,
   panelProps,
@@ -2370,18 +2393,18 @@ function TasksSimpleList({
     setActiveQuickPanel((current) => current?.taskId === taskId && current.mode === mode ? null : { mode, taskId });
   };
   const rowContextMenuTask = useMemo(
-    () => rowContextMenu ? tasks.find((task) => task.id === rowContextMenu.taskId) ?? null : null,
-    [rowContextMenu, tasks],
+    () => rowContextMenu ? taskById.get(rowContextMenu.taskId) ?? null : null,
+    [rowContextMenu, taskById],
   );
   const rowContextMenuMoveIntoParentOptions = useMemo(
     () => rowContextMenuTask
       ? buildMoveIntoParentOptions({
         childTaskPreviewByParentTaskId: tableProps.childTaskPreviewByParentTaskId ?? {},
         sourceTaskId: rowContextMenuTask.id,
-        tasks: overlayRows,
+        tasks: (allRows?.length ?? 0) > 0 ? allRows ?? [] : overlayRows,
       })
       : [],
-    [overlayRows, rowContextMenuTask, tableProps.childTaskPreviewByParentTaskId],
+    [allRows, overlayRows, rowContextMenuTask, tableProps.childTaskPreviewByParentTaskId],
   );
   useEffect(() => {
     if (parentStepDraftTaskId) {
@@ -2594,6 +2617,7 @@ function TasksSimpleList({
               onOpenNote={tableProps.onOpenNote}
               onOpenTaskActualTime={tableProps.onOpenTaskActualTime}
               onOpenTaskEditor={tableProps.onOpenTaskEditor}
+              onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
               onOpenTaskHistory={tableProps.onOpenTaskHistory}
               onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
               onPauseTaskTimer={tableProps.onPauseTaskTimer}
@@ -2697,6 +2721,7 @@ function TasksSimpleList({
         const panelTitle = task.title;
         const listMemberships = rowContext.listMembershipsByTaskId[task.id] ?? [];
         const isPinned = Boolean(task.pinned_at);
+        const isRoutine = hasTaskManualListMembership(listMemberships, "routine");
         const stepPreviewGroup = tableProps.childTaskPreviewByParentTaskId?.[task.id];
         const effectiveStepPreviewGroup = stepPreviewGroup ?? (parentStepDraftTaskId === task.id
           ? {
@@ -2841,6 +2866,24 @@ function TasksSimpleList({
                         variant="rowToolbar"
                       >
                         <Pin className={`h-3.5 w-3.5 ${isPinned ? "fill-current" : ""}`} />
+                      </AdhdIconButton>
+                    ) : null}
+                    {tableProps.onToggleTaskList ? (
+                      <AdhdIconButton
+                        aria-label={isRoutine ? `Remove ${task.title} from Routine` : `Add ${task.title} to Routine`}
+                        aria-pressed={isRoutine}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          closeQuickPanel();
+                          setRowContextMenu(null);
+                          tableProps.onToggleTaskList?.(task.id, "routine");
+                        }}
+                        selected={isRoutine}
+                        size="sm"
+                        tone="purple"
+                        variant="rowToolbar"
+                      >
+                        <ListTodo className={`h-3.5 w-3.5 ${isRoutine ? "fill-current" : ""}`} />
                       </AdhdIconButton>
                     ) : null}
                     {tableProps.onCreateChildTask ? (
@@ -3207,6 +3250,10 @@ function TasksSimpleList({
                 await tableProps.onMoveTaskIntoParent?.(rowContextMenuTask.id, parentTaskId);
                 setRowContextMenu(null);
               } : undefined}
+              onOpenInNewTab={tableProps.onOpenTaskInNewTab ? () => {
+                tableProps.onOpenTaskInNewTab?.(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
               onOpenDetails={() => {
                 setRowContextMenu(null);
                 closeQuickPanel();
@@ -3283,7 +3330,22 @@ function TasksSimpleList({
 }
 
 export function TasksListAdapter(props: TasksListAdapterProps) {
-  return <TasksSimpleList {...props} />;
+  const allTaskRows = useMemo(
+    () => (props.tableProps.allTasks ?? [])
+      .filter(isTaskVisibleInPrimaryViews)
+      .map((task) => buildTaskTableRow(task, {
+        focusedTaskIdSet: props.tableProps.rowContext.focusedTaskIdSet,
+        linkedNotes: props.tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
+        listDefinitions: props.tableProps.rowContext.listDefinitions,
+        listMemberships: props.tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
+        subtasks: props.tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
+        taskHistory: props.tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+        todayDateKey: props.tableProps.rowContext.todayDateKey,
+      })),
+    [props.tableProps.allTasks, props.tableProps.rowContext],
+  );
+
+  return <TasksSimpleList {...props} allRows={allTaskRows} />;
 }
 
 type DuplicateTaskGroupsAdapterProps = {

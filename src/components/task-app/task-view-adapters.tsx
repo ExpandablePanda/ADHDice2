@@ -566,6 +566,7 @@ export function TaskHistoryModal({
   const selectedEntries = selectedDates.map((dateKey) => historyByDate.get(dateKey) ?? null);
   const selectedIsFuture = selectedDate > today;
   const selectedIsDue = dueDates.has(selectedDate);
+  const selectedIsMissed = selectedEntry?.status === "missed";
   const selectedVirtualState = getTaskHistoryCalendarVirtualState({
     dateKey: selectedDate,
     delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
@@ -575,7 +576,11 @@ export function TaskHistoryModal({
     todayDateKey: today,
   });
   const calendarActionStatuses = getTaskHistoryCalendarActionStatuses(task);
-  const canDelaySelectedDate = !isMultiSelect && selectedDate === today && Boolean(task.due_on) && Boolean(onSetDelayedStatus);
+  const canDelaySelectedDate = !isMultiSelect
+    && !selectedIsFuture
+    && Boolean(task.due_on)
+    && Boolean(onSetDelayedStatus)
+    && (selectedDate === today || selectedIsMissed || selectedVirtualState === "due");
   const visibleCalendarActionStatuses = isMultiSelect
     ? calendarActionStatuses.filter((status) => status !== "complete" && status !== "delayed")
     : calendarActionStatuses;
@@ -864,8 +869,10 @@ export function TaskHistoryModal({
             {showDelayEditor && canDelaySelectedDate && task.due_on ? (
               <div className="mt-4 rounded-[1.25rem] border border-[#efe9ff] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
                 <TaskDelayPicker
-                  anchorDateKey={task.due_on > today ? task.due_on : today}
-                  description="Delay today’s live task without changing past rewards or completion history."
+                  anchorDateKey={selectedDate === today ? (task.due_on > today ? task.due_on : today) : selectedDate}
+                  description={selectedDate === today
+                    ? "Delay today’s live task without changing past rewards or completion history."
+                    : "Correct this saved occurrence to Delayed using the app’s existing history semantics without double-counting rewards."}
                   inputClassName="h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]"
                   onCancel={() => setShowDelayEditor(false)}
                   onSave={(nextDueOn) => handleSaveDelayedStatus(nextDueOn)}

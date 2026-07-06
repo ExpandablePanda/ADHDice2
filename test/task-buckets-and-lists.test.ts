@@ -91,6 +91,15 @@ test("task list evaluation honors manual memberships and date-added rules", () =
   });
 });
 
+test("built-in task lists include Routine as a persisted manual system list", () => {
+  const routineList = getBuiltInTaskLists().find((list) => list.id === "routine") ?? null;
+
+  assert.ok(routineList);
+  assert.equal(routineList?.membershipMode, "manual");
+  assert.equal(routineList?.type, "system");
+  assert.equal(routineList?.name, "Routine");
+});
+
 test("inbox saved due-empty rule constrains both bulk and direct membership checks", () => {
   const datedTask = createTask({
     created_at: "2026-06-24T09:00:00.000Z",

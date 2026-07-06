@@ -16,6 +16,7 @@ import {
   Flag,
   GripVertical,
   Link2,
+  ListTodo,
   ExternalLink,
   MoveLeft,
   Pin,
@@ -359,6 +360,7 @@ type TaskRowContextMenuProps = {
   onDuplicateTask?: () => void;
   onEditTask?: () => void;
   onMoveIntoParent?: (parentTaskId: string) => void | Promise<void>;
+  onOpenInNewTab?: () => void;
   onOpenDetails?: (sourceElement?: HTMLElement | null) => void;
   onOpenHistory?: () => void;
   onOpenQuickEdit?: (mode: TaskRowContextMenuQuickEditMode, sourceElement?: HTMLElement | null) => void;
@@ -387,6 +389,7 @@ export function TaskRowContextMenu({
   onDuplicateTask,
   onEditTask,
   onMoveIntoParent,
+  onOpenInNewTab,
   onOpenDetails,
   onOpenHistory,
   onOpenQuickEdit,
@@ -442,7 +445,7 @@ export function TaskRowContextMenu({
               type="text"
               value={parentSearch}
             />
-            <div className="max-h-60 space-y-1 overflow-y-auto pr-1">
+            <div className="adhdice-scrollbar max-h-60 space-y-1 overflow-y-auto pb-1 pr-1 overscroll-contain">
               {filteredMoveIntoParentOptions.map((option) => (
                 <TaskTableChipButton
                   className="w-full justify-between gap-2"
@@ -479,6 +482,15 @@ export function TaskRowContextMenu({
               onClick={(event) => onOpenDetails?.(event.currentTarget)}
             >
               <span>Open details</span>
+            </TaskTableChipButton>
+          ) : null}
+          {onOpenInNewTab ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onOpenInNewTab()}
+            >
+              <span>Open in new tab</span>
+              <ExternalLink className="h-3.5 w-3.5" />
             </TaskTableChipButton>
           ) : null}
           {onEditTask ? (
@@ -926,10 +938,10 @@ export function buildMoveIntoParentOptions({
     }
   }
 
-  const options: MoveIntoParentOption[] = [];
+  const optionsById = new Map<string, MoveIntoParentOption>();
   for (const task of tasks) {
     if (!excludedTaskIds.has(task.id)) {
-      options.push({ id: task.id, label: task.title || "Untitled task" });
+      optionsById.set(task.id, { id: task.id, label: task.title || "Untitled task" });
     }
   }
 
@@ -938,13 +950,13 @@ export function buildMoveIntoParentOptions({
       continue;
     }
     const depthLabel = formatChildTaskPreviewDepthLabel(preview.depth);
-    options.push({
+    optionsById.set(preview.id, {
       id: preview.id,
       label: `${preview.title || "Untitled task"} · ${depthLabel}`,
     });
   }
 
-  return options.sort((left, right) => left.label.localeCompare(right.label));
+  return Array.from(optionsById.values()).sort((left, right) => left.label.localeCompare(right.label));
 }
 
 function isKeyboardEventFromEditableTarget(
@@ -978,6 +990,7 @@ function isKeyboardEventFromEditableTarget(
 
 type TaskManagementTableV2Props = {
   allowInlineInspector?: boolean;
+  allRows?: PrototypeTaskRow[];
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
@@ -1010,6 +1023,7 @@ type TaskManagementTableV2Props = {
   onOpenNote?: (noteId: string) => void;
   onOpenTaskActualTime?: (taskId: string, options?: { durationSeconds?: number; title?: string }) => void;
   onOpenTaskEditor?: (taskId: string) => void;
+  onOpenTaskInNewTab?: (taskId: string) => void;
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
@@ -2168,6 +2182,7 @@ function sortRows(
 
 export function TaskManagementTableV2({
   allowInlineInspector = false,
+  allRows,
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
@@ -2196,6 +2211,7 @@ export function TaskManagementTableV2({
   onOpenNote,
   onOpenTaskActualTime,
   onOpenTaskEditor,
+  onOpenTaskInNewTab,
   onOpenChildTask,
   onMoveTaskIntoParent,
   onUnlinkTask,
@@ -2793,10 +2809,10 @@ export function TaskManagementTableV2({
       ? buildMoveIntoParentOptions({
         childTaskPreviewByParentTaskId,
         sourceTaskId: rowContextMenuTask.id,
-        tasks,
+        tasks: allRows && allRows.length > 0 ? allRows : tasks,
       })
       : [],
-    [childTaskPreviewByParentTaskId, rowContextMenuTask, tasks],
+    [allRows, childTaskPreviewByParentTaskId, rowContextMenuTask, tasks],
   );
   const shouldAnimateRows = !shouldReduceMotion && effectiveDisplayedTasks.length <= 80;
   const tableRowVariants: Variants | undefined = shouldAnimateRows
@@ -6051,6 +6067,7 @@ export function TaskManagementTableV2({
       const isRenamingTitle = editingTaskTitleId === task.id;
       const titleDraft = titleDraftsRef.current[task.id] ?? task.title;
       const isPinned = Boolean(task.pinnedAt);
+      const isRoutine = taskHasList(task, "Routine");
       return (
         <div className="relative min-w-0 w-full pl-[5px]">
           <span
@@ -6135,6 +6152,21 @@ export function TaskManagementTableV2({
                   type="button"
                 >
                   <Pin className={`h-3.5 w-3.5 ${isPinned ? "fill-current" : ""}`} />
+                </button>
+              ) : null}
+              {onToggleTaskList ? (
+                <button
+                  aria-label={isRoutine ? "Remove task from Routine" : "Add task to Routine"}
+                  aria-pressed={isRoutine}
+                  className={isRoutine ? `${ROW_ACTION_ICON_BUTTON_CLASS} border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]` : ROW_ACTION_ICON_BUTTON_CLASS}
+                  onPointerDown={stopRowActionPointerEvent}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleTaskList(task.id, "routine");
+                  }}
+                  type="button"
+                >
+                  <ListTodo className={`h-3.5 w-3.5 ${isRoutine ? "fill-current" : ""}`} />
                 </button>
               ) : null}
               {onCreateChildTask ? (
@@ -7946,6 +7978,10 @@ export function TaskManagementTableV2({
               onMoveIntoParent={onMoveTaskIntoParent ? async (parentTaskId) => {
                 setRowContextMenu(null);
                 await onMoveTaskIntoParent(rowContextMenuTask.id, parentTaskId);
+              } : undefined}
+              onOpenInNewTab={onOpenTaskInNewTab ? () => {
+                setRowContextMenu(null);
+                onOpenTaskInNewTab(rowContextMenuTask.id);
               } : undefined}
               onOpenDetails={(sourceElement) => openTaskDetailsFromContextMenu(rowContextMenuTask.id, sourceElement)}
               onOpenHistory={onOpenTaskHistory ? () => {

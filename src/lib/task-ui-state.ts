@@ -3,7 +3,7 @@ import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 
 export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "grid";
-export type TasksSurface = "tasks" | "paths";
+export type TasksSurface = "tasks" | "paths" | "report";
 export type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
 export type AppPage =
   | "Home"
@@ -62,7 +62,6 @@ export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
 export const TASK_UI_SCHEMA_VERSION = 7;
 export const DEFAULT_TASK_WORKSPACE_TAB_ID = "workspace-1";
-export const REPORT_TASK_WORKSPACE_TAB_ID = "workspace-report";
 export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
@@ -113,13 +112,6 @@ export const DEFAULT_TASK_WORKSPACE_TABS_STATE: TaskWorkspaceTabsState = {
       isRailHidden: false,
       kind: "tasks",
       label: "Tab 1",
-      taskUiState: DEFAULT_TASK_UI_STATE,
-    },
-    {
-      id: REPORT_TASK_WORKSPACE_TAB_ID,
-      isRailHidden: true,
-      kind: "report",
-      label: "Report",
       taskUiState: DEFAULT_TASK_UI_STATE,
     },
   ],
@@ -220,15 +212,30 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     duplicateTitleMode: state.duplicateTitleMode === true,
     selectedBucket: nextBucket,
     statusFilters: Array.isArray(state.statusFilters) ? state.statusFilters : [],
-    tasksSurface: state.tasksSurface === "paths" ? "paths" : "tasks",
+    tasksSurface: state.tasksSurface === "paths" || state.tasksSurface === "report"
+      ? state.tasksSurface
+      : "tasks",
     view: nextView,
     uiStateVersion: TASK_UI_SCHEMA_VERSION,
     visibleColumnsByView: nextVisibleColumnsByView,
   };
 }
 
-function normalizeTaskWorkspaceTab(value: unknown, index: number): TaskWorkspaceTab | null {
+export function isReportTaskWorkspaceTab(tab: Pick<TaskWorkspaceTab, "taskUiState">) {
+  return tab.taskUiState.tasksSurface === "report";
+}
+
+function isLegacyReportTaskWorkspaceTab(value: unknown) {
   if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<TaskWorkspaceTab>;
+  return candidate.kind === "report" || candidate.id === "workspace-report";
+}
+
+function normalizeTaskWorkspaceTab(value: unknown, index: number): TaskWorkspaceTab | null {
+  if (!value || typeof value !== "object" || isLegacyReportTaskWorkspaceTab(value)) {
     return null;
   }
 
@@ -243,8 +250,8 @@ function normalizeTaskWorkspaceTab(value: unknown, index: number): TaskWorkspace
   return {
     id,
     isRailHidden: candidate.isRailHidden === true,
-    kind: candidate.kind === "report" || id === REPORT_TASK_WORKSPACE_TAB_ID ? "report" : "tasks",
-    label: candidate.kind === "report" || id === REPORT_TASK_WORKSPACE_TAB_ID ? "Report" : label,
+    kind: "tasks",
+    label,
     taskUiState: migrateLegacyTaskUiState(candidate.taskUiState ?? {}),
   };
 }
@@ -267,34 +274,46 @@ export function normalizeTaskWorkspaceTabsState(value: unknown): TaskWorkspaceTa
           label: "Tab 1",
           taskUiState: migratedTaskUiState,
         },
+      ],
+      uiStateVersion: TASK_UI_SCHEMA_VERSION,
+    };
+  }
+
+  const legacyReportTabWasActive = typeof candidate.activeTabId === "string"
+    && candidate.tabs.some((tab) => {
+      if (!isLegacyReportTaskWorkspaceTab(tab) || !tab || typeof tab !== "object") {
+        return false;
+      }
+      return (tab as Partial<TaskWorkspaceTab>).id === candidate.activeTabId;
+    });
+
+  const tabs = candidate.tabs
+    .map((tab, index) => normalizeTaskWorkspaceTab(tab, index))
+    .filter((tab): tab is TaskWorkspaceTab => Boolean(tab));
+
+  if (tabs.length === 0) {
+    return {
+      activeTabId: DEFAULT_TASK_WORKSPACE_TAB_ID,
+      tabs: [
         {
-          id: REPORT_TASK_WORKSPACE_TAB_ID,
-          isRailHidden: true,
-          kind: "report",
-          label: "Report",
-          taskUiState: DEFAULT_TASK_UI_STATE,
+          ...DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0],
+          taskUiState: legacyReportTabWasActive
+            ? { ...DEFAULT_TASK_UI_STATE, tasksSurface: "report" }
+            : DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0].taskUiState,
         },
       ],
       uiStateVersion: TASK_UI_SCHEMA_VERSION,
     };
   }
 
-  const tabs = candidate.tabs
-    .map((tab, index) => normalizeTaskWorkspaceTab(tab, index))
-    .filter((tab): tab is TaskWorkspaceTab => Boolean(tab));
-
-  if (!tabs.some((tab) => tab.kind === "report" || tab.id === REPORT_TASK_WORKSPACE_TAB_ID)) {
-    tabs.push({
-      id: REPORT_TASK_WORKSPACE_TAB_ID,
-      isRailHidden: true,
-      kind: "report",
-      label: "Report",
-      taskUiState: DEFAULT_TASK_UI_STATE,
-    });
-  }
-
-  if (tabs.length === 0) {
-    return DEFAULT_TASK_WORKSPACE_TABS_STATE;
+  if (legacyReportTabWasActive) {
+    tabs[0] = {
+      ...tabs[0],
+      taskUiState: {
+        ...tabs[0].taskUiState,
+        tasksSurface: "report",
+      },
+    };
   }
 
   const activeTabId = typeof candidate.activeTabId === "string" && tabs.some((tab) => tab.id === candidate.activeTabId)

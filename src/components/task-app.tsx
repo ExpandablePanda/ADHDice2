@@ -233,6 +233,7 @@ import { mapTaskListManualMembershipRow, mapTaskListRow } from "@/lib/task-list-
 import {
   DEFAULT_TASK_UI_STATE,
   getUserScopedStorageKey,
+  isReportTaskWorkspaceTab,
   parseStoredJson,
   TASK_FOCUS_STORAGE_KEY,
   type AppPage,
@@ -473,9 +474,10 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.20.11";
+const APP_VERSION = "6.21.4";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
+const OPEN_TASK_QUERY_PARAM = "openTask";
 const APP_UPDATE_ATTEMPT_STORAGE_KEY = "adhdice:app-update-attempt";
 const APP_UPDATE_ATTEMPT_TTL_MS = 45_000;
 
@@ -831,6 +833,7 @@ const TASK_BUCKET_LABELS: Record<TaskBucket, string> = {
 function isTaskPinned(task: Task) {
   return Boolean(task.pinned_at);
 }
+
 const TASK_LIST_RULE_FIELD_OPTIONS: Array<{ label: string; value: TaskListRuleField }> = [
   { label: "Status", value: "status" },
   { label: "List", value: "list" },
@@ -1841,6 +1844,30 @@ export function TaskApp() {
   }, [dayStartTime, userTimeZone]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || isRestoringPersistedUiState) {
+      return;
+    }
+    const requestedTaskId = new URLSearchParams(window.location.search).get(OPEN_TASK_QUERY_PARAM);
+    if (!requestedTaskId) {
+      return;
+    }
+    const nextTaskWorkspaceTabId = taskWorkspaceTabsState.tabs.find((tab) => !isReportTaskWorkspaceTab(tab))?.id
+      ?? taskWorkspaceTabsState.activeTabId;
+    setActivePage("Tasks");
+    setActiveTaskWorkspaceTab(nextTaskWorkspaceTabId);
+    setTaskUiState((current) => (
+      current.tasksSurface === "tasks"
+        ? current
+        : { ...current, tasksSurface: "tasks" }
+    ));
+    setSuppressDetachedListNoticeTaskId(null);
+    setRequestedListOverlayTaskId(requestedTaskId);
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete(OPEN_TASK_QUERY_PARAM);
+    window.history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+  }, [isRestoringPersistedUiState, setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
+
+  useEffect(() => {
     focusAlarmAudioRef.current = new Audio(withBasePath("/calm-alarm.wav"));
     return () => {
       focusAlarmAudioRef.current?.pause();
@@ -2421,6 +2448,12 @@ export function TaskApp() {
     () => tasks.filter((task) => isTaskPinned(task) && task.status !== "archived" && task.status !== "trashed").length,
     [tasks],
   );
+  const visibleRoutineTaskCount = useMemo(
+    () => filteredTasksSorted.filter((task) =>
+      (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"),
+    ).length,
+    [filteredTasksSorted, taskListMembershipsByTaskId],
+  );
   const listVisibleColumns = taskUiState.visibleColumnsByView.table;
   const listSelectionResetKey = JSON.stringify({
     duplicateTitleMode: duplicateTitleModeActive,
@@ -2955,6 +2988,65 @@ export function TaskApp() {
     focusedTaskIdsRef.current = nextFocusedTaskIds;
     void saveFocusSelection(nextFocusedTaskIds);
   }, [saveFocusSelection, updateTask]);
+
+  const openTaskInNewWorkspaceTab = useCallback((taskId: string) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    const nextLabel = task?.title.trim() ? task.title.trim() : "Task";
+    const nextTaskUiState = {
+      ...activeTaskWorkspaceTab.taskUiState,
+      tasksSurface: "tasks" as const,
+      view: taskUiState.view === "list" ? "list" : "table",
+    };
+
+    setActivePage("Tasks");
+    setSuppressDetachedListNoticeTaskId(null);
+    setRequestedListOverlayTaskId(taskId);
+    createTaskWorkspaceTab({
+      isRailHidden: activeTaskWorkspaceTab.isRailHidden,
+      label: nextLabel,
+      taskUiState: nextTaskUiState,
+    });
+  }, [activeTaskWorkspaceTab.isRailHidden, activeTaskWorkspaceTab.taskUiState, createTaskWorkspaceTab, setActivePage, taskUiState.view, tasks]);
+
+  const handleTaskWorkspaceSurfaceChange = useCallback((surface: TaskUiState["tasksSurface"]) => {
+    if (surface === "report") {
+      const existingReportTab = taskWorkspaceTabsState.tabs.find((tab) => isReportTaskWorkspaceTab(tab));
+      if (existingReportTab) {
+        setActiveTaskWorkspaceTab(existingReportTab.id);
+        return;
+      }
+
+      createTaskWorkspaceTab({
+        isRailHidden: activeTaskWorkspaceTab.isRailHidden,
+        label: "Report",
+        taskUiState: {
+          ...activeTaskWorkspaceTab.taskUiState,
+          tasksSurface: "report",
+        },
+      });
+      return;
+    }
+
+    if (isReportTaskWorkspaceTab(activeTaskWorkspaceTab)) {
+      const existingNonReportTab = taskWorkspaceTabsState.tabs.find((tab) => !isReportTaskWorkspaceTab(tab));
+      if (existingNonReportTab) {
+        setActiveTaskWorkspaceTab(existingNonReportTab.id);
+        setTaskUiState((prev) => ({ ...prev, tasksSurface: surface }));
+        return;
+      }
+
+      createTaskWorkspaceTab({
+        isRailHidden: activeTaskWorkspaceTab.isRailHidden,
+        taskUiState: {
+          ...activeTaskWorkspaceTab.taskUiState,
+          tasksSurface: surface,
+        },
+      });
+      return;
+    }
+
+    setTaskUiState((prev) => ({ ...prev, tasksSurface: surface }));
+  }, [activeTaskWorkspaceTab, createTaskWorkspaceTab, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.tabs]);
 
   const openBlankTaskEditor = useCallback(() => {
     setSuppressDetachedListNoticeTaskId(null);
@@ -3701,8 +3793,11 @@ export function TaskApp() {
       matchAny={taskUiState.matchAny}
       pinnedCount={visiblePinnedTaskCount}
       pinnedFilterActive={taskUiState.selectedBucket === "pinned"}
+      routineCount={visibleRoutineTaskCount}
+      routineFilterActive={taskUiState.selectedBucket === "routine"}
       onReset={() => setTaskUiState((prev) => resetTaskFiltersPreservingView(prev))}
       onTogglePinnedFilter={togglePinnedFilter}
+      onToggleRoutineFilter={toggleRoutineFilter}
       onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
       onToggleEnergy={(energy) =>
         setTaskUiState((prev) => ({
@@ -4449,15 +4544,17 @@ export function TaskApp() {
       if (!taskHistoryModalTaskId) {
         return;
       }
-      const didDelay = await delayTaskToDate(taskHistoryModalTaskId, nextDueOn);
-      if (!didDelay) {
-        return;
+      if (entryDate === todayKey) {
+        const didDelay = await delayTaskToDate(taskHistoryModalTaskId, nextDueOn);
+        if (!didDelay) {
+          return;
+        }
       }
       await syncTaskHistoryEntries(
         taskHistoryModalTaskId,
         "delayed",
         [entryDate],
-        { syncLiveTask: false },
+        { syncLiveTask: true },
       );
     },
     task: taskHistoryModalTask,
@@ -4473,6 +4570,14 @@ export function TaskApp() {
         : "pinned",
     }));
   }
+  function toggleRoutineFilter() {
+    setTaskUiState((prev) => ({
+      ...prev,
+      selectedBucket: prev.selectedBucket === "routine"
+        ? (lastNonPinnedBucketRef.current === "routine" ? DEFAULT_TASK_UI_STATE.selectedBucket : lastNonPinnedBucketRef.current)
+        : "routine",
+    }));
+  }
   const pinnedEmptyStateMessage = taskUiState.selectedBucket === "pinned"
     ? (allOpenPinnedTaskCount === 0 ? "No pinned tasks yet." : "No pinned tasks match this view right now.")
     : "No tasks match this view right now.";
@@ -4486,8 +4591,11 @@ export function TaskApp() {
         matchAny={taskUiState.matchAny}
         pinnedCount={visiblePinnedTaskCount}
         pinnedFilterActive={taskUiState.selectedBucket === "pinned"}
+        routineCount={visibleRoutineTaskCount}
+        routineFilterActive={taskUiState.selectedBucket === "routine"}
         onReset={() => setTaskUiState((prev) => resetTaskFiltersPreservingView(prev))}
         onTogglePinnedFilter={togglePinnedFilter}
+        onToggleRoutineFilter={toggleRoutineFilter}
         onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
         onToggleEnergy={(energy) =>
           setTaskUiState((prev) => ({
@@ -4850,7 +4958,6 @@ export function TaskApp() {
         ) : activePage === "Tasks" ? (
           <TasksWorkspace
             activeTabId={taskWorkspaceTabsState.activeTabId}
-            activeTabKind={activeTaskWorkspaceTab.kind}
             flows={(
               <TaskEditFlows
                 actualTimeEntryFlow={actualTimeEntryFlow}
@@ -4884,11 +4991,14 @@ export function TaskApp() {
             )}
             onAddTab={() => createTaskWorkspaceTab({
               isRailHidden: false,
-              taskUiState: taskUiState,
+              taskUiState: {
+                ...taskUiState,
+                tasksSurface: "tasks",
+              },
             })}
             onCloseTab={closeTaskWorkspaceTab}
             onRenameTab={handleRenameTaskWorkspaceTab}
-            onSurfaceChange={(surface) => setTaskUiState((prev) => ({ ...prev, tasksSurface: surface }))}
+            onSurfaceChange={handleTaskWorkspaceSurfaceChange}
             onTabChange={setActiveTaskWorkspaceTab}
             operationsHeaderProps={taskOperationsHeaderProps}
             pathsWorkspacePanel={(
@@ -4905,22 +5015,23 @@ export function TaskApp() {
                 userId={currentUserId}
               />
             )}
+            reportWorkspacePanel={(
+              <TaskReportWorkspace
+                appVersion={APP_VERSION}
+                availableTaskLists={availableTaskLists}
+                focusCategories={focusCategories}
+                focusHistory={focusHistory}
+                taskHistory={taskHistory}
+                tasks={tasks}
+                todayDateKey={todayKey}
+                userId={currentUserId}
+              />
+            )}
             surface={taskUiState.tasksSurface}
             tabs={taskWorkspaceTabsState.tabs}
             view={duplicateTitleModeActive ? "table" : taskUiState.view}
             tableViewPanel={(
-              activeTaskWorkspaceTab.kind === "report" ? (
-                <TaskReportWorkspace
-                  appVersion={APP_VERSION}
-                  availableTaskLists={availableTaskLists}
-                  focusCategories={focusCategories}
-                  focusHistory={focusHistory}
-                  taskHistory={taskHistory}
-                  tasks={tasks}
-                  todayDateKey={todayKey}
-                  userId={currentUserId}
-                />
-              ) : duplicateTitleModeActive ? (
+              duplicateTitleModeActive ? (
                 <DuplicateTaskGroupsAdapter
                   duplicateGroups={duplicateTitleGroups}
                   filterRowsNode={taskFilterRowsNode}
@@ -4990,6 +5101,7 @@ export function TaskApp() {
                   taskActualTimeEntriesByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: openTaskEditorFromId,
+                  onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
                   onOpenChildTask: openChildTaskFromPreview,
                   onMoveTaskIntoParent: moveTaskIntoParent,
                   onReorderChildTask: (taskId, direction) => { void reorderChildTask(taskId, direction); },
@@ -5139,6 +5251,7 @@ export function TaskApp() {
                   taskActualTimeEntriesByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: (taskId) => setRequestedListOverlayTaskId(taskId),
+                  onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
                   onOpenChildTask: openChildTaskFromPreview,
                   onMoveTaskIntoParent: moveTaskIntoParent,
                   onReorderChildTask: (taskId, direction) => { void reorderChildTask(taskId, direction); },

@@ -466,7 +466,7 @@ export function useTaskUiState<TTaskGridItem>({
       const nextTab: TaskWorkspaceTab = {
         id,
         isRailHidden: seedState?.isRailHidden === true,
-        kind: seedState?.kind === "report" ? "report" : "tasks",
+        kind: "tasks",
         label: seedState?.label?.trim() ? seedState.label.trim() : `Tab ${nextIndex}`,
         taskUiState: seedState?.taskUiState ?? activeTaskWorkspaceTab.taskUiState,
       };
@@ -481,7 +481,7 @@ export function useTaskUiState<TTaskGridItem>({
   const closeTaskWorkspaceTab = useCallback((tabId: string) => {
     setTaskWorkspaceTabsState((current) => {
       const targetTab = current.tabs.find((tab) => tab.id === tabId);
-      if (current.tabs.length <= 1 || !targetTab || targetTab.kind === "report") {
+      if (current.tabs.length <= 1 || !targetTab) {
         return current;
       }
 
@@ -506,7 +506,7 @@ export function useTaskUiState<TTaskGridItem>({
     setTaskWorkspaceTabsState((current) => ({
       ...current,
       tabs: current.tabs.map((tab) => (
-        tab.id === tabId && tab.kind !== "report"
+        tab.id === tabId
           ? { ...tab, label: trimmedLabel }
           : tab
       )),

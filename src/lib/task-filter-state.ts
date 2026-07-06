@@ -18,19 +18,24 @@ export const TASK_FILTER_STATUS_OPTIONS: TaskStatus[] = [
   "trashed",
 ];
 
+const FILTER_BUCKET_IDS = new Set(["pinned", "routine"]);
+
 export function hasActiveTaskFilters(state: TaskUiState) {
   return state.duplicateTitleMode
     || state.search.trim().length > 0
     || state.quickFilters.length > 0
     || state.statusFilters.length > 0
     || state.energyFilters.length > 0
+    || FILTER_BUCKET_IDS.has(state.selectedBucket)
     || state.matchAny !== DEFAULT_TASK_UI_STATE.matchAny;
 }
 
 export function resetTaskFiltersPreservingView(state: TaskUiState): TaskUiState {
   return {
     ...DEFAULT_TASK_UI_STATE,
-    selectedBucket: state.selectedBucket,
+    selectedBucket: FILTER_BUCKET_IDS.has(state.selectedBucket)
+      ? DEFAULT_TASK_UI_STATE.selectedBucket
+      : state.selectedBucket,
     tasksSurface: state.tasksSurface,
     view: state.view,
     visibleColumnsByView: state.visibleColumnsByView,

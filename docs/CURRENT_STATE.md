@@ -5,13 +5,19 @@ Last reviewed: 2026-07-01
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.20.11`.
-- Current release group: `6.20.x` mobile task-edit/report/tag-actions completion pass.
+- Current working app version: `6.21.4`.
+- Current release group: `6.21.x` integrated task-move/routine/rewards/history correction pass.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 6.21 Checkpoint
+- `6.21.4` fixes the `6.21.3` Report navigation regression by keeping the internal task workspace-tab strip visible while Report is active, treating Report as a focusable internal workspace tab from the existing `Tasks | Paths | Report` control, and preserving existing task tabs plus `Open in New Tab` behavior. Priority `1–5`, dice/reward logic, History Delay, schema changes, and unrelated UI behavior remain unchanged.
+- `6.21.3` fixes the List View `allTaskRows` runtime regression by reusing the existing full-row source in the live `TasksSimpleList` move-into-parent path, and moves `Report` out of the internal workspace-tab strip into the top-level `Tasks | Paths | Report` segmented toggle while preserving the existing report workspace renderer, task tabs, and `?openTask=` task reveal behavior. Priority `1–5`, dice/reward logic, History Delay, schema changes, and unrelated UI behavior remain unchanged.
+- `6.21.2` fixes three narrow QA regressions without expanding scope: context-menu `Open in new tab` now creates and focuses an internal Tasks workspace tab labeled for the chosen task instead of opening a browser tab, Routine row-toolbar icons now keep the same filled active treatment as Pinned when the task belongs to Routine, and the Move Into Parent chooser now uses the hidden-scrollbar menu scroller so parent chips stay fully visible and clickable. Priority `1–5`, dice/reward logic, History Delay, schema changes, and unrelated UI behavior remain unchanged.
+- `6.21.1` fixes the targeted `6.21.0` regressions without expanding scope: `?openTask=` deep links now force the Tasks page onto a task-rendering workspace instead of leaving the persisted Report tab active, shared filter helpers now treat Routine and Pinned as active resettable filters and clear those filter buckets back to the default task bucket on Reset, and Move Into Parent options are deduped by task id before rendering so duplicate parent rows stop triggering React key warnings. Priority `1–5`, dice/reward logic, schema changes, and unrelated UI behavior remain unchanged.
 
 ## 6.20 Checkpoint
 - `6.20.11` removes the hard six-chip row grouping from the browser Table View inline saved-tags section so tag chips now keep flowing across the available width and only wrap when the next chip truly no longer fits; mobile tag-actions, search/add behavior, and unrelated List/Edit layouts remain unchanged.
