@@ -10,6 +10,7 @@ import {
   type TaskBucketContext,
 } from "@/lib/task-buckets";
 import type { TaskQuickFilter } from "@/lib/task-ui-state";
+import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
 import { todayISO } from "@/lib/utils";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { getLatestTaskHistoryEntryOnDate, isTaskHistoryStatus } from "@/lib/task-history";
@@ -28,6 +29,53 @@ function daysUntilFromDate(date: string | null, todayDateKey: string) {
   const start = new Date(`${todayDateKey}T00:00:00`);
   const end = new Date(`${date}T00:00:00`);
   return Math.round((end.getTime() - start.getTime()) / 86_400_000);
+}
+
+function getDueDateBucketForDate(date: string | null, todayDateKey: string): TaskDueDateBucket {
+  const difference = daysUntilFromDate(date, todayDateKey);
+
+  if (difference === null) {
+    return "none";
+  }
+
+  if (difference < 0) {
+    return "overdue";
+  }
+
+  if (difference === 0) {
+    return "today";
+  }
+
+  if (difference <= 7) {
+    return "upcoming";
+  }
+
+  return "not_due";
+}
+
+export function normalizeOpenTaskStatusForDueDate(
+  task: Pick<Task, "due_on" | "status">,
+  todayDateKey: string = todayISO(),
+): TaskStatus {
+  if (task.status === "delayed") {
+    const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
+    return dueBucket === "upcoming" || dueBucket === "not_due" ? "delayed" : "pending";
+  }
+
+  if (task.status !== "pending" && task.status !== "upcoming" && task.status !== "not_due") {
+    return task.status;
+  }
+
+  const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
+  if (dueBucket === "upcoming") {
+    return "upcoming";
+  }
+
+  if (dueBucket === "not_due") {
+    return "not_due";
+  }
+
+  return "pending";
 }
 
 export function isDueToday(date: string | null) {
@@ -68,16 +116,7 @@ export function getTaskDueDateBucket(task: Pick<Task, "due_on" | "status">): Tas
 
 function getTaskDisplayStatusForDate(task: Task, todayDateKey: string) {
   if (task.status === "delayed") {
-    const difference = daysUntilFromDate(task.due_on, todayDateKey);
-    const dueBucket: TaskDueDateBucket = difference === null
-      ? "none"
-      : difference < 0
-        ? "overdue"
-        : difference === 0
-          ? "today"
-          : difference <= 7
-            ? "upcoming"
-            : "not_due";
+    const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
 
     if (dueBucket === "upcoming" || dueBucket === "not_due") {
       return "delayed";
@@ -94,16 +133,7 @@ function getTaskDisplayStatusForDate(task: Task, todayDateKey: string) {
     return task.status;
   }
 
-  const difference = daysUntilFromDate(task.due_on, todayDateKey);
-  const dueBucket: TaskDueDateBucket = difference === null
-    ? "none"
-    : difference < 0
-      ? "overdue"
-      : difference === 0
-        ? "today"
-        : difference <= 7
-          ? "upcoming"
-          : "not_due";
+  const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
   if (dueBucket === "upcoming") {
     return "upcoming";
   }
@@ -262,7 +292,8 @@ function buildTaskCockpitSortKey(task: Task, context: TaskBucketContext, todayKe
   const isFocused = context.focusedTaskIds.has(task.id);
   const isDueTodayTask = task.due_on === todayKey;
   const isOverdueTask = task.due_on !== null && task.due_on < todayKey;
-  const isUrgentTask = isOpen && task.is_urgent;
+  const priorityLevel = getTaskPriorityLevel(task);
+  const isUrgentTask = isOpen && priorityLevel === 5;
   const isQuickWinTask = isOpen
     && task.energy === "low"
     && (task.estimated_minutes === null || task.estimated_minutes <= 20);
@@ -281,7 +312,7 @@ function buildTaskCockpitSortKey(task: Task, context: TaskBucketContext, todayKe
   if (isDueTodayTask) score -= 4;
   if (isFocused) score -= 3;
   if (isUrgentTask) score -= 2;
-  if (task.priority === "high") score -= 1;
+  if (priorityLevel >= 4) score -= 1;
   if (isQuickWinTask) score -= 1;
 
   return {
@@ -342,8 +373,7 @@ function getTaskCockpitBucket(
 
   if (state.isOpen
     && !task.due_on
-    && !task.is_urgent
-    && !task.is_important
+    && getTaskPriorityLevel(task) < 4
     && task.repeat_frequency === "none"
     && task.status === "pending") {
     return "inbox";
@@ -418,23 +448,17 @@ export function describePlanningCandidate(task: Task) {
     formatTaskDueLabel(task),
     formatOptionLabel(task.energy),
     task.repeat_frequency !== "none" ? formatOptionLabel(task.repeat_frequency) : null,
-    task.is_urgent ? "Urgent" : null,
+    getTaskPriorityLevel(task) === 5 ? "Priority 5" : null,
   ].filter(Boolean);
 
   return parts.join(" · ");
 }
 
 export function getListPriorityLabel(task: Task, focusedTaskIdSet: Set<string>) {
-  if (task.is_urgent) {
-    return "Urgent";
-  }
-  if (task.is_important) {
-    return "Important";
-  }
   if (focusedTaskIdSet.has(task.id)) {
     return "Focus";
   }
-  return "None";
+  return formatTaskPriorityLabel(getTaskPriorityLevel(task));
 }
 
 export function matchesTaskQuickFilter(task: Task, filter: TaskQuickFilter, focusedTaskIds: string[]) {

@@ -9,6 +9,7 @@ import type { Task, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus 
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { formatRepeatSummary } from "@/lib/task-formatting";
 import { getDisplayRowsFromSpan, getSpanFromDisplayRows, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
+import { formatTaskPriorityLabel, getTaskPriorityLevel, getTaskPriorityToneClass } from "@/lib/task-priority";
 import { getNextPendingSubtask, isClosedSubtaskStatus } from "@/lib/task-subtasks";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
@@ -21,9 +22,11 @@ function EmptyTaskState({ text }: { text: string }) {
   );
 }
 
-function TaskMetaChip({ children, tone }: { children: React.ReactNode; tone: "blue" | "purple" | "green" | "neutral" | "red" | "yellow" }) {
+function TaskMetaChip({ children, tone }: { children: React.ReactNode; tone: "blue" | "orange" | "purple" | "green" | "neutral" | "red" | "yellow" }) {
   const className = tone === "blue"
     ? "bg-[#edf6ff] text-[#3f8bdc] dark:bg-[#162434] dark:text-[#8bc4ff]"
+    : tone === "orange"
+      ? "bg-[#fff1e7] text-[#dc6c1c] dark:bg-[#432712] dark:text-[#ffb37e]"
     : tone === "purple"
       ? "bg-[#f2edff] text-[#7a63f7] dark:bg-[#22193f] dark:text-[#c7b9ff]"
       : tone === "green"
@@ -232,7 +235,9 @@ export function UrgentTasksPanelComponent({
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus</TaskMetaChip> : null}
-                  <TaskMetaChip tone="neutral">{task.priority} priority</TaskMetaChip>
+                  <span className={`inline-flex shrink-0 whitespace-nowrap rounded-xl border px-3 py-1.5 text-sm font-semibold ${getTaskPriorityToneClass(getTaskPriorityLevel(task))}`}>
+                    {formatTaskPriorityLabel(getTaskPriorityLevel(task))}
+                  </span>
                   <TaskMetaChip tone="green">{task.energy}</TaskMetaChip>
                   <TaskMetaChip tone="neutral">{formatDueLabel(task.due_on)}</TaskMetaChip>
                 </div>

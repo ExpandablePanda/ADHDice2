@@ -7,6 +7,7 @@ import { renderTaskStatusCircle } from "./task-status-ui";
 import { formatActualSecondsLabel, formatRepeatSummary, formatTaskMetaLine } from "@/lib/task-formatting";
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import { formatOptionLabel } from "@/lib/task-label-format";
+import { buildTaskPriorityUpdate, formatTaskPriorityLevel, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import { getNextPendingSubtask } from "@/lib/task-subtasks";
 import { isTaskUrgent } from "@/lib/task-buckets";
 import { formatDueLabel } from "@/lib/task-cockpit";
@@ -25,7 +26,6 @@ type Message = {
   tone: "neutral" | "good" | "warn";
 };
 
-type QuickPriority = "urgent" | "important" | "focus";
 const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
 function EmptyTaskState({ text }: { text: string }) {
   return (
@@ -35,11 +35,13 @@ function EmptyTaskState({ text }: { text: string }) {
   );
 }
 
-function TaskMetaChip({ children, tone }: { children: ReactNode; tone: "blue" | "green" | "neutral" | "purple" | "red" | "yellow" }) {
+function TaskMetaChip({ children, tone }: { children: ReactNode; tone: "blue" | "green" | "neutral" | "orange" | "purple" | "red" | "yellow" }) {
   const toneClasses = tone === "blue"
     ? "bg-[#edf6ff] text-[#3f8bdc] dark:bg-[#162434] dark:text-[#8bc4ff]"
     : tone === "green"
       ? "bg-[#eef9f4] text-[#12a876] dark:bg-[#17362d] dark:text-[#7de4b8]"
+      : tone === "orange"
+        ? "bg-[#fff1e7] text-[#dc6c1c] dark:bg-[#432712] dark:text-[#ffb37e]"
       : tone === "purple"
         ? "bg-[#f0ebff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
         : tone === "red"
@@ -92,7 +94,8 @@ export function TaskComposerCardComponent({
   SelectComponent: <T extends string>(props: SelectProps<T>) => React.JSX.Element;
 }) {
   const [title, setTitle] = useState("");
-  const [priorityFlag, setPriorityFlag] = useState<QuickPriority>("urgent");
+  const [focusToday, setFocusToday] = useState(false);
+  const [priorityLevel, setPriorityLevel] = useState<TaskPriorityLevelOption>("3");
   const [energy, setEnergy] = useState<TaskEnergy>("none");
   const [dueOn, setDueOn] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -112,16 +115,15 @@ export function TaskComposerCardComponent({
           if (!trimmedTitle) return;
           setIsSubmitting(true);
           await onAdd({
-            focusToday: priorityFlag === "focus",
+            focusToday,
             values: {
-              is_important: priorityFlag === "important",
-              is_urgent: priorityFlag === "urgent",
-              priority: "normal",
+              ...buildTaskPriorityUpdate(Number.parseInt(priorityLevel, 10) as 1 | 2 | 3 | 4 | 5),
               title: trimmedTitle,
               energy,
               due_on: dueOn || null,
             },
           });
+          setFocusToday(false);
           setTitle("");
           setDueOn("");
           setIsSubmitting(false);
@@ -132,8 +134,19 @@ export function TaskComposerCardComponent({
           <input className="h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30" onChange={(event) => setTitle(event.target.value)} placeholder="Drink water, clear email, write first paragraph..." value={title} />
         </label>
         <div className="grid gap-3 md:grid-cols-2">
-          <SelectComponent label="Priority" onChange={setPriorityFlag} options={["urgent", "important", "focus"]} showLabel value={priorityFlag} />
+          <SelectComponent label="Priority" onChange={setPriorityLevel} options={[...TASK_PRIORITY_LEVEL_OPTIONS]} showLabel value={priorityLevel} />
           <SelectComponent label="Energy" onChange={setEnergy} options={ENERGY_OPTIONS} showLabel value={energy} />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={`inline-flex items-center rounded-xl px-3 py-2 text-sm font-semibold transition ${focusToday
+              ? "bg-[#f0ebff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
+              : "bg-[#f3f4f8] text-[#5e6782] dark:bg-white/10 dark:text-white/70"}`}
+            onClick={() => setFocusToday((current) => !current)}
+            type="button"
+          >
+            Focus Today
+          </button>
         </div>
         <label className="grid gap-2">
           <span className="text-sm font-semibold text-[#5f6983] dark:text-white/65">Due date</span>
@@ -235,13 +248,14 @@ export function TaskCardGalleryComponent({ focusedTaskIds, onEditTask, onSetStat
                 <button className="text-left text-xl font-bold text-[#1f2746] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
                 <p className="mt-2 text-sm text-[#77829f] dark:text-white/55">{formatTaskMetaLine(task)}</p>
               </div>
-              <span className="rounded-full px-3 py-1 text-xs font-semibold bg-[#f2edff] text-[#725af6] dark:bg-[#22193f] dark:text-[#cabfff]">{task.priority}</span>
+              <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getTaskPriorityToneClass(getTaskPriorityLevel(task))}`}>{formatTaskPriorityLevel(getTaskPriorityLevel(task))}</span>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
               {focusedTaskIds.includes(task.id) ? <TaskMetaChip tone="purple">Focus</TaskMetaChip> : null}
               <TaskMetaChip tone={task.energy === "high" ? "blue" : task.energy === "medium" ? "neutral" : "green"}>{task.energy}</TaskMetaChip>
-              {task.is_urgent ? <TaskMetaChip tone="red">Urgent</TaskMetaChip> : null}
-              {task.is_important ? <TaskMetaChip tone="yellow">Important</TaskMetaChip> : null}
+              <TaskMetaChip tone={getTaskPriorityLevel(task) === 5 ? "red" : getTaskPriorityLevel(task) === 4 ? "orange" : getTaskPriorityLevel(task) === 3 ? "yellow" : getTaskPriorityLevel(task) === 2 ? "blue" : "neutral"}>
+                {`Priority ${formatTaskPriorityLevel(getTaskPriorityLevel(task))}`}
+              </TaskMetaChip>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {getSelectableTaskStatuses(task).map((status) => {

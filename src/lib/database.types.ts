@@ -151,6 +151,7 @@ export type Task = {
   notes: string | null;
   status: TaskStatus;
   priority: TaskPriority;
+  priority_level?: 1 | 2 | 3 | 4 | 5 | null;
   energy: TaskEnergy;
   is_urgent: boolean;
   is_important: boolean;
@@ -189,6 +190,7 @@ export type TaskInsert = {
   notes?: string | null;
   status?: TaskStatus;
   priority?: TaskPriority;
+  priority_level?: 1 | 2 | 3 | 4 | 5;
   energy?: TaskEnergy;
   is_urgent?: boolean;
   is_important?: boolean;
@@ -224,6 +226,7 @@ export type TaskUpdate = Partial<
     | "notes"
     | "status"
     | "priority"
+    | "priority_level"
     | "energy"
     | "is_urgent"
     | "is_important"

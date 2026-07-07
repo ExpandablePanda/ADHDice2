@@ -39,6 +39,7 @@ import {
 import { buildChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { formatLocalDate, todayISO } from "@/lib/utils";
+import { formatTaskPriorityLevel, getSelectedTaskPriorityToneClass, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
@@ -59,9 +60,7 @@ const QUICK_PANEL_SHELL_CLASS = "mt-2.5 rounded-[1.15rem] border border-[#e7defc
 const QUICK_PANEL_TEXT_INPUT_CLASS = "h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]";
 const QUICK_PANEL_PRIMARY_CHIP_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
 const PRIORITY_OPTIONS = [
-  { label: "Focus", value: "focus" as const },
-  { label: "Important", value: "important" as const },
-  { label: "Urgent", value: "urgent" as const },
+  ...TASK_PRIORITY_LEVEL_OPTIONS.map((value) => ({ label: value, value })),
 ];
 const REPEAT_OPTIONS = [
   { label: "No Repeat", value: "none" as const },
@@ -95,16 +94,12 @@ const COMPACT_REPEAT_UNITS: Array<{ label: string; value: PrototypeTaskRow["repe
   { label: "Months", value: "monthly" },
 ];
 const isDevelopment = process.env.NODE_ENV !== "production";
-function priorityTone(priority: "focus" | "important" | "urgent") {
-  if (priority === "focus") return "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
-  if (priority === "important") return "border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]";
-  return "border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]";
+function priorityTone(priority: TaskPriorityLevelOption) {
+  return getTaskPriorityToneClass(priority);
 }
 
 function formatPreviewPriorityLabel(priority: ChildTaskPreviewPriority) {
-  if (priority === "focus") return "Focus";
-  if (priority === "important") return "Important";
-  return "Urgent";
+  return `Priority ${priority}`;
 }
 
 function repeatTone(repeat: PrototypeTaskRow["repeat"]) {
@@ -625,12 +620,8 @@ function shiftIsoDate(date: string, days: number) {
   return formatLocalDate(next);
 }
 
-function buildTaskPrioritySelection(task: Task, focusedTaskIdSet: Set<string>) {
-  const priorities: Array<"focus" | "important" | "urgent"> = [];
-  if (focusedTaskIdSet.has(task.id)) priorities.push("focus");
-  if (task.is_important) priorities.push("important");
-  if (task.is_urgent) priorities.push("urgent");
-  return priorities;
+function buildTaskPrioritySelection(task: Task) {
+  return [formatTaskPriorityLevel(getTaskPriorityLevel(task))] as TaskPriorityLevelOption[];
 }
 
 function hasTaskManualListMembership(listMemberships: Array<{ id: string }>, listId: string) {
@@ -638,11 +629,12 @@ function hasTaskManualListMembership(listMemberships: Array<{ id: string }>, lis
 }
 
 function formatPriorityChipLabel(task: Task, focusedTaskIdSet: Set<string>) {
-  const activePriorities = buildTaskPrioritySelection(task, focusedTaskIdSet);
-  if (activePriorities.includes("urgent")) return "Urgent";
-  if (activePriorities.includes("important")) return "Important";
-  if (activePriorities.includes("focus")) return "Focus";
-  return `${task.priority.charAt(0).toUpperCase()}${task.priority.slice(1)} priority`;
+  const activePriorities = buildTaskPrioritySelection(task);
+  return activePriorities[0] ? `Priority ${activePriorities[0]}` : "Priority 3";
+}
+
+function isTaskFocusedToday(taskId: string, focusedTaskIdSet: Set<string>) {
+  return focusedTaskIdSet.has(taskId);
 }
 
 function formatStepPreviewSchedule(item: ChildTaskPreview) {
@@ -737,16 +729,29 @@ function formatListActual(seconds: number) {
   return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
 }
 
-function formatDateAddedChip(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString([], {
-    month: "numeric",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+function formatListDueDateChip(dateKey: string | null) {
+  if (!dateKey) return "No date";
+  const [year, month, day] = dateKey.split("-").map((part) => Number.parseInt(part ?? "", 10));
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return dateKey;
+  }
+  return `${month}/${day}/${String(year).slice(-2)}`;
+}
+
+function formatListLastDoneChip(lastDoneAt: string | null, lastDoneDate: string | null) {
+  if (lastDoneAt) {
+    const parsed = new Date(lastDoneAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      return `Last Done ${parsed.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}`;
+    }
+    return `Last Done ${lastDoneAt}`;
+  }
+
+  if (lastDoneDate) {
+    return `Last Done ${formatListDueDateChip(lastDoneDate)}`;
+  }
+
+  return "Last Done None";
 }
 
 function formatEnergyChipLabel(energy: PrototypeTaskRow["energy"]) {
@@ -1089,7 +1094,7 @@ function StepsCardPreview({
                 todayDateKey,
               )
               : item.status;
-            const activePriorities = childTask ? buildTaskPrioritySelection(childTask, new Set(item.priorityFlags.includes("focus") ? [item.id] : [])) : item.priorityFlags;
+            const activePriorities = childTask ? buildTaskPrioritySelection(childTask) : item.priorityFlags;
             const categoryLabel = resolveTaskCategoryLabel({
               currentListLabel: currentListLabel ?? "All tasks",
               listDefinitions,
@@ -1153,23 +1158,7 @@ function StepsCardPreview({
                 style={{ marginLeft: `${depthIndent}rem` }}
                 tabIndex={0}
               >
-                <div className="flex min-w-0 items-start gap-2">
-                  <button
-                    aria-expanded={activePanelMode === "status"}
-                    aria-label={`Change status for ${item.title || (item.depth > 1 ? "substep" : "step")}`}
-                    className="group mt-0.5 inline-flex h-7 w-7 flex-none items-center justify-center rounded-full text-[#8d97b0] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOpenQuickPanel(item.id, "status");
-                    }}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    type="button"
-                  >
-                    {renderTaskStatusCircle(displayStatus, "sm", {
-                      className: getTaskStatusCircleHoverInvertedClassName(displayStatus),
-                    })}
-                  </button>
-                  <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 flex-col gap-2">
                       <div className="flex min-w-0 items-start justify-between gap-2">
                         <div className="flex min-w-0 flex-wrap items-start gap-1.5">
@@ -1202,6 +1191,21 @@ function StepsCardPreview({
                                 <p className={`${TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
                                   {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                                 </p>
+                              </button>
+                              <button
+                                aria-expanded={activePanelMode === "status"}
+                                aria-label={`Change status for ${item.title || (item.depth > 1 ? "substep" : "step")}`}
+                                className="group inline-flex h-7 w-7 flex-none items-center justify-center rounded-full text-[#8d97b0] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onOpenQuickPanel(item.id, "status");
+                                }}
+                                onPointerDown={(event) => event.stopPropagation()}
+                                type="button"
+                              >
+                                {renderTaskStatusCircle(displayStatus, "sm", {
+                                  className: getTaskStatusCircleHoverInvertedClassName(displayStatus),
+                                })}
                               </button>
                               <StepLayerChip depth={item.depth} />
                               <StepHistoryChips currentStreak={item.currentStreak} missedStreak={item.missedStreak} />
@@ -1372,8 +1376,13 @@ function StepsCardPreview({
                       <MetadataChipButton active={activePanelMode === "due"} onClick={() => onOpenQuickPanel(item.id, "due")}>
                         {scheduleLabel || "No date"}
                       </MetadataChipButton>
-                      <MetadataChipButton active={activePanelMode === "priority"} onClick={() => onOpenQuickPanel(item.id, "priority")}>
-                        {childTask ? formatPriorityChipLabel(childTask, new Set(activePriorities.includes("focus") ? [item.id] : [])) : activePriorities[0] ? formatPreviewPriorityLabel(activePriorities[0]) : "Normal priority"}
+                      <MetadataChipButton
+                        active={activePanelMode === "priority"}
+                        activeToneClassName={activePriorities[0] ? getSelectedTaskPriorityToneClass(activePriorities[0]) : TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}
+                        onClick={() => onOpenQuickPanel(item.id, "priority")}
+                        toneClassName={activePriorities[0] ? priorityTone(activePriorities[0]) : TASK_TABLE_INACTIVE_CHIP_CLASS}
+                      >
+                        {childTask ? formatPriorityChipLabel(childTask, new Set()) : activePriorities[0] ? formatPreviewPriorityLabel(activePriorities[0]) : "Priority 3"}
                       </MetadataChipButton>
                       {repeatSummary ? (
                         <MetadataChipButton active={activePanelMode === "repeat"} onClick={() => onOpenQuickPanel(item.id, "repeat")}>
@@ -1407,7 +1416,7 @@ function StepsCardPreview({
                             {categoryLabel}
                           </MetadataChipButton>
                           <span className={`${TASK_TABLE_INACTIVE_CHIP_CLASS} inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[12px] font-medium`}>
-                            Added {formatDateAddedChip(item.createdAt)}
+                            {formatListLastDoneChip(item.lastDoneAt, item.lastDoneDate)}
                           </span>
                           <MetadataChipButton active={activePanelMode === "estimated"} onClick={() => onOpenQuickPanel(item.id, "estimated")}>
                             <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListDuration(item.estimatedMinutes)}</span>
@@ -1428,7 +1437,6 @@ function StepsCardPreview({
                       </div>
                     </div>
                   </div>
-                </div>
                 {substepDraftParentId === item.id ? (
                   <form
                     className="mt-2 flex flex-col gap-2 pl-8 sm:flex-row"
@@ -1595,12 +1603,14 @@ function StepsCardPreview({
 
 function MetadataChipButton({
   active = false,
+  activeToneClassName,
   children,
   onClick,
   tone = "default",
   toneClassName,
 }: {
   active?: boolean;
+  activeToneClassName?: string;
   children: ReactNode;
   onClick: () => void;
   tone?: "default" | "tag";
@@ -1615,7 +1625,7 @@ function MetadataChipButton({
         event.stopPropagation();
         onClick();
       }}
-      toneClassName={active ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : resolvedToneClassName}
+      toneClassName={active ? (activeToneClassName ?? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS) : resolvedToneClassName}
     >
       {children}
     </TaskTableChipButton>
@@ -1866,15 +1876,12 @@ function PriorityQuickPanel({
   onClose,
   onSave,
 }: {
-  activePriorities: Array<"focus" | "important" | "urgent">;
+  activePriorities: TaskPriorityLevelOption[];
   onClose: () => void;
-  onSave: (priorities: Array<"focus" | "important" | "urgent">) => void;
+  onSave: (priorities: TaskPriorityLevelOption[]) => void;
 }) {
-  const togglePriority = (value: "focus" | "important" | "urgent") => {
-    const nextPriorities = activePriorities.includes(value)
-      ? activePriorities.filter((entry) => entry !== value)
-      : [...activePriorities, value];
-    onSave(nextPriorities);
+  const setPriority = (value: TaskPriorityLevelOption) => {
+    onSave([value]);
   };
 
   return (
@@ -1883,18 +1890,12 @@ function PriorityQuickPanel({
         {PRIORITY_OPTIONS.map((option) => (
           <TaskTableChipButton
             key={option.value}
-            onClick={() => togglePriority(option.value)}
-            toneClassName={activePriorities.includes(option.value) ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : priorityTone(option.value)}
+            onClick={() => setPriority(option.value)}
+            toneClassName={activePriorities.includes(option.value) ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value)}
           >
             {option.label}
           </TaskTableChipButton>
         ))}
-        <TaskTableChipButton
-          onClick={() => onSave([])}
-          toneClassName={activePriorities.length === 0 ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}
-        >
-          Clear all
-        </TaskTableChipButton>
       </div>
     </QuickPanelShell>
   );
@@ -2684,7 +2685,7 @@ function TasksSimpleList({
           rowContext.taskHistoryByTaskId[task.id] ?? [],
           rowContext.todayDateKey,
         );
-        const dueLabel = formatDueLabel(task.due_on);
+        const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
         const dueMeta = dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;
         const repeatSummary = formatRepeatSummary(task);
@@ -2703,7 +2704,7 @@ function TasksSimpleList({
           listMemberships: rowContext.listMembershipsByTaskId[task.id] ?? [],
           selectedBucket,
         });
-        const activePriorities = buildTaskPrioritySelection(task, rowContext.focusedTaskIdSet);
+        const activePriorities = buildTaskPrioritySelection(task);
         const visibleTags = (task.tags ?? []).slice(0, 3);
         const extraTagCount = Math.max(0, (task.tags ?? []).length - visibleTags.length);
         const isRenamingTaskTitle = editingTaskTitleId === task.id;
@@ -2762,26 +2763,8 @@ function TasksSimpleList({
                 }
               }}
             >
-            <div className="flex items-start gap-3">
-              <div className="shrink-0">
-                <button
-                  aria-expanded={activePanelMode === "status"}
-                  aria-label={`Change status for ${task.title}`}
-                  className="group mt-0.5 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[1rem] text-[#8d97b0] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setRowContextMenu(null);
-                    openQuickPanel(task.id, "status");
-                  }}
-                  type="button"
-                >
-                  {renderTaskStatusCircle(displayStatus, "md", {
-                    className: getTaskStatusCircleHoverInvertedClassName(displayStatus),
-                  })}
-                </button>
-              </div>
-
-              <div className="min-w-0 flex-1">
+            <div className="min-w-0">
+              <div className="min-w-0">
                 <div className="flex items-start justify-between gap-3">
                   <div
                     className="min-w-0 flex-1 cursor-pointer"
@@ -2836,11 +2819,21 @@ function TasksSimpleList({
                           </p>
                         </button>
                       )}
-                      {task.is_urgent ? (
-                        <span className="rounded-full bg-[#fff1f3] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#d94e67] dark:bg-[#44232f] dark:text-[#ff9eaf]">
-                          Urgent
-                        </span>
-                      ) : null}
+                      <button
+                        aria-expanded={activePanelMode === "status"}
+                        aria-label={`Change status for ${task.title}`}
+                        className="group inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8d97b0] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setRowContextMenu(null);
+                          openQuickPanel(task.id, "status");
+                        }}
+                        type="button"
+                      >
+                        {renderTaskStatusCircle(displayStatus, "md", {
+                          className: getTaskStatusCircleHoverInvertedClassName(displayStatus),
+                        })}
+                      </button>
                       <TaskHistoryChips
                         className="hidden sm:inline-flex"
                         currentStreak={taskRow.currentStreak}
@@ -2849,7 +2842,7 @@ function TasksSimpleList({
                     </div>
                   </div>
 
-                  <div className="relative flex shrink-0 items-center gap-1" data-list-action-control="true">
+                  <div className="relative flex shrink-0 items-center gap-0.5" data-list-action-control="true">
                     {tableProps.onTogglePinned ? (
                       <AdhdIconButton
                         aria-label={isPinned ? `Unpin ${task.title}` : `Pin ${task.title}`}
@@ -2958,7 +2951,17 @@ function TasksSimpleList({
                   <MetadataChipButton active={activePanelMode === "due"} onClick={() => openQuickPanel(task.id, "due")}>
                     {dueMeta}
                   </MetadataChipButton>
-                  <MetadataChipButton active={activePanelMode === "priority"} onClick={() => openQuickPanel(task.id, "priority")}>
+                  {isTaskFocusedToday(task.id, rowContext.focusedTaskIdSet) ? (
+                    <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold ${QUICK_PANEL_PRIMARY_CHIP_CLASS}`}>
+                      Focus
+                    </span>
+                  ) : null}
+                  <MetadataChipButton
+                    active={activePanelMode === "priority"}
+                    activeToneClassName={activePriorities[0] ? getSelectedTaskPriorityToneClass(activePriorities[0]) : TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}
+                    onClick={() => openQuickPanel(task.id, "priority")}
+                    toneClassName={activePriorities[0] ? priorityTone(activePriorities[0]) : TASK_TABLE_INACTIVE_CHIP_CLASS}
+                  >
                     {formatPriorityChipLabel(task, rowContext.focusedTaskIdSet)}
                   </MetadataChipButton>
                   <MetadataChipButton
@@ -3000,7 +3003,7 @@ function TasksSimpleList({
                       {categoryLabel}
                     </MetadataChipButton>
                     <span className={`${TASK_TABLE_INACTIVE_CHIP_CLASS} inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[12px] font-medium`}>
-                      Added {formatDateAddedChip(task.created_at)}
+                      {formatListLastDoneChip(taskRow.lastDoneAt, taskRow.lastDoneDate)}
                     </span>
                     <MetadataChipButton active={activePanelMode === "estimated"} onClick={() => openQuickPanel(task.id, "estimated")}>
                       <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListDuration(task.estimated_minutes)}</span>

@@ -1,7 +1,7 @@
 "use client";
 
 import type { User } from "@supabase/supabase-js";
-import { AlertCircle, Brain, CalendarDays, Clock, Footprints, Star, Trash2 } from "lucide-react";
+import { CalendarDays, Clock, Footprints, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ManualEntryModal } from "../focus-modals";
@@ -12,6 +12,7 @@ import { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, FocusLabelOptions } from "@/lib/types";
 import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskStatus } from "@/lib/database.types";
 import { getSelectableTaskStatuses, getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
+import { buildTaskPriorityUpdate, formatTaskPriorityMenuLabel, getSelectedTaskPriorityToneClass, getTaskPriorityToneClass, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 
 import {
   applyTaskEditorDraftOverrides,
@@ -534,7 +535,7 @@ export function TaskEditorModal({
         {isEditing ? (
           <button
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#fff1f3] text-[#f05566]"
-            onClick={() => onSave({ focusToday: draft.focusToday, linkedNoteIds: [], subtasks: [], values: { title: draft.title, notes: null, status: "trashed" as TaskStatus, priority: draft.priority, energy: draft.energy, is_urgent: false, is_important: false, due_on: null, due_time: null, estimated_minutes: null, tags: [], external_link_label: null, external_link_url: null, one_step_at_a_time: false, subtasks_auto_reset: false, repeat_frequency: "none", repeat_interval: 1, repeat_days_of_week: [], repeat_day_of_month: null, repeat_monthly_mode: "day_of_month", repeat_monthly_ordinal: null, repeat_monthly_weekday: null, completed_at: null, trashed_at: new Date().toISOString() } })}
+            onClick={() => onSave({ focusToday: draft.focusToday, linkedNoteIds: [], subtasks: [], values: { title: draft.title, notes: null, status: "trashed" as TaskStatus, ...buildTaskPriorityUpdate(Number.parseInt(draft.priorityLevel, 10) as 1 | 2 | 3 | 4 | 5), energy: draft.energy, due_on: null, due_time: null, estimated_minutes: null, tags: [], external_link_label: null, external_link_url: null, one_step_at_a_time: false, subtasks_auto_reset: false, repeat_frequency: "none", repeat_interval: 1, repeat_days_of_week: [], repeat_day_of_month: null, repeat_monthly_mode: "day_of_month", repeat_monthly_ordinal: null, repeat_monthly_weekday: null, completed_at: null, trashed_at: new Date().toISOString() } })}
             type="button"
           >
             <Trash2 className="h-4 w-4" />
@@ -560,10 +561,8 @@ export function TaskEditorModal({
               title: trimmedSnapshotTitle,
               notes: emptyToNull(draftSnapshot.notes),
               status: draftSnapshot.status,
-              priority: draftSnapshot.priority,
+              ...buildTaskPriorityUpdate(Number.parseInt(draftSnapshot.priorityLevel, 10) as 1 | 2 | 3 | 4 | 5),
               energy: draftSnapshot.energy,
-              is_urgent: draftSnapshot.isUrgent,
-              is_important: draftSnapshot.isImportant,
               due_on: emptyToNull(draftSnapshot.dueOn),
               due_time: emptyToNull(draftSnapshot.dueTime),
               estimated_minutes: parsePositiveInteger(draftSnapshot.estimatedMinutes),
@@ -614,7 +613,7 @@ export function TaskEditorModal({
           title="Metadata"
         >
           <div className="grid gap-4">
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <CompactSelectField
                 label="Status"
                 onChange={(value) => setDraft((current) => ({
@@ -630,6 +629,15 @@ export function TaskEditorModal({
                 renderValueNode={(status) => renderTaskStatusChip(status as TaskStatus, { size: "sm" })}
                 triggerClassName={(status) => `${TASK_STATUS_CHIP_STYLES[status as TaskStatus]} hover:opacity-95`}
                 value={draft.status}
+              />
+              <CompactSelectField
+                label="Priority"
+                onChange={(value) => setDraft((current) => ({ ...current, priorityLevel: value }))}
+                optionButtonClassName={(value, selected) => selected ? getSelectedTaskPriorityToneClass(value) : getTaskPriorityToneClass(value)}
+                options={TASK_PRIORITY_LEVEL_OPTIONS}
+                renderValueLabel={formatTaskPriorityMenuLabel}
+                triggerClassName={(value) => getTaskPriorityToneClass(value)}
+                value={draft.priorityLevel}
               />
               <CompactSelectField label="Energy" onChange={(value) => setDraft((c) => ({ ...c, energy: value }))} options={energyOptions} value={draft.energy} />
               <CompactSelectField
@@ -757,8 +765,6 @@ export function TaskEditorModal({
 
               <div className="flex flex-wrap gap-2">
                 {([
-                  { key: "isUrgent", label: "Urgent", activeClass: "bg-[#f05566] text-white border-[#f05566]", idleClass: "border-[#ffd8de] text-[#c24d5d] dark:border-[#6d3240] dark:text-[#ffb0bc]" },
-                  { key: "isImportant", label: "Important", activeClass: "bg-[#f4b400] text-white border-[#f4b400]", idleClass: "border-[#f4dba6] text-[#a87200] dark:border-[#6b5314] dark:text-[#ffd36c]" },
                   { key: "focusToday", label: "Focus Today", activeClass: "bg-[#6f57f6] text-white border-[#6f57f6] dark:bg-[#cabfff] dark:text-[#1a1431] dark:border-[#cabfff]", idleClass: "border-[#d9d0ff] text-[#6f57f6] dark:border-[#4b3b8f] dark:text-[#cabfff]" },
                 ] as const).map(({ key, label, activeClass, idleClass }) => {
                   const checked = draft[key] as boolean;
@@ -777,42 +783,6 @@ export function TaskEditorModal({
             </div>
           </div>
         </EditorCollapsibleSection>
-
-        {/* Urgent / Important / Focus Today */}
-        <div className="hidden space-y-2">
-          {([
-            { key: "isUrgent", label: "Urgent", desc: "Needs attention now", Icon: AlertCircle, color: "text-[#f05566]", bg: "bg-[#fff1f3] dark:bg-[#44232f]" },
-            { key: "isImportant", label: "Important", desc: "High value goal", Icon: Star, color: "text-[#c98a00]", bg: "bg-[#fff5d9] dark:bg-[#44350d]" },
-            { key: "focusToday", label: "Focus", desc: "Add to daily priority list", Icon: Brain, color: "text-[#6f57f6]", bg: "bg-[#f2edff] dark:bg-[#22193f]" },
-          ] as const).map(({ key, label, desc, Icon, color, bg }) => {
-            const checked = draft[key] as boolean;
-            const activeClass = key === "isImportant"
-              ? "bg-[#f4b400] text-[#1f1800]"
-              : key === "focusToday"
-                ? "bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                : "bg-[#f05566] text-white";
-            return (
-              <div className={`flex items-center gap-3 rounded-[1.1rem] px-4 py-3 bg-[#faf8ff] dark:bg-white/[0.03]`} key={key}>
-                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${bg}`}>
-                  <Icon className={`h-4 w-4 ${color}`} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-semibold text-[#1e2540] dark:text-white`}>{label}</p>
-                  <p className={`text-xs text-[#8d97b0] dark:text-white/45`}>{desc}</p>
-                </div>
-                <button
-                  className={`rounded-full px-4 py-1.5 text-sm font-bold transition-colors ${checked
-                    ? activeClass
-                    : "border border-[#e5e0f5] text-[#8d97b0] dark:border dark:border-white/15 dark:text-white/50"}`}
-                  onClick={() => setDraft((c) => ({ ...c, [key]: !checked }))}
-                  type="button"
-                >
-                  {checked ? "YES" : "No"}
-                </button>
-              </div>
-            );
-          })}
-        </div>
 
         {/* REPEAT FREQUENCY */}
         <div className="hidden">

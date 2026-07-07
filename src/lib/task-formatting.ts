@@ -1,5 +1,6 @@
 import type { Task } from "@/lib/database.types";
 import { formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
+import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
 import { formatRepeatSummary } from "@/lib/task-repeat";
 
 function formatEstimatedMinutesLabel(minutes: string) {
@@ -33,7 +34,7 @@ export function formatTaskMetaLine(task: Task) {
     parts.push(dueTime);
   }
   parts.push(`${task.energy} energy`);
-  parts.push(task.is_important ? "important" : `${task.priority} priority`);
+  parts.push(formatTaskPriorityLabel(getTaskPriorityLevel(task)));
   if (task.estimated_minutes) {
     parts.push(`${task.estimated_minutes} min`);
   }

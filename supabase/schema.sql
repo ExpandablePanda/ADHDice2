@@ -18,6 +18,7 @@ create table public.adhdice_clean_tasks (
   notes text,
   status public.adhdice_clean_task_status not null default 'pending',
   priority public.adhdice_clean_task_priority not null default 'normal',
+  priority_level integer not null default 3 check (priority_level between 1 and 5),
   energy public.adhdice_clean_task_energy not null default 'none',
   is_urgent boolean not null default false,
   is_important boolean not null default false,

@@ -30,6 +30,8 @@ export function createDefaultTaskListRule(field: TaskListRuleField = "status"): 
       return { field: "list", op: "is", value: "inbox" };
     case "steps":
       return { field: "steps", op: "is", value: true };
+    case "priority_level":
+      return { field: "priority_level", op: "is", value: ["3"] };
     case "date_added":
       return { field: "date_added", op: "is_today" };
     case "due":
@@ -74,6 +76,7 @@ export function taskListRuleNeedsValue(rule: TaskListRule) {
     || rule.field === "energy"
     || rule.field === "streak"
     || rule.field === "list"
+    || rule.field === "priority_level"
     || rule.field === "history_status"
     || rule.field === "completed_streak"
     || rule.field === "missed_streak";
@@ -93,6 +96,8 @@ export function formatTaskListRule(rule: TaskListRule, resolveListLabel?: (listI
       return `Steps ${rule.op === "is" ? "has steps" : "doesn't have steps"}`;
     case "energy":
       return `Energy ${rule.op === "is" ? "is" : "isn't"} ${normalizeTaskListRuleValues(rule.value).map((entry) => formatOptionLabel(entry)).join(" or ")}`;
+    case "priority_level":
+      return `Priority ${rule.op === "is" ? "is" : "isn't"} ${normalizeTaskListRuleValues(rule.value).join(" or ")}`;
     case "streak": {
       const label = rule.value === "0"
         ? "0"
@@ -171,6 +176,11 @@ export function updateTaskListRuleOperator(rule: TaskListRule, operator: TaskLis
     case "steps":
       if (operator === "is" || operator === "is_not") {
         return { field: "steps", op: operator, value: true };
+      }
+      return rule;
+    case "priority_level":
+      if (operator === "is" || operator === "is_not") {
+        return { field: "priority_level", op: operator, value: rule.value };
       }
       return rule;
     case "energy":
@@ -254,6 +264,14 @@ export function updateTaskListRuleValue(rule: TaskListRule, value: string): Task
   if (rule.field === "status") {
     const currentValues = normalizeTaskListRuleValues(rule.value);
     const nextValue = value as TaskStatus;
+    const nextValues = currentValues.includes(nextValue)
+      ? currentValues.filter((entry) => entry !== nextValue)
+      : [...currentValues, nextValue];
+    return { ...rule, value: nextValues.length > 0 ? nextValues : [nextValue] };
+  }
+  if (rule.field === "priority_level") {
+    const currentValues = normalizeTaskListRuleValues(rule.value);
+    const nextValue = value as "1" | "2" | "3" | "4" | "5";
     const nextValues = currentValues.includes(nextValue)
       ? currentValues.filter((entry) => entry !== nextValue)
       : [...currentValues, nextValue];

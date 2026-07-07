@@ -12,6 +12,7 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import { formatActualSecondsLabel, formatRepeatSummary } from "@/lib/task-formatting";
 import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
+import { getTaskPriorityLevel } from "@/lib/task-priority";
 
 function formatEnergyLabel(value: string) {
   return value
@@ -177,12 +178,11 @@ function buildAgentPlanRowChips(
     });
   }
 
-  if (task.is_urgent) {
-    pushChip({ label: "Urgent", tone: "danger" });
-  }
-
-  if (task.is_important) {
-    pushChip({ label: "Important", tone: "warning" });
+  const priorityLevel = getTaskPriorityLevel(task);
+  if (priorityLevel === 5) {
+    pushChip({ label: "Priority 5", tone: "danger" });
+  } else if (priorityLevel === 4) {
+    pushChip({ label: "Priority 4", tone: "warning" });
   }
 
   if (context.focusedTaskIdSet.has(task.id)) {
@@ -206,8 +206,9 @@ function buildAgentPlanRowChips(
 
 export function getTaskListTone(listId: string): AgentPlanMetaPill["tone"] {
   if (listId === "focus") return "accent";
-  if (listId === "urgent" || listId === "missed") return "danger";
-  if (listId === "important" || listId === "recurring") return "warning";
+  if (listId === "priority_5" || listId === "missed") return "danger";
+  if (listId === "priority_3_4" || listId === "recurring") return "warning";
+  if (listId === "priority_1_2") return "accent";
   if (listId === "done" || listId === "quick_wins") return "success";
   return "neutral";
 }

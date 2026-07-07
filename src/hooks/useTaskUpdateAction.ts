@@ -3,6 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskUpdate } from "@/lib/database.types";
 import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
+import { normalizeOpenTaskStatusForDueDate } from "@/lib/task-cockpit";
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
@@ -49,13 +50,22 @@ export function useTaskUpdateAction({
   async function updateTask(taskId: string, values: TaskUpdate, options?: UpdateTaskActionOptions) {
     markPendingTaskMutations?.([taskId]);
     const previousTask = options?.expectedTask ?? tasks.find((task) => task.id === taskId) ?? null;
+    const nextValues = previousTask && Object.prototype.hasOwnProperty.call(values, "due_on")
+      ? {
+        ...values,
+        status: normalizeOpenTaskStatusForDueDate({
+          due_on: values.due_on ?? null,
+          status: (values.status ?? previousTask.status) as Task["status"],
+        }, currentDayKey),
+      }
+      : values;
     const {
       conflict,
       data,
       error,
       usedEnergyFallback,
       usedActualSecondsFallback,
-    } = await updateTaskRowWithLegacyEnergyFallback(taskId, values, {
+    } = await updateTaskRowWithLegacyEnergyFallback(taskId, nextValues, {
       expectedTask: previousTask,
     });
 

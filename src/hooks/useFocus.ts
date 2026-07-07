@@ -37,6 +37,13 @@ type FocusCounterState = {
   ownerUserId: string | null;
 };
 
+function createClientSideId(prefix: string) {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
 function parseStoredJson<T>(key: string, fallback: T): T {
@@ -657,7 +664,7 @@ export function useFocus(
 
     const uniqueCategories = dedupeCategoriesByName(categories).map((category) => ({
       ...category,
-      id: isUuid(category.id) ? category.id : crypto.randomUUID(),
+      id: isUuid(category.id) ? category.id : createClientSideId("focus-category"),
     }));
 
     if (uniqueCategories.length === 0) {
@@ -833,7 +840,7 @@ export function useFocus(
       createdAt: timestamp,
       goal: Math.max(1, Math.floor(input.goal)),
       icon: input.icon.trim() || "Hash",
-      id: crypto.randomUUID(),
+      id: createClientSideId("focus-counter"),
       step: Math.max(1, Math.floor(input.step)),
       title: input.title.trim() || "Counter",
       updatedAt: timestamp,
@@ -916,7 +923,7 @@ export function useFocus(
         counterTitleSnapshot: targetCounter.title,
         createdAt: timestamp,
         delta,
-        id: crypto.randomUUID(),
+        id: createClientSideId("focus-counter-history"),
         nextValue,
         stepSnapshot: targetCounter.step,
       };

@@ -8,6 +8,7 @@ import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone } from "@/lib/task-history";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
+import { formatTaskPriorityLevel, getTaskPriorityLevel } from "@/lib/task-priority";
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 let buildTaskTableRowDebugCount = 0;
@@ -44,11 +45,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
   }
   const historyStats = computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
   const lastDone = getTaskHistoryLastDone(context.taskHistory);
-  const priorities: PrototypeTaskRow["priorities"] = [];
-
-  if (context.focusedTaskIdSet.has(task.id)) priorities.push("focus");
-  if (task.is_important) priorities.push("important");
-  if (task.is_urgent) priorities.push("urgent");
+  const priorities: PrototypeTaskRow["priorities"] = [formatTaskPriorityLevel(getTaskPriorityLevel(task))];
 
   const listLabels = context.listDefinitions.flatMap((listDefinition) =>
     context.listMemberships.some((membership) => membership.id === listDefinition.id)

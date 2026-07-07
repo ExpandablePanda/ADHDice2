@@ -2,6 +2,7 @@
 
 import type { AppPage } from "@/lib/task-ui-state";
 import type { Task } from "@/lib/database.types";
+import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
 
 type HomePageProps = {
   activeCount: number;
@@ -195,7 +196,7 @@ function HomeUrgentPreview({
         {tasks.map((task) => (
           <div className="max-w-[32rem] rounded-[1.2rem] border border-[#eee9fb] bg-[#fcfbff] px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={task.id}>
             <p className="text-lg font-semibold text-[#27304c] dark:text-white">{task.title}</p>
-            <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/55">{formatDueLabel(task.due_on)} / {task.priority} priority</p>
+            <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/55">{formatDueLabel(task.due_on)} / {formatTaskPriorityLabel(getTaskPriorityLevel(task))}</p>
           </div>
         ))}
       </div>

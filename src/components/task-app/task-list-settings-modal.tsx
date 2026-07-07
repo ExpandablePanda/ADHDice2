@@ -186,8 +186,9 @@ export function TaskListSettingsModal({
     });
   }
 
-  async function handleSave(list: TaskListDefinition) {
-    const draft = drafts[list.id];
+  async function handleSave(list: TaskListDefinition, draftOverride?: Partial<Pick<TaskListSettingsDraft, "isVisible">>) {
+    const currentDraft = drafts[list.id];
+    const draft = currentDraft ? { ...currentDraft, ...draftOverride } : null;
     if (!draft) return;
 
     let parsedRules = null;
@@ -451,6 +452,19 @@ export function TaskListSettingsModal({
                     {list.type === "custom" && list.isDeletable ? (
                       <button className="ui-pill-button-danger-light transition hover:border-[#ef9aab] dark:border-[#5b2e3b] dark:bg-white/[0.05] dark:text-[#ff9eaf]" onClick={() => { void onDeleteList(list.id); }} type="button">
                         Delete
+                      </button>
+                    ) : null}
+                    {list.type !== "custom" ? (
+                      <button
+                        className="ui-pill-button-light transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
+                        onClick={() => {
+                          const nextIsVisible = !draft.isVisible;
+                          updateDraft(list.id, { isVisible: nextIsVisible });
+                          void handleSave(list, { isVisible: nextIsVisible });
+                        }}
+                        type="button"
+                      >
+                        {draft.isVisible ? "Hide" : "Show"}
                       </button>
                     ) : null}
                     <button className="ui-pill-button-light transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]" onClick={() => { void handleSave(list); }} type="button">

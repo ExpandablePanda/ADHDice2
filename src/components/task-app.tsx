@@ -188,6 +188,7 @@ import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/li
 import { buildFocusLabelOptions, getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import {
@@ -250,7 +251,6 @@ import type {
   TaskGridLayout as DbTaskGridLayout,
   TaskInsert,
   TaskActualTimeEntry,
-  TaskPriority,
   TaskRepeatFrequency,
   TaskStatus,
   TaskSubtask as DbTaskSubtask,
@@ -474,7 +474,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.21.4";
+const APP_VERSION = "6.22.5";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -845,6 +845,7 @@ const TASK_LIST_RULE_FIELD_OPTIONS: Array<{ label: string; value: TaskListRuleFi
   { label: "Date Added", value: "date_added" },
   { label: "History Status", value: "history_status" },
   { label: "Due", value: "due" },
+  { label: "Priority", value: "priority_level" },
   { label: "Energy", value: "energy" },
   { label: "Focus", value: "focus" },
   { label: "Urgent", value: "is_urgent" },
@@ -903,6 +904,10 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
     { label: "is", value: "is" },
     { label: "isn't", value: "is_not" },
   ],
+  priority_level: [
+    { label: "is", value: "is" },
+    { label: "isn't", value: "is_not" },
+  ],
   streak: [
     { label: "is", value: "is" },
     { label: "isn't", value: "is_not" },
@@ -928,7 +933,7 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
     { label: "isn't", value: "is_not" },
   ],
 };
-const priorityOptions: TaskPriority[] = ["normal", "high", "low"];
+const priorityOptions: TaskPriorityLevelOption[] = ["1", "2", "3", "4", "5"];
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
 const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "delayed", "done", "did_my_best", "missed", "complete", "upcoming", "not_due", "archived", "trashed"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
@@ -2977,17 +2982,12 @@ export function TaskApp() {
       await updateTask(taskId, updates);
     },
   });
-  const applyTaskPriorityChange = useCallback((taskId: string, priorities: TaskPriority[]) => {
+  const applyTaskPriorityChange = useCallback((taskId: string, priorities: TaskPriorityLevelOption[]) => {
+    const nextPriorityLevel = priorities[0] ? Number.parseInt(priorities[0], 10) as 1 | 2 | 3 | 4 | 5 : 3;
     void updateTask(taskId, {
-      is_important: priorities.includes("important"),
-      is_urgent: priorities.includes("urgent"),
+      ...buildTaskPriorityUpdate(nextPriorityLevel),
     });
-    const nextFocusedTaskIds = priorities.includes("focus")
-      ? Array.from(new Set([...focusedTaskIdsRef.current, taskId]))
-      : focusedTaskIdsRef.current.filter((id) => id !== taskId);
-    focusedTaskIdsRef.current = nextFocusedTaskIds;
-    void saveFocusSelection(nextFocusedTaskIds);
-  }, [saveFocusSelection, updateTask]);
+  }, [updateTask]);
 
   const openTaskInNewWorkspaceTab = useCallback((taskId: string) => {
     const task = tasks.find((entry) => entry.id === taskId);
@@ -3064,11 +3064,9 @@ export function TaskApp() {
       estimated_minutes: null,
       external_link_label: null,
       external_link_url: null,
-      is_important: false,
-      is_urgent: false,
       notes: null,
       one_step_at_a_time: false,
-      priority: "normal",
+      ...buildTaskPriorityUpdate(3),
       repeat_day_of_month: null,
       repeat_days_of_week: [],
       repeat_frequency: "none",
@@ -3113,11 +3111,9 @@ export function TaskApp() {
       estimated_minutes: task.estimated_minutes,
       external_link_label: task.external_link_label,
       external_link_url: task.external_link_url,
-      is_important: task.is_important,
-      is_urgent: task.is_urgent,
       notes: task.notes,
       one_step_at_a_time: task.one_step_at_a_time,
-      priority: task.priority,
+      ...buildTaskPriorityUpdate(getTaskPriorityLevel(task)),
       repeat_day_of_month: task.repeat_day_of_month,
       repeat_days_of_week: [...task.repeat_days_of_week],
       repeat_frequency: task.repeat_frequency,
@@ -3157,9 +3153,8 @@ export function TaskApp() {
     setTaskEditorInitialDraft({
       estimatedMinutes: template.estimatedMinutes ? String(template.estimatedMinutes) : "",
       focusToday: false,
-      isImportant: false,
-      isUrgent: false,
       notes: template.notes,
+      priorityLevel: "3",
       repeatDayOfMonth: template.repeatDayOfMonth ? String(template.repeatDayOfMonth) : "",
       repeatDaysOfWeek: template.repeatDaysOfWeek,
       repeatFrequency: template.repeatFrequency,
@@ -3780,7 +3775,7 @@ export function TaskApp() {
       routeTaskToToday={(taskId) => planTasksForToday([taskId])}
       sendTaskToLater={deferTask}
       sendTaskToWaiting={sendTaskToWaiting}
-      todayCount={(visibleListCounts.today ?? 0) + (visibleListCounts.focus ?? 0) + (visibleListCounts.urgent ?? 0)}
+      todayCount={(visibleListCounts.today ?? 0) + (visibleListCounts.focus ?? 0) + (visibleListCounts.priority_5 ?? 0)}
       waitingCount={waitingTasks.length}
     />
   );

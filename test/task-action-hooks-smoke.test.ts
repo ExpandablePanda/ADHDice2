@@ -4,6 +4,7 @@ import { useTaskRoutingActions } from "../src/hooks/useTaskRoutingActions.ts";
 import { mergeTasksById, useTaskCrudActions } from "../src/hooks/useTaskCrudActions.ts";
 import { useTaskUpdateAction } from "../src/hooks/useTaskUpdateAction.ts";
 import { useTaskEditorSaveAction } from "../src/hooks/useTaskEditorSaveAction.ts";
+import { useTaskBatchEditAction } from "../src/hooks/useTaskBatchEditAction.ts";
 import { useTaskHistoryActions } from "../src/hooks/useTaskHistoryActions.ts";
 import { useTaskNoteLinkActions } from "../src/hooks/useTaskNoteLinkActions.ts";
 import { useTaskSubtaskActions } from "../src/hooks/useTaskSubtaskActions.ts";
@@ -466,6 +467,127 @@ test("updateTask forwards an explicit expected snapshot to guarded writes", asyn
   await update.updateTask("task-update-expected", { status: "archived" }, { expectedTask });
   assert.equal(receivedExpectedTask?.revision, 7);
   assert.equal(receivedExpectedTask?.status, "pending");
+});
+
+test("due-date edits recalculate open status in update, editor, and batch flows", async () => {
+  const baseTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    due_on: "2026-06-21",
+    id: "task-due-normalize",
+    repeat_frequency: "none",
+    sort_order: 1,
+    status: "pending",
+    title: "Normalize me",
+  });
+  let updateValues: Record<string, unknown> | null = null;
+  let editorValues: Record<string, unknown> | null = null;
+  let batchValues: Record<string, unknown> | null = null;
+
+  const update = useTaskUpdateAction({
+    currentDayKey: "2026-06-21",
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: [baseTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      updateValues = values as Record<string, unknown>;
+      return {
+        conflict: null,
+        data: { ...baseTask, ...values, status: values.status as typeof baseTask.status },
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+  await update.updateTask(baseTask.id, { due_on: "2026-06-29" });
+  assert.equal(updateValues?.status, "not_due");
+
+  const editor = useTaskEditorSaveAction({
+    currentDayKey: "2026-06-21",
+    focusedTaskIds: [],
+    currentUserId: "u1",
+    insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
+    onTasksCompleted: async () => {},
+    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    reconcileOverdueTaskMisses: async () => true,
+    saveFocusSelection: async () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    syncTaskNoteLinks: async () => true,
+    tasks: [baseTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      editorValues = values as Record<string, unknown>;
+      return {
+        conflict: null,
+        data: { ...baseTask, ...values, status: values.status as typeof baseTask.status },
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+  await editor.saveTaskEditor({ ...baseTask, due_on: "2026-06-24" }, { taskId: baseTask.id });
+  assert.equal(editorValues?.status, "upcoming");
+
+  const delayedTask = { ...baseTask, status: "delayed" as const };
+  const batch = useTaskBatchEditAction({
+    clearListTaskSelection: () => {},
+    currentDayKey: "2026-06-21",
+    focusedTaskIds: [],
+    onTasksCompleted: async () => {},
+    parseDayOfMonth: () => null,
+    parsePositiveInteger: (value) => {
+      const parsed = Number.parseInt(value, 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    },
+    routeTask: () => {},
+    saveFocusSelection: async () => {},
+    selectedListTasks: [delayedTask],
+    setIsBatchEditModalOpen: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: [delayedTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      batchValues = values as Record<string, unknown>;
+      return {
+        data: { ...delayedTask, ...values, status: values.status as typeof delayedTask.status },
+        error: null,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+  await batch.applyBatchTaskEdit({
+    dueOn: "2026-06-21",
+    dueOnMode: "set",
+    energy: "unchanged",
+    estimatedMinutes: "",
+    estimatedMinutesMode: "unchanged",
+    focusToday: "unchanged",
+    oneStepAtATime: "unchanged",
+    priority: "unchanged",
+    repeatDayOfMonth: "",
+    repeatDaysOfWeek: [],
+    repeatFrequency: "unchanged",
+    repeatInterval: "",
+    route: "unchanged",
+    status: "unchanged",
+    subtasksAutoReset: "unchanged",
+    tags: [],
+    tagsMode: "unchanged",
+  });
+  assert.equal(batchValues?.status, "pending");
 });
 
 test("deleteTasks forwards explicit expected snapshots to guarded trash writes", async () => {

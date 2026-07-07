@@ -4,6 +4,8 @@ import type { Dispatch, SetStateAction } from "react";
 import type { BatchTaskEditDraft } from "@/components/task-app/task-batch-edit-modal";
 import type { Task, TaskStatus, TaskUpdate } from "@/lib/database.types";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
+import { normalizeOpenTaskStatusForDueDate } from "@/lib/task-cockpit";
+import { buildTaskPriorityUpdate } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 
 type Message = {
@@ -20,6 +22,7 @@ type UpdateTaskRowResult = {
 
 type UseTaskBatchEditActionOptions = {
   clearListTaskSelection: () => void;
+  currentDayKey: string;
   focusedTaskIds: string[];
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   parseDayOfMonth: (value: string) => number | null;
@@ -38,6 +41,7 @@ type UseTaskBatchEditActionOptions = {
 
 export function useTaskBatchEditAction({
   clearListTaskSelection,
+  currentDayKey,
   focusedTaskIds,
   onTasksCompleted,
   parseDayOfMonth,
@@ -76,7 +80,7 @@ export function useTaskBatchEditAction({
       }
 
       if (draft.priority !== "unchanged") {
-        updateValues.priority = draft.priority;
+        Object.assign(updateValues, buildTaskPriorityUpdate(Number.parseInt(draft.priority, 10) as 1 | 2 | 3 | 4 | 5));
       }
 
       if (draft.energy !== "unchanged") {
@@ -87,6 +91,13 @@ export function useTaskBatchEditAction({
         updateValues.due_on = draft.dueOn.trim() || null;
       } else if (draft.dueOnMode === "clear") {
         updateValues.due_on = null;
+      }
+
+      if (draft.dueOnMode !== "unchanged") {
+        updateValues.status = normalizeOpenTaskStatusForDueDate({
+          due_on: updateValues.due_on ?? task.due_on,
+          status: (updateValues.status ?? task.status) as TaskStatus,
+        }, currentDayKey);
       }
 
       if (draft.estimatedMinutesMode === "set") {
@@ -107,14 +118,6 @@ export function useTaskBatchEditAction({
 
       if (draft.subtasksAutoReset !== "unchanged") {
         updateValues.subtasks_auto_reset = draft.subtasksAutoReset === "true";
-      }
-
-      if (draft.isUrgent !== "unchanged") {
-        updateValues.is_urgent = draft.isUrgent === "true";
-      }
-
-      if (draft.isImportant !== "unchanged") {
-        updateValues.is_important = draft.isImportant === "true";
       }
 
       if (draft.repeatFrequency !== "unchanged") {

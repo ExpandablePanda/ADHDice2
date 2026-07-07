@@ -4,7 +4,9 @@ import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskUpdate } from "@/lib/database.types";
 import type { TaskDraft, TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
 import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
+import { normalizeOpenTaskStatusForDueDate } from "@/lib/task-cockpit";
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
+import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
 
@@ -72,10 +74,19 @@ export function useTaskEditorSaveAction({
 
     if (isEditing && taskId) {
       const previousTask = tasks.find((task) => task.id === taskId) ?? null;
-      const updateValues = {
+      const normalizedUpdateValues = normalizeTaskPriorityFields({
         ...values,
         id: undefined,
-      };
+      });
+      const updateValues = previousTask && normalizedUpdateValues.due_on !== previousTask.due_on
+        ? {
+          ...normalizedUpdateValues,
+          status: normalizeOpenTaskStatusForDueDate({
+            due_on: normalizedUpdateValues.due_on ?? null,
+            status: normalizedUpdateValues.status,
+          }, currentDayKey),
+        }
+        : normalizedUpdateValues;
       const {
         conflict,
         data,
@@ -150,11 +161,11 @@ export function useTaskEditorSaveAction({
       return nextData;
     }
 
-    const payload = {
+    const payload = normalizeTaskPriorityFields({
       ...values,
       user_id: currentUserId,
       sort_order: sortOrder,
-    };
+    });
     const { data, error, usedEnergyFallback } = await insertTaskRowWithLegacyEnergyFallback(payload);
 
     if (error) {

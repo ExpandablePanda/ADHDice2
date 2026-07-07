@@ -33,6 +33,7 @@ import {
 import type { TaskActualTimeEntry, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
+import { getSelectedTaskPriorityToneClass, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TaskDelayPicker } from "@/components/task-app/task-delay-picker";
 import { TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
@@ -66,7 +67,7 @@ import { mergeMeasuredColumnWidths } from "@/lib/task-table-measurements";
 import { type TaskTableLayoutPreferences, taskTableLayoutPreferencesEqual } from "@/lib/task-table-layout-persistence";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
-type TaskPriority = "focus" | "important" | "urgent";
+type TaskPriority = TaskPriorityLevelOption;
 type TaskRepeat = "custom" | "daily" | "daily_until_complete" | "monthly" | "none" | "weekly";
 type SortOptionId =
   | "status_asc"
@@ -1107,7 +1108,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     notes: "Needs a lighter first pass before turning into a bigger work block.",
     pinOrder: null,
     pinnedAt: null,
-    priorities: ["focus"],
+    priorities: ["3"],
     currentStreak: 1,
     missedStreak: 0,
     repeat: "daily",
@@ -1148,7 +1149,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     notes: "Follow up with the client and tighten the timeline assumptions.",
     pinOrder: null,
     pinnedAt: new Date(Date.now() - 1_800_000).toISOString(),
-    priorities: ["important", "urgent"],
+    priorities: ["5"],
     currentStreak: 2,
     missedStreak: 0,
     repeat: "weekly",
@@ -1196,7 +1197,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     notes: "Custom cadence draft for a longer-term maintenance loop.",
     pinOrder: null,
     pinnedAt: null,
-    priorities: ["important"],
+    priorities: ["4"],
     currentStreak: 0,
     missedStreak: 1,
     repeat: "custom",
@@ -1306,9 +1307,7 @@ function getInitialStatusDisplayMode() {
 }
 
 const PRIORITY_OPTIONS: Array<{ label: string; value: TaskPriority }> = [
-  { label: "Focus", value: "focus" },
-  { label: "Important", value: "important" },
-  { label: "Urgent", value: "urgent" },
+  ...TASK_PRIORITY_LEVEL_OPTIONS.map((value) => ({ label: value, value })),
 ];
 
 const ENERGY_OPTIONS: Array<{ label: string; value: TaskEnergy }> = [
@@ -1400,7 +1399,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
 };
 const MIN_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   status_icon: 24,
-  title: 156,
+  title: 128,
   lists: 62,
   date_added: 92,
   date_completed: 104,
@@ -1453,7 +1452,7 @@ const HEADER_COLUMNS: HeaderColumn[] = [
   { id: "tags", label: "Tags", menuLabel: "Tags", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search tags" },
   { id: "link", label: "Link", menuLabel: "Link", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search links" },
   { id: "notes", label: "Notes", menuLabel: "Notes", options: [{ id: "text_asc", label: "Sort A-Z" }, { id: "text_desc", label: "Sort Z-A" }], filterPlaceholder: "Search notes" },
-  { id: "priority", label: "Priority", menuLabel: "Priority", options: [{ id: "priority_desc", label: "Sort urgent first" }, { id: "priority_asc", label: "Sort focus first" }] },
+  { id: "priority", label: "Priority", menuLabel: "Priority", options: [{ id: "priority_desc", label: "Sort high-low" }, { id: "priority_asc", label: "Sort low-high" }] },
   { id: "energy", label: "Energy", menuLabel: "Energy", options: [{ id: "energy_desc", label: "Sort high first" }, { id: "energy_asc", label: "Sort none first" }] },
   { id: "repeat", label: "Repeat", menuLabel: "Repeat", options: [{ id: "repeat_desc", label: "Sort repeating first" }, { id: "repeat_asc", label: "Sort no repeat first" }] },
 ];
@@ -1470,7 +1469,7 @@ function summarizeInlineItems<T>(items: T[], maxVisible = 1) {
     visibleItems: items.slice(0, maxVisible),
   };
 }
-const PRIORITY_SORT_ORDER: TaskPriority[] = ["focus", "important", "urgent"];
+const PRIORITY_SORT_ORDER: TaskPriority[] = ["1", "2", "3", "4", "5"];
 const ENERGY_SORT_ORDER: TaskEnergy[] = ["none", "low", "medium", "high"];
 const REPEAT_SORT_ORDER: TaskRepeat[] = ["none", "daily", "weekly", "monthly", "custom"];
 const STATUS_SORT_ORDER: TaskStatus[] = [
@@ -1830,9 +1829,7 @@ function energyTone(energy: TaskEnergy) {
 }
 
 function priorityTone(priority: TaskPriority) {
-  if (priority === "focus") return "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
-  if (priority === "important") return "border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]";
-  return "border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]";
+  return getTaskPriorityToneClass(priority);
 }
 
 function repeatTone(repeat: TaskRepeat) {
@@ -1849,8 +1846,8 @@ function inlineAccordionChipContentClass(tone: string) {
   return `${CHIP_BASE} ${tone}`;
 }
 
-const ROW_ACTION_ICON_BUTTON_CLASS = "inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#6f57f6] opacity-78 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f] dark:focus-visible:ring-[#3b2f68]/90";
-const ROW_ACTION_DANGER_ICON_BUTTON_CLASS = "inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#d94e67] opacity-72 transition hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffd6de]/80 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f] dark:focus-visible:ring-[#5b2e3b]/90";
+const ROW_ACTION_ICON_BUTTON_CLASS = "inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#8a79d6] opacity-78 transition hover:text-[#6f57f6] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-[#b6a9ec] dark:hover:text-[#cabfff] dark:focus-visible:ring-[#3b2f68]/90";
+const ROW_ACTION_DANGER_ICON_BUTTON_CLASS = "inline-flex h-7 w-7 flex-none items-center justify-center rounded-full border border-transparent bg-transparent text-[#d94e67] opacity-72 transition hover:text-[#c93d5c] hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ffd6de]/80 dark:text-[#ff9eaf] dark:hover:text-[#ffb5c3] dark:focus-visible:ring-[#5b2e3b]/90";
 
 function inlineAccordionInputCardClass(widthClass = "w-[15rem]") {
   return `shrink-0 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-2.5 dark:border-white/10 dark:bg-white/[0.04] ${widthClass}`;
@@ -1900,7 +1897,7 @@ function formatStatusLabel(status: TaskStatus) {
 }
 
 function formatPriorityLabel(priority: TaskPriority) {
-  return PRIORITY_OPTIONS.find((option) => option.value === priority)?.label ?? priority;
+  return priority;
 }
 
 function formatEnergyLabel(energy: TaskEnergy) {
@@ -4978,7 +4975,7 @@ export function TaskManagementTableV2({
               }}
               type="button"
             >
-              <span className={inlineAccordionChipContentClass(selected ? priorityTone(option.value) : INACTIVE_CHIP_CLASS)}>{option.label}</span>
+              <span className={inlineAccordionChipContentClass(selected ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value))}>{option.label}</span>
             </button>
           );
         }),
@@ -5693,7 +5690,7 @@ export function TaskManagementTableV2({
               const selected = structuredFilters.priority.includes(option.value);
               return (
                 <button
-                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? priorityTone(option.value) : LIST_CHIP_CLASS}`}
+                  className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value)}`}
                   key={`${option.value || "priority-filter"}-${optionIndex}`}
                   onClick={() => toggleStructuredFilter("priority", option.value)}
                   type="button"
@@ -6069,16 +6066,15 @@ export function TaskManagementTableV2({
       const isPinned = Boolean(task.pinnedAt);
       const isRoutine = taskHasList(task, "Routine");
       return (
-        <div className="relative min-w-0 w-full pl-[5px]">
+        <div className="relative inline-flex min-w-0 max-w-full pl-[5px]">
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute left-0 top-0 inline-flex w-full max-w-[40ch] items-start justify-start opacity-0"
+            className="pointer-events-none absolute left-0 top-0 inline-flex max-w-full items-start justify-start opacity-0"
             data-column-content-measure={columnId}
-            style={{ maxWidth: "min(100%, 40ch)" }}
           >
-            <span className={`flex min-w-0 items-start ${hasSecondaryContent ? "flex-col" : "min-h-[2.25rem] justify-center"}`}>
+            <span className={`flex min-w-0 items-start ${hasSecondaryContent ? "flex-col" : "min-h-[2rem] justify-center"}`}>
               <span className="inline-flex min-w-0 items-center gap-2">
-                <span className={`${VISIBLE_TITLE_TEXT_CLASS} whitespace-normal break-words`}>{task.title}</span>
+                <span className={`${VISIBLE_TITLE_TEXT_CLASS} whitespace-normal break-normal`}>{task.title}</span>
                 {task.status === "trashed" ? (
                   <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
                     {`${getTrashDaysRemaining(task.trashedAt) ?? 30}d until auto delete`}
@@ -6092,39 +6088,42 @@ export function TaskManagementTableV2({
               ) : null}
             </span>
           </span>
-          <div className={`min-w-0 max-w-[40ch] ${hasSecondaryContent ? "space-y-1" : "flex min-h-[2.25rem] items-center"}`} style={{ maxWidth: "min(100%, 40ch)" }}>
-            <div className="flex min-w-0 items-center gap-1.5">
-              {isRenamingTitle ? (
-                <TaskTitleDraftInput
-                  autoFocus
-                  className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 min-w-0 flex-1 rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
-                  initialValue={titleDraft}
-                  onCommit={commitTaskTitle}
-                  onDone={() => setEditingTaskTitleId((current) => (current === task.id ? null : current))}
-                  onDraftChange={setTitleDraft}
-                  style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
-                  taskId={task.id}
-                />
-              ) : (
-                <button
-                  className="min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setEditingTaskTitleId(task.id);
-                    setTitleDraft(task.id, task.title);
-                  }}
-                  type="button"
-                >
-                  <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 whitespace-normal break-words`}>
-                    {task.title}
-                  </p>
-                </button>
-              )}
-              {task.status === "trashed" ? (
-                <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
-                  {`${getTrashDaysRemaining(task.trashedAt) ?? 30}d until auto delete`}
-                </span>
-              ) : null}
+          <div className={`min-w-0 max-w-full ${hasSecondaryContent ? "space-y-px" : "flex min-h-[2rem] items-center"}`}>
+            <div className="flex min-w-0 items-center gap-1">
+              <div className="flex min-w-0 flex-[0_1_auto] items-center gap-1">
+                {isRenamingTitle ? (
+                  <TaskTitleDraftInput
+                    autoFocus
+                    className={`${VISIBLE_TITLE_TEXT_CLASS} h-[15px] min-h-0 min-w-0 max-w-full rounded-[0.45rem] border border-[#ddd2ff] bg-white px-1 py-0 outline-none transition focus:border-[#b7a7ff] dark:border-[#42306f] dark:bg-[#22193f] dark:focus:border-[#6d56d6]`}
+                    initialValue={titleDraft}
+                    onCommit={commitTaskTitle}
+                    onDone={() => setEditingTaskTitleId((current) => (current === task.id ? null : current))}
+                    onDraftChange={setTitleDraft}
+                    style={PARENT_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE}
+                    taskId={task.id}
+                  />
+                ) : (
+                  <button
+                    className="min-w-0 max-w-full flex-[0_1_auto] appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setEditingTaskTitleId(task.id);
+                      setTitleDraft(task.id, task.title);
+                    }}
+                    type="button"
+                  >
+                    <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 whitespace-normal break-normal`}>
+                      {task.title}
+                    </p>
+                  </button>
+                )}
+                {task.status === "trashed" ? (
+                  <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
+                    {`${getTrashDaysRemaining(task.trashedAt) ?? 30}d until auto delete`}
+                  </span>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-0 [&>button]:h-6 [&>button]:w-6">
               {(task.status === "archived" || task.status === "trashed") && onRestoreTask ? (
                 <button
                   aria-label="Restore task to inbox"
@@ -6223,6 +6222,7 @@ export function TaskManagementTableV2({
                   {task.missedStreak}
                 </span>
               ) : null}
+              </div>
             </div>
             {hasDescription ? (
               <p className="truncate text-left text-[12px] font-medium text-[#8d87a7] dark:text-white/40">
@@ -6231,11 +6231,11 @@ export function TaskManagementTableV2({
             ) : null}
             {hasUnifiedSteps ? (
               <div className="w-full min-w-0">
-                <div className="inline-flex items-center gap-1.5">
+                <div className="inline-flex items-center gap-1 leading-none">
                   <span className={TITLE_CELL_CLASS}>Steps</span>
                   <button
                     aria-expanded={unifiedStepsExpanded}
-                    className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#9b92be] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:border-[#42306f] dark:hover:bg-[#22193f] dark:focus-visible:ring-[#3b2f68]/90"
+                    className="inline-flex h-4 w-4 flex-none items-center justify-center text-[#9b92be] transition hover:text-[#6f57f6] hover:[&_svg]:stroke-[2.5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:text-[#cabfff] dark:focus-visible:ring-[#3b2f68]/90"
                     onClick={(event) => {
                       event.stopPropagation();
                       const nextStepsExpanded = !stepsExpanded;
@@ -6583,7 +6583,7 @@ export function TaskManagementTableV2({
 
           return (
             <div
-              className={`group flex min-w-0 items-start gap-2 rounded-[0.95rem] border border-transparent px-1.5 py-2.5 text-left transition ${isMetadataTarget ? "bg-[#fbfaff] dark:bg-white/[0.05]" : "bg-transparent"} ${canSelectChildTask ? "cursor-pointer hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+              className={`group flex min-w-0 items-start gap-2 rounded-[0.95rem] border border-transparent px-1.5 py-2 text-left transition ${isMetadataTarget ? "bg-[#fbfaff] dark:bg-white/[0.05]" : "bg-transparent"} ${canSelectChildTask ? "cursor-pointer hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
               data-same-table-step-row={item.id}
               key={item.id}
               onDragOver={(event) => updateChildTaskDropTarget(event, item)}
@@ -6633,8 +6633,8 @@ export function TaskManagementTableV2({
               >
                 {renderTaskStatusCircle(item.status, "sm", { inverted: activeStepPanel === "status" })}
               </button>
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-[0_1_auto]">
+                <div className="flex min-w-0 flex-wrap items-start gap-2">
                   <div className="min-w-0">
                     {isRenamingStepTitle ? (
                       <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
@@ -6661,7 +6661,7 @@ export function TaskManagementTableV2({
                       <div className="flex min-w-0 items-center gap-1">
                         <button
                           data-step-title-edit={item.id}
-                          className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                          className="block min-w-0 max-w-full flex-[0_1_auto] appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                           onClick={(event) => {
                             event.stopPropagation();
                             handoffEditorChildTitleRename(item.id, item.title);
@@ -6672,7 +6672,7 @@ export function TaskManagementTableV2({
                           }}
                           type="button"
                         >
-                          <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
+                          <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 whitespace-normal break-normal`}>
                             {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                           </p>
                         </button>
@@ -6696,7 +6696,7 @@ export function TaskManagementTableV2({
                       {formatChildTaskPreviewDepthLabel(item.depth)}
                     </p>
                   </div>
-                  <div className="flex flex-none items-center gap-1">
+                  <div className="flex flex-none items-center gap-0.5">
                     {onReorderChildTask ? (
                       <button
                         aria-label={`Drag to reorder ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
@@ -6914,10 +6914,16 @@ export function TaskManagementTableV2({
       const isRenamingStepTitle = editingTaskTitleId === item.id;
       const canCollapse = childTaskPreviewVisibility?.collapsibleTaskIds.has(item.id) ?? false;
       const isCollapsed = canCollapse && collapsedChildTaskIds[item.id] === true;
+      const siblingItems = childTaskPreviewVisibility?.siblingItems ?? [];
+      const siblingIndex = siblingItems.findIndex((sibling) => sibling.id === item.id);
       return (
-        <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: `${0.2 + depthIndent}rem` }}>
+        <div
+          className={`inline-flex min-w-[15rem] max-w-full flex-[0_1_auto] flex-wrap items-start gap-x-1.5 gap-y-1 text-left ${getInlineClusterClass(columnId)}`}
+          data-column-content-measure={columnId}
+          style={{ paddingLeft: `${0.2 + depthIndent}rem` }}
+        >
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
-          <div className="min-w-0 flex-1">
+          <div className="min-w-[8rem] flex-[1_1_8rem]">
             {isRenamingStepTitle ? (
               <span data-step-title-edit={item.id} onClick={(event) => event.stopPropagation()}>
                 <TaskTitleDraftInput
@@ -6933,10 +6939,10 @@ export function TaskManagementTableV2({
               </span>
             ) : (
               <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-1.5">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <button
                     data-step-title-edit={item.id}
-                    className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
+                    className="block min-w-0 max-w-full flex-[0_1_auto] appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                     onClick={(event) => {
                       event.stopPropagation();
                       setEditingTaskTitleId(item.id);
@@ -6944,7 +6950,7 @@ export function TaskManagementTableV2({
                     }}
                     type="button"
                   >
-                    <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 truncate`}>
+                    <p className={`${VISIBLE_TITLE_TEXT_CLASS} min-w-0 whitespace-normal break-normal`}>
                       {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                     </p>
                   </button>
@@ -6981,50 +6987,89 @@ export function TaskManagementTableV2({
               </div>
             )}
           </div>
-          {onCreateChildTask ? (
-            <button
-              aria-label={`Add substep to ${item.title || "Untitled step"}`}
-              className={ROW_ACTION_ICON_BUTTON_CLASS}
-              data-same-table-step-add={item.id}
-              onClick={(event) => {
-                event.stopPropagation();
-                beginTableStepDraft(item.id);
-              }}
-              onPointerDown={stopRowActionPointerEvent}
-              type="button"
-            >
-              <Footprints className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-          {onOpenTaskHistory ? (
-            <button
-              aria-label={`Open history for step ${item.title || "Untitled step"}`}
-              className={ROW_ACTION_ICON_BUTTON_CLASS}
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenTaskHistory(item.id);
-              }}
-              onPointerDown={stopRowActionPointerEvent}
-              type="button"
-            >
-              <CalendarDays className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-          {onOpenDeleteTask ? (
-            <button
-              aria-label={`Move step ${item.title || "Untitled step"} to trash`}
-              className={ROW_ACTION_DANGER_ICON_BUTTON_CLASS}
-              data-same-table-step-delete={item.id}
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenDeleteTask(item.id);
-              }}
-              onPointerDown={stopRowActionPointerEvent}
-              type="button"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-0 [&>button]:h-6 [&>button]:w-6">
+            {onCreateChildTask ? (
+              <button
+                aria-label={`Add substep to ${item.title || "Untitled step"}`}
+                className={ROW_ACTION_ICON_BUTTON_CLASS}
+                data-same-table-step-add={item.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  beginTableStepDraft(item.id);
+                }}
+                onPointerDown={stopRowActionPointerEvent}
+                type="button"
+              >
+                <Footprints className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+            {onOpenTaskHistory ? (
+              <button
+                aria-label={`Open history for step ${item.title || "Untitled step"}`}
+                className={ROW_ACTION_ICON_BUTTON_CLASS}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenTaskHistory(item.id);
+                }}
+                onPointerDown={stopRowActionPointerEvent}
+                type="button"
+              >
+                <CalendarDays className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+            {onOpenDeleteTask ? (
+              <button
+                aria-label={`Move step ${item.title || "Untitled step"} to trash`}
+                className={ROW_ACTION_DANGER_ICON_BUTTON_CLASS}
+                data-same-table-step-delete={item.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenDeleteTask(item.id);
+                }}
+                onPointerDown={stopRowActionPointerEvent}
+                type="button"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+            {onReorderChildTask ? (
+              <>
+                <button
+                  aria-label={`Drag to reorder ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent text-[#8a79d6] opacity-70 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+                  draggable
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onDragEnd={clearChildTaskDragState}
+                  onDragStart={(event) => beginChildTaskDrag(event, item)}
+                  onPointerDown={stopRowActionPointerEvent}
+                  type="button"
+                >
+                  <GripVertical className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]"
+                  disabled={siblingIndex <= 0}
+                  onClick={() => onReorderChildTask(item.id, "up")}
+                  type="button"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]"
+                  disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1}
+                  onClick={() => onReorderChildTask(item.id, "down")}
+                  type="button"
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </button>
+              </>
+            ) : null}
+          </div>
         </div>
       );
     }
@@ -7322,7 +7367,7 @@ export function TaskManagementTableV2({
         ) : null}
         {isDraftingStepForTask ? (
           <form
-            className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-2 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+            className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
             data-table-step-draft-row={task.id}
             onClick={(event) => event.stopPropagation()}
             onSubmit={(event) => {
@@ -7340,9 +7385,6 @@ export function TaskManagementTableV2({
         ) : null}
         {visibleItems.map((item) => {
           const inlineStepTask = childPreviewToPrototypeTaskRow(item);
-          const siblingItems = group?.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth) ?? [];
-          const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
-
           return (
             <Fragment key={item.id}>
               <div
@@ -7350,7 +7392,7 @@ export function TaskManagementTableV2({
                 data-same-table-step-row={item.id}
               >
                 <div
-                  className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-2 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-[#ddd2ff] bg-[#f7f2ff] ring-2 ring-[#6f57f6]/15 dark:border-[#42306f] dark:bg-[#201733] dark:ring-[#cabfff]/12" : "border-transparent bg-white dark:bg-[#181226]"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                  className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]" : "border-transparent bg-white dark:bg-[#181226]"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
                   onClick={canOpenStepActions ? (event) => {
@@ -7392,27 +7434,7 @@ export function TaskManagementTableV2({
                   {visibleHeaderColumns.map((column) => (
                     <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${item.id}-${column.id}`}>
                       {column.id === "title" ? (
-                        <div className="flex min-w-0 flex-1 items-center gap-1">
-                          {renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
-                          {onReorderChildTask ? (
-                            <span className="ml-auto flex shrink-0 items-center" onClick={(event) => event.stopPropagation()} onPointerDown={stopRowActionPointerEvent}>
-                              <button
-                                aria-label={`Drag to reorder ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-transparent text-[#8a79d6] opacity-70 transition hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
-                                draggable
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                }}
-                                onDragEnd={clearChildTaskDragState}
-                                onDragStart={(event) => beginChildTaskDrag(event, item)}
-                                type="button"
-                              ><GripVertical className="h-3.5 w-3.5" /></button>
-                              <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} up`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex <= 0} onClick={() => onReorderChildTask(item.id, "up")} type="button"><ArrowUp className="h-3.5 w-3.5" /></button>
-                              <button aria-label={`Move ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"} down`} className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6f57f6] hover:bg-[#f3efff] disabled:cursor-not-allowed disabled:opacity-25 dark:text-[#cabfff] dark:hover:bg-[#22193f]" disabled={siblingIndex < 0 || siblingIndex >= siblingItems.length - 1} onClick={() => onReorderChildTask(item.id, "down")} type="button"><ArrowDown className="h-3.5 w-3.5" /></button>
-                            </span>
-                          ) : null}
-                        </div>
+                        renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)
                       ) : renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
                     </div>
                   ))}
@@ -7421,7 +7443,7 @@ export function TaskManagementTableV2({
               {renderInlineActionRow(inlineStepTask)}
               {tableStepDraftParentId === item.id ? (
                 <form
-                  className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-2 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+                  className="grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
                   data-table-step-draft-row={item.id}
                   onClick={(event) => event.stopPropagation()}
                   onSubmit={(event) => {
@@ -7457,7 +7479,7 @@ export function TaskManagementTableV2({
         <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: `${0.2 + depthIndent}rem` }}>
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
           <div className="flex min-w-0 items-center gap-1.5">
-            <p className="min-w-0 truncate text-[13px] font-medium text-[#27304c] dark:text-white">
+            <p className="min-w-0 whitespace-normal break-normal text-[13px] font-medium text-[#27304c] dark:text-white">
               {subtask.title || (depth > 1 ? "Untitled substep" : "Untitled step")}
             </p>
             {renderStepLayerChip(depth)}
@@ -7494,7 +7516,7 @@ export function TaskManagementTableV2({
             onClick={(event) => event.stopPropagation()}
           >
             <div
-              className="ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-3 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
+              className="ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-0.5 pl-[3px] pr-0 text-center transition dark:bg-[#181226]"
               style={{ gridTemplateColumns }}
             >
               {visibleHeaderColumns.map((column) => (
@@ -7869,9 +7891,9 @@ export function TaskManagementTableV2({
                     variants={tableRowVariants}
                     whileHover={shouldAnimateRows ? { y: -0.5 } : undefined}
                   >
-                    <div className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-3 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${
+                    <div className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${
                       selectedTaskIdSet.has(task.id)
-                        ? "border-[#ddd2ff] bg-[#f7f2ff] ring-2 ring-[#6f57f6]/15 dark:border-[#42306f] dark:bg-[#201733] dark:ring-[#cabfff]/12"
+                        ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]"
                         : showInlineAccordion || rowContextMenu?.taskId === task.id
                           ? "border-transparent bg-white dark:bg-[#181226]"
                           : "border-transparent bg-white dark:bg-white/[0.04]"
@@ -8356,7 +8378,7 @@ export function TaskManagementTableV2({
                       {PRIORITY_OPTIONS.map((option, optionIndex) => {
                         const selected = metadataTask.priorities.includes(option.value);
                         const nextPriorities = selected ? metadataTask.priorities.filter((value) => value !== option.value) : [...metadataTask.priorities, option.value];
-                        return <TaskTableChipButton key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => setTaskPriorities(metadataTask.id, nextPriorities)} toneClassName={selected ? priorityTone(option.value) : INACTIVE_CHIP_CLASS}>{option.label}</TaskTableChipButton>;
+                        return <TaskTableChipButton key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => setTaskPriorities(metadataTask.id, nextPriorities)} toneClassName={selected ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value)}>{option.label}</TaskTableChipButton>;
                       })}
                       <TaskTableChipButton onClick={() => setTaskPriorities(metadataTask.id, [])} toneClassName={INACTIVE_CHIP_CLASS}>Clear all</TaskTableChipButton>
                     </div>
@@ -9051,7 +9073,7 @@ export function TaskManagementTableV2({
                         const selected = selectedTask.priorities.includes(option.value);
                         return (
                           <button
-                            className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? priorityTone(option.value) : INACTIVE_CHIP_CLASS}`}
+                            className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value)}`}
                             key={`${option.value || "priority-option"}-${optionIndex}`}
                             onClick={() => {
                               const nextPriorities = selected

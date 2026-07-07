@@ -1,13 +1,15 @@
 import type { Task, TaskEnergy, TaskHistory, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
 import { buildEmptyTaskHistoryFacts, getTaskFocusFilterFacts, type TaskHistoryFacts, type TaskHistoryStreakPreset, type TaskHistoryWindowPreset } from "@/lib/task-history";
 import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
+import { getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 
 export type BuiltInTaskListId =
   | "inbox"
   | "today"
   | "focus"
-  | "urgent"
-  | "important"
+  | "priority_1_2"
+  | "priority_3_4"
+  | "priority_5"
   | "routine"
   | "quick_wins"
   | "recurring"
@@ -24,6 +26,7 @@ export type TaskListRule =
   | { field: "status"; op: "is" | "is_not"; value: TaskStatus | TaskStatus[] }
   | { field: "list"; op: "is" | "is_not"; value: TaskListId }
   | { field: "steps"; op: "is" | "is_not"; value: boolean }
+  | { field: "priority_level"; op: "is" | "is_not"; value: TaskPriorityLevelOption | TaskPriorityLevelOption[] }
   | { field: "is_urgent"; op: "is" | "is_not"; value: boolean }
   | { field: "is_important"; op: "is" | "is_not"; value: boolean }
   | { field: "focus"; op: "is" | "is_not"; value: boolean }
@@ -142,8 +145,9 @@ export const BUILT_IN_TASK_LIST_IDS: BuiltInTaskListId[] = [
   "inbox",
   "today",
   "focus",
-  "urgent",
-  "important",
+  "priority_1_2",
+  "priority_3_4",
+  "priority_5",
   "routine",
   "quick_wins",
   "recurring",
@@ -199,31 +203,45 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       type: "smart",
     },
     {
-      description: "Time-sensitive or consequence-heavy work.",
-      id: "urgent",
+      description: "Lower-friction or lower-pressure tasks with numeric priority 1 or 2.",
+      id: "priority_1_2",
       isDeletable: false,
       isEditable: true,
       isVisible: true,
       membershipMode: "rules",
-      name: "Urgent",
+      name: "Priority 1-2",
       rules: {
-        rules: [{ rule: { field: "is_urgent", op: "is", value: true } }],
+        rules: [{ rule: { field: "priority_level", op: "is", value: ["1", "2"] } }],
       },
       sortOrder: 3,
       type: "smart",
     },
     {
-      description: "Important work that deserves attention even if it is not urgent.",
-      id: "important",
+      description: "Core work tracked with numeric priority 3 or 4.",
+      id: "priority_3_4",
       isDeletable: false,
       isEditable: true,
       isVisible: true,
       membershipMode: "rules",
-      name: "Important",
+      name: "Priority 3-4",
       rules: {
-        rules: [{ rule: { field: "is_important", op: "is", value: true } }],
+        rules: [{ rule: { field: "priority_level", op: "is", value: ["3", "4"] } }],
       },
       sortOrder: 4,
+      type: "smart",
+    },
+    {
+      description: "Highest-pressure work tracked as numeric priority 5.",
+      id: "priority_5",
+      isDeletable: false,
+      isEditable: true,
+      isVisible: true,
+      membershipMode: "rules",
+      name: "Priority 5",
+      rules: {
+        rules: [{ rule: { field: "priority_level", op: "is", value: "5" } }],
+      },
+      sortOrder: 5,
       type: "smart",
     },
     {
@@ -235,7 +253,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "manual",
       name: "Routine",
       rules: null,
-      sortOrder: 5,
+      sortOrder: 6,
       type: "system",
     },
     {
@@ -247,7 +265,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "manual",
       name: "Quick Wins",
       rules: null,
-      sortOrder: 6,
+      sortOrder: 7,
       type: "system",
     },
     {
@@ -261,7 +279,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "repeat", op: "is", value: true } }],
       },
-      sortOrder: 7,
+      sortOrder: 8,
       type: "system",
     },
     {
@@ -275,7 +293,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "status", op: "is", value: "upcoming" } }],
       },
-      sortOrder: 8,
+      sortOrder: 9,
       type: "system",
     },
     {
@@ -287,7 +305,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "manual",
       name: "Later",
       rules: null,
-      sortOrder: 9,
+      sortOrder: 10,
       type: "system",
     },
     {
@@ -304,7 +322,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
           { connector: "or", rule: { field: "status", op: "is", value: "did_my_best" } },
         ],
       },
-      sortOrder: 10,
+      sortOrder: 11,
       type: "system",
     },
     {
@@ -318,7 +336,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "status", op: "is", value: "missed" } }],
       },
-      sortOrder: 11,
+      sortOrder: 12,
       type: "system",
     },
   ];
@@ -580,10 +598,15 @@ function matchesTaskListRule(
       const hasSteps = context.hasStepsByTaskId[task.id] === true;
       return rule.op === "is" ? hasSteps === rule.value : hasSteps !== rule.value;
     }
+    case "priority_level": {
+      const values = Array.isArray(rule.value) ? rule.value : [rule.value];
+      const priorityLevel = String(getTaskPriorityLevel(task)) as TaskPriorityLevelOption;
+      return rule.op === "is" ? values.includes(priorityLevel) : !values.includes(priorityLevel);
+    }
     case "is_urgent":
-      return rule.op === "is" ? task.is_urgent === rule.value : task.is_urgent !== rule.value;
+      return rule.op === "is" ? getTaskPriorityLevel(task) === 5 : getTaskPriorityLevel(task) !== 5;
     case "is_important":
-      return rule.op === "is" ? task.is_important === rule.value : task.is_important !== rule.value;
+      return rule.op === "is" ? getTaskPriorityLevel(task) === 4 : getTaskPriorityLevel(task) !== 4;
     case "focus":
       return rule.op === "is"
         ? context.focusedTaskIds.has(task.id) === rule.value
@@ -659,6 +682,10 @@ function isTaskListRule(value: unknown): value is TaskListRule {
   }
   if (candidate.field === "steps") {
     return (candidate.op === "is" || candidate.op === "is_not") && typeof candidate.value === "boolean";
+  }
+  if (candidate.field === "priority_level") {
+    return (candidate.op === "is" || candidate.op === "is_not")
+      && (typeof candidate.value === "string" || (Array.isArray(candidate.value) && candidate.value.every((item) => typeof item === "string")));
   }
   if (candidate.field === "is_urgent" || candidate.field === "is_important" || candidate.field === "focus" || candidate.field === "repeat") {
     return (candidate.op === "is" || candidate.op === "is_not") && typeof candidate.value === "boolean";

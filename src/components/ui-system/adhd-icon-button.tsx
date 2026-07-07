@@ -53,11 +53,11 @@ const ICON_BUTTON_SELECTED_CLASS: Record<Exclude<AdhdIconButtonTone, "ghost">, s
 
 const ROW_TOOLBAR_TONE_CLASS: Record<Exclude<AdhdIconButtonTone, "ghost">, string> = {
   default:
-    "border-transparent bg-transparent text-[#6f57f6] opacity-78 hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]",
+    "border-transparent bg-transparent text-[#8a79d6] opacity-78 hover:text-[#6f57f6] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:text-[#cabfff]",
   purple:
-    "border-transparent bg-transparent text-[#6f57f6] opacity-78 hover:border-[#ddd2ff] hover:bg-[#f3efff] hover:opacity-100 dark:text-[#cabfff] dark:hover:border-[#42306f] dark:hover:bg-[#22193f]",
+    "border-transparent bg-transparent text-[#8a79d6] opacity-78 hover:text-[#6f57f6] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:text-[#cabfff]",
   danger:
-    "border-transparent bg-transparent text-[#d94e67] opacity-72 hover:border-[#ffd6de] hover:bg-[#fff1f3] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:border-[#5b2e3b] dark:hover:bg-[#44232f]",
+    "border-transparent bg-transparent text-[#d94e67] opacity-72 hover:text-[#c93d5c] hover:opacity-100 dark:text-[#ff9eaf] dark:hover:text-[#ffb5c3]",
 };
 
 const ROW_TOOLBAR_SELECTED_CLASS: Record<Exclude<AdhdIconButtonTone, "ghost">, string> = {

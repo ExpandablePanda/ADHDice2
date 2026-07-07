@@ -8,7 +8,7 @@ import type {
   TaskStatus,
   TaskSubtask as DbTaskSubtask,
 } from "@/lib/database.types";
-import { computeTaskSpecificHistoryStats, getTaskFocusFilterFacts } from "@/lib/task-history";
+import { computeTaskSpecificHistoryStats, getTaskFocusFilterFacts, getTaskHistoryLastDone } from "@/lib/task-history";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
   TaskBucketContext,
@@ -22,6 +22,7 @@ import type {
 import { buildTaskListLookup, evaluateTaskListMemberships } from "@/lib/task-lists";
 import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
 import { isDueToday, isOverdue } from "@/lib/task-cockpit";
+import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { isTaskInRecentTrash } from "@/lib/task-trash";
 import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
 
@@ -71,7 +72,7 @@ export type TaskPrimaryVisibility = {
   primaryVisibleTaskIds: string[];
 };
 
-export type ChildTaskPreviewPriority = "focus" | "important" | "urgent";
+export type ChildTaskPreviewPriority = TaskPriorityLevelOption;
 
 export type ChildTaskPreview = {
   actualSeconds: number;
@@ -84,6 +85,8 @@ export type ChildTaskPreview = {
   estimatedMinutes: number | null;
   id: string;
   issueTypes: Array<TaskHierarchyIssue["type"]>;
+  lastDoneAt: string | null;
+  lastDoneDate: string | null;
   linkLabel: string;
   linkUrl: string;
   missedStreak: number;
@@ -288,20 +291,8 @@ export function buildTaskPrimaryVisibility(tasks: Task[]): TaskPrimaryVisibility
   };
 }
 
-function getChildTaskPriorityFlags(task: Task, focusedTaskIdSet: Set<string>): ChildTaskPreviewPriority[] {
-  const priorityFlags: ChildTaskPreviewPriority[] = [];
-
-  if (focusedTaskIdSet.has(task.id)) {
-    priorityFlags.push("focus");
-  }
-  if (task.is_important) {
-    priorityFlags.push("important");
-  }
-  if (task.is_urgent) {
-    priorityFlags.push("urgent");
-  }
-
-  return priorityFlags;
+function getChildTaskPriorityFlags(task: Task): ChildTaskPreviewPriority[] {
+  return [formatTaskPriorityLevel(getTaskPriorityLevel(task))];
 }
 
 export function buildChildTaskPreviewLookup(
@@ -310,8 +301,8 @@ export function buildChildTaskPreviewLookup(
   taskHistoryByTaskId: Record<string, TaskHistory[]> = {},
   todayDateKey = "",
 ): ChildTaskPreviewLookup {
+  void focusedTaskIds;
   const adapter = buildTaskHierarchyAdapter(tasks);
-  const focusedTaskIdSet = new Set(focusedTaskIds);
   const previewByParentTaskId: ChildTaskPreviewLookup = {};
 
   for (const task of tasks) {
@@ -338,6 +329,7 @@ export function buildChildTaskPreviewLookup(
           taskHistoryByTaskId[descendant.id] ?? [],
           todayDateKey,
         );
+        const lastDone = getTaskHistoryLastDone(taskHistoryByTaskId[descendant.id] ?? []);
 
         return {
           actualSeconds: descendant.actual_seconds,
@@ -350,12 +342,14 @@ export function buildChildTaskPreviewLookup(
           estimatedMinutes: descendant.estimated_minutes,
           id: descendant.id,
           issueTypes: adapter.getNode(descendant.id)?.issueTypes ?? [],
+          lastDoneAt: lastDone?.timestamp ?? null,
+          lastDoneDate: lastDone?.dateKey ?? null,
           linkLabel: descendant.external_link_label ?? "",
           linkUrl: descendant.external_link_url ?? "",
           missedStreak: historyStats.missedStreak,
           notes: descendant.notes ?? "",
           parentTaskId: descendant.parent_task_id,
-          priorityFlags: getChildTaskPriorityFlags(descendant, focusedTaskIdSet),
+          priorityFlags: getChildTaskPriorityFlags(descendant),
           repeat: descendant.repeat_frequency,
           repeatDayOfMonth: descendant.repeat_day_of_month,
           repeatDaysOfWeek: descendant.repeat_days_of_week ?? [],
@@ -876,7 +870,7 @@ export function computeTaskAppDerivedData({
     : sortTasksForCockpit(
       filteredTasksSorted.filter((task) => {
         const memberships = taskListMembershipsByTaskId[task.id] ?? [];
-        return isTaskOpen(task) && memberships.some((membership) => membership.id === "today" || membership.id === "urgent" || membership.id === "quick_wins" || membership.id === "focus");
+        return isTaskOpen(task) && memberships.some((membership) => membership.id === "today" || membership.id === "priority_5" || membership.id === "quick_wins" || membership.id === "focus");
       }),
       bucketContext,
     );

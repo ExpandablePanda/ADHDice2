@@ -17,7 +17,7 @@ type UseTaskActionsOptions = {
   currentDayKey: string;
   create: Omit<Parameters<typeof useTaskCreateAction>[0], "routeTask">;
   editorSave: Omit<Parameters<typeof useTaskEditorSaveAction>[0], "currentDayKey" | "replaceTaskSubtasks" | "syncTaskHistoryEntry" | "syncTaskNoteLinks">;
-  batchEdit: Omit<Parameters<typeof useTaskBatchEditAction>[0], "routeTask" | "saveFocusSelection" | "syncTaskHistoryEntry">;
+  batchEdit: Omit<Parameters<typeof useTaskBatchEditAction>[0], "currentDayKey" | "routeTask" | "saveFocusSelection" | "syncTaskHistoryEntry">;
   list?: Parameters<typeof useTaskListActions>[0];
   history: Parameters<typeof useTaskHistoryActions>[0];
   noteLinks: Parameters<typeof useTaskNoteLinkActions>[0];
@@ -68,6 +68,7 @@ export function useTaskActions({
   });
   const batchEditAction = useTaskBatchEditAction({
     ...batchEdit,
+    currentDayKey,
     routeTask: routingActions.routeTask,
     saveFocusSelection: editorSave.saveFocusSelection,
     syncTaskHistoryEntry,

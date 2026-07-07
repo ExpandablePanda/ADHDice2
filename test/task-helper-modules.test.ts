@@ -17,6 +17,7 @@ import {
   getTaskDueDateBucket,
   getListPriorityLabel,
   matchesTaskQuickFilter,
+  normalizeOpenTaskStatusForDueDate,
 } from "../src/lib/task-cockpit.ts";
 import {
   getMomentumMetric,
@@ -592,6 +593,22 @@ test("date bucket helpers classify due_on windows and normalize stale future sta
     status: "delayed",
     title: "Delayed today task",
   });
+  const notDueTodayTask = createTask({
+    created_at: `${today}T07:38:00.000Z`,
+    due_on: today,
+    id: "task-not-due-today",
+    sort_order: 19,
+    status: "not_due",
+    title: "Not due today task",
+  });
+  const delayedOverdueTask = createTask({
+    created_at: `${today}T07:39:00.000Z`,
+    due_on: yesterday,
+    id: "task-delayed-overdue",
+    sort_order: 20,
+    status: "delayed",
+    title: "Delayed overdue task",
+  });
 
   assert.equal(getTaskDueDateBucket(todayTask), "today");
   assert.equal(getTaskDueDateBucket(tomorrowTask), "upcoming");
@@ -608,6 +625,14 @@ test("date bucket helpers classify due_on windows and normalize stale future sta
   assert.equal(getTaskDisplayStatus(noDueDateTask), "not_due");
   assert.equal(getTaskDisplayStatus(delayedFutureTask), "delayed");
   assert.equal(getTaskDisplayStatus(delayedTodayTask), "pending");
+  assert.equal(getTaskDisplayStatus(notDueTodayTask), "pending");
+  assert.equal(getTaskDisplayStatus(delayedOverdueTask), "missed");
+  assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: today, status: "pending" }, today), "pending");
+  assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: tomorrow, status: "pending" }, today), "upcoming");
+  assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: eightDaysOut, status: "pending" }, today), "not_due");
+  assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: tomorrow, status: "delayed" }, today), "delayed");
+  assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: today, status: "delayed" }, today), "pending");
+  assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: eightDaysOut, status: "in_progress" }, today), "in_progress");
 });
 
 test("recurring display status follows current-occurrence history without treating older history as the current row", () => {

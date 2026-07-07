@@ -1,17 +1,25 @@
 # Current State
 
-Last reviewed: 2026-07-01
+Last reviewed: 2026-07-06
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.21.4`.
-- Current release group: `6.21.x` integrated task-move/routine/rewards/history correction pass.
+- Current working app version: `6.22.5`.
+- Current release group: `6.22.x` task-priority rollout pass.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 6.22 Checkpoint
+- `6.22.5` tightens the remaining Table View density seams without expanding scope: parent rows drop to a more compact vertical padding and title-cell height floor, same-table child/source-step rows use matching tighter wrappers, and the Table title-row toolbar icons pack closer together with the local table seam only. Due-date status logic, Focus counters, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.4` fixes the due-date status recalculation gap without expanding scope: when an open task's due date is edited through the shared update, Edit Task save, or batch-edit paths, the raw open status is recalculated with the shared due window rules so due today/overdue stays `Pending`, `1-7 days` becomes `Upcoming`, and `8+ days` becomes `Not Due`, while delayed semantics, recurrence, history, rewards, priority `1-5`, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.3` fixes the five narrow `6.22.2` QA misses without expanding scope: Table View parent/child rows are slightly denser, task-row title toolbar icons drop the hover circle in favor of tighter color-only hover feedback, Focus counter creation now uses mobile-safe client id generation, delayed and due-driven `Upcoming` / `Not Due` tasks normalize back to `Pending` when their due date arrives, and the shared upcoming window is corrected to `1-7 days` while `Not Due` now means `8+ days`. Priority `1-5`, dice/reward logic, History Delay behavior beyond due-status normalization, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.2` adds shared priority `1–5` chip/button color treatment across task surfaces, replaces the old Important/Urgent system lists with numeric priority system lists, lets non-deletable system/smart lists be hidden from List settings without deleting data, re-centers Focus counters inside the sandbox card, and tightens Table View row plus title-toolbar spacing. Focus timer/session logic, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.1` fixes the narrow `6.22.0` priority-rollout regressions without expanding scope: List View again shows Focus Today as a separate affordance from numeric `Priority 1–5`, Quick Capture keeps numeric priority while restoring a separate Focus Today creation path, and stale priority callers such as Agent Plan now normalize legacy values safely instead of producing invalid `priority_level` writes. Focus page/timers/sessions, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.0` adds `priority_level` as the new persisted task-priority source of truth, with user-facing numeric priority `1–5` across task editing plus list/table/report/import paths, while legacy `priority`, `is_urgent`, and `is_important` fields remain synced for rollout compatibility. Focus Today, Focus page/timers/sessions, dice/reward logic, History Delay, Routine behavior, and Report internal workspace-tab behavior remain separate and unchanged.
 
 ## 6.21 Checkpoint
 - `6.21.4` fixes the `6.21.3` Report navigation regression by keeping the internal task workspace-tab strip visible while Report is active, treating Report as a focusable internal workspace tab from the existing `Tasks | Paths | Report` control, and preserving existing task tabs plus `Open in New Tab` behavior. Priority `1–5`, dice/reward logic, History Delay, schema changes, and unrelated UI behavior remain unchanged.

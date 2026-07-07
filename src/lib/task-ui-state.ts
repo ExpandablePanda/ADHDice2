@@ -104,6 +104,16 @@ export const DEFAULT_TASK_UI_STATE: TaskUiState = {
   visibleColumnsByView: DEFAULT_VISIBLE_COLUMNS_BY_VIEW,
 };
 
+function normalizeLegacySelectedBucket(value: string) {
+  if (value === "important") {
+    return "priority_3_4";
+  }
+  if (value === "urgent") {
+    return "priority_5";
+  }
+  return value;
+}
+
 export const DEFAULT_TASK_WORKSPACE_TABS_STATE: TaskWorkspaceTabsState = {
   activeTabId: DEFAULT_TASK_WORKSPACE_TAB_ID,
   tabs: [
@@ -179,7 +189,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     ? state.view as TaskViewMode
     : DEFAULT_TASK_UI_STATE.view;
   const nextBucket = typeof state.selectedBucket === "string" && state.selectedBucket.length > 0
-    ? state.selectedBucket
+    ? normalizeLegacySelectedBucket(state.selectedBucket)
     : DEFAULT_TASK_UI_STATE.selectedBucket;
   const nextVisibleColumnsByView = VALID_TASK_VIEWS.reduce<Record<TaskViewMode, AgentPlanColumnId[]>>((accumulator, view) => {
     const candidate = view === "table"

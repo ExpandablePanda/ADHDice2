@@ -2,7 +2,6 @@ import type {
   Task,
   TaskEnergy,
   TaskInsert,
-  TaskPriority,
   TaskRepeatFrequency,
   TaskRepeatMonthlyMode,
   TaskRepeatMonthlyOrdinal,
@@ -10,6 +9,7 @@ import type {
   TaskSubtask as DbTaskSubtask,
   TaskSubtaskStatus,
 } from "@/lib/database.types";
+import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 
 export type TaskDraft = Omit<TaskInsert, "user_id">;
 export type TaskEditorMode = "create" | "edit";
@@ -26,10 +26,8 @@ export type TaskEditorDraft = {
   notes: string;
   linkedNoteIds: string[];
   status: TaskStatus;
-  priority: TaskPriority;
+  priorityLevel: TaskPriorityLevelOption;
   energy: TaskEnergy;
-  isUrgent: boolean;
-  isImportant: boolean;
   focusToday: boolean;
   dueOn: string;
   dueTime: string;
@@ -91,10 +89,8 @@ export function createTaskEditorDraft(task: Task | null, focusToday: boolean, su
     notes: task?.notes ?? "",
     linkedNoteIds: [],
     status: task?.status ?? "pending",
-    priority: task?.priority ?? "normal",
+    priorityLevel: formatTaskPriorityLevel(task ? getTaskPriorityLevel(task) : 3),
     energy: task?.energy ?? "none",
-    isUrgent: task?.is_urgent ?? false,
-    isImportant: task?.is_important ?? false,
     focusToday,
     dueOn: task?.due_on ?? "",
     dueTime: task?.due_time ?? "",

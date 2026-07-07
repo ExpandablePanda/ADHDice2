@@ -183,6 +183,17 @@ test("repeat helpers resolve recurring live status from next due date and logica
       now: new Date("2026-05-21T18:00:00.000Z"),
       timezone: "UTC",
     }),
+    "upcoming",
+  );
+
+  assert.equal(
+    resolveRecurringLiveStatusFromNextDueDate(task, {
+      currentDayKey: "2026-05-21",
+      dayStartTime: "06:00",
+      nextDueDate: "2026-05-29",
+      now: new Date("2026-05-21T18:00:00.000Z"),
+      timezone: "UTC",
+    }),
     "not_due",
   );
 

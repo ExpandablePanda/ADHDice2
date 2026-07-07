@@ -4,6 +4,7 @@ import type {
   TaskRepeatFrequency,
   TaskStatus,
 } from "@/lib/database.types";
+import type { TaskPriorityLevel } from "@/lib/task-priority";
 import { formatDateKey, shiftDateKey } from "@/lib/task-grid-layout";
 
 export type ImportedTaskWarning = {
@@ -23,6 +24,7 @@ export type ImportedTaskSubtask = {
   isUrgent: boolean;
   line: number;
   priority: TaskPriority;
+  priorityLevel: TaskPriorityLevel;
   repeatFrequency: TaskRepeatFrequency;
   status: TaskStatus;
   tags: string[];
@@ -38,6 +40,7 @@ export type ImportedTaskDraft = {
   isImportant: boolean;
   isUrgent: boolean;
   line: number;
+  priorityLevel: TaskPriorityLevel;
   repeatFrequency: TaskRepeatFrequency;
   status: TaskStatus;
   subtasks: ImportedTaskSubtask[];
@@ -157,6 +160,7 @@ function parseParentTaskLine(
     isUrgent: false,
     line,
     priority: "normal" as TaskPriority,
+    priorityLevel: 3 as TaskPriorityLevel,
     repeatFrequency: "none" as TaskRepeatFrequency,
     status: "pending" as TaskStatus,
     subtasks: [] as ImportedTaskSubtask[],
@@ -200,6 +204,7 @@ function parseStepLine(
     isUrgent: false,
     line,
     priority: "normal",
+    priorityLevel: 3,
     repeatFrequency: "none",
     status: "pending",
     tags: parsed.tags,
@@ -339,9 +344,11 @@ function applyParentMetadataToken(
     }
     if (parsed.kind === "priority") {
       task.priority = parsed.value;
+      task.priorityLevel = parsed.level;
       return {};
     }
     if (parsed.kind === "flag") {
+      task.priorityLevel = parsed.value === "urgent" ? 5 : 4;
       if (parsed.value === "urgent") task.isUrgent = true;
       if (parsed.value === "important") task.isImportant = true;
       return {};
@@ -452,9 +459,11 @@ function applyStepMetadataToken(
     }
     if (parsed.kind === "priority") {
       subtask.priority = parsed.value;
+      subtask.priorityLevel = parsed.level;
       return {};
     }
     if (parsed.kind === "flag") {
+      subtask.priorityLevel = parsed.value === "urgent" ? 5 : 4;
       if (parsed.value === "urgent") subtask.isUrgent = true;
       if (parsed.value === "important") subtask.isImportant = true;
       return {};
@@ -573,8 +582,20 @@ function parseEnergyValue(value: string) {
 
 function parsePriorityValue(value: string) {
   const normalized = normalizeOptionValue(value);
+  if (normalized === "1" || normalized === "2" || normalized === "3" || normalized === "4" || normalized === "5") {
+    const level = Number.parseInt(normalized, 10) as TaskPriorityLevel;
+    return {
+      kind: "priority" as const,
+      level,
+      value: level <= 2 ? "low" as TaskPriority : level === 3 ? "normal" as TaskPriority : "high" as TaskPriority,
+    };
+  }
   if (normalized === "low" || normalized === "normal" || normalized === "high") {
-    return { kind: "priority" as const, value: normalized as TaskPriority };
+    return {
+      kind: "priority" as const,
+      level: normalized === "low" ? 2 : normalized === "high" ? 4 : 3,
+      value: normalized as TaskPriority,
+    };
   }
   if (normalized === "urgent" || normalized === "important") {
     return { kind: "flag" as const, value: normalized };

@@ -189,6 +189,12 @@ export function resolveRecurringLiveStatusFromNextDueDate(
   }: ResolveRecurringLiveStatusOptions,
 ): TaskStatus {
   if (nextDueDate > currentDayKey) {
+    const daysUntilDue = Math.round(
+      (new Date(`${nextDueDate}T00:00:00`).getTime() - new Date(`${currentDayKey}T00:00:00`).getTime()) / 86_400_000,
+    );
+    if (daysUntilDue <= 7) {
+      return "upcoming";
+    }
     return "not_due";
   }
 

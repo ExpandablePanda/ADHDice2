@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { Fragment, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { normalizeTaskPrioritySelectionInput, type TaskPrioritySelectionInput } from "@/lib/task-priority";
 
 export type AgentPlanStatus =
   | "pending"
@@ -104,7 +105,7 @@ export type AgentPlanBucketOption = {
 
 type AgentPlanDuePreset = "next_week" | "none" | "today" | "tomorrow";
 type AgentPlanEnergyValue = "high" | "low" | "medium" | "none";
-type AgentPlanPriorityValue = "focus" | "important" | "none" | "urgent";
+type AgentPlanPriorityValue = TaskPrioritySelectionInput;
 type AgentPlanRepeatValue = "custom" | "daily" | "monthly" | "none" | "weekly";
 type EditableTaskField = "bucket" | "due" | "energy" | "priority" | "repeat" | "tags" | "link" | "notes";
 type OpenTaskFieldMenu = {
@@ -333,9 +334,27 @@ type ResizableColumnId = "bucket" | "date_added" | "date_completed" | "last_done
 
 function getPriorityTone(priority: AgentPlanPriorityValue): AgentPlanMetaTone {
   if (priority === "focus") return "accent";
-  if (priority === "important") return "warning";
-  if (priority === "urgent") return "danger";
+  if (priority === "important" || priority === "4") return "warning";
+  if (priority === "urgent" || priority === "5") return "danger";
   return "neutral";
+}
+
+function getAgentPlanPriorityValueFromLabel(priorityLabel: string): AgentPlanPriorityValue {
+  const normalizedLabel = priorityLabel.trim().toLowerCase();
+  const normalizedPriority = normalizeTaskPrioritySelectionInput(
+    normalizedLabel.startsWith("priority ") ? normalizedLabel.replace("priority ", "") : normalizedLabel,
+  );
+
+  if (normalizedPriority?.priorityLevel) {
+    return String(normalizedPriority.priorityLevel) as AgentPlanPriorityValue;
+  }
+  if (normalizedLabel === "focus") {
+    return "focus";
+  }
+  if (normalizedLabel === "none") {
+    return "none";
+  }
+  return "none";
 }
 
 function getEnergyTone(energy: AgentPlanEnergyValue): AgentPlanMetaTone {
@@ -2699,7 +2718,7 @@ export default function AgentPlan({
                             if (columnId === "priority") {
                               if (!experimentalMode) {
                                 const priorityLabel = metadataValueByColumn.priority ?? "None";
-                                const activePriority = priorityLabel.toLowerCase() as AgentPlanPriorityValue;
+                                const activePriority = getAgentPlanPriorityValueFromLabel(priorityLabel);
 
                                 return (
                                   <td className="relative px-[3px] py-3 align-top" key={`${task.id}-${columnId}`}>

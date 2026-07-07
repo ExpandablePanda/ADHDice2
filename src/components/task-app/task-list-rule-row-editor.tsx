@@ -5,6 +5,7 @@ import { TaskTableChipButton, TASK_TABLE_INACTIVE_CHIP_CLASS, TASK_TABLE_TAG_CHI
 import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
 import { TASK_HISTORY_STREAK_PRESETS, TASK_HISTORY_WINDOW_PRESETS } from "@/lib/task-history";
 import { formatOptionLabel } from "@/lib/task-label-format";
+import { getSelectedTaskPriorityToneClass, getTaskPriorityToneClass } from "@/lib/task-priority";
 import {
   formatTaskListRule,
   getTaskListRuleOperator,
@@ -20,6 +21,7 @@ import type { TaskListId, TaskListRule } from "@/lib/task-lists";
 
 function RuleChipGroup({
   multiSelect = false,
+  optionToneClassName,
   options,
   onSelect,
   selectedValue,
@@ -27,6 +29,7 @@ function RuleChipGroup({
 }: {
   multiSelect?: boolean;
   onSelect: (value: string) => void;
+  optionToneClassName?: (value: string, active: boolean) => string;
   options: Array<{ label: string; value: string }>;
   selectedValue?: string;
   selectedValues?: string[];
@@ -42,7 +45,7 @@ function RuleChipGroup({
             className="transition"
             key={option.value}
             onClick={() => onSelect(option.value)}
-            toneClassName={active ? TASK_TABLE_TAG_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}
+            toneClassName={optionToneClassName ? optionToneClassName(option.value, active) : active ? TASK_TABLE_TAG_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}
           >
             {option.label}
           </TaskTableChipButton>
@@ -86,6 +89,11 @@ export function TaskListRuleRowEditor({
         label: formatOptionLabel(option),
         value: option,
       }))
+      : rule.field === "priority_level"
+        ? ["1", "2", "3", "4", "5"].map((option) => ({
+          label: option,
+          value: option,
+        }))
       : rule.field === "history_status"
         ? [
           { label: "Done Today", value: "done_today" },
@@ -110,7 +118,7 @@ export function TaskListRuleRowEditor({
         { label: "Over 14", value: "over_14" },
         { label: "Over 30", value: "over_30" },
       ];
-  const isMultiSelectValueRule = rule.field === "status" || rule.field === "energy";
+  const isMultiSelectValueRule = rule.field === "status" || rule.field === "energy" || rule.field === "priority_level";
 
   return (
     <div className="space-y-3 rounded-[1rem] border border-[#ece8f8] bg-[#faf8ff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
@@ -130,10 +138,14 @@ export function TaskListRuleRowEditor({
             <RuleChipGroup
               multiSelect={isMultiSelectValueRule}
               onSelect={(value) => onChange(updateTaskListRuleValue(rule, value))}
+              optionToneClassName={rule.field === "priority_level"
+                ? (value, active) => active ? getSelectedTaskPriorityToneClass(value as "1" | "2" | "3" | "4" | "5") : getTaskPriorityToneClass(value as "1" | "2" | "3" | "4" | "5")
+                : undefined}
               options={valueOptions}
               selectedValue={
                 rule.field === "streak"
                   || rule.field === "list"
+                  || rule.field === "priority_level"
                   || rule.field === "history_status"
                   || rule.field === "completed_history"
                   || rule.field === "missed_history"

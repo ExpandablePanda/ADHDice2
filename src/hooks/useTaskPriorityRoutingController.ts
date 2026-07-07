@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Task } from "@/lib/database.types";
 import type { TaskBucket, TaskRoutingBucket } from "@/lib/task-buckets";
+import { buildTaskPriorityUpdate, normalizeTaskPrioritySelectionInput, type TaskPrioritySelectionInput } from "@/lib/task-priority";
 
 type Message = {
   tone: "neutral" | "good" | "warn";
@@ -66,20 +67,25 @@ export function useTaskPriorityRoutingController({
     void routeTask(task.id, null);
   }
 
-  async function setTaskPriority(taskId: string, priority: "focus" | "important" | "none" | "urgent") {
-    const nextFocusedTaskIds = priority === "focus"
-      ? Array.from(new Set([...focusedTaskIds, taskId]))
-      : focusedTaskIds.filter((id) => id !== taskId);
-
-    await saveFocusSelection(nextFocusedTaskIds);
-    if (priority === "focus") {
-      void routeTask(taskId, "today");
+  async function setTaskPriority(taskId: string, priority: TaskPrioritySelectionInput) {
+    const normalizedPriority = normalizeTaskPrioritySelectionInput(priority);
+    if (!normalizedPriority) {
+      return;
     }
 
-    await updateTask(taskId, {
-      is_important: priority === "important",
-      is_urgent: priority === "urgent",
-    });
+    if (normalizedPriority.focusAction === "add") {
+      await saveFocusSelection(Array.from(new Set([...focusedTaskIds, taskId])));
+      void routeTask(taskId, "today");
+      return;
+    }
+
+    if (normalizedPriority.focusAction === "remove") {
+      await saveFocusSelection(focusedTaskIds.filter((id) => id !== taskId));
+    }
+
+    if (normalizedPriority.priorityLevel) {
+      await updateTask(taskId, buildTaskPriorityUpdate(normalizedPriority.priorityLevel));
+    }
   }
 
   return {

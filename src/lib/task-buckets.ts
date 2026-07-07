@@ -1,5 +1,6 @@
 import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
 import { isArchiveLikeTask, shouldHideTaskFromPrimaryViews } from "@/lib/task-complete";
+import { getTaskPriorityLevel } from "@/lib/task-priority";
 import { todayISO } from "@/lib/utils";
 
 export type TaskBucket =
@@ -48,18 +49,17 @@ export function isTaskVisibleInPrimaryViews(task: Task) {
 }
 
 export function isTaskUrgent(task: Task) {
-  return isTaskOpen(task) && task.is_urgent;
+  return isTaskOpen(task) && getTaskPriorityLevel(task) === 5;
 }
 
 export function isTaskImportant(task: Task) {
-  return isTaskOpen(task) && (task.is_important || task.priority === "high");
+  return isTaskOpen(task) && getTaskPriorityLevel(task) === 4;
 }
 
 export function shouldRouteTaskToInbox(task: Task) {
   return isTaskOpen(task)
     && !task.due_on
-    && !task.is_urgent
-    && !task.is_important
+    && getTaskPriorityLevel(task) < 4
     && task.repeat_frequency === "none"
     && task.status === "pending";
 }

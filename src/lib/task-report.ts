@@ -4,6 +4,7 @@ import { shiftDateKey } from "@/lib/task-grid-layout";
 import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import type { TaskListDefinition } from "@/lib/task-lists";
+import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
 import { formatRepeatSummary } from "@/lib/task-repeat";
 
 export const TASK_REPORT_RANGE_OPTIONS = [
@@ -300,7 +301,7 @@ function getTaskTypeLabel(task: Task, depth: number | null): TaskTypeLabel {
 }
 
 function buildPriorityLabel(task: Task) {
-  return `${capitalizeWord(task.priority)} priority`;
+  return formatTaskPriorityLabel(getTaskPriorityLevel(task));
 }
 
 function isTestLikeTaskTitle(title: string) {
@@ -417,6 +418,7 @@ function buildTaskMetadata(
       .reverse();
     const pathLabel = [...ancestry, title].join(" > ");
 
+    const priorityLevel = getTaskPriorityLevel(task);
     metadataByTaskId.set(task.id, {
       cadenceLabel: formatRepeatSummary(task) ?? null,
       currentStatusLabel: STATUS_LABELS[getTaskDisplayStatusWithHistory(
@@ -424,10 +426,10 @@ function buildTaskMetadata(
         taskHistoryByTaskId[task.id] ?? [],
         todayDateKey,
       )] ?? task.status,
-      isImportant: task.is_important,
+      isImportant: priorityLevel === 4,
       isTestLike: isTestLikeTaskTitle(title),
       isTrashed: task.status === "trashed",
-      isUrgent: task.is_urgent,
+      isUrgent: priorityLevel === 5,
       pathLabel,
       priorityLabel: buildPriorityLabel(task),
       title,
@@ -742,19 +744,6 @@ function formatCurrentStreak(entries: LatestHistoryEntry[]) {
   return `${streakCount} ${latestOutcome}`;
 }
 
-function formatFlags(metadata: TaskReportTaskMetadata) {
-  if (metadata.isUrgent && metadata.isImportant) {
-    return "Urgent + Important";
-  }
-  if (metadata.isUrgent) {
-    return "Urgent";
-  }
-  if (metadata.isImportant) {
-    return "Important";
-  }
-  return null;
-}
-
 function formatTaskHistoryLine(entry: TaskPatternEntry) {
   const parts = [
     entry.metadata.title,
@@ -765,11 +754,7 @@ function formatTaskHistoryLine(entry: TaskPatternEntry) {
     `Current Streak: ${formatCurrentStreak(entry.historyEntries)}`,
     `Cadence: ${entry.metadata.cadenceLabel ?? "None"}`,
   ];
-  const flags = formatFlags(entry.metadata);
-  if (flags) {
-    parts.push(`Flags: ${flags}`);
-  }
-  if (entry.task.priority !== "normal") {
+  if (getTaskPriorityLevel(entry.task) !== 3) {
     parts.push(`Priority: ${entry.metadata.priorityLabel}`);
   }
   return `- ${parts.filter((value): value is string => Boolean(value)).join(" — ")}`;

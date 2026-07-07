@@ -31,8 +31,9 @@ export function FocusCounterRow({
 
   return (
     <div className={embedded ? "" : "mt-6"}>
-      <div className="adhdice-scrollbar w-full overflow-x-auto pb-4 pt-4 sm:hidden" style={{ WebkitOverflowScrolling: "touch" }}>
+      <div className="adhdice-scrollbar flex w-full justify-center overflow-x-auto pb-4 pt-4 sm:hidden" style={{ WebkitOverflowScrolling: "touch" }}>
         <div
+          className="mx-auto"
           style={{
             display: "grid",
             gridTemplateRows: "repeat(2, auto)",
@@ -62,7 +63,7 @@ export function FocusCounterRow({
           ))}
         </div>
       </div>
-      <div className={`hidden justify-center pt-4 sm:flex ${FOCUS_CLOCK_DESKTOP_SCALE_CLASSNAME}`}>
+      <div className={`hidden w-full justify-center pt-4 sm:flex ${FOCUS_CLOCK_DESKTOP_SCALE_CLASSNAME}`}>
         <div className="flex flex-wrap justify-center gap-x-6 gap-y-10">
         {counters.map((counter) => (
           <div

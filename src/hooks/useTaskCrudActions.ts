@@ -8,6 +8,7 @@ import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import type { DeleteTaskRowResult, TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import type { ImportedTaskSubtask, ImportedTaskWarning } from "@/lib/task-input-parsing";
 import { parseImportedTaskLines } from "@/lib/task-input-parsing";
+import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import { isMissingTaskActualSecondsColumnError, isMissingTaskEnergyNoneEnumError } from "@/lib/task-db-compat";
 
 type Message = {
@@ -80,7 +81,7 @@ export function useTaskCrudActions({
     const importErrors: ImportedTaskWarning[] = [];
 
     for (const [index, parsedTask] of parsed.tasks.entries()) {
-      const payload: TaskInsert = {
+      const payload: TaskInsert = normalizeTaskPriorityFields({
         actual_seconds: parsedTask.actualSeconds ?? undefined,
         due_on: parsedTask.dueOn,
         due_time: parsedTask.dueTime,
@@ -89,13 +90,14 @@ export function useTaskCrudActions({
         is_important: parsedTask.isImportant,
         is_urgent: parsedTask.isUrgent,
         priority: parsedTask.priority,
+        priority_level: parsedTask.priorityLevel,
         repeat_frequency: parsedTask.repeatFrequency,
         sort_order: Date.now() + index,
         status: parsedTask.status,
         tags: parsedTask.tags,
         title: parsedTask.title,
         user_id: currentUserId,
-      };
+      });
 
       const insertResult = await insertImportedTaskRow(client, payload);
       if (insertResult.error) {
@@ -430,7 +432,7 @@ async function insertImportedChildTaskTree({
       continue;
     }
 
-    const payload: TaskInsert = {
+    const payload: TaskInsert = normalizeTaskPriorityFields({
       ...childDraft.draft,
       actual_seconds: child.actualSeconds ?? undefined,
       due_on: child.dueOn,
@@ -441,12 +443,13 @@ async function insertImportedChildTaskTree({
       is_urgent: child.isUrgent,
       parent_task_id: parentTaskId,
       priority: child.priority,
+      priority_level: child.priorityLevel,
       repeat_frequency: child.repeatFrequency,
       sort_order: index,
       status: child.status,
       tags: child.tags,
       user_id: currentUserId,
-    };
+    });
 
     const insertResult = await insertImportedTaskRow(client, payload);
     if (insertResult.error) {

@@ -3,9 +3,11 @@
 import { X } from "lucide-react";
 import { useState } from "react";
 
-import type { TaskEnergy, TaskPriority, TaskRepeatFrequency } from "@/lib/database.types";
+import type { TaskEnergy, TaskRepeatFrequency } from "@/lib/database.types";
 import { getBatchSelectableTaskStatuses } from "@/lib/task-complete";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
+import type { TaskPriorityLevelOption } from "@/lib/task-priority";
+import { formatTaskPriorityMenuLabel, getSelectedTaskPriorityToneClass, getTaskPriorityToneClass } from "@/lib/task-priority";
 
 import { ModalShell } from "../modal-shell";
 import {
@@ -31,10 +33,8 @@ export type BatchTaskEditDraft = {
   estimatedMinutes: string;
   estimatedMinutesMode: BatchFieldMode;
   focusToday: BatchBooleanChoice;
-  isImportant: BatchBooleanChoice;
-  isUrgent: BatchBooleanChoice;
   oneStepAtATime: BatchBooleanChoice;
-  priority: TaskPriority | "unchanged";
+  priority: TaskPriorityLevelOption | "unchanged";
   repeatDayOfMonth: string;
   repeatDaysOfWeek: number[];
   repeatFrequency: TaskRepeatFrequency | "unchanged";
@@ -61,7 +61,7 @@ export function TaskBatchEditModal({
   energyOptions: TaskEnergy[];
   onClose: () => void;
   onSave: (draft: BatchTaskEditDraft) => Promise<void>;
-  priorityOptions: TaskPriority[];
+  priorityOptions: TaskPriorityLevelOption[];
   repeatFrequencyOptions: TaskRepeatFrequency[];
   repeatWeekdayOptions: readonly { label: string; value: number }[];
 }) {
@@ -98,7 +98,7 @@ export function TaskBatchEditModal({
           setIsSaving(false);
         }}
       >
-        <EditorCollapsibleSection defaultOpen summary="Status, routing, urgency, and focus." title="Core metadata">
+        <EditorCollapsibleSection defaultOpen summary="Status, routing, priority, and focus." title="Core metadata">
           <div className="grid gap-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <CompactSelectField
@@ -124,8 +124,16 @@ export function TaskBatchEditModal({
               <CompactSelectField
                 label="Priority"
                 onChange={(value) => setDraft((current) => ({ ...current, priority: value }))}
+                optionButtonClassName={(value, selected) => value === "unchanged"
+                  ? selected
+                    ? "bg-[#f2edff] text-[#6f57f6] dark:bg-[#312555] dark:text-[#cabfff]"
+                    : "text-[#3a4260] hover:bg-[#f7f4ff] dark:text-white/80 dark:hover:bg-white/8"
+                  : selected
+                    ? getSelectedTaskPriorityToneClass(value)
+                    : getTaskPriorityToneClass(value)}
                 options={priorityOptionsWithUnchanged}
-                renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : formatOptionLabel(value)}
+                renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : formatTaskPriorityMenuLabel(value)}
+                triggerClassName={(value) => value === "unchanged" ? "" : getTaskPriorityToneClass(value)}
                 value={draft.priority}
               />
               <CompactSelectField
@@ -139,8 +147,6 @@ export function TaskBatchEditModal({
             <div className="grid gap-3 sm:grid-cols-2">
               {([
                 ["Focus Today", "focusToday"],
-                ["Urgent", "isUrgent"],
-                ["Important", "isImportant"],
                 ["One Step At A Time", "oneStepAtATime"],
                 ["Subtasks Auto Reset", "subtasksAutoReset"],
               ] as const).map(([label, key]) => (
@@ -268,8 +274,6 @@ function createEmptyBatchTaskEditDraft(): BatchTaskEditDraft {
     estimatedMinutes: "",
     estimatedMinutesMode: "unchanged",
     focusToday: "unchanged",
-    isImportant: "unchanged",
-    isUrgent: "unchanged",
     oneStepAtATime: "unchanged",
     priority: "unchanged",
     repeatDayOfMonth: "",
