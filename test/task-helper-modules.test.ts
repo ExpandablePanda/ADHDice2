@@ -1831,13 +1831,16 @@ test("child task preview lookup exposes direct same-table children", () => {
     energy: "low",
     estimatedMinutes: 25,
     id: "child",
+    isFocused: false,
     issueTypes: [],
+    lastDoneAt: null,
+    lastDoneDate: null,
     linkLabel: "Brief",
     linkUrl: "https://example.com/brief",
     missedStreak: 0,
     notes: "Bring the small pieces together.",
     parentTaskId: "parent",
-    priorityFlags: ["important"],
+    priorityFlags: ["4"],
     repeat: "weekly",
     repeatDayOfMonth: null,
     repeatDaysOfWeek: [1, 3],
@@ -1921,7 +1924,8 @@ test("child task preview lookup is depth-aware for grandchildren", () => {
   assert.deepEqual(preview.parent.items.map((item) => item.id), ["child", "grandchild"]);
   assert.deepEqual(preview.parent.items.map((item) => item.depth), [1, 2]);
   assert.deepEqual(preview.parent.items.map((item) => formatChildTaskPreviewDepthLabel(item.depth)), ["Step", "Substep"]);
-  assert.deepEqual(preview.parent.items[1]?.priorityFlags, ["focus"]);
+  assert.deepEqual(preview.parent.items[1]?.priorityFlags, ["3"]);
+  assert.equal(preview.parent.items[1]?.isFocused, true);
   assert.equal(preview.child.summary.directChildCount, 1);
   assert.deepEqual(preview.child.items.map((item) => item.id), ["grandchild"]);
   assert.deepEqual(preview.child.items.map((item) => item.depth), [1]);

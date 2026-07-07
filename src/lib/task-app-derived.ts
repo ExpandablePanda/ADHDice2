@@ -84,6 +84,7 @@ export type ChildTaskPreview = {
   energy: Task["energy"];
   estimatedMinutes: number | null;
   id: string;
+  isFocused: boolean;
   issueTypes: Array<TaskHierarchyIssue["type"]>;
   lastDoneAt: string | null;
   lastDoneDate: string | null;
@@ -301,8 +302,8 @@ export function buildChildTaskPreviewLookup(
   taskHistoryByTaskId: Record<string, TaskHistory[]> = {},
   todayDateKey = "",
 ): ChildTaskPreviewLookup {
-  void focusedTaskIds;
   const adapter = buildTaskHierarchyAdapter(tasks);
+  const focusedTaskIdSet = new Set(focusedTaskIds);
   const previewByParentTaskId: ChildTaskPreviewLookup = {};
 
   for (const task of tasks) {
@@ -341,6 +342,7 @@ export function buildChildTaskPreviewLookup(
           energy: descendant.energy,
           estimatedMinutes: descendant.estimated_minutes,
           id: descendant.id,
+          isFocused: focusedTaskIdSet.has(descendant.id),
           issueTypes: adapter.getNode(descendant.id)?.issueTypes ?? [],
           lastDoneAt: lastDone?.timestamp ?? null,
           lastDoneDate: lastDone?.dateKey ?? null,
@@ -878,6 +880,15 @@ export function computeTaskAppDerivedData({
     focusPlannerTasks: focusPlannerTasks.length,
     tasks: filteredTasksSorted.length,
   });
+  const todayQueueTaskCount = activePage !== "Tasks"
+    ? 0
+    : filteredTasksSorted.filter((task) => {
+      if (!isTaskOpen(task)) {
+        return false;
+      }
+      const memberships = taskListMembershipsByTaskId[task.id] ?? [];
+      return memberships.some((membership) => membership.id === "today" || membership.id === "focus" || membership.id === "priority_5");
+    }).length;
 
   const listAssemblyStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const momentumPercent = activeTasks.length === 0
@@ -965,6 +976,7 @@ export function computeTaskAppDerivedData({
     taskListMembershipsByTaskId,
     taskStatusCounts,
     todayTasks,
+    todayQueueTaskCount,
     urgentTasks,
     visibleListCounts,
   };

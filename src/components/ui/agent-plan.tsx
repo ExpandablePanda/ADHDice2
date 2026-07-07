@@ -19,7 +19,13 @@ import {
   X,
 } from "lucide-react";
 import { Fragment, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { normalizeTaskPrioritySelectionInput, type TaskPrioritySelectionInput } from "@/lib/task-priority";
+import {
+  formatTaskPriorityLabel,
+  formatTaskPriorityMenuLabel,
+  normalizeTaskPrioritySelectionInput,
+  TASK_PRIORITY_LEVEL_OPTIONS,
+  type TaskPrioritySelectionInput,
+} from "@/lib/task-priority";
 
 export type AgentPlanStatus =
   | "pending"
@@ -179,8 +185,10 @@ const DUE_PRESET_OPTIONS: Array<{ label: string; value: AgentPlanDuePreset }> = 
 const PRIORITY_OPTIONS: Array<{ label: string; value: AgentPlanPriorityValue }> = [
   { label: "None", value: "none" },
   { label: "Focus", value: "focus" },
-  { label: "Important", value: "important" },
-  { label: "Urgent", value: "urgent" },
+  ...TASK_PRIORITY_LEVEL_OPTIONS.map((value) => ({
+    label: formatTaskPriorityMenuLabel(Number.parseInt(value, 10) as 1 | 2 | 3 | 4 | 5),
+    value,
+  })),
 ];
 
 const ENERGY_OPTIONS: Array<{ label: string; value: AgentPlanEnergyValue }> = [
@@ -337,6 +345,29 @@ function getPriorityTone(priority: AgentPlanPriorityValue): AgentPlanMetaTone {
   if (priority === "important" || priority === "4") return "warning";
   if (priority === "urgent" || priority === "5") return "danger";
   return "neutral";
+}
+
+function getPriorityOptionLabel(priority: AgentPlanPriorityValue) {
+  const optionLabel = PRIORITY_OPTIONS.find((option) => option.value === priority)?.label;
+  if (optionLabel) {
+    return optionLabel;
+  }
+  const normalizedPriority = normalizeTaskPrioritySelectionInput(priority);
+  if (normalizedPriority?.priorityLevel) {
+    return formatTaskPriorityLabel(normalizedPriority.priorityLevel);
+  }
+  return priority;
+}
+
+function getAgentPlanPriorityDisplayLabel(priorityLabel: string) {
+  const activePriority = getAgentPlanPriorityValueFromLabel(priorityLabel);
+  if (activePriority !== "none" && activePriority !== "focus") {
+    const normalizedPriority = normalizeTaskPrioritySelectionInput(activePriority);
+    if (normalizedPriority?.priorityLevel) {
+      return formatTaskPriorityLabel(normalizedPriority.priorityLevel);
+    }
+  }
+  return priorityLabel;
 }
 
 function getAgentPlanPriorityValueFromLabel(priorityLabel: string): AgentPlanPriorityValue {
@@ -2718,6 +2749,7 @@ export default function AgentPlan({
                             if (columnId === "priority") {
                               if (!experimentalMode) {
                                 const priorityLabel = metadataValueByColumn.priority ?? "None";
+                                const priorityDisplayLabel = getAgentPlanPriorityDisplayLabel(priorityLabel);
                                 const activePriority = getAgentPlanPriorityValueFromLabel(priorityLabel);
 
                                 return (
@@ -2735,7 +2767,7 @@ export default function AgentPlan({
                                         type="button"
                                       >
                                         <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[getPriorityTone(activePriority)]}`}>
-                                          {priorityLabel}
+                                          {priorityDisplayLabel}
                                         </span>
                                       </button>
                                       {isTaskFieldMenuOpen(task.id, "priority") ? (
@@ -2771,10 +2803,10 @@ export default function AgentPlan({
                                 );
                               }
 
+                              const activePriority = getAgentPlanPriorityValueFromLabel(metadataValueByColumn.priority ?? "None");
                               const activePriorities: AgentPlanPriorityValue[] = [
                                 ...(task.isFocused ? ["focus" as const] : []),
-                                ...(task.isImportant ? ["important" as const] : []),
-                                ...(task.isUrgent ? ["urgent" as const] : []),
+                                ...(activePriority !== "none" && activePriority !== "focus" ? [activePriority] : []),
                               ];
 
                               return (
@@ -2797,7 +2829,7 @@ export default function AgentPlan({
                                         ) : (
                                           activePriorities.map((priority) => (
                                             <span className={`${META_PILL_BASE_CLASS} ${META_PILL_STYLES[getPriorityTone(priority)]}`} key={`${task.id}-priority-chip-${priority}`}>
-                                              {PRIORITY_OPTIONS.find((option) => option.value === priority)?.label ?? priority}
+                                              {getPriorityOptionLabel(priority)}
                                             </span>
                                           ))
                                         )}

@@ -474,7 +474,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.22.5";
+const APP_VERSION = "6.22.17";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2392,6 +2392,7 @@ export function TaskApp() {
     taskListMembershipsByTaskId,
     taskStatusCounts,
     todayTasks,
+    todayQueueTaskCount,
     urgentTasks,
     visibleListCounts,
   } = derivedData;
@@ -3775,7 +3776,7 @@ export function TaskApp() {
       routeTaskToToday={(taskId) => planTasksForToday([taskId])}
       sendTaskToLater={deferTask}
       sendTaskToWaiting={sendTaskToWaiting}
-      todayCount={(visibleListCounts.today ?? 0) + (visibleListCounts.focus ?? 0) + (visibleListCounts.priority_5 ?? 0)}
+      todayCount={todayQueueTaskCount}
       waitingCount={waitingTasks.length}
     />
   );

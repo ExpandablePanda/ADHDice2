@@ -1376,6 +1376,11 @@ function StepsCardPreview({
                       <MetadataChipButton active={activePanelMode === "due"} onClick={() => onOpenQuickPanel(item.id, "due")}>
                         {scheduleLabel || "No date"}
                       </MetadataChipButton>
+                      {item.isFocused ? (
+                        <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold ${QUICK_PANEL_PRIMARY_CHIP_CLASS}`}>
+                          Focus
+                        </span>
+                      ) : null}
                       <MetadataChipButton
                         active={activePanelMode === "priority"}
                         activeToneClassName={activePriorities[0] ? getSelectedTaskPriorityToneClass(activePriorities[0]) : TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}
