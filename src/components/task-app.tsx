@@ -474,7 +474,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.23.15";
+const APP_VERSION = "6.24.0";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2165,6 +2165,13 @@ export function TaskApp() {
   const focusedTaskIdsRef = useRef(focusedTaskIds);
   focusedTaskIdsRef.current = focusedTaskIds;
   const focusedTaskIdSet = useMemo(() => new Set(focusedTaskIds), [focusedTaskIds]);
+  const toggleFocusTodayForTask = useCallback((taskId: string) => {
+    if (focusedTaskIds.includes(taskId)) {
+      void saveFocusSelection(focusedTaskIds.filter((id) => id !== taskId));
+      return;
+    }
+    void saveFocusSelection([...focusedTaskIds, taskId]);
+  }, [focusedTaskIds, saveFocusSelection]);
   const builtInTaskLists = useMemo(() => getBuiltInTaskLists(), []);
   const availableTaskLists = useMemo(() => {
     const byId = new Map<TaskListId, TaskListDefinition>();
@@ -4938,7 +4945,7 @@ export function TaskApp() {
             momentumPercent={momentumPercent}
             overdueCount={overdueTasks.length}
             setActivePage={setActivePage}
-            todayCount={todayTasks.length}
+            todayCount={todayQueueTaskCount}
             urgentTasks={urgentTasks}
           />
         ) : activePage === "Achievements" ? (
@@ -5197,6 +5204,7 @@ export function TaskApp() {
               <TasksListAdapter
                 currentListLabel={selectedBucketLabel}
                 filterRowsNode={taskFilterRowsNode}
+                onToggleFocusToday={toggleFocusTodayForTask}
                 panelProps={listPanelProps}
                 selectedBucket={taskUiState.selectedBucket}
                 tableProps={{

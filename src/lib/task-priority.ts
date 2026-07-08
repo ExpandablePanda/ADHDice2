@@ -74,6 +74,10 @@ export function buildTaskPriorityUpdate(level: TaskPriorityLevel) {
   };
 }
 
+export function getTaskPrioritySelection(priorities: readonly TaskPriorityLevelOption[]) {
+  return priorities[0] ?? null;
+}
+
 export function normalizeTaskPriorityFields<T extends Partial<Pick<Task, "is_important" | "is_urgent" | "priority" | "priority_level">>>(values: T) {
   const level = coerceTaskPriorityLevel(values.priority_level) ?? inferLegacyTaskPriorityLevel(values);
   return {

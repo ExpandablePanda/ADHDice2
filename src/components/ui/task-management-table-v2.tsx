@@ -33,7 +33,7 @@ import {
 import type { TaskActualTimeEntry, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
-import { getSelectedTaskPriorityToneClass, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
+import { getSelectedTaskPriorityToneClass, getTaskPrioritySelection, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TaskDelayPicker } from "@/components/task-app/task-delay-picker";
 import { TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
@@ -4961,16 +4961,13 @@ export function TaskManagementTableV2({
     if (overlayMode === "priority") {
       return [
         ...PRIORITY_OPTIONS.map((option, optionIndex) => {
-          const selected = task.priorities.includes(option.value);
+          const selected = getTaskPrioritySelection(task.priorities) === option.value;
           return (
             <button
               className={inlineAccordionButtonClass()}
               key={`${option.value || "priority-option"}-${optionIndex}`}
               onClick={() => {
-                const nextPriorities = selected
-                  ? task.priorities.filter((value) => value !== option.value)
-                  : [...task.priorities, option.value];
-                setTaskPriorities(task.id, nextPriorities);
+                setTaskPriorities(task.id, [option.value]);
                 closeInspector();
               }}
               type="button"
@@ -8376,9 +8373,8 @@ export function TaskManagementTableV2({
                   metadataPanelContent = (
                     <div className="flex flex-wrap gap-2">
                       {PRIORITY_OPTIONS.map((option, optionIndex) => {
-                        const selected = metadataTask.priorities.includes(option.value);
-                        const nextPriorities = selected ? metadataTask.priorities.filter((value) => value !== option.value) : [...metadataTask.priorities, option.value];
-                        return <TaskTableChipButton key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => setTaskPriorities(metadataTask.id, nextPriorities)} toneClassName={selected ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value)}>{option.label}</TaskTableChipButton>;
+                        const selected = getTaskPrioritySelection(metadataTask.priorities) === option.value;
+                        return <TaskTableChipButton key={`${option.value || "priority-option"}-${optionIndex}`} onClick={() => setTaskPriorities(metadataTask.id, [option.value])} toneClassName={selected ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value)}>{option.label}</TaskTableChipButton>;
                       })}
                       <TaskTableChipButton onClick={() => setTaskPriorities(metadataTask.id, [])} toneClassName={INACTIVE_CHIP_CLASS}>Clear all</TaskTableChipButton>
                     </div>
@@ -9070,17 +9066,12 @@ export function TaskManagementTableV2({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {PRIORITY_OPTIONS.map((option, optionIndex) => {
-                        const selected = selectedTask.priorities.includes(option.value);
+                        const selected = getTaskPrioritySelection(selectedTask.priorities) === option.value;
                         return (
                           <button
                             className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${selected ? getSelectedTaskPriorityToneClass(option.value) : priorityTone(option.value)}`}
                             key={`${option.value || "priority-option"}-${optionIndex}`}
-                            onClick={() => {
-                              const nextPriorities = selected
-                                ? selectedTask.priorities.filter((value) => value !== option.value)
-                                : [...selectedTask.priorities, option.value];
-                              setTaskPriorities(selectedTask.id, nextPriorities);
-                            }}
+                            onClick={() => setTaskPriorities(selectedTask.id, [option.value])}
                             type="button"
                           >
                             {option.label}

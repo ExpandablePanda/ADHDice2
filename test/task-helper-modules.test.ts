@@ -119,6 +119,45 @@ function computeDerivedForHierarchyDiagnostics(
   });
 }
 
+function computeDerivedForQueueCount(tasks: ReturnType<typeof createTask>[], focusedTaskIds: string[], todayDateKey: string) {
+  return computeTaskAppDerivedData({
+    activePage: "Home",
+    availableTaskLists: getBuiltInTaskLists(),
+    availableTaskNotes: [],
+    bucketContext: {
+      focusedTaskIds: new Set(focusedTaskIds),
+      routing: {},
+    },
+    deferredSearchQuery: "",
+    focusedTaskIds,
+    listColumnPickerOrder: [],
+    listVisibleColumns: [],
+    taskActualTimeEntryTaskId: null,
+    taskEditorTaskId: null,
+    taskGridLayout: [],
+    taskGridWidgetTypes: [],
+    taskHistoryByTaskId: {},
+    taskListEvaluationContext: {
+      currentStreakByTaskId: {},
+      focusedTaskIds: new Set(focusedTaskIds),
+      hasStepsByTaskId: {},
+      historyFactsByTaskId: {},
+      isDueToday: (date) => date === todayDateKey,
+      isDueTomorrow: () => false,
+      isLater: () => false,
+      isOpen: (task) => task.status === "pending" || task.status === "in_progress",
+      isOverdue: () => false,
+      manualMembershipsByTaskId: {},
+      taskHistoryByTaskId: {},
+      todayDateKey,
+    },
+    taskSubtasksByTaskId: {},
+    taskUiState: DEFAULT_TASK_UI_STATE,
+    todayDateKey,
+    tasks,
+  });
+}
+
 test("focus collections follow normal open-task visibility without extra focus filter tabs", () => {
   const today = "2026-06-25";
   const openFocusTask = createTask({
@@ -1572,6 +1611,56 @@ test("hierarchy diagnostics report missing parents while keeping normal derived 
     [...derived.activeTasks.map((task) => task.id)].sort(),
     ["orphan", "root"],
   );
+});
+
+test("home queue count includes unique open today, focus, and priority 5 tasks", () => {
+  const today = "2026-07-08";
+  const todayOnly = createTask({
+    created_at: `${today}T08:00:00.000Z`,
+    due_on: today,
+    id: "today-only",
+    status: "pending",
+    title: "Today only",
+  });
+  const focusOnly = createTask({
+    created_at: `${today}T08:05:00.000Z`,
+    due_on: "2026-07-09",
+    id: "focus-only",
+    status: "pending",
+    title: "Focus only",
+  });
+  const priorityOnly = createTask({
+    created_at: `${today}T08:10:00.000Z`,
+    due_on: "2026-07-09",
+    id: "priority-only",
+    priority_level: 5,
+    status: "pending",
+    title: "Priority only",
+  });
+  const overlap = createTask({
+    created_at: `${today}T08:15:00.000Z`,
+    due_on: today,
+    id: "overlap",
+    priority_level: 5,
+    status: "pending",
+    title: "Overlap",
+  });
+  const doneToday = createTask({
+    created_at: `${today}T08:20:00.000Z`,
+    due_on: today,
+    id: "done-today",
+    status: "done",
+    title: "Done today",
+  });
+
+  const derived = computeDerivedForQueueCount(
+    [todayOnly, focusOnly, priorityOnly, overlap, doneToday],
+    [focusOnly.id, overlap.id],
+    today,
+  );
+
+  assert.equal(derived.todayQueueTaskCount, 4);
+  assert.deepEqual(derived.todayTasks.map((task) => task.id), [todayOnly.id, overlap.id]);
 });
 
 test("primary derived search returns the parent when only a child task matches", () => {

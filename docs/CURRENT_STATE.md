@@ -6,14 +6,16 @@ Role: active working
 
 ## Current App Version
 - Current working app version: `6.23.15`.
-- Current release group: `6.23.x` Focus Goals 2.0 rollout pass.
+- Current working app version: `6.24.0`.
+- Current release group: `6.24.x` task priority, Home queue, and List View regression cleanup pass.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
-## 6.23 Checkpoint
+## 6.24 Checkpoint
+- `6.24.0` is a targeted task priority, Home queue, and List View regression cleanup pass after the 6.22 priority migration and 6.23 Focus Goals work: numeric priority chips now behave as single-select in the Table inline metadata panel and full inspector, Home Today Queue now uses the unique derived queue count that includes open today/focus/priority 5 tasks, and List View row metadata restores a direct Focus Today toggle separate from numeric priority. Focus Goals math, counters, reports, table density, SQL, and unrelated task behavior remain unchanged.
 - `6.23.15` is a narrow Focus layout pass: the Recommend Now and Productive Totals headers now reuse the same Activity Summary label formatting, the Recommend Now tile and Productive Totals card still match the white shell background treatment, the Sleep excluded line sits flush left under the Productive Totals header, and the top Focus Timers section sits closer to the HUD. Focus Goals math, reallocation behavior, productive totals, session handling, persistence, SQL, Focus counters, task/table/report/Agent Plan surfaces, and Focus History chart logic remain unchanged.
 - Checks run for `6.23.15`: `git diff --check` and targeted `npx eslint src/components/focus-page.tsx src/components/focus-goals-panel.tsx`.
 - `6.23.11` is a narrow Focus page header layout pass: the focus timer search bar and Add Counter chip now sit in the same wrapping top control row as Edit Categories and Manual Entry. Focus Goals math, reallocation behavior, productive totals, session handling, persistence, SQL, Focus counters, task/table/report/Agent Plan surfaces, and Focus History chart logic remain unchanged.

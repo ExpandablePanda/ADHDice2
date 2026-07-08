@@ -880,15 +880,14 @@ export function computeTaskAppDerivedData({
     focusPlannerTasks: focusPlannerTasks.length,
     tasks: filteredTasksSorted.length,
   });
-  const todayQueueTaskCount = activePage !== "Tasks"
-    ? 0
-    : filteredTasksSorted.filter((task) => {
-      if (!isTaskOpen(task)) {
-        return false;
-      }
-      const memberships = taskListMembershipsByTaskId[task.id] ?? [];
-      return memberships.some((membership) => membership.id === "today" || membership.id === "focus" || membership.id === "priority_5");
-    }).length;
+  const todayQueueTaskCount = primaryTasks.filter((task) => (
+    isTaskOpen(task)
+    && (
+      visibleTaskBaseFactsByTaskId[task.id]?.isTodayTask
+      || focusedTaskIdSet.has(task.id)
+      || getTaskPriorityLevel(task) === 5
+    )
+  )).length;
 
   const listAssemblyStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const momentumPercent = activeTasks.length === 0

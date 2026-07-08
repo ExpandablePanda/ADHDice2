@@ -569,6 +569,7 @@ type TasksListAdapterProps = {
   allRows?: PrototypeTaskRow[];
   currentListLabel: string;
   filterRowsNode: ReactNode;
+  onToggleFocusToday?: (taskId: string) => void;
   panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode">;
   selectedBucket: string;
   tableProps: TasksTableSourceProps;
@@ -811,6 +812,7 @@ function StepsCardPreview({
   onSetRepeat,
   onSetStatus,
   onSetTags,
+  onToggleFocusToday,
   onToggleTaskList,
   onToggleExpanded,
   parentStepCreationError,
@@ -860,6 +862,7 @@ function StepsCardPreview({
     options?: { suppressSharedScrollAnchor?: boolean },
   ) => void;
   onSetTags?: (taskId: string, tags: string[]) => void;
+  onToggleFocusToday?: (taskId: string) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
   onToggleExpanded?: () => void;
   parentStepCreationError?: string | null;
@@ -1376,11 +1379,14 @@ function StepsCardPreview({
                       <MetadataChipButton active={activePanelMode === "due"} onClick={() => onOpenQuickPanel(item.id, "due")}>
                         {scheduleLabel || "No date"}
                       </MetadataChipButton>
-                      {item.isFocused ? (
-                        <span className={`inline-flex shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm font-semibold ${QUICK_PANEL_PRIMARY_CHIP_CLASS}`}>
-                          Focus
-                        </span>
-                      ) : null}
+                      <MetadataChipButton
+                        active={item.isFocused}
+                        activeToneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS}
+                        onClick={() => onToggleFocusToday?.(item.id)}
+                        toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+                      >
+                        {item.isFocused ? "Focus" : "Focus Today"}
+                      </MetadataChipButton>
                       <MetadataChipButton
                         active={activePanelMode === "priority"}
                         activeToneClassName={activePriorities[0] ? getSelectedTaskPriorityToneClass(activePriorities[0]) : TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}
@@ -2281,6 +2287,7 @@ function TasksSimpleList({
   allRows,
   currentListLabel,
   filterRowsNode,
+  onToggleFocusToday,
   panelProps,
   selectedBucket,
   tableProps,
@@ -3194,6 +3201,7 @@ function TasksSimpleList({
                 onSetRepeat={tableProps.onSetRepeat}
                 onSetStatus={tableProps.onSetStatus}
                 onSetTags={tableProps.onSetTags}
+                onToggleFocusToday={onToggleFocusToday}
                 onToggleTaskList={tableProps.onToggleTaskList}
                 onToggleExpanded={() => {
                   if (searchMatchedStepParentTaskIdSet.has(task.id)) {
