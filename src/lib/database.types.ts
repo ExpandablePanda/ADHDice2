@@ -534,6 +534,12 @@ export type FocusCategory = {
   icon: string;
   daily_goal_seconds: number | null;
   weekly_goal_seconds: number | null;
+  priority_level: number;
+  target_distribution_mode: "auto" | "manual";
+  weekday_target_seconds: Record<string, number>;
+  count_toward_productive_goal: boolean | null;
+  allow_daily_surplus_reduction: boolean | null;
+  weekly_surplus_carryover_mode: "off" | "cap25" | "cap50" | "full";
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -550,13 +556,50 @@ export type FocusCategoryInsert = {
   icon: string;
   daily_goal_seconds?: number | null;
   weekly_goal_seconds?: number | null;
+  priority_level?: number;
+  target_distribution_mode?: "auto" | "manual";
+  weekday_target_seconds?: Record<string, number>;
+  count_toward_productive_goal?: boolean | null;
+  allow_daily_surplus_reduction?: boolean | null;
+  weekly_surplus_carryover_mode?: "off" | "cap25" | "cap50" | "full";
   sort_order?: number;
 };
 
 export type FocusCategoryUpdate = Partial<
   Pick<
     FocusCategory,
-    "title" | "focus_type" | "focus_subtype" | "focus_subtype_2" | "color" | "icon" | "daily_goal_seconds" | "weekly_goal_seconds" | "sort_order"
+    "title" | "focus_type" | "focus_subtype" | "focus_subtype_2" | "color" | "icon" | "daily_goal_seconds" | "weekly_goal_seconds" | "priority_level" | "target_distribution_mode" | "weekday_target_seconds" | "count_toward_productive_goal" | "allow_daily_surplus_reduction" | "weekly_surplus_carryover_mode" | "sort_order"
+  >
+>;
+
+export type FocusDailyGoalAdjustment = {
+  id: string;
+  user_id: string;
+  adjustment_date: string;
+  source_category_id: string;
+  target_category_id: string;
+  source_session_id: string | null;
+  reduction_seconds: number;
+  reason: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FocusDailyGoalAdjustmentInsert = {
+  id?: string;
+  user_id: string;
+  adjustment_date: string;
+  source_category_id: string;
+  target_category_id: string;
+  source_session_id?: string | null;
+  reduction_seconds: number;
+  reason?: string;
+};
+
+export type FocusDailyGoalAdjustmentUpdate = Partial<
+  Pick<
+    FocusDailyGoalAdjustment,
+    "adjustment_date" | "source_category_id" | "target_category_id" | "source_session_id" | "reduction_seconds" | "reason"
   >
 >;
 
@@ -1303,6 +1346,12 @@ export type Database = {
         Row: FocusCategory;
         Insert: FocusCategoryInsert;
         Update: FocusCategoryUpdate;
+        Relationships: [];
+      };
+      adhdice_focus_daily_goal_adjustments: {
+        Row: FocusDailyGoalAdjustment;
+        Insert: FocusDailyGoalAdjustmentInsert;
+        Update: FocusDailyGoalAdjustmentUpdate;
         Relationships: [];
       };
       adhdice_focus_sessions: {

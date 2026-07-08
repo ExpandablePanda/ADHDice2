@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
-import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype } from "@/lib/types";
-import type { FocusCategory as DbFocusCategory, FocusSession as DbFocusSession } from "@/lib/database.types";
+import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, PendingFocusDailySurplus } from "@/lib/types";
+import type { FocusCategory as DbFocusCategory, FocusDailyGoalAdjustment as DbFocusDailyGoalAdjustment, FocusSession as DbFocusSession } from "@/lib/database.types";
 import type { AppendEconomyEventOpts } from "@/hooks/useEconomy";
+import { buildFocusGoalPlan, getMondayWeekRange, getPromptedDailySurplusSeconds, normalizeCarryoverMode, normalizeDistributionMode, normalizePriorityLevel } from "@/lib/focus-goals";
 import {
   adjustActiveFocusSession,
   dedupeCategoriesByName,
@@ -36,6 +37,16 @@ type FocusCounterState = {
   history: FocusCounterHistoryEntry[];
   ownerUserId: string | null;
 };
+
+function normalizeWeekdayTargetSeconds(value: unknown) {
+  if (!value || typeof value !== "object") return {};
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, number>>((targets, [key, rawValue]) => {
+    if (!["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(key)) return targets;
+    const seconds = typeof rawValue === "number" ? rawValue : Number.parseInt(String(rawValue ?? ""), 10);
+    targets[key] = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+    return targets;
+  }, {});
+}
 
 function createClientSideId(prefix: string) {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -156,6 +167,27 @@ export function mapFocusCategoryRow(row: DbFocusCategory): FocusCategory {
     icon: row.icon,
     dailyGoalSeconds: row.daily_goal_seconds,
     weeklyGoalSeconds: row.weekly_goal_seconds,
+    priorityLevel: normalizePriorityLevel(row.priority_level),
+    targetDistributionMode: normalizeDistributionMode(row.target_distribution_mode),
+    weekdayTargetSeconds: normalizeWeekdayTargetSeconds(row.weekday_target_seconds),
+    countTowardProductiveGoal: row.count_toward_productive_goal,
+    allowDailySurplusReduction: row.allow_daily_surplus_reduction,
+    weeklySurplusCarryoverMode: normalizeCarryoverMode(row.weekly_surplus_carryover_mode),
+  };
+}
+
+export function mapFocusDailyGoalAdjustmentRow(row: DbFocusDailyGoalAdjustment): FocusDailyGoalAdjustment {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    adjustmentDate: row.adjustment_date,
+    sourceCategoryId: row.source_category_id,
+    targetCategoryId: row.target_category_id,
+    sourceSessionId: row.source_session_id,
+    reductionSeconds: row.reduction_seconds,
+    reason: row.reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -194,6 +226,7 @@ export function mapFocusSessionRow(row: DbFocusSession): HistoricalFocusSession 
     categoryId: row.category_id,
     title: row.title_snapshot,
     date: row.session_date,
+    endedAt: row.ended_at,
     durationSeconds: row.duration_seconds,
     focusType: row.focus_type_snapshot as FocusType,
     focusSubtype: row.focus_subtype_snapshot ? row.focus_subtype_snapshot as FocusSubtype : undefined,
@@ -201,6 +234,15 @@ export function mapFocusSessionRow(row: DbFocusSession): HistoricalFocusSession 
     notes: row.notes ?? undefined,
     createdAt: row.created_at,
   };
+}
+
+function completionIsoFromDateTime(date: string, time?: string | null) {
+  const safeTime = time?.trim() || "12:00";
+  const parsed = new Date(`${date}T${safeTime}:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.toISOString();
 }
 
 export function mergeStoredFocusHistory(history: HistoricalFocusSession[]): HistoricalFocusSession[] {
@@ -238,6 +280,12 @@ export function mergeStoredFocusCategories(categories: FocusCategory[]): FocusCa
       focusType: preferStoredValue(stored.focusType, category.focusType),
       focusSubtype: preferStoredOptionalValue(stored.focusSubtype, category.focusSubtype),
       focusSubtype2: preferStoredOptionalValue(stored.focusSubtype2, category.focusSubtype2),
+      priorityLevel: stored.priorityLevel ?? category.priorityLevel,
+      targetDistributionMode: stored.targetDistributionMode ?? category.targetDistributionMode,
+      weekdayTargetSeconds: stored.weekdayTargetSeconds ?? category.weekdayTargetSeconds,
+      countTowardProductiveGoal: stored.countTowardProductiveGoal ?? category.countTowardProductiveGoal,
+      allowDailySurplusReduction: stored.allowDailySurplusReduction ?? category.allowDailySurplusReduction,
+      weeklySurplusCarryoverMode: stored.weeklySurplusCarryoverMode ?? category.weeklySurplusCarryoverMode,
     };
   });
 }
@@ -253,6 +301,8 @@ export function useFocus(
   const [focusCategories, setFocusCategories] = useState<FocusCategory[]>([]);
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
   const [focusHistory, setFocusHistory] = useState<HistoricalFocusSession[]>([]);
+  const [focusDailyGoalAdjustments, setFocusDailyGoalAdjustments] = useState<FocusDailyGoalAdjustment[]>([]);
+  const [pendingDailyGoalSurplus, setPendingDailyGoalSurplus] = useState<PendingFocusDailySurplus | null>(null);
   const [focusCounterState, setFocusCounterState] = useState<FocusCounterState>({ counters: [], history: [], ownerUserId: null });
   const suppressCategoryReload = useRef(false);
   const focusCounters = focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
@@ -288,6 +338,35 @@ export function useFocus(
     };
   }, [userId]);
 
+  useEffect(() => {
+    if (!client || !userId) {
+      const timeoutId = window.setTimeout(() => {
+        setFocusDailyGoalAdjustments([]);
+        setPendingDailyGoalSurplus(null);
+      }, 0);
+      return () => window.clearTimeout(timeoutId);
+    }
+
+    const todayRange = getMondayWeekRange(todayISO());
+    client
+      .from("adhdice_focus_daily_goal_adjustments")
+      .select("*")
+      .eq("user_id", userId)
+      .gte("adjustment_date", todayRange.startDate)
+      .lte("adjustment_date", todayRange.endDate)
+      .order("adjustment_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (error) {
+          if (!/does not exist|schema cache/i.test(error.message)) {
+            setMessage({ tone: "warn", text: error.message });
+          }
+          return;
+        }
+        setFocusDailyGoalAdjustments((data ?? []).map(mapFocusDailyGoalAdjustmentRow));
+      });
+  }, [client, setMessage, userId]);
+
   async function persistActiveSession(categoryId: string, nextSession: ActiveFocusSession) {
     if (!client || !userId) return false;
 
@@ -321,6 +400,88 @@ export function useFocus(
     if (typeof BroadcastChannel !== "undefined") {
       new BroadcastChannel("adhdice_focus_sync").postMessage("toggle");
     }
+    return true;
+  }
+
+  function queueDailySurplusPrompt(previousHistory: HistoricalFocusSession[], nextHistory: HistoricalFocusSession[], entry: HistoricalFocusSession) {
+    if (!entry.categoryId) return;
+    const category = focusCategories.find((candidate) => candidate.id === entry.categoryId);
+    if (!category) return;
+    const plan = buildFocusGoalPlan({
+      adjustments: focusDailyGoalAdjustments,
+      categories: focusCategories,
+      history: nextHistory,
+      todayDate: entry.date,
+    });
+    const summary = plan.summaries.find((candidate) => candidate.category.id === entry.categoryId);
+    if (!summary) return;
+    const surplusSeconds = getPromptedDailySurplusSeconds({
+      adjustments: focusDailyGoalAdjustments,
+      afterHistory: nextHistory,
+      beforeHistory: previousHistory,
+      categoryId: entry.categoryId,
+      sourceSessionId: entry.id,
+      targetSeconds: summary.adjustedTodayTargetSeconds,
+      todayDate: entry.date,
+    });
+    if (surplusSeconds <= 0) return;
+    setPendingDailyGoalSurplus({
+      sourceCategoryId: entry.categoryId,
+      sourceCategoryTitle: category.title,
+      sourceSessionId: entry.id,
+      adjustmentDate: entry.date,
+      surplusSeconds,
+    });
+  }
+
+  async function handleSaveDailyGoalAdjustment(input: {
+    adjustmentDate: string;
+    sourceCategoryId: string;
+    targetCategoryId: string;
+    sourceSessionId?: string | null;
+    reductionSeconds: number;
+    reason?: string;
+  }) {
+    if (!client || !userId) return false;
+    const payload = {
+      user_id: userId,
+      adjustment_date: input.adjustmentDate,
+      source_category_id: input.sourceCategoryId,
+      target_category_id: input.targetCategoryId,
+      source_session_id: input.sourceSessionId ?? null,
+      reduction_seconds: Math.max(1, Math.floor(input.reductionSeconds)),
+      reason: input.reason ?? "daily_surplus_reallocation",
+    };
+    await client
+      .from("adhdice_focus_daily_goal_adjustments")
+      .delete()
+      .eq("user_id", userId)
+      .eq("adjustment_date", input.adjustmentDate)
+      .eq("source_category_id", input.sourceCategoryId)
+      .eq("target_category_id", input.targetCategoryId);
+    const { data, error } = await client
+      .from("adhdice_focus_daily_goal_adjustments")
+      .insert(payload)
+      .select("*")
+      .single();
+
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+    if (data) {
+      const nextAdjustment = mapFocusDailyGoalAdjustmentRow(data);
+      setFocusDailyGoalAdjustments((current) => [
+        nextAdjustment,
+        ...current.filter((adjustment) =>
+          adjustment.adjustmentDate !== nextAdjustment.adjustmentDate ||
+          adjustment.sourceCategoryId !== nextAdjustment.sourceCategoryId ||
+          adjustment.targetCategoryId !== nextAdjustment.targetCategoryId
+        ),
+      ]);
+    }
+    setPendingDailyGoalSurplus(null);
+    setMessage({ tone: "good", text: "Today’s Focus Goal plan updated." });
     return true;
   }
 
@@ -396,7 +557,7 @@ export function useFocus(
 
   async function handleFinishTimer(
     categoryId: string,
-    data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string },
+    data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string; completionTime?: string },
   ) {
     if (!client || !userId) return;
     if (isSystemCountdownCategoryId(categoryId)) return;
@@ -417,7 +578,8 @@ export function useFocus(
       : elapsedTotalSeconds;
     if (totalSeconds < 1) return;
 
-    const completedAt = new Date(now).toISOString();
+    const sessionDate = data?.date ?? (activeSession.startTime ? getLogicalDayKey(new Date(activeSession.startTime)) : todayISO());
+    const completedAt = completionIsoFromDateTime(sessionDate, data?.completionTime) ?? new Date(now).toISOString();
     const payload = {
       user_id: userId,
       category_id: isSystemCountdownCategoryId(categoryId) ? null : categoryId,
@@ -425,7 +587,7 @@ export function useFocus(
       focus_type_snapshot: sanitizeFocusLabel(data?.focusType ?? category.focusType, "Work"),
       focus_subtype_snapshot: sanitizeOptionalFocusLabel(data?.focusSubtype ?? category.focusSubtype),
       focus_subtype_2_snapshot: sanitizeOptionalFocusLabel(data?.focusSubtype2 ?? category.focusSubtype2),
-      session_date: data?.date ?? (activeSession.startTime ? getLogicalDayKey(new Date(activeSession.startTime)) : todayISO()),
+      session_date: sessionDate,
       duration_seconds: totalSeconds,
       notes: data?.notes || null,
       started_at: activeSession.startTime ? new Date(activeSession.startTime).toISOString() : null,
@@ -468,11 +630,14 @@ export function useFocus(
       },
     ])[0];
 
+    const previousHistorySnapshot = focusHistory;
+    const nextHistorySnapshot = [nextEntry, ...focusHistory];
     setFocusHistory((prev) => {
       const nextHistory = [nextEntry, ...prev];
       saveFocusHistory(nextHistory);
       return nextHistory;
     });
+    queueDailySurplusPrompt(previousHistorySnapshot, nextHistorySnapshot, nextEntry);
     setActiveSessions((prev) => {
       const next = { ...prev };
       delete next[categoryId];
@@ -616,9 +781,11 @@ export function useFocus(
     durationSeconds: number;
     date: string;
     notes: string;
+    completionTime?: string;
   }) {
     if (!client || !userId) return false;
 
+    const completedAt = completionIsoFromDateTime(data.date, data.completionTime);
     const payload = {
       user_id: userId,
       category_id: data.categoryId,
@@ -629,6 +796,7 @@ export function useFocus(
       session_date: data.date,
       duration_seconds: data.durationSeconds,
       notes: data.notes || null,
+      ended_at: completedAt,
       source: "manual" as const,
     };
 
@@ -650,11 +818,14 @@ export function useFocus(
         focusSubtype2: data.focusSubtype2,
       },
     ])[0];
+    const previousHistorySnapshot = focusHistory;
+    const nextHistorySnapshot = [nextEntry, ...focusHistory];
     setFocusHistory((prev) => {
       const nextHistory = [nextEntry, ...prev];
       saveFocusHistory(nextHistory);
       return nextHistory;
     });
+    queueDailySurplusPrompt(previousHistorySnapshot, nextHistorySnapshot, nextEntry);
     setMessage({ tone: "good", text: "Focus entry saved." });
     return true;
   }
@@ -689,6 +860,12 @@ export function useFocus(
       icon: category.icon,
       daily_goal_seconds: category.dailyGoalSeconds ?? null,
       weekly_goal_seconds: category.weeklyGoalSeconds ?? null,
+      priority_level: normalizePriorityLevel(category.priorityLevel),
+      target_distribution_mode: normalizeDistributionMode(category.targetDistributionMode),
+      weekday_target_seconds: category.weekdayTargetSeconds ?? {},
+      count_toward_productive_goal: category.countTowardProductiveGoal ?? null,
+      allow_daily_surplus_reduction: category.allowDailySurplusReduction ?? null,
+      weekly_surplus_carryover_mode: normalizeCarryoverMode(category.weeklySurplusCarryoverMode),
       sort_order: index,
     }));
 
@@ -704,9 +881,26 @@ export function useFocus(
 
     if (error) { setMessage({ tone: "warn", text: error.message }); return false; }
 
-    const nextCategories = (savedCategories ?? [])
-      .sort((a, b) => a.sort_order - b.sort_order)
-      .map(mapFocusCategoryRow);
+    const optimisticById = new Map(uniqueCategories.map((category) => [category.id, category]));
+    const nextCategories = savedCategories && savedCategories.length > 0
+      ? savedCategories
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map((row) => {
+          const optimistic = optimisticById.get(row.id);
+          return {
+            ...(optimistic ?? {}),
+            ...mapFocusCategoryRow(row),
+            dailyGoalSeconds: row.daily_goal_seconds ?? optimistic?.dailyGoalSeconds ?? null,
+            weeklyGoalSeconds: row.weekly_goal_seconds ?? optimistic?.weeklyGoalSeconds ?? null,
+            priorityLevel: normalizePriorityLevel(row.priority_level ?? optimistic?.priorityLevel),
+            targetDistributionMode: normalizeDistributionMode(row.target_distribution_mode ?? optimistic?.targetDistributionMode),
+            weekdayTargetSeconds: normalizeWeekdayTargetSeconds(row.weekday_target_seconds ?? optimistic?.weekdayTargetSeconds),
+            countTowardProductiveGoal: row.count_toward_productive_goal ?? optimistic?.countTowardProductiveGoal ?? null,
+            allowDailySurplusReduction: row.allow_daily_surplus_reduction ?? optimistic?.allowDailySurplusReduction ?? null,
+            weeklySurplusCarryoverMode: normalizeCarryoverMode(row.weekly_surplus_carryover_mode ?? optimistic?.weeklySurplusCarryoverMode),
+          };
+        })
+      : uniqueCategories;
 
     setFocusCategories(nextCategories);
     saveFocusCategories(nextCategories);
@@ -762,11 +956,13 @@ export function useFocus(
       focusSubtype2?: FocusSubtype | null;
       durationSeconds: number;
       date: string;
+      completionTime?: string;
       notes: string;
     },
   ) {
     if (!client || !userId) return;
 
+    const completedAt = completionIsoFromDateTime(data.date, data.completionTime);
     const payload = {
       category_id: data.categoryId,
       title_snapshot: sanitizeFocusLabel(data.title, "Untitled Session"),
@@ -775,6 +971,7 @@ export function useFocus(
       focus_subtype_2_snapshot: sanitizeOptionalFocusLabel(data.focusSubtype2),
       session_date: data.date,
       duration_seconds: data.durationSeconds,
+      ended_at: completedAt,
       notes: data.notes || null,
     };
 
@@ -798,11 +995,14 @@ export function useFocus(
         focusSubtype2: data.focusSubtype2,
       },
     ])[0];
+    let nextHistorySnapshot: HistoricalFocusSession[] = [];
     setFocusHistory((prev) => {
       const nextHistory = prev.map((entry) => (entry.id === entryId ? nextEntry : entry));
+      nextHistorySnapshot = nextHistory;
       saveFocusHistory(nextHistory);
       return nextHistory;
     });
+    queueDailySurplusPrompt(focusHistory, nextHistorySnapshot, nextEntry);
     setMessage({ tone: "good", text: "Focus entry updated." });
   }
 
@@ -947,6 +1147,9 @@ export function useFocus(
     activeSessions,
     setActiveSessions,
     focusHistory,
+    focusDailyGoalAdjustments,
+    pendingDailyGoalSurplus,
+    setPendingDailyGoalSurplus,
     setFocusHistory,
     suppressCategoryReload,
     handleToggleTimer,
@@ -956,6 +1159,7 @@ export function useFocus(
     handleResetTimer,
     handleDeleteTimer,
     handleManualFocusEntry,
+    handleSaveDailyGoalAdjustment,
     handleSaveCategories,
     handleDeleteFocusCategory,
     handleUpdateFocusHistoryEntry,

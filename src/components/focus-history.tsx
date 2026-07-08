@@ -1094,7 +1094,7 @@ export function DailyHistoryGallery({
   labelOptions: FocusLabelOptions;
   onDeleteEntry: (entryId: string) => Promise<void>;
   onEditGoals: () => void;
-  onUpdateEntry: (entryId: string, data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<void>;
+  onUpdateEntry: (entryId: string, data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; completionTime?: string; notes: string }) => Promise<void>;
 }) {
   const [activityScope, setActivityScope] = useState<TimeScope>("daily");
   const [activityDate, setActivityDate] = useState(todayLocalISO());
@@ -1144,6 +1144,7 @@ export function DailyHistoryGallery({
   const editingEntry = editingId ? history.find((entry) => entry.id === editingId) ?? null : null;
 
   const [entryDate, setEntryDate] = useState(todayLocalISO());
+  const [entryCompletionTime, setEntryCompletionTime] = useState("12:00");
   const [entryCategoryId, setEntryCategoryId] = useState("__none__");
   const [entryTitle, setEntryTitle] = useState("");
   const [entryType, setEntryType] = useState<FocusType>("Work");
@@ -1156,6 +1157,7 @@ export function DailyHistoryGallery({
   const openEdit = (entry: HistoricalFocusSession) => {
     setEditingId(entry.id);
     setEntryDate(entry.date);
+    setEntryCompletionTime(entry.endedAt ? new Date(entry.endedAt).toTimeString().slice(0, 5) : "12:00");
     setEntryCategoryId(entry.categoryId ?? "__none__");
     setEntryTitle(entry.title);
     setEntryType(entry.focusType);
@@ -1201,6 +1203,7 @@ export function DailyHistoryGallery({
         focusSubtype2: entrySecondarySubtype.trim() || null,
         durationSeconds: nextSeconds,
         date: entryDate,
+        completionTime: entryCompletionTime,
         notes: entryNotes,
       });
       setEditingId(null);
@@ -1473,6 +1476,10 @@ export function DailyHistoryGallery({
                 <label className="text-sm">
                   <span className="mb-1 block font-semibold">Date</span>
                   <input className="h-10 w-full px-3 ui-input-light" type="date" value={entryDate} onChange={(event) => setEntryDate(event.target.value)} />
+                </label>
+                <label className="text-sm">
+                  <span className="mb-1 block font-semibold">Time</span>
+                  <input className="h-10 w-full px-3 ui-input-light" type="time" value={entryCompletionTime} onChange={(event) => setEntryCompletionTime(event.target.value)} />
                 </label>
                 <label className="text-sm">
                   <span className="mb-1 block font-semibold">Hours</span>

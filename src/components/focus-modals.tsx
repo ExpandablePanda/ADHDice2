@@ -211,6 +211,11 @@ function todayLocalISO() {
   return getLogicalDayKey();
 }
 
+function currentTimeValue() {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
 function resolveSessionLogDate(sessionStartTime: number | null) {
   if (sessionStartTime) {
     return getLogicalDayKey(new Date(sessionStartTime));
@@ -230,7 +235,7 @@ export function SessionFinishModal({
   category: FocusCategory;
   durationSeconds: number;
   labelOptions: FocusLabelOptions;
-  onConfirm: (data: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string }) => void;
+  onConfirm: (data: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string; completionTime?: string }) => void;
   onCancel: () => void;
   sessionStartTime: number | null;
 }) {
@@ -240,6 +245,7 @@ export function SessionFinishModal({
   const [focusSubtype2, setFocusSubtype2] = useState(category.focusSubtype2 ?? "");
   const [notes, setNotes] = useState("");
   const [date, setDate] = useState(resolveSessionLogDate(sessionStartTime));
+  const [completionTime, setCompletionTime] = useState(currentTimeValue());
 
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60);
@@ -283,15 +289,26 @@ export function SessionFinishModal({
             />
           </div>
 
-          <label className="flex flex-col gap-2">
-            <FieldLabel>Completion Date</FieldLabel>
-            <input
-              className={`px-4 py-3 ui-input-light ${manualInputClassName}`}
-              onChange={(e) => setDate(e.target.value)}
-              type="date"
-              value={date}
-            />
-          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="flex flex-col gap-2">
+              <FieldLabel>Completion Date</FieldLabel>
+              <input
+                className={`px-4 py-3 ui-input-light ${manualInputClassName}`}
+                onChange={(e) => setDate(e.target.value)}
+                type="date"
+                value={date}
+              />
+            </label>
+            <label className="flex flex-col gap-2">
+              <FieldLabel>Completion Time</FieldLabel>
+              <input
+                className={`px-4 py-3 ui-input-light ${manualInputClassName}`}
+                onChange={(e) => setCompletionTime(e.target.value)}
+                type="time"
+                value={completionTime}
+              />
+            </label>
+          </div>
 
           <ManualSuggestionInput
             label="Subtype 2"
@@ -323,7 +340,7 @@ export function SessionFinishModal({
           </button>
           <button
             className="ui-pill-button-strong-light transition hover:scale-105 dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
-            onClick={() => onConfirm({ title, focusType, focusSubtype: focusSubtype.trim() || null, focusSubtype2: focusSubtype2.trim() || null, notes, date })}
+            onClick={() => onConfirm({ title, focusType, focusSubtype: focusSubtype.trim() || null, focusSubtype2: focusSubtype2.trim() || null, notes, date, completionTime })}
             type="button"
           >
             Save Session
@@ -347,7 +364,7 @@ export function ManualEntryModal({
   initialTitle?: string;
   labelOptions: FocusLabelOptions;
   onClear?: () => Promise<boolean> | boolean;
-  onSave: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<boolean>;
+  onSave: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; completionTime?: string; notes: string }) => Promise<boolean>;
   onClose: () => void;
 }) {
   const initialTotalMinutes = initialDurationSeconds ? Math.max(0, Math.round(initialDurationSeconds / 60)) : 0;
@@ -355,6 +372,7 @@ export function ManualEntryModal({
   const [hours, setHours] = useState(String(Math.floor(initialTotalMinutes / 60)));
   const [minutes, setMinutes] = useState(String(initialTotalMinutes % 60));
   const [date, setDate] = useState(todayLocalISO());
+  const [completionTime, setCompletionTime] = useState(currentTimeValue());
   const [title, setTitle] = useState(initialTitle ?? categories[0]?.title ?? "");
   const [focusType, setFocusType] = useState<FocusType>(categories[0]?.focusType ?? "Work");
   const [focusSubtype, setFocusSubtype] = useState<FocusSubtype>(categories[0]?.focusSubtype ?? "");
@@ -391,6 +409,7 @@ export function ManualEntryModal({
         focusSubtype2: focusSubtype2.trim() || null,
         durationSeconds: totalSeconds,
         date,
+        completionTime,
         notes,
       });
     } finally {
@@ -433,7 +452,7 @@ export function ManualEntryModal({
             value={title}
           />
 
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,7rem)_minmax(0,7rem)_minmax(0,1fr)]">
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,7rem)_minmax(0,7rem)_minmax(0,1fr)_minmax(0,1fr)]">
             <label className="flex flex-col gap-2">
               <FieldLabel>Hours</FieldLabel>
               <input className={`px-4 py-2 ui-input-light ${manualInputClassName}`} min="0" onChange={(e) => setHours(e.target.value)} type="number" value={hours} />
@@ -445,6 +464,10 @@ export function ManualEntryModal({
             <label className="flex flex-col gap-2">
               <FieldLabel>Date</FieldLabel>
               <input className={`px-4 py-3 ui-input-light ${manualInputClassName}`} onChange={(e) => setDate(e.target.value)} type="date" value={date} />
+            </label>
+            <label className="flex flex-col gap-2">
+              <FieldLabel>Time</FieldLabel>
+              <input className={`px-4 py-3 ui-input-light ${manualInputClassName}`} onChange={(e) => setCompletionTime(e.target.value)} type="time" value={completionTime} />
             </label>
           </div>
 

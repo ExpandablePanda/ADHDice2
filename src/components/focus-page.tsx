@@ -5,7 +5,9 @@ import {
   type ActiveFocusSession,
   type FocusCounter,
   type FocusCounterHistoryEntry,
+  type FocusDailyGoalAdjustment,
   type HistoricalFocusSession,
+  type PendingFocusDailySurplus,
   type FocusLabelOptions,
   type FocusType,
   type FocusSubtype,
@@ -14,7 +16,24 @@ import {
   DEFAULT_PRIMARY_SUBTYPES,
   DEFAULT_SECONDARY_SUBTYPES,
 } from "@/lib/types";
+import {
+  buildFocusGoalPlan,
+  formatPriorityLabel,
+  getAllocationSummary,
+  getEligibleSurplusTargets,
+  getWeekdayKey,
+  getOverWeeklyDailyTargetReallocationPool,
+  getSurplusOverrideTargets,
+  isSleepCategory,
+  normalizeCarryoverMode,
+  normalizeDistributionMode,
+  normalizePriorityLevel,
+  OVER_WEEKLY_DAILY_TARGET_REALLOCATION_REASON,
+  resolveCountsTowardProductiveGoal,
+  WEEKDAY_KEYS,
+} from "@/lib/focus-goals";
 import { getDisplayFocusCategories, isSystemCountdownCategoryId, SYSTEM_COUNTDOWN_CATEGORY_ID } from "@/lib/focus-utils";
+import { FocusGoalsPanel } from "./focus-goals-panel";
 import { FocusClockRow, FocusClockRowDesktop } from "./focus-clocks";
 import { FocusCounterHistoryCard, FocusCounterRow } from "./focus-counters";
 import { CategoryManager } from "./category-manager";
@@ -66,6 +85,26 @@ const FOCUS_COUNTER_ICON_OPTIONS = [
   { name: "Wifi", label: "Online" },
   { name: "DollarSign", label: "Money" },
 ] as const;
+
+const OVER_WEEKLY_REALLOCATION_DISMISSED_KEY = "adhdice.focusGoals.overWeeklyReallocationDismissed.v1";
+
+function readOverWeeklyReallocationDismissedKeys() {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(window.localStorage.getItem(OVER_WEEKLY_REALLOCATION_DISMISSED_KEY) ?? "{}") as Record<string, true>;
+  } catch {
+    return {};
+  }
+}
+
+function writeOverWeeklyReallocationDismissedKeys(keys: Record<string, true>) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(OVER_WEEKLY_REALLOCATION_DISMISSED_KEY, JSON.stringify(keys));
+}
+
+function overWeeklyReallocationPromptKey(dateKey: string, categoryId: string) {
+  return `${dateKey}:${categoryId}`;
+}
 
 function FocusTimerPicker({
   categories,
@@ -128,7 +167,7 @@ function FocusTimerPicker({
   };
 
   return (
-    <div className="relative mt-4 w-[min(14rem,calc(100vw-2rem))] text-left" ref={rootRef}>
+    <div className="relative w-[min(14rem,calc(100vw-2rem))] text-left" ref={rootRef}>
       <label className="sr-only" htmlFor={`${listboxId}-input`}>Add a focus timer</label>
       <div className="relative">
         <input
@@ -226,6 +265,11 @@ export function FocusPage({
   onDeleteHistoryEntry,
   onUpdateCategories,
   onDeleteCategory,
+  adjustments,
+  pendingDailyGoalSurplus,
+  onDismissDailyGoalSurplus,
+  onRequestDailyGoalSurplus,
+  onSaveDailyGoalAdjustment,
 }: {
   categories: FocusCategory[];
   activeSessions: Record<string, ActiveFocusSession>;
@@ -241,12 +285,17 @@ export function FocusPage({
   onDeleteTimer: (catId: string) => void;
   onCreateCounter: (input: { color: string; goal: number; icon: string; initialValue: number; step: number; title: string }) => void;
   onDeleteCounter: (counterId: string) => void;
-  onLogManual: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<boolean>;
+  onLogManual: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; completionTime?: string; notes: string }) => Promise<boolean>;
   onUpdateCounter: (counterId: string, updates: Partial<Pick<FocusCounter, "color" | "goal" | "icon" | "step" | "title" | "value">>) => void;
-  onUpdateHistoryEntry: (entryId: string, data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; notes: string }) => Promise<void>;
+  onUpdateHistoryEntry: (entryId: string, data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; completionTime?: string; notes: string }) => Promise<void>;
   onDeleteHistoryEntry: (entryId: string) => Promise<void>;
   onUpdateCategories: (categories: FocusCategory[]) => Promise<boolean>;
   onDeleteCategory: (category: FocusCategory) => Promise<boolean>;
+  adjustments: FocusDailyGoalAdjustment[];
+  pendingDailyGoalSurplus: PendingFocusDailySurplus | null;
+  onDismissDailyGoalSurplus: () => void;
+  onRequestDailyGoalSurplus: (pending: PendingFocusDailySurplus) => void;
+  onSaveDailyGoalAdjustment: (input: { adjustmentDate: string; sourceCategoryId: string; targetCategoryId: string; sourceSessionId?: string | null; reductionSeconds: number; reason?: string }) => Promise<boolean>;
 }) {
   const [countdownPickerOpenRequest, setCountdownPickerOpenRequest] = useState(0);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
@@ -262,6 +311,7 @@ export function FocusPage({
   const [counterStep, setCounterStep] = useState("1");
   const [counterGoal, setCounterGoal] = useState("10");
   const [counterValue, setCounterValue] = useState("0");
+  const [dismissedOverWeeklyReallocationKeys, setDismissedOverWeeklyReallocationKeys] = useState<Record<string, true>>(() => readOverWeeklyReallocationDismissedKeys());
   const userCategories = categories.filter((category) => !isSystemCountdownCategoryId(category.id));
   const displayCategories = getDisplayFocusCategories(categories, activeSessions);
   const countersById = new Map(counters.map((counter) => [counter.id, counter]));
@@ -302,6 +352,40 @@ export function FocusPage({
   const activeFinishingCategory = finishingCatId ? displayCategories.find((category) => category.id === finishingCatId) : null;
   const labelOptions = buildFocusLabelOptions(userCategories, history);
   const activeCategories = displayCategories.filter((category) => Boolean(activeSessions[category.id]));
+
+  const markOverWeeklyReallocationHandled = (pending: PendingFocusDailySurplus | null) => {
+    if (pending?.reason !== OVER_WEEKLY_DAILY_TARGET_REALLOCATION_REASON) return;
+    const promptKey = overWeeklyReallocationPromptKey(pending.adjustmentDate, pending.sourceCategoryId);
+    setDismissedOverWeeklyReallocationKeys((current) => {
+      if (current[promptKey]) return current;
+      const next = { ...current, [promptKey]: true as const };
+      writeOverWeeklyReallocationDismissedKeys(next);
+      return next;
+    });
+  };
+
+  const dismissDailyGoalSurplus = () => {
+    markOverWeeklyReallocationHandled(pendingDailyGoalSurplus);
+    onDismissDailyGoalSurplus();
+  };
+
+  useEffect(() => {
+    if (pendingDailyGoalSurplus || userCategories.length === 0) return;
+    const plan = buildFocusGoalPlan({ adjustments, categories: userCategories, history });
+    const source = plan.summaries.find((summary) => {
+      const promptKey = overWeeklyReallocationPromptKey(plan.todayDate, summary.category.id);
+      return !dismissedOverWeeklyReallocationKeys[promptKey] && getOverWeeklyDailyTargetReallocationPool(summary) > 0;
+    });
+    if (!source) return;
+    onRequestDailyGoalSurplus({
+      adjustmentDate: plan.todayDate,
+      reason: OVER_WEEKLY_DAILY_TARGET_REALLOCATION_REASON,
+      sourceCategoryId: source.category.id,
+      sourceCategoryTitle: source.category.title,
+      sourceSessionId: null,
+      surplusSeconds: getOverWeeklyDailyTargetReallocationPool(source),
+    });
+  }, [adjustments, dismissedOverWeeklyReallocationKeys, history, onRequestDailyGoalSurplus, pendingDailyGoalSurplus, userCategories]);
 
   const openCreateCounter = () => {
     setEditingCounterId(null);
@@ -358,12 +442,12 @@ export function FocusPage({
 
   return (
     <>
-      <section className="flex flex-col items-center pt-8 text-center">
+      <section className="flex flex-col items-center pt-5 text-center sm:pt-6">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">
           Focus Timers
         </p>
 
-        <div className="mt-4 flex justify-center gap-4 sm:mt-8">
+        <div className="mt-3 flex flex-wrap items-center justify-center gap-3 sm:mt-4">
           <button
             className="ui-pill-button-light transition hover:-translate-y-0.5 dark:rounded-full dark:bg-white/5 dark:text-[#cabfff]"
             onClick={() => setShowCategoryManager(true)}
@@ -378,9 +462,6 @@ export function FocusPage({
           >
             Manual Entry
           </button>
-        </div>
-
-        <div className="mt-4 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <FocusTimerPicker
             activeSessions={activeSessions}
             categories={userCategories}
@@ -466,6 +547,13 @@ export function FocusPage({
           </div>
         </section>
       ) : null}
+
+      <FocusGoalsPanel
+        activeSessions={activeSessions}
+        adjustments={adjustments}
+        categories={userCategories}
+        history={history}
+      />
 
       <FocusCounterHistoryCard
         countersById={countersById}
@@ -632,6 +720,17 @@ export function FocusPage({
           }}
         />
       ) : null}
+
+      {pendingDailyGoalSurplus ? (
+        <DailySurplusReallocationModal
+          adjustments={adjustments}
+          categories={userCategories}
+          history={history}
+          onClose={dismissDailyGoalSurplus}
+          onSave={onSaveDailyGoalAdjustment}
+          pending={pendingDailyGoalSurplus}
+        />
+      ) : null}
     </>
   );
 }
@@ -680,6 +779,219 @@ function buildFocusLabelOptions(
   };
 }
 
+function surplusTargetContext(summary: ReturnType<typeof buildFocusGoalPlan>["summaries"][number]) {
+  const remainingTodaySeconds = Math.max(0, summary.adjustedTodayTargetSeconds - summary.todayActualSeconds);
+  if (summary.weeklyPaceBehindSeconds > 0) {
+    return `behind weekly pace by ${formatDurationForGoals(summary.weeklyPaceBehindSeconds)}`;
+  }
+  if (remainingTodaySeconds <= 0) {
+    return summary.adjustedTodayTargetSeconds <= 0 ? "no target left today" : "done today";
+  }
+  return `${formatDurationForGoals(remainingTodaySeconds)} remaining today · ahead this week`;
+}
+
+function allocationInputValue(seconds: number | undefined) {
+  if (!seconds) return "";
+  return String(Math.round(seconds / 60));
+}
+
+function parseAllocationMinutes(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, parsed) * 60;
+}
+
+function DailySurplusReallocationModal({
+  adjustments,
+  categories,
+  history,
+  onClose,
+  onSave,
+  pending,
+}: {
+  adjustments: FocusDailyGoalAdjustment[];
+  categories: FocusCategory[];
+  history: HistoricalFocusSession[];
+  onClose: () => void;
+  onSave: (input: { adjustmentDate: string; sourceCategoryId: string; targetCategoryId: string; sourceSessionId?: string | null; reductionSeconds: number; reason?: string }) => Promise<boolean>;
+  pending: PendingFocusDailySurplus;
+}) {
+  const [allocations, setAllocations] = useState<Record<string, number>>({});
+  const [isSaving, setIsSaving] = useState(false);
+  const plan = useMemo(() => buildFocusGoalPlan({
+    adjustments,
+    categories,
+    history,
+    todayDate: pending.adjustmentDate,
+  }), [adjustments, categories, history, pending.adjustmentDate]);
+  const sourceSummary = plan.summaries.find((summary) => summary.category.id === pending.sourceCategoryId);
+  const eligibleTargets = sourceSummary ? getEligibleSurplusTargets(sourceSummary, plan.summaries) : [];
+  const eligibleTargetIds = new Set(eligibleTargets.map((target) => target.category.id));
+  const overrideTargets = sourceSummary
+    ? getSurplusOverrideTargets(sourceSummary, plan.summaries).filter((target) => !eligibleTargetIds.has(target.summary.category.id))
+    : [];
+  const reductionSeconds = Math.max(60, Math.ceil(pending.surplusSeconds / 60) * 60);
+  const isOverWeeklyShift = pending.reason === OVER_WEEKLY_DAILY_TARGET_REALLOCATION_REASON;
+  const allocationSummary = getAllocationSummary(allocations, reductionSeconds);
+  const positiveAllocations = Object.entries(allocations).filter(([, seconds]) => seconds > 0);
+  const canSave = positiveAllocations.length > 0 && allocationSummary.overallocatedSeconds === 0;
+
+  const renderAllocationRow = (
+    summary: ReturnType<typeof buildFocusGoalPlan>["summaries"][number],
+    options: { warningLabel?: string | null } = {},
+  ) => (
+    <div
+      className="grid min-w-0 gap-3 rounded-[1rem] border border-[#e9e2f6] bg-white px-3 py-2 text-sm dark:border-white/10 dark:bg-white/[0.04] sm:grid-cols-[minmax(0,1fr)_minmax(6rem,7rem)] sm:items-center"
+      key={summary.category.id}
+    >
+      <div className="min-w-0">
+        <p className="truncate font-semibold text-[var(--text-primary)]">
+          {summary.category.title} <span className="font-medium text-[var(--text-muted)]">({formatPriorityLabel(summary.priorityLevel)})</span>
+        </p>
+        <p className="mt-1 text-xs font-medium text-[var(--text-muted)]">{surplusTargetContext(summary)}</p>
+        <p className="mt-1 text-xs text-[var(--text-muted)]">
+          {summary.allowDailySurplusReduction ? "Flexible" : "Protected"} · Today remaining {formatDurationForGoals(Math.max(0, summary.adjustedTodayTargetSeconds - summary.todayActualSeconds))}
+        </p>
+        {options.warningLabel ? (
+          <span className="mt-2 inline-flex rounded-full border border-[#f4d4bb] bg-[#fff7ed] px-2 py-0.5 text-[11px] text-[#9a5a22] dark:border-[#70451f] dark:bg-[#2a1c12] dark:text-[#f4bd82]">
+            {options.warningLabel}
+          </span>
+        ) : null}
+      </div>
+      <label className="grid min-w-0 gap-1 text-xs font-bold uppercase tracking-[0.12em] text-[var(--text-muted)]">
+        {isOverWeeklyShift ? "Increase" : "Decrease"}
+        <div className="flex min-w-0 items-center gap-1.5">
+          <input
+            className="h-9 w-full min-w-0 rounded-full border border-[#ddd6fb] bg-white px-2.5 text-right text-sm font-bold text-[#1f2642] outline-none focus:border-[#c8bcff] dark:border-white/10 dark:bg-white/8 dark:text-white"
+            inputMode="numeric"
+            onChange={(event) => setAllocations((current) => ({ ...current, [summary.category.id]: parseAllocationMinutes(event.target.value) }))}
+            pattern="[0-9]*"
+            type="text"
+            value={allocationInputValue(allocations[summary.category.id])}
+          />
+          <span className="shrink-0 text-xs normal-case tracking-normal text-[var(--text-muted)]">min</span>
+        </div>
+      </label>
+    </div>
+  );
+
+  const save = async () => {
+    if (!canSave) return;
+    setIsSaving(true);
+    try {
+      for (const [targetCategoryId, reductionSecondsForTarget] of positiveAllocations) {
+        const saved = await onSave({
+          adjustmentDate: pending.adjustmentDate,
+          reason: pending.reason,
+          sourceCategoryId: pending.sourceCategoryId,
+          targetCategoryId,
+          sourceSessionId: pending.sourceSessionId,
+          reductionSeconds: reductionSecondsForTarget,
+        });
+        if (!saved) {
+          return;
+        }
+      }
+      onClose();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <ModalShell className="flex max-h-[min(86dvh,calc(100dvh-6rem))] w-full max-w-2xl flex-col overflow-hidden rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-modal)] dark:border-white/10 dark:bg-[#171329]" onClose={onClose}>
+      <div className="border-b border-[var(--border-soft)] p-6 pb-4 dark:border-white/10">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Focus Goals</p>
+        <h3 className="mt-2 text-2xl font-black text-[var(--text-primary)]">Reallocate today?</h3>
+        <p className="mt-2 text-sm text-[var(--text-secondary)]">
+          {isOverWeeklyShift
+            ? `${pending.sourceCategoryTitle} is already over its weekly goal. Reallocate today’s ${formatDurationForGoals(reductionSeconds)} ${pending.sourceCategoryTitle} target?`
+            : `${pending.sourceCategoryTitle} is over today’s target. Reduce today’s targets across one or more categories.`}
+        </p>
+        <div className="mt-3 grid gap-2 rounded-[1rem] border border-[#e9e2f6] bg-white/70 p-3 text-sm font-semibold text-[var(--text-secondary)] dark:border-white/10 dark:bg-white/[0.04] sm:grid-cols-3">
+          <span>{isOverWeeklyShift ? "Target to shift" : "Surplus to allocate"}: {formatDurationForGoals(reductionSeconds)}</span>
+          <span>Allocated: {formatDurationForGoals(allocationSummary.allocatedSeconds)}</span>
+          <span className={allocationSummary.overallocatedSeconds > 0 ? "text-[#9a5a22] dark:text-[#f4bd82]" : ""}>
+            {allocationSummary.overallocatedSeconds > 0
+              ? `Overallocated: ${formatDurationForGoals(allocationSummary.overallocatedSeconds)}`
+              : `Remaining: ${formatDurationForGoals(allocationSummary.remainingSeconds)}`}
+          </span>
+        </div>
+      </div>
+      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4">
+        <div className="space-y-4">
+        <div className="space-y-2">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--text-muted)]">Suggested targets</p>
+          {eligibleTargets.length ? eligibleTargets.map((target) => renderAllocationRow(target)) : (
+            <p className="rounded-[1rem] border border-[#f4d4bb] bg-[#fff7ed] p-3 text-sm text-[#9a5a22] dark:border-[#70451f] dark:bg-[#2a1c12] dark:text-[#f4bd82]">
+              No lower-priority flexible category has time left today.
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--text-muted)]">Other categories</p>
+          {overrideTargets.map((target) => renderAllocationRow(target.summary, { warningLabel: target.warningLabel }))}
+        </div>
+      </div>
+      {allocationSummary.remainingSeconds > 0 && allocationSummary.allocatedSeconds > 0 ? (
+        <p className="mt-3 rounded-[1rem] border border-[#f4d4bb] bg-[#fff7ed] p-3 text-sm text-[#9a5a22] dark:border-[#70451f] dark:bg-[#2a1c12] dark:text-[#f4bd82]">
+          {isOverWeeklyShift
+            ? `Remaining ${formatDurationForGoals(allocationSummary.remainingSeconds)} will stay on ${pending.sourceCategoryTitle} today.`
+            : `Remaining ${formatDurationForGoals(allocationSummary.remainingSeconds)} will stay over capacity today.`}
+        </p>
+      ) : null}
+      </div>
+      <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--border-soft)] p-6 pt-4 dark:border-white/10">
+        <button className="ui-pill-button-light px-4 py-2 font-semibold" onClick={onClose} type="button">
+          {isOverWeeklyShift ? "Keep today’s target" : "Leave today over capacity"}
+        </button>
+        <button
+          className="ui-pill-button-strong-light px-4 py-2 font-bold disabled:opacity-50"
+          disabled={!canSave || isSaving}
+          onClick={() => void save()}
+          type="button"
+        >
+          {isSaving ? "Saving..." : "Reallocate"}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function formatDurationForGoals(seconds: number) {
+  const totalMinutes = Math.max(0, Math.round(seconds / 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours && minutes) return `${hours}h ${minutes}m`;
+  if (hours) return `${hours}h`;
+  return `${minutes}m`;
+}
+
+function getManualWeekdayAllocationSummary(draft: {
+  weeklyHours: string;
+  weeklyMinutes: string;
+  weekdayTargets: Record<string, { hours: string; minutes: string }>;
+}) {
+  const weeklyTargetSeconds = hourMinutePartsToSeconds(draft.weeklyHours, draft.weeklyMinutes) ?? 0;
+  const allocatedSeconds = WEEKDAY_KEYS.reduce((total, weekday) => (
+    total + (hourMinutePartsToSeconds(draft.weekdayTargets[weekday]?.hours ?? "", draft.weekdayTargets[weekday]?.minutes ?? "") ?? 0)
+  ), 0);
+  return {
+    allocatedSeconds,
+    overSeconds: Math.max(0, allocatedSeconds - weeklyTargetSeconds),
+    remainingSeconds: Math.max(0, weeklyTargetSeconds - allocatedSeconds),
+    weeklyTargetSeconds,
+  };
+}
+
+function formatLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function CategoryGoalsModal({
   categories,
   onClose,
@@ -696,10 +1008,20 @@ function CategoryGoalsModal({
       dailyMinutes: secondsToHourMinuteParts(category.dailyGoalSeconds).minutes,
       weeklyHours: secondsToHourMinuteParts(category.weeklyGoalSeconds).hours,
       weeklyMinutes: secondsToHourMinuteParts(category.weeklyGoalSeconds).minutes,
+      priorityLevel: normalizePriorityLevel(category.priorityLevel),
+      targetDistributionMode: normalizeDistributionMode(category.targetDistributionMode),
+      weekdayTargets: Object.fromEntries(WEEKDAY_KEYS.map((key) => [key, {
+        hours: secondsToHourMinuteParts(category.weekdayTargetSeconds?.[key]).hours,
+        minutes: secondsToHourMinuteParts(category.weekdayTargetSeconds?.[key]).minutes,
+      }])),
+      countTowardProductiveGoal: category.countTowardProductiveGoal ?? null,
+      allowDailySurplusReduction: category.allowDailySurplusReduction ?? null,
+      weeklySurplusCarryoverMode: normalizeCarryoverMode(category.weeklySurplusCarryoverMode),
     })),
   );
   const [isSaving, setIsSaving] = useState(false);
-  const [sortMode, setSortMode] = useState<"alphabetical" | "daily" | "weekly">("alphabetical");
+  const [sortMode, setSortMode] = useState<"alphabetical" | "daily" | "weekly" | "priorityHigh" | "priorityLow">("alphabetical");
+  const todayWeekdayKey = getWeekdayKey(formatLocalDateKey(new Date()));
 
   const updateDraft = (
     id: string,
@@ -731,6 +1053,26 @@ function CategoryGoalsModal({
     );
   };
 
+  const updatePolicyDraft = (id: string, updates: Partial<(typeof drafts)[number]>) => {
+    setDrafts((current) => current.map((draft) => draft.id === id ? { ...draft, ...updates } : draft));
+  };
+
+  const updateWeekdayDraft = (id: string, weekday: string, field: "hours" | "minutes", value: string) => {
+    setDrafts((current) => current.map((draft) => {
+      if (draft.id !== id) return draft;
+      return {
+        ...draft,
+        weekdayTargets: {
+          ...draft.weekdayTargets,
+          [weekday]: {
+            ...(draft.weekdayTargets[weekday] ?? { hours: "", minutes: "" }),
+            [field]: value,
+          },
+        },
+      };
+    }));
+  };
+
   const submit = async () => {
     setIsSaving(true);
     try {
@@ -741,6 +1083,18 @@ function CategoryGoalsModal({
             ...category,
             dailyGoalSeconds: hourMinutePartsToSeconds(draft?.dailyHours ?? "", draft?.dailyMinutes ?? ""),
             weeklyGoalSeconds: hourMinutePartsToSeconds(draft?.weeklyHours ?? "", draft?.weeklyMinutes ?? ""),
+            priorityLevel: draft?.priorityLevel ?? 3,
+            targetDistributionMode: draft?.targetDistributionMode ?? "auto",
+            weekdayTargetSeconds: Object.fromEntries(WEEKDAY_KEYS.map((key) => [
+              key,
+              hourMinutePartsToSeconds(
+                draft?.weekdayTargets[key]?.hours ?? "",
+                draft?.weekdayTargets[key]?.minutes ?? "",
+              ) ?? 0,
+            ])),
+            countTowardProductiveGoal: draft?.countTowardProductiveGoal ?? null,
+            allowDailySurplusReduction: draft?.allowDailySurplusReduction ?? null,
+            weeklySurplusCarryoverMode: draft?.weeklySurplusCarryoverMode ?? "off",
           };
         }),
       );
@@ -771,11 +1125,75 @@ function CategoryGoalsModal({
       }
     }
 
+    if (sortMode === "priorityHigh") {
+      const priorityDiff = (draftB?.priorityLevel ?? 3) - (draftA?.priorityLevel ?? 3);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+    }
+
+    if (sortMode === "priorityLow") {
+      const priorityDiff = (draftA?.priorityLevel ?? 3) - (draftB?.priorityLevel ?? 3);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+    }
+
     return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
   });
+  const baseGoalTotals = drafts.reduce(
+    (totals, draft) => {
+      const category = categories.find((entry) => entry.id === draft.id);
+      if (!category) {
+        return totals;
+      }
+
+      const weeklySeconds = hourMinutePartsToSeconds(draft.weeklyHours, draft.weeklyMinutes) ?? 0;
+      const dailySeconds = draft.targetDistributionMode === "manual"
+        ? hourMinutePartsToSeconds(
+          draft.weekdayTargets[todayWeekdayKey]?.hours ?? "",
+          draft.weekdayTargets[todayWeekdayKey]?.minutes ?? "",
+        ) ?? 0
+        : hourMinutePartsToSeconds(draft.dailyHours, draft.dailyMinutes) ?? 0;
+      const draftCategory = {
+        ...category,
+        countTowardProductiveGoal: draft.countTowardProductiveGoal,
+      };
+      const isSleep = isSleepCategory(draftCategory);
+      const countsTowardProductiveGoal = resolveCountsTowardProductiveGoal(draftCategory);
+
+      if (isSleep) {
+        return {
+          ...totals,
+          sleepExcludedWeeklySeconds: totals.sleepExcludedWeeklySeconds + weeklySeconds,
+        };
+      }
+
+      if (!countsTowardProductiveGoal) {
+        return {
+          ...totals,
+          unproductiveExcludedWeeklySeconds: totals.unproductiveExcludedWeeklySeconds + weeklySeconds,
+        };
+      }
+
+      return {
+        ...totals,
+        productiveCategoryCount: totals.productiveCategoryCount + (dailySeconds > 0 || weeklySeconds > 0 ? 1 : 0),
+        productiveDailySeconds: totals.productiveDailySeconds + dailySeconds,
+        productiveWeeklySeconds: totals.productiveWeeklySeconds + weeklySeconds,
+      };
+    },
+    {
+      productiveCategoryCount: 0,
+      productiveDailySeconds: 0,
+      productiveWeeklySeconds: 0,
+      sleepExcludedWeeklySeconds: 0,
+      unproductiveExcludedWeeklySeconds: 0,
+    },
+  );
 
   return (
-    <ModalShell className="w-full max-w-4xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]" onClose={onClose}>
+    <ModalShell className="adhdice-scrollbar w-full max-w-4xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]" onClose={onClose}>
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">Category Goals</p>
@@ -797,9 +1215,11 @@ function CategoryGoalsModal({
           <div className="w-full sm:w-[14rem]">
             <FocusPillSelect
               label="Sort Goals"
-              onChange={(value) => setSortMode(value as "alphabetical" | "daily" | "weekly")}
+              onChange={(value) => setSortMode(value as "alphabetical" | "daily" | "weekly" | "priorityHigh" | "priorityLow")}
               options={[
                 { label: "Alphabetical", value: "alphabetical" },
+                { label: "Priority 5 to 1", value: "priorityHigh" },
+                { label: "Priority 1 to 5", value: "priorityLow" },
                 { label: "Daily Hours", value: "daily" },
                 { label: "Weekly Hours", value: "weekly" },
               ]}
@@ -808,10 +1228,34 @@ function CategoryGoalsModal({
           </div>
         </div>
 
-        <div className="mt-6 max-h-[55vh] overflow-y-auto pr-2">
+        <div className="mt-4 grid gap-2 rounded-[var(--radius-card)] border border-[#e9e2f6] bg-[#fbf9ff] p-3 text-sm dark:border-white/10 dark:bg-white/[0.04] sm:grid-cols-2 lg:grid-cols-5">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Base Daily</p>
+            <p className="mt-1 font-black text-[var(--text-primary)]">{formatDurationForGoals(baseGoalTotals.productiveDailySeconds)}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Base Weekly</p>
+            <p className="mt-1 font-black text-[var(--text-primary)]">{formatDurationForGoals(baseGoalTotals.productiveWeeklySeconds)}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Productive categories</p>
+            <p className="mt-1 font-black text-[var(--text-primary)]">{baseGoalTotals.productiveCategoryCount}</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Sleep excluded</p>
+            <p className="mt-1 font-black text-[var(--text-primary)]">{formatDurationForGoals(baseGoalTotals.sleepExcludedWeeklySeconds)}/week</p>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Unproductive excluded</p>
+            <p className="mt-1 font-black text-[var(--text-primary)]">{formatDurationForGoals(baseGoalTotals.unproductiveExcludedWeeklySeconds)}/week</p>
+          </div>
+        </div>
+
+        <div className="adhdice-scrollbar mt-6 max-h-[55vh] overflow-y-auto pr-2">
           <div className="space-y-3">
             {sortedCategories.map((category) => {
               const draft = drafts.find((entry) => entry.id === category.id);
+              const manualSummary = draft ? getManualWeekdayAllocationSummary(draft) : null;
               return (
                 <div
                   key={category.id}
@@ -861,6 +1305,91 @@ function CategoryGoalsModal({
                       />
                     </div>
                   </label>
+                  <div className="md:col-span-3">
+                    <div className="grid gap-3 md:grid-cols-[0.9fr_1fr_1fr]">
+                      <FocusPillSelect
+                        label="Priority"
+                        onChange={(value) => updatePolicyDraft(category.id, { priorityLevel: normalizePriorityLevel(value) })}
+                        options={[5, 4, 3, 2, 1].map((priority) => ({ label: formatPriorityLabel(priority), value: String(priority) }))}
+                        value={String(draft?.priorityLevel ?? 3)}
+                      />
+                      <FocusPillSelect
+                        label="Distribution"
+                        onChange={(value) => updatePolicyDraft(category.id, { targetDistributionMode: normalizeDistributionMode(value) })}
+                        options={[
+                          { label: "Auto", value: "auto" },
+                          { label: "Manual", value: "manual" },
+                        ]}
+                        value={draft?.targetDistributionMode ?? "auto"}
+                      />
+                      <FocusPillSelect
+                        label="Carryover"
+                        onChange={(value) => updatePolicyDraft(category.id, { weeklySurplusCarryoverMode: normalizeCarryoverMode(value) })}
+                        options={[
+                          { label: "Off", value: "off" },
+                          { label: "25%", value: "cap25" },
+                          { label: "50%", value: "cap50" },
+                          { label: "Full", value: "full" },
+                        ]}
+                        value={draft?.weeklySurplusCarryoverMode ?? "off"}
+                      />
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        className={`rounded-full border px-2 py-1 text-[13px] font-medium leading-none ${draft?.countTowardProductiveGoal === true ? "border-[#cdbdff] bg-[#f1ecff] text-[#5c46d8]" : "border-[#e6def7] bg-white text-[#675b8a]"}`}
+                        onClick={() => updatePolicyDraft(category.id, { countTowardProductiveGoal: draft?.countTowardProductiveGoal === true ? false : true })}
+                        type="button"
+                      >
+                        Count toward productive goal
+                      </button>
+                      <button
+                        className={`rounded-full border px-2 py-1 text-[13px] font-medium leading-none ${draft?.allowDailySurplusReduction === true ? "border-[#cdbdff] bg-[#f1ecff] text-[#5c46d8]" : "border-[#e6def7] bg-white text-[#675b8a]"}`}
+                        onClick={() => updatePolicyDraft(category.id, { allowDailySurplusReduction: draft?.allowDailySurplusReduction === true ? false : true })}
+                        type="button"
+                      >
+                        Allow daily surplus reduction
+                      </button>
+                    </div>
+                    {draft?.targetDistributionMode === "manual" ? (
+                      <div className="mt-3 space-y-3">
+                        {manualSummary ? (
+                          <div className={`rounded-[1rem] border px-3 py-2 text-sm font-semibold ${
+                            manualSummary.overSeconds > 0
+                              ? "border-[#f4d4bb] bg-[#fff7ed] text-[#9a5a22] dark:border-[#70451f] dark:bg-[#2a1c12] dark:text-[#f4bd82]"
+                              : "border-[#d9d0f2] bg-[#fbf9ff] text-[#675b8a] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/75"
+                          }`}>
+                            <span>Allocated: {formatDurationForGoals(manualSummary.allocatedSeconds)} / {formatDurationForGoals(manualSummary.weeklyTargetSeconds)}</span>
+                            <span className="ml-2">
+                              {manualSummary.overSeconds > 0
+                                ? `${formatDurationForGoals(manualSummary.overSeconds)} over weekly target`
+                                : `${formatDurationForGoals(manualSummary.remainingSeconds)} left to allocate`}
+                            </span>
+                          </div>
+                        ) : null}
+                        <div className="grid gap-2 sm:grid-cols-7">
+                          {WEEKDAY_KEYS.map((weekday) => (
+                            <label className="flex flex-col gap-1" key={weekday}>
+                              <span className="text-[11px] font-bold uppercase tracking-wider opacity-40">{weekday}</span>
+                              <input
+                                className="px-2 py-2 text-sm ui-input-light"
+                                inputMode="numeric"
+                                onChange={(event) => updateWeekdayDraft(category.id, weekday, "hours", event.target.value)}
+                                placeholder="hr"
+                                value={draft.weekdayTargets[weekday]?.hours ?? ""}
+                              />
+                              <input
+                                className="px-2 py-2 text-sm ui-input-light"
+                                inputMode="numeric"
+                                onChange={(event) => updateWeekdayDraft(category.id, weekday, "minutes", event.target.value)}
+                                placeholder="min"
+                                value={draft.weekdayTargets[weekday]?.minutes ?? ""}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               );
             })}

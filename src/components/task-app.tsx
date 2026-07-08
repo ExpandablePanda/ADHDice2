@@ -474,7 +474,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.22.17";
+const APP_VERSION = "6.23.15";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1061,9 +1061,12 @@ export function TaskApp() {
     focusCounterHistory,
     activeSessions, setActiveSessions,
     focusHistory, setFocusHistory,
+    focusDailyGoalAdjustments,
+    pendingDailyGoalSurplus,
+    setPendingDailyGoalSurplus,
     suppressCategoryReload,
     handleToggleTimer, handleSetCountdownTarget, handleFinishTimer, handleAdjustTimer, handleResetTimer, handleDeleteTimer,
-    handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory,
+    handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory, handleSaveDailyGoalAdjustment,
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
     handleAdjustFocusCounter, handleCreateFocusCounter, handleDeleteFocusCounter, handleUpdateFocusCounter,
   } = useFocus(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent);
@@ -5360,6 +5363,7 @@ export function TaskApp() {
         ) : activePage === "Focus" ? (
           <FocusPage
             activeSessions={activeSessions}
+            adjustments={focusDailyGoalAdjustments}
             categories={getDisplayFocusCategories(focusCategories, activeSessions)}
             counters={focusCounters}
             counterHistory={focusCounterHistory}
@@ -5394,7 +5398,11 @@ export function TaskApp() {
             onUpdateHistoryEntry={handleUpdateFocusHistoryEntry}
             onDeleteHistoryEntry={handleDeleteFocusHistoryEntry}
             onDeleteCategory={handleDeleteFocusCategory}
+            onDismissDailyGoalSurplus={() => setPendingDailyGoalSurplus(null)}
+            onRequestDailyGoalSurplus={setPendingDailyGoalSurplus}
+            onSaveDailyGoalAdjustment={handleSaveDailyGoalAdjustment}
             onUpdateCategories={handleSaveCategories}
+            pendingDailyGoalSurplus={pendingDailyGoalSurplus}
           />
         ) : activePage === "Health" ? (
           <TaskHealthPage

@@ -74,6 +74,12 @@ create table public.adhdice_focus_categories (
   icon text not null check (char_length(trim(icon)) > 0),
   daily_goal_seconds integer check (daily_goal_seconds is null or daily_goal_seconds >= 0),
   weekly_goal_seconds integer check (weekly_goal_seconds is null or weekly_goal_seconds >= 0),
+  priority_level smallint not null default 3 check (priority_level between 1 and 5),
+  target_distribution_mode text not null default 'auto' check (target_distribution_mode in ('auto', 'manual')),
+  weekday_target_seconds jsonb not null default '{}'::jsonb,
+  count_toward_productive_goal boolean,
+  allow_daily_surplus_reduction boolean,
+  weekly_surplus_carryover_mode text not null default 'off' check (weekly_surplus_carryover_mode in ('off', 'cap25', 'cap50', 'full')),
   sort_order bigint not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -104,6 +110,20 @@ create table public.adhdice_focus_active_sessions (
   is_running boolean not null default false,
   updated_at timestamptz not null default now(),
   primary key (user_id, category_id)
+);
+
+create table public.adhdice_focus_daily_goal_adjustments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  adjustment_date date not null,
+  source_category_id uuid not null references public.adhdice_focus_categories(id) on delete cascade,
+  target_category_id uuid not null references public.adhdice_focus_categories(id) on delete cascade,
+  source_session_id uuid references public.adhdice_focus_sessions(id) on delete set null,
+  reduction_seconds integer not null check (reduction_seconds > 0),
+  reason text not null default 'daily_surplus_reallocation',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (source_category_id <> target_category_id)
 );
 
 create table public.adhdice_task_active_timers (
@@ -336,6 +356,10 @@ create index adhdice_focus_sessions_user_date_idx
   on public.adhdice_focus_sessions (user_id, session_date desc, created_at desc);
 create index adhdice_focus_active_sessions_user_updated_idx
   on public.adhdice_focus_active_sessions (user_id, updated_at desc);
+create index adhdice_focus_daily_goal_adjustments_user_date_idx
+  on public.adhdice_focus_daily_goal_adjustments (user_id, adjustment_date desc, created_at desc);
+create index adhdice_focus_daily_goal_adjustments_target_idx
+  on public.adhdice_focus_daily_goal_adjustments (user_id, target_category_id, adjustment_date desc);
 create index adhdice_task_active_timers_user_created_idx
   on public.adhdice_task_active_timers (user_id, created_at asc, updated_at desc);
 create index adhdice_task_focus_days_user_date_idx
@@ -374,6 +398,7 @@ alter table public.adhdice_user_profiles enable row level security;
 alter table public.adhdice_focus_categories enable row level security;
 alter table public.adhdice_focus_sessions enable row level security;
 alter table public.adhdice_focus_active_sessions enable row level security;
+alter table public.adhdice_focus_daily_goal_adjustments enable row level security;
 alter table public.adhdice_task_active_timers enable row level security;
 alter table public.adhdice_task_focus_days enable row level security;
 alter table public.adhdice_task_lists enable row level security;
@@ -489,6 +514,27 @@ create policy "Users can update their own active focus sessions"
 
 create policy "Users can delete their own active focus sessions"
   on public.adhdice_focus_active_sessions
+  for delete
+  using (auth.uid() = user_id);
+
+create policy "Users can read their own focus daily goal adjustments"
+  on public.adhdice_focus_daily_goal_adjustments
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can create their own focus daily goal adjustments"
+  on public.adhdice_focus_daily_goal_adjustments
+  for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own focus daily goal adjustments"
+  on public.adhdice_focus_daily_goal_adjustments
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "Users can delete their own focus daily goal adjustments"
+  on public.adhdice_focus_daily_goal_adjustments
   for delete
   using (auth.uid() = user_id);
 
@@ -796,6 +842,11 @@ create trigger adhdice_focus_active_sessions_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
+create trigger adhdice_focus_daily_goal_adjustments_set_updated_at
+  before update on public.adhdice_focus_daily_goal_adjustments
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
 create trigger adhdice_task_active_timers_set_updated_at
   before update on public.adhdice_task_active_timers
   for each row
@@ -865,6 +916,7 @@ alter publication supabase_realtime add table public.adhdice_clean_tasks;
 alter publication supabase_realtime add table public.adhdice_focus_categories;
 alter publication supabase_realtime add table public.adhdice_focus_sessions;
 alter publication supabase_realtime add table public.adhdice_focus_active_sessions;
+alter publication supabase_realtime add table public.adhdice_focus_daily_goal_adjustments;
 alter publication supabase_realtime add table public.adhdice_task_active_timers;
 alter publication supabase_realtime add table public.adhdice_task_focus_days;
 alter publication supabase_realtime add table public.adhdice_task_lists;

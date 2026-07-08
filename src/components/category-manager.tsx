@@ -449,7 +449,7 @@ export function CategoryManager({
             <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <button
                 className="flex items-center justify-center gap-2 rounded-[var(--radius-card)] border-2 border-dashed px-5 py-4 transition hover:bg-white/5 border-[var(--border-soft)] bg-[var(--surface-muted)] text-[var(--accent)] dark:border-white/10 dark:bg-transparent"
-                onClick={() => openEditor({ id: Math.random().toString(), title: "New Category", focusType: "Work", focusSubtype: "Productive", focusSubtype2: null, color: "#6f57f6", icon: "Code", dailyGoalSeconds: null, weeklyGoalSeconds: null })}
+                onClick={() => openEditor({ id: Math.random().toString(), title: "New Category", focusType: "Work", focusSubtype: "Productive", focusSubtype2: null, color: "#6f57f6", icon: "Code", dailyGoalSeconds: null, weeklyGoalSeconds: null, priorityLevel: 3, targetDistributionMode: "auto", weekdayTargetSeconds: {}, countTowardProductiveGoal: true, allowDailySurplusReduction: false, weeklySurplusCarryoverMode: "off" })}
                 type="button"
               >
                 <span className="text-lg font-bold">+</span> Add New

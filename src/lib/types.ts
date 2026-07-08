@@ -1,5 +1,8 @@
 export type FocusType = string;
 export type FocusSubtype = string;
+export type FocusTargetDistributionMode = "auto" | "manual";
+export type FocusWeeklySurplusCarryoverMode = "off" | "cap25" | "cap50" | "full";
+export type FocusWeekdayTargetSeconds = Partial<Record<"mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun", number>>;
 
 export const DEFAULT_FOCUS_TYPES = ["Work", "Personal", "Entertainment", "Sleep"];
 export const DEFAULT_PRIMARY_SUBTYPES: string[] = [];
@@ -17,6 +20,34 @@ export type FocusCategory = {
   icon: string;
   dailyGoalSeconds?: number | null;
   weeklyGoalSeconds?: number | null;
+  priorityLevel?: number | null;
+  targetDistributionMode?: FocusTargetDistributionMode | null;
+  weekdayTargetSeconds?: FocusWeekdayTargetSeconds | null;
+  countTowardProductiveGoal?: boolean | null;
+  allowDailySurplusReduction?: boolean | null;
+  weeklySurplusCarryoverMode?: FocusWeeklySurplusCarryoverMode | null;
+};
+
+export type FocusDailyGoalAdjustment = {
+  id: string;
+  userId: string;
+  adjustmentDate: string;
+  sourceCategoryId: string;
+  targetCategoryId: string;
+  sourceSessionId?: string | null;
+  reductionSeconds: number;
+  reason: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PendingFocusDailySurplus = {
+  sourceCategoryId: string;
+  sourceCategoryTitle: string;
+  sourceSessionId: string | null;
+  adjustmentDate: string;
+  surplusSeconds: number;
+  reason?: string;
 };
 
 export type ActiveFocusSession = {
@@ -33,6 +64,7 @@ export type HistoricalFocusSession = {
   categoryId: string | null;
   title: string;
   date: string; // YYYY-MM-DD
+  endedAt?: string | null;
   durationSeconds: number;
   focusType: FocusType;
   focusSubtype?: FocusSubtype | null;
