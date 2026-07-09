@@ -4,6 +4,7 @@ import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } 
 import {
   buildFocusGoalPlan,
   detectDailySurplus,
+  formatFocusGoalDuration,
   getAllocationSummary,
   getBaseTodayTargetSeconds,
   getEligibleSurplusTargets,
@@ -79,6 +80,11 @@ test("Priority 5 outranks lower priorities", () => {
   });
   assert.equal(normalizePriorityLevel(5), 5);
   assert.equal(plan.recommendedCategoryId, "p5");
+});
+
+test("focus goal duration formatting carries residual minutes without rendering 60m", () => {
+  assert.equal(formatFocusGoalDuration(7199), "1h 59m");
+  assert.equal(formatFocusGoalDuration(7200), "2h");
 });
 
 test("Sleep is excluded from productive totals", () => {

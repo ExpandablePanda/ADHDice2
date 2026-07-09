@@ -2,19 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import type { ActiveFocusSession, FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import {
   buildFocusGoalPlan,
+  formatFocusGoalDuration,
   formatPriorityLabel,
   isSleepCategory,
   type FocusGoalCategorySummary,
 } from "@/lib/focus-goals";
-
-function formatDuration(seconds: number) {
-  const safeSeconds = Math.max(0, Math.round(seconds));
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.round((safeSeconds % 3600) / 60);
-  if (hours && minutes) return `${hours}h ${minutes}m`;
-  if (hours) return `${hours}h`;
-  return `${minutes}m`;
-}
 
 function formatCompactDateRange(startDate: string, endDate: string) {
   const start = new Date(`${startDate}T00:00:00`);
@@ -41,12 +33,12 @@ function targetText(label: string, summary: FocusGoalCategorySummary) {
   const baseSeconds = summary.baseTodayTargetSeconds;
   const adjustedChanged = adjustedSeconds !== baseSeconds;
   if (summary.todaySourceShiftedSeconds > 0) {
-    return `${label}: ${formatDuration(actualSeconds)} / ${formatDuration(adjustedSeconds)} · base ${formatDuration(baseSeconds)} shifted today`;
+    return `${label}: ${formatFocusGoalDuration(actualSeconds)} / ${formatFocusGoalDuration(adjustedSeconds)} · base ${formatFocusGoalDuration(baseSeconds)} shifted today`;
   }
   if (adjustedChanged) {
-    return `${label}: ${formatDuration(actualSeconds)} / ${formatDuration(adjustedSeconds)} · base ${formatDuration(baseSeconds)}`;
+    return `${label}: ${formatFocusGoalDuration(actualSeconds)} / ${formatFocusGoalDuration(adjustedSeconds)} · base ${formatFocusGoalDuration(baseSeconds)}`;
   }
-  return `${label}: ${formatDuration(actualSeconds)} / ${formatDuration(baseSeconds)}`;
+  return `${label}: ${formatFocusGoalDuration(actualSeconds)} / ${formatFocusGoalDuration(baseSeconds)}`;
 }
 
 function statusLabels(summary: FocusGoalCategorySummary) {
@@ -59,7 +51,7 @@ function statusLabels(summary: FocusGoalCategorySummary) {
   if (summary.warnings.includes("over-daily-target")) labels.push({ label: "Over today", tone: "warning" });
   if (summary.warnings.includes("over-weekly-target")) labels.push({ label: "Over weekly", tone: summary.todaySourceShiftedSeconds > 0 ? "success" : "warning" });
   if (summary.todaySourceShiftedSeconds > 0) labels.push({ label: "Today target shifted", tone: "success" });
-  if (summary.todayReceivedShiftSeconds > 0) labels.push({ label: `Received ${formatDuration(summary.todayReceivedShiftSeconds)} today`, tone: "credit" });
+  if (summary.todayReceivedShiftSeconds > 0) labels.push({ label: `Received ${formatFocusGoalDuration(summary.todayReceivedShiftSeconds)} today`, tone: "credit" });
   if (summary.catchUpPaceSeconds > summary.todayActualSeconds) labels.push({ label: "Behind pace", tone: "warning" });
   if (summary.warnings.includes("priority-drift")) labels.push({ label: "Priority drift", tone: "warning" });
   if (summary.warnings.includes("today-over-capacity")) labels.push({ label: "Over capacity", tone: "warning" });
@@ -78,8 +70,8 @@ function statusTextClass(tone: "success" | "warning" | "credit") {
 }
 
 function weeklyTargetText(summary: FocusGoalCategorySummary) {
-  const actual = formatDuration(summary.weekActualSeconds);
-  const base = formatDuration(summary.baseWeeklyTargetSeconds);
+  const actual = formatFocusGoalDuration(summary.weekActualSeconds);
+  const base = formatFocusGoalDuration(summary.baseWeeklyTargetSeconds);
   return `Week: ${actual} / ${base}`;
 }
 
@@ -125,10 +117,10 @@ function GoalColumn({
   return (
     <div className={`flex min-w-0 flex-col items-center justify-end gap-1 ${className}`}>
       <span className="w-full whitespace-nowrap text-center text-[9px] font-bold leading-none text-[var(--text-primary)] sm:text-[10px]">
-        {formatDuration(actualSeconds)}
+        {formatFocusGoalDuration(actualSeconds)}
       </span>
       <span className="w-full whitespace-nowrap text-center text-[8px] font-semibold leading-none text-[var(--text-muted)] sm:text-[9px]">
-        {hasGoal ? formatDuration(targetSeconds) : "No goal"}
+        {hasGoal ? formatFocusGoalDuration(targetSeconds) : "No goal"}
       </span>
       <div className="flex h-20 w-full min-w-0 items-end justify-center">
         <div
@@ -231,7 +223,7 @@ export function FocusGoalsPanel({
             <p className="mt-1 text-sm text-[var(--text-secondary)]">{plan.recommendationReason}</p>
             {plan.todayOverCapacitySeconds > 0 ? (
               <span className="mt-3 inline-flex rounded-full border border-[#f4d4bb] bg-[#fff7ed] px-2 py-1 text-[13px] font-medium leading-none text-[#9a5a22] dark:border-[#70451f] dark:bg-[#2a1c12] dark:text-[#f4bd82]">
-                Today over capacity by {formatDuration(plan.todayOverCapacitySeconds)}
+                Today over capacity by {formatFocusGoalDuration(plan.todayOverCapacitySeconds)}
               </span>
             ) : null}
             {activeWarnings.map((warning) => (
@@ -246,7 +238,7 @@ export function FocusGoalsPanel({
               <div>
                 <div className="mb-1 flex justify-between gap-2 text-xs font-medium text-[var(--text-secondary)]">
                   <span>Productive Today</span>
-                  <span>{formatDuration(plan.productiveTodaySeconds)} / {formatDuration(plan.productiveTodayBaseTargetSeconds)}</span>
+                  <span>{formatFocusGoalDuration(plan.productiveTodaySeconds)} / {formatFocusGoalDuration(plan.productiveTodayBaseTargetSeconds)}</span>
                 </div>
                 <ProgressBar
                   actualSeconds={plan.productiveTodaySeconds}
@@ -254,16 +246,16 @@ export function FocusGoalsPanel({
                   targetSeconds={plan.productiveTodayBaseTargetSeconds}
                 />
                 {plan.productiveTodayReallocatedSeconds > 0 ? (
-                  <p className="mt-1 text-xs font-medium text-[var(--text-muted)]">{formatDuration(plan.productiveTodayReallocatedSeconds)} reallocated across categories today</p>
+                  <p className="mt-1 text-xs font-medium text-[var(--text-muted)]">{formatFocusGoalDuration(plan.productiveTodayReallocatedSeconds)} reallocated across categories today</p>
                 ) : null}
                 <p className="mt-1 text-[11px] font-medium text-[var(--text-muted)]">
-                  Sleep excluded: {formatDuration(plan.productiveTodayExcludedSleepSeconds)} · Unproductive excluded: {formatDuration(plan.productiveTodayExcludedUnproductiveSeconds)} · Productive categories counted: {plan.productiveTodayCategoryCount}
+                  Sleep excluded: {formatFocusGoalDuration(plan.productiveTodayExcludedSleepSeconds)} · Unproductive excluded: {formatFocusGoalDuration(plan.productiveTodayExcludedUnproductiveSeconds)} · Productive categories counted: {plan.productiveTodayCategoryCount}
                 </p>
               </div>
               <div>
                 <div className="mb-1 flex justify-between gap-2 text-xs font-medium text-[var(--text-secondary)]">
                   <span>Productive Weekly</span>
-                  <span>{formatDuration(plan.productiveWeekSeconds)} / {formatDuration(plan.productiveWeekBaseTargetSeconds)}</span>
+                  <span>{formatFocusGoalDuration(plan.productiveWeekSeconds)} / {formatFocusGoalDuration(plan.productiveWeekBaseTargetSeconds)}</span>
                 </div>
                 <ProgressBar
                   actualSeconds={plan.productiveWeekSeconds}
@@ -271,7 +263,7 @@ export function FocusGoalsPanel({
                   targetSeconds={plan.productiveWeekBaseTargetSeconds}
                 />
                 {plan.productiveNextWeekCreditPreviewSeconds > 0 ? (
-                  <p className="mt-1 text-xs font-medium text-[var(--text-muted)]">Next week credit preview {formatDuration(plan.productiveNextWeekCreditPreviewSeconds)}</p>
+                  <p className="mt-1 text-xs font-medium text-[var(--text-muted)]">Next week credit preview {formatFocusGoalDuration(plan.productiveNextWeekCreditPreviewSeconds)}</p>
                 ) : null}
               </div>
             </div>
@@ -319,12 +311,12 @@ export function FocusGoalsPanel({
                       </p>
                       {summary.incomingCarryoverCreditSeconds > 0 ? (
                         <p className="mt-1 text-xs font-semibold text-[#6b5ab8] dark:text-[#b9a9ff]">
-                          Incoming credit: {formatDuration(summary.incomingCarryoverCreditSeconds)}
+                          Incoming credit: {formatFocusGoalDuration(summary.incomingCarryoverCreditSeconds)}
                         </p>
                       ) : null}
                       {summary.outgoingCarryoverCreditSeconds > 0 ? (
                         <p className="mt-1 text-xs font-semibold text-[#32734c] dark:text-[#9bd7b4]">
-                          Next week credit preview: {formatDuration(summary.outgoingCarryoverCreditSeconds)}
+                          Next week credit preview: {formatFocusGoalDuration(summary.outgoingCarryoverCreditSeconds)}
                         </p>
                       ) : null}
                       {labels.length ? (
@@ -362,7 +354,7 @@ export function FocusGoalsPanel({
                       </div>
                       {summary.weeklyPaceBehindSeconds > 0 ? (
                         <p className="mt-2 text-xs font-semibold text-[#9a5a22] dark:text-[#f4bd82]">
-                          Behind weekly pace by {formatDuration(summary.weeklyPaceBehindSeconds)}
+                          Behind weekly pace by {formatFocusGoalDuration(summary.weeklyPaceBehindSeconds)}
                         </p>
                       ) : null}
                     </div>

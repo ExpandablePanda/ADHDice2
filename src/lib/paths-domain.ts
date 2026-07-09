@@ -6,6 +6,10 @@ export type Path = {
   archivedAt: string | null;
   createdAt: string;
   description: string | null;
+  endpointConnectedNodeIds: string[];
+  endpointIcon: string | null;
+  endpointLabel: string | null;
+  endpointPosition: PathNodePosition | null;
   id: string;
   pathType: PathType;
   sortOrder: number;
@@ -16,7 +20,7 @@ export type Path = {
 
 export type PathNode = {
   id: string;
-  linkedTaskId: string | null;
+  linkedTaskIds: string[];
   nextNodeIds: string[];
   note: string | null;
   pathId: string;
@@ -115,6 +119,10 @@ export function normalizePathRecord(input: unknown, index = 0): Path {
     archivedAt: normalizeOptionalString(record.archivedAt),
     createdAt,
     description: normalizeOptionalString(record.description),
+    endpointConnectedNodeIds: normalizeStringArray(record.endpointConnectedNodeIds),
+    endpointIcon: normalizeOptionalString(record.endpointIcon),
+    endpointLabel: normalizeOptionalString(record.endpointLabel),
+    endpointPosition: normalizeOptionalPathPosition(record.endpointPosition),
     id: pathId,
     pathType: normalizePathType(record.pathType),
     sortOrder: normalizeSortOrder(record.sortOrder, index),
@@ -136,7 +144,7 @@ export function normalizePathNodeRecord(
 
   return {
     id: normalizeRequiredString(record.id, `${fallbackPathId}-node-${index + 1}`),
-    linkedTaskId: normalizeOptionalString(record.linkedTaskId),
+    linkedTaskIds: normalizeLinkedTaskIds(record),
     nextNodeIds: normalizeStringArray(record.nextNodeIds),
     note: normalizeOptionalString(record.note),
     pathId: normalizeRequiredString(record.pathId, fallbackPathId),
@@ -170,14 +178,17 @@ export function normalizePathRecordBundle(
 
   return {
     nodes,
-    path,
+    path: {
+      ...path,
+      endpointConnectedNodeIds: dedupeStrings(path.endpointConnectedNodeIds.filter((nodeId) => nodeIds.has(nodeId))),
+    },
   };
 }
 
 export function normalizePathRecords(records: readonly { nodes?: readonly unknown[] | null; path: unknown }[]) {
   return records
     .map((record, index) => normalizePathRecordBundle(record, index))
-    .sort(comparePathOrder);
+    .sort(comparePathRecordOrder);
 }
 
 export function getLocalPathDateKey(date = new Date()) {
@@ -309,10 +320,11 @@ export function createLocalStoragePathsStorageAdapter({
   if (!storage) {
     return memoryAdapter;
   }
+  const storageArea = storage;
 
   function readSnapshot() {
     try {
-      const raw = storage.getItem(key);
+      const raw = storageArea.getItem(key);
       if (!raw) {
         const initial = {
           progress: [],
@@ -339,7 +351,7 @@ export function createLocalStoragePathsStorageAdapter({
   }
 
   function writeSnapshot(snapshot: { progress: readonly PathProgress[]; records: readonly PathRecord[] }) {
-    storage.setItem(key, JSON.stringify({
+    storageArea.setItem(key, JSON.stringify({
       progress: snapshot.progress.map(clonePathProgress),
       records: snapshot.records.map(clonePathRecord),
     }));
@@ -443,7 +455,7 @@ export const DEFAULT_PROTOTYPE_PATH_RECORDS = [
     nodes: [
       {
         id: "path-morning-reset-node-water",
-        linkedTaskId: null,
+        linkedTaskIds: [],
         nextNodeIds: ["path-morning-reset-node-face"],
         note: "Start with the lightest reset before deciding what needs more attention.",
         pathId: "path-morning-reset",
@@ -453,7 +465,7 @@ export const DEFAULT_PROTOTYPE_PATH_RECORDS = [
       },
       {
         id: "path-morning-reset-node-face",
-        linkedTaskId: "task-skincare-am",
+        linkedTaskIds: ["task-skincare-am"],
         nextNodeIds: ["path-morning-reset-node-counter"],
         note: "Linked task stays reference-only in PATHS v1.",
         pathId: "path-morning-reset",
@@ -463,7 +475,7 @@ export const DEFAULT_PROTOTYPE_PATH_RECORDS = [
       },
       {
         id: "path-morning-reset-node-counter",
-        linkedTaskId: null,
+        linkedTaskIds: [],
         nextNodeIds: [],
         note: "Reset the immediate environment before choosing the next path.",
         pathId: "path-morning-reset",
@@ -476,6 +488,10 @@ export const DEFAULT_PROTOTYPE_PATH_RECORDS = [
       archivedAt: null,
       createdAt: "2026-06-24T00:00:00.000Z",
       description: "A short guided reset for rebooting the day without touching task state.",
+      endpointConnectedNodeIds: ["path-morning-reset-node-counter"],
+      endpointIcon: "briefcase",
+      endpointLabel: "Work",
+      endpointPosition: { x: 1012, y: 220 },
       id: "path-morning-reset",
       pathType: "daily_reset",
       sortOrder: 0,
@@ -513,7 +529,11 @@ function clonePathRecord(record: PathRecord): PathRecord {
       nextNodeIds: [...node.nextNodeIds],
       position: { ...node.position },
     })),
-    path: { ...record.path },
+    path: {
+      ...record.path,
+      endpointConnectedNodeIds: [...record.path.endpointConnectedNodeIds],
+      endpointPosition: record.path.endpointPosition ? { ...record.path.endpointPosition } : null,
+    },
   };
 }
 
@@ -586,6 +606,24 @@ function normalizePathNodePosition(value: unknown, index: number): PathNodePosit
   };
 }
 
+function normalizeOptionalPathPosition(value: unknown): PathNodePosition | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const record = asRecord(value);
+  const x = typeof record.x === "number" && Number.isFinite(record.x) ? record.x : null;
+  const y = typeof record.y === "number" && Number.isFinite(record.y) ? record.y : null;
+  if (x === null || y === null) {
+    return null;
+  }
+
+  return {
+    x: clampPositionValue(x, x),
+    y: clampPositionValue(y, y),
+  };
+}
+
 function buildDefaultNodePosition(index: number): PathNodePosition {
   return {
     x: 160 + (index % 4) * 240,
@@ -607,6 +645,15 @@ function normalizeStringArray(value: unknown) {
   }
 
   return dedupeStrings(value.map((entry) => normalizeOptionalString(entry)).filter((entry): entry is string => entry !== null));
+}
+
+function normalizeLinkedTaskIds(record: Record<string, unknown>) {
+  const linkedTaskIds = normalizeStringArray(record.linkedTaskIds);
+  if (linkedTaskIds.length > 0) {
+    return linkedTaskIds;
+  }
+  const legacyLinkedTaskId = normalizeOptionalString(record.linkedTaskId);
+  return legacyLinkedTaskId ? [legacyLinkedTaskId] : [];
 }
 
 function dedupeStrings(values: readonly string[]) {

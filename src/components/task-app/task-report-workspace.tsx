@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Copy } from "lucide-react";
 import type { Task, TaskHistory } from "@/lib/database.types";
-import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
+import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { mapTaskHistoryRow } from "@/lib/task-history";
-import { mapFocusSessionRow } from "@/hooks/useFocus";
-import type { TaskListDefinition } from "@/lib/task-lists";
+import { mapFocusDailyGoalAdjustmentRow, mapFocusSessionRow } from "@/hooks/useFocus";
+import type { TaskListDefinition, TaskListMembership } from "@/lib/task-lists";
 import {
   generateTaskReport,
   resolveTaskReportHistoryFetchRange,
@@ -22,7 +22,9 @@ type TaskReportWorkspaceProps = {
   appVersion: string;
   availableTaskLists: TaskListDefinition[];
   focusCategories: FocusCategory[];
+  focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
+  listMembershipsByTaskId: Record<string, TaskListMembership[]>;
   taskHistory: TaskHistory[];
   tasks: Task[];
   todayDateKey: string;
@@ -36,6 +38,7 @@ const REPORT_FULL_HISTORY_SOURCE_LABEL = "Full selected date range fetch";
 const REPORT_FALLBACK_HISTORY_SOURCE_LABEL = "Loaded workspace history fallback";
 
 type ReportHistoryState = {
+  focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
   history: TaskHistory[];
   sourceLabel: string;
@@ -144,11 +147,64 @@ async function fetchFocusReportHistoryForRange({
   return fullHistory;
 }
 
+async function fetchFocusDailyGoalAdjustmentsForRange({
+  rangeId,
+  todayDateKey,
+  userId,
+}: {
+  rangeId: TaskReportRangeId;
+  todayDateKey: string;
+  userId: string;
+}) {
+  const client = createBrowserSupabaseClient();
+  if (!client) {
+    throw new Error("Supabase client is unavailable.");
+  }
+
+  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey);
+  const fullAdjustments: FocusDailyGoalAdjustment[] = [];
+  let offset = 0;
+
+  while (true) {
+    let query = client
+      .from("adhdice_focus_daily_goal_adjustments")
+      .select("*")
+      .eq("user_id", userId)
+      .order("adjustment_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + REPORT_HISTORY_PAGE_SIZE - 1);
+
+    if (fetchRange.startDateKey) {
+      query = query.gte("adjustment_date", fetchRange.startDateKey);
+    }
+    if (fetchRange.endDateKey) {
+      query = query.lte("adjustment_date", fetchRange.endDateKey);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+
+    const batch = (data ?? []).map(mapFocusDailyGoalAdjustmentRow);
+    fullAdjustments.push(...batch);
+    if (batch.length < REPORT_HISTORY_PAGE_SIZE) {
+      break;
+    }
+    offset += REPORT_HISTORY_PAGE_SIZE;
+  }
+
+  return fullAdjustments;
+}
+
 export function TaskReportWorkspace({
   appVersion,
   availableTaskLists,
   focusCategories,
+  focusDailyGoalAdjustments,
   focusHistory,
+  listMembershipsByTaskId,
   taskHistory,
   tasks,
   todayDateKey,
@@ -159,6 +215,7 @@ export function TaskReportWorkspace({
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [reportHistoryState, setReportHistoryState] = useState<ReportHistoryState>({
+    focusDailyGoalAdjustments,
     focusHistory,
     history: taskHistory,
     sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
@@ -175,6 +232,7 @@ export function TaskReportWorkspace({
       if (!userId) {
         if (!cancelled) {
           setReportHistoryState({
+            focusDailyGoalAdjustments,
             focusHistory,
             history: taskHistory,
             sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
@@ -186,7 +244,7 @@ export function TaskReportWorkspace({
       }
 
       try {
-        const [fullHistory, fullFocusHistory] = await Promise.all([
+        const [fullHistory, fullFocusHistory, fullAdjustments] = await Promise.all([
           fetchTaskReportHistoryForRange({
             rangeId,
             todayDateKey,
@@ -197,11 +255,17 @@ export function TaskReportWorkspace({
             todayDateKey,
             userId,
           }),
+          fetchFocusDailyGoalAdjustmentsForRange({
+            rangeId,
+            todayDateKey,
+            userId,
+          }),
         ]);
         if (cancelled) {
           return;
         }
         setReportHistoryState({
+          focusDailyGoalAdjustments: fullAdjustments,
           focusHistory: fullFocusHistory,
           history: fullHistory,
           sourceLabel: REPORT_FULL_HISTORY_SOURCE_LABEL,
@@ -215,6 +279,7 @@ export function TaskReportWorkspace({
           ? error.message
           : "Unknown fetch error.";
         setReportHistoryState({
+          focusDailyGoalAdjustments,
           focusHistory,
           history: taskHistory,
           sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
@@ -232,7 +297,7 @@ export function TaskReportWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [focusHistory, rangeId, taskHistory, todayDateKey, userId]);
+  }, [focusDailyGoalAdjustments, focusHistory, rangeId, taskHistory, todayDateKey, userId]);
 
   const reportMarkdown = useMemo(
     () => generateTaskReport({
@@ -240,16 +305,18 @@ export function TaskReportWorkspace({
       availableTaskLists,
       detailLevel,
       focusCategories,
+      focusDailyGoalAdjustments: reportHistoryState.focusDailyGoalAdjustments,
       focusHistory: reportHistoryState.focusHistory,
       generatedAt: new Date(),
       historySourceLabel: reportHistoryState.sourceLabel,
       historyWarning: reportHistoryState.warning,
+      listMembershipsByTaskId,
       rangeId,
       taskHistory: reportHistoryState.history,
       tasks,
       todayDateKey,
     }),
-    [appVersion, availableTaskLists, detailLevel, focusCategories, rangeId, reportHistoryState, tasks, todayDateKey],
+    [appVersion, availableTaskLists, detailLevel, focusCategories, listMembershipsByTaskId, rangeId, reportHistoryState, tasks, todayDateKey],
   );
 
   async function handleCopyReport() {

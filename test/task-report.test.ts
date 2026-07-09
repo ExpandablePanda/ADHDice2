@@ -103,6 +103,42 @@ test("summary report uses the current overall-stats structure and skips detailed
   assert.doesNotMatch(report, /## Day-by-Day Breakdown/);
 });
 
+test("report exports derived legacy urgent priority when priority_level is null", () => {
+  const urgentLegacyTask = createTask({
+    created_at: "2026-06-20T09:00:00.000Z",
+    id: "legacy-urgent",
+    is_urgent: true,
+    priority_level: null,
+    sort_order: 1,
+    status: "pending",
+    title: "Legacy urgent task",
+  });
+
+  const report = generateTaskReport({
+    appVersion: "6.24.3",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "detailed",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-06-30T15:00:00.000Z"),
+    historySourceLabel: "Loaded workspace history fallback",
+    historyWarning: null,
+    rangeId: "last7",
+    taskHistory: [
+      createHistoryEntry({
+        entry_date: "2026-06-29",
+        id: "legacy-urgent-done",
+        status: "done",
+        task_id: urgentLegacyTask.id,
+      }),
+    ],
+    tasks: [urgentLegacyTask],
+    todayDateKey: "2026-06-30",
+  });
+
+  assert.match(report, /Legacy urgent task.*Priority: 5/);
+});
+
 test("detailed report uses the shipped detailed sections and current status lines", () => {
   const parentTask = createTask({
     created_at: "2026-06-01T09:00:00.000Z",
@@ -325,7 +361,7 @@ test("report includes focus goals and selected-range focus sessions", () => {
 
   assert.match(report, /## Focus Report/);
   assert.match(report, /### Focus Goals/);
-  assert.match(report, /- Coding: Daily 30m; Weekly 2h/);
+  assert.match(report, /- Coding: Today 25m\/17m; Week 40m\/2h; Pace On pace/);
   assert.match(report, /#### 2026-06-29/);
   assert.match(report, /#### 2026-06-30/);
   assert.match(report, /Morning sprint — Coding — 25m — Work \/ Deep Work — Notes: Heads-down sprint/);
@@ -417,7 +453,7 @@ test("focus duration labels stay carry-safe near hour boundaries", () => {
     todayDateKey: "2026-06-30",
   });
 
-  assert.match(report, /- Coding: Daily 59m; Weekly 1h 59m/);
+  assert.match(report, /- Coding: Today 2h 59m\/17m; Week 2h 59m\/1h 59m; Pace Over 59m/);
   assert.match(report, /Boundary under one hour — Coding — 59m/);
   assert.match(report, /Boundary under two hours — Coding — 1h 59m/);
   assert.doesNotMatch(report, /60m/);

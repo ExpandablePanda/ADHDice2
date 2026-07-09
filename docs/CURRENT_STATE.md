@@ -5,8 +5,7 @@ Last reviewed: 2026-07-08
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.23.15`.
-- Current working app version: `6.24.0`.
+- Current working app version: `6.24.3`.
 - Current release group: `6.24.x` task priority, Home queue, and List View regression cleanup pass.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -15,6 +14,15 @@ Role: active working
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
 ## 6.24 Checkpoint
+- `6.24.3` is a narrow regression-fix patch on top of the active 6.24.2 PATHS QA pass: daily report exports now preserve derived legacy urgent/important priority when `priority_level` is still null, Focus Goals duration labels carry residual minutes safely instead of rendering impossible values like `1h 60m`, and PATHS endpoint placement now has a touch-accessible place/move action that lets blank-canvas taps place the in-map endpoint without relying on right-click. Reports, Focus math/persistence, PATHS progress semantics, and endpoint in-map representation remain otherwise unchanged.
+- Checks run for `6.24.3`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/task-report.test.ts`, and `node --import ./test/register-alias.mjs --experimental-strip-types --test test/focus-goals.test.ts`.
+- Not tested for `6.24.3`: manual PATHS browser/touch QA, broader lint/build/typecheck passes, and the PATHS domain test because `src/lib/paths-domain.ts` was unchanged in this patch.
+- `6.24.2` is a PATHS-only QA cleanup pass after 6.24.1: PATHS now hides native scrollbars on the canvas/inspector/menu surfaces, replaces native select styling with the approved white dropdown shell, keeps the linked-task picker open for append-only multi-link selection, shrinks the in-map linked-task count chip to the compact task-chip scale, makes the right inspector white and collapsible, moves new-path creation to a top-right `Create new path` chip, removes the old top landmark chip, and persists endpoint-to-chip connections separately from normal steps so endpoint links survive reload without affecting PATH progress or linked ADHDice task status.
+- Checks run for `6.24.2`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/paths-domain.test.ts`, and targeted `npx eslint src/lib/paths-domain.ts src/components/task-app/paths-workspace.tsx test/paths-domain.test.ts`.
+- Not tested for `6.24.2`: manual browser QA and broader lint/build/typecheck passes.
+- `6.24.1` is the PATHS correction pass after 6.24.0 QA: PATHS linked-task picker search now matches task tags and notes in addition to titles, the right inspector scrolls independently while the map stays fixed, endpoint identity is now a draggable in-map landmark placed from a blank-canvas right-click action, and PATHS chips keep unlimited linked task ids without replacing earlier links. PATHS remains local-first and task-reference-only; Reports, Focus reporting, image upload, and Supabase persistence remain unchanged.
+- Checks run for `6.24.1`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/paths-domain.test.ts`, and targeted `npx eslint src/lib/paths-domain.ts src/components/task-app/paths-workspace.tsx test/paths-domain.test.ts`.
+- Not tested for `6.24.1`: manual browser QA, PATHS tag-search component automation, and broader lint/build/typecheck passes.
 - `6.24.0` is a targeted task priority, Home queue, and List View regression cleanup pass after the 6.22 priority migration and 6.23 Focus Goals work: numeric priority chips now behave as single-select in the Table inline metadata panel and full inspector, Home Today Queue now uses the unique derived queue count that includes open today/focus/priority 5 tasks, and List View row metadata restores a direct Focus Today toggle separate from numeric priority. Focus Goals math, counters, reports, table density, SQL, and unrelated task behavior remain unchanged.
 - `6.23.15` is a narrow Focus layout pass: the Recommend Now and Productive Totals headers now reuse the same Activity Summary label formatting, the Recommend Now tile and Productive Totals card still match the white shell background treatment, the Sleep excluded line sits flush left under the Productive Totals header, and the top Focus Timers section sits closer to the HUD. Focus Goals math, reallocation behavior, productive totals, session handling, persistence, SQL, Focus counters, task/table/report/Agent Plan surfaces, and Focus History chart logic remain unchanged.
 - Checks run for `6.23.15`: `git diff --check` and targeted `npx eslint src/components/focus-page.tsx src/components/focus-goals-panel.tsx`.

@@ -1,5 +1,7 @@
 import type { Task } from "@/lib/database.types";
 
+export type LinkableTaskSearchCandidate = Pick<Task, "notes" | "tags" | "title">;
+
 export type ScratchTaskTokenSegment =
   | { kind: "text"; text: string }
   | { fallbackTitle: string; kind: "task"; taskId: string };
@@ -86,8 +88,19 @@ export function filterScratchLinkableTasks(tasks: Task[], query: string, linkedT
       return false;
     }
 
-    return normalizedQuery.length === 0 || task.title.toLowerCase().includes(normalizedQuery);
+    return matchesLinkableTaskSearch(task, normalizedQuery);
   });
+}
+
+export function matchesLinkableTaskSearch(task: LinkableTaskSearchCandidate, query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (normalizedQuery.length === 0) {
+    return true;
+  }
+
+  return task.title.toLowerCase().includes(normalizedQuery)
+    || (typeof task.notes === "string" && task.notes.toLowerCase().includes(normalizedQuery))
+    || task.tags.some((tag) => tag.toLowerCase().includes(normalizedQuery));
 }
 
 export function parseScratchTaskTokenSegments(body: string): ScratchTaskTokenSegment[] {

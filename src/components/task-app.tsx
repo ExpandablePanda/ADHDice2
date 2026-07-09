@@ -474,7 +474,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.24.0";
+const APP_VERSION = "6.24.3";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -5026,7 +5026,9 @@ export function TaskApp() {
                 appVersion={APP_VERSION}
                 availableTaskLists={availableTaskLists}
                 focusCategories={focusCategories}
+                focusDailyGoalAdjustments={focusDailyGoalAdjustments}
                 focusHistory={focusHistory}
+                listMembershipsByTaskId={taskListMembershipsByTaskId}
                 taskHistory={taskHistory}
                 tasks={tasks}
                 todayDateKey={todayKey}

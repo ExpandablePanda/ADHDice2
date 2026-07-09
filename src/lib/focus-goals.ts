@@ -94,6 +94,15 @@ export function formatPriorityLabel(priority: unknown) {
   return `Priority ${normalized}`;
 }
 
+export function formatFocusGoalDuration(seconds: number) {
+  const safeSeconds = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  if (hours && minutes) return `${hours}h ${minutes}m`;
+  if (hours) return `${hours}h`;
+  return `${minutes}m`;
+}
+
 export function normalizeDistributionMode(value: unknown): FocusGoalDistributionMode {
   return value === "manual" ? "manual" : "auto";
 }

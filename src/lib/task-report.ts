@@ -1,10 +1,11 @@
 import type { Task, TaskHistory, TaskStatus } from "@/lib/database.types";
-import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
+import { buildFocusGoalPlan } from "@/lib/focus-goals";
+import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
-import type { TaskListDefinition } from "@/lib/task-lists";
-import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
+import { hasTaskManualListMembership, type TaskListDefinition, type TaskListMembership } from "@/lib/task-lists";
+import { formatTaskPriorityLevel, getTaskPriorityLevel, inferLegacyTaskPriorityLevel, type TaskPriorityLevel } from "@/lib/task-priority";
 import { formatRepeatSummary } from "@/lib/task-repeat";
 
 export const TASK_REPORT_RANGE_OPTIONS = [
@@ -31,7 +32,9 @@ type GenerateTaskReportInput = {
   historySourceLabel: string;
   historyWarning: string | null;
   focusCategories: FocusCategory[];
+  focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
+  listMembershipsByTaskId: Record<string, TaskListMembership[]>;
   rangeId: TaskReportRangeId;
   taskHistory: TaskHistory[];
   tasks: Task[];
@@ -52,11 +55,13 @@ type TaskReportTaskMetadata = {
   cadenceLabel: string | null;
   currentStatusLabel: string;
   isImportant: boolean;
+  isPinned: boolean;
+  isRoutine: boolean;
   isTestLike: boolean;
   isTrashed: boolean;
   isUrgent: boolean;
   pathLabel: string;
-  priorityLabel: string;
+  priorityLevel: TaskPriorityLevel | null;
   title: string;
   typeLabel: TaskTypeLabel;
 };
@@ -286,10 +291,6 @@ function isEntryInRange(entry: TaskHistory, range: ReportRange) {
   return true;
 }
 
-function capitalizeWord(value: string) {
-  return `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
-}
-
 function getTaskTypeLabel(task: Task, depth: number | null): TaskTypeLabel {
   if (task.parent_task_id === null) {
     return "Parent";
@@ -298,10 +299,6 @@ function getTaskTypeLabel(task: Task, depth: number | null): TaskTypeLabel {
     return "Step";
   }
   return "Substep";
-}
-
-function buildPriorityLabel(task: Task) {
-  return formatTaskPriorityLabel(getTaskPriorityLevel(task));
 }
 
 function isTestLikeTaskTitle(title: string) {
@@ -331,6 +328,8 @@ function buildFocusSection(
   range: ReportRange,
   focusCategories: FocusCategory[],
   focusHistory: HistoricalFocusSession[],
+  focusDailyGoalAdjustments: FocusDailyGoalAdjustment[],
+  todayDateKey: string,
 ) {
   const sortedCategories = [...focusCategories].sort((left, right) => left.title.localeCompare(right.title, undefined, { sensitivity: "base" }));
   const rangedSessions = focusHistory
@@ -347,12 +346,45 @@ function buildFocusSection(
       return left.id.localeCompare(right.id);
     });
   const categoryById = new Map(sortedCategories.map((category) => [category.id, category] as const));
+  const rangedAdjustments = focusDailyGoalAdjustments
+    .filter((adjustment) => {
+      if (range.startDateKey && adjustment.adjustmentDate < range.startDateKey) {
+        return false;
+      }
+      if (range.endDateKey && adjustment.adjustmentDate > range.endDateKey) {
+        return false;
+      }
+      return true;
+    })
+    .sort((left, right) => {
+      if (left.adjustmentDate !== right.adjustmentDate) {
+        return left.adjustmentDate.localeCompare(right.adjustmentDate);
+      }
+      if (left.createdAt !== right.createdAt) {
+        return left.createdAt.localeCompare(right.createdAt);
+      }
+      return left.id.localeCompare(right.id);
+    });
   const sessionsByDate = rangedSessions.reduce<Map<string, HistoricalFocusSession[]>>((accumulator, session) => {
     const sessions = accumulator.get(session.date) ?? [];
     sessions.push(session);
     accumulator.set(session.date, sessions);
     return accumulator;
   }, new Map());
+  const adjustmentLinesByDate = rangedAdjustments.reduce<Map<string, string[]>>((accumulator, adjustment) => {
+    const sourceLabel = categoryById.get(adjustment.sourceCategoryId)?.title ?? "Deleted source";
+    const targetLabel = categoryById.get(adjustment.targetCategoryId)?.title ?? "Deleted target";
+    const lines = accumulator.get(adjustment.adjustmentDate) ?? [];
+    lines.push(`- ${sourceLabel} -> ${targetLabel} — ${formatDurationCompact(adjustment.reductionSeconds)} — ${formatAdjustmentReason(adjustment.reason)}`);
+    accumulator.set(adjustment.adjustmentDate, lines);
+    return accumulator;
+  }, new Map());
+  const plan = buildFocusGoalPlan({
+    adjustments: focusDailyGoalAdjustments,
+    categories: sortedCategories,
+    history: focusHistory,
+    todayDate: range.endDateKey ?? todayDateKey,
+  });
 
   const lines = ["## Focus Report"];
 
@@ -365,10 +397,27 @@ function buildFocusSection(
   if (sortedCategories.length === 0) {
     lines.push("- No focus categories configured.");
   } else {
-    for (const category of sortedCategories) {
-      const dailyGoal = category.dailyGoalSeconds ? formatDurationCompact(category.dailyGoalSeconds) : "None";
-      const weeklyGoal = category.weeklyGoalSeconds ? formatDurationCompact(category.weeklyGoalSeconds) : "None";
-      lines.push(`- ${category.title || "Untitled category"}: Daily ${dailyGoal}; Weekly ${weeklyGoal}`);
+    for (const summary of plan.summaries.sort((left, right) => left.category.title.localeCompare(right.category.title, undefined, { sensitivity: "base" }))) {
+      const goalParts = [
+        `Today ${formatDurationCompact(summary.todayActualSeconds)}/${formatDurationCompact(summary.adjustedTodayTargetSeconds)}`,
+        `Week ${formatDurationCompact(summary.weekActualSeconds)}/${formatDurationCompact(summary.baseWeeklyTargetSeconds)}`,
+        `Pace ${formatPaceStatus(summary.weeklyPaceBehindSeconds, summary.weekDeltaSeconds)}`,
+      ];
+      const reallocationParts = [
+        summary.todayReceivedShiftSeconds > 0 ? `Received ${formatDurationCompact(summary.todayReceivedShiftSeconds)}` : null,
+        summary.todaySourceShiftedSeconds > 0 ? `Shifted ${formatDurationCompact(summary.todaySourceShiftedSeconds)}` : null,
+        summary.incomingCarryoverCreditSeconds > 0 ? `Carryover ${formatDurationCompact(summary.incomingCarryoverCreditSeconds)}` : null,
+      ].filter((value): value is string => Boolean(value));
+      lines.push(`- ${summary.category.title || "Untitled category"}: ${goalParts.join("; ")}${reallocationParts.length > 0 ? `; Reallocation ${reallocationParts.join(", ")}` : ""}`);
+    }
+  }
+
+  lines.push("", "### Focus Reallocations");
+  if (adjustmentLinesByDate.size === 0) {
+    lines.push("- No focus reallocations in the selected range.");
+  } else {
+    for (const dateKey of [...adjustmentLinesByDate.keys()].sort((left, right) => left.localeCompare(right))) {
+      lines.push("", `#### ${dateKey}`, ...adjustmentLinesByDate.get(dateKey)!);
     }
   }
 
@@ -405,6 +454,7 @@ function buildFocusSection(
 function buildTaskMetadata(
   tasks: Task[],
   _availableTaskLists: TaskListDefinition[],
+  listMembershipsByTaskId: Record<string, TaskListMembership[]>,
   taskHistoryByTaskId: Record<string, TaskHistory[]>,
   todayDateKey: string,
 ) {
@@ -427,11 +477,13 @@ function buildTaskMetadata(
         todayDateKey,
       )] ?? task.status,
       isImportant: priorityLevel === 4,
+      isPinned: Boolean(task.pinned_at),
+      isRoutine: hasTaskManualListMembership(listMembershipsByTaskId[task.id] ?? [], "routine"),
       isTestLike: isTestLikeTaskTitle(title),
       isTrashed: task.status === "trashed",
       isUrgent: priorityLevel === 5,
       pathLabel,
-      priorityLabel: buildPriorityLabel(task),
+      priorityLevel: resolveReportPriorityLevel(task),
       title,
       typeLabel: getTaskTypeLabel(task, taskHierarchy.getDepth(task.id)),
     });
@@ -444,9 +496,10 @@ function buildTaskSnapshotSections(
   tasks: Task[],
   todayDateKey: string,
   availableTaskLists: TaskListDefinition[],
+  listMembershipsByTaskId: Record<string, TaskListMembership[]>,
   taskHistoryByTaskId: Record<string, TaskHistory[]>,
 ) {
-  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, taskHistoryByTaskId, todayDateKey);
+  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId, todayDateKey);
   const workloadTasks = tasks.filter((task) => task.status !== "trashed");
   const currentStatusSnapshotCounts = workloadTasks.reduce<Record<string, number>>((accumulator, task) => {
     const metadata = metadataByTaskId.get(task.id);
@@ -533,10 +586,11 @@ function buildHistorySections(
   range: ReportRange,
   todayDateKey: string,
   availableTaskLists: TaskListDefinition[],
+  listMembershipsByTaskId: Record<string, TaskListMembership[]>,
   taskHistoryByTaskId: Record<string, TaskHistory[]>,
 ) {
   const tasksById = new Map(tasks.map((task) => [task.id, task] as const));
-  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, taskHistoryByTaskId, todayDateKey);
+  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId, todayDateKey);
   const rangedEntries = taskHistory.filter((entry) => isEntryInRange(entry, range));
   const latestEntries = buildLatestEntries(rangedEntries, tasksById, metadataByTaskId);
   const dayBreakdownsByDate = new Map<string, DayBreakdown>();
@@ -754,10 +808,41 @@ function formatTaskHistoryLine(entry: TaskPatternEntry) {
     `Current Streak: ${formatCurrentStreak(entry.historyEntries)}`,
     `Cadence: ${entry.metadata.cadenceLabel ?? "None"}`,
   ];
-  if (getTaskPriorityLevel(entry.task) !== 3) {
-    parts.push(`Priority: ${entry.metadata.priorityLabel}`);
+  if (entry.metadata.priorityLevel !== null) {
+    parts.push(`Priority: ${formatTaskPriorityLevel(entry.metadata.priorityLevel)}`);
+  }
+  if (entry.metadata.isPinned) {
+    parts.push("Pinned");
+  }
+  if (entry.metadata.isRoutine) {
+    parts.push("Routine");
   }
   return `- ${parts.filter((value): value is string => Boolean(value)).join(" — ")}`;
+}
+
+function formatAdjustmentReason(reason: string) {
+  return reason
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function formatPaceStatus(weeklyPaceBehindSeconds: number, weekDeltaSeconds: number) {
+  if (weeklyPaceBehindSeconds > 0) {
+    return `Behind ${formatDurationCompact(weeklyPaceBehindSeconds)}`;
+  }
+  if (weekDeltaSeconds > 0) {
+    return `Over ${formatDurationCompact(weekDeltaSeconds)}`;
+  }
+  return "On pace";
+}
+
+function resolveReportPriorityLevel(task: Task) {
+  if (task.priority_level !== null) {
+    return getTaskPriorityLevel(task);
+  }
+
+  const legacyLevel = inferLegacyTaskPriorityLevel(task);
+  return legacyLevel === 3 ? null : legacyLevel;
 }
 
 function sortLatestEntries(entries: LatestHistoryEntry[]) {
@@ -797,10 +882,12 @@ function generateTaskReport({
   availableTaskLists,
   detailLevel,
   focusCategories,
+  focusDailyGoalAdjustments = [],
   focusHistory,
   generatedAt,
   historySourceLabel,
   historyWarning,
+  listMembershipsByTaskId = {},
   rangeId,
   taskHistory,
   tasks,
@@ -808,9 +895,9 @@ function generateTaskReport({
 }: GenerateTaskReportInput) {
   const range = buildRange(rangeId, todayDateKey, taskHistory, focusHistory);
   const taskHistoryByTaskId = buildTaskHistoryByTaskId(taskHistory);
-  const snapshot = buildTaskSnapshotSections(tasks, todayDateKey, availableTaskLists, taskHistoryByTaskId);
-  const history = buildHistorySections(tasks, taskHistory, range, todayDateKey, availableTaskLists, taskHistoryByTaskId);
-  const focusSection = buildFocusSection(range, focusCategories, focusHistory);
+  const snapshot = buildTaskSnapshotSections(tasks, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);
+  const history = buildHistorySections(tasks, taskHistory, range, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);
+  const focusSection = buildFocusSection(range, focusCategories, focusHistory, focusDailyGoalAdjustments, todayDateKey);
 
   const lines = [
     "# ADHDice Report",

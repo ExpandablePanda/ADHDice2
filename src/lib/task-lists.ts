@@ -80,6 +80,13 @@ export type TaskListMembership = {
   source: "manual" | "rule";
 };
 
+export function hasTaskManualListMembership(
+  listMemberships: ReadonlyArray<Pick<TaskListMembership, "id" | "isManual">>,
+  listId: TaskListId,
+) {
+  return listMemberships.some((membership) => membership.id === listId && membership.isManual);
+}
+
 export type TaskListEvaluationContext = {
   currentStreakByTaskId: Record<string, number>;
   focusedTaskIds: Set<string>;
