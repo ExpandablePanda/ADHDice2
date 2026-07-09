@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createTask } from "../src/lib/task-buckets.ts";
-import { getBuiltInTaskLists } from "../src/lib/task-lists.ts";
+import { getBuiltInTaskLists, type TaskListMembership } from "../src/lib/task-lists.ts";
 import { generateTaskReport } from "../src/lib/task-report.ts";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import type { FocusCategory, HistoricalFocusSession } from "../src/lib/types.ts";
@@ -50,6 +50,14 @@ function createFocusSession(overrides: Partial<HistoricalFocusSession> = {}): Hi
     notes: "Heads-down sprint",
     title: "Morning sprint",
     ...overrides,
+  };
+}
+
+function createManualListMembership(id: TaskListMembership["id"]): TaskListMembership {
+  return {
+    id,
+    isManual: true,
+    source: "manual",
   };
 }
 
@@ -137,6 +145,88 @@ test("report exports derived legacy urgent priority when priority_level is null"
   });
 
   assert.match(report, /Legacy urgent task.*Priority: 5/);
+});
+
+test("report includes compact pinned, routine, and priority summaries", () => {
+  const pinnedTask = createTask({
+    created_at: "2026-06-20T09:00:00.000Z",
+    id: "pinned-task",
+    pinned_at: "2026-06-29T08:00:00.000Z",
+    priority_level: 5,
+    sort_order: 1,
+    status: "done",
+    title: "Pinned task",
+  });
+  const routineLegacyUrgentTask = createTask({
+    created_at: "2026-06-20T09:05:00.000Z",
+    id: "routine-legacy-urgent-task",
+    is_urgent: true,
+    priority_level: null,
+    sort_order: 2,
+    status: "missed",
+    title: "Routine legacy urgent task",
+  });
+  const routineImportantTask = createTask({
+    created_at: "2026-06-20T09:10:00.000Z",
+    id: "routine-important-task",
+    is_important: true,
+    priority_level: null,
+    sort_order: 3,
+    status: "did_my_best",
+    title: "Routine important task",
+  });
+  const normalTask = createTask({
+    created_at: "2026-06-20T09:15:00.000Z",
+    id: "normal-task",
+    sort_order: 4,
+    status: "pending",
+    title: "Normal task",
+  });
+
+  const report = generateTaskReport({
+    appVersion: "6.24.4",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "summary",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-06-30T15:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    listMembershipsByTaskId: {
+      [routineLegacyUrgentTask.id]: [createManualListMembership("routine")],
+      [routineImportantTask.id]: [createManualListMembership("routine")],
+    },
+    rangeId: "last7",
+    taskHistory: [
+      createHistoryEntry({
+        entry_date: "2026-06-29",
+        id: "pinned-task-done",
+        status: "done",
+        task_id: pinnedTask.id,
+      }),
+      createHistoryEntry({
+        entry_date: "2026-06-29",
+        id: "routine-legacy-urgent-task-missed",
+        status: "missed",
+        task_id: routineLegacyUrgentTask.id,
+      }),
+      createHistoryEntry({
+        entry_date: "2026-06-29",
+        id: "routine-important-task-dmb",
+        status: "did_my_best",
+        task_id: routineImportantTask.id,
+      }),
+    ],
+    tasks: [pinnedTask, routineLegacyUrgentTask, routineImportantTask, normalTask],
+    todayDateKey: "2026-06-30",
+  });
+
+  assert.match(report, /Pinned Tasks: 1 total \(Done 1\)/);
+  assert.match(report, /Routine Tasks: 2 total \(Did My Best 1, Missed 1\)/);
+  assert.match(report, /Priority 5: Done 1, Missed 1/);
+  assert.match(report, /Priority 4: Did My Best 1/);
+  assert.doesNotMatch(report, /Pinned Tasks: 0 total/);
+  assert.doesNotMatch(report, /Routine Tasks: 0 total/);
 });
 
 test("detailed report uses the shipped detailed sections and current status lines", () => {
@@ -275,6 +365,43 @@ test("detailed report uses the shipped detailed sections and current status line
   assert.match(report, /Summary: Parents handled 1; Steps\/Substeps handled 1; Combined handled 2; Missed 27/);
   assert.doesNotMatch(report, /Test inbox thing.*Current Status: Missed/);
   assert.doesNotMatch(report, /Old trashed task.*Current Status: Missed/);
+});
+
+test("report distinguishes credited history day from the real logged timestamp", () => {
+  const overnightTask = createTask({
+    created_at: "2026-07-08T08:00:00.000Z",
+    id: "overnight-task",
+    sort_order: 1,
+    status: "pending",
+    title: "Overnight log task",
+  });
+
+  const report = generateTaskReport({
+    appVersion: "6.24.4",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "detailed",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-09T15:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "last7",
+    taskHistory: [
+      createHistoryEntry({
+        created_at: "2026-07-09T13:30:00.000Z",
+        entry_date: "2026-07-08",
+        id: "overnight-task-done",
+        status: "done",
+        task_id: overnightTask.id,
+        updated_at: "2026-07-09T13:30:00.000Z",
+      }),
+    ],
+    tasks: [overnightTask],
+    todayDateKey: "2026-07-09",
+  });
+
+  assert.match(report, /History: Done: Jul 8 \(logged /);
+  assert.match(report, /Logged /);
 });
 
 test("report status snapshot and task status lines use the passed history source", () => {

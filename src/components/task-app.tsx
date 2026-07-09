@@ -152,6 +152,7 @@ import {
   isDueToday,
   isLater,
   isOverdue,
+  getTaskDisplayStatusWithHistory,
 } from "@/lib/task-cockpit";
 import {
   getMomentumMetric,
@@ -474,7 +475,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.24.3";
+const APP_VERSION = "6.24.7";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2222,6 +2223,15 @@ export function TaskApp() {
           taskHistoryByTaskId[task.id] ?? [],
           todayKey,
         ).currentStreak,
+      ]),
+    ),
+    [taskHistoryByTaskId, tasks, todayKey],
+  );
+  const pathsTaskDisplayStatusByTaskId = useMemo(
+    () => Object.fromEntries(
+      tasks.map((task) => [
+        task.id,
+        getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayKey),
       ]),
     ),
     [taskHistoryByTaskId, tasks, todayKey],
@@ -5017,6 +5027,7 @@ export function TaskApp() {
                   }
                   void updateTaskStatus(task, status);
                 }}
+                taskDisplayStatusByTaskId={pathsTaskDisplayStatusByTaskId}
                 tasks={tasks}
                 userId={currentUserId}
               />

@@ -3,7 +3,7 @@
 import { Archive, Bed, BookOpen, Briefcase, Car, Check, ChevronDown, ChevronUp, Copy, Footprints, Home, Link2, Moon, Plus, RotateCcw, Search, ShowerHead, Sparkles, Target, Trash2, Unlink, Utensils, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Task } from "@/lib/database.types";
+import type { Task, TaskStatus } from "@/lib/database.types";
 import { formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import {
   createLocalStoragePathsStorageAdapter,
@@ -29,11 +29,13 @@ import { getSelectableTaskStatuses } from "@/lib/task-complete";
 type LinkedTaskOption = Pick<Task, "id" | "notes" | "repeat_frequency" | "status" | "tags" | "title" | "trashed_at">;
 type PathEndpointIconId = keyof typeof PATH_ENDPOINT_ICON_MAP;
 type PathConnectionSource = { kind: "endpoint" } | { kind: "node"; nodeId: string };
+type PathNodeHandleSide = "bottom" | "left" | "right" | "top";
 type InspectorSectionId = "actions" | "endpoint" | "path" | "selectedChip";
 
 type PathsWorkspaceProps = {
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
+  taskDisplayStatusByTaskId?: Record<string, TaskStatus>;
   tasks?: LinkedTaskOption[];
   userId?: string | null;
 };
@@ -58,7 +60,10 @@ const NODE_CARD_WIDTH = 252;
 const NODE_CARD_HEIGHT = 116;
 const CANVAS_NODE_PADDING = 24;
 const LINKED_TASK_MENU_PANEL_CLASS = "adhdice-scrollbar max-h-64 overflow-y-auto";
-const LINKED_TASK_CHIP_CLASS = `${TASK_TABLE_CHIP_BASE_CLASS} gap-0 overflow-hidden border-[#e4deef] bg-[#f4f5f8] px-0 text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`;
+const LINKED_TASK_LIST_PANEL_CLASS = `${LINKED_TASK_MENU_PANEL_CLASS} flex flex-col gap-2`;
+const LINKED_TASK_CHIP_CLASS = `${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_INACTIVE_CHIP_CLASS} max-w-full gap-1.5 overflow-hidden`;
+const LINKED_TASK_UNAVAILABLE_CHIP_CLASS = `${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_INACTIVE_CHIP_CLASS} max-w-full`;
+const NODE_HANDLE_CLASS = "absolute h-3 w-3 rounded-full border border-[#cfc3f8] bg-white shadow-sm dark:border-[#7f67ff] dark:bg-[#1b152d]";
 const INSPECTOR_SECTION_LABEL_CLASS = "text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/40";
 const PATH_PROGRESS_MARKER_COLOR = "#9b8bf0";
 const ENDPOINT_MARKER_RADIUS = 34;
@@ -86,6 +91,7 @@ const PATH_ENDPOINT_ICON_OPTIONS: Array<{ id: PathEndpointIconId; label: string 
   { id: "car", label: "Leave Home" },
   { id: "moon", label: "Sleep" },
 ];
+const NODE_HANDLE_SIDES: PathNodeHandleSide[] = ["top", "right", "bottom", "left"];
 
 function cubicBezierPoint(start: number, controlA: number, controlB: number, end: number, t: number) {
   const inverse = 1 - t;
@@ -115,18 +121,29 @@ function buildConnectionSegment({
   endY,
   id,
   sourceCompleted,
+  startSide,
   startX,
   startY,
+  endSide,
 }: {
+  endSide?: PathNodeHandleSide;
   endX: number;
   endY: number;
   id: string;
   sourceCompleted: boolean;
+  startSide: PathNodeHandleSide;
   startX: number;
   startY: number;
 }) {
+  const controlOffset = Math.max(48, Math.min(140, Math.hypot(endX - startX, endY - startY) * 0.34));
+  const startControl = getBezierControlPoint(startX, startY, startSide, controlOffset);
+  const endControl = endSide ? getBezierControlPoint(endX, endY, endSide, controlOffset) : { x: endX, y: endY };
+
   return {
-    controlOffset: Math.max(80, Math.abs(endX - startX) * 0.42),
+    controlAX: startControl.x,
+    controlAY: startControl.y,
+    controlBX: endControl.x,
+    controlBY: endControl.y,
     endX,
     endY,
     id,
@@ -134,6 +151,53 @@ function buildConnectionSegment({
     startX,
     startY,
   };
+}
+
+function getBezierControlPoint(x: number, y: number, side: PathNodeHandleSide, offset: number) {
+  switch (side) {
+    case "bottom":
+      return { x, y: y + offset };
+    case "left":
+      return { x: x - offset, y };
+    case "right":
+      return { x: x + offset, y };
+    case "top":
+      return { x, y: y - offset };
+  }
+}
+
+function getNodeHandleAnchor(node: Pick<PathNode, "position">, target: { x: number; y: number }) {
+  const centerX = node.position.x + NODE_CARD_WIDTH / 2;
+  const centerY = node.position.y + NODE_CARD_HEIGHT / 2;
+  const deltaX = target.x - centerX;
+  const deltaY = target.y - centerY;
+  const side: PathNodeHandleSide = Math.abs(deltaX) >= Math.abs(deltaY)
+    ? deltaX >= 0 ? "right" : "left"
+    : deltaY >= 0 ? "bottom" : "top";
+
+  switch (side) {
+    case "bottom":
+      return { side, x: centerX, y: node.position.y + NODE_CARD_HEIGHT };
+    case "left":
+      return { side, x: node.position.x, y: centerY };
+    case "right":
+      return { side, x: node.position.x + NODE_CARD_WIDTH, y: centerY };
+    case "top":
+      return { side, x: centerX, y: node.position.y };
+  }
+}
+
+function getNodeHandleClassName(side: PathNodeHandleSide) {
+  switch (side) {
+    case "bottom":
+      return `${NODE_HANDLE_CLASS} left-1/2 top-full -translate-x-1/2 -translate-y-1/2`;
+    case "left":
+      return `${NODE_HANDLE_CLASS} left-0 top-1/2 -translate-x-1/2 -translate-y-1/2`;
+    case "right":
+      return `${NODE_HANDLE_CLASS} right-0 top-1/2 -translate-y-1/2 translate-x-1/2`;
+    case "top":
+      return `${NODE_HANDLE_CLASS} left-1/2 top-0 -translate-x-1/2 -translate-y-1/2`;
+  }
 }
 
 function PathLinkedTaskPill({
@@ -169,7 +233,7 @@ function PathLinkedTaskPill({
     <span className="relative inline-flex max-w-full" data-path-node-control ref={statusMenuRef}>
       <span className={LINKED_TASK_CHIP_CLASS}>
         <button
-          className="min-w-0 max-w-[190px] truncate px-2 py-1 text-left text-[13px] font-medium leading-none"
+          className="min-w-0 max-w-[190px] truncate text-left text-[13px] font-medium leading-none"
           disabled={!onOpenTask}
           onClick={(event) => {
             event.stopPropagation();
@@ -185,7 +249,7 @@ function PathLinkedTaskPill({
         </button>
         <button
           aria-label={`Change task status from ${formatTaskStatusLabel(task.status)}`}
-          className="flex h-[26px] items-center justify-center border-l border-[#d7cff6] px-1.5 dark:border-[#433567] [&>span]:h-4 [&>span]:w-4"
+          className="flex h-4 w-4 shrink-0 items-center justify-center [&>span]:h-4 [&>span]:w-4"
           onClick={(event) => {
             event.stopPropagation();
             setIsStatusMenuOpen((current) => !current);
@@ -290,15 +354,18 @@ function LinkedTaskPicker({
           <div className={`mt-2 flex flex-col gap-1 ${LINKED_TASK_MENU_PANEL_CLASS}`}>
             {filteredTasks.length > 0 ? filteredTasks.map((task) => (
               <button
-                className="flex items-center justify-between gap-2 rounded-[0.9rem] px-3 py-2 text-left text-[13px] font-medium text-[#5f5878] transition hover:bg-[#f7f3ff] dark:text-white/72 dark:hover:bg-white/8"
+                className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_INACTIVE_CHIP_CLASS} w-full justify-between gap-2 text-left transition hover:bg-white dark:hover:bg-white/12`}
                 key={task.id}
                 onClick={() => {
                   onSelectTask(task.id);
                 }}
                 type="button"
               >
-                <span className="truncate">{task.title}</span>
-                <Plus className="h-3.5 w-3.5 shrink-0" />
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  {renderTaskStatusCircle(task.status, "sm")}
+                  <span className="truncate">{task.title}</span>
+                </span>
+                <Plus className="h-3 w-3 shrink-0" />
               </button>
             )) : (
               <div className="rounded-[0.9rem] border border-dashed border-[#e6e0f5] px-3 py-3 text-[13px] text-[#8a84a3] dark:border-white/10 dark:text-white/45">
@@ -409,7 +476,7 @@ function InspectorSection({
   );
 }
 
-export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId }: PathsWorkspaceProps) {
+export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusByTaskId = {}, tasks = [], userId }: PathsWorkspaceProps) {
   const workspaceUserId = userId ?? LOCAL_PATHS_PROTOTYPE_USER_ID;
   const adapter = useMemo(() => createLocalStoragePathsStorageAdapter({ userId: workspaceUserId }), [workspaceUserId]);
   const [pathRecords, setPathRecords] = useState<PathRecord[]>([]);
@@ -452,10 +519,18 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
 
   const todayKey = getLocalPathDateKey();
   const linkedTasks = useMemo(
-    () => tasks
-      .filter((task) => !task.trashed_at)
+    () => Array.from(tasks.reduce<Map<string, LinkedTaskOption>>((taskById, task) => {
+      if (task.trashed_at) {
+        return taskById;
+      }
+      taskById.set(task.id, {
+        ...task,
+        status: taskDisplayStatusByTaskId[task.id] ?? task.status,
+      });
+      return taskById;
+    }, new Map()).values())
       .sort((left, right) => left.title.localeCompare(right.title)),
-    [tasks],
+    [taskDisplayStatusByTaskId, tasks],
   );
   const linkedTaskById = useMemo(
     () => new Map(linkedTasks.map((task) => [task.id, task])),
@@ -512,6 +587,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
   }, [canvasContextMenu]);
 
   const selectedRecord = pathRecords.find((record) => record.path.id === selectedPathId) ?? null;
+  const selectedRecordRef = useRef<PathRecord | null>(null);
   const selectedProgress = selectedRecord ? progressByPathId[selectedRecord.path.id] ?? EMPTY_PROGRESS : EMPTY_PROGRESS;
   const completedNodeIds = useMemo(() => new Set(selectedProgress.completedNodeIds), [selectedProgress.completedNodeIds]);
   const selectedNode = selectedRecord?.nodes.find((node) => node.id === selectedNodeId) ?? null;
@@ -531,13 +607,24 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
         return [];
       }
 
+      const sourceAnchor = getNodeHandleAnchor(node, {
+        x: targetNode.position.x + NODE_CARD_WIDTH / 2,
+        y: targetNode.position.y + NODE_CARD_HEIGHT / 2,
+      });
+      const targetAnchor = getNodeHandleAnchor(targetNode, {
+        x: node.position.x + NODE_CARD_WIDTH / 2,
+        y: node.position.y + NODE_CARD_HEIGHT / 2,
+      });
+
       return [buildConnectionSegment({
-        endX: targetNode.position.x,
-        endY: targetNode.position.y + NODE_CARD_HEIGHT / 2,
+        endSide: targetAnchor.side,
+        endX: targetAnchor.x,
+        endY: targetAnchor.y,
         id: `${node.id}-${nextNodeId}`,
         sourceCompleted: completedNodeIds.has(node.id),
-        startX: node.position.x + NODE_CARD_WIDTH,
-        startY: node.position.y + NODE_CARD_HEIGHT / 2,
+        startSide: sourceAnchor.side,
+        startX: sourceAnchor.x,
+        startY: sourceAnchor.y,
       })];
     }));
 
@@ -548,13 +635,16 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
             return [];
           }
 
+          const sourceAnchor = getNodeHandleAnchor(node, selectedEndpointPosition);
+
           return [buildConnectionSegment({
             endX: selectedEndpointPosition.x,
             endY: selectedEndpointPosition.y,
             id: `${node.id}-endpoint`,
             sourceCompleted: completedNodeIds.has(node.id),
-            startX: node.position.x + NODE_CARD_WIDTH,
-            startY: node.position.y + NODE_CARD_HEIGHT / 2,
+            startSide: sourceAnchor.side,
+            startX: sourceAnchor.x,
+            startY: sourceAnchor.y,
           })];
         })
       : [];
@@ -564,8 +654,15 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
   const activePathRecords = pathRecords.filter((record) => !record.path.archivedAt);
   const archivedPathRecords = pathRecords.filter((record) => record.path.archivedAt);
 
+  useEffect(() => {
+    selectedRecordRef.current = selectedRecord;
+  }, [selectedRecord]);
+
   async function saveRecord(nextRecord: PathRecord) {
     const saved = await adapter.savePath({ nodes: nextRecord.nodes, path: nextRecord.path });
+    if (selectedPathId === saved.path.id) {
+      selectedRecordRef.current = saved;
+    }
     setPathRecords((current) => [
       ...current.filter((record) => record.path.id !== saved.path.id),
       saved,
@@ -601,29 +698,30 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
   }
 
   async function updateSelectedPath(patch: Partial<Pick<PathRecord["path"], "description" | "endpointConnectedNodeIds" | "endpointIcon" | "endpointLabel" | "endpointPosition" | "pathType" | "title">>) {
-    if (!selectedRecord) {
+    const currentRecord = selectedRecordRef.current;
+    if (!currentRecord) {
       return;
     }
 
     const saved = await saveRecord({
-      ...selectedRecord,
+      ...currentRecord,
       path: {
-        ...selectedRecord.path,
+        ...currentRecord.path,
         ...patch,
-        description: patch.description === undefined ? selectedRecord.path.description : patch.description?.trim() || null,
+        description: patch.description === undefined ? currentRecord.path.description : patch.description?.trim() || null,
         endpointConnectedNodeIds: patch.endpointConnectedNodeIds === undefined
-          ? selectedRecord.path.endpointConnectedNodeIds
+          ? currentRecord.path.endpointConnectedNodeIds
           : [...new Set(patch.endpointConnectedNodeIds)],
         endpointIcon: patch.endpointLabel === undefined
-          ? (patch.endpointIcon === undefined ? selectedRecord.path.endpointIcon : patch.endpointIcon)
-          : (patch.endpointLabel?.trim() ? (patch.endpointIcon ?? selectedRecord.path.endpointIcon ?? "target") : null),
-        endpointLabel: patch.endpointLabel === undefined ? selectedRecord.path.endpointLabel : patch.endpointLabel?.trim() || null,
+          ? (patch.endpointIcon === undefined ? currentRecord.path.endpointIcon : patch.endpointIcon)
+          : (patch.endpointLabel?.trim() ? (patch.endpointIcon ?? currentRecord.path.endpointIcon ?? "target") : null),
+        endpointLabel: patch.endpointLabel === undefined ? currentRecord.path.endpointLabel : patch.endpointLabel?.trim() || null,
         endpointPosition: patch.endpointPosition === undefined
-          ? selectedRecord.path.endpointPosition
+          ? currentRecord.path.endpointPosition
           : patch.endpointPosition === null
             ? null
             : clampEndpointPosition(patch.endpointPosition),
-        title: patch.title === undefined ? selectedRecord.path.title : patch.title.trim() || "Untitled path",
+        title: patch.title === undefined ? currentRecord.path.title : patch.title.trim() || "Untitled path",
         updatedAt: new Date().toISOString(),
       },
     });
@@ -803,17 +901,23 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
   }
 
   async function connectEndpointToNode(nodeId: string) {
-    if (!selectedRecord || selectedRecord.path.endpointConnectedNodeIds.includes(nodeId)) {
-      setConnectSource(null);
+    const currentRecord = selectedRecordRef.current;
+    if (!currentRecord) {
+      return;
+    }
+
+    if (currentRecord.path.endpointConnectedNodeIds.includes(nodeId)) {
+      setSelectedNodeId(nodeId);
+      setStatusMessage("That chip is already connected to the endpoint.");
       return;
     }
 
     await updateSelectedPath({
-      endpointConnectedNodeIds: [...selectedRecord.path.endpointConnectedNodeIds, nodeId],
+      endpointConnectedNodeIds: [...currentRecord.path.endpointConnectedNodeIds, nodeId],
     });
-    setConnectSource(null);
     setSelectedNodeId(nodeId);
-    setStatusMessage("Endpoint connected.");
+    setConnectSource({ kind: "endpoint" });
+    setStatusMessage("Endpoint connected. Click another chip to keep linking, or tap Connect endpoint again to stop.");
   }
 
   async function removeConnection(sourceNodeId: string, targetNodeId: string) {
@@ -1040,7 +1144,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
                       {connectionSegments.map((segment) => (
                         <path
                           className="drop-shadow-[0_1px_1px_rgba(111,87,246,0.14)]"
-                          d={`M ${segment.startX} ${segment.startY} C ${segment.startX + segment.controlOffset} ${segment.startY}, ${segment.endX - segment.controlOffset} ${segment.endY}, ${segment.endX} ${segment.endY}`}
+                          d={`M ${segment.startX} ${segment.startY} C ${segment.controlAX} ${segment.controlAY}, ${segment.controlBX} ${segment.controlBY}, ${segment.endX} ${segment.endY}`}
                           fill="none"
                           key={segment.id}
                           stroke="#b7a8f8"
@@ -1055,10 +1159,10 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
                       }
 
                       return getConnectionMarkerOffsets(segment.startX, segment.startY, segment.endX, segment.endY).map((offset, index) => {
-                        const x = cubicBezierPoint(segment.startX, segment.startX + segment.controlOffset, segment.endX - segment.controlOffset, segment.endX, offset);
-                        const y = cubicBezierPoint(segment.startY, segment.startY, segment.endY, segment.endY, offset);
-                        const tangentX = cubicBezierTangent(segment.startX, segment.startX + segment.controlOffset, segment.endX - segment.controlOffset, segment.endX, offset);
-                        const tangentY = cubicBezierTangent(segment.startY, segment.startY, segment.endY, segment.endY, offset);
+                        const x = cubicBezierPoint(segment.startX, segment.controlAX, segment.controlBX, segment.endX, offset);
+                        const y = cubicBezierPoint(segment.startY, segment.controlAY, segment.controlBY, segment.endY, offset);
+                        const tangentX = cubicBezierTangent(segment.startX, segment.controlAX, segment.controlBX, segment.endX, offset);
+                        const tangentY = cubicBezierTangent(segment.startY, segment.controlAY, segment.controlBY, segment.endY, offset);
                         const rotation = Math.atan2(tangentY, tangentX) * (180 / Math.PI);
 
                         return (
@@ -1098,6 +1202,14 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
                           data-path-node-control
                           onClick={(event) => {
                             event.stopPropagation();
+                            if (connectSource?.kind === "node") {
+                              void connectEndpointToNode(connectSource.nodeId);
+                              return;
+                            }
+                            if (connectSource?.kind === "endpoint") {
+                              setStatusMessage("Endpoint connection mode is active. Click chips to connect them.");
+                              return;
+                            }
                             setSelectedNodeId(null);
                           }}
                           onPointerDown={(event) => {
@@ -1242,36 +1354,58 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
                                 <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-[#7a7592] dark:text-white/55">{node.note}</p>
                               ) : null}
                               {linkedTaskCount > 0 ? (
-                                <button
-                                  className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_INACTIVE_CHIP_CLASS} mt-2 gap-1 px-2 py-1 text-[11px]`}
+                                <TaskTableChipButton
+                                  className="mt-2 gap-1"
                                   data-path-node-control
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     toggleNodeTaskExpansion(node.id);
                                   }}
-                                  type="button"
+                                  toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
                                 >
                                   <Link2 className="h-3 w-3" />
                                   <span>{linkedTaskCount} linked task{linkedTaskCount === 1 ? "" : "s"}</span>
                                   {expandedLinkedTasks ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                                </button>
+                                </TaskTableChipButton>
                               ) : null}
                             </div>
                           </div>
                           {expandedLinkedTasks && linkedTaskCount > 0 ? (
-                            <AdhdDropdownPanel className={`left-3 right-3 top-[calc(100%+8px)] ${LINKED_TASK_MENU_PANEL_CLASS}`} widthClassName="">
+                            <AdhdDropdownPanel className={`left-3 right-3 top-[calc(100%+8px)] ${LINKED_TASK_LIST_PANEL_CLASS}`} widthClassName="">
                               {linkedTasksForNode.map((task, index) => (
                                 task ? (
                                   <PathLinkedTaskPill key={node.linkedTaskIds[index]} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} />
                                 ) : (
-                                  <span className="inline-flex rounded-full border border-[#ead6a6] bg-[#fff9ea] px-2 py-1 text-[12px] font-semibold text-[#8a6418] dark:border-[#65502a] dark:bg-[#312410] dark:text-[#f8d996]" key={node.linkedTaskIds[index]}>
+                                  <span className={LINKED_TASK_UNAVAILABLE_CHIP_CLASS} key={node.linkedTaskIds[index]}>
                                     Linked task unavailable
                                   </span>
                                 )
                               ))}
                             </AdhdDropdownPanel>
                           ) : null}
-                          <span className="absolute -right-1.5 top-1/2 h-3 w-3 -translate-y-1/2 rounded-full border border-[#cfc3f8] bg-white shadow-sm dark:border-[#7f67ff] dark:bg-[#1b152d]" />
+                          {NODE_HANDLE_SIDES.map((side) => (
+                            <button
+                              aria-label={`Connect ${side} side of ${node.title}`}
+                              className={`${getNodeHandleClassName(side)} transition hover:scale-110 hover:border-[#7f67ff] hover:bg-[#f7f3ff]`}
+                              data-path-node-control
+                              key={side}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (connectSource?.kind === "node") {
+                                  void connectNodes(connectSource.nodeId, node.id);
+                                  return;
+                                }
+                                if (connectSource?.kind === "endpoint") {
+                                  void connectEndpointToNode(node.id);
+                                  return;
+                                }
+                                setSelectedNodeId(node.id);
+                                setConnectSource({ kind: "node", nodeId: node.id });
+                                setStatusMessage("Click a target chip or endpoint to connect.");
+                              }}
+                              type="button"
+                            />
+                          ))}
                         </div>
                       );
                     })}
@@ -1398,14 +1532,19 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
                     <TaskTableChipButton
                       disabled={!selectedEndpointPosition}
                       onClick={() => {
+                        if (connectSource?.kind === "endpoint") {
+                          setConnectSource(null);
+                          setStatusMessage("Endpoint connection mode stopped.");
+                          return;
+                        }
                         setSelectedNodeId(null);
                         setConnectSource({ kind: "endpoint" });
-                        setStatusMessage("Click a chip to connect the endpoint.");
+                        setStatusMessage("Click one or more chips to connect the endpoint.");
                       }}
                       toneClassName={connectSource?.kind === "endpoint" ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}
                     >
                       <Link2 className="mr-1 h-3.5 w-3.5" />
-                      Connect endpoint
+                      {connectSource?.kind === "endpoint" ? "Done connecting" : "Connect endpoint"}
                     </TaskTableChipButton>
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-[#7a7592] dark:text-white/55">Connected chips</p>
@@ -1487,7 +1626,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, tasks = [], userId
                               </div>
                             ) : (
                               <div className="inline-flex items-center gap-1" key={taskId}>
-                                <span className="inline-flex rounded-full border border-[#ead6a6] bg-[#fff9ea] px-2 py-1 text-[12px] font-semibold text-[#8a6418] dark:border-[#65502a] dark:bg-[#312410] dark:text-[#f8d996]">
+                                <span className={LINKED_TASK_UNAVAILABLE_CHIP_CLASS}>
                                   Linked task unavailable
                                 </span>
                                 <IconButton ariaLabel="Remove unavailable linked task" onClick={() => { void updateNode(selectedNode.id, { linkedTaskIds: selectedNode.linkedTaskIds.filter((id) => id !== taskId) }); }}>

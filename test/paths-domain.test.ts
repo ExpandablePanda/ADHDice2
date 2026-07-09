@@ -308,6 +308,48 @@ test("localStorage adapter persists records and daily progress under a user scop
   assert.ok(storage.getItem(`${LOCAL_PATHS_STORAGE_KEY_PREFIX}:user-1`)?.includes("path-a"));
 });
 
+test("localStorage adapter persists multiple endpoint-connected node ids and preserves the remaining links when one is removed", async () => {
+  const storage = createMemoryStorage();
+  const adapter = createLocalStoragePathsStorageAdapter({ storage, userId: "user-1" });
+
+  const saved = await adapter.savePath({
+    nodes: [
+      { id: "node-a", linkedTaskIds: [], pathId: "path-a", position: { x: 320, y: 180 }, title: "Node A" },
+      { id: "node-b", linkedTaskIds: [], pathId: "path-a", position: { x: 620, y: 220 }, title: "Node B" },
+    ],
+    path: {
+      createdAt: "2026-06-24T00:00:00.000Z",
+      endpointConnectedNodeIds: ["node-a", "node-b", "node-a"],
+      endpointIcon: "target",
+      endpointLabel: "Destination",
+      endpointPosition: { x: 980, y: 240 },
+      id: "path-a",
+      pathType: "daily_reset",
+      sortOrder: 0,
+      title: "Path A",
+      updatedAt: "2026-06-24T00:00:00.000Z",
+      userId: "user-1",
+    },
+  });
+
+  assert.deepEqual(saved.path.endpointConnectedNodeIds, ["node-a", "node-b"]);
+
+  await adapter.savePath({
+    nodes: saved.nodes,
+    path: {
+      ...saved.path,
+      endpointConnectedNodeIds: saved.path.endpointConnectedNodeIds.filter((nodeId) => nodeId !== "node-a"),
+      updatedAt: "2026-06-24T01:00:00.000Z",
+    },
+  });
+
+  const reloaded = createLocalStoragePathsStorageAdapter({ storage, userId: "user-1" });
+  const fetched = await reloaded.getPath({ pathId: "path-a", userId: "user-1" });
+
+  assert.deepEqual(fetched?.path.endpointConnectedNodeIds, ["node-b"]);
+  assert.deepEqual(fetched?.path.endpointPosition, { x: 980, y: 240 });
+});
+
 function createMemoryStorage() {
   const values = new Map<string, string>();
 

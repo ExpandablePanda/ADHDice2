@@ -94,6 +94,18 @@ function formatHistoryDateTime(timestamp: string) {
   });
 }
 
+function getTaskHistoryTimestamp(entry: Pick<DbTaskHistory, "created_at" | "updated_at">) {
+  return entry.updated_at || entry.created_at || null;
+}
+
+function formatTaskHistoryLoggedLine(entry: Pick<DbTaskHistory, "created_at" | "updated_at">) {
+  const timestamp = getTaskHistoryTimestamp(entry);
+  if (!timestamp) {
+    return null;
+  }
+  return `Logged ${formatHistoryDateTime(timestamp)}`;
+}
+
 const HISTORY_STATUS_CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
 const ACTIVE_CHIP_RING_CLASS = "ring-2 ring-[#d7cbfb] ring-offset-1 dark:ring-[#6d56d6] dark:ring-offset-[#18112d]";
 
@@ -804,6 +816,7 @@ export function TaskHistoryModal({
                   <div>
                     <p className="text-sm font-semibold text-[#27304c] dark:text-white">{formatCalendarDate(entry.entry_date)}</p>
                     <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{dueDates.has(entry.entry_date) ? "Due opportunity" : "Manual history entry"}</p>
+                    {formatTaskHistoryLoggedLine(entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryLoggedLine(entry)}</p> : null}
                   </div>
                   {renderStatusPill(entry)}
                 </button>
@@ -827,6 +840,11 @@ export function TaskHistoryModal({
                       ? "This date is part of the task's due schedule."
                       : "This date is outside the inferred due schedule and will be treated as a manual history entry."}
                 </p>
+                {!isMultiSelect && selectedEntry ? (
+                  <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">
+                    Credited for {formatCalendarDate(selectedEntry.entry_date)} • {formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable"}
+                  </p>
+                ) : null}
               </div>
               {isMultiSelect
                 ? <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>{selectedDates.length} Selected</span>

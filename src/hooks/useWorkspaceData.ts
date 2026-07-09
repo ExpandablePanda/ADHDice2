@@ -91,10 +91,37 @@ function shouldLoadSecondaryForPage(activePage: AppPage) {
 
 const TASK_RESUME_SYNC_DEBOUNCE_MS = 450;
 const TASK_RESUME_SYNC_COOLDOWN_MS = 1500;
+const TASK_HISTORY_PAGE_SIZE = 1000;
 const isDevelopment = process.env.NODE_ENV !== "production";
 
 function keepCurrentIfStructurallyEqual<T>(current: T, next: T) {
   return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+}
+
+type PagedFetchResult<T> = {
+  data: T[] | null;
+  error: { message?: string } | null;
+};
+
+export async function fetchAllPagedRows<T>(
+  fetchPage: (from: number, to: number) => Promise<PagedFetchResult<T>>,
+  pageSize = TASK_HISTORY_PAGE_SIZE,
+): Promise<PagedFetchResult<T>> {
+  const rows: T[] = [];
+
+  for (let from = 0; ; from += pageSize) {
+    const pageResult = await fetchPage(from, from + pageSize - 1);
+    if (pageResult.error) {
+      return { data: null, error: pageResult.error };
+    }
+
+    const pageRows = pageResult.data ?? [];
+    rows.push(...pageRows);
+
+    if (pageRows.length < pageSize) {
+      return { data: rows, error: null };
+    }
+  }
 }
 
 function logWorkspaceTiming(step: string, startedAt: number, details: Record<string, boolean | number | string> = {}) {
@@ -368,12 +395,13 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       secondaryLoadInFlightRef.current = true;
       const secondaryStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
       const [taskHistoryResult, taskActualTimeEntriesResult, noteResult, historyResult] = await Promise.all([
-        client
+        fetchAllPagedRows<DbTaskHistory>((from, to) => client
           .from("adhdice_task_history")
           .select("*")
           .eq("user_id", userId)
           .order("entry_date", { ascending: false })
-          .order("created_at", { ascending: false }),
+          .order("created_at", { ascending: false })
+          .range(from, to)),
         client
           .from("adhdice_task_actual_time_entries")
           .select("*")

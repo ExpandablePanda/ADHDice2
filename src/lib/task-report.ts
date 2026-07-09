@@ -101,6 +101,15 @@ type DayBreakdown = {
   outcomes: Record<OutcomeLabel, LatestHistoryEntry[]>;
 };
 
+type CompactStatusSummary = {
+  byStatus: Record<string, number>;
+  total: number;
+};
+
+type PriorityStatusSummary = CompactStatusSummary & {
+  priorityLevel: TaskPriorityLevel;
+};
+
 const STATUS_LABELS: Record<TaskStatus, string> = {
   archived: "Archived",
   complete: "Complete",
@@ -197,6 +206,22 @@ function formatTimeOnly(isoString: string | null | undefined) {
   return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
+  }).format(date);
+}
+
+function formatLoggedMoment(isoString: string | null | undefined) {
+  if (!isoString) {
+    return null;
+  }
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
   }).format(date);
 }
 
@@ -513,9 +538,50 @@ function buildTaskSnapshotSections(
   return {
     activeLoadedTaskCount: tasks.filter((task) => task.status !== "trashed").length,
     currentStatusSnapshotCounts,
+    pinnedSummary: buildCompactTaskSummary(workloadTasks, metadataByTaskId, (metadata) => metadata.isPinned),
+    prioritySummaries: buildPriorityStatusSummaries(workloadTasks, metadataByTaskId),
+    routineSummary: buildCompactTaskSummary(workloadTasks, metadataByTaskId, (metadata) => metadata.isRoutine),
     snapshotTaskCount: workloadTasks.length,
     trashedLoadedTaskCount: tasks.filter((task) => task.status === "trashed").length,
   };
+}
+
+function buildCompactTaskSummary(
+  tasks: Task[],
+  metadataByTaskId: Map<string, TaskReportTaskMetadata>,
+  predicate: (metadata: TaskReportTaskMetadata) => boolean,
+): CompactStatusSummary {
+  return tasks.reduce<CompactStatusSummary>((summary, task) => {
+    const metadata = metadataByTaskId.get(task.id);
+    if (!metadata || !predicate(metadata)) {
+      return summary;
+    }
+    summary.total += 1;
+    incrementCount(summary.byStatus, metadata.currentStatusLabel);
+    return summary;
+  }, { byStatus: {}, total: 0 });
+}
+
+function buildPriorityStatusSummaries(tasks: Task[], metadataByTaskId: Map<string, TaskReportTaskMetadata>) {
+  const byPriority = new Map<TaskPriorityLevel, PriorityStatusSummary>();
+
+  for (const task of tasks) {
+    const metadata = metadataByTaskId.get(task.id);
+    if (!metadata?.priorityLevel) {
+      continue;
+    }
+
+    const existing = byPriority.get(metadata.priorityLevel) ?? {
+      byStatus: {},
+      priorityLevel: metadata.priorityLevel,
+      total: 0,
+    };
+    existing.total += 1;
+    incrementCount(existing.byStatus, metadata.currentStatusLabel);
+    byPriority.set(metadata.priorityLevel, existing);
+  }
+
+  return [...byPriority.values()].sort((left, right) => right.priorityLevel - left.priorityLevel);
 }
 
 function buildLatestEntries(entries: TaskHistory[], tasksById: Map<string, Task>, metadataByTaskId: Map<string, TaskReportTaskMetadata>) {
@@ -694,12 +760,27 @@ function formatStatusSnapshotCounts(counts: Record<string, number>) {
   return orderedEntries.map(([label, count]) => `${label} ${count}`).join(", ");
 }
 
+function formatCompactTaskSummaryLine(label: string, summary: CompactStatusSummary) {
+  return `- ${label}: ${summary.total} total${summary.total > 0 ? ` (${formatStatusSnapshotCounts(summary.byStatus)})` : ""}`;
+}
+
 function getHistoryTimestamp(entry: LatestHistoryEntry) {
   return entry.updated_at || entry.created_at || null;
 }
 
 function formatHistoryEntryMoment(entry: LatestHistoryEntry) {
-  const timeLabel = formatTimeOnly(getHistoryTimestamp(entry));
+  const timestamp = getHistoryTimestamp(entry);
+  const timeLabel = formatTimeOnly(timestamp);
+  if (!timestamp) {
+    return formatShortDate(entry.entry_date);
+  }
+  const loggedDateKey = timestamp.slice(0, 10);
+  if (loggedDateKey !== entry.entry_date) {
+    const loggedLabel = formatLoggedMoment(timestamp);
+    return loggedLabel
+      ? `${formatShortDate(entry.entry_date)} (logged ${loggedLabel})`
+      : formatShortDate(entry.entry_date);
+  }
   return timeLabel ? `${formatShortDate(entry.entry_date)} ${timeLabel}` : formatShortDate(entry.entry_date);
 }
 
@@ -853,8 +934,15 @@ function formatDayRow(entry: LatestHistoryEntry) {
   const descriptor = entry.metadata.typeLabel === "Parent"
     ? entry.metadata.typeLabel
     : `${entry.metadata.typeLabel} — ${entry.metadata.pathLabel}`;
-  const timeLabel = formatTimeOnly(getHistoryTimestamp(entry));
-  return `- ${entry.metadata.title} — ${descriptor}${timeLabel ? ` — ${timeLabel}` : ""}`;
+  const timestamp = getHistoryTimestamp(entry);
+  const timeLabel = formatTimeOnly(timestamp);
+  const loggedDateKey = timestamp?.slice(0, 10) ?? null;
+  const timingLabel = !timestamp
+    ? null
+    : loggedDateKey !== entry.entry_date
+      ? `Logged ${formatLoggedMoment(timestamp) ?? timestamp}`
+      : timeLabel;
+  return `- ${entry.metadata.title} — ${descriptor}${timingLabel ? ` — ${timingLabel}` : ""}`;
 }
 
 function formatDayOutcomeGroup(outcomeLabel: OutcomeLabel, entries: LatestHistoryEntry[]) {
@@ -915,6 +1003,9 @@ function generateTaskReport({
     formatOutcomeTotalLine("Complete", history.outcomeTotals.Complete),
     formatOutcomeTotalLine("Missed", history.outcomeTotals.Missed),
     `- Current Status Snapshot: ${formatStatusSnapshotCounts(snapshot.currentStatusSnapshotCounts)}`,
+    ...(snapshot.pinnedSummary.total > 0 ? [formatCompactTaskSummaryLine("Pinned Tasks", snapshot.pinnedSummary)] : []),
+    ...(snapshot.routineSummary.total > 0 ? [formatCompactTaskSummaryLine("Routine Tasks", snapshot.routineSummary)] : []),
+    ...snapshot.prioritySummaries.map((summary) => `- Priority ${summary.priorityLevel}: ${formatStatusSnapshotCounts(summary.byStatus)}`),
     `- Best Completion Day: ${history.topHandledDay ? `${formatDateLabel(history.topHandledDay.dateKey)} (${history.topHandledDay.count} handled)` : "None in selected range"}`,
     `- Highest Missed Day: ${history.highestMissedDay ? `${formatDateLabel(history.highestMissedDay.dateKey)} (${history.highestMissedDay.count} missed)` : "None in selected range"}`,
     `- Repeated Missed Count: ${history.repeatedMissCount}`,
