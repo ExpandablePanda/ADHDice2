@@ -379,6 +379,36 @@ function LinkedTaskPicker({
   );
 }
 
+function PathUnavailableLinkedTaskChip({
+  label,
+  onRemove,
+}: {
+  label: string;
+  onRemove?: () => void;
+}) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1">
+      <span className={LINKED_TASK_UNAVAILABLE_CHIP_CLASS}>
+        {label}
+      </span>
+      {onRemove ? (
+        <button
+          aria-label={`Remove ${label.toLowerCase()}`}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#e2daf8] bg-white text-[#6f57f6] transition hover:border-[#cbbcff] dark:border-white/10 dark:bg-white/[0.05] dark:text-[#cabfff]"
+          data-path-node-control
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+          type="button"
+        >
+          <Unlink className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </span>
+  );
+}
+
 function DropdownField({
   options,
   placeholder,
@@ -518,11 +548,8 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
   } | null>(null);
 
   const todayKey = getLocalPathDateKey();
-  const linkedTasks = useMemo(
+  const allLinkedTasks = useMemo(
     () => Array.from(tasks.reduce<Map<string, LinkedTaskOption>>((taskById, task) => {
-      if (task.trashed_at) {
-        return taskById;
-      }
       taskById.set(task.id, {
         ...task,
         status: taskDisplayStatusByTaskId[task.id] ?? task.status,
@@ -532,9 +559,13 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
       .sort((left, right) => left.title.localeCompare(right.title)),
     [taskDisplayStatusByTaskId, tasks],
   );
+  const linkedTasks = useMemo(
+    () => allLinkedTasks.filter((task) => !task.trashed_at),
+    [allLinkedTasks],
+  );
   const linkedTaskById = useMemo(
-    () => new Map(linkedTasks.map((task) => [task.id, task])),
-    [linkedTasks],
+    () => new Map(allLinkedTasks.map((task) => [task.id, task])),
+    [allLinkedTasks],
   );
 
   useEffect(() => {
@@ -1372,15 +1403,18 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                           </div>
                           {expandedLinkedTasks && linkedTaskCount > 0 ? (
                             <AdhdDropdownPanel className={`left-3 right-3 top-[calc(100%+8px)] ${LINKED_TASK_LIST_PANEL_CLASS}`} widthClassName="">
-                              {linkedTasksForNode.map((task, index) => (
-                                task ? (
-                                  <PathLinkedTaskPill key={node.linkedTaskIds[index]} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} />
+                              {linkedTasksForNode.map((task, index) => {
+                                const taskId = node.linkedTaskIds[index] ?? "";
+                                return task && !task.trashed_at ? (
+                                  <PathLinkedTaskPill key={taskId} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} />
                                 ) : (
-                                  <span className={LINKED_TASK_UNAVAILABLE_CHIP_CLASS} key={node.linkedTaskIds[index]}>
-                                    Linked task unavailable
-                                  </span>
-                                )
-                              ))}
+                                  <PathUnavailableLinkedTaskChip
+                                    key={taskId}
+                                    label={task?.trashed_at ? "Linked task trashed" : "Linked task unavailable"}
+                                    onRemove={() => { void updateNode(node.id, { linkedTaskIds: node.linkedTaskIds.filter((id) => id !== taskId) }); }}
+                                  />
+                                );
+                              })}
                             </AdhdDropdownPanel>
                           ) : null}
                           {NODE_HANDLE_SIDES.map((side) => (
@@ -1611,29 +1645,29 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                         />
                         {selectedNode.linkedTaskIds.length > 0 ? (
                           <div className="flex flex-wrap gap-2">
-                            {selectedNode.linkedTaskIds.map((taskId) => linkedTaskById.get(taskId) ? (
+                            {selectedNode.linkedTaskIds.map((taskId) => {
+                              const linkedTask = linkedTaskById.get(taskId);
+                              return linkedTask && !linkedTask.trashed_at ? (
                               <div className="flex max-w-full items-center gap-1" key={taskId}>
                                 <div className="max-w-full">
                                   <PathLinkedTaskPill
                                     onOpenTask={onOpenTask}
                                     onSetTaskStatus={onSetTaskStatus}
-                                    task={linkedTaskById.get(taskId)!}
+                                    task={linkedTask}
                                   />
                                 </div>
                                 <IconButton ariaLabel="Remove linked task" onClick={() => { void updateNode(selectedNode.id, { linkedTaskIds: selectedNode.linkedTaskIds.filter((id) => id !== taskId) }); }}>
                                   <Unlink className="h-3.5 w-3.5" />
                                 </IconButton>
                               </div>
-                            ) : (
-                              <div className="inline-flex items-center gap-1" key={taskId}>
-                                <span className={LINKED_TASK_UNAVAILABLE_CHIP_CLASS}>
-                                  Linked task unavailable
-                                </span>
-                                <IconButton ariaLabel="Remove unavailable linked task" onClick={() => { void updateNode(selectedNode.id, { linkedTaskIds: selectedNode.linkedTaskIds.filter((id) => id !== taskId) }); }}>
-                                  <Unlink className="h-3.5 w-3.5" />
-                                </IconButton>
-                              </div>
-                            ))}
+                              ) : (
+                                <PathUnavailableLinkedTaskChip
+                                  key={taskId}
+                                  label={linkedTask?.trashed_at ? "Linked task trashed" : "Linked task unavailable"}
+                                  onRemove={() => { void updateNode(selectedNode.id, { linkedTaskIds: selectedNode.linkedTaskIds.filter((id) => id !== taskId) }); }}
+                                />
+                              );
+                            })}
                           </div>
                         ) : null}
                         <div className="space-y-2">

@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-07-08
+Last reviewed: 2026-07-09
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.24.7`.
+- Current working app version: `6.24.8`.
 - Current release group: `6.24.x` task priority, Home queue, and List View regression cleanup pass.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,9 @@ Role: active working
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
 ## 6.24 Checkpoint
+- `6.24.8` fixes the remaining PATHS linked-task search bug: PATHS linked-task candidate search now excludes tasks with `trashed_at` across title, note, and tag matching, while saved linked ids pointing at trashed tasks are preserved and render as unavailable/trashed with a remove control instead of normal clickable task pills. PATHS stays local-first and task-reference-only; Reports, Focus, task-history pagination/loading, Supabase persistence, endpoint connections, and top-right Connect behavior remain unchanged.
+- Checks run for `6.24.8`: `git diff --check`; targeted `npx eslint src/components/task-app/paths-workspace.tsx src/components/task-app.tsx` was attempted and still reports existing React Compiler/ref lint blockers plus existing unused warnings in those files.
+- Not tested for `6.24.8`: manual PATHS browser/touch QA, broader lint/build/typecheck passes, Reports, Focus, task-history loading, Supabase persistence, and `test/paths-domain.test.ts` because `src/lib/paths-domain.ts` was unchanged.
 - `6.24.7` fixes the Task History Calendar/streak regression caused by capped workspace history loading: `useWorkspaceData` now paginates all `adhdice_task_history` rows with stable `entry_date` descending / `created_at` descending ordering, so calendar, streak, and report consumers can receive the full loaded history instead of only the newest capped response. No schema change, database mutation, title-based merge, task lineage work, PATHS change, Focus change, or task-history semantics change was included.
 - Checks run for `6.24.7`: `git diff --check`; `node --import ./test/register-alias.mjs --experimental-strip-types --test test/workspace-data.test.ts`; targeted `npx eslint src/hooks/useWorkspaceData.ts test/workspace-data.test.ts` completed with the existing `useWorkspaceData` hook dependency warning and no errors.
 - Not tested for `6.24.7`: live Supabase fetch against the user account, manual Appanda calendar QA, broader lint/build/typecheck passes, PATHS, Focus, and full Reports export QA.
