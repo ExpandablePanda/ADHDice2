@@ -13,10 +13,11 @@ import {
   resolveTaskReportHistoryFetchRange,
   TASK_REPORT_DETAIL_OPTIONS,
   TASK_REPORT_RANGE_OPTIONS,
+  type TaskReportCustomRange,
   type TaskReportDetailLevel,
   type TaskReportRangeId,
 } from "@/lib/task-report";
-import { TASK_TABLE_BODY_VALUE_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
+import { TASK_TABLE_BODY_VALUE_CLASS, TASK_TABLE_INPUT_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
 
 type TaskReportWorkspaceProps = {
   appVersion: string;
@@ -49,17 +50,19 @@ async function fetchTaskReportHistoryForRange({
   rangeId,
   todayDateKey,
   userId,
+  customRange,
 }: {
   rangeId: TaskReportRangeId;
   todayDateKey: string;
   userId: string;
+  customRange?: TaskReportCustomRange | null;
 }) {
   const client = createBrowserSupabaseClient();
   if (!client) {
     throw new Error("Supabase client is unavailable.");
   }
 
-  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey);
+  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
   const fullHistory: TaskHistory[] = [];
   let offset = 0;
 
@@ -100,17 +103,19 @@ async function fetchFocusReportHistoryForRange({
   rangeId,
   todayDateKey,
   userId,
+  customRange,
 }: {
   rangeId: TaskReportRangeId;
   todayDateKey: string;
   userId: string;
+  customRange?: TaskReportCustomRange | null;
 }) {
   const client = createBrowserSupabaseClient();
   if (!client) {
     throw new Error("Supabase client is unavailable.");
   }
 
-  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey);
+  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
   const fullHistory: HistoricalFocusSession[] = [];
   let offset = 0;
 
@@ -151,17 +156,19 @@ async function fetchFocusDailyGoalAdjustmentsForRange({
   rangeId,
   todayDateKey,
   userId,
+  customRange,
 }: {
   rangeId: TaskReportRangeId;
   todayDateKey: string;
   userId: string;
+  customRange?: TaskReportCustomRange | null;
 }) {
   const client = createBrowserSupabaseClient();
   if (!client) {
     throw new Error("Supabase client is unavailable.");
   }
 
-  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey);
+  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
   const fullAdjustments: FocusDailyGoalAdjustment[] = [];
   let offset = 0;
 
@@ -211,6 +218,10 @@ export function TaskReportWorkspace({
   userId,
 }: TaskReportWorkspaceProps) {
   const [rangeId, setRangeId] = useState<TaskReportRangeId>("last7");
+  const [customRange, setCustomRange] = useState<TaskReportCustomRange>({
+    endDateKey: todayDateKey,
+    startDateKey: todayDateKey,
+  });
   const [detailLevel, setDetailLevel] = useState<TaskReportDetailLevel>("summary");
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
@@ -246,16 +257,19 @@ export function TaskReportWorkspace({
       try {
         const [fullHistory, fullFocusHistory, fullAdjustments] = await Promise.all([
           fetchTaskReportHistoryForRange({
+            customRange,
             rangeId,
             todayDateKey,
             userId,
           }),
           fetchFocusReportHistoryForRange({
+            customRange,
             rangeId,
             todayDateKey,
             userId,
           }),
           fetchFocusDailyGoalAdjustmentsForRange({
+            customRange,
             rangeId,
             todayDateKey,
             userId,
@@ -297,7 +311,7 @@ export function TaskReportWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [focusDailyGoalAdjustments, focusHistory, rangeId, taskHistory, todayDateKey, userId]);
+  }, [customRange, focusDailyGoalAdjustments, focusHistory, rangeId, taskHistory, todayDateKey, userId]);
 
   const reportMarkdown = useMemo(
     () => generateTaskReport({
@@ -311,12 +325,13 @@ export function TaskReportWorkspace({
       historySourceLabel: reportHistoryState.sourceLabel,
       historyWarning: reportHistoryState.warning,
       listMembershipsByTaskId,
+      customRange: rangeId === "custom" ? customRange : null,
       rangeId,
       taskHistory: reportHistoryState.history,
       tasks,
       todayDateKey,
     }),
-    [appVersion, availableTaskLists, detailLevel, focusCategories, listMembershipsByTaskId, rangeId, reportHistoryState, tasks, todayDateKey],
+    [appVersion, availableTaskLists, customRange, detailLevel, focusCategories, listMembershipsByTaskId, rangeId, reportHistoryState, tasks, todayDateKey],
   );
 
   async function handleCopyReport() {
@@ -364,6 +379,26 @@ export function TaskReportWorkspace({
               </TaskTableChipButton>
             ))}
           </div>
+          {rangeId === "custom" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                aria-label="Report custom range start"
+                className={`${TASK_TABLE_INPUT_CLASS} h-8 w-[9.5rem] rounded-full py-1 text-[13px]`}
+                max={customRange.endDateKey || undefined}
+                onChange={(event) => setCustomRange((current) => ({ ...current, startDateKey: event.target.value || current.startDateKey }))}
+                type="date"
+                value={customRange.startDateKey}
+              />
+              <input
+                aria-label="Report custom range end"
+                className={`${TASK_TABLE_INPUT_CLASS} h-8 w-[9.5rem] rounded-full py-1 text-[13px]`}
+                min={customRange.startDateKey || undefined}
+                onChange={(event) => setCustomRange((current) => ({ ...current, endDateKey: event.target.value || current.endDateKey }))}
+                type="date"
+                value={customRange.endDateKey}
+              />
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-col items-stretch gap-2 sm:items-end">
           <TaskTableChipButton className="gap-1.5" disabled={isLoadingHistory} onClick={() => { void handleCopyReport(); }} toneClassName={REPORT_ACTIVE_CHIP_CLASS}>

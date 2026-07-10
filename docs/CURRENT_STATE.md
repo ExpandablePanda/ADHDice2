@@ -5,13 +5,19 @@ Last reviewed: 2026-07-09
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.24.8`.
-- Current release group: `6.24.x` task priority, Home queue, and List View regression cleanup pass.
+- Current working app version: `6.25.7`.
+- Current release group: `6.25.x` focused stabilization pass.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 6.25 Checkpoint
+- `6.25.7` fixes the chip-first workspace tab action regressions without reopening the old icon-heavy rail: tab chips still drag directly for persisted reorder, double-click now enters the existing inline rename path for active or inactive tabs, and the active tab `...` menu now opens as a compact anchored popover with Rename and Close that closes on outside click, Escape, or action selection. Inbox, Focus, Reports, Priority 0, manual lists, table/list task rows, PATHS, and unrelated task behavior remain unchanged.
+- `6.25.6` replaces the always-visible workspace-tab drag, rename, and close micro-controls with a quieter chip-first tab rail: each tab chip now drags directly for reorder, inactive-tab clicks stay dedicated to tab switching, and only the active tab exposes a compact actions menu for Rename and Close while preserving the existing rename input path, close semantics, and persisted internal tab order. Focus crash/search guards, Inbox, Priority 0, Reports, manual lists, table/list task rows, PATHS, and unrelated UI systems remain unchanged.
+- `6.25.3` is an integrated cleanup pass for unresolved 6.25.x QA: Inbox saved-rule membership no longer lets priority smart-list membership hide otherwise eligible Inbox tasks, Focus Activity headline totals exclude Sleep while retaining Sleep bars, mobile Countdown custom values have an explicit Start action, Reports support custom date ranges, task workspace tabs use drag reorder, manual rule-free lists can add existing active tasks in-list, and Priority 0 is wired through app/domain surfaces with a Supabase migration (`supabase/add_task_priority_zero.sql`) required before deployed database writes can use it. Expanded one-click Table/List status mode was deferred because the current Table/List status paths are separate and scroll-anchor-sensitive.
+- `6.25.2` is a narrow report/history correction pass: `All available` report ranges now include focus-goal reallocation-only days when deriving exported Focus Report bounds, and task history/report timestamp wording now treats `created_at` as the logged time while labeling later `updated_at` values as edited timestamps instead of logged timestamps. PATHS, Inbox/list membership, Focus Activity sleep-total behavior, priority defaults, reports custom ranges, task-history mutation semantics, and database schema remain unchanged.
 
 ## 6.24 Checkpoint
 - `6.24.8` fixes the remaining PATHS linked-task search bug: PATHS linked-task candidate search now excludes tasks with `trashed_at` across title, note, and tag matching, while saved linked ids pointing at trashed tasks are preserved and render as unavailable/trashed with a remove control instead of normal clickable task pills. PATHS stays local-first and task-reference-only; Reports, Focus, task-history pagination/loading, Supabase persistence, endpoint connections, and top-right Connect behavior remain unchanged.

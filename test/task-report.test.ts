@@ -4,7 +4,7 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import { getBuiltInTaskLists, type TaskListMembership } from "../src/lib/task-lists.ts";
 import { generateTaskReport } from "../src/lib/task-report.ts";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
-import type { FocusCategory, HistoricalFocusSession } from "../src/lib/types.ts";
+import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "../src/lib/types.ts";
 
 function createHistoryEntry(params: Partial<TaskHistory> & Pick<TaskHistory, "entry_date" | "id" | "status" | "task_id">): TaskHistory {
   return {
@@ -49,6 +49,22 @@ function createFocusSession(overrides: Partial<HistoricalFocusSession> = {}): Hi
     id: "focus-session-1",
     notes: "Heads-down sprint",
     title: "Morning sprint",
+    ...overrides,
+  };
+}
+
+function createFocusAdjustment(overrides: Partial<FocusDailyGoalAdjustment> = {}): FocusDailyGoalAdjustment {
+  return {
+    adjustmentDate: "2026-06-30",
+    createdAt: "2026-06-30T12:30:00.000Z",
+    id: "focus-adjustment-1",
+    reason: "manual_reallocation",
+    reductionSeconds: 900,
+    sourceCategoryId: "focus-category-1",
+    sourceSessionId: null,
+    targetCategoryId: "focus-category-1",
+    updatedAt: "2026-06-30T12:30:00.000Z",
+    userId: "test-user",
     ...overrides,
   };
 }
@@ -401,7 +417,44 @@ test("report distinguishes credited history day from the real logged timestamp",
   });
 
   assert.match(report, /History: Done: Jul 8 \(logged /);
-  assert.match(report, /Logged /);
+  assert.doesNotMatch(report, /Edited /);
+});
+
+test("report labels edited history timestamps separately from logged timestamps", () => {
+  const editedTask = createTask({
+    created_at: "2026-07-08T08:00:00.000Z",
+    id: "edited-history-task",
+    sort_order: 1,
+    status: "pending",
+    title: "Edited history task",
+  });
+
+  const report = generateTaskReport({
+    appVersion: "6.25.2",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "detailed",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-09T15:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "last7",
+    taskHistory: [
+      createHistoryEntry({
+        created_at: "2026-07-09T01:15:00.000Z",
+        entry_date: "2026-07-08",
+        id: "edited-history-task-done",
+        status: "done",
+        task_id: editedTask.id,
+        updated_at: "2026-07-09T13:30:00.000Z",
+      }),
+    ],
+    tasks: [editedTask],
+    todayDateKey: "2026-07-09",
+  });
+
+  assert.match(report, /History: Done: Jul 8 \(logged /);
+  assert.match(report, /Edited /);
 });
 
 test("report status snapshot and task status lines use the passed history source", () => {
@@ -495,7 +548,7 @@ test("report includes focus goals and selected-range focus sessions", () => {
   assert.doesNotMatch(report, /Old session/);
 });
 
-test("all range uses the union of task history and focus session dates", () => {
+test("all range uses the union of task history, focus session, and adjustment dates", () => {
   const recurringTask = createTask({
     created_at: "2026-06-20T09:00:00.000Z",
     id: "focus-all-range-task",
@@ -510,6 +563,14 @@ test("all range uses the union of task history and focus session dates", () => {
     availableTaskLists: getBuiltInTaskLists(),
     detailLevel: "summary",
     focusCategories: [createFocusCategory()],
+    focusDailyGoalAdjustments: [
+      createFocusAdjustment({
+        adjustmentDate: "2026-06-05",
+        id: "focus-adjustment-earliest",
+        sourceCategoryId: "focus-category-1",
+        targetCategoryId: "focus-category-1",
+      }),
+    ],
     focusHistory: [
       createFocusSession({
         createdAt: "2026-06-10T12:00:00.000Z",
@@ -542,9 +603,52 @@ test("all range uses the union of task history and focus session dates", () => {
     todayDateKey: "2026-06-30",
   });
 
-  assert.match(report, /Selected Date Range: All available \(Jun 10, 2026 to Jun 30, 2026\)/);
+  assert.match(report, /Selected Date Range: All available \(Jun 5, 2026 to Jun 30, 2026\)/);
   assert.match(report, /Earlier focus session/);
   assert.match(report, /Later focus session/);
+  assert.match(report, /#### 2026-06-05/);
+});
+
+test("custom range filters task and focus report data through the selected dates", () => {
+  const task = createTask({
+    created_at: "2026-06-20T09:00:00.000Z",
+    id: "custom-range-task",
+    sort_order: 1,
+    status: "pending",
+    title: "Custom range task",
+  });
+
+  const report = generateTaskReport({
+    appVersion: "6.25.3",
+    availableTaskLists: getBuiltInTaskLists(),
+    customRange: {
+      endDateKey: "2026-06-20",
+      startDateKey: "2026-06-10",
+    },
+    detailLevel: "summary",
+    focusCategories: [createFocusCategory()],
+    focusDailyGoalAdjustments: [],
+    focusHistory: [
+      createFocusSession({ date: "2026-06-15", id: "focus-in-custom-range", title: "Inside focus" }),
+      createFocusSession({ date: "2026-06-22", id: "focus-out-custom-range", title: "Outside focus" }),
+    ],
+    generatedAt: new Date("2026-06-30T15:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "custom",
+    taskHistory: [
+      createHistoryEntry({ entry_date: "2026-06-15", id: "history-in-custom-range", status: "done", task_id: task.id }),
+      createHistoryEntry({ entry_date: "2026-06-22", id: "history-out-custom-range", status: "missed", task_id: task.id }),
+    ],
+    tasks: [task],
+    todayDateKey: "2026-06-30",
+  });
+
+  assert.match(report, /Selected Date Range: Custom range \(Jun 10, 2026 to Jun 20, 2026\)/);
+  assert.match(report, /Inside focus/);
+  assert.doesNotMatch(report, /Outside focus/);
+  assert.match(report, /Done: 1 Parents, 0 Steps\/Substeps, 1 Total/);
+  assert.doesNotMatch(report, /Missed: 1 Parents/);
 });
 
 test("focus duration labels stay carry-safe near hour boundaries", () => {

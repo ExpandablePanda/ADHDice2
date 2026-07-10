@@ -16,7 +16,6 @@ import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import {
   ACTIVE_PAGE_STORAGE_KEY,
   DAILY_PLANNING_COLLAPSED_STORAGE_KEY,
-  DEFAULT_TASK_UI_STATE,
   DEFAULT_TASK_WORKSPACE_TABS_STATE,
   getUserScopedStorageKey,
   HUD_UI_STORAGE_KEY,
@@ -25,6 +24,8 @@ import {
   normalizeTaskWorkspaceTabsState,
   normalizePersistedTaskEditorUiState,
   parseStoredJson,
+  reorderTaskWorkspaceTabToIndex,
+  reorderTaskWorkspaceTabs,
   TASK_EDITOR_UI_STORAGE_KEY,
   TASK_FILTERS_OPEN_STORAGE_KEY,
   TASK_FOCUS_STORAGE_KEY,
@@ -513,6 +514,14 @@ export function useTaskUiState<TTaskGridItem>({
     }));
   }, []);
 
+  const moveTaskWorkspaceTab = useCallback((tabId: string, direction: -1 | 1) => {
+    setTaskWorkspaceTabsState((current) => reorderTaskWorkspaceTabs(current, tabId, direction));
+  }, []);
+
+  const reorderTaskWorkspaceTab = useCallback((tabId: string, targetIndex: number) => {
+    setTaskWorkspaceTabsState((current) => reorderTaskWorkspaceTabToIndex(current, tabId, targetIndex));
+  }, []);
+
   useEffect(() => {
     if (hudCloudWriteTimeoutRef.current !== null) {
       window.clearTimeout(hudCloudWriteTimeoutRef.current);
@@ -763,7 +772,9 @@ export function useTaskUiState<TTaskGridItem>({
     activeTaskWorkspaceTab,
     closeTaskWorkspaceTab,
     createTaskWorkspaceTab,
+    moveTaskWorkspaceTab,
     renameTaskWorkspaceTab,
+    reorderTaskWorkspaceTab,
     setActivePage,
     setActiveTaskWorkspaceTab,
     setFocusedTaskIdsByDate,

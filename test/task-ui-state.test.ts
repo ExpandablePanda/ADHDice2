@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizePersistedTaskEditorUiState, normalizeTaskWorkspaceTabsState } from "../src/lib/task-ui-state.ts";
+import { DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizePersistedTaskEditorUiState, normalizeTaskWorkspaceTabsState, reorderTaskWorkspaceTabToIndex, reorderTaskWorkspaceTabs } from "../src/lib/task-ui-state.ts";
 
 test("task ui state migration repairs missing newer columns", () => {
   const migrated = migrateLegacyTaskUiState({
@@ -166,4 +166,52 @@ test("report workspace tabs are identified by their active surface", () => {
       tasksSurface: "tasks",
     },
   }), false);
+});
+
+test("task workspace tab reorder preserves active tab id", () => {
+  const state = normalizeTaskWorkspaceTabsState({
+    activeTabId: "workspace-2",
+    tabs: [
+      {
+        id: "workspace-1",
+        isRailHidden: false,
+        kind: "tasks",
+        label: "Tab 1",
+        taskUiState: DEFAULT_TASK_UI_STATE,
+      },
+      {
+        id: "workspace-2",
+        isRailHidden: true,
+        kind: "tasks",
+        label: "Tab 2",
+        taskUiState: {
+          ...DEFAULT_TASK_UI_STATE,
+          selectedBucket: "focus",
+        },
+      },
+      {
+        id: "workspace-3",
+        isRailHidden: false,
+        kind: "tasks",
+        label: "Tab 3",
+        taskUiState: {
+          ...DEFAULT_TASK_UI_STATE,
+          selectedBucket: "priority_5",
+        },
+      },
+    ],
+  });
+
+  const movedLeft = reorderTaskWorkspaceTabs(state, "workspace-2", -1);
+  assert.deepEqual(movedLeft.tabs.map((tab) => tab.id), ["workspace-2", "workspace-1", "workspace-3"]);
+  assert.equal(movedLeft.activeTabId, "workspace-2");
+
+  const movedRight = reorderTaskWorkspaceTabs(movedLeft, "workspace-2", 1);
+  assert.deepEqual(movedRight.tabs.map((tab) => tab.id), ["workspace-1", "workspace-2", "workspace-3"]);
+  assert.equal(movedRight.activeTabId, "workspace-2");
+  assert.equal(reorderTaskWorkspaceTabs(movedRight, "workspace-1", -1), movedRight);
+
+  const draggedToEnd = reorderTaskWorkspaceTabToIndex(state, "workspace-1", 2);
+  assert.deepEqual(draggedToEnd.tabs.map((tab) => tab.id), ["workspace-2", "workspace-3", "workspace-1"]);
+  assert.equal(draggedToEnd.activeTabId, "workspace-2");
 });

@@ -414,7 +414,6 @@ export function evaluateTaskListMemberships(
   }
 
   const manualRuleMembershipCount = memberships.size;
-  let hasNonInboxRuleMatch = false;
   const ruleEvaluationStartedAt = canMeasure ? performance.now() : 0;
   for (const list of lookup.ruleLists) {
     if (list.id === "inbox") {
@@ -422,7 +421,6 @@ export function evaluateTaskListMemberships(
     }
     const current = memberships.get(list.id);
     if (matchesSpecificListRuleMembership(task, list, lists, context, new Set(), evaluationCache, lookup)) {
-      hasNonInboxRuleMatch = true;
       memberships.set(list.id, {
         id: list.id,
         isManual: current?.isManual ?? false,
@@ -439,7 +437,7 @@ export function evaluateTaskListMemberships(
   }
 
   const inboxCheckStartedAt = canMeasure ? performance.now() : 0;
-  if (shouldAppearInInbox(task, lists, memberships, context, new Set(["inbox"]), evaluationCache, lookup, hasNonInboxRuleMatch)) {
+  if (shouldAppearInInbox(task, lists, memberships, context, new Set(["inbox"]), evaluationCache, lookup)) {
     const current = memberships.get("inbox");
     memberships.set("inbox", {
       id: "inbox",
@@ -552,11 +550,9 @@ function shouldAppearInInbox(
   visitedListIds: Set<TaskListId> = new Set(),
   evaluationCache: Map<string, boolean> = new Map(),
   lookup: TaskListLookup = buildTaskListLookup(lists),
-  hasNonInboxRuleMatch?: boolean,
 ) {
   return matchesInboxMembership(task, lists, context, {
     evaluationCache,
-    hasNonInboxRuleMatch,
     lookup,
     visitedListIds,
   });
@@ -816,14 +812,12 @@ function matchesInboxMembership(
   context: TaskListEvaluationContext,
   options: {
     evaluationCache?: Map<string, boolean>;
-    hasNonInboxRuleMatch?: boolean;
     lookup?: TaskListLookup;
     visitedListIds?: Set<TaskListId>;
   } = {},
 ) {
   const {
     evaluationCache = new Map<string, boolean>(),
-    hasNonInboxRuleMatch,
     lookup = buildTaskListLookup(lists),
     visitedListIds = new Set<TaskListId>(),
   } = options;
@@ -834,14 +828,6 @@ function matchesInboxMembership(
 
   const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
   if (manualListIds.length > 0) {
-    return false;
-  }
-
-  const matchesBuiltInInbox = hasNonInboxRuleMatch
-    ?? lookup.nonInboxRuleLists.some((list) =>
-      matchesSpecificListRuleMembership(task, list, lists, context, visitedListIds, evaluationCache, lookup),
-    );
-  if (matchesBuiltInInbox) {
     return false;
   }
 

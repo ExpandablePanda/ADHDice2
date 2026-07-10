@@ -106,6 +106,7 @@ import {
   ScrollUpButton,
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_CHIP_BASE_CLASS,
+  TASK_TABLE_INPUT_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
@@ -475,7 +476,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.24.8";
+const APP_VERSION = "6.25.7";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -934,7 +935,7 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
     { label: "isn't", value: "is_not" },
   ],
 };
-const priorityOptions: TaskPriorityLevelOption[] = ["1", "2", "3", "4", "5"];
+const priorityOptions: TaskPriorityLevelOption[] = ["0", "1", "2", "3", "4", "5"];
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
 const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "delayed", "done", "did_my_best", "missed", "complete", "upcoming", "not_due", "archived", "trashed"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
@@ -1115,6 +1116,7 @@ export function TaskApp() {
     isTaskFiltersOpen,
     pendingTaskEditorRestore,
     renameTaskWorkspaceTab,
+    reorderTaskWorkspaceTab,
     setActivePage,
     setActiveTaskWorkspaceTab,
     setFocusedTaskIdsByDate,
@@ -2513,6 +2515,30 @@ export function TaskApp() {
     }
     return availableTaskLists.find((list) => list.id === taskUiState.selectedBucket)?.name ?? taskUiState.selectedBucket;
   }, [availableTaskLists, taskUiState.selectedBucket]);
+  const selectedManualList = useMemo(
+    () => availableTaskLists.find((list) =>
+      list.id === taskUiState.selectedBucket
+      && list.membershipMode === "manual"
+      && !list.rules,
+    ) ?? null,
+    [availableTaskLists, taskUiState.selectedBucket],
+  );
+  const [manualListAddTaskSearch, setManualListAddTaskSearch] = useState("");
+  const manualListAddTaskMatches = useMemo(() => {
+    if (!selectedManualList) {
+      return [];
+    }
+    const normalizedSearch = manualListAddTaskSearch.trim().toLowerCase();
+    return activeTasks
+      .filter((task) =>
+        isTaskOpen(task)
+        && task.status !== "archived"
+        && task.status !== "trashed"
+        && !(manualMembershipsByTaskId[task.id] ?? []).includes(selectedManualList.id)
+        && (!normalizedSearch || task.title.toLowerCase().includes(normalizedSearch))
+      )
+      .slice(0, 6);
+  }, [activeTasks, manualListAddTaskSearch, manualMembershipsByTaskId, selectedManualList]);
   const [tableVisibleSearchMatchIds, setTableVisibleSearchMatchIds] = useState<string[] | null>(null);
   const [statusChangeScrollAnchor, setStatusChangeScrollAnchor] = useState<StatusChangeScrollAnchorState | null>(null);
   const handleTableVisibleSearchMatchIdsChange = useCallback((taskIds: string[]) => {
@@ -3004,7 +3030,7 @@ export function TaskApp() {
     },
   });
   const applyTaskPriorityChange = useCallback((taskId: string, priorities: TaskPriorityLevelOption[]) => {
-    const nextPriorityLevel = priorities[0] ? Number.parseInt(priorities[0], 10) as 1 | 2 | 3 | 4 | 5 : 3;
+    const nextPriorityLevel = priorities[0] ? Number.parseInt(priorities[0], 10) as 0 | 1 | 2 | 3 | 4 | 5 : 0;
     void updateTask(taskId, {
       ...buildTaskPriorityUpdate(nextPriorityLevel),
     });
@@ -3087,7 +3113,7 @@ export function TaskApp() {
       external_link_url: null,
       notes: null,
       one_step_at_a_time: false,
-      ...buildTaskPriorityUpdate(3),
+      ...buildTaskPriorityUpdate(0),
       repeat_day_of_month: null,
       repeat_days_of_week: [],
       repeat_frequency: "none",
@@ -3175,7 +3201,7 @@ export function TaskApp() {
       estimatedMinutes: template.estimatedMinutes ? String(template.estimatedMinutes) : "",
       focusToday: false,
       notes: template.notes,
-      priorityLevel: "3",
+      priorityLevel: "0",
       repeatDayOfMonth: template.repeatDayOfMonth ? String(template.repeatDayOfMonth) : "",
       repeatDaysOfWeek: template.repeatDaysOfWeek,
       repeatFrequency: template.repeatFrequency,
@@ -4635,6 +4661,32 @@ export function TaskApp() {
         selectedStatuses={taskUiState.statusFilters}
         selectedEnergies={taskUiState.energyFilters}
       />
+      {selectedManualList ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
+          <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+          <input
+            className={`${TASK_TABLE_INPUT_CLASS} h-8 min-w-[12rem] flex-1 rounded-full py-1 text-[13px]`}
+            onChange={(event) => setManualListAddTaskSearch(event.target.value)}
+            placeholder={`Add existing task to ${selectedManualList.name}`}
+            value={manualListAddTaskSearch}
+          />
+          {manualListAddTaskMatches.map((task) => (
+            <TaskTableChipButton
+              key={task.id}
+              onClick={() => {
+                void toggleTaskManualListMembership(task.id, selectedManualList.id);
+                setManualListAddTaskSearch("");
+              }}
+              toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+            >
+              Add {task.title}
+            </TaskTableChipButton>
+          ))}
+          {manualListAddTaskSearch.trim() && manualListAddTaskMatches.length === 0 ? (
+            <span className="text-xs font-medium text-[#8a93aa] dark:text-white/45">No active tasks found</span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
   const listPanelProps = {
@@ -5013,6 +5065,7 @@ export function TaskApp() {
               },
             })}
             onCloseTab={closeTaskWorkspaceTab}
+            onReorderTab={reorderTaskWorkspaceTab}
             onRenameTab={handleRenameTaskWorkspaceTab}
             onSurfaceChange={handleTaskWorkspaceSurfaceChange}
             onTabChange={setActiveTaskWorkspaceTab}

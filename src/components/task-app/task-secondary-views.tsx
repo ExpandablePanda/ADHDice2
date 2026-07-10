@@ -95,7 +95,7 @@ export function TaskComposerCardComponent({
 }) {
   const [title, setTitle] = useState("");
   const [focusToday, setFocusToday] = useState(false);
-  const [priorityLevel, setPriorityLevel] = useState<TaskPriorityLevelOption>("3");
+  const [priorityLevel, setPriorityLevel] = useState<TaskPriorityLevelOption>("0");
   const [energy, setEnergy] = useState<TaskEnergy>("none");
   const [dueOn, setDueOn] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -117,7 +117,7 @@ export function TaskComposerCardComponent({
           await onAdd({
             focusToday,
             values: {
-              ...buildTaskPriorityUpdate(Number.parseInt(priorityLevel, 10) as 1 | 2 | 3 | 4 | 5),
+              ...buildTaskPriorityUpdate(Number.parseInt(priorityLevel, 10) as 0 | 1 | 2 | 3 | 4 | 5),
               title: trimmedTitle,
               energy,
               due_on: dueOn || null,

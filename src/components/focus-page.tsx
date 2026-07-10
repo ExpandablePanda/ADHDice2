@@ -456,6 +456,13 @@ export function FocusPage({
             Edit Categories
           </button>
           <button
+            className="ui-pill-button-light transition hover:-translate-y-0.5 dark:rounded-full dark:bg-white/5 dark:text-[#cabfff]"
+            onClick={() => setShowGoalsEditor(true)}
+            type="button"
+          >
+            Edit Goals
+          </button>
+          <button
             className="ui-pill-button-strong-light transition hover:-translate-y-0.5 dark:rounded-full dark:bg-[#cabfff] dark:text-[#1a1431]"
             onClick={() => setShowManualEntry(true)}
             type="button"

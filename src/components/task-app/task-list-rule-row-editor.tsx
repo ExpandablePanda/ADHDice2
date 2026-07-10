@@ -90,7 +90,7 @@ export function TaskListRuleRowEditor({
         value: option,
       }))
       : rule.field === "priority_level"
-        ? ["1", "2", "3", "4", "5"].map((option) => ({
+        ? ["0", "1", "2", "3", "4", "5"].map((option) => ({
           label: option,
           value: option,
         }))

@@ -7,6 +7,7 @@ import {
   TaskTableChipButton,
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
+import { isSleepCategory } from "@/lib/focus-goals";
 import { type FocusCategory, type HistoricalFocusSession, type FocusLabelOptions, type FocusSubtype, type FocusType } from "@/lib/types";
 import { formatLocalDate } from "@/lib/utils";
 
@@ -36,6 +37,7 @@ type PeriodStats = {
   actualByCategory: Record<string, number>;
   averageSessionSeconds: number;
   goalCompletionRate: number | null;
+  headlineTotalSeconds: number;
   sessions: HistoricalFocusSession[];
   topCategory: { category: FocusCategory; seconds: number } | null;
   totalSeconds: number;
@@ -392,12 +394,18 @@ function getGoalCompletionRate(categories: FocusCategory[], actualByCategory: Re
 }
 
 function getPeriodStats(categories: FocusCategory[], sessions: HistoricalFocusSession[], scope: TimeScope, currentDate: string): PeriodStats {
+  const categoryById = new Map(categories.map((category) => [category.id, category]));
   const totalSeconds = sessions.reduce((sum, session) => sum + session.durationSeconds, 0);
+  const headlineTotalSeconds = sessions.reduce((sum, session) => {
+    const category = session.categoryId ? categoryById.get(session.categoryId) : null;
+    return category && isSleepCategory(category) ? sum : sum + session.durationSeconds;
+  }, 0);
   const actualByCategory = getActualByCategory(sessions);
   return {
     actualByCategory,
     averageSessionSeconds: sessions.length > 0 ? Math.round(totalSeconds / sessions.length) : 0,
     goalCompletionRate: getGoalCompletionRate(categories, actualByCategory, scope, currentDate),
+    headlineTotalSeconds,
     sessions,
     topCategory: getTopCategory(categories, actualByCategory),
     totalSeconds,
@@ -1018,8 +1026,8 @@ function buildFocusHistoryDerived(
   const overviewMetrics: OverviewMetric[] = [
     {
       label: "Total focus time",
-      value: formatRoundedMinuteDuration(currentStats.totalSeconds),
-      delta: buildNumericDelta(currentStats.totalSeconds, previousStats.totalSeconds, formatSignedDurationDelta),
+      value: formatRoundedMinuteDuration(currentStats.headlineTotalSeconds),
+      delta: buildNumericDelta(currentStats.headlineTotalSeconds, previousStats.headlineTotalSeconds, formatSignedDurationDelta),
     },
     {
       label: "Sessions completed",
@@ -1069,7 +1077,7 @@ function buildFocusHistoryDerived(
       noGoal: goalRows.filter((row) => row.status === "no goal").length,
     },
     overviewMetrics,
-    activityTrend: buildActivityTrendLabel(currentStats.totalSeconds, previousStats.totalSeconds, scope),
+    activityTrend: buildActivityTrendLabel(currentStats.headlineTotalSeconds, previousStats.headlineTotalSeconds, scope),
     activityOverallBars,
     activityCategoryBars,
     activityLineSeries,
@@ -1077,7 +1085,7 @@ function buildFocusHistoryDerived(
     categoryBreakdownRows: buildCategoryBreakdownRows(categories, scopedSessions, currentStats.actualByCategory, currentStats.totalSeconds),
     scopedSessionCount: currentStats.sessions.length,
     topCategory: currentStats.topCategory,
-    totalScopedSeconds: currentStats.totalSeconds,
+    totalScopedSeconds: currentStats.headlineTotalSeconds,
   };
 }
 

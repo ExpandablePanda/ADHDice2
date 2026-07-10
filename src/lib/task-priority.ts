@@ -1,13 +1,14 @@
 import type { Task, TaskInsert, TaskPriority, TaskUpdate } from "@/lib/database.types";
 
-export type TaskPriorityLevel = 1 | 2 | 3 | 4 | 5;
-export type TaskPriorityLevelOption = "1" | "2" | "3" | "4" | "5";
+export type TaskPriorityLevel = 0 | 1 | 2 | 3 | 4 | 5;
+export type TaskPriorityLevelOption = "0" | "1" | "2" | "3" | "4" | "5";
 export type LegacyTaskPrioritySelection = "focus" | "important" | "none" | "urgent";
 export type TaskPrioritySelectionInput = LegacyTaskPrioritySelection | TaskPriorityLevelOption;
 
-export const TASK_PRIORITY_LEVEL_OPTIONS = ["1", "2", "3", "4", "5"] as const satisfies readonly TaskPriorityLevelOption[];
+export const TASK_PRIORITY_LEVEL_OPTIONS = ["0", "1", "2", "3", "4", "5"] as const satisfies readonly TaskPriorityLevelOption[];
 
 const TASK_PRIORITY_TONE_CLASS: Record<TaskPriorityLevel, string> = {
+  0: "border-[#e4deef] bg-white text-[#8a93aa] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/45",
   1: "border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60",
   2: "border-[#cfe4ff] bg-[#eef6ff] text-[#3e7bd6] dark:border-[#284978] dark:bg-[#15243b] dark:text-[#8dc0ff]",
   3: "border-[#f2df9b] bg-[#fff6df] text-[#b77900] dark:border-[#6b5317] dark:bg-[#44350d] dark:text-[#ffd56b]",
@@ -16,6 +17,7 @@ const TASK_PRIORITY_TONE_CLASS: Record<TaskPriorityLevel, string> = {
 };
 
 const TASK_PRIORITY_LABELS: Record<TaskPriorityLevel, string> = {
+  0: "0",
   1: "1",
   2: "2",
   3: "3",
@@ -24,6 +26,7 @@ const TASK_PRIORITY_LABELS: Record<TaskPriorityLevel, string> = {
 };
 
 const TASK_PRIORITY_MENU_LABELS: Record<TaskPriorityLevel, string> = {
+  0: "0 - Unsorted",
   1: "1 - Light",
   2: "2 - Low",
   3: "3 - Normal",
@@ -33,7 +36,7 @@ const TASK_PRIORITY_MENU_LABELS: Record<TaskPriorityLevel, string> = {
 
 export function coerceTaskPriorityLevel(value: number | string | null | undefined): TaskPriorityLevel | null {
   const numericValue = typeof value === "string" ? Number.parseInt(value, 10) : value;
-  if (numericValue === 1 || numericValue === 2 || numericValue === 3 || numericValue === 4 || numericValue === 5) {
+  if (numericValue === 0 || numericValue === 1 || numericValue === 2 || numericValue === 3 || numericValue === 4 || numericValue === 5) {
     return numericValue;
   }
   return null;
@@ -118,7 +121,7 @@ export function normalizeTaskPrioritySelectionInput(value: string | null | undef
     return { focusAction: "remove" as const, priorityLevel: 5 as TaskPriorityLevel };
   }
   if (value === "none") {
-    return { focusAction: "remove" as const, priorityLevel: 3 as TaskPriorityLevel };
+    return { focusAction: "remove" as const, priorityLevel: 0 as TaskPriorityLevel };
   }
 
   const priorityLevel = coerceTaskPriorityLevel(value);

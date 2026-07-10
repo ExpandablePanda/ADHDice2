@@ -80,7 +80,7 @@ export function useTaskBatchEditAction({
       }
 
       if (draft.priority !== "unchanged") {
-        Object.assign(updateValues, buildTaskPriorityUpdate(Number.parseInt(draft.priority, 10) as 1 | 2 | 3 | 4 | 5));
+        Object.assign(updateValues, buildTaskPriorityUpdate(Number.parseInt(draft.priority, 10) as 0 | 1 | 2 | 3 | 4 | 5));
       }
 
       if (draft.energy !== "unchanged") {

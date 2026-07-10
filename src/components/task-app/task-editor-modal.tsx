@@ -535,7 +535,7 @@ export function TaskEditorModal({
         {isEditing ? (
           <button
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#fff1f3] text-[#f05566]"
-            onClick={() => onSave({ focusToday: draft.focusToday, linkedNoteIds: [], subtasks: [], values: { title: draft.title, notes: null, status: "trashed" as TaskStatus, ...buildTaskPriorityUpdate(Number.parseInt(draft.priorityLevel, 10) as 1 | 2 | 3 | 4 | 5), energy: draft.energy, due_on: null, due_time: null, estimated_minutes: null, tags: [], external_link_label: null, external_link_url: null, one_step_at_a_time: false, subtasks_auto_reset: false, repeat_frequency: "none", repeat_interval: 1, repeat_days_of_week: [], repeat_day_of_month: null, repeat_monthly_mode: "day_of_month", repeat_monthly_ordinal: null, repeat_monthly_weekday: null, completed_at: null, trashed_at: new Date().toISOString() } })}
+            onClick={() => onSave({ focusToday: draft.focusToday, linkedNoteIds: [], subtasks: [], values: { title: draft.title, notes: null, status: "trashed" as TaskStatus, ...buildTaskPriorityUpdate(Number.parseInt(draft.priorityLevel, 10) as 0 | 1 | 2 | 3 | 4 | 5), energy: draft.energy, due_on: null, due_time: null, estimated_minutes: null, tags: [], external_link_label: null, external_link_url: null, one_step_at_a_time: false, subtasks_auto_reset: false, repeat_frequency: "none", repeat_interval: 1, repeat_days_of_week: [], repeat_day_of_month: null, repeat_monthly_mode: "day_of_month", repeat_monthly_ordinal: null, repeat_monthly_weekday: null, completed_at: null, trashed_at: new Date().toISOString() } })}
             type="button"
           >
             <Trash2 className="h-4 w-4" />
@@ -561,7 +561,7 @@ export function TaskEditorModal({
               title: trimmedSnapshotTitle,
               notes: emptyToNull(draftSnapshot.notes),
               status: draftSnapshot.status,
-              ...buildTaskPriorityUpdate(Number.parseInt(draftSnapshot.priorityLevel, 10) as 1 | 2 | 3 | 4 | 5),
+              ...buildTaskPriorityUpdate(Number.parseInt(draftSnapshot.priorityLevel, 10) as 0 | 1 | 2 | 3 | 4 | 5),
               energy: draftSnapshot.energy,
               due_on: emptyToNull(draftSnapshot.dueOn),
               due_time: emptyToNull(draftSnapshot.dueTime),

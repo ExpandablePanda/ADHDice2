@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useCallback, useState, useEffect, useRef } from "react";
 import { type FocusCategory, type ActiveFocusSession } from "@/lib/types";
 import { isSystemCountdownCategoryId } from "@/lib/focus-utils";
 import { CategoryIcon } from "./task-app";
 import { formatDuration } from "@/lib/utils";
 export { formatDuration } from "@/lib/utils";
 
-const COUNTDOWN_DURATION_PRESETS = [10, 20, 30, 60] as const;
+const COUNTDOWN_DURATION_PRESETS = [5, 10, 20, 30, 60] as const;
 export const FOCUS_CLOCK_BASE_WIDTH_PX = 272;
 export const FOCUS_CLOCK_BASE_HEIGHT_PX = 344;
 export const FOCUS_CLOCK_MOBILE_SCALE = 0.58;
@@ -82,12 +82,12 @@ export function FocusClock({
     onAdjust(category.id, deltaSeconds);
   };
 
-  const openCountdownDurationPicker = () => {
+  const openCountdownDurationPicker = useCallback(() => {
     setShowSettingsMenu(false);
     setQuickAdjustSign(null);
     setCountdownMinutes(String(Math.max(1, Math.round((activeSession?.countdownTargetSeconds ?? 10 * 60) / 60))));
     setShowAdjustMenu((prev) => !prev);
-  };
+  }, [activeSession?.countdownTargetSeconds]);
 
   const startCountdownWithMinutes = (minutesValue: string) => {
     const nextMinutes = Math.max(1, Number.parseInt(minutesValue, 10) || 10);
@@ -109,7 +109,7 @@ export function FocusClock({
 
     handledAutoOpenCountdownRequestRef.current = autoOpenCountdownRequest;
     openCountdownDurationPicker();
-  }, [autoOpenCountdownRequest, hasCountdownTarget, isCountdown, isRunning]);
+  }, [autoOpenCountdownRequest, hasCountdownTarget, isCountdown, isRunning, openCountdownDurationPicker]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -235,7 +235,13 @@ export function FocusClock({
           >
             {isCountdown ? (
               <>
-                <div className="flex max-w-[12rem] flex-wrap items-center justify-center gap-2">
+                <form
+                  className="flex max-w-[12rem] flex-wrap items-center justify-center gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    startCountdownWithMinutes(countdownMinutes);
+                  }}
+                >
                   {COUNTDOWN_DURATION_PRESETS.map((minutes) => (
                     <button
                       className={`flex h-10 w-10 items-center justify-center rounded-full border text-sm font-semibold transition ${countdownMinutes === String(minutes) ? "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" : "border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/65"}`}
@@ -260,7 +266,13 @@ export function FocusClock({
                     type="text"
                     value={countdownMinutes}
                   />
-                </div>
+                  <button
+                    className="flex h-10 items-center justify-center rounded-full border border-[#ddd2ff] bg-[#6f57f6] px-3 text-sm font-semibold text-white transition hover:bg-[#5f49e8] dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:hover:bg-[#927fff]"
+                    type="submit"
+                  >
+                    Start
+                  </button>
+                </form>
               </>
             ) : (
               <>

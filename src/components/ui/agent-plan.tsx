@@ -186,7 +186,7 @@ const PRIORITY_OPTIONS: Array<{ label: string; value: AgentPlanPriorityValue }> 
   { label: "None", value: "none" },
   { label: "Focus", value: "focus" },
   ...TASK_PRIORITY_LEVEL_OPTIONS.map((value) => ({
-    label: formatTaskPriorityMenuLabel(Number.parseInt(value, 10) as 1 | 2 | 3 | 4 | 5),
+    label: formatTaskPriorityMenuLabel(Number.parseInt(value, 10) as 0 | 1 | 2 | 3 | 4 | 5),
     value,
   })),
 ];

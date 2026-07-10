@@ -94,16 +94,31 @@ function formatHistoryDateTime(timestamp: string) {
   });
 }
 
-function getTaskHistoryTimestamp(entry: Pick<DbTaskHistory, "created_at" | "updated_at">) {
-  return entry.updated_at || entry.created_at || null;
+function getTaskHistoryCreatedTimestamp(entry: Pick<DbTaskHistory, "created_at">) {
+  return entry.created_at || null;
 }
 
-function formatTaskHistoryLoggedLine(entry: Pick<DbTaskHistory, "created_at" | "updated_at">) {
-  const timestamp = getTaskHistoryTimestamp(entry);
+function getTaskHistoryEditedTimestamp(entry: Pick<DbTaskHistory, "created_at" | "updated_at">) {
+  if (!entry.updated_at || !entry.created_at || entry.updated_at === entry.created_at) {
+    return null;
+  }
+  return entry.updated_at;
+}
+
+function formatTaskHistoryLoggedLine(entry: Pick<DbTaskHistory, "created_at">) {
+  const timestamp = getTaskHistoryCreatedTimestamp(entry);
   if (!timestamp) {
     return null;
   }
   return `Logged ${formatHistoryDateTime(timestamp)}`;
+}
+
+function formatTaskHistoryEditedLine(entry: Pick<DbTaskHistory, "created_at" | "updated_at">) {
+  const timestamp = getTaskHistoryEditedTimestamp(entry);
+  if (!timestamp) {
+    return null;
+  }
+  return `Edited ${formatHistoryDateTime(timestamp)}`;
 }
 
 const HISTORY_STATUS_CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
@@ -817,6 +832,7 @@ export function TaskHistoryModal({
                     <p className="text-sm font-semibold text-[#27304c] dark:text-white">{formatCalendarDate(entry.entry_date)}</p>
                     <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{dueDates.has(entry.entry_date) ? "Due opportunity" : "Manual history entry"}</p>
                     {formatTaskHistoryLoggedLine(entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryLoggedLine(entry)}</p> : null}
+                    {formatTaskHistoryEditedLine(entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryEditedLine(entry)}</p> : null}
                   </div>
                   {renderStatusPill(entry)}
                 </button>
@@ -842,7 +858,11 @@ export function TaskHistoryModal({
                 </p>
                 {!isMultiSelect && selectedEntry ? (
                   <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">
-                    Credited for {formatCalendarDate(selectedEntry.entry_date)} • {formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable"}
+                    {[
+                      `Credited for ${formatCalendarDate(selectedEntry.entry_date)}`,
+                      formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable",
+                      formatTaskHistoryEditedLine(selectedEntry),
+                    ].filter((value): value is string => Boolean(value)).join(" • ")}
                   </p>
                 ) : null}
               </div>

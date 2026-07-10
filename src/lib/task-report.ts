@@ -13,6 +13,7 @@ export const TASK_REPORT_RANGE_OPTIONS = [
   { id: "last7", label: "Last 7 days", days: 7 },
   { id: "last30", label: "Last 30 days", days: 30 },
   { id: "last90", label: "Last 90 days", days: 90 },
+  { id: "custom", label: "Custom range", days: "custom" },
   { id: "all", label: "All available", days: null },
 ] as const;
 
@@ -23,6 +24,11 @@ export const TASK_REPORT_DETAIL_OPTIONS = [
 
 export type TaskReportRangeId = typeof TASK_REPORT_RANGE_OPTIONS[number]["id"];
 export type TaskReportDetailLevel = typeof TASK_REPORT_DETAIL_OPTIONS[number]["id"];
+
+export type TaskReportCustomRange = {
+  endDateKey: string;
+  startDateKey: string;
+};
 
 type GenerateTaskReportInput = {
   appVersion: string;
@@ -35,6 +41,7 @@ type GenerateTaskReportInput = {
   focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
+  customRange?: TaskReportCustomRange | null;
   rangeId: TaskReportRangeId;
   taskHistory: TaskHistory[];
   tasks: Task[];
@@ -209,7 +216,7 @@ function formatTimeOnly(isoString: string | null | undefined) {
   }).format(date);
 }
 
-function formatLoggedMoment(isoString: string | null | undefined) {
+function formatHistoryMoment(isoString: string | null | undefined) {
   if (!isoString) {
     return null;
   }
@@ -223,6 +230,27 @@ function formatLoggedMoment(isoString: string | null | undefined) {
     minute: "2-digit",
     month: "short",
   }).format(date);
+}
+
+function getCreatedHistoryTimestamp(entry: Pick<TaskHistory, "created_at">) {
+  return entry.created_at || null;
+}
+
+function getEditedHistoryTimestamp(entry: Pick<TaskHistory, "created_at" | "updated_at">) {
+  if (!entry.updated_at || !entry.created_at || entry.updated_at === entry.created_at) {
+    return null;
+  }
+  return entry.updated_at;
+}
+
+function formatHistoryCreatedLabel(entry: Pick<TaskHistory, "created_at">) {
+  const timestamp = getCreatedHistoryTimestamp(entry);
+  return timestamp ? `Logged ${formatHistoryMoment(timestamp) ?? timestamp}` : null;
+}
+
+function formatHistoryEditedLabel(entry: Pick<TaskHistory, "created_at" | "updated_at">) {
+  const timestamp = getEditedHistoryTimestamp(entry);
+  return timestamp ? `Edited ${formatHistoryMoment(timestamp) ?? timestamp}` : null;
 }
 
 function formatDurationCompact(totalSeconds: number) {
@@ -251,8 +279,19 @@ function compareHistoryEntries(left: TaskHistory, right: TaskHistory) {
   return left.id.localeCompare(right.id);
 }
 
-function resolveTaskReportHistoryFetchRange(rangeId: TaskReportRangeId, todayDateKey: string) {
+function normalizeTaskReportCustomRange(customRange: TaskReportCustomRange | null | undefined, todayDateKey: string): TaskReportCustomRange {
+  const startDateKey = customRange?.startDateKey || todayDateKey;
+  const endDateKey = customRange?.endDateKey || startDateKey;
+  return startDateKey <= endDateKey
+    ? { startDateKey, endDateKey }
+    : { startDateKey: endDateKey, endDateKey: startDateKey };
+}
+
+function resolveTaskReportHistoryFetchRange(rangeId: TaskReportRangeId, todayDateKey: string, customRange?: TaskReportCustomRange | null) {
   const option = TASK_REPORT_RANGE_OPTIONS.find((entry) => entry.id === rangeId) ?? TASK_REPORT_RANGE_OPTIONS[0];
+  if (option.days === "custom") {
+    return normalizeTaskReportCustomRange(customRange, todayDateKey);
+  }
   if (option.days !== null) {
     return {
       endDateKey: todayDateKey,
@@ -271,9 +310,27 @@ function buildRange(
   todayDateKey: string,
   history: TaskHistory[],
   focusHistory: HistoricalFocusSession[] = [],
+  focusDailyGoalAdjustments: FocusDailyGoalAdjustment[] = [],
+  customRange?: TaskReportCustomRange | null,
 ): ReportRange {
   const option = TASK_REPORT_RANGE_OPTIONS.find((entry) => entry.id === rangeId) ?? TASK_REPORT_RANGE_OPTIONS[0];
-  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey);
+  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
+  if (option.days === "custom") {
+    let spanDays = 0;
+    let cursor = fetchRange.startDateKey;
+    while (cursor <= fetchRange.endDateKey) {
+      spanDays += 1;
+      if (cursor === fetchRange.endDateKey) {
+        break;
+      }
+      cursor = shiftDateKey(cursor, 1);
+    }
+    return {
+      ...fetchRange,
+      label: option.label,
+      spanDays,
+    };
+  }
   if (option.days !== null) {
     return {
       ...fetchRange,
@@ -282,7 +339,11 @@ function buildRange(
     };
   }
 
-  const sortedDates = [...history.map((entry) => entry.entry_date), ...focusHistory.map((session) => session.date)].sort();
+  const sortedDates = [
+    ...history.map((entry) => entry.entry_date),
+    ...focusHistory.map((session) => session.date),
+    ...focusDailyGoalAdjustments.map((adjustment) => adjustment.adjustmentDate),
+  ].sort();
   const startDateKey = sortedDates[0] ?? null;
   const endDateKey = sortedDates.at(-1) ?? todayDateKey;
   let spanDays = 0;
@@ -769,14 +830,14 @@ function getHistoryTimestamp(entry: LatestHistoryEntry) {
 }
 
 function formatHistoryEntryMoment(entry: LatestHistoryEntry) {
-  const timestamp = getHistoryTimestamp(entry);
-  const timeLabel = formatTimeOnly(timestamp);
-  if (!timestamp) {
+  const createdTimestamp = getCreatedHistoryTimestamp(entry);
+  const timeLabel = formatTimeOnly(createdTimestamp);
+  if (!createdTimestamp) {
     return formatShortDate(entry.entry_date);
   }
-  const loggedDateKey = timestamp.slice(0, 10);
+  const loggedDateKey = createdTimestamp.slice(0, 10);
   if (loggedDateKey !== entry.entry_date) {
-    const loggedLabel = formatLoggedMoment(timestamp);
+    const loggedLabel = formatHistoryMoment(createdTimestamp);
     return loggedLabel
       ? `${formatShortDate(entry.entry_date)} (logged ${loggedLabel})`
       : formatShortDate(entry.entry_date);
@@ -934,15 +995,16 @@ function formatDayRow(entry: LatestHistoryEntry) {
   const descriptor = entry.metadata.typeLabel === "Parent"
     ? entry.metadata.typeLabel
     : `${entry.metadata.typeLabel} — ${entry.metadata.pathLabel}`;
-  const timestamp = getHistoryTimestamp(entry);
-  const timeLabel = formatTimeOnly(timestamp);
-  const loggedDateKey = timestamp?.slice(0, 10) ?? null;
-  const timingLabel = !timestamp
+  const createdTimestamp = getCreatedHistoryTimestamp(entry);
+  const createdDateKey = createdTimestamp?.slice(0, 10) ?? null;
+  const createdTimingLabel = !createdTimestamp
     ? null
-    : loggedDateKey !== entry.entry_date
-      ? `Logged ${formatLoggedMoment(timestamp) ?? timestamp}`
-      : timeLabel;
-  return `- ${entry.metadata.title} — ${descriptor}${timingLabel ? ` — ${timingLabel}` : ""}`;
+    : createdDateKey !== entry.entry_date
+      ? formatHistoryCreatedLabel(entry)
+      : formatTimeOnly(createdTimestamp);
+  const editedTimingLabel = formatHistoryEditedLabel(entry);
+  const timingParts = [createdTimingLabel, editedTimingLabel].filter((value): value is string => Boolean(value));
+  return `- ${entry.metadata.title} — ${descriptor}${timingParts.length > 0 ? ` — ${timingParts.join(" — ")}` : ""}`;
 }
 
 function formatDayOutcomeGroup(outcomeLabel: OutcomeLabel, entries: LatestHistoryEntry[]) {
@@ -976,12 +1038,13 @@ function generateTaskReport({
   historySourceLabel,
   historyWarning,
   listMembershipsByTaskId = {},
+  customRange,
   rangeId,
   taskHistory,
   tasks,
   todayDateKey,
 }: GenerateTaskReportInput) {
-  const range = buildRange(rangeId, todayDateKey, taskHistory, focusHistory);
+  const range = buildRange(rangeId, todayDateKey, taskHistory, focusHistory, focusDailyGoalAdjustments, customRange);
   const taskHistoryByTaskId = buildTaskHistoryByTaskId(taskHistory);
   const snapshot = buildTaskSnapshotSections(tasks, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);
   const history = buildHistorySections(tasks, taskHistory, range, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);

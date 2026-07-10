@@ -1469,7 +1469,7 @@ function summarizeInlineItems<T>(items: T[], maxVisible = 1) {
     visibleItems: items.slice(0, maxVisible),
   };
 }
-const PRIORITY_SORT_ORDER: TaskPriority[] = ["1", "2", "3", "4", "5"];
+const PRIORITY_SORT_ORDER: TaskPriority[] = ["0", "1", "2", "3", "4", "5"];
 const ENERGY_SORT_ORDER: TaskEnergy[] = ["none", "low", "medium", "high"];
 const REPEAT_SORT_ORDER: TaskRepeat[] = ["none", "daily", "weekly", "monthly", "custom"];
 const STATUS_SORT_ORDER: TaskStatus[] = [
@@ -7393,6 +7393,9 @@ export function TaskManagementTableV2({
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
                   onClick={canOpenStepActions ? (event) => {
+                    if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                      return;
+                    }
                     event.stopPropagation();
                     if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
                       startTaskSelection(item.id, { additive: true, range: event.shiftKey });
@@ -7401,6 +7404,9 @@ export function TaskManagementTableV2({
                     openTaskInCurrentEditor(item.id);
                   } : undefined}
                   onDoubleClick={onToggleTaskSelection ? (event) => {
+                    if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                      return;
+                    }
                     event.preventDefault();
                     event.stopPropagation();
                     startTaskSelection(item.id, { additive: true });
@@ -7829,6 +7835,10 @@ export function TaskManagementTableV2({
                     data-task-table-row={task.id}
                     initial={shouldAnimateRows ? undefined : false}
                     onClick={(event) => {
+                      if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                        return;
+                      }
+
                       if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
                         clearPendingRowClick();
                         startTaskSelection(task.id, {
@@ -7846,6 +7856,10 @@ export function TaskManagementTableV2({
                     }}
                     onDoubleClick={(event) => {
                       if (!onToggleTaskSelection) {
+                        return;
+                      }
+
+                      if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                         return;
                       }
 

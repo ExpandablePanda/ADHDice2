@@ -89,7 +89,7 @@ export function createTaskEditorDraft(task: Task | null, focusToday: boolean, su
     notes: task?.notes ?? "",
     linkedNoteIds: [],
     status: task?.status ?? "pending",
-    priorityLevel: formatTaskPriorityLevel(task ? getTaskPriorityLevel(task) : 3),
+    priorityLevel: formatTaskPriorityLevel(task ? getTaskPriorityLevel(task) : 0),
     energy: task?.energy ?? "none",
     focusToday,
     dueOn: task?.due_on ?? "",
