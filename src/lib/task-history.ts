@@ -90,6 +90,7 @@ export function getTaskHistoryCalendarVirtualState({
   hasHistoryEntry,
   isDue,
   nextDueDateKey,
+  projectsUndatedDelayed,
   todayDateKey,
 }: {
   dateKey: string;
@@ -97,10 +98,14 @@ export function getTaskHistoryCalendarVirtualState({
   hasHistoryEntry: boolean;
   isDue: boolean;
   nextDueDateKey: string | null;
+  projectsUndatedDelayed?: boolean;
   todayDateKey: string;
 }): TaskHistoryCalendarVirtualState | null {
   if (hasHistoryEntry) {
     return null;
+  }
+  if (projectsUndatedDelayed && dateKey >= todayDateKey) {
+    return "delayed";
   }
   if (
     delayedUntilDateKey

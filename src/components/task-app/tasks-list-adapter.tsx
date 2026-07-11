@@ -1,5 +1,5 @@
 "use client";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Flame, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Eye, EyeOff, Flame, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, Trash2, X } from "lucide-react";
 import {
   buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
@@ -53,6 +53,61 @@ import {
 import { AdhdIconButton } from "@/components/ui-system";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
+
+function MetadataDisclosureButton({
+  isVisible,
+  label,
+  onToggleAll,
+  onToggle,
+}: {
+  isVisible: boolean;
+  label: string;
+  onToggleAll: () => void;
+  onToggle: () => void;
+}) {
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressCompletedRef = useRef(false);
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  return (
+    <AdhdIconButton
+      aria-label={`${isVisible ? "Hide" : "Show"} details for ${label}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (longPressCompletedRef.current) {
+          longPressCompletedRef.current = false;
+          return;
+        }
+        onToggle();
+      }}
+      onContextMenu={(event) => event.preventDefault()}
+      onPointerCancel={cancelLongPress}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        longPressCompletedRef.current = false;
+        cancelLongPress();
+        longPressTimerRef.current = window.setTimeout(() => {
+          longPressTimerRef.current = null;
+          longPressCompletedRef.current = true;
+          onToggleAll();
+        }, 600);
+      }}
+      onPointerLeave={cancelLongPress}
+      onPointerUp={cancelLongPress}
+      selected={isVisible}
+      size="sm"
+      title={`${isVisible ? "Hide" : "Show"} details`}
+      variant="rowToolbar"
+    >
+      {isVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+    </AdhdIconButton>
+  );
+}
 type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
 type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
 
@@ -195,7 +250,7 @@ type TasksTableSourceProps = {
   onOpenDeleteTask?: (taskId: string) => void;
   onDuplicateTask?: (taskId: string) => void;
   onDelayTask?: (taskId: string, days: number) => Promise<boolean> | boolean;
-  onDelayTaskUntil?: (taskId: string, dueOn: string) => Promise<boolean> | boolean;
+  onDelayTaskUntil?: (taskId: string, dueOn: string | null) => Promise<boolean> | boolean;
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenTaskEditor?: (taskId: string) => void;
@@ -805,6 +860,9 @@ function StepsCardPreview({
   onParentStepDraftChange,
   highlightedActiveTaskId,
   highlightedTaskIds,
+  onToggleAllMetadata,
+  onToggleMetadata,
+  visibleMetadataTaskIds,
 }: {
   activeQuickPanel: { mode: ListQuickPanelMode; taskId: string } | null;
   allTagOptions: string[];
@@ -823,7 +881,7 @@ function StepsCardPreview({
   onRenameStep?: (taskId: string, title: string) => void;
   onReorderStep?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onOpenActualTime?: (taskId: string) => void;
-  onDelayTaskUntil?: (taskId: string, dueOn: string) => Promise<boolean> | boolean;
+  onDelayTaskUntil?: (taskId: string, dueOn: string | null) => Promise<boolean> | boolean;
   onSetActualSeconds?: (taskId: string, seconds: number) => void;
   onSetDue?: (taskId: string, schedule: { dueOn: string; dueTime: string }) => void;
   onSetEnergy?: (taskId: string, energy: PrototypeTaskRow["energy"]) => void;
@@ -855,6 +913,9 @@ function StepsCardPreview({
   onParentStepDraftChange?: (value: string) => void;
   highlightedActiveTaskId?: string | null;
   highlightedTaskIds?: string[];
+  onToggleAllMetadata: () => void;
+  onToggleMetadata: (taskId: string) => void;
+  visibleMetadataTaskIds: Set<string>;
 }) {
   const [editingStepTitleId, setEditingStepTitleId] = useState<string | null>(null);
   const [collapsedStepIds, setCollapsedStepIds] = useState<Record<string, boolean>>({});
@@ -1100,6 +1161,7 @@ function StepsCardPreview({
             const titleDraft = stepTitleDrafts[item.id] ?? item.title;
             const canCollapse = collapsibleTaskIds.has(item.id);
             const isCollapsed = canCollapse && collapsedStepIds[item.id] === true;
+            const isMetadataVisible = visibleMetadataTaskIds.has(item.id);
             const commitTitle = (taskId: string) => {
               const nextTitle = (stepTitleDraftsRef.current[taskId] ?? item.title).trim();
               if (nextTitle && nextTitle !== item.title) {
@@ -1175,6 +1237,12 @@ function StepsCardPreview({
                               </button>
                               <StepLayerChip depth={item.depth} />
                               <StepHistoryChips currentStreak={item.currentStreak} missedStreak={item.missedStreak} />
+                              <MetadataDisclosureButton
+                                isVisible={isMetadataVisible}
+                                label={item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
+                                onToggleAll={onToggleAllMetadata}
+                                onToggle={() => onToggleMetadata(item.id)}
+                              />
                               {canCollapse ? (
                                 <button
                                   aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${item.depth > 1 ? "substep" : "step"} ${item.title || "Untitled"}`}
@@ -1332,7 +1400,7 @@ function StepsCardPreview({
                       ) : null}
                       </div>
                       <div
-                        className="adhdice-scrollbar -mx-1 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1"
+                        className="adhdice-scrollbar -mx-1 -my-1 flex min-w-0 w-full items-center gap-1 overflow-x-auto px-1 py-1"
                         data-list-action-control="true"
                         onClick={(event) => event.stopPropagation()}
                         onContextMenu={(event) => event.stopPropagation()}
@@ -1341,8 +1409,12 @@ function StepsCardPreview({
                           className="min-w-max flex-nowrap"
                           currentStatus={displayStatus}
                           onSetStatus={(status) => {
-                            if (status === "delayed" && item.dueOn && onDelayTaskUntil) {
-                              onOpenQuickPanel(item.id, "delay");
+                            if (status === "delayed" && onDelayTaskUntil) {
+                              if (childTask?.due_on ?? item.dueOn) {
+                                onOpenQuickPanel(item.id, "delay");
+                              } else {
+                                void onDelayTaskUntil(item.id, null);
+                              }
                               return;
                             }
                             onSetStatus?.(item.id, status, childTask, [item.id]);
@@ -1354,7 +1426,7 @@ function StepsCardPreview({
                           statusLabelPrefix={`Set ${item.depth > 1 ? "substep" : "step"} status to`}
                         />
                       </div>
-                      <div className="-mx-1 -my-1 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]" data-list-action-control="true">
+                      <div className={`${isMetadataVisible ? "flex" : "hidden"} -mx-1 -my-1 max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]`} data-list-action-control="true">
                       <MetadataChipButton active={activePanelMode === "due"} onClick={() => onOpenQuickPanel(item.id, "due")}>
                         {scheduleLabel || "No date"}
                       </MetadataChipButton>
@@ -1374,13 +1446,11 @@ function StepsCardPreview({
                       >
                         {childTask ? formatPriorityChipLabel(childTask, new Set()) : activePriorities[0] ? formatPreviewPriorityLabel(activePriorities[0]) : "Priority 3"}
                       </MetadataChipButton>
-                      {repeatSummary ? (
-                        <MetadataChipButton active={activePanelMode === "repeat"} onClick={() => onOpenQuickPanel(item.id, "repeat")}>
-                          {repeatSummary}
-                        </MetadataChipButton>
-                      ) : null}
+                      <MetadataChipButton active={activePanelMode === "repeat"} onClick={() => onOpenQuickPanel(item.id, "repeat")}>
+                        {repeatSummary || "No Repeat"}
+                      </MetadataChipButton>
                       </div>
-                      <div className="adhdice-scrollbar -mx-1 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1" data-list-action-control="true">
+                      <div className={`adhdice-scrollbar ${isMetadataVisible ? "block" : "hidden"} -mx-1 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1`} data-list-action-control="true">
                         <div className="flex min-w-max flex-nowrap items-center gap-2">
                           <MetadataChipButton active={activePanelMode === "tags"} onClick={() => onOpenQuickPanel(item.id, "tags")} tone="tag">
                             <span className="inline-flex items-center gap-1">
@@ -1400,7 +1470,7 @@ function StepsCardPreview({
                           ) : null}
                         </div>
                       </div>
-                      <div className="adhdice-scrollbar -mx-1 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1" data-list-action-control="true">
+                      <div className={`adhdice-scrollbar ${isMetadataVisible ? "block" : "hidden"} -mx-1 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1`} data-list-action-control="true">
                         <div className="flex min-w-max flex-nowrap items-center gap-2">
                           <MetadataChipButton active={activePanelMode === "list"} onClick={() => onOpenQuickPanel(item.id, "list")}>
                             {categoryLabel}
@@ -1811,7 +1881,7 @@ function DelayQuickPanel({
 }: {
   dueOn: string | null;
   onClose: () => void;
-  onSave: (nextDueOn: string) => Promise<boolean> | boolean;
+  onSave: (nextDueOn: string | null) => Promise<boolean> | boolean;
   todayDateKey: string;
 }) {
   const anchorDateKey = getDelayAnchorDate(dueOn, todayDateKey);
@@ -2249,6 +2319,7 @@ function TasksSimpleList({
 }: TasksListAdapterProps) {
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
+  const [visibleMetadataTaskIds, setVisibleMetadataTaskIds] = useState<Set<string>>(() => new Set());
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
   const [collapsedStepSectionsByTaskId, setCollapsedStepSectionsByTaskId] = useState<Record<string, boolean>>({});
   const [parentStepDraftTaskId, setParentStepDraftTaskId] = useState<string | null>(null);
@@ -2262,6 +2333,26 @@ function TasksSimpleList({
   const tasks = tableProps.tasks;
   const rowContext = tableProps.rowContext;
   const visibleTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
+  const toggleTaskMetadata = (taskId: string) => {
+    setVisibleMetadataTaskIds((current) => {
+      const next = new Set(current);
+      if (next.has(taskId)) next.delete(taskId); else next.add(taskId);
+      return next;
+    });
+  };
+  const toggleAllRenderedTaskMetadata = () => {
+    const renderedTaskIds = Array.from(
+      listShellRef.current?.querySelectorAll<HTMLElement>("[data-task-list-row], [data-same-table-step-row]") ?? [],
+    ).flatMap((element) => [element.dataset.taskListRow ?? element.dataset.sameTableStepRow].filter((taskId): taskId is string => Boolean(taskId)));
+    setVisibleMetadataTaskIds((current) => {
+      const next = new Set(current);
+      const everyRenderedCardIsVisible = renderedTaskIds.every((taskId) => current.has(taskId));
+      for (const taskId of renderedTaskIds) {
+        if (everyRenderedCardIsVisible) next.delete(taskId); else next.add(taskId);
+      }
+      return next;
+    });
+  };
   const buildListStatusScrollAnchorTaskIds = (taskId: string) => {
     const taskIndex = visibleTaskIds.indexOf(taskId);
     if (taskIndex < 0) {
@@ -2655,6 +2746,7 @@ function TasksSimpleList({
         const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
         const dueMeta = dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;
+        const isMetadataVisible = visibleMetadataTaskIds.has(task.id);
         const repeatSummary = formatRepeatSummary(task);
         const taskRow = buildTaskTableRow(task, {
           focusedTaskIdSet: rowContext.focusedTaskIdSet,
@@ -2790,6 +2882,17 @@ function TasksSimpleList({
                         currentStreak={taskRow.currentStreak}
                         missedStreak={taskRow.missedStreak}
                       />
+                      <TaskHistoryChips
+                        className="sm:hidden"
+                        currentStreak={taskRow.currentStreak}
+                        missedStreak={taskRow.missedStreak}
+                      />
+                      <MetadataDisclosureButton
+                        isVisible={isMetadataVisible}
+                        label={task.title}
+                        onToggleAll={toggleAllRenderedTaskMetadata}
+                        onToggle={() => toggleTaskMetadata(task.id)}
+                      />
                     </div>
                   </div>
 
@@ -2887,7 +2990,7 @@ function TasksSimpleList({
                   </div>
                 </div>
                 <div
-                  className="adhdice-scrollbar -mx-1 mt-2 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1"
+                  className="adhdice-scrollbar -mx-1 mt-2 -my-1 flex min-w-0 w-full items-center gap-1 overflow-x-auto px-1 py-1"
                   data-list-action-control="true"
                   onClick={(event) => event.stopPropagation()}
                   onContextMenu={(event) => event.stopPropagation()}
@@ -2896,9 +2999,14 @@ function TasksSimpleList({
                     className="min-w-max flex-nowrap"
                     currentStatus={displayStatus}
                     onSetStatus={(status) => {
-                      if (status === "delayed" && task.due_on && tableProps.onDelayTaskUntil) {
+                      if (status === "delayed" && tableProps.onDelayTaskUntil) {
                         setRowContextMenu(null);
-                        openQuickPanel(task.id, "delay");
+                        if (task.due_on) {
+                          openQuickPanel(task.id, "delay");
+                        } else {
+                          closeQuickPanel();
+                          void tableProps.onDelayTaskUntil(task.id, null);
+                        }
                         return;
                       }
                       setRowContextMenu(null);
@@ -2911,12 +3019,7 @@ function TasksSimpleList({
                     }))}
                   />
                 </div>
-                <div className="-mx-1 mt-2 -my-1 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]">
-                  <TaskHistoryChips
-                    className="sm:hidden"
-                    currentStreak={taskRow.currentStreak}
-                    missedStreak={taskRow.missedStreak}
-                  />
+                <div className={`${isMetadataVisible ? "flex" : "hidden"} -mx-1 mt-2 -my-1 max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]`}>
                   <MetadataChipButton active={activePanelMode === "due"} onClick={() => openQuickPanel(task.id, "due")}>
                     {dueMeta}
                   </MetadataChipButton>
@@ -2941,7 +3044,7 @@ function TasksSimpleList({
                     {repeatSummary ?? "No Repeat"}
                   </MetadataChipButton>
                 </div>
-                <div className="adhdice-scrollbar -mx-1 mt-2 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1">
+                <div className={`adhdice-scrollbar ${isMetadataVisible ? "block" : "hidden"} -mx-1 mt-2 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1`}>
                   <div className="flex min-w-max flex-nowrap items-center gap-2">
                     <MetadataChipButton active={activePanelMode === "tags"} onClick={() => openQuickPanel(task.id, "tags")} tone="tag">
                       <span className="inline-flex items-center gap-1">
@@ -2966,7 +3069,7 @@ function TasksSimpleList({
                     ) : null}
                   </div>
                 </div>
-                <div className="adhdice-scrollbar -mx-1 mt-2 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1">
+                <div className={`adhdice-scrollbar ${isMetadataVisible ? "block" : "hidden"} -mx-1 mt-2 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1`}>
                   <div className="flex min-w-max flex-nowrap items-center gap-2">
                     <MetadataChipButton active={activePanelMode === "list"} onClick={() => openQuickPanel(task.id, "list")}>
                       {categoryLabel}
@@ -3165,6 +3268,9 @@ function TasksSimpleList({
                 }}
                 highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
                 highlightedTaskIds={tableProps.highlightedTaskIds}
+                onToggleAllMetadata={toggleAllRenderedTaskMetadata}
+                onToggleMetadata={toggleTaskMetadata}
+                visibleMetadataTaskIds={visibleMetadataTaskIds}
               />
             ) : null}
             </article>

@@ -1020,7 +1020,7 @@ type TaskManagementTableV2Props = {
   onOpenDeleteTask?: (taskId: string) => void;
   onDuplicateTask?: (taskId: string) => void;
   onDelayTask?: (taskId: string, days: number) => Promise<boolean> | boolean;
-  onDelayTaskUntil?: (taskId: string, dueOn: string) => Promise<boolean> | boolean;
+  onDelayTaskUntil?: (taskId: string, dueOn: string | null) => Promise<boolean> | boolean;
   onRestoreTask?: (taskId: string) => void;
   onOpenTaskHistory?: (taskId: string) => void;
   onOpenFocusTimer?: (taskId: string) => void;
@@ -4020,8 +4020,7 @@ export function TaskManagementTableV2({
 
   function canDelayTask(task: PrototypeTaskRow) {
     return Boolean(
-      task.dueOn
-      && task.status !== "archived"
+      task.status !== "archived"
       && task.status !== "complete"
       && task.status !== "did_my_best"
       && task.status !== "done"
@@ -4828,7 +4827,7 @@ export function TaskManagementTableV2({
           className={inlineAccordionButtonClass()}
           key={`${status || "status-option"}-${optionIndex}`}
           onClick={() => {
-            if (status === "delayed" && canDelayTask(task)) {
+            if (status === "delayed" && task.dueOn && canDelayTask(task)) {
               setOverlayMode("delay");
               return;
             }
@@ -5621,6 +5620,10 @@ export function TaskManagementTableV2({
     return "items-center text-center justify-center";
   }
 
+  function getChildColumnAlignmentClass(columnId: TaskManagementTableColumnId) {
+    return columnId === "title" ? "items-start text-left justify-start" : getColumnAlignmentClass(columnId);
+  }
+
   function getInlineClusterClass(columnId: TaskManagementTableColumnId) {
     const alignment = columnAlignments[columnId] ?? "center";
     if (alignment === "left") return "justify-start";
@@ -6123,7 +6126,7 @@ export function TaskManagementTableV2({
                       statusRailLongPressTriggeredRef.current = false;
                       return;
                     }
-                    if (status === "delayed" && canDelayTask(task)) {
+                    if (status === "delayed" && task.dueOn && canDelayTask(task)) {
                       openInspector(task.id, "delay", event.currentTarget);
                       return;
                     }
@@ -6200,7 +6203,7 @@ export function TaskManagementTableV2({
                     statusRailLongPressTriggeredRef.current = false;
                     return;
                   }
-                  if (status === "delayed" && canDelayTask(task)) {
+                  if (status === "delayed" && task.dueOn && canDelayTask(task)) {
                     openInspector(task.id, "delay", event.currentTarget);
                     return;
                   }
@@ -6991,7 +6994,7 @@ export function TaskManagementTableV2({
                           className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${item.status === status ? "" : "opacity-78 hover:opacity-100"}`}
                           key={status}
                           onClick={() => {
-                            if (status === "delayed" && canDelayTask(item)) {
+                            if (status === "delayed" && item.dueOn && canDelayTask(item)) {
                               setActiveMetadataPanelByTaskId((current) => ({ ...current, [item.id]: "delay" }));
                               return;
                             }
@@ -7083,7 +7086,7 @@ export function TaskManagementTableV2({
                 className="w-max max-w-none flex-nowrap"
                 currentStatus={item.status}
                 onSetStatus={(status, event) => {
-                  if (status === "delayed" && canDelayTask(item)) {
+                  if (status === "delayed" && item.dueOn && canDelayTask(item)) {
                     setActiveMetadataPanelByTaskId((current) => ({ ...current, [item.id]: "delay" }));
                     return;
                   }
@@ -7577,7 +7580,7 @@ export function TaskManagementTableV2({
             style={{ gridTemplateColumns }}
           >
             {visibleHeaderColumns.map((column) => (
-              <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${task.id}-draft-${column.id}`}>
+              <div className={`flex min-h-full min-w-0 overflow-hidden ${getChildColumnAlignmentClass(column.id)}`} key={`${task.id}-draft-${column.id}`}>
                 {renderTableStepDraftCell(task.id, column.id)}
               </div>
             ))}
@@ -7638,7 +7641,7 @@ export function TaskManagementTableV2({
                   tabIndex={canOpenStepActions ? 0 : undefined}
                 >
                   {visibleHeaderColumns.map((column) => (
-                    <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${item.id}-${column.id}`}>
+                    <div className={`flex min-h-full min-w-0 overflow-hidden ${getChildColumnAlignmentClass(column.id)}`} key={`${item.id}-${column.id}`}>
                       {column.id === "title" ? (
                         renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)
                       ) : renderChildTaskMiniCell(item, column.id, childTaskPreviewVisibility)}
@@ -7659,7 +7662,7 @@ export function TaskManagementTableV2({
                   style={{ gridTemplateColumns }}
                 >
                   {visibleHeaderColumns.map((column) => (
-                    <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${item.id}-draft-${column.id}`}>
+                    <div className={`flex min-h-full min-w-0 overflow-hidden ${getChildColumnAlignmentClass(column.id)}`} key={`${item.id}-draft-${column.id}`}>
                       {renderTableStepDraftCell(item.id, column.id)}
                     </div>
                   ))}
@@ -7726,7 +7729,7 @@ export function TaskManagementTableV2({
               style={{ gridTemplateColumns }}
             >
               {visibleHeaderColumns.map((column) => (
-                <div className={`flex min-h-full min-w-0 overflow-hidden ${getColumnAlignmentClass(column.id)}`} key={`${row.subtask.id}-${column.id}`}>
+                <div className={`flex min-h-full min-w-0 overflow-hidden ${getChildColumnAlignmentClass(column.id)}`} key={`${row.subtask.id}-${column.id}`}>
                   {renderSourceStepMiniCell(row, column.id)}
                 </div>
               ))}
@@ -8676,7 +8679,7 @@ export function TaskManagementTableV2({
                     <div className="flex flex-wrap gap-2">
                       {getSelectableTaskStatusesForRepeatFrequency(metadataTask.repeat).map((status, optionIndex) => (
                         <TaskTableChipButton className="gap-1.5" key={`${status || "status-option"}-${optionIndex}`} onClick={() => {
-                          if (status === "delayed" && canDelayTask(metadataTask)) {
+                          if (status === "delayed" && metadataTask.dueOn && canDelayTask(metadataTask)) {
                             setActiveMetadataPanelByTaskId((current) => ({ ...current, [metadataTask.id]: "delay" }));
                             return;
                           }
@@ -9408,7 +9411,7 @@ export function TaskManagementTableV2({
                           className="gap-1.5"
                           key={`${status || "status-option"}-${optionIndex}`}
                           onClick={() => {
-                            if (status === "delayed" && canDelayTask(selectedTask)) {
+                            if (status === "delayed" && selectedTask.dueOn && canDelayTask(selectedTask)) {
                               if (overlayMode === "status") {
                                 setOverlayMode("delay");
                               } else {

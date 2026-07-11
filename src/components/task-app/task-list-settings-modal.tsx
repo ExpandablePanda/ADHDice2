@@ -192,7 +192,7 @@ export function TaskListSettingsModal({
     if (!draft) return;
 
     let parsedRules = null;
-    if (list.membershipMode !== "manual") {
+    if (list.membershipMode !== "manual" && list.membershipMode !== "system") {
       parsedRules = draft.rules;
       if (!parsedRules || parsedRules.rules.length === 0) {
         setRowErrors((current) => ({
@@ -389,12 +389,12 @@ export function TaskListSettingsModal({
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-lg font-bold text-[#1f2642] dark:text-white">{list.name}</h3>
                       <span className="rounded-full bg-[#f3efff] px-2.5 py-1 text-[11px] font-semibold text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]">{list.type === "system" ? "System List" : list.type === "smart" ? "Smart List" : "Custom List"}</span>
-                      <span className="rounded-full bg-[#f7f4ff] px-2.5 py-1 text-[11px] font-semibold text-[#7a7397] dark:bg-white/[0.06] dark:text-white/55">{list.membershipMode === "manual" ? "Manual" : list.membershipMode === "hybrid" ? "Hybrid" : "Rules only"}</span>
+                      <span className="rounded-full bg-[#f7f4ff] px-2.5 py-1 text-[11px] font-semibold text-[#7a7397] dark:bg-white/[0.06] dark:text-white/55">{list.membershipMode === "manual" ? "Manual" : list.membershipMode === "hybrid" ? "Hybrid" : list.membershipMode === "system" ? "System" : "Rules only"}</span>
                     </div>
                     <p className="mt-2 text-sm text-[#68738f] dark:text-white/55">{list.description}</p>
                     <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/35">{listCounts[list.id] ?? 0} task{(listCounts[list.id] ?? 0) === 1 ? "" : "s"} currently visible</p>
                     <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/35">Rail order: {listIndex + 1}</p>
-                    {draft.isCollapsed ? <p className="mt-2 text-xs text-[#7a7397] dark:text-white/45">{list.membershipMode === "manual" ? "Manual list membership." : summarizeTaskListRules(draft.rules, (listId) => listLabelById[listId] ?? "")}</p> : null}
+                    {draft.isCollapsed ? <p className="mt-2 text-xs text-[#7a7397] dark:text-white/45">{list.membershipMode === "manual" ? "Manual list membership." : list.membershipMode === "system" ? "Membership is controlled from the task toolbar." : summarizeTaskListRules(draft.rules, (listId) => listLabelById[listId] ?? "")}</p> : null}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2 md:self-start">
                     {isReorderable ? (
@@ -489,7 +489,7 @@ export function TaskListSettingsModal({
                         </span>
                       </label>
                     </div>
-                    {list.membershipMode !== "manual" ? (
+                    {list.membershipMode !== "manual" && list.membershipMode !== "system" ? (
                       <div className="mt-4 space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Rules</span>
@@ -533,11 +533,11 @@ export function TaskListSettingsModal({
                           Add rule
                         </TaskTableChipButton>
                       </div>
-                    ) : (
+                    ) : list.membershipMode === "manual" ? (
                       <div className="mt-4 rounded-[1rem] border border-dashed border-[#ddd6fb] bg-[#faf8ff] px-4 py-3 text-sm text-[#68738f] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
                         This is a manual list. Tasks appear here when you explicitly add them.
                       </div>
-                    )}
+                    ) : null}
                     {rowErrors[list.id] ? <p className="mt-3 text-sm text-[#d94e67] dark:text-[#ff9eaf]">{rowErrors[list.id]}</p> : null}
                   </>
                 ) : null}

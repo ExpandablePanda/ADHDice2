@@ -600,6 +600,7 @@ export function TaskHistoryModal({
     hasHistoryEntry: selectedEntry !== null,
     isDue: selectedIsDue,
     nextDueDateKey: getNextDueDateKey(selectedDate),
+    projectsUndatedDelayed: task.status === "delayed" && task.due_on === null,
     todayDateKey: today,
   });
   const calendarActionStatuses = getTaskHistoryCalendarActionStatuses(task);
@@ -625,6 +626,7 @@ export function TaskHistoryModal({
         hasHistoryEntry: false,
         isDue: dueDates.has(dateKey),
         nextDueDateKey: getNextDueDateKey(dateKey),
+        projectsUndatedDelayed: task.status === "delayed" && task.due_on === null,
         todayDateKey: today,
       });
       if (virtualState === "delayed") {

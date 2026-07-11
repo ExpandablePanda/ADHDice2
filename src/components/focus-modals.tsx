@@ -207,6 +207,98 @@ function ManualPillSelect({
   );
 }
 
+function SearchableManualPillSelect({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  options: ManualSelectOption[];
+  value: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selectedLabel = options.find((option) => option.value === value)?.label ?? "";
+  const filteredOptions = options.filter((option) => option.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isOpen]);
+
+  return (
+    <div className="grid gap-2" ref={rootRef}>
+      <FieldLabel>{label}</FieldLabel>
+      <div className="relative">
+        <input
+          aria-expanded={isOpen}
+          aria-label={label}
+          className={`w-full pr-11 ${manualInputClassName}`}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setActiveIndex(0);
+            setIsOpen(true);
+          }}
+          onFocus={() => {
+            setQuery("");
+            setActiveIndex(Math.max(0, options.findIndex((option) => option.value === value)));
+            setIsOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setIsOpen(false);
+              return;
+            }
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              const direction = event.key === "ArrowDown" ? 1 : -1;
+              setActiveIndex((current) => Math.max(0, Math.min(filteredOptions.length - 1, current + direction)));
+              return;
+            }
+            if (event.key === "Enter" && isOpen && filteredOptions[activeIndex]) {
+              event.preventDefault();
+              onChange(filteredOptions[activeIndex].value);
+              setQuery("");
+              setIsOpen(false);
+            }
+          }}
+          placeholder={selectedLabel}
+          value={query}
+        />
+        <ChevronDown className={`pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
+        {isOpen ? (
+          <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 max-h-64 w-full overflow-y-auto rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
+            {filteredOptions.map((option, index) => (
+              <button
+                className={`flex w-full items-center rounded-[0.9rem] px-3 py-2 text-left text-sm font-semibold ${index === activeIndex || option.value === value ? "bg-[#f2edff] text-[#6f57f6] dark:bg-[#312555] dark:text-[#cabfff]" : "text-[#3a4260] hover:bg-[#f7f4ff] dark:text-white/80 dark:hover:bg-white/8"}`}
+                key={option.value}
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => {
+                  onChange(option.value);
+                  setQuery("");
+                  setIsOpen(false);
+                }}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function todayLocalISO() {
   return getLogicalDayKey();
 }
@@ -434,12 +526,14 @@ export function ManualEntryModal({
         <h2 className="ui-display-font text-center text-3xl tracking-[0.08em] text-[#6f57f6] dark:text-[#cabfff]">Manual Entry</h2>
 
         <div className="mt-10 space-y-6">
-          <ManualPillSelect
+          <SearchableManualPillSelect
             label="Saved Category"
             onChange={handleCategoryChange}
             options={[
               { label: "No saved category", value: "__none__" },
-              ...categories.map((category) => ({ label: category.title, value: category.id })),
+              ...categories
+                .map((category) => ({ label: category.title, value: category.id }))
+                .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: "base" })),
             ]}
             value={catId}
           />

@@ -905,7 +905,11 @@ export function computeTaskAppDerivedData({
   ].filter((columnId, index, columns) => columns.indexOf(columnId) === index);
   const visibleTaskLists = activePage !== "Tasks"
     ? []
-    : availableTaskLists.filter((list) => list.isVisible && (list.id !== "missed" || (visibleListCounts[list.id] ?? 0) > 0));
+    : availableTaskLists.filter((list) =>
+      list.isVisible
+      && list.id !== "routine"
+      && (list.id !== "missed" || (visibleListCounts[list.id] ?? 0) > 0)
+    );
   const listRailOptions: TaskRailListOption[] = activePage !== "Tasks"
     ? []
     : [
@@ -927,7 +931,7 @@ export function computeTaskAppDerivedData({
   const manualListOptions = activePage !== "Tasks"
     ? []
     : availableTaskLists
-      .filter((list) => list.membershipMode !== "rules" || list.id === "waiting")
+      .filter((list) => list.membershipMode === "manual" || list.membershipMode === "hybrid" || list.id === "waiting")
       .map((list) => ({
         count: visibleListCounts[list.id] ?? 0,
         label: list.name,

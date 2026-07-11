@@ -476,7 +476,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.25.18";
+const APP_VERSION = "6.25.21";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2182,6 +2182,9 @@ export function TaskApp() {
       byId.set(list.id, list);
     }
     for (const list of taskLists) {
+      if (list.id === "routine") {
+        continue;
+      }
       byId.set(list.id, list);
     }
     return Array.from(byId.values()).sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
@@ -3537,11 +3540,10 @@ export function TaskApp() {
     task.due_on && task.due_on > todayKey ? task.due_on : todayKey
   ), [todayKey]);
 
-  const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string) => {
+  const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string | null) => {
     const task = tasks.find((entry) => entry.id === taskId);
     if (
       !task
-      || !task.due_on
       || task.status === "archived"
       || task.status === "complete"
       || task.status === "did_my_best"
@@ -3552,7 +3554,7 @@ export function TaskApp() {
     }
 
     const delayAnchorDate = getTaskDelayAnchorDate(task);
-    if (nextDueOn <= delayAnchorDate) {
+    if (nextDueOn !== null && nextDueOn <= delayAnchorDate) {
       return false;
     }
 
@@ -3570,7 +3572,7 @@ export function TaskApp() {
 
     setMessage({
       tone: "good",
-      text: `"${task.title}" was delayed until ${nextDueOn}.`,
+      text: nextDueOn ? `"${task.title}" was delayed until ${nextDueOn}.` : `"${task.title}" was benched without a date.`,
     });
     return true;
   }, [applyTaskMutationWithoutHistory, getTaskDelayAnchorDate, setMessage, tasks]);
@@ -4824,7 +4826,7 @@ export function TaskApp() {
           energyOptions={energyOptions}
           fieldOptions={TASK_LIST_RULE_FIELD_OPTIONS}
           listCounts={visibleListCounts}
-          lists={availableTaskLists}
+          lists={availableTaskLists.filter((list) => list.membershipMode !== "system")}
           onClose={() => setIsTaskListSettingsOpen(false)}
           onCreateCustomList={createCustomTaskList}
           onDeleteList={deleteTaskList}

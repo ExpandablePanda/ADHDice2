@@ -58,6 +58,7 @@ export function isTaskImportant(task: Task) {
 
 export function shouldRouteTaskToInbox(task: Task) {
   return isTaskOpen(task)
+    && task.status !== "delayed"
     && !task.due_on
     && getTaskPriorityLevel(task) < 4
     && task.repeat_frequency === "none"
@@ -87,6 +88,10 @@ export function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucke
 
   if (task.status === "missed" || (isTaskOpen(task) && task.due_on !== null && task.due_on < todayKey)) {
     return "missed";
+  }
+
+  if (task.status === "delayed" && task.due_on === null) {
+    return "all";
   }
 
   const routedBucket = context.routing[task.id];

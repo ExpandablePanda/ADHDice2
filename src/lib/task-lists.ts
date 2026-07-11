@@ -20,7 +20,7 @@ export type BuiltInTaskListId =
 
 export type TaskListId = BuiltInTaskListId | `list:${string}`;
 export type TaskListType = "system" | "smart" | "custom";
-export type TaskListMembershipMode = "hybrid" | "manual" | "rules";
+export type TaskListMembershipMode = "hybrid" | "manual" | "rules" | "system";
 
 export type TaskListRule =
   | { field: "status"; op: "is" | "is_not"; value: TaskStatus | TaskStatus[] }
@@ -85,6 +85,13 @@ export function hasTaskManualListMembership(
   listId: TaskListId,
 ) {
   return listMemberships.some((membership) => membership.id === listId && membership.isManual);
+}
+
+export function hasTaskListMembership(
+  listMemberships: ReadonlyArray<Pick<TaskListMembership, "id">>,
+  listId: TaskListId,
+) {
+  return listMemberships.some((membership) => membership.id === listId);
 }
 
 export type TaskListEvaluationContext = {
@@ -252,12 +259,12 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       type: "smart",
     },
     {
-      description: "Manual list for repeatable routines you want one tap away.",
+      description: "System-owned list for repeatable routines you toggle from the task toolbar.",
       id: "routine",
       isDeletable: false,
       isEditable: true,
       isVisible: true,
-      membershipMode: "manual",
+      membershipMode: "system",
       name: "Routine",
       rules: null,
       sortOrder: 6,
@@ -402,7 +409,7 @@ export function evaluateTaskListMemberships(
     }
     memberships.set(listId, {
       id: listId,
-      isManual: true,
+      isManual: lookup.listById.get(listId)?.membershipMode !== "system",
       source: "manual",
     });
   }
@@ -826,7 +833,13 @@ function matchesInboxMembership(
     return false;
   }
 
-  const manualListIds = context.manualMembershipsByTaskId[task.id] ?? [];
+  if (task.status === "delayed" && !task.due_on) {
+    return false;
+  }
+
+  const manualListIds = (context.manualMembershipsByTaskId[task.id] ?? []).filter(
+    (listId) => lookup.listById.get(listId)?.membershipMode !== "system",
+  );
   if (manualListIds.length > 0) {
     return false;
   }

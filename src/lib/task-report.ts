@@ -4,7 +4,7 @@ import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } 
 import { shiftDateKey } from "@/lib/task-grid-layout";
 import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
-import { hasTaskManualListMembership, type TaskListDefinition, type TaskListMembership } from "@/lib/task-lists";
+import { hasTaskListMembership, type TaskListDefinition, type TaskListMembership } from "@/lib/task-lists";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, inferLegacyTaskPriorityLevel, type TaskPriorityLevel } from "@/lib/task-priority";
 import { formatRepeatSummary } from "@/lib/task-repeat";
 
@@ -564,7 +564,7 @@ function buildTaskMetadata(
       )] ?? task.status,
       isImportant: priorityLevel === 4,
       isPinned: Boolean(task.pinned_at),
-      isRoutine: hasTaskManualListMembership(listMembershipsByTaskId[task.id] ?? [], "routine"),
+      isRoutine: hasTaskListMembership(listMembershipsByTaskId[task.id] ?? [], "routine"),
       isTestLike: isTestLikeTaskTitle(title),
       isTrashed: task.status === "trashed",
       isUrgent: priorityLevel === 5,

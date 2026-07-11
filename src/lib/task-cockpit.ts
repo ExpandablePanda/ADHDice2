@@ -58,6 +58,9 @@ export function normalizeOpenTaskStatusForDueDate(
   todayDateKey: string = todayISO(),
 ): TaskStatus {
   if (task.status === "delayed") {
+    if (!task.due_on) {
+      return "delayed";
+    }
     const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
     return dueBucket === "upcoming" || dueBucket === "not_due" ? "delayed" : "pending";
   }
@@ -116,6 +119,9 @@ export function getTaskDueDateBucket(task: Pick<Task, "due_on" | "status">): Tas
 
 function getTaskDisplayStatusForDate(task: Task, todayDateKey: string) {
   if (task.status === "delayed") {
+    if (!task.due_on) {
+      return "delayed";
+    }
     const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
 
     if (dueBucket === "upcoming" || dueBucket === "not_due") {

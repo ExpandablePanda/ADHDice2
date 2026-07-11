@@ -5,7 +5,7 @@ Last reviewed: 2026-07-09
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.25.18`.
+- Current working app version: `6.25.21`.
 - Current release group: `6.25.x` focused stabilization pass.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,9 @@ Role: active working
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
 ## 6.25 Checkpoint
+- `6.25.21` corrects the three remaining `6.25.20` QA gaps: List metadata long-press now toggles all and only currently rendered parent/Step/Substep cards while preserving individual click behavior; Routine is omitted from the primary list rail and remains beside Pinned in the filter rail with its existing count, selection, toolbar membership, and persistence paths; and the shared current-status normalization/display resolver preserves undated `status = delayed` tasks as visibly Delayed across List, Table, editor, and shared status consumers without requiring a due date or changing dated-delay reconciliation.
+- `6.25.20` completes the narrow QA correction pass: List metadata disclosure now lives beside each parent/Step/Substep streak-history cluster with per-card click and rendered-result-only long-press reveal; Routine is excluded from manual-list management and classified as system-owned while retaining its membership-table storage and toolbar toggle; and undated Delayed saves immediately without opening the date picker, stays out of Inbox/date buckets, and projects continuously as Delayed on future History Calendar dates without synthetic history rows.
+- `6.25.19` completes the six confirmed QA updates as one coordinated release: List parent/Step/Substep cards now keep titles, actions, status rails, and streak/history visible while optional metadata is toggled per stable task id; revealed child metadata always includes the existing Repeat control with `No Repeat`; Table child/source/draft title cells stay left-aligned without changing parent or saved alignment preferences; Manual Focus Log uses a searchable, alphabetized, keyboard-operable saved-category picker with `No saved category` first; Routine is classified as a system-owned built-in list while preserving its existing membership-table records and toolbar-toggle mutation path; and Delayed supports an undated benched state through the existing picker/editor/mutation paths. Undated Delayed remains open, is excluded from Inbox and date-derived buckets, creates no synthetic history date, and still participates in All, Pinned, Routine, and independently matching custom lists. Future delay dates and existing due-date reconciliation remain intact; no schema migration was added.
 - `6.25.18` fixes the expanded Table View step status rail DOM nesting regression by rendering expanded step rails outside the compact step action-wrapper button, while compact step status circles still open the existing status action rail.
 - `6.25.17` restores compact Table View status-circle click behavior after the expanded rail follow-ups: when the first status column is not expanded, parent status circles again open the existing status action rail on normal click, while long-press still expands the status column.
 - `6.25.16` extends the Table View expanded first-column status rail to visible step mini-rows: compact step rows still show one current status circle, while expanded mode uses the same shared circle-only rail and existing step status save/delay paths as the parent status column.

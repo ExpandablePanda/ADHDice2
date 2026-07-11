@@ -471,8 +471,7 @@ export function TaskEditorModal({
   const customEstimatedMinuteValue = customEstimatedMinutes === null ? "" : String(customEstimatedMinutes % 60);
   const todayDateKey = todayISO();
   const delayAnchorDateKey = task?.due_on && task.due_on > todayDateKey ? task.due_on : todayDateKey;
-  const requiresDelayedDueDate = draft.status === "delayed";
-  const hasValidDelayedDueDate = Boolean(draft.dueOn && draft.dueOn > delayAnchorDateKey);
+  const requiresDelayedDueDate = draft.status === "delayed" && Boolean(task?.due_on);
 
   function updateEstimatedTimeParts(hoursPart: string, minutesPart: string) {
     const normalizedHours = hoursPart.replace(/[^\d]/g, "");
@@ -549,9 +548,7 @@ export function TaskEditorModal({
           event.preventDefault();
           const draftSnapshot = draftRef.current;
           const trimmedSnapshotTitle = draftSnapshot.title.trim();
-          const delayedAnchorDateKey = task?.due_on && task.due_on > todayDateKey ? task.due_on : todayDateKey;
-          const hasDelayedDueDate = Boolean(draftSnapshot.dueOn && draftSnapshot.dueOn > delayedAnchorDateKey);
-          if (!trimmedSnapshotTitle || hasUrlError || (draftSnapshot.status === "delayed" && !hasDelayedDueDate)) return;
+          if (!trimmedSnapshotTitle || hasUrlError) return;
           setIsSaving(true);
           await onSave({
             focusToday: draftSnapshot.focusToday,
@@ -676,11 +673,6 @@ export function TaskEditorModal({
                   primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
                   saveLabel="Use delay date"
                 />
-                {!hasValidDelayedDueDate ? (
-                  <p className="mt-2 text-xs text-[#b24d67] dark:text-[#ffb0bc]">
-                    Delayed needs a future due date before this task can be saved.
-                  </p>
-                ) : null}
               </div>
             ) : null}
 
