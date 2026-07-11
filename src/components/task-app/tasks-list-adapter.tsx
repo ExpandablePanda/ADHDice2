@@ -27,7 +27,7 @@ import { TasksListViewPanel } from "./tasks-page";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
-import { TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES, formatTaskStatusLabel, getTaskStatusCircleHoverInvertedClassName, renderTaskStatusCircle } from "./task-status-ui";
+import { TaskStatusCircleRail, formatTaskStatusLabel } from "./task-status-ui";
 import {
   formatRepeatFrequencyLabel,
   formatRepeatSummary,
@@ -146,14 +146,6 @@ function chunkItems<T>(items: T[], size: number) {
     chunks.push(items.slice(index, index + size));
   }
   return chunks;
-}
-
-function statusTone(status: TaskStatus) {
-  return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
-}
-
-function invertedStatusTone(status: TaskStatus) {
-  return TASK_STATUS_INVERTED_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
 }
 
 function shouldIgnoreListOverlayOpen(target: EventTarget | null) {
@@ -573,20 +565,6 @@ type TasksListAdapterProps = {
   panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode">;
   selectedBucket: string;
   tableProps: TasksTableSourceProps;
-};
-
-const SIMPLE_STATUS_STYLES: Record<TaskStatus, string> = {
-  archived: "border-[#d8ddea] bg-white text-[#68738c] dark:border-white/15 dark:bg-white/[0.04] dark:text-white/55",
-  complete: "border-[#5d9b76] bg-[#eef8f1] text-[#256947] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]",
-  delayed: "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]",
-  did_my_best: "border-[#f2d36f] bg-[#fff9e7] text-[#9f7200] dark:border-[#65511a] dark:bg-[#3a2d10] dark:text-[#ffd56b]",
-  done: "border-[#97dfc1] bg-[#ecfbf4] text-[#119a69] dark:border-[#245441] dark:bg-[#14362c] dark:text-[#7de4b8]",
-  in_progress: "border-[#a9c2ff] bg-[#eef3ff] text-[#4473df] dark:border-[#29437c] dark:bg-[#17253f] dark:text-[#a9c2ff]",
-  missed: "border-[#f4afbc] bg-[#fff2f5] text-[#d94e67] dark:border-[#60313d] dark:bg-[#44232f] dark:text-[#ff9eaf]",
-  not_due: "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#27516b] dark:bg-[#162434] dark:text-[#8bc4ff]",
-  pending: "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#6b4522] dark:bg-[#392818] dark:text-[#ffcb99]",
-  trashed: "border-[#f4afbc] bg-[#fff2f5] text-[#d94e67] dark:border-[#60313d] dark:bg-[#44232f] dark:text-[#ff9eaf]",
-  upcoming: "border-[#d9def0] bg-[#f8f9fd] text-[#68738c] dark:border-white/15 dark:bg-white/[0.04] dark:text-white/60",
 };
 
 function resolveTaskCategoryLabel({
@@ -1195,21 +1173,6 @@ function StepsCardPreview({
                                   {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                                 </p>
                               </button>
-                              <button
-                                aria-expanded={activePanelMode === "status"}
-                                aria-label={`Change status for ${item.title || (item.depth > 1 ? "substep" : "step")}`}
-                                className="group inline-flex h-7 w-7 flex-none items-center justify-center rounded-full text-[#8d97b0] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onOpenQuickPanel(item.id, "status");
-                                }}
-                                onPointerDown={(event) => event.stopPropagation()}
-                                type="button"
-                              >
-                                {renderTaskStatusCircle(displayStatus, "sm", {
-                                  className: getTaskStatusCircleHoverInvertedClassName(displayStatus),
-                                })}
-                              </button>
                               <StepLayerChip depth={item.depth} />
                               <StepHistoryChips currentStreak={item.currentStreak} missedStreak={item.missedStreak} />
                               {canCollapse ? (
@@ -1368,14 +1331,30 @@ function StepsCardPreview({
                         </button>
                       ) : null}
                       </div>
-                      <div className="-mx-1 -my-1 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]" data-list-action-control="true">
-                      <MetadataChipButton
-                        active={activePanelMode === "status"}
-                        onClick={() => onOpenQuickPanel(item.id, "status")}
-                        toneClassName={SIMPLE_STATUS_STYLES[displayStatus]}
+                      <div
+                        className="adhdice-scrollbar -mx-1 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1"
+                        data-list-action-control="true"
+                        onClick={(event) => event.stopPropagation()}
+                        onContextMenu={(event) => event.stopPropagation()}
                       >
-                        {formatTaskStatusLabel(displayStatus)}
-                      </MetadataChipButton>
+                        <TaskStatusCircleRail
+                          className="min-w-max flex-nowrap"
+                          currentStatus={displayStatus}
+                          onSetStatus={(status) => {
+                            if (status === "delayed" && item.dueOn && onDelayTaskUntil) {
+                              onOpenQuickPanel(item.id, "delay");
+                              return;
+                            }
+                            onSetStatus?.(item.id, status, childTask, [item.id]);
+                          }}
+                          options={getSelectableTaskStatuses(childTask ?? { repeat_frequency: item.repeat }).map((status) => ({
+                            label: formatTaskStatusLabel(status),
+                            value: status,
+                          }))}
+                          statusLabelPrefix={`Set ${item.depth > 1 ? "substep" : "step"} status to`}
+                        />
+                      </div>
+                      <div className="-mx-1 -my-1 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]" data-list-action-control="true">
                       <MetadataChipButton active={activePanelMode === "due"} onClick={() => onOpenQuickPanel(item.id, "due")}>
                         {scheduleLabel || "No date"}
                       </MetadataChipButton>
@@ -1484,30 +1463,6 @@ function StepsCardPreview({
                     <TaskTableChipButton toneClassName={QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">Add</TaskTableChipButton>
                     {substepCreationErrors[item.id] ? <p className="text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">{substepCreationErrors[item.id]}</p> : null}
                   </form>
-                ) : null}
-                {activePanelMode === "status" ? (
-                  <QuickPanelShell onClose={closeQuickPanel} title={`Status · ${item.title || "Step"}`}>
-                    <div className="flex flex-wrap gap-2">
-                      {getSelectableTaskStatuses(childTask ?? { repeat_frequency: item.repeat }).map((status) => (
-                        <TaskTableChipButton
-                          className="gap-2"
-                          key={status}
-                          onClick={() => {
-                            if (status === "delayed" && item.dueOn && onDelayTaskUntil) {
-                              onOpenQuickPanel(item.id, "delay");
-                              return;
-                            }
-                            closeQuickPanel();
-                            onSetStatus?.(item.id, status, childTask, [item.id]);
-                          }}
-                          toneClassName={status === displayStatus ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}
-                        >
-                          {renderTaskStatusCircle(status, "sm")}
-                          <span>{formatTaskStatusLabel(status)}</span>
-                        </TaskTableChipButton>
-                      ))}
-                    </div>
-                  </QuickPanelShell>
                 ) : null}
                 {activePanelMode === "delay" ? (
                   <DelayQuickPanel
@@ -2731,7 +2686,6 @@ function TasksSimpleList({
         const isOpenTask = isTaskOpen(task);
         const activePanelMode = activeQuickPanel?.taskId === task.id ? activeQuickPanel.mode : null;
         const isQuickPanelOpen = activePanelMode !== null;
-        const panelTitle = task.title;
         const listMemberships = rowContext.listMembershipsByTaskId[task.id] ?? [];
         const isPinned = Boolean(task.pinned_at);
         const isRoutine = hasTaskManualListMembership(listMemberships, "routine");
@@ -2831,21 +2785,6 @@ function TasksSimpleList({
                           </p>
                         </button>
                       )}
-                      <button
-                        aria-expanded={activePanelMode === "status"}
-                        aria-label={`Change status for ${task.title}`}
-                        className="group inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8d97b0] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/30 dark:text-white/45"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setRowContextMenu(null);
-                          openQuickPanel(task.id, "status");
-                        }}
-                        type="button"
-                      >
-                        {renderTaskStatusCircle(displayStatus, "md", {
-                          className: getTaskStatusCircleHoverInvertedClassName(displayStatus),
-                        })}
-                      </button>
                       <TaskHistoryChips
                         className="hidden sm:inline-flex"
                         currentStreak={taskRow.currentStreak}
@@ -2947,14 +2886,32 @@ function TasksSimpleList({
                     </AdhdIconButton>
                   </div>
                 </div>
+                <div
+                  className="adhdice-scrollbar -mx-1 mt-2 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1"
+                  data-list-action-control="true"
+                  onClick={(event) => event.stopPropagation()}
+                  onContextMenu={(event) => event.stopPropagation()}
+                >
+                  <TaskStatusCircleRail
+                    className="min-w-max flex-nowrap"
+                    currentStatus={displayStatus}
+                    onSetStatus={(status) => {
+                      if (status === "delayed" && task.due_on && tableProps.onDelayTaskUntil) {
+                        setRowContextMenu(null);
+                        openQuickPanel(task.id, "delay");
+                        return;
+                      }
+                      setRowContextMenu(null);
+                      closeQuickPanel();
+                      tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
+                    }}
+                    options={getSelectableTaskStatuses(task).map((status) => ({
+                      label: formatTaskStatusLabel(status),
+                      value: status,
+                    }))}
+                  />
+                </div>
                 <div className="-mx-1 mt-2 -my-1 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:thin]">
-                  <MetadataChipButton
-                    active={activePanelMode === "status"}
-                    onClick={() => openQuickPanel(task.id, "status")}
-                    toneClassName={SIMPLE_STATUS_STYLES[displayStatus]}
-                  >
-                    {formatTaskStatusLabel(displayStatus)}
-                  </MetadataChipButton>
                   <TaskHistoryChips
                     className="sm:hidden"
                     currentStreak={taskRow.currentStreak}
@@ -3047,30 +3004,6 @@ function TasksSimpleList({
                 </div>
               </div>
             </div>
-            {activePanelMode === "status" ? (
-              <QuickPanelShell onClose={closeQuickPanel} title={`Status · ${panelTitle}`}>
-                <div className="flex flex-wrap gap-2">
-                  {getSelectableTaskStatuses(task).map((status) => (
-                    <TaskTableChipButton
-                      className="gap-2"
-                      key={status}
-                      onClick={() => {
-                        if (status === "delayed" && task.due_on && tableProps.onDelayTaskUntil) {
-                          openQuickPanel(task.id, "delay");
-                          return;
-                        }
-                        closeQuickPanel();
-                        tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
-                      }}
-                      toneClassName={status === displayStatus ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}
-                    >
-                      {renderTaskStatusCircle(status, "sm")}
-                      <span>{formatTaskStatusLabel(status)}</span>
-                    </TaskTableChipButton>
-                  ))}
-                </div>
-              </QuickPanelShell>
-            ) : null}
             {activePanelMode === "delay" ? (
               <DelayQuickPanel
                 dueOn={task.due_on}

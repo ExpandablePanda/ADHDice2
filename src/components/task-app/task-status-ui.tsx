@@ -2,6 +2,24 @@ import { ArrowRight, BookOpen, CalendarClock, Clock, Ellipsis, Star, Trash2, X }
 
 import type { TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 
+export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
+  { label: "Pending", value: "pending" },
+  { label: "In Progress", value: "in_progress" },
+  { label: "Delayed", value: "delayed" },
+  { label: "Done", value: "done" },
+  { label: "Did My Best", value: "did_my_best" },
+  { label: "Missed", value: "missed" },
+  { label: "Complete", value: "complete" },
+  { label: "Upcoming", value: "upcoming" },
+  { label: "Not Due", value: "not_due" },
+  { label: "Archived", value: "archived" },
+  { label: "Trash", value: "trashed" },
+];
+
+export const TASK_SUBTASK_STATUS_OPTIONS: Array<{ label: string; value: TaskSubtaskStatus }> = TASK_STATUS_OPTIONS.filter(
+  (option): option is { label: string; value: TaskSubtaskStatus } => option.value !== "delayed" && option.value !== "complete" && option.value !== "archived" && option.value !== "trashed",
+);
+
 export const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {
   pending: "border border-[#f6be96] bg-white text-[#d96b1c]",
   in_progress: "border border-[#a9c2ff] bg-white text-[#4473df]",
@@ -151,6 +169,36 @@ export function renderTaskStatusCircle(
     >
       {renderTaskStatusGlyph(status, size)}
     </span>
+  );
+}
+
+export function TaskStatusCircleRail<Status extends TaskStatus | TaskSubtaskStatus>({
+  className = "",
+  currentStatus,
+  onSetStatus,
+  options,
+  statusLabelPrefix = "Set status to",
+}: {
+  className?: string;
+  currentStatus: Status;
+  onSetStatus: (status: Status) => void;
+  options: Array<{ label: string; value: Status }>;
+  statusLabelPrefix?: string;
+}) {
+  return (
+    <div className={["flex flex-wrap gap-1.5", className].join(" ").trim()}>
+      {options.map((option) => (
+        <button
+          aria-label={`${statusLabelPrefix} ${option.label}`}
+          className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${currentStatus === option.value ? "" : "opacity-78 hover:opacity-100"}`}
+          key={option.value}
+          onClick={() => onSetStatus(option.value)}
+          type="button"
+        >
+          {renderTaskStatusCircle(option.value, "sm", { inverted: currentStatus === option.value })}
+        </button>
+      ))}
+    </div>
   );
 }
 

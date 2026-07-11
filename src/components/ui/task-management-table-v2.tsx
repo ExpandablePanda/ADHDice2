@@ -7,6 +7,7 @@ import {
   ArrowDown,
   CalendarDays,
   ChevronDown,
+  ChevronRight,
   Clock3,
   CirclePause,
   CirclePlay,
@@ -36,7 +37,17 @@ import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from
 import { getSelectedTaskPriorityToneClass, getTaskPrioritySelection, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TaskDelayPicker } from "@/components/task-app/task-delay-picker";
-import { TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES, formatTaskStatusLabel, renderTaskStatusChip, renderTaskStatusCircle, renderTaskStatusGlyph } from "@/components/task-app/task-status-ui";
+import {
+  TASK_STATUS_CHIP_STYLES,
+  TASK_STATUS_INVERTED_CHIP_STYLES,
+  TASK_STATUS_OPTIONS,
+  TASK_SUBTASK_STATUS_OPTIONS,
+  TaskStatusCircleRail,
+  formatTaskStatusLabel,
+  renderTaskStatusChip,
+  renderTaskStatusCircle,
+  renderTaskStatusGlyph,
+} from "@/components/task-app/task-status-ui";
 import { getSelectableTaskStatusesForRepeatFrequency } from "@/lib/task-complete";
 import {
   formatRepeatFrequencyLabel,
@@ -815,22 +826,16 @@ function InlineSubtaskEditor({
               </div>
             </div>
             {openStatusPickerSubtaskId === subtask.id ? (
-              <div className="mt-2 flex flex-wrap gap-1.5 pl-8">
-                {SUBTASK_STATUS_OPTIONS.map((option) => (
-                  <button
-                    aria-label={`Set step status to ${option.label}`}
-                    className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${subtask.status === option.value ? "" : "opacity-78 hover:opacity-100"}`}
-                    key={option.value}
-                    onClick={() => {
-                      onSetStatus?.(subtask.id, option.value);
-                      setOpenStatusPickerSubtaskId(null);
-                    }}
-                    type="button"
-                  >
-                    {renderTaskStatusCircle(option.value, "sm", { inverted: subtask.status === option.value })}
-                  </button>
-                ))}
-              </div>
+              <TaskStatusCircleRail<TaskSubtaskStatus>
+                className="mt-2 pl-8"
+                currentStatus={subtask.status as TaskSubtaskStatus}
+                onSetStatus={(status) => {
+                  onSetStatus?.(subtask.id, status);
+                  setOpenStatusPickerSubtaskId(null);
+                }}
+                options={TASK_SUBTASK_STATUS_OPTIONS}
+                statusLabelPrefix="Set step status to"
+              />
             ) : null}
           </div>
           {subtask.children.length > 0 ? (
@@ -1352,23 +1357,7 @@ const COMPACT_REPEAT_UNITS: Array<{ label: string; value: TaskRepeat }> = [
   { label: "Months", value: "monthly" },
 ];
 
-const STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
-  { label: "Pending", value: "pending" },
-  { label: "In Progress", value: "in_progress" },
-  { label: "Delayed", value: "delayed" },
-  { label: "Done", value: "done" },
-  { label: "Did My Best", value: "did_my_best" },
-  { label: "Missed", value: "missed" },
-  { label: "Complete", value: "complete" },
-  { label: "Upcoming", value: "upcoming" },
-  { label: "Not Due", value: "not_due" },
-  { label: "Archived", value: "archived" },
-  { label: "Trash", value: "trashed" },
-];
-
-const SUBTASK_STATUS_OPTIONS: Array<{ label: string; value: TaskSubtaskStatus }> = STATUS_OPTIONS.filter(
-  (option): option is { label: string; value: TaskSubtaskStatus } => option.value !== "delayed",
-);
+const STATUS_OPTIONS = TASK_STATUS_OPTIONS;
 
 const DUE_PRESETS = [
   { label: "No Date", value: "" },
@@ -2332,6 +2321,7 @@ export function TaskManagementTableV2({
   const [columnOrder, setColumnOrder] = useState<TaskManagementTableColumnId[]>(() => getInitialColumnOrder(persistedLayoutPreferences));
   const [columnAlignments, setColumnAlignments] = useState<Partial<Record<TaskManagementTableColumnId, ColumnAlignment>>>(() => getInitialColumnAlignments());
   const [statusDisplayMode, setStatusDisplayMode] = useState<"chip" | "circle">(() => getInitialStatusDisplayMode());
+  const [expandedStatusTaskId, setExpandedStatusTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     if (tableStepDraftParentId) {
@@ -4020,6 +4010,7 @@ export function TaskManagementTableV2({
   function setTaskStatus(taskId: string, status: TaskStatus) {
     // Status changes must reuse the app's per-task status action path so validation,
     // completion, recurrence, rewards, and trash/archive side effects still run.
+    setExpandedStatusTaskId(null);
     queueTableMutationScrollTopHold(taskId);
     const targetTaskIds = resolveTableActionTargetTaskIds(taskId);
     for (const targetTaskId of targetTaskIds) {
@@ -6021,21 +6012,60 @@ export function TaskManagementTableV2({
     };
 
     if (columnId === "status_icon") {
+      const isStatusExpanded = expandedStatusTaskId === task.id;
       if (!allowInlineInspector) {
         return wrapMeasuredContent(
-          <div className="flex items-center justify-center self-center">
+          <div className="flex min-w-0 items-center justify-center gap-0.5 self-center">
             {statusDisplayMode === "chip" ? renderTaskStatusChip(task.status, { size: "sm" }) : renderTaskStatusCircle(task.status, "md")}
+            <button
+              aria-expanded={isStatusExpanded}
+              aria-label={`${isStatusExpanded ? "Collapse" : "Expand"} direct status options for ${task.title}`}
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e7defc] bg-white text-[#8a79d6] transition hover:border-[#d8cdf7] hover:bg-[#f7f3ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/25 dark:border-white/10 dark:bg-white/5 dark:text-[#cabfff] dark:hover:bg-white/10"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpandedStatusTaskId((current) => (current === task.id ? null : task.id));
+              }}
+              type="button"
+            >
+              {isStatusExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            </button>
+            {isStatusExpanded ? (
+              <span
+                className="ml-1 flex max-w-[min(38vw,28rem)] flex-nowrap items-center gap-1 overflow-x-auto [scrollbar-width:thin]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                {getSelectableTaskStatusesForRepeatFrequency(task.repeat).map((status) => (
+                  <TaskTableChipButton
+                    className="gap-1.5 px-2 py-1 text-[11px]"
+                    key={status}
+                    onClick={(event) => {
+                      if (status === "delayed" && canDelayTask(task)) {
+                        setExpandedStatusTaskId(null);
+                        openInspector(task.id, "delay", event.currentTarget);
+                        return;
+                      }
+                      setTaskStatus(task.id, status);
+                    }}
+                    toneClassName={task.status === status ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}
+                  >
+                    {renderTaskStatusCircle(status, "sm", { inverted: task.status === status })}
+                    <span>{formatTaskStatusLabel(status)}</span>
+                  </TaskTableChipButton>
+                ))}
+              </span>
+            ) : null}
           </div>,
           "justify-center"
         );
       }
 
       return (
-        <div className="flex items-center justify-center self-center">
+        <div className="flex min-w-0 items-center justify-center gap-0.5 self-center">
           <button
             className={`${CONTROL_FONT_CLASS} rounded-full p-0 transition`}
             onClick={(event) => {
               event.stopPropagation();
+              setExpandedStatusTaskId(null);
               toggleInlineActionRow(task.id, "status", event.currentTarget);
             }}
             type="button"
@@ -6044,6 +6074,44 @@ export function TaskManagementTableV2({
               {statusDisplayMode === "chip" ? renderTaskStatusChip(task.status, { size: "sm" }) : renderTaskStatusCircle(task.status, "md")}
             </span>
           </button>
+          <button
+            aria-expanded={isStatusExpanded}
+            aria-label={`${isStatusExpanded ? "Collapse" : "Expand"} direct status options for ${task.title}`}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e7defc] bg-white text-[#8a79d6] transition hover:border-[#d8cdf7] hover:bg-[#f7f3ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/25 dark:border-white/10 dark:bg-white/5 dark:text-[#cabfff] dark:hover:bg-white/10"
+            onClick={(event) => {
+              event.stopPropagation();
+              closeInspector();
+              setExpandedStatusTaskId((current) => (current === task.id ? null : task.id));
+            }}
+            type="button"
+          >
+            {isStatusExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
+          {isStatusExpanded ? (
+            <span
+              className="ml-1 flex max-w-[min(38vw,28rem)] flex-nowrap items-center gap-1 overflow-x-auto [scrollbar-width:thin]"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {getSelectableTaskStatusesForRepeatFrequency(task.repeat).map((status) => (
+                <TaskTableChipButton
+                  className="gap-1.5 px-2 py-1 text-[11px]"
+                  key={status}
+                  onClick={(event) => {
+                    if (status === "delayed" && canDelayTask(task)) {
+                      setExpandedStatusTaskId(null);
+                      openInspector(task.id, "delay", event.currentTarget);
+                      return;
+                    }
+                    setTaskStatus(task.id, status);
+                  }}
+                  toneClassName={task.status === status ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}
+                >
+                  {renderTaskStatusCircle(status, "sm", { inverted: task.status === status })}
+                  <span>{formatTaskStatusLabel(status)}</span>
+                </TaskTableChipButton>
+              ))}
+            </span>
+          ) : null}
         </div>
       );
     }
