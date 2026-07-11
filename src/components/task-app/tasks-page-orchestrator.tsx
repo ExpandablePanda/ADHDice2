@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentProps, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Ellipsis, Pencil, Plus, X } from "lucide-react";
 import { TaskPage } from "./task-page";
 import { TaskOperationsHeader } from "./tasks-page";
@@ -126,8 +126,14 @@ export function TasksWorkspace({
     setRenameDraft(label);
   };
 
-  const openTabMenu = (tabId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
-    const buttonRect = event.currentTarget.getBoundingClientRect();
+  const toggleTabMenu = (tabId: string, button: HTMLButtonElement) => {
+    if (menuTabId === tabId) {
+      setMenuTabId(null);
+      setMenuPosition(null);
+      return;
+    }
+
+    const buttonRect = button.getBoundingClientRect();
     setMenuPosition({
       left: Math.max(8, buttonRect.right - 144),
       top: buttonRect.bottom + 8,
@@ -264,20 +270,16 @@ export function TasksWorkspace({
                       <div className="relative">
                         <button
                           aria-expanded={isMenuOpen}
+                          aria-haspopup="menu"
                           aria-label={`${tab.label} tab actions`}
                           className="flex h-6 min-w-6 items-center justify-center rounded-full border border-transparent bg-transparent text-[#8b84aa] transition hover:border-[#e4deef] hover:bg-white/80 hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b6a7ff] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:text-white/45 dark:hover:border-white/10 dark:hover:bg-white/10 dark:hover:text-[#cabfff] dark:focus-visible:ring-[#7f67ff] dark:focus-visible:ring-offset-[#140f26]"
                           onClick={(event) => {
-                            event.stopPropagation();
-                          }}
-                          onPointerDown={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            if (isMenuOpen) {
-                              setMenuTabId(null);
-                              setMenuPosition(null);
-                              return;
-                            }
-                            openTabMenu(tab.id, event);
+                            toggleTabMenu(tab.id, event.currentTarget);
+                          }}
+                          onPointerDown={(event) => {
+                            event.stopPropagation();
                           }}
                           type="button"
                         >

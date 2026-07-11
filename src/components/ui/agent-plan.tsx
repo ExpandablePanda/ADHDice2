@@ -353,7 +353,7 @@ function getPriorityOptionLabel(priority: AgentPlanPriorityValue) {
     return optionLabel;
   }
   const normalizedPriority = normalizeTaskPrioritySelectionInput(priority);
-  if (normalizedPriority?.priorityLevel) {
+  if (normalizedPriority?.priorityLevel !== null && normalizedPriority?.priorityLevel !== undefined) {
     return formatTaskPriorityLabel(normalizedPriority.priorityLevel);
   }
   return priority;
@@ -363,7 +363,7 @@ function getAgentPlanPriorityDisplayLabel(priorityLabel: string) {
   const activePriority = getAgentPlanPriorityValueFromLabel(priorityLabel);
   if (activePriority !== "none" && activePriority !== "focus") {
     const normalizedPriority = normalizeTaskPrioritySelectionInput(activePriority);
-    if (normalizedPriority?.priorityLevel) {
+    if (normalizedPriority?.priorityLevel !== null && normalizedPriority?.priorityLevel !== undefined) {
       return formatTaskPriorityLabel(normalizedPriority.priorityLevel);
     }
   }
@@ -376,7 +376,7 @@ function getAgentPlanPriorityValueFromLabel(priorityLabel: string): AgentPlanPri
     normalizedLabel.startsWith("priority ") ? normalizedLabel.replace("priority ", "") : normalizedLabel,
   );
 
-  if (normalizedPriority?.priorityLevel) {
+  if (normalizedPriority?.priorityLevel !== null && normalizedPriority?.priorityLevel !== undefined) {
     return String(normalizedPriority.priorityLevel) as AgentPlanPriorityValue;
   }
   if (normalizedLabel === "focus") {

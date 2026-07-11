@@ -7,7 +7,6 @@ import {
   ArrowDown,
   CalendarDays,
   ChevronDown,
-  ChevronRight,
   Clock3,
   CirclePause,
   CirclePlay,
@@ -44,7 +43,6 @@ import {
   TASK_SUBTASK_STATUS_OPTIONS,
   TaskStatusCircleRail,
   formatTaskStatusLabel,
-  renderTaskStatusChip,
   renderTaskStatusCircle,
   renderTaskStatusGlyph,
 } from "@/components/task-app/task-status-ui";
@@ -1386,6 +1384,9 @@ const DEFAULT_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   repeat: 92,
   status: 92,
 };
+const STATUS_RAIL_COLUMN_WIDTH = 332;
+const STATUS_RAIL_COMPACT_COLUMN_WIDTH = DEFAULT_COLUMN_WIDTHS.status_icon;
+const STATUS_RAIL_LONG_PRESS_MS = 450;
 const MIN_COLUMN_WIDTHS: Record<TaskManagementTableColumnId, number> = {
   status_icon: 24,
   title: 128,
@@ -2321,13 +2322,32 @@ export function TaskManagementTableV2({
   const [columnOrder, setColumnOrder] = useState<TaskManagementTableColumnId[]>(() => getInitialColumnOrder(persistedLayoutPreferences));
   const [columnAlignments, setColumnAlignments] = useState<Partial<Record<TaskManagementTableColumnId, ColumnAlignment>>>(() => getInitialColumnAlignments());
   const [statusDisplayMode, setStatusDisplayMode] = useState<"chip" | "circle">(() => getInitialStatusDisplayMode());
-  const [expandedStatusTaskId, setExpandedStatusTaskId] = useState<string | null>(null);
+  const [isStatusRailColumnExpanded, setIsStatusRailColumnExpanded] = useState(false);
 
   useEffect(() => {
     if (tableStepDraftParentId) {
       tableStepDraftInputRef.current?.focus();
     }
   }, [tableStepDraftParentId]);
+
+  useEffect(() => {
+    return () => clearStatusRailLongPress();
+  }, []);
+
+  useEffect(() => {
+    if (!isStatusRailColumnExpanded || typeof window === "undefined") {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsStatusRailColumnExpanded(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isStatusRailColumnExpanded]);
   const [localRunningTimers, setLocalRunningTimers] = useState<RunningTaskTimer[]>([]);
   const [localActiveTimerIndex, setLocalActiveTimerIndex] = useState(0);
   const [localTimerNow, setLocalTimerNow] = useState(() => Date.now());
@@ -2365,6 +2385,8 @@ export function TaskManagementTableV2({
   const lastRowsSignatureRef = useRef(buildPrototypeRowsSignature(rows));
   const pendingRowClickTimeoutRef = useRef<number | null>(null);
   const pendingMetadataTargetTaskIdRef = useRef<string | null>(null);
+  const statusRailLongPressTimeoutRef = useRef<number | null>(null);
+  const statusRailLongPressTriggeredRef = useRef(false);
   const recentInlineCommitRef = useRef<Map<string, { expiresAt: number; value: string }>>(new Map());
   const effectiveRunningTimers = runningTaskTimers ?? localRunningTimers;
   const effectiveActiveTimerIndex = activeTaskTimerIndex ?? localActiveTimerIndex;
@@ -2465,10 +2487,17 @@ export function TaskManagementTableV2({
   );
   const effectiveColumnWidths = useMemo(
     () => visibleHeaderColumns.reduce<Record<TaskManagementTableColumnId, number>>((accumulator, column) => {
-      accumulator[column.id] = Math.max(columnWidths[column.id], requiredColumnWidths[column.id] ?? MIN_COLUMN_WIDTHS[column.id]);
+      if (column.id === "status_icon") {
+        accumulator.status_icon = isStatusRailColumnExpanded ? STATUS_RAIL_COLUMN_WIDTH : STATUS_RAIL_COMPACT_COLUMN_WIDTH;
+        return accumulator;
+      }
+      accumulator[column.id] = Math.max(
+        columnWidths[column.id],
+        requiredColumnWidths[column.id] ?? MIN_COLUMN_WIDTHS[column.id],
+      );
       return accumulator;
     }, { ...columnWidths }),
-    [columnWidths, requiredColumnWidths, visibleHeaderColumns],
+    [columnWidths, isStatusRailColumnExpanded, requiredColumnWidths, visibleHeaderColumns],
   );
   const gridTemplateColumns = useMemo(
     () => visibleHeaderColumns.map((column) => `${effectiveColumnWidths[column.id]}px`).join(" "),
@@ -3052,8 +3081,8 @@ export function TaskManagementTableV2({
       const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
       setRequiredColumnWidths((current) => {
         const nextMeasuredWidths = visibleHeaderColumns.reduce<Partial<Record<TaskManagementTableColumnId, number>>>((accumulator, column) => {
-          const headerWidths = getMeasuredColumnWidths(`[data-column-header-measure="${column.id}"]`);
-          const rowContentWidths = getMeasuredColumnWidths(`[data-column-content-measure="${column.id}"]`, 12);
+          const headerWidths = column.id === "status_icon" ? [] : getMeasuredColumnWidths(`[data-column-header-measure="${column.id}"]`);
+          const rowContentWidths = column.id === "status_icon" ? [] : getMeasuredColumnWidths(`[data-column-content-measure="${column.id}"]`, 12);
           const widestHeader = headerWidths.length > 0 ? Math.max(...headerWidths) : 0;
           const widestRowContent = rowContentWidths.length > 0 ? Math.max(...rowContentWidths) : 0;
           accumulator[column.id] = Math.max(MIN_COLUMN_WIDTHS[column.id], widestHeader, widestRowContent) + COLUMN_WIDTH_BUFFER[column.id];
@@ -4000,6 +4029,32 @@ export function TaskManagementTableV2({
     );
   }
 
+  function clearStatusRailLongPress() {
+    if (statusRailLongPressTimeoutRef.current !== null) {
+      window.clearTimeout(statusRailLongPressTimeoutRef.current);
+      statusRailLongPressTimeoutRef.current = null;
+    }
+  }
+
+  function beginStatusRailLongPress(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    event.stopPropagation();
+    clearStatusRailLongPress();
+    statusRailLongPressTriggeredRef.current = false;
+    statusRailLongPressTimeoutRef.current = window.setTimeout(() => {
+      statusRailLongPressTriggeredRef.current = true;
+      setIsStatusRailColumnExpanded((current) => !current);
+      closeInspector();
+      statusRailLongPressTimeoutRef.current = null;
+    }, STATUS_RAIL_LONG_PRESS_MS);
+  }
+
+  function endStatusRailLongPress() {
+    clearStatusRailLongPress();
+  }
+
   async function applyTaskDelay(taskId: string, nextDueOn: string) {
     const didDelay = await onDelayTaskUntil?.(taskId, nextDueOn);
     if (didDelay !== false) {
@@ -4010,7 +4065,6 @@ export function TaskManagementTableV2({
   function setTaskStatus(taskId: string, status: TaskStatus) {
     // Status changes must reuse the app's per-task status action path so validation,
     // completion, recurrence, rewards, and trash/archive side effects still run.
-    setExpandedStatusTaskId(null);
     queueTableMutationScrollTopHold(taskId);
     const targetTaskIds = resolveTableActionTargetTaskIds(taskId);
     for (const targetTaskId of targetTaskIds) {
@@ -5474,6 +5528,9 @@ export function TaskManagementTableV2({
   }
 
   function getAutoShrinkWidth(columnId: TaskManagementTableColumnId) {
+    if (columnId === "status_icon") {
+      return STATUS_RAIL_COMPACT_COLUMN_WIDTH;
+    }
     const headerWidths = getMeasuredColumnWidths(`[data-column-header-measure="${columnId}"]`);
     const rowContentWidths = getMeasuredColumnWidths(`[data-column-content-measure="${columnId}"]`);
     const widestHeader = headerWidths.length > 0 ? Math.max(...headerWidths) : 0;
@@ -6012,47 +6069,74 @@ export function TaskManagementTableV2({
     };
 
     if (columnId === "status_icon") {
-      const isStatusExpanded = expandedStatusTaskId === task.id;
       if (!allowInlineInspector) {
         return wrapMeasuredContent(
-          <div className="flex min-w-0 items-center justify-center gap-0.5 self-center">
-            {statusDisplayMode === "chip" ? renderTaskStatusChip(task.status, { size: "sm" }) : renderTaskStatusCircle(task.status, "md")}
-            <button
-              aria-expanded={isStatusExpanded}
-              aria-label={`${isStatusExpanded ? "Collapse" : "Expand"} direct status options for ${task.title}`}
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e7defc] bg-white text-[#8a79d6] transition hover:border-[#d8cdf7] hover:bg-[#f7f3ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/25 dark:border-white/10 dark:bg-white/5 dark:text-[#cabfff] dark:hover:bg-white/10"
-              onClick={(event) => {
-                event.stopPropagation();
-                setExpandedStatusTaskId((current) => (current === task.id ? null : task.id));
-              }}
-              type="button"
-            >
-              {isStatusExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            </button>
-            {isStatusExpanded ? (
-              <span
-                className="ml-1 flex max-w-[min(38vw,28rem)] flex-nowrap items-center gap-1 overflow-x-auto [scrollbar-width:thin]"
-                onClick={(event) => event.stopPropagation()}
+          <div className="flex w-full min-w-0 items-center justify-center self-center">
+            {!isStatusRailColumnExpanded ? (
+              <button
+                aria-expanded={isStatusRailColumnExpanded}
+                aria-label={`Expand status rail for ${task.title}`}
+                className={`${CONTROL_FONT_CLASS} rounded-full p-0 transition`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (statusRailLongPressTriggeredRef.current) {
+                    statusRailLongPressTriggeredRef.current = false;
+                  }
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onPointerCancel={endStatusRailLongPress}
+                onPointerDown={beginStatusRailLongPress}
+                onPointerLeave={endStatusRailLongPress}
+                onPointerUp={endStatusRailLongPress}
+                type="button"
               >
-                {getSelectableTaskStatusesForRepeatFrequency(task.repeat).map((status) => (
-                  <TaskTableChipButton
-                    className="gap-1.5 px-2 py-1 text-[11px]"
-                    key={status}
-                    onClick={(event) => {
-                      if (status === "delayed" && canDelayTask(task)) {
-                        setExpandedStatusTaskId(null);
-                        openInspector(task.id, "delay", event.currentTarget);
-                        return;
-                      }
-                      setTaskStatus(task.id, status);
-                    }}
-                    toneClassName={task.status === status ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}
-                  >
-                    {renderTaskStatusCircle(status, "sm", { inverted: task.status === status })}
-                    <span>{formatTaskStatusLabel(status)}</span>
-                  </TaskTableChipButton>
-                ))}
-              </span>
+                {renderTaskStatusCircle(task.status, "md")}
+              </button>
+            ) : null}
+            {isStatusRailColumnExpanded ? (
+              <div
+                className="adhdice-scrollbar min-w-0 flex-1 overflow-x-auto"
+                onClickCapture={(event) => {
+                  if (statusRailLongPressTriggeredRef.current) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    statusRailLongPressTriggeredRef.current = false;
+                  }
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onPointerCancel={endStatusRailLongPress}
+                onPointerDown={beginStatusRailLongPress}
+                onPointerLeave={endStatusRailLongPress}
+                onPointerUp={endStatusRailLongPress}
+              >
+                <TaskStatusCircleRail<TaskStatus>
+                  className="w-max max-w-none flex-nowrap"
+                  currentStatus={task.status}
+                  onSetStatus={(status, event) => {
+                    if (statusRailLongPressTriggeredRef.current) {
+                      statusRailLongPressTriggeredRef.current = false;
+                      return;
+                    }
+                    if (status === "delayed" && canDelayTask(task)) {
+                      openInspector(task.id, "delay", event.currentTarget);
+                      return;
+                    }
+                    setTaskStatus(task.id, status);
+                  }}
+                  options={getSelectableTaskStatusesForRepeatFrequency(task.repeat).map((status) => ({
+                    label: formatTaskStatusLabel(status),
+                    value: status,
+                  }))}
+                  statusLabelPrefix="Set task status to"
+                  wrap={false}
+                />
+              </div>
             ) : null}
           </div>,
           "justify-center"
@@ -6060,57 +6144,76 @@ export function TaskManagementTableV2({
       }
 
       return (
-        <div className="flex min-w-0 items-center justify-center gap-0.5 self-center">
-          <button
-            className={`${CONTROL_FONT_CLASS} rounded-full p-0 transition`}
-            onClick={(event) => {
-              event.stopPropagation();
-              setExpandedStatusTaskId(null);
-              toggleInlineActionRow(task.id, "status", event.currentTarget);
-            }}
-            type="button"
-          >
-            <span className="inline-flex w-max items-center justify-center" data-column-content-measure={columnId}>
-              {statusDisplayMode === "chip" ? renderTaskStatusChip(task.status, { size: "sm" }) : renderTaskStatusCircle(task.status, "md")}
-            </span>
-          </button>
-          <button
-            aria-expanded={isStatusExpanded}
-            aria-label={`${isStatusExpanded ? "Collapse" : "Expand"} direct status options for ${task.title}`}
-            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[#e7defc] bg-white text-[#8a79d6] transition hover:border-[#d8cdf7] hover:bg-[#f7f3ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/25 dark:border-white/10 dark:bg-white/5 dark:text-[#cabfff] dark:hover:bg-white/10"
-            onClick={(event) => {
-              event.stopPropagation();
-              closeInspector();
-              setExpandedStatusTaskId((current) => (current === task.id ? null : task.id));
-            }}
-            type="button"
-          >
-            {isStatusExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-          </button>
-          {isStatusExpanded ? (
-            <span
-              className="ml-1 flex max-w-[min(38vw,28rem)] flex-nowrap items-center gap-1 overflow-x-auto [scrollbar-width:thin]"
-              onClick={(event) => event.stopPropagation()}
+        <div className="flex w-full min-w-0 items-center justify-center self-center">
+          {!isStatusRailColumnExpanded ? (
+            <button
+              className={`${CONTROL_FONT_CLASS} rounded-full p-0 transition`}
+              aria-expanded={isStatusRailColumnExpanded}
+              aria-label={`Expand status rail for ${task.title}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (statusRailLongPressTriggeredRef.current) {
+                  statusRailLongPressTriggeredRef.current = false;
+                  return;
+                }
+                toggleInlineActionRow(task.id, "status", event.currentTarget);
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onPointerCancel={endStatusRailLongPress}
+              onPointerDown={beginStatusRailLongPress}
+              onPointerLeave={endStatusRailLongPress}
+              onPointerUp={endStatusRailLongPress}
+              type="button"
             >
-              {getSelectableTaskStatusesForRepeatFrequency(task.repeat).map((status) => (
-                <TaskTableChipButton
-                  className="gap-1.5 px-2 py-1 text-[11px]"
-                  key={status}
-                  onClick={(event) => {
-                    if (status === "delayed" && canDelayTask(task)) {
-                      setExpandedStatusTaskId(null);
-                      openInspector(task.id, "delay", event.currentTarget);
-                      return;
-                    }
-                    setTaskStatus(task.id, status);
-                  }}
-                  toneClassName={task.status === status ? invertedStatusTone(status) : `${statusTone(status)} opacity-78 hover:opacity-100`}
-                >
-                  {renderTaskStatusCircle(status, "sm", { inverted: task.status === status })}
-                  <span>{formatTaskStatusLabel(status)}</span>
-                </TaskTableChipButton>
-              ))}
-            </span>
+              <span className="inline-flex w-max items-center justify-center" data-column-content-measure={columnId}>
+                {renderTaskStatusCircle(task.status, "md")}
+              </span>
+            </button>
+          ) : null}
+          {isStatusRailColumnExpanded ? (
+            <div
+              className="adhdice-scrollbar min-w-0 flex-1 overflow-x-auto"
+              onClickCapture={(event) => {
+                if (statusRailLongPressTriggeredRef.current) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  statusRailLongPressTriggeredRef.current = false;
+                }
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onPointerCancel={endStatusRailLongPress}
+              onPointerDown={beginStatusRailLongPress}
+              onPointerLeave={endStatusRailLongPress}
+              onPointerUp={endStatusRailLongPress}
+            >
+              <TaskStatusCircleRail<TaskStatus>
+                className="w-max max-w-none flex-nowrap"
+                currentStatus={task.status}
+                onSetStatus={(status, event) => {
+                  if (statusRailLongPressTriggeredRef.current) {
+                    statusRailLongPressTriggeredRef.current = false;
+                    return;
+                  }
+                  if (status === "delayed" && canDelayTask(task)) {
+                    openInspector(task.id, "delay", event.currentTarget);
+                    return;
+                  }
+                  setTaskStatus(task.id, status);
+                }}
+                options={getSelectableTaskStatusesForRepeatFrequency(task.repeat).map((status) => ({
+                  label: formatTaskStatusLabel(status),
+                  value: status,
+                }))}
+                statusLabelPrefix="Set task status to"
+                wrap={false}
+              />
+            </div>
           ) : null}
         </div>
       );
@@ -6972,7 +7075,39 @@ export function TaskManagementTableV2({
     const hasNotes = item.notes.trim().length > 0;
 
     if (columnId === "status_icon") {
-      return wrapStepMiniCellAction(item, columnId, <div className="flex items-center justify-center self-center">{renderTaskStatusCircle(item.status, "sm")}</div>);
+      if (isStatusRailColumnExpanded) {
+        return (
+          <div className="flex w-full min-w-0 items-center justify-center self-center">
+            <div className="adhdice-scrollbar min-w-0 flex-1 overflow-x-auto" onClick={(event) => event.stopPropagation()}>
+              <TaskStatusCircleRail<TaskStatus>
+                className="w-max max-w-none flex-nowrap"
+                currentStatus={item.status}
+                onSetStatus={(status, event) => {
+                  if (status === "delayed" && canDelayTask(item)) {
+                    setActiveMetadataPanelByTaskId((current) => ({ ...current, [item.id]: "delay" }));
+                    return;
+                  }
+                  setTaskStatus(item.id, status);
+                }}
+                options={getSelectableTaskStatusesForRepeatFrequency(item.repeat).map((status) => ({
+                  label: formatTaskStatusLabel(status),
+                  value: status,
+                }))}
+                statusLabelPrefix="Set step status to"
+                wrap={false}
+              />
+            </div>
+          </div>
+        );
+      }
+
+      return wrapStepMiniCellAction(
+        item,
+        columnId,
+        <div className="flex w-full min-w-0 items-center justify-center self-center">
+          {renderTaskStatusCircle(item.status, "sm")}
+        </div>,
+      );
     }
 
     if (columnId === "title") {

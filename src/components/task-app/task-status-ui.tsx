@@ -1,4 +1,5 @@
 import { ArrowRight, BookOpen, CalendarClock, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
+import type { MouseEvent } from "react";
 
 import type { TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 
@@ -178,21 +179,26 @@ export function TaskStatusCircleRail<Status extends TaskStatus | TaskSubtaskStat
   onSetStatus,
   options,
   statusLabelPrefix = "Set status to",
+  wrap = true,
 }: {
   className?: string;
   currentStatus: Status;
-  onSetStatus: (status: Status) => void;
+  onSetStatus: (status: Status, event: MouseEvent<HTMLButtonElement>) => void;
   options: Array<{ label: string; value: Status }>;
   statusLabelPrefix?: string;
+  wrap?: boolean;
 }) {
   return (
-    <div className={["flex flex-wrap gap-1.5", className].join(" ").trim()}>
+    <div className={["flex gap-1.5", wrap ? "flex-wrap" : "flex-nowrap", className].join(" ").trim()}>
       {options.map((option) => (
         <button
           aria-label={`${statusLabelPrefix} ${option.label}`}
           className={`inline-flex items-center justify-center rounded-full p-0.5 transition ${currentStatus === option.value ? "" : "opacity-78 hover:opacity-100"}`}
           key={option.value}
-          onClick={() => onSetStatus(option.value)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSetStatus(option.value, event);
+          }}
           type="button"
         >
           {renderTaskStatusCircle(option.value, "sm", { inverted: currentStatus === option.value })}

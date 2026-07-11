@@ -194,6 +194,7 @@ test("report includes compact pinned, routine, and priority summaries", () => {
   const normalTask = createTask({
     created_at: "2026-06-20T09:15:00.000Z",
     id: "normal-task",
+    priority_level: 0,
     sort_order: 4,
     status: "pending",
     title: "Normal task",
@@ -241,6 +242,7 @@ test("report includes compact pinned, routine, and priority summaries", () => {
   assert.match(report, /Routine Tasks: 2 total \(Did My Best 1, Missed 1\)/);
   assert.match(report, /Priority 5: Done 1, Missed 1/);
   assert.match(report, /Priority 4: Did My Best 1/);
+  assert.match(report, /Priority 0: Pending 1/);
   assert.doesNotMatch(report, /Pinned Tasks: 0 total/);
   assert.doesNotMatch(report, /Routine Tasks: 0 total/);
 });

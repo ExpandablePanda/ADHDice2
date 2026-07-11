@@ -125,7 +125,7 @@ export function normalizeTaskPrioritySelectionInput(value: string | null | undef
   }
 
   const priorityLevel = coerceTaskPriorityLevel(value);
-  if (priorityLevel) {
+  if (priorityLevel !== null) {
     return { focusAction: "preserve" as const, priorityLevel };
   }
 

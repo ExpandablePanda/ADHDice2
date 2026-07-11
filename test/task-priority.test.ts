@@ -5,6 +5,7 @@ import {
   coerceTaskPriorityLevel,
   formatTaskPriorityMenuLabel,
   getTaskPrioritySelection,
+  normalizeTaskPrioritySelectionInput,
   TASK_PRIORITY_LEVEL_OPTIONS,
 } from "../src/lib/task-priority.ts";
 
@@ -22,5 +23,16 @@ test("priority 0 preserves legacy compatibility while storing the numeric level"
     is_urgent: false,
     priority: "low",
     priority_level: 0,
+  });
+});
+
+test("priority 0 selection input normalizes as a real persisted level", () => {
+  assert.deepEqual(normalizeTaskPrioritySelectionInput("0"), {
+    focusAction: "preserve",
+    priorityLevel: 0,
+  });
+  assert.deepEqual(normalizeTaskPrioritySelectionInput("none"), {
+    focusAction: "remove",
+    priorityLevel: 0,
   });
 });

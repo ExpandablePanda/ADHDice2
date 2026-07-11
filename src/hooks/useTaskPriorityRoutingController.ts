@@ -83,7 +83,7 @@ export function useTaskPriorityRoutingController({
       await saveFocusSelection(focusedTaskIds.filter((id) => id !== taskId));
     }
 
-    if (normalizedPriority.priorityLevel) {
+    if (normalizedPriority.priorityLevel !== null) {
       await updateTask(taskId, buildTaskPriorityUpdate(normalizedPriority.priorityLevel));
     }
   }

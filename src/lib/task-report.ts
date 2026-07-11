@@ -628,7 +628,7 @@ function buildPriorityStatusSummaries(tasks: Task[], metadataByTaskId: Map<strin
 
   for (const task of tasks) {
     const metadata = metadataByTaskId.get(task.id);
-    if (!metadata?.priorityLevel) {
+    if (!metadata || metadata.priorityLevel === null) {
       continue;
     }
 
@@ -823,10 +823,6 @@ function formatStatusSnapshotCounts(counts: Record<string, number>) {
 
 function formatCompactTaskSummaryLine(label: string, summary: CompactStatusSummary) {
   return `- ${label}: ${summary.total} total${summary.total > 0 ? ` (${formatStatusSnapshotCounts(summary.byStatus)})` : ""}`;
-}
-
-function getHistoryTimestamp(entry: LatestHistoryEntry) {
-  return entry.updated_at || entry.created_at || null;
 }
 
 function formatHistoryEntryMoment(entry: LatestHistoryEntry) {
