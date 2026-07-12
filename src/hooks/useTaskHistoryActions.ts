@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus, TaskUpdate } from "@/lib/database.types";
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
+import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { resolveLiveTaskStatusFromHistory } from "@/lib/task-history";
 
 type Message = {
@@ -79,7 +80,7 @@ export function useTaskHistoryActions({
 
     const { conflict, data, error } = await updateTaskRowWithLegacyEnergyFallback(
       taskId,
-      updateValues,
+      applyTaskActiveStatusTracking(task, updateValues, currentDayKey),
       { expectedTask: task },
     );
 

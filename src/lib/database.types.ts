@@ -156,6 +156,8 @@ export type Task = {
   is_urgent: boolean;
   is_important: boolean;
   due_on: string | null;
+  active_status_logical_date: string | null;
+  active_occurrence_due_on: string | null;
   scheduled_on: string | null;
   due_time: string | null;
   estimated_minutes: number | null;
@@ -195,6 +197,8 @@ export type TaskInsert = {
   is_urgent?: boolean;
   is_important?: boolean;
   due_on?: string | null;
+  active_status_logical_date?: string | null;
+  active_occurrence_due_on?: string | null;
   scheduled_on?: string | null;
   due_time?: string | null;
   estimated_minutes?: number | null;
@@ -231,6 +235,8 @@ export type TaskUpdate = Partial<
     | "is_urgent"
     | "is_important"
     | "due_on"
+    | "active_status_logical_date"
+    | "active_occurrence_due_on"
     | "scheduled_on"
     | "due_time"
     | "estimated_minutes"

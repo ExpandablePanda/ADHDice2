@@ -4,7 +4,7 @@ import { useRef, type Dispatch, type MutableRefObject, type SetStateAction } fro
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TaskList, TaskListInsert } from "@/lib/database.types";
 import { reconcileTaskListRows } from "@/lib/task-list-mappers";
-import type { TaskListDefinition, TaskListId, TaskListManualMembership } from "@/lib/task-lists";
+import { getStoredTaskListMembershipMode, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
 
 type Message = {
   text: string;
@@ -86,7 +86,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       is_editable: definition.isEditable,
       is_visible: definition.isVisible,
       list_type: definition.type,
-      membership_mode: definition.membershipMode === "system" ? "manual" : definition.membershipMode,
+      membership_mode: getStoredTaskListMembershipMode(definition.membershipMode),
       name: definition.name,
       rules_json: definition.rules ? JSON.stringify(definition.rules) : null,
       sort_order: definition.sortOrder,

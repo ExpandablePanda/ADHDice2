@@ -182,7 +182,7 @@ function ReorderableTaskChipRail({
   selectedBucket,
 }: {
   lists: TaskRailListOption[];
-  onReorderLists?: (orderedListIds: string[]) => void;
+  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
   onSelectBucket: (bucket: string) => void;
   selectedBucket: string;
 }) {
@@ -227,10 +227,19 @@ function ReorderableTaskChipRail({
     removeActivationListeners: (() => void) | null;
   } | null>(null);
   const pendingTouchIdentifierRef = useRef<number | null>(null);
+  const pendingPersistedOrderRef = useRef<string[] | null>(null);
   const suppressClickRef = useRef(false);
+  const latestListsRef = useRef(lists);
+  latestListsRef.current = lists;
 
   useEffect(() => {
     if (dragRef.current?.mode !== "reordering") {
+      const pendingOrder = pendingPersistedOrderRef.current;
+      const incomingOrder = lists.filter(isRailListReorderable).map((list) => list.id);
+      if (pendingOrder && pendingOrder.some((listId, index) => listId !== incomingOrder[index])) {
+        return;
+      }
+      pendingPersistedOrderRef.current = null;
       renderedListsRef.current = lists;
       setRenderedLists(lists);
     }
@@ -250,16 +259,24 @@ function ReorderableTaskChipRail({
     setMobileInsertionMarker(null);
 
     if (persist && drag.mode === "reordering") {
-      const finalLists = drag.pointerType === "touch" || drag.pointerType === "pen"
-        ? drag.pendingInsertionIndex === null
-          ? drag.initialLists
-          : reorderRailListToIndex(drag.initialLists, drag.sourceListId, drag.pendingInsertionIndex) ?? drag.initialLists
-        : renderedListsRef.current;
+      const finalLists = drag.pendingInsertionIndex === null
+        ? drag.initialLists
+        : reorderRailListToIndex(drag.initialLists, drag.sourceListId, drag.pendingInsertionIndex) ?? drag.initialLists;
       const finalOrderIds = finalLists.filter(isRailListReorderable).map((list) => list.id);
       const didReorder = finalOrderIds.some((listId, index) => listId !== drag.initialOrderIds[index]);
       renderedListsRef.current = finalLists;
       setRenderedLists(finalLists);
-      if (didReorder && onReorderLists) onReorderLists(finalOrderIds);
+      if (didReorder && onReorderLists) {
+        pendingPersistedOrderRef.current = finalOrderIds;
+        void onReorderLists(finalOrderIds).then((saved) => {
+          if (pendingPersistedOrderRef.current !== finalOrderIds) return;
+          if (!saved) {
+            pendingPersistedOrderRef.current = null;
+            renderedListsRef.current = latestListsRef.current;
+            setRenderedLists(latestListsRef.current);
+          }
+        });
+      }
       return;
     }
 
@@ -267,7 +284,7 @@ function ReorderableTaskChipRail({
     setRenderedLists(drag.initialLists);
   };
 
-  const updateMobileInsertion = (drag: NonNullable<typeof dragRef.current>, clientX: number) => {
+  const updateRailInsertion = (drag: NonNullable<typeof dragRef.current>, clientX: number) => {
     const rail = drag.target.closest<HTMLElement>("[data-list-reorder-rail]");
     if (!rail) return;
     const railRect = rail.getBoundingClientRect();
@@ -309,25 +326,7 @@ function ReorderableTaskChipRail({
       clientY: event.clientY,
     } : current);
 
-    if (drag.pointerType === "touch" || drag.pointerType === "pen") {
-      updateMobileInsertion(drag, event.clientX);
-      return;
-    }
-
-    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-reorderable-list-id]");
-    if (!target) return;
-    const rail = target.closest<HTMLElement>("[data-list-reorder-rail]");
-    if (!rail) return;
-    const targetElements = Array.from(rail.querySelectorAll<HTMLElement>("[data-reorderable-list-id]"));
-    const targetIndex = targetElements.indexOf(target);
-    if (targetIndex < 0) return;
-    const targetRect = target.getBoundingClientRect();
-    const insertionIndex = targetIndex + (event.clientX >= targetRect.left + targetRect.width / 2 ? 1 : 0);
-    setRenderedLists((current) => {
-      const next = reorderRailListToIndex(current, drag.sourceListId, insertionIndex) ?? current;
-      renderedListsRef.current = next;
-      return next;
-    });
+    updateRailInsertion(drag, event.clientX);
   };
 
   const activateDrag = (pointerId: number, sourceListId: string) => {
@@ -337,6 +336,21 @@ function ReorderableTaskChipRail({
     drag.holdTimer = null;
     suppressClickRef.current = true;
     setDraggedListId(sourceListId);
+    const sourceList = renderedListsRef.current.find((list) => list.id === sourceListId);
+    if (sourceList) {
+      setMobileDragPreview({
+        clientX: drag.currentX,
+        clientY: drag.currentY,
+        count: sourceList.count,
+        height: drag.previewHeight,
+        label: sourceList.label,
+        offsetX: drag.previewOffsetX,
+        offsetY: drag.previewOffsetY,
+        selected: sourceList.id === selectedBucket,
+        width: drag.previewWidth,
+      });
+    }
+    updateRailInsertion(drag, drag.currentX);
     if (drag.pointerType === "touch" || drag.pointerType === "pen") {
       drag.target.setPointerCapture(drag.pointerId);
       const removePreActivationListeners = drag.removeActivationListeners;
@@ -356,21 +370,6 @@ function ReorderableTaskChipRail({
         window.removeEventListener("pointerup", handleUp);
         window.removeEventListener("pointercancel", handleCancel);
       };
-      const sourceList = renderedListsRef.current.find((list) => list.id === sourceListId);
-      if (sourceList) {
-        setMobileDragPreview({
-          clientX: drag.currentX,
-          clientY: drag.currentY,
-          count: sourceList.count,
-          height: drag.previewHeight,
-          label: sourceList.label,
-          offsetX: drag.previewOffsetX,
-          offsetY: drag.previewOffsetY,
-          selected: sourceList.id === selectedBucket,
-          width: drag.previewWidth,
-        });
-      }
-      updateMobileInsertion(drag, drag.currentX);
     }
   };
 
@@ -724,7 +723,7 @@ export function TaskOperationsHeader({
   onOpenListSettings: () => void;
   onOpenMomentumDetails: () => void;
   onOpenTrash: () => void;
-  onReorderLists?: (orderedListIds: string[]) => void;
+  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
   onSelectBucket: (bucket: string) => void;
   onToggleRail: () => void;
   onExpandAllColumns: () => void;
@@ -957,7 +956,7 @@ export function TasksListViewPanel(props: {
   onOpenArchive: () => void;
   onOpenComposer: () => void;
   onOpenImport: () => void;
-  onReorderLists?: (orderedListIds: string[]) => void;
+  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
   onSelectBucket: (bucket: string) => void;
   onReorderListColumns: (columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) => void;
   onSetDraggedListColumnId: (columnId: AgentPlanColumnId | null) => void;
@@ -997,7 +996,7 @@ export function TasksNonListViewPanel({
   dailyPlanningNode: ReactNode;
   filterRowsNode: ReactNode;
   lists: TaskRailListOption[];
-  onReorderLists?: (orderedListIds: string[]) => void;
+  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
   onSelectBucket: (bucket: string) => void;
   selectedBucket: string;
 }) {
@@ -1025,7 +1024,7 @@ function TaskBucketRail({
   selectedBucket,
 }: {
   lists: TaskRailListOption[];
-  onReorderLists?: (orderedListIds: string[]) => void;
+  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
   onSelectBucket: (bucket: string) => void;
   selectedBucket: string;
 }) {

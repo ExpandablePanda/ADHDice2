@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import { useState, type ComponentProps, type JSX, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type JSX, type ReactNode } from "react";
 import { ModalShell } from "../modal-shell";
 import { BottomDockComponent } from "./bottom-dock";
 import { FilterRowsComponent } from "./task-filter-rows";
@@ -32,6 +32,10 @@ import {
 import { UrgentTasksPanelComponent } from "./task-grid-widgets";
 import type { TaskDraft } from "./task-editor-model";
 import { shiftDateKey } from "@/lib/task-grid-layout";
+import {
+  getComfortableTaskHistoryScrollOffset,
+  getTaskHistoryInitialFocusDateKey,
+} from "@/lib/task-history-calendar-focus";
 import type { AppPage } from "@/lib/task-ui-state";
 import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
 import { getTaskHistoryCalendarActionStatuses } from "@/lib/task-complete";
@@ -560,6 +564,7 @@ export function TaskHistoryModal({
   taskHistory,
   taskTitle,
   todayDateKey,
+  initialDateKey,
 }: {
   onClose: () => void;
   onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<void>;
@@ -568,6 +573,7 @@ export function TaskHistoryModal({
   taskHistory: DbTaskHistory[];
   taskTitle: string;
   todayDateKey: string;
+  initialDateKey?: string | null;
 }) {
   const today = todayDateKey;
   const pastDayCount = 140;
@@ -575,12 +581,17 @@ export function TaskHistoryModal({
   const totalDays = pastDayCount + futureDayCount;
   const days = Array.from({ length: totalDays }, (_, index) => shiftDateKey(today, index - (pastDayCount - 1)));
   const historyByDate = new Map(taskHistory.map((historyEntry) => [historyEntry.entry_date, historyEntry]));
-  const initialSelectedDate = [...historyByDate.keys()].sort().at(-1) ?? today;
+  const [initialFocusDate] = useState(() => getTaskHistoryInitialFocusDateKey({ initialDateKey, todayDateKey }));
+  const initialSelectedDate = initialFocusDate;
   const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
   const [selectedDates, setSelectedDates] = useState<string[]>([initialSelectedDate]);
+  const [mobileSection, setMobileSection] = useState<"calendar" | "history" | "stats">("calendar");
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showDelayEditor, setShowDelayEditor] = useState(false);
+  const desktopCalendarViewportRef = useRef<HTMLDivElement>(null);
+  const mobileCalendarViewportRef = useRef<HTMLDivElement>(null);
+  const mobileScrollRef = useRef<HTMLDivElement>(null);
   const weeks: string[][] = [];
   const dueDates = buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, taskHistory);
   const sortedDueDates = [...dueDates].sort();
@@ -747,104 +758,46 @@ export function TaskHistoryModal({
       : selectedEntry?.status === status;
   }
 
-  return (
-    <ModalShell className="flex max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-[2.4rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
-      <div className="flex items-start justify-between gap-4 border-b border-[#efebfb] pb-5 dark:border-white/10">
-        <div>
-          <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Task History</p>
-          <h2 className="mt-2 text-3xl font-black text-[#1f2746] dark:text-white">{taskTitle}</h2>
-          <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/50">
-            Edit task history by date without changing past rewards or economy.
-          </p>
-        </div>
-        <button className="text-2xl leading-none text-[#8e97af] dark:text-white/55" onClick={onClose} type="button">×</button>
-      </div>
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const isMobile = window.matchMedia("(max-width: 1023px)").matches;
+      const container = isMobile ? mobileCalendarViewportRef.current : desktopCalendarViewportRef.current;
+      const target = container?.querySelector<HTMLElement>(`[data-history-date="${initialFocusDate}"]`);
+      if (!container || !target) return;
 
-      <div className="adhdice-scrollbar mt-6 min-h-0 flex-1 overflow-y-auto pr-1">
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
-        <div className="space-y-6">
-          <section className="rounded-[2rem] border border-[#ece8f8] bg-[#fcfbff] p-5 dark:border-white/10 dark:bg-white/[0.03]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p>
-                <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a square to inspect or update that date."}</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <TaskTableChipButton
-                    onClick={toggleMultiSelect}
-                    toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}
-                  >
-                    {isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}
-                  </TaskTableChipButton>
-                  {isMultiSelect && selectedDates.length > 1 ? (
-                    <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton>
-                  ) : null}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
-                {renderOfficialStatusChip("done", "Done")}
-                {renderOfficialStatusChip("complete", "Marked Complete")}
-                {renderOfficialStatusChip("delayed", "Delayed")}
-                {renderOfficialStatusChip("did_my_best", "Did My Best")}
-                {renderOfficialStatusChip("missed", "Missed")}
-                <span className="flex items-center gap-1.5 text-[#d96b1c] dark:text-[#ffb47c]"><span className="inline-block h-3 w-3 rounded-sm border border-[#f6be96] bg-[#fff4eb] dark:border-[#7a4527] dark:bg-[#3a2418]" />Due</span>
-                <span className="flex items-center gap-1.5 text-[#68738c] dark:text-white/60"><span className="inline-block h-3 w-3 rounded-sm border border-[#cfd6e4] bg-[#f4f5f8] dark:border-white/10 dark:bg-white/8" />Upcoming</span>
-                <span className="flex items-center gap-1.5 text-[#3388c9] dark:text-[#8ed0f6]"><span className="inline-block h-3 w-3 rounded-sm border border-[#a9daf7] bg-[#eef8ff] dark:border-[#315f7c] dark:bg-[#173044]" />Not Due</span>
-              </div>
-            </div>
-            <div className="adhdice-scrollbar -mx-2 overflow-x-auto px-2 pb-2">
-              <div className="inline-flex w-max gap-1.5 pr-2">
-                {weeks.map((week, weekIndex) => (
-                  <div className="flex flex-col gap-1.5" key={weekIndex}>
-                    {week.map((dateKey) => (
-                      <button
-                        aria-pressed={selectedDateSet.has(dateKey)}
-                        className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDateSet.has(dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""} ${isMultiSelect && dateKey > today ? "cursor-not-allowed opacity-45" : ""}`}
-                        key={dateKey}
-                        onClick={() => selectDate(dateKey)}
-                        title={dateKey}
-                        type="button"
-                      >
-                        {dateKey.slice(-2)}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
+      const containerRect = container.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      if (isMobile) {
+        container.scrollTo({
+          top: getComfortableTaskHistoryScrollOffset({
+            containerSize: container.clientHeight,
+            targetOffset: container.scrollTop + targetRect.top - containerRect.top,
+            targetSize: targetRect.height,
+          }),
+          behavior: "auto",
+        });
+        return;
+      }
 
-          <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Task Status History</p>
-                <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Recent saved results for this task.</p>
-              </div>
-              <span className="text-xs font-semibold text-[#8d87a7] dark:text-white/40">{sortedHistory.length} logged</span>
-            </div>
-            <div className="adhdice-scrollbar max-h-[20rem] space-y-2 overflow-y-auto pr-1">
-              {sortedHistory.length === 0 ? <EmptyTaskState text="No saved task history yet." /> : null}
-              {sortedHistory.map((entry) => (
-                <button
-                  className={`flex w-full items-center justify-between rounded-[1.25rem] border px-4 py-3 text-left transition ${selectedDateSet.has(entry.entry_date) ? "border-[#cfc3ff] bg-[#f8f5ff] dark:border-[#6f57f6] dark:bg-[#22193d]" : "border-[#efebfb] bg-[#fcfbff] hover:border-[#ddd3ff] dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20"}`}
-                  key={entry.id}
-                  onClick={() => selectDate(entry.entry_date)}
-                  type="button"
-                >
-                  <div>
-                    <p className="text-sm font-semibold text-[#27304c] dark:text-white">{formatCalendarDate(entry.entry_date)}</p>
-                    <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{dueDates.has(entry.entry_date) ? "Due opportunity" : "Manual history entry"}</p>
-                    {formatTaskHistoryLoggedLine(entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryLoggedLine(entry)}</p> : null}
-                    {formatTaskHistoryEditedLine(entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryEditedLine(entry)}</p> : null}
-                  </div>
-                  {renderStatusPill(entry)}
-                </button>
-              ))}
-            </div>
-          </section>
-        </div>
+      container.scrollTo({
+        left: getComfortableTaskHistoryScrollOffset({
+          containerSize: container.clientWidth,
+          targetOffset: container.scrollLeft + targetRect.left - containerRect.left,
+          targetSize: targetRect.width,
+        }),
+        behavior: "auto",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialFocusDate]);
 
-        <div className="space-y-6">
-          <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
+  const calendarButton = (dateKey: string) => (
+    <button aria-pressed={selectedDateSet.has(dateKey)} className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDateSet.has(dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""} ${isMultiSelect && dateKey > today ? "cursor-not-allowed opacity-45" : ""}`} data-history-date={dateKey} key={dateKey} onClick={() => selectDate(dateKey)} title={dateKey} type="button">{dateKey.slice(-2)}</button>
+  );
+  const calendarControls = <div className="mt-2 flex flex-wrap gap-2"><TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>{isMultiSelect && selectedDates.length > 1 ? <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton> : null}</div>;
+  const calendarLegend = <div className="flex flex-wrap items-center gap-2 text-xs">{renderOfficialStatusChip("done", "Done")}{renderOfficialStatusChip("complete", "Marked Complete")}{renderOfficialStatusChip("delayed", "Delayed")}{renderOfficialStatusChip("did_my_best", "Did My Best")}{renderOfficialStatusChip("missed", "Missed")}<span className="text-[#d96b1c] dark:text-[#ffb47c]">Due</span><span className="text-[#68738c] dark:text-white/60">Upcoming</span><span className="text-[#3388c9] dark:text-[#8ed0f6]">Not Due</span></div>;
+  const selectedDetailsSection = (
+    <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{isMultiSelect ? "Edit Selected Dates" : "Edit Selected Date"}</p>
@@ -924,11 +877,18 @@ export function TaskHistoryModal({
             <p className="mt-4 text-xs text-[#8d87a7] dark:text-white/40">
               Calendar edits update saved task history, streaks, and the live task status when the active unresolved state changes. They do not change past rewards or economy.
             </p>
-          </section>
-
-          <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
+    </section>
+  );
+  const historySection = (
+    <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
+      <div className="mb-4 flex items-center justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Task Status History</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">Recent saved results for this task.</p></div><span className="text-xs font-semibold text-[#8d87a7] dark:text-white/40">{sortedHistory.length} logged</span></div>
+      <div className="space-y-2">{sortedHistory.length === 0 ? <EmptyTaskState text="No saved task history yet." /> : null}{sortedHistory.map((entry) => <button className={`flex w-full items-center justify-between rounded-[1.25rem] border px-4 py-3 text-left transition ${selectedDateSet.has(entry.entry_date) ? "border-[#cfc3ff] bg-[#f8f5ff] dark:border-[#6f57f6] dark:bg-[#22193d]" : "border-[#efebfb] bg-[#fcfbff] hover:border-[#ddd3ff] dark:border-white/10 dark:bg-white/[0.03] dark:hover:border-white/20"}`} key={entry.id} onClick={() => selectDate(entry.entry_date)} type="button"><div><p className="text-sm font-semibold text-[#27304c] dark:text-white">{formatCalendarDate(entry.entry_date)}</p><p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{dueDates.has(entry.entry_date) ? "Due opportunity" : "Manual history entry"}</p>{formatTaskHistoryLoggedLine(entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryLoggedLine(entry)}</p> : null}{formatTaskHistoryEditedLine(entry) ? <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/45">{formatTaskHistoryEditedLine(entry)}</p> : null}</div>{renderStatusPill(entry)}</button>)}</div>
+    </section>
+  );
+  const statsSection = (
+    <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
             <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Stats</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
               {[
                 { label: "Last Done", value: lastDone ? (lastDone.timestamp ? formatHistoryDateTime(lastDone.timestamp) : formatCalendarDate(lastDone.dateKey)) : "None", detail: "latest Done or Did My Best" },
                 { label: "Current Streak", value: stats.currentStreak, detail: "completed due dates in a row" },
@@ -955,9 +915,23 @@ export function TaskHistoryModal({
                 </div>
               ))}
             </div>
-          </section>
+    </section>
+  );
+
+  return (
+    <ModalShell className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-none border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-[2.4rem] sm:p-6 dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
+      <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-[#efebfb] bg-white px-4 py-3 dark:border-white/10 dark:bg-[#171328] sm:static sm:px-0 sm:pb-5">
+        <div className="min-w-0"><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Task History</p><h2 className="mt-1 truncate text-xl font-black text-[#1f2746] dark:text-white sm:mt-2 sm:text-3xl">{taskTitle}</h2><p className="mt-1 hidden text-sm text-[#7d88a1] dark:text-white/50 sm:block">Edit task history by date without changing past rewards or economy.</p></div>
+        <button aria-label="Close task history" className="shrink-0 p-2 text-2xl leading-none text-[#8e97af] dark:text-white/55" onClick={onClose} type="button">×</button>
+      </div>
+      <div className="sticky top-0 z-20 lg:hidden"><div className="mx-4 mt-3 flex w-fit items-center gap-1 rounded-full border border-[#ece8f8] bg-white/88 p-1 shadow-[0_12px_28px_rgba(81,61,168,0.06)] dark:border-white/10 dark:bg-white/[0.04]">{(["calendar", "history", "stats"] as const).map((section) => <TaskTableChipButton aria-pressed={mobileSection === section} key={section} onClick={() => setMobileSection(section)} toneClassName={mobileSection === section ? "border-[#6f57f6] bg-[#6f57f6] text-white dark:border-[#c9bbff] dark:bg-[#c9bbff] dark:text-[#1a1431]" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{section[0].toUpperCase() + section.slice(1)}</TaskTableChipButton>)}</div></div>
+      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:mt-6 sm:px-0 sm:py-0" ref={mobileScrollRef}>
+        <div className="space-y-5 lg:hidden">
+          {mobileSection === "calendar" ? <><section className="rounded-[1.5rem] border border-[#ece8f8] bg-[#fcfbff] p-4 dark:border-white/10 dark:bg-white/[0.03]"><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a day to inspect or update it."}</p>{calendarControls}<div className="mt-3">{calendarLegend}</div><div className="adhdice-scrollbar mt-4 h-[7.5rem] overflow-y-auto overscroll-contain touch-pan-y" ref={mobileCalendarViewportRef}><div className="grid grid-cols-7 gap-1.5">{days.map(calendarButton)}</div></div></section>{selectedDetailsSection}</> : null}
+          {mobileSection === "history" ? historySection : null}
+          {mobileSection === "stats" ? statsSection : null}
         </div>
-        </div>
+        <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)] gap-6 lg:grid"><div className="space-y-6"><section className="rounded-[2rem] border border-[#ece8f8] bg-[#fcfbff] p-5 dark:border-white/10 dark:bg-white/[0.03]"><div className="mb-4 flex items-start justify-between gap-3"><div><p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Calendar</p><p className="mt-1 text-sm text-[#7d88a1] dark:text-white/50">{isMultiSelect ? "Tap past or current dates to add or remove them." : "Tap a square to inspect or update that date."}</p>{calendarControls}</div><div className="max-w-sm">{calendarLegend}</div></div><div className="adhdice-scrollbar -mx-2 overflow-x-auto px-2 pb-2" ref={desktopCalendarViewportRef}><div className="inline-flex w-max gap-1.5 pr-2">{weeks.map((week, weekIndex) => <div className="flex flex-col gap-1.5" key={weekIndex}>{week.map(calendarButton)}</div>)}</div></div></section>{historySection}</div><div className="space-y-6">{selectedDetailsSection}{statsSection}</div></div>
       </div>
     </ModalShell>
   );

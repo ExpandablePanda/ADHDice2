@@ -14,7 +14,7 @@ type TasksNonListShellProps = {
   listNode: ReactNode;
   lists: TaskRailListOption[];
   matrixNode: ReactNode;
-  onReorderLists?: (orderedListIds: string[]) => void;
+  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
   onSelectBucket: (bucket: string) => void;
   selectedBucket: string;
   view: TaskViewMode;

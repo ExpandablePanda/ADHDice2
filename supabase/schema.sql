@@ -23,6 +23,8 @@ create table public.adhdice_clean_tasks (
   is_urgent boolean not null default false,
   is_important boolean not null default false,
   due_on date,
+  active_status_logical_date date,
+  active_occurrence_due_on date,
   scheduled_on date,
   due_time time,
   estimated_minutes integer check (estimated_minutes is null or estimated_minutes > 0),

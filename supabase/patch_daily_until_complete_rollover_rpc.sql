@@ -8,6 +8,10 @@
 --    daily_until_complete while preserving the anchored due_on date until the user
 --    records a successful occurrence.
 
+alter table public.adhdice_clean_tasks
+  add column if not exists active_status_logical_date date,
+  add column if not exists active_occurrence_due_on date;
+
 create or replace function public.adhdice_task_next_due_date(
   p_repeat_frequency public.adhdice_clean_task_repeat_frequency,
   p_repeat_interval integer,
@@ -143,11 +147,83 @@ begin
     select *
       from public.adhdice_clean_tasks
       where user_id = p_user_id
-        and due_on is not null
         and status <> 'archived'
-        and due_on <= v_rollover_date
-      order by due_on asc, created_at asc
+        and (
+          (due_on is not null and due_on <= v_rollover_date)
+          or (
+            status = 'in_progress'
+            and active_status_logical_date is not null
+            and active_status_logical_date <= v_rollover_date
+          )
+        )
+      order by coalesce(active_status_logical_date, due_on) asc, created_at asc
   loop
+    if v_task.status = 'in_progress'
+      and v_task.active_status_logical_date is not null
+      and v_task.active_status_logical_date <= v_rollover_date
+    then
+      insert into public.adhdice_task_history (
+        task_id,
+        user_id,
+        entry_date,
+        status,
+        was_completed
+      )
+      values (
+        v_task.id,
+        p_user_id,
+        v_task.active_status_logical_date,
+        'did_my_best',
+        true
+      )
+      on conflict (user_id, task_id, entry_date) do update
+        set
+          status = excluded.status,
+          was_completed = excluded.was_completed,
+          updated_at = now();
+
+      v_inserted_history_count := v_inserted_history_count + 1;
+
+      if v_task.repeat_frequency = 'none' or v_task.active_occurrence_due_on is null then
+        update public.adhdice_clean_tasks
+          set
+            status = 'did_my_best',
+            completed_at = coalesce(completed_at, p_now),
+            active_status_logical_date = null,
+            active_occurrence_due_on = null
+          where id = v_task.id
+            and user_id = p_user_id;
+      else
+        v_due_on := public.adhdice_task_next_due_date(
+          v_task.repeat_frequency,
+          v_task.repeat_interval,
+          v_task.repeat_days_of_week,
+          v_task.repeat_day_of_month,
+          v_task.active_occurrence_due_on
+        );
+        v_next_status := public.adhdice_resolve_recurring_due_status(
+          v_due_on,
+          v_task.due_time,
+          v_effective_date,
+          v_local_now_time
+        );
+
+        update public.adhdice_clean_tasks
+          set
+            due_on = v_due_on,
+            status = v_next_status,
+            completed_at = null,
+            active_status_logical_date = null,
+            active_occurrence_due_on = null
+          where id = v_task.id
+            and user_id = p_user_id;
+      end if;
+
+      get diagnostics v_row_count = row_count;
+      v_changed_task_count := v_changed_task_count + v_row_count;
+      continue;
+    end if;
+
     if v_task.repeat_frequency = 'none' then
       if v_task.status not in ('pending', 'in_progress', 'delayed', 'missed', 'upcoming', 'not_due') then
         continue;
@@ -204,7 +280,9 @@ begin
           completed_at = case
             when v_resolution = 'did_my_best' then coalesce(completed_at, p_now)
             else null
-          end
+          end,
+          active_status_logical_date = null,
+          active_occurrence_due_on = null
         where id = v_task.id
           and user_id = p_user_id
           and (
@@ -286,7 +364,9 @@ begin
           set
             due_on = v_due_on,
             status = v_next_status,
-            completed_at = null
+            completed_at = null,
+            active_status_logical_date = null,
+            active_occurrence_due_on = null
           where id = v_task.id
             and user_id = p_user_id
             and (
@@ -298,7 +378,9 @@ begin
         update public.adhdice_clean_tasks
           set
             status = 'missed',
-            completed_at = null
+            completed_at = null,
+            active_status_logical_date = null,
+            active_occurrence_due_on = null
           where id = v_task.id
             and user_id = p_user_id
             and (
@@ -360,22 +442,20 @@ begin
       continue;
     end if;
 
-    if v_task.status = 'in_progress' then
-      v_next_status := public.adhdice_resolve_recurring_due_status(
-        v_due_on,
-        v_task.due_time,
-        v_effective_date,
-        v_local_now_time
-      );
-    else
-      v_next_status := 'missed';
-    end if;
+    v_next_status := public.adhdice_resolve_recurring_due_status(
+      v_due_on,
+      v_task.due_time,
+      v_effective_date,
+      v_local_now_time
+    );
 
     update public.adhdice_clean_tasks
       set
         due_on = v_due_on,
         status = v_next_status,
-        completed_at = null
+        completed_at = null,
+        active_status_logical_date = null,
+        active_occurrence_due_on = null
       where id = v_task.id
         and user_id = p_user_id
         and (

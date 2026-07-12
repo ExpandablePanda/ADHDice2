@@ -15,7 +15,7 @@ import {
   updateTaskListRuleRow,
   updateTaskListRuleRowConnector,
 } from "@/lib/task-list-rule-editor";
-import type { TaskListDefinition, TaskListId, TaskListRuleGroup, parseTaskListRules } from "@/lib/task-lists";
+import { isTaskListSettingsEligible, type TaskListDefinition, type TaskListId, type TaskListRuleGroup, type parseTaskListRules } from "@/lib/task-lists";
 import { TaskListRuleRowEditor } from "./task-list-rule-row-editor";
 
 type TaskListSettingsDraft = {
@@ -52,8 +52,6 @@ type TaskListSettingsModalProps = {
   taskStatusOptions: TaskStatus[];
 };
 
-const PINNED_LIST_IDS = new Set<TaskListId>(["routine"]);
-
 function buildInitialDrafts(lists: TaskListDefinition[]) {
   return Object.fromEntries(
     lists.map((list, index) => [
@@ -66,21 +64,6 @@ function buildInitialDrafts(lists: TaskListDefinition[]) {
       },
     ]),
   ) as Record<string, TaskListSettingsDraft>;
-}
-
-function moveListId(listIds: TaskListId[], listId: TaskListId, direction: "up" | "down") {
-  const currentIndex = listIds.indexOf(listId);
-  if (currentIndex < 0) {
-    return listIds;
-  }
-  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-  if (targetIndex < 0 || targetIndex >= listIds.length) {
-    return listIds;
-  }
-
-  const nextListIds = [...listIds];
-  [nextListIds[currentIndex], nextListIds[targetIndex]] = [nextListIds[targetIndex]!, nextListIds[currentIndex]!];
-  return nextListIds;
 }
 
 function reorderListIdsWithinGroup(
@@ -156,14 +139,15 @@ export function TaskListSettingsModal({
   operatorOptionsByField,
   taskStatusOptions,
 }: TaskListSettingsModalProps) {
-  const listOptions = lists.map((list) => ({
+  const eligibleLists = lists.filter(isTaskListSettingsEligible);
+  const listOptions = eligibleLists.map((list) => ({
     label: list.name,
     value: list.id,
   }));
   const listLabelById = Object.fromEntries(listOptions.map((list) => [list.value, list.label])) as Partial<Record<TaskListId, string>>;
-  const [drafts, setDrafts] = useState<Record<string, TaskListSettingsDraft>>(() => buildInitialDrafts(lists));
-  const [orderedListIds, setOrderedListIds] = useState<TaskListId[]>(() => lists.map((list) => list.id));
-  const reorderableListIds = lists.filter((list) => !PINNED_LIST_IDS.has(list.id)).map((list) => list.id);
+  const [drafts, setDrafts] = useState<Record<string, TaskListSettingsDraft>>(() => buildInitialDrafts(eligibleLists));
+  const [orderedListIds, setOrderedListIds] = useState<TaskListId[]>(() => eligibleLists.map((list) => list.id));
+  const reorderableListIds = eligibleLists.map((list) => list.id);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [newListName, setNewListName] = useState("");
   const [newListMode, setNewListMode] = useState<"manual" | "rules">("manual");
@@ -361,11 +345,11 @@ export function TaskListSettingsModal({
 
         <div className="space-y-4">
           {orderedListIds.map((listId, listIndex) => {
-            const list = lists.find((entry) => entry.id === listId);
+            const list = eligibleLists.find((entry) => entry.id === listId);
             if (!list) return null;
             const draft = drafts[list.id];
             if (!draft) return null;
-            const isReorderable = !PINNED_LIST_IDS.has(list.id);
+            const isReorderable = true;
             const reorderableListIndex = orderedListIds.filter((currentListId) => reorderableListIds.includes(currentListId)).indexOf(list.id);
             const reorderableListCount = reorderableListIds.length;
             return (
@@ -427,7 +411,7 @@ export function TaskListSettingsModal({
                       onClick={() => setOrderedListIds((current) => (
                         isReorderable
                           ? moveListIdWithinGroup(current, list.id, "up", reorderableListIds)
-                          : moveListId(current, list.id, "up")
+                          : current
                       ))}
                       type="button"
                     >
@@ -440,7 +424,7 @@ export function TaskListSettingsModal({
                       onClick={() => setOrderedListIds((current) => (
                         isReorderable
                           ? moveListIdWithinGroup(current, list.id, "down", reorderableListIds)
-                          : moveListId(current, list.id, "down")
+                          : current
                       ))}
                       type="button"
                     >

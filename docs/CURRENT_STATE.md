@@ -5,7 +5,7 @@ Last reviewed: 2026-07-12
 Role: active working
 
 ## Current App Version
-- Current working app version: `6.25.32`.
+- Current working app version: `6.25.39`.
 - Current release group: `6.25.x` focused stabilization pass.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,11 @@ Role: active working
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
 
 ## 6.25 Checkpoint
+- `6.25.39` constrains the mobile Task History calendar to a three-week nested scroll viewport while preserving one-time date focus and history semantics.
+- `6.25.36` keeps a dropped primary-rail order pinned locally while its atomic reorder request is pending, preventing intermediate stale list props from snapping the rail back before the authoritative response and success notification arrive. The reorder callback now reports persistence success so genuine failures still restore the latest authoritative order.
+- `6.25.35` restores smooth desktop primary-rail dragging without reopening the direction-dependent insertion bug: desktop now uses the same pointer-following fixed chip preview as touch and pen while the source slot and gesture-start order remain stable until drop.
+- `6.25.34` makes primary-rail chip dragging direction-symmetric by resolving desktop and mobile insertion against the stable order captured at gesture start. Chips no longer mutate underneath the active pointer while calculating the next target; leftward and rightward drops share the same midpoint insertion and existing atomic persistence path. The shared fixed notification alert is now anchored at the safe-area-aware top right beside the HUD instead of centered across the viewport, without changing its width constraints, tones, timing, announcement, or dismissal behavior.
+- `6.25.33` restores app-owned system-list semantics for All and Routine from their canonical persisted identifiers while retaining schema-compatible `manual` storage. All now respects its saved primary-rail visibility, Routine is excluded from List Settings and manual-list destinations, and shared eligibility helpers keep those rules consistent across hydration, persistence responses, reorder responses, settings, and derived list surfaces.
 - `6.25.32` converts the shared success, warning, and neutral status banner into a fixed safe-area-aware overlay on authenticated and authentication surfaces. Notifications retain their existing message timing, tones, accessibility announcements, and Dismiss action without entering document flow or shifting mobile/desktop page content when they appear or disappear.
 - `6.25.31` fixes the remaining direction-dependent Safari primary-list reorder failure by binding the active touch guard to the current gesture's finger instead of allowing a stale pre-session touch identifier to reject movement suppression. The live session now accepts the touch identifier regardless of touch/pointer event ordering and can resolve the authoritative active touch by proximity after activation, preventing rightward dragging from falling back to native rail scrolling.
 - `6.25.30` corrects the Safari mobile primary-list handoff after the stationary hold by registering a capture-phase non-passive touch-move guard at gesture start while leaving it inert before activation. Native pre-hold rail/page scrolling remains available, but the already-registered guard suppresses Safari scrolling as soon as reorder activates so pointer capture, the fixed preview, and stable insertion marker retain ownership through drop.

@@ -7,6 +7,7 @@ import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import { normalizeOpenTaskStatusForDueDate } from "@/lib/task-cockpit";
 import { buildTaskPriorityUpdate } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
+import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 
 type Message = {
   text: string;
@@ -153,7 +154,8 @@ export function useTaskBatchEditAction({
         continue;
       }
 
-      const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, updateValues);
+      const trackedUpdateValues = applyTaskActiveStatusTracking(task, updateValues, currentDayKey);
+      const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues);
 
       if (error) {
         firstErrorMessage ??= error.message;

@@ -1,7 +1,7 @@
 "use client";
 
 import type { TaskList as DbTaskList, TaskListManualMembership as DbTaskListManualMembership } from "@/lib/database.types";
-import { isBuiltInTaskListId, parseTaskListRules, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
+import { isBuiltInTaskListId, parseTaskListRules, resolveAppTaskListMembershipMode, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
 
 const LEGACY_SYSTEM_LIST_ID_MAP = {
   important: "priority_3_4",
@@ -73,7 +73,7 @@ export function mapTaskListRow(row: DbTaskList): TaskListDefinition | null {
     isDeletable: row.is_deletable,
     isEditable: row.is_editable,
     isVisible: row.is_visible,
-    membershipMode: row.membership_mode,
+    membershipMode: resolveAppTaskListMembershipMode(id, normalizedBuiltInKey, row.membership_mode),
     name: legacyMetadata?.name ?? row.name,
     rules: legacyMetadata?.rules ?? rules,
     sortOrder: row.sort_order,

@@ -75,6 +75,39 @@ export type TaskListManualMembership = {
   user_id: string;
 };
 
+const APP_OWNED_SYSTEM_LIST_IDS = new Set<TaskListId>(["all", "routine"]);
+
+export function isAppOwnedSystemTaskListId(value: string | null | undefined): value is TaskListId {
+  return Boolean(value && APP_OWNED_SYSTEM_LIST_IDS.has(value as TaskListId));
+}
+
+export function resolveAppTaskListMembershipMode(
+  id: TaskListId,
+  builtInKey: string | null,
+  storedMode: Exclude<TaskListMembershipMode, "system">,
+): TaskListMembershipMode {
+  return isAppOwnedSystemTaskListId(id) || isAppOwnedSystemTaskListId(builtInKey)
+    ? "system"
+    : storedMode;
+}
+
+export function getStoredTaskListMembershipMode(mode: TaskListMembershipMode): Exclude<TaskListMembershipMode, "system"> {
+  return mode === "system" ? "manual" : mode;
+}
+
+export function isManualTaskListDestination(list: Pick<TaskListDefinition, "id" | "membershipMode">) {
+  return !isAppOwnedSystemTaskListId(list.id)
+    && (list.membershipMode === "manual" || list.membershipMode === "hybrid" || list.id === "waiting");
+}
+
+export function isTaskListSettingsEligible(list: Pick<TaskListDefinition, "id">) {
+  return list.id !== "routine";
+}
+
+export function isPrimaryRailTaskListEligible(list: Pick<TaskListDefinition, "id" | "isVisible">) {
+  return list.id !== "routine" && list.isVisible;
+}
+
 export type TaskListMembership = {
   id: TaskListId;
   isManual: boolean;

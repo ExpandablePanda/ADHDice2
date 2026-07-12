@@ -19,7 +19,7 @@ import type {
   TaskListEvaluationContext,
   TaskListEvaluationPerf,
 } from "@/lib/task-lists";
-import { buildTaskListLookup, evaluateTaskListMemberships } from "@/lib/task-lists";
+import { buildTaskListLookup, evaluateTaskListMemberships, isManualTaskListDestination, isPrimaryRailTaskListEligible } from "@/lib/task-lists";
 import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
 import { isDueToday, isOverdue } from "@/lib/task-cockpit";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
@@ -906,8 +906,7 @@ export function computeTaskAppDerivedData({
   const visibleTaskLists = activePage !== "Tasks"
     ? []
     : availableTaskLists.filter((list) =>
-      (list.id === "all" || list.isVisible)
-      && list.id !== "routine"
+      isPrimaryRailTaskListEligible(list)
       && (list.id !== "missed" || (visibleListCounts[list.id] ?? 0) > 0)
     );
   const listRailOptions: TaskRailListOption[] = activePage !== "Tasks"
@@ -922,7 +921,7 @@ export function computeTaskAppDerivedData({
   const manualListOptions = activePage !== "Tasks"
     ? []
     : availableTaskLists
-      .filter((list) => list.membershipMode === "manual" || list.membershipMode === "hybrid" || list.id === "waiting")
+      .filter(isManualTaskListDestination)
       .map((list) => ({
         count: visibleListCounts[list.id] ?? 0,
         label: list.name,

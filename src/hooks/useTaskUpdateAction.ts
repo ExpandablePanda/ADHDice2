@@ -8,6 +8,7 @@ import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
+import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 
 type Message = {
   text: string;
@@ -50,7 +51,7 @@ export function useTaskUpdateAction({
   async function updateTask(taskId: string, values: TaskUpdate, options?: UpdateTaskActionOptions) {
     markPendingTaskMutations?.([taskId]);
     const previousTask = options?.expectedTask ?? tasks.find((task) => task.id === taskId) ?? null;
-    const nextValues = previousTask && Object.prototype.hasOwnProperty.call(values, "due_on")
+    const normalizedValues = previousTask && Object.prototype.hasOwnProperty.call(values, "due_on")
       ? {
         ...values,
         status: normalizeOpenTaskStatusForDueDate({
@@ -59,6 +60,9 @@ export function useTaskUpdateAction({
         }, currentDayKey),
       }
       : values;
+    const nextValues = previousTask
+      ? applyTaskActiveStatusTracking(previousTask, normalizedValues, currentDayKey)
+      : normalizedValues;
     const {
       conflict,
       data,

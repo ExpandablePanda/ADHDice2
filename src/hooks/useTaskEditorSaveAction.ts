@@ -6,6 +6,7 @@ import type { TaskDraft, TaskSubtaskDraft } from "@/components/task-app/task-edi
 import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { normalizeOpenTaskStatusForDueDate } from "@/lib/task-cockpit";
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
+import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
@@ -78,7 +79,7 @@ export function useTaskEditorSaveAction({
         ...values,
         id: undefined,
       });
-      const updateValues = previousTask && normalizedUpdateValues.due_on !== previousTask.due_on
+      const dueNormalizedValues = previousTask && normalizedUpdateValues.due_on !== previousTask.due_on
         ? {
           ...normalizedUpdateValues,
           status: normalizeOpenTaskStatusForDueDate({
@@ -87,6 +88,9 @@ export function useTaskEditorSaveAction({
           }, currentDayKey),
         }
         : normalizedUpdateValues;
+      const updateValues = previousTask
+        ? applyTaskActiveStatusTracking(previousTask, dueNormalizedValues, currentDayKey)
+        : dueNormalizedValues;
       const {
         conflict,
         data,

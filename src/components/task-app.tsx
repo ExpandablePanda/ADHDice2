@@ -220,6 +220,8 @@ import {
   buildManualMembershipMap,
   getBuiltInTaskLists,
   isBuiltInTaskListId,
+  isManualTaskListDestination,
+  isTaskListSettingsEligible,
   type BuiltInTaskListId,
   type TaskListDefinition,
   type TaskListEvaluationContext,
@@ -476,7 +478,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.25.32";
+const APP_VERSION = "6.25.39";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2095,6 +2097,7 @@ export function TaskApp() {
         return;
       }
 
+      await softRefreshWorkspace();
       lastResetDateRef.current = todayKey;
     }
 
@@ -2117,7 +2120,7 @@ export function TaskApp() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pageshow", handlePageShow);
     };
-  }, [session?.user?.id, supabase, todayKey]);
+  }, [session?.user?.id, softRefreshWorkspace, supabase, todayKey]);
   const visibleTaskSubtasks = useMemo(
     () => filterPromotedLegacySubtasks(taskSubtasks, taskLegacySubtaskPromotions),
     [taskLegacySubtaskPromotions, taskSubtasks],
@@ -2523,7 +2526,7 @@ export function TaskApp() {
   const selectedManualList = useMemo(
     () => availableTaskLists.find((list) =>
       list.id === taskUiState.selectedBucket
-      && list.membershipMode === "manual"
+      && isManualTaskListDestination(list)
       && !list.rules,
     ) ?? null,
     [availableTaskLists, taskUiState.selectedBucket],
@@ -4105,6 +4108,8 @@ export function TaskApp() {
       repeat_frequency: "none" as const,
       repeat_interval: 1,
       status: "complete" as const,
+      active_occurrence_due_on: null,
+      active_status_logical_date: null,
       trashed_at: null,
     } satisfies TaskUpdate;
   }
@@ -4707,7 +4712,7 @@ export function TaskApp() {
     onOpenComposer: openInlineNewListTaskComposer,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
-    onReorderLists: (orderedListIds: string[]) => { void reorderTaskLists(orderedListIds as TaskListId[]); },
+    onReorderLists: (orderedListIds: string[]) => reorderTaskLists(orderedListIds as TaskListId[]),
     onSelectBucket: setSelectedBucket,
     onReorderListColumns: reorderListColumns,
     onSetDraggedListColumnId: setDraggedListColumnId,
@@ -4785,7 +4790,7 @@ export function TaskApp() {
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
     onOpenMomentumDetails: openMomentumDetails,
-    onReorderLists: (orderedListIds: string[]) => { void reorderTaskLists(orderedListIds as TaskListId[]); },
+    onReorderLists: (orderedListIds: string[]) => reorderTaskLists(orderedListIds as TaskListId[]),
     onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onSelectBucket: setSelectedBucket,
@@ -4830,7 +4835,7 @@ export function TaskApp() {
           energyOptions={energyOptions}
           fieldOptions={TASK_LIST_RULE_FIELD_OPTIONS}
           listCounts={visibleListCounts}
-          lists={availableTaskLists.filter((list) => list.membershipMode !== "system")}
+          lists={availableTaskLists.filter(isTaskListSettingsEligible)}
           onClose={() => setIsTaskListSettingsOpen(false)}
           onCreateCustomList={createCustomTaskList}
           onDeleteList={deleteTaskList}
@@ -5124,7 +5129,7 @@ export function TaskApp() {
               ) : (
                 <TasksTableAdapter
                 tableProps={{
-                  allListOptions: availableTaskLists.map((list) => ({ id: list.id, label: list.name })),
+                  allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   allTasks: tasks,
@@ -5253,7 +5258,7 @@ export function TaskApp() {
                   rowContext: {
                     focusedTaskIdSet,
                     linkedNotesByTaskId: taskLinkedNotesByTaskId,
-                    listDefinitions: availableTaskLists,
+                    listDefinitions: availableTaskLists.filter(isManualTaskListDestination),
                     listMembershipsByTaskId: taskListMembershipsByTaskId,
                     subtasksByTaskId: taskSubtasksByTaskId,
                     taskHistoryByTaskId,
@@ -5276,7 +5281,7 @@ export function TaskApp() {
                 panelProps={listPanelProps}
                 selectedBucket={taskUiState.selectedBucket}
                 tableProps={{
-                  allListOptions: availableTaskLists.map((list) => ({ id: list.id, label: list.name })),
+                  allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
                   allTasks: tasks,
@@ -5404,7 +5409,7 @@ export function TaskApp() {
                   rowContext: {
                     focusedTaskIdSet,
                     linkedNotesByTaskId: taskLinkedNotesByTaskId,
-                    listDefinitions: availableTaskLists,
+                    listDefinitions: availableTaskLists.filter(isManualTaskListDestination),
                     listMembershipsByTaskId: taskListMembershipsByTaskId,
                     subtasksByTaskId: taskSubtasksByTaskId,
                     taskHistoryByTaskId,
@@ -5429,7 +5434,7 @@ export function TaskApp() {
                 listNode={null}
                 lists={listRailOptions}
                 matrixNode={matrixContentNode}
-                onReorderLists={(orderedListIds) => { void reorderTaskLists(orderedListIds as TaskListId[]); }}
+                onReorderLists={(orderedListIds) => reorderTaskLists(orderedListIds as TaskListId[])}
                 onSelectBucket={setSelectedBucket}
                 selectedBucket={taskUiState.selectedBucket}
                 view={taskUiState.view}
@@ -5892,7 +5897,7 @@ function StatusBanner({
   return (
     <div
       aria-live={message.tone === "warn" ? "assertive" : "polite"}
-      className={`fixed inset-x-3 top-[calc(env(safe-area-inset-top)+1rem)] z-[140] mx-auto flex max-w-xl items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium shadow-[0_18px_48px_rgba(39,28,89,0.18)] ${className}`}
+      className={`fixed right-3 top-[calc(env(safe-area-inset-top)+1rem)] z-[140] flex w-[calc(100vw-1.5rem)] max-w-xl items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium shadow-[0_18px_48px_rgba(39,28,89,0.18)] sm:right-4 sm:w-auto sm:min-w-80 ${className}`}
       role={message.tone === "warn" ? "alert" : "status"}
     >
       <span className="min-w-0 flex-1">{message.text}</span>
