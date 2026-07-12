@@ -19,6 +19,7 @@ import type {
   UserProfile as DbUserProfile,
 } from "@/lib/database.types";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
+import { reconcileTaskListRows } from "@/lib/task-list-mappers";
 import type { TaskListDefinition, TaskListManualMembership } from "@/lib/task-lists";
 import type { AppPage } from "@/lib/task-ui-state";
 
@@ -83,6 +84,7 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   suppressCategoryReload: MutableRefObject<boolean>;
   supabase: SupabaseClient;
   taskGridStarterLayout: TTaskGridItem[];
+  taskListDataGeneration: MutableRefObject<number>;
 };
 
 function shouldLoadSecondaryForPage(activePage: AppPage) {
@@ -177,6 +179,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   suppressCategoryReload,
   supabase,
   taskGridStarterLayout,
+  taskListDataGeneration,
 }: UseWorkspaceDataOptions<TTaskGridItem>) {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [isSoftWorkspaceRefreshing, setIsSoftWorkspaceRefreshing] = useState(false);
@@ -454,6 +457,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     }
 
     async function loadCoreWorkspaceData({ silent = false }: { silent?: boolean } = {}) {
+      const taskListLoadGeneration = taskListDataGeneration.current + 1;
+      taskListDataGeneration.current = taskListLoadGeneration;
       if (!silent) {
         setIsWorkspaceLoading(true);
       }
@@ -600,7 +605,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       let nextFocusedTaskIdsByDate = mapTaskFocusDayRows(focusDayResult.data ?? [], taskResult.data ?? []);
       const nextTaskLists = (taskListsResult.error && isMissingTaskListsTableError(taskListsResult.error.message))
         ? []
-        : (taskListsResult.data ?? []).map(mapTaskListRow).filter((list): list is TaskListDefinition => list !== null);
+        : reconcileTaskListRows(taskListsResult.data ?? [], mapTaskListRow);
       const nextTaskListManualMemberships = (manualMembershipResult.error && isMissingTaskListManualMembershipsTableError(manualMembershipResult.error.message))
         ? []
         : (manualMembershipResult.data ?? []).map(mapTaskListManualMembershipRow);
@@ -674,7 +679,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       setActiveSessions((current) => keepCurrentIfStructurallyEqual(current, nextActiveSessions));
       setFocusHistory((current) => keepCurrentIfStructurallyEqual(current, nextFocusHistory));
       setFocusedTaskIdsByDate((current) => keepCurrentIfStructurallyEqual(current, nextFocusedTaskIdsByDate));
-      setTaskLists((current) => keepCurrentIfStructurallyEqual(current, nextTaskLists));
+      if (taskListLoadGeneration === taskListDataGeneration.current) {
+        setTaskLists((current) => keepCurrentIfStructurallyEqual(current, nextTaskLists));
+      }
       setTaskListManualMemberships((current) => keepCurrentIfStructurallyEqual(current, nextTaskListManualMemberships));
       setTaskGridLayout((current) => keepCurrentIfStructurallyEqual(current, nextTaskGridLayout));
       saveFocusCategories(nextCategories);

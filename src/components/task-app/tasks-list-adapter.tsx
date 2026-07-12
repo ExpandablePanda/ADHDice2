@@ -65,18 +65,23 @@ function MetadataDisclosureButton({
   onToggleAll: () => void;
   onToggle: () => void;
 }) {
-  const longPressTimerRef = useRef<number | null>(null);
+  const longPressSessionRef = useRef<{ pointerId: number; startX: number; startY: number; target: HTMLButtonElement; timer: number | null } | null>(null);
   const longPressCompletedRef = useRef(false);
-  const cancelLongPress = () => {
-    if (longPressTimerRef.current !== null) {
-      window.clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
+  const cancelLongPress = (pointerId?: number) => {
+    const session = longPressSessionRef.current;
+    if (!session || (pointerId !== undefined && session.pointerId !== pointerId)) return;
+    longPressSessionRef.current = null;
+    if (session.timer !== null) window.clearTimeout(session.timer);
+    if (session.target.hasPointerCapture(session.pointerId)) session.target.releasePointerCapture(session.pointerId);
   };
+
+  useEffect(() => () => cancelLongPress(), []);
 
   return (
     <AdhdIconButton
       aria-label={`${isVisible ? "Hide" : "Show"} details for ${label}`}
+      className="adhdice-native-interaction-suppressed"
+      draggable={false}
       onClick={(event) => {
         event.stopPropagation();
         if (longPressCompletedRef.current) {
@@ -86,21 +91,33 @@ function MetadataDisclosureButton({
         onToggle();
       }}
       onContextMenu={(event) => event.preventDefault()}
-      onPointerCancel={cancelLongPress}
+      onDragStart={(event) => event.preventDefault()}
+      onLostPointerCapture={(event) => cancelLongPress(event.pointerId)}
+      onPointerCancel={(event) => cancelLongPress(event.pointerId)}
       onPointerDown={(event) => {
         event.stopPropagation();
         longPressCompletedRef.current = false;
         cancelLongPress();
-        longPressTimerRef.current = window.setTimeout(() => {
-          longPressTimerRef.current = null;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        const session = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, target: event.currentTarget, timer: null as number | null };
+        longPressSessionRef.current = session;
+        session.timer = window.setTimeout(() => {
+          if (longPressSessionRef.current !== session) return;
+          session.timer = null;
           longPressCompletedRef.current = true;
           onToggleAll();
         }, 600);
       }}
-      onPointerLeave={cancelLongPress}
-      onPointerUp={cancelLongPress}
+      onPointerMove={(event) => {
+        const session = longPressSessionRef.current;
+        if (session?.pointerId === event.pointerId && Math.hypot(event.clientX - session.startX, event.clientY - session.startY) > 8) {
+          cancelLongPress(event.pointerId);
+        }
+      }}
+      onPointerUp={(event) => cancelLongPress(event.pointerId)}
       selected={isVisible}
       size="sm"
+      style={{ touchAction: "manipulation", userSelect: "none", WebkitTouchCallout: "none", WebkitUserSelect: "none" }}
       title={`${isVisible ? "Hide" : "Show"} details`}
       variant="rowToolbar"
     >
@@ -2878,12 +2895,6 @@ function TasksSimpleList({
                         </button>
                       )}
                       <TaskHistoryChips
-                        className="hidden sm:inline-flex"
-                        currentStreak={taskRow.currentStreak}
-                        missedStreak={taskRow.missedStreak}
-                      />
-                      <TaskHistoryChips
-                        className="sm:hidden"
                         currentStreak={taskRow.currentStreak}
                         missedStreak={taskRow.missedStreak}
                       />

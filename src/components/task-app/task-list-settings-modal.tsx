@@ -52,7 +52,7 @@ type TaskListSettingsModalProps = {
   taskStatusOptions: TaskStatus[];
 };
 
-const PINNED_LIST_IDS = new Set<TaskListId>(["inbox", "today"]);
+const PINNED_LIST_IDS = new Set<TaskListId>(["routine"]);
 
 function buildInitialDrafts(lists: TaskListDefinition[]) {
   return Object.fromEntries(
@@ -454,7 +454,7 @@ export function TaskListSettingsModal({
                         Delete
                       </button>
                     ) : null}
-                    {list.type !== "custom" ? (
+                    {list.type !== "custom" && list.id !== "all" ? (
                       <button
                         className="ui-pill-button-light transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
                         onClick={() => {

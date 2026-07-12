@@ -1,8 +1,9 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import { useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TaskList, TaskListInsert } from "@/lib/database.types";
+import { reconcileTaskListRows } from "@/lib/task-list-mappers";
 import type { TaskListDefinition, TaskListId, TaskListManualMembership } from "@/lib/task-lists";
 
 type Message = {
@@ -41,6 +42,7 @@ type UseTaskListActionsOptions = {
   setMessage?: Dispatch<SetStateAction<Message | null>>;
   setTaskListManualMemberships?: Dispatch<SetStateAction<TaskListManualMembership[]>>;
   setTaskLists?: Dispatch<SetStateAction<TaskListDefinition[]>>;
+  taskListDataGeneration?: MutableRefObject<number>;
   taskLists?: TaskListDefinition[];
 };
 
@@ -58,8 +60,12 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
     setMessage = NOOP_SETTER as Dispatch<SetStateAction<Message | null>>,
     setTaskListManualMemberships = NOOP_SETTER as Dispatch<SetStateAction<TaskListManualMembership[]>>,
     setTaskLists = NOOP_SETTER as Dispatch<SetStateAction<TaskListDefinition[]>>,
+    taskListDataGeneration,
     taskLists = [],
   } = options;
+  const latestReorderRequestIdRef = useRef(0);
+  const latestTaskListsRef = useRef(taskLists);
+  latestTaskListsRef.current = taskLists;
 
   async function persistTaskListDefinitions({
     missingTableMessage,
@@ -80,7 +86,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       is_editable: definition.isEditable,
       is_visible: definition.isVisible,
       list_type: definition.type,
-      membership_mode: definition.membershipMode,
+      membership_mode: definition.membershipMode === "system" ? "manual" : definition.membershipMode,
       name: definition.name,
       rules_json: definition.rules ? JSON.stringify(definition.rules) : null,
       sort_order: definition.sortOrder,
@@ -89,7 +95,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
 
     const { data, error } = await client
       .from("adhdice_task_lists")
-      .upsert(payloads, { onConflict: "id" })
+      .upsert(payloads, { onConflict: "user_id,id" })
       .select("*");
 
     if (error) {
@@ -102,9 +108,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
     }
 
     if (data) {
-      const mappedRows = data
-        .map((row) => mapTaskListRow(row))
-        .filter((row): row is TaskListDefinition => Boolean(row));
+      const mappedRows = reconcileTaskListRows(data, mapTaskListRow);
       if (mappedRows.length > 0) {
         mappedRows.sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
         setTaskLists(mappedRows);
@@ -152,34 +156,44 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       };
     });
     const savedDefinition = nextDefinitions.find((list) => list.id === input.id) ?? baseline;
-    return persistTaskListDefinitions({
+    const saved = await persistTaskListDefinitions({
       missingTableMessage: "Task list settings are not migrated yet, so these changes will only last for this session.",
       nextDefinitions,
       successMessage: `${savedDefinition.name} settings saved.`,
     });
+    if (!saved) {
+      return false;
+    }
+    return reorderTaskLists(normalizedOrderedListIds);
   }
 
-  async function reorderCustomTaskLists(orderedCustomListIds: TaskListId[]) {
+  async function reorderTaskLists(orderedListIds: TaskListId[]) {
     if (!client || !currentUserId) {
       setMessage({ tone: "warn", text: "Task list settings are unavailable right now." });
       return false;
     }
 
-    const customLists = availableTaskLists.filter((list) => list.type === "custom");
-    if (customLists.length <= 1) {
+    const requestId = latestReorderRequestIdRef.current + 1;
+    latestReorderRequestIdRef.current = requestId;
+    if (taskListDataGeneration) {
+      taskListDataGeneration.current += 1;
+    }
+    const fixedListIds = new Set<TaskListId>(["routine"]);
+    const reorderableLists = availableTaskLists.filter((list) => !fixedListIds.has(list.id));
+    if (reorderableLists.length <= 1) {
       return true;
     }
 
-    const customListIds = new Set(customLists.map((list) => list.id));
-    const normalizedCustomListIds = [
-      ...orderedCustomListIds.filter((listId, index, listIds) => customListIds.has(listId) && listIds.indexOf(listId) === index),
-      ...customLists.map((list) => list.id).filter((listId) => !orderedCustomListIds.includes(listId)),
+    const reorderableListIds = new Set(reorderableLists.map((list) => list.id));
+    const normalizedOrderedListIds = [
+      ...orderedListIds.filter((listId, index, listIds) => reorderableListIds.has(listId) && listIds.indexOf(listId) === index),
+      ...reorderableLists.map((list) => list.id).filter((listId) => !orderedListIds.includes(listId)),
     ];
 
-    let customListIndex = 0;
+    let reorderableListIndex = 0;
     const nextDefinitions = availableTaskLists.map((list, index) => {
-      const nextList = list.type === "custom"
-        ? availableTaskLists.find((entry) => entry.id === normalizedCustomListIds[customListIndex++]) ?? list
+      const nextList = reorderableListIds.has(list.id)
+        ? availableTaskLists.find((entry) => entry.id === normalizedOrderedListIds[reorderableListIndex++]) ?? list
         : list;
 
       return {
@@ -188,11 +202,45 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       };
     });
 
-    return persistTaskListDefinitions({
-      missingTableMessage: "Task lists are not migrated yet, so this rail order will only last for this session.",
-      nextDefinitions,
-      successMessage: "Custom list order saved.",
+    const previousTaskLists = latestTaskListsRef.current;
+    latestTaskListsRef.current = nextDefinitions;
+    setTaskLists(nextDefinitions);
+    const { data, error } = await client.rpc("reorder_task_lists", {
+      ordered_list_ids: normalizedOrderedListIds,
     });
+
+    if (error) {
+      if (requestId !== latestReorderRequestIdRef.current) {
+        return false;
+      }
+      latestTaskListsRef.current = previousTaskLists;
+      setTaskLists(previousTaskLists);
+      if (isMissingTaskListsTableError(error.message)) {
+        setMessage({ tone: "warn", text: "Task-list ordering requires the 6.25.27 Supabase migration." });
+        return false;
+      }
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+
+    if (requestId !== latestReorderRequestIdRef.current) {
+      return true;
+    }
+
+    const mappedRows = reconcileTaskListRows(data ?? [], mapTaskListRow);
+    const returnedIds = new Set(mappedRows.map((row) => row.id));
+    const responseIsComplete = normalizedOrderedListIds.every((listId) => returnedIds.has(listId));
+    if (!responseIsComplete || mappedRows.length === 0) {
+      latestTaskListsRef.current = previousTaskLists;
+      setTaskLists(previousTaskLists);
+      setMessage({ tone: "warn", text: "The saved list order response was incomplete. Please try again." });
+      return false;
+    }
+    mappedRows.sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
+    latestTaskListsRef.current = mappedRows;
+    setTaskLists(mappedRows);
+    setMessage({ tone: "good", text: "List order saved." });
+    return true;
   }
 
   async function createCustomTaskList(input: CustomTaskListInput) {
@@ -312,7 +360,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
   return {
     createCustomTaskList,
     deleteTaskList,
-    reorderCustomTaskLists,
+    reorderTaskLists,
     saveTaskListDefinition,
   };
 }

@@ -1512,7 +1512,12 @@ export type Database = {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      reorder_task_lists: {
+        Args: { ordered_list_ids: string[] };
+        Returns: TaskList[];
+      };
+    };
     Enums: {
       adhdice_clean_task_status: TaskStatus;
       adhdice_clean_task_priority: TaskPriority;

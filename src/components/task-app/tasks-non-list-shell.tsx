@@ -14,7 +14,7 @@ type TasksNonListShellProps = {
   listNode: ReactNode;
   lists: TaskRailListOption[];
   matrixNode: ReactNode;
-  onReorderCustomLists?: (orderedCustomListIds: string[]) => void;
+  onReorderLists?: (orderedListIds: string[]) => void;
   onSelectBucket: (bucket: string) => void;
   selectedBucket: string;
   view: TaskViewMode;
@@ -28,7 +28,7 @@ export function TasksNonListShell({
   listNode,
   lists,
   matrixNode,
-  onReorderCustomLists,
+  onReorderLists,
   onSelectBucket,
   selectedBucket,
   view,
@@ -47,7 +47,7 @@ export function TasksNonListShell({
       dailyPlanningNode={dailyPlanningNode}
       filterRowsNode={filterRowsNode}
       lists={lists}
-      onReorderCustomLists={onReorderCustomLists}
+      onReorderLists={onReorderLists}
       onSelectBucket={onSelectBucket}
       selectedBucket={selectedBucket}
     />

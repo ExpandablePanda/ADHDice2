@@ -906,28 +906,19 @@ export function computeTaskAppDerivedData({
   const visibleTaskLists = activePage !== "Tasks"
     ? []
     : availableTaskLists.filter((list) =>
-      list.isVisible
+      (list.id === "all" || list.isVisible)
       && list.id !== "routine"
       && (list.id !== "missed" || (visibleListCounts[list.id] ?? 0) > 0)
     );
   const listRailOptions: TaskRailListOption[] = activePage !== "Tasks"
     ? []
-    : [
-      {
-        count: filteredTasksSorted.length,
-        description: "Everything that matches the current search and filters.",
-        id: "all",
-        isCustom: false,
-        label: "All",
-      },
-      ...visibleTaskLists.map((list) => ({
-        count: visibleListCounts[list.id] ?? 0,
+    : visibleTaskLists.map((list) => ({
+        count: list.id === "all" ? filteredTasksSorted.length : visibleListCounts[list.id] ?? 0,
         description: list.description,
         id: list.id,
         isCustom: list.type === "custom",
         label: list.name,
-      })),
-    ];
+      }));
   const manualListOptions = activePage !== "Tasks"
     ? []
     : availableTaskLists

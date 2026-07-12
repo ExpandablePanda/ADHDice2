@@ -8,6 +8,13 @@ const LEGACY_SYSTEM_LIST_ID_MAP = {
   urgent: "priority_5",
 } as const;
 
+function normalizeTaskListSourceId(value: string | null) {
+  if (!value) return null;
+  return value in LEGACY_SYSTEM_LIST_ID_MAP
+    ? LEGACY_SYSTEM_LIST_ID_MAP[value as keyof typeof LEGACY_SYSTEM_LIST_ID_MAP]
+    : value;
+}
+
 const TASK_BUCKET_DESCRIPTIONS: Record<string, string> = {
   priority_1_2: "Lower-friction or lower-pressure tasks with numeric priority 1 or 2.",
   priority_3_4: "Core work tracked with numeric priority 3 or 4.",
@@ -30,12 +37,8 @@ const LEGACY_SYSTEM_LIST_METADATA: Partial<Record<string, Pick<TaskListDefinitio
 };
 
 export function mapTaskListRow(row: DbTaskList): TaskListDefinition | null {
-  const normalizedBuiltInKey = row.built_in_key && row.built_in_key in LEGACY_SYSTEM_LIST_ID_MAP
-    ? LEGACY_SYSTEM_LIST_ID_MAP[row.built_in_key as keyof typeof LEGACY_SYSTEM_LIST_ID_MAP]
-    : row.built_in_key;
-  const normalizedIdValue = row.id in LEGACY_SYSTEM_LIST_ID_MAP
-    ? LEGACY_SYSTEM_LIST_ID_MAP[row.id as keyof typeof LEGACY_SYSTEM_LIST_ID_MAP]
-    : row.id;
+  const normalizedBuiltInKey = normalizeTaskListSourceId(row.built_in_key);
+  const normalizedIdValue = normalizeTaskListSourceId(row.id) ?? row.id;
   let rules = null;
   if (row.rules_json) {
     try {
@@ -76,6 +79,30 @@ export function mapTaskListRow(row: DbTaskList): TaskListDefinition | null {
     sortOrder: row.sort_order,
     type: row.list_type,
   };
+}
+
+export function reconcileTaskListRows(
+  rows: DbTaskList[],
+  mapper: (row: DbTaskList) => TaskListDefinition | null = mapTaskListRow,
+) {
+  const winners = new Map<TaskListId, { definition: TaskListDefinition; preference: number; sourceKey: string }>();
+
+  for (const row of rows) {
+    const definition = mapper(row);
+    if (!definition) continue;
+    const preference = row.id === definition.id || row.built_in_key === definition.id ? 1 : 0;
+    const sourceKey = `${row.id}\u0000${row.built_in_key ?? ""}`;
+    const current = winners.get(definition.id);
+    if (
+      !current
+      || preference > current.preference
+      || (preference === current.preference && sourceKey.localeCompare(current.sourceKey) < 0)
+    ) {
+      winners.set(definition.id, { definition, preference, sourceKey });
+    }
+  }
+
+  return Array.from(winners.values(), ({ definition }) => definition);
 }
 
 export function mapTaskListManualMembershipRow(row: DbTaskListManualMembership): TaskListManualMembership {

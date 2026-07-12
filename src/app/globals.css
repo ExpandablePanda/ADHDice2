@@ -211,6 +211,16 @@
   -ms-overflow-style: none;
 }
 
+.adhdice-native-interaction-suppressed,
+.adhdice-native-interaction-suppressed *,
+[data-reorderable-list-id],
+[data-reorderable-list-id] * {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 html,
 body {
   overflow-x: hidden;

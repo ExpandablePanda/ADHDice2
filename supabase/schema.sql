@@ -148,7 +148,7 @@ create table public.adhdice_task_focus_days (
 );
 
 create table public.adhdice_task_lists (
-  id text primary key,
+  id text not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   built_in_key text,
   name text not null check (char_length(trim(name)) > 0),
@@ -160,7 +160,8 @@ create table public.adhdice_task_lists (
   sort_order bigint not null default 0,
   rules_json text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  primary key (user_id, id)
 );
 
 create table public.adhdice_task_list_manual_memberships (

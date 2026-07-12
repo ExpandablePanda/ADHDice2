@@ -476,7 +476,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.25.21";
+const APP_VERSION = "6.25.32";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1478,6 +1478,7 @@ export function TaskApp() {
       TASK_GRID_MAX_COLUMNS,
       TASK_GRID_MAX_DISPLAY_ROWS,
     );
+  const taskListDataGeneration = useRef(0);
 
   const {
     isSoftWorkspaceRefreshing,
@@ -1560,6 +1561,7 @@ export function TaskApp() {
     suppressCategoryReload,
     supabase,
     taskGridStarterLayout: TASK_GRID_STARTER_LAYOUT,
+    taskListDataGeneration,
   });
 
   const isRefreshBusy = refreshStatus === "updating" || isSoftWorkspaceRefreshing;
@@ -2770,7 +2772,7 @@ export function TaskApp() {
     deleteTaskSubtask,
     deleteTasks,
     importTasks,
-    reorderCustomTaskLists,
+    reorderTaskLists,
     renameTaskSubtask,
     routeTask,
     saveTaskEditor,
@@ -2830,6 +2832,7 @@ export function TaskApp() {
       setMessage,
       setTaskListManualMemberships,
       setTaskLists,
+      taskListDataGeneration,
       taskLists,
     },
     editorSave: {
@@ -4704,7 +4707,7 @@ export function TaskApp() {
     onOpenComposer: openInlineNewListTaskComposer,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
-    onReorderCustomLists: (orderedCustomListIds: string[]) => { void reorderCustomTaskLists(orderedCustomListIds as TaskListId[]); },
+    onReorderLists: (orderedListIds: string[]) => { void reorderTaskLists(orderedListIds as TaskListId[]); },
     onSelectBucket: setSelectedBucket,
     onReorderListColumns: reorderListColumns,
     onSetDraggedListColumnId: setDraggedListColumnId,
@@ -4782,6 +4785,7 @@ export function TaskApp() {
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
     onOpenMomentumDetails: openMomentumDetails,
+    onReorderLists: (orderedListIds: string[]) => { void reorderTaskLists(orderedListIds as TaskListId[]); },
     onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onSelectBucket: setSelectedBucket,
@@ -4977,11 +4981,7 @@ export function TaskApp() {
           </div>
         ) : null}
 
-        {message ? (
-          <div className="mt-5">
-            <StatusBanner message={message} />
-          </div>
-        ) : null}
+        {message ? <StatusBanner message={message} /> : null}
 
         <ErrorBoundary
           key={shouldDeferPageRender ? "restoring-page" : activePage}
@@ -5429,7 +5429,7 @@ export function TaskApp() {
                 listNode={null}
                 lists={listRailOptions}
                 matrixNode={matrixContentNode}
-                onReorderCustomLists={(orderedCustomListIds) => { void reorderCustomTaskLists(orderedCustomListIds as TaskListId[]); }}
+                onReorderLists={(orderedListIds) => { void reorderTaskLists(orderedListIds as TaskListId[]); }}
                 onSelectBucket={setSelectedBucket}
                 selectedBucket={taskUiState.selectedBucket}
                 view={taskUiState.view}
@@ -5861,11 +5861,7 @@ function AuthSplash({
             </button>
           </form>
 
-          {message ? (
-            <div className="mt-4">
-              <StatusBanner message={message} />
-            </div>
-          ) : null}
+          {message ? <StatusBanner message={message} /> : null}
         </div>
       </section>
     </main>
@@ -5894,7 +5890,11 @@ function StatusBanner({
   }
 
   return (
-    <div className={`flex items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium ${className}`}>
+    <div
+      aria-live={message.tone === "warn" ? "assertive" : "polite"}
+      className={`fixed inset-x-3 top-[calc(env(safe-area-inset-top)+1rem)] z-[140] mx-auto flex max-w-xl items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium shadow-[0_18px_48px_rgba(39,28,89,0.18)] ${className}`}
+      role={message.tone === "warn" ? "alert" : "status"}
+    >
       <span className="min-w-0 flex-1">{message.text}</span>
       <TaskTableChipButton
         className="shrink-0"
