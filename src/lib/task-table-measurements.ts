@@ -1,5 +1,9 @@
 export const COLUMN_WIDTH_SHRINK_JITTER_TOLERANCE_PX = 1;
 
+export function normalizeMeasuredColumnWidth(width: number) {
+  return Number.isFinite(width) ? Math.ceil(width) : width;
+}
+
 export function mergeMeasuredColumnWidths<ColumnId extends string>(
   current: Record<ColumnId, number>,
   measured: Partial<Record<ColumnId, number>>,

@@ -20,6 +20,8 @@ type TasksPageOrchestratorProps = {
   flows: ReactNode;
   listViewPanel: ReactNode;
   onAddTab: () => void;
+  onTimeWorkspacePanel: ReactNode;
+  showTableOverlayOnTime?: boolean;
   onCloseTab: (tabId: string) => void;
   onReorderTab: (tabId: string, targetIndex: number) => void;
   onRenameTab: (tabId: string, nextLabel: string) => void;
@@ -40,6 +42,8 @@ export function TasksWorkspace({
   flows,
   listViewPanel,
   onAddTab,
+  onTimeWorkspacePanel,
+  showTableOverlayOnTime,
   onCloseTab,
   onReorderTab,
   onRenameTab,
@@ -147,6 +151,8 @@ export function TasksWorkspace({
         alternateViewPanel={alternateViewPanel}
         flows={flows}
         listViewPanel={listViewPanel}
+        onTimeWorkspacePanel={onTimeWorkspacePanel}
+        showTableOverlayOnTime={showTableOverlayOnTime}
         operationsHeader={<TaskOperationsHeader {...operationsHeaderProps} />}
         pathsWorkspacePanel={pathsWorkspacePanel}
         reportWorkspacePanel={reportWorkspacePanel}

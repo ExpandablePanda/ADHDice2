@@ -7,6 +7,8 @@ type TaskPageProps = {
   alternateViewPanel: ReactNode;
   flows: ReactNode;
   listViewPanel: ReactNode;
+  onTimeWorkspacePanel: ReactNode;
+  showTableOverlayOnTime?: boolean;
   operationsHeader: ReactNode;
   pathsWorkspacePanel: ReactNode;
   reportWorkspacePanel: ReactNode;
@@ -21,6 +23,8 @@ export function TaskPage({
   alternateViewPanel,
   flows,
   listViewPanel,
+  onTimeWorkspacePanel,
+  showTableOverlayOnTime = false,
   operationsHeader,
   pathsWorkspacePanel,
   reportWorkspacePanel,
@@ -41,6 +45,8 @@ export function TaskPage({
         pathsWorkspacePanel
       ) : surface === "report" ? (
         reportWorkspacePanel
+      ) : surface === "on_time" ? (
+        <>{onTimeWorkspacePanel}{showTableOverlayOnTime ? tableViewPanel : null}</>
       ) : (
         <>
           {operationsHeader}

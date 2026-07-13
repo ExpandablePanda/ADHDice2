@@ -38,6 +38,13 @@ export function TasksSurfaceSwitch({
         >
           Report
         </AdhdChip>
+        <AdhdChip
+          aria-pressed={value === "on_time"}
+          onClick={() => onChange("on_time")}
+          toneClassName={value === "on_time" ? TASKS_SURFACE_ACTIVE_CHIP_CLASS : TASKS_SURFACE_INACTIVE_CHIP_CLASS}
+        >
+          On-Time
+        </AdhdChip>
       </div>
     </div>
   );

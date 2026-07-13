@@ -9,7 +9,7 @@ import type { RunningTaskTimer } from "@/components/ui/task-management-table-v2"
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
 
-function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
+export function getTaskTimerDisplaySeconds(timer: RunningTaskTimer, now: number) {
   const endTime = timer.pausedAt ?? now;
   return timer.baseSeconds + Math.max(0, Math.floor((endTime - timer.startedAt) / 1000));
 }
@@ -23,6 +23,8 @@ function mapTaskTimerRow(row: DbActiveTaskTimer): RunningTaskTimer {
     startedAt: row.is_running && row.start_time ? Date.parse(row.start_time) : pausedTimestamp,
     taskId: row.task_id,
     title: row.title_snapshot,
+    occurrenceKey: row.occurrence_key,
+    occurrenceDueOn: row.occurrence_due_on,
   };
 }
 
@@ -152,6 +154,8 @@ export function useTaskTimers(
       accumulated_seconds: timer.baseSeconds,
       started_actual_seconds: timer.startedActualSeconds,
       is_running: true,
+      occurrence_key: timer.occurrenceKey ?? null,
+      occurrence_due_on: timer.occurrenceDueOn ?? null,
     };
 
     const { data, error } = await client
@@ -281,7 +285,34 @@ export function useTaskTimers(
     return {
       elapsedSeconds,
       title: currentTimer.title,
+      occurrenceDueOn: currentTimer.occurrenceDueOn ?? null,
+      occurrenceKey: currentTimer.occurrenceKey ?? null,
     };
+  }
+
+  async function discardTaskTimer(taskId: string) {
+    if (!client || !userId) {
+      return false;
+    }
+
+    const currentTimer = runningTaskTimers.find((entry) => entry.taskId === taskId);
+    if (!currentTimer) {
+      return false;
+    }
+
+    const { error } = await client
+      .from("adhdice_task_active_timers")
+      .delete()
+      .eq("user_id", userId)
+      .eq("task_id", taskId);
+
+    if (error) {
+      setMessage({ tone: "warn", text: formatTaskTimerPersistenceError(error.message) });
+      return false;
+    }
+
+    setRunningTaskTimers((current) => current.filter((entry) => entry.taskId !== taskId));
+    return true;
   }
 
   return {
@@ -290,5 +321,6 @@ export function useTaskTimers(
     pauseTaskTimer,
     resumeTaskTimer,
     stopTaskTimer,
+    discardTaskTimer,
   };
 }

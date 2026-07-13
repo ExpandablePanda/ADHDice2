@@ -29,7 +29,7 @@ type UseTaskUpdateActionOptions = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
-  syncTaskHistoryEntry: (taskId: string, status: Task["status"]) => Promise<boolean>;
+  syncTaskHistoryEntry: (taskId: string, status: Task["status"], occurrenceTask?: Task | null) => Promise<boolean>;
   tasks: Task[];
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
 };
@@ -106,7 +106,7 @@ export function useTaskUpdateAction({
           return false;
         }
       }
-      const historySaved = await syncTaskHistoryEntry(taskId, data.status);
+      const historySaved = await syncTaskHistoryEntry(taskId, data.status, previousTask ?? nextData);
       if (!historySaved) {
         return;
       }

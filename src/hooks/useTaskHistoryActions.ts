@@ -5,6 +5,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus, TaskUpdate } from "@/lib/database.types";
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
+import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
 import { resolveLiveTaskStatusFromHistory } from "@/lib/task-history";
 
 type Message = {
@@ -113,7 +114,7 @@ export function useTaskHistoryActions({
     taskId: string,
     status: TaskStatus,
     entryDate: string,
-    options?: { syncLiveTask?: boolean },
+    options?: { occurrenceTask?: Task | null; syncLiveTask?: boolean },
   ) {
     const shouldKeepEntry = isTaskHistoryStatus(status);
 
@@ -148,6 +149,10 @@ export function useTaskHistoryActions({
 
     const payload: TaskHistoryInsert = {
       entry_date: entryDate,
+      ...buildTaskHistoryOccurrenceMetadata(
+        options?.occurrenceTask ?? tasks.find((task) => task.id === taskId),
+        status,
+      ),
       status,
       task_id: taskId,
       user_id: currentUserId,

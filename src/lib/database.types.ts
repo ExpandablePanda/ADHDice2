@@ -75,6 +75,22 @@ export type HudUiSettingsUpdate = Partial<
   Pick<HudUiSettings, "hud_state" | "client_updated_at">
 >;
 
+export type OnTimePlanRow = {
+  user_id: string;
+  plan_state: Record<string, unknown>;
+  client_updated_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type OnTimePlanInsert = {
+  user_id: string;
+  plan_state?: Record<string, unknown>;
+  client_updated_at?: string;
+};
+
+export type OnTimePlanUpdate = Partial<Pick<OnTimePlanRow, "plan_state" | "client_updated_at">>;
+
 export type TaskListKind = "system" | "smart" | "custom";
 export type TaskListMembershipMode = "manual" | "rules" | "hybrid";
 
@@ -270,6 +286,8 @@ export type ActiveTaskTimer = {
   accumulated_seconds: number;
   started_actual_seconds: number;
   is_running: boolean;
+  occurrence_key: string | null;
+  occurrence_due_on: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -282,10 +300,12 @@ export type ActiveTaskTimerInsert = {
   accumulated_seconds?: number;
   started_actual_seconds?: number;
   is_running?: boolean;
+  occurrence_key?: string | null;
+  occurrence_due_on?: string | null;
 };
 
 export type ActiveTaskTimerUpdate = Partial<
-  Pick<ActiveTaskTimer, "title_snapshot" | "start_time" | "accumulated_seconds" | "started_actual_seconds" | "is_running">
+  Pick<ActiveTaskTimer, "title_snapshot" | "start_time" | "accumulated_seconds" | "started_actual_seconds" | "is_running" | "occurrence_key" | "occurrence_due_on">
 >;
 
 export type TaskSubtask = {
@@ -335,6 +355,8 @@ export type TaskHistory = {
   task_id: string;
   user_id: string;
   entry_date: string;
+  occurrence_key: string | null;
+  occurrence_due_on: string | null;
   status: TaskStatus;
   event_type: TaskHistoryEventType;
   counted_as_due_occurrence: boolean;
@@ -350,6 +372,8 @@ export type TaskHistoryInsert = {
   task_id: string;
   user_id: string;
   entry_date: string;
+  occurrence_key?: string | null;
+  occurrence_due_on?: string | null;
   status: TaskStatus;
   event_type?: TaskHistoryEventType;
   counted_as_due_occurrence?: boolean;
@@ -357,7 +381,7 @@ export type TaskHistoryInsert = {
 };
 
 export type TaskHistoryUpdate = Partial<
-  Pick<TaskHistory, "status" | "event_type" | "counted_as_due_occurrence" | "was_completed">
+  Pick<TaskHistory, "status" | "event_type" | "counted_as_due_occurrence" | "was_completed" | "occurrence_key" | "occurrence_due_on">
 >;
 
 export type TaskActualTimeEntry = {
@@ -368,6 +392,13 @@ export type TaskActualTimeEntry = {
   title_snapshot: string;
   duration_seconds: number;
   notes: string | null;
+  occurrence_key: string | null;
+  occurrence_due_on: string | null;
+  source: "task_timer" | "manual" | "import" | "legacy";
+  estimate_eligible: boolean;
+  exclusion_reason: string | null;
+  completion_history_id: string | null;
+  completion_completed_at: string | null;
   created_at: string;
 };
 
@@ -379,10 +410,17 @@ export type TaskActualTimeEntryInsert = {
   title_snapshot: string;
   duration_seconds: number;
   notes?: string | null;
+  occurrence_key?: string | null;
+  occurrence_due_on?: string | null;
+  source?: TaskActualTimeEntry["source"];
+  estimate_eligible?: boolean;
+  exclusion_reason?: string | null;
+  completion_history_id?: string | null;
+  completion_completed_at?: string | null;
 };
 
 export type TaskActualTimeEntryUpdate = Partial<
-  Pick<TaskActualTimeEntry, "entry_date" | "title_snapshot" | "duration_seconds" | "notes">
+  Pick<TaskActualTimeEntry, "entry_date" | "title_snapshot" | "duration_seconds" | "notes" | "estimate_eligible" | "exclusion_reason" | "completion_history_id" | "completion_completed_at">
 >;
 
 export type UserProfile = {
@@ -1334,6 +1372,12 @@ export type Database = {
         Row: HudUiSettings;
         Insert: HudUiSettingsInsert;
         Update: HudUiSettingsUpdate;
+        Relationships: [];
+      };
+      adhdice_on_time_plans: {
+        Row: OnTimePlanRow;
+        Insert: OnTimePlanInsert;
+        Update: OnTimePlanUpdate;
         Relationships: [];
       };
       adhdice_focus_active_sessions: {

@@ -72,7 +72,8 @@ import {
   ScrollUpButton,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
-import { mergeMeasuredColumnWidths } from "@/lib/task-table-measurements";
+import { mergeMeasuredColumnWidths, normalizeMeasuredColumnWidth } from "@/lib/task-table-measurements";
+import { TaskTimerDial } from "@/components/task-app/task-timer-display";
 import { type TaskTableLayoutPreferences, taskTableLayoutPreferencesEqual } from "@/lib/task-table-layout-persistence";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
@@ -136,7 +137,7 @@ type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "li
 type ColumnAlignment = "center" | "left" | "right";
 export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
-export type RunningTaskTimer = { baseSeconds: number; pausedAt?: number | null; startedActualSeconds: number; startedAt: number; taskId: string; title: string };
+export type RunningTaskTimer = { baseSeconds: number; occurrenceDueOn?: string | null; occurrenceKey?: string | null; pausedAt?: number | null; startedActualSeconds: number; startedAt: number; taskId: string; title: string };
 export type TaskRowContextMenuQuickEditMode = "actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
 type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
@@ -1044,8 +1045,10 @@ type TaskManagementTableV2Props = {
   onResumeTaskTimer?: (taskId: string) => void;
   onStartTaskTimer?: (timer: RunningTaskTimer) => void;
   onStopTaskTimer?: (taskId: string) => void;
+  onDiscardTaskTimer?: (taskId: string) => void;
   onTaskActualSecondsChange?: (taskId: string, seconds: number) => void;
   taskActualTimeEntriesByTaskId?: Record<string, TaskActualTimeEntry[]>;
+  learnedTaskDurationStatisticsByTaskId?: Record<string, { averageSeconds: number | null; completedSampleCount: number; latestSeconds: number | null; typicalSeconds: number | null }>;
   onTaskDueChange?: (taskId: string, schedule: { dueOn: string; dueTime: string }) => void;
   onTaskEnergyChange?: (taskId: string, energy: TaskEnergy) => void;
   onTaskEstimatedMinutesChange?: (taskId: string, minutes: number | null) => void;
@@ -2215,8 +2218,10 @@ export function TaskManagementTableV2({
   onResumeTaskTimer,
   onStartTaskTimer,
   onStopTaskTimer,
+  onDiscardTaskTimer,
   onTaskActualSecondsChange,
   taskActualTimeEntriesByTaskId,
+  learnedTaskDurationStatisticsByTaskId,
   onTaskDueChange,
   onTaskEnergyChange,
   onTaskEstimatedMinutesChange,
@@ -2481,6 +2486,10 @@ export function TaskManagementTableV2({
       .map((columnId) => HEADER_COLUMNS.find((column) => column.id === columnId))
       .filter((column): column is HeaderColumn => Boolean(column));
   }, [columnOrder, visibleColumns]);
+  const visibleHeaderColumnKey = useMemo(
+    () => visibleHeaderColumns.map((column) => column.id).join("|"),
+    [visibleHeaderColumns],
+  );
   const openColumnMenuColumn = useMemo(
     () => (openColumnMenuId ? visibleHeaderColumns.find((column) => column.id === openColumnMenuId) ?? null : null),
     [openColumnMenuId, visibleHeaderColumns],
@@ -3077,7 +3086,11 @@ export function TaskManagementTableV2({
       return;
     }
 
+    let cancelled = false;
     const frameId = window.requestAnimationFrame(() => {
+      if (cancelled) {
+        return;
+      }
       const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
       setRequiredColumnWidths((current) => {
         const nextMeasuredWidths = visibleHeaderColumns.reduce<Partial<Record<TaskManagementTableColumnId, number>>>((accumulator, column) => {
@@ -3085,7 +3098,9 @@ export function TaskManagementTableV2({
           const rowContentWidths = column.id === "status_icon" ? [] : getMeasuredColumnWidths(`[data-column-content-measure="${column.id}"]`, 12);
           const widestHeader = headerWidths.length > 0 ? Math.max(...headerWidths) : 0;
           const widestRowContent = rowContentWidths.length > 0 ? Math.max(...rowContentWidths) : 0;
-          accumulator[column.id] = Math.max(MIN_COLUMN_WIDTHS[column.id], widestHeader, widestRowContent) + COLUMN_WIDTH_BUFFER[column.id];
+          accumulator[column.id] = normalizeMeasuredColumnWidth(
+            Math.max(MIN_COLUMN_WIDTHS[column.id], widestHeader, widestRowContent) + COLUMN_WIDTH_BUFFER[column.id],
+          );
           return accumulator;
         }, {});
         return mergeMeasuredColumnWidths(
@@ -3105,18 +3120,11 @@ export function TaskManagementTableV2({
       }
     });
 
-    return () => window.cancelAnimationFrame(frameId);
-  }, [measurementSignature, visibleHeaderColumns]);
-
-  useEffect(() => {
-    if (effectiveRunningTimers.length === 0 || taskTimerNow !== undefined) {
-      return;
-    }
-    const interval = window.setInterval(() => {
-      setLocalTimerNow(Date.now());
-    }, 1000);
-    return () => window.clearInterval(interval);
-  }, [effectiveRunningTimers.length, taskTimerNow]);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [measurementSignature, visibleHeaderColumnKey]);
 
   useEffect(() => {
     if (!layoutPersistenceEnabled || !persistedLayoutPreferences) {
@@ -4268,8 +4276,8 @@ export function TaskManagementTableV2({
       return;
     }
 
-    if (onStopTaskTimer) {
-      onStopTaskTimer(taskId);
+    if (onDiscardTaskTimer) {
+      onDiscardTaskTimer(taskId);
     } else {
       setLocalRunningTimers((current) => {
         const next = current.filter((entry) => entry.taskId !== taskId);
@@ -5249,7 +5257,7 @@ export function TaskManagementTableV2({
             onClick={() => clearTaskTimer(task.id)}
             type="button"
           >
-            <span className={inlineAccordionChipContentClass(INACTIVE_CHIP_CLASS)}>Clear focus timer</span>
+            <span className={inlineAccordionChipContentClass(INACTIVE_CHIP_CLASS)}>Discard Timer</span>
           </button>
         </>
       ) : (
@@ -6533,7 +6541,7 @@ export function TaskManagementTableV2({
         wrapMeasuredContent(
           <div>
             {getRunningTimer(task.id)
-              ? renderFocusTimerDial(getDisplayedActualSeconds(task), { compact: true })
+              ? <TaskTimerDial timer={getRunningTimer(task.id)!} />
               : (
                 <span className={`${CHIP_BASE} ${getDisplayedActualSeconds(task) > 0 ? "border-[#ece7f5] bg-white text-[#6f57f6] dark:border-white/10 dark:bg-[#181226] dark:text-[#cabfff]" : INACTIVE_CHIP_CLASS} gap-1.5`}>
                   <Clock3 className="h-3.25 w-3.25" />
@@ -8352,6 +8360,7 @@ export function TaskManagementTableV2({
                 const metadataTagDraft = tagDrafts[metadataTask.id] ?? "";
                 const metadataListDraft = listDrafts[metadataTask.id] ?? "";
                 const metadataTaskActualTimeEntries = taskActualTimeEntriesByTaskId?.[metadataTask.id] ?? [];
+                const learnedDuration = learnedTaskDurationStatisticsByTaskId?.[metadataTask.id];
                 const normalizedMetadataTagDraft = normalizeTaskTagValue(metadataTagDraft);
                 const selectedMetadataTagSet = new Set(metadataTask.tags.map((tag) => normalizeTaskTagValue(tag)));
                 const dedupedMergedTagOptions = dedupeTaskTagLabels(mergedTagOptions);
@@ -8550,6 +8559,12 @@ export function TaskManagementTableV2({
                 } else if (metadataPanelId === "estimated") {
                   metadataPanelContent = (
                     <>
+                      <div className="mb-3 text-sm text-[#7d7597] dark:text-white/55">
+                        {metadataTask.estimatedMinutes ? `Manual estimate: ${metadataTask.estimatedMinutes}m` : "Manual estimate: none"}
+                        {learnedDuration?.completedSampleCount
+                          ? <div className="mt-1">{learnedDuration.typicalSeconds ? `Typical actual: ${formatActual(learnedDuration.typicalSeconds)} · ` : "Typical available after 3 completed samples · "}Average actual: {formatActual(learnedDuration.averageSeconds ?? 0)} · Latest actual: {formatActual(learnedDuration.latestSeconds ?? 0)} · Based on {learnedDuration.completedSampleCount} completed occurrence{learnedDuration.completedSampleCount === 1 ? "" : "s"}</div>
+                          : <div className="mt-1">No completed time samples yet</div>}
+                      </div>
                       {renderInlineTextChoices(
                         ESTIMATED_TIME_PRESETS.map((minutes) => ({ label: minutes === 60 ? "1h" : `${minutes}m`, value: String(minutes) })),
                         metadataTask.estimatedMinutes !== null ? [String(metadataTask.estimatedMinutes)] : [],

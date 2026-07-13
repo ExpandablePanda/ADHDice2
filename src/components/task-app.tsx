@@ -80,11 +80,13 @@ import { TaskListSettingsModal } from "./task-app/task-list-settings-modal";
 import { TaskListRuleRowEditor } from "./task-app/task-list-rule-row-editor";
 import { PathsWorkspace } from "./task-app/paths-workspace";
 import { TaskReportWorkspace } from "./task-app/task-report-workspace";
+import { OnTimePlannerWorkspace } from "./task-app/on-time-planner-workspace";
 import { TaskRewardModal } from "./task-app/task-reward-modal";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
+import { TaskActiveTimersTray } from "./task-app/task-active-timers-tray";
 import { ScratchPaperWidget, type ScratchPaperData } from "./task-app/scratch-paper";
 import {
   applyTaskEditorDraftOverrides,
@@ -129,6 +131,7 @@ import { useFocusSelectionPersistence } from "@/hooks/useFocusSelectionPersisten
 import { useTaskPriorityRoutingController } from "@/hooks/useTaskPriorityRoutingController";
 import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportController";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
+import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import {
   getDisplayFocusCategories,
   isSystemCountdownCategoryId,
@@ -189,6 +192,8 @@ import {
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { buildFocusLabelOptions, getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
+import { buildTaskDurationEvidence, type TaskDurationEvidence } from "@/lib/task-duration-evidence";
+import { computeLearnedTaskDurationStatistics } from "@/lib/task-duration-statistics";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
@@ -478,7 +483,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.25.39";
+const APP_VERSION = "6.27.3";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1314,10 +1319,13 @@ export function TaskApp() {
   } | null>(null);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
   const [taskActualTimeEntryTaskId, setTaskActualTimeEntryTaskId] = useState<string | null>(null);
-  const [taskActualTimeEntryPrefill, setTaskActualTimeEntryPrefill] = useState<{ durationSeconds: number; title: string } | null>(null);
+  const [taskActualTimeEntryPrefill, setTaskActualTimeEntryPrefill] = useState<{ durationSeconds: number; occurrenceDueOn?: string | null; occurrenceKey?: string | null; source?: TaskDurationEvidence["source"]; title: string } | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
+  const [onTimeSharedOverlayTaskId, setOnTimeSharedOverlayTaskId] = useState<string | null>(null);
   const [suppressDetachedListNoticeTaskId, setSuppressDetachedListNoticeTaskId] = useState<string | null>(null);
   const [activeTaskTimerIndex, setActiveTaskTimerIndex] = useState(0);
+  const [isActiveTimersTrayOpen, setIsActiveTimersTrayOpen] = useState(false);
+  const [pendingTaskTimerDiscardId, setPendingTaskTimerDiscardId] = useState<string | null>(null);
   const [logicalDayNow, setLogicalDayNow] = useState(() => Date.now());
   const [notePageOpenNoteId, setNotePageOpenNoteId] = useState<string | null>(null);
   const {
@@ -1326,6 +1334,7 @@ export function TaskApp() {
     pauseTaskTimer: persistPausedTaskTimer,
     resumeTaskTimer: persistResumedTaskTimer,
     stopTaskTimer: persistStoppedTaskTimer,
+    discardTaskTimer: persistDiscardedTaskTimer,
   } = useTaskTimers(supabase, session?.user?.id ?? null, setMessage);
   const gridColumns = useResponsiveTaskGridColumns({
     maxColumns: TASK_GRID_MAX_COLUMNS,
@@ -1334,6 +1343,11 @@ export function TaskApp() {
   });
   const [dayStartTime, setDayStartTime] = useState<string>("06:00");
   const [userTimeZone, setUserTimeZone] = useState<string>(getBrowserTimeZone());
+  const onTimePlan = useOnTimePlan(
+    currentUserId,
+    userTimeZone,
+    activePage === "Tasks" && taskUiState.tasksSurface === "on_time",
+  );
   const [focusAlarmAudioBlocked, setFocusAlarmAudioBlocked] = useState(false);
   const lastResetDateRef = useRef<string>("");
   const focusAlarmAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -2439,6 +2453,10 @@ export function TaskApp() {
       return accumulator;
     }, {}),
     [taskActualTimeEntries],
+  );
+  const learnedTaskDurationStatisticsByTaskId = useMemo(
+    () => Object.fromEntries(Object.entries(taskActualTimeEntriesByTaskId).map(([taskId, entries]) => [taskId, computeLearnedTaskDurationStatistics(entries)])),
+    [taskActualTimeEntriesByTaskId],
   );
   const hasFocusedToday = focusedTaskIds.length > 0;
   const momentumMetric = getMomentumMetric({
@@ -3666,18 +3684,25 @@ export function TaskApp() {
     setMessage({ tone: "good", text: "Account profile saved." });
   }
 
-  function startHudTaskTimer(timer: RunningTaskTimer) {
+  async function startHudTaskTimer(timer: RunningTaskTimer) {
     const existingIndex = runningTaskTimers.findIndex((entry) => entry.taskId === timer.taskId);
     if (existingIndex >= 0) {
       setActiveTaskTimerIndex(existingIndex);
       return;
     }
     setActiveTaskTimerIndex(runningTaskTimers.length);
-    void persistTaskTimer({
+    const task = tasks.find((candidate) => candidate.id === timer.taskId);
+    const evidence = task ? buildTaskDurationEvidence(task, "task_timer") : null;
+    const started = await persistTaskTimer({
       ...timer,
+      occurrenceDueOn: evidence?.occurrenceDueOn ?? null,
+      occurrenceKey: evidence?.occurrenceKey ?? null,
       pausedAt: null,
       startedActualSeconds: timer.startedActualSeconds ?? timer.baseSeconds,
     });
+    if (started) {
+      setIsActiveTimersTrayOpen(true);
+    }
   }
 
   function pauseHudTaskTimer(taskId: string) {
@@ -3697,9 +3722,31 @@ export function TaskApp() {
       setTaskActualTimeEntryTaskId(taskId);
       setTaskActualTimeEntryPrefill({
         durationSeconds: Math.max(0, stoppedTimer.elapsedSeconds),
+        occurrenceDueOn: stoppedTimer.occurrenceDueOn,
+        occurrenceKey: stoppedTimer.occurrenceKey,
+        source: "task_timer",
         title: stoppedTimer.title,
       });
     })();
+  }
+
+  function requestTaskTimerDiscard(taskId: string) {
+    setPendingTaskTimerDiscardId(taskId);
+    setIsActiveTimersTrayOpen(true);
+  }
+
+  function goToActiveTimerTask(taskId: string) {
+    const nextTaskWorkspaceTabId = taskWorkspaceTabsState.tabs.find((tab) => !isReportTaskWorkspaceTab(tab))?.id
+      ?? taskWorkspaceTabsState.activeTabId;
+    setActivePage("Tasks");
+    setActiveTaskWorkspaceTab(nextTaskWorkspaceTabId);
+    setSuppressDetachedListNoticeTaskId(null);
+    setTaskUiState((current) => ({
+      ...current,
+      tasksSurface: "tasks",
+      view: current.view === "list" ? "list" : "table",
+    }));
+    setRequestedListOverlayTaskId(taskId);
   }
 
   function cycleHudTaskTimer(direction: "next" | "previous") {
@@ -3789,8 +3836,9 @@ export function TaskApp() {
       tasks={selectedBucketTasks}
     />
   );
-  const requestedOpenListTask = requestedListOverlayTaskId
-    ? tasks.find((task) => task.id === requestedListOverlayTaskId) ?? null
+  const sharedOverlayTaskId = onTimeSharedOverlayTaskId ?? requestedListOverlayTaskId;
+  const requestedOpenListTask = sharedOverlayTaskId
+    ? tasks.find((task) => task.id === sharedOverlayTaskId) ?? null
     : null;
   const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
   const toggleDuplicateTitleMode = () => {
@@ -3876,6 +3924,7 @@ export function TaskApp() {
   async function logActualTimeForTask(
     task: Task,
     entry: { date: string; durationSeconds: number; notes: string; title: string },
+    evidence?: TaskDurationEvidence,
   ) {
     if (!currentUser || !supabase) {
       return false;
@@ -3894,6 +3943,7 @@ export function TaskApp() {
       return false;
     }
 
+    const trustedEvidence = evidence ?? buildTaskDurationEvidence(task, "manual");
     const { data: insertedEntry, error: actualTimeEntryError } = await supabase
       .from("adhdice_task_actual_time_entries")
       .insert({
@@ -3903,6 +3953,11 @@ export function TaskApp() {
         title_snapshot: entry.title,
         duration_seconds: entry.durationSeconds,
         notes: entry.notes || null,
+        occurrence_due_on: trustedEvidence.occurrenceDueOn,
+        occurrence_key: trustedEvidence.occurrenceKey,
+        source: trustedEvidence.source,
+        estimate_eligible: trustedEvidence.estimateEligible,
+        exclusion_reason: null,
       })
       .select("*")
       .single();
@@ -3934,7 +3989,14 @@ export function TaskApp() {
       return false;
     }
 
-    const success = await logActualTimeForTask(taskForActualTimeEntry, entry);
+    const success = await logActualTimeForTask(taskForActualTimeEntry, entry, taskActualTimeEntryPrefill?.occurrenceKey
+      ? {
+          estimateEligible: true,
+          occurrenceDueOn: taskActualTimeEntryPrefill.occurrenceDueOn ?? null,
+          occurrenceKey: taskActualTimeEntryPrefill.occurrenceKey,
+          source: taskActualTimeEntryPrefill.source ?? "manual",
+        }
+      : undefined);
     if (success) {
       setTaskActualTimeEntryTaskId(null);
     }
@@ -4749,6 +4811,12 @@ export function TaskApp() {
       }));
     });
   };
+  const openTaskInSharedTasksEditorFromOnTime = (taskId: string) => {
+    setOnTimeSharedOverlayTaskId(taskId);
+  };
+  const returnToOnTimeAfterSharedOverlay = () => {
+    setOnTimeSharedOverlayTaskId(null);
+  };
   const scratchPaperData: ScratchPaperData = {
     error: scratchNotes.error,
     isLoading: scratchNotes.isLoading,
@@ -5072,6 +5140,27 @@ export function TaskApp() {
               },
             })}
             onCloseTab={closeTaskWorkspaceTab}
+            onTimeWorkspacePanel={(
+              <OnTimePlannerWorkspace
+                actualTimeEntries={taskActualTimeEntries}
+                error={onTimePlan.error}
+                learnedStatisticsByTaskId={learnedTaskDurationStatisticsByTaskId}
+                onOpenTask={openTaskInSharedTasksEditorFromOnTime}
+                onSetTaskStatus={(task, status) => { void updateTaskStatus(task, status); }}
+                onPauseTimer={pauseHudTaskTimer}
+                onResumeTimer={resumeHudTaskTimer}
+                onStartTimer={(task) => { void startHudTaskTimer({ baseSeconds: task.actual_seconds, pausedAt: null, startedActualSeconds: task.actual_seconds, startedAt: Date.now(), taskId: task.id, title: task.title }); }}
+                onStopAndSaveTimer={stopHudTaskTimer}
+                plan={onTimePlan.plan}
+                remoteUpdateNotice={onTimePlan.remoteUpdateNotice}
+                resetPlan={onTimePlan.resetPlan}
+                syncState={onTimePlan.syncState}
+                tasks={tasks}
+                timers={runningTaskTimers}
+                updatePlan={onTimePlan.updatePlan}
+              />
+            )}
+            showTableOverlayOnTime={Boolean(onTimeSharedOverlayTaskId)}
             onReorderTab={reorderTaskWorkspaceTab}
             onRenameTab={handleRenameTaskWorkspaceTab}
             onSurfaceChange={handleTaskWorkspaceSurfaceChange}
@@ -5160,6 +5249,7 @@ export function TaskApp() {
                   onSelectAllVisible: selectAllVisibleListTasks,
                   onStartTaskTimer: startHudTaskTimer,
                   onStopTaskTimer: stopHudTaskTimer,
+                  onDiscardTaskTimer: requestTaskTimerDiscard,
                   onOpenTaskActualTime: (taskId, options) => {
                     setTaskActualTimeEntryPrefill(options?.durationSeconds && options.durationSeconds > 0
                       ? {
@@ -5178,6 +5268,7 @@ export function TaskApp() {
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
                   taskActualTimeEntriesByTaskId,
+                  learnedTaskDurationStatisticsByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: openTaskEditorFromId,
                   onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
@@ -5197,6 +5288,7 @@ export function TaskApp() {
                   onRequestedOpenTaskHandled: (taskId) => {
                     setRequestedListOverlayTaskId((current) => (current === taskId ? null : current));
                   },
+                  onRequestedOpenTaskOverlayClose: returnToOnTimeAfterSharedOverlay,
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
                   onSetPriority: applyTaskPriorityChange,
@@ -5250,11 +5342,12 @@ export function TaskApp() {
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
                   requestedOpenTask: requestedOpenListTask,
-                  requestedOpenTaskId: requestedListOverlayTaskId,
+                  requestedOpenTaskId: sharedOverlayTaskId,
+                  overlayOnly: taskUiState.tasksSurface === "on_time" && Boolean(onTimeSharedOverlayTaskId),
                   suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
-                  tasks: selectedBucketTasks,
+                  tasks: taskUiState.tasksSurface === "on_time" && onTimeSharedOverlayTaskId ? tasks : selectedBucketTasks,
                   rowContext: {
                     focusedTaskIdSet,
                     linkedNotesByTaskId: taskLinkedNotesByTaskId,
@@ -5311,6 +5404,7 @@ export function TaskApp() {
                   onSelectAllVisible: selectAllVisibleListTasks,
                   onStartTaskTimer: startHudTaskTimer,
                   onStopTaskTimer: stopHudTaskTimer,
+                  onDiscardTaskTimer: requestTaskTimerDiscard,
                   onOpenTaskActualTime: (taskId, options) => {
                     setTaskActualTimeEntryPrefill(options?.durationSeconds && options.durationSeconds > 0
                       ? {
@@ -5329,6 +5423,7 @@ export function TaskApp() {
                   onSetEstimatedMinutes: (taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); },
                   onSetActualSeconds: (taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); },
                   taskActualTimeEntriesByTaskId,
+                  learnedTaskDurationStatisticsByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
                   onOpenTaskEditor: (taskId) => setRequestedListOverlayTaskId(taskId),
                   onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
@@ -5592,6 +5687,18 @@ export function TaskApp() {
           renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
         />
       </div>
+      <TaskActiveTimersTray
+        isOpen={isActiveTimersTrayOpen}
+        onDiscard={(taskId) => { void persistDiscardedTaskTimer(taskId); }}
+        onGoToTask={goToActiveTimerTask}
+        onPause={pauseHudTaskTimer}
+        onPendingDiscardHandled={() => setPendingTaskTimerDiscardId(null)}
+        onResume={resumeHudTaskTimer}
+        onStopAndSave={stopHudTaskTimer}
+        onToggle={() => setIsActiveTimersTrayOpen((current) => !current)}
+        pendingDiscardTaskId={pendingTaskTimerDiscardId}
+        timers={runningTaskTimers}
+      />
       {showBackToTop ? (
         <ScrollUpButton
           aria-label="Scroll to top"

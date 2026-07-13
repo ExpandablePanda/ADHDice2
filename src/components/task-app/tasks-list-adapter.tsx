@@ -1,5 +1,5 @@
 "use client";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, Clock3, Ellipsis, ExternalLink, Eye, EyeOff, Flame, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, CirclePause, CirclePlay, Clock3, Ellipsis, ExternalLink, Eye, EyeOff, Flame, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, TimerReset, Trash2, X } from "lucide-react";
 import {
   buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
@@ -51,6 +51,7 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { AdhdIconButton } from "@/components/ui-system";
+import { TaskTimerStateChip } from "./task-timer-display";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -257,6 +258,7 @@ type TasksTableSourceProps = {
   currentListLabel?: string | null;
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
   overlayNode?: ReactNode;
+  overlayOnly?: boolean;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenFocusTimer?: (taskId: string) => void;
@@ -313,10 +315,12 @@ type TasksTableSourceProps = {
   onResumeTaskTimer?: (taskId: string) => void;
   onStartTaskTimer?: (timer: RunningTaskTimer) => void;
   onStopTaskTimer?: (taskId: string) => void;
+  onDiscardTaskTimer?: (taskId: string) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
   selectedTaskIds?: string[];
   requestedOpenTaskId?: string | null;
   taskActualTimeEntriesByTaskId?: Record<string, TaskActualTimeEntry[]>;
+  learnedTaskDurationStatisticsByTaskId?: Record<string, { averageSeconds: number | null; completedSampleCount: number; latestSeconds: number | null; typicalSeconds: number | null }>;
   runningTaskTimers?: RunningTaskTimer[];
   activeTaskTimerIndex?: number;
   requestedOpenTask?: Task | null;
@@ -332,6 +336,7 @@ type TasksTableSourceProps = {
     todayDateKey: string;
   };
   onRequestedOpenTaskHandled?: (taskId: string) => void;
+  onRequestedOpenTaskOverlayClose?: () => void;
   taskTableLayoutPreferences?: TaskTableLayoutPreferences;
   onTaskTableLayoutPreferencesChange?: (nextPreferences: TaskTableLayoutPreferences) => void;
   emptyStateMessage?: string;
@@ -340,6 +345,8 @@ type TasksTableSourceProps = {
   statusChangeScrollSourceTaskId?: string | null;
   statusChangeScrollToken?: number | null;
 };
+
+const OVERLAY_VISIBLE_COLUMNS: TaskManagementTableColumnId[] = ["status_icon", "title"];
 
 type TasksTableAdapterProps = {
   filterRowsNode: ReactNode;
@@ -541,6 +548,7 @@ export function TasksTableAdapter({
           getFollowTaskDestination={tableProps.getFollowTaskDestination}
           onClearSelection={tableProps.onClearSelection}
           overlayNode={tableProps.overlayNode}
+          overlayOnly={tableProps.overlayOnly}
           onCreateTaskList={tableProps.onCreateTaskList}
           onCreateChildTask={tableProps.onCreateChildTask}
           onOpenBatchDelete={tableProps.onOpenBatchDelete}
@@ -569,8 +577,10 @@ export function TasksTableAdapter({
           onResumeTaskTimer={tableProps.onResumeTaskTimer}
           onStartTaskTimer={tableProps.onStartTaskTimer}
           onStopTaskTimer={tableProps.onStopTaskTimer}
+          onDiscardTaskTimer={tableProps.onDiscardTaskTimer}
           onTaskActualSecondsChange={tableProps.onSetActualSeconds}
           taskActualTimeEntriesByTaskId={tableProps.taskActualTimeEntriesByTaskId}
+          learnedTaskDurationStatisticsByTaskId={tableProps.learnedTaskDurationStatisticsByTaskId}
           onTaskDueChange={tableProps.onSetDue}
           onTaskEnergyChange={tableProps.onSetEnergy}
           onTaskEstimatedMinutesChange={tableProps.onSetEstimatedMinutes}
@@ -616,6 +626,7 @@ export function TasksTableAdapter({
           visibleColumns={visibleColumns}
           activeTaskTimerIndex={tableProps.activeTaskTimerIndex}
           onRequestedOpenTaskHandled={tableProps.onRequestedOpenTaskHandled}
+          onInspectorClose={tableProps.onRequestedOpenTaskOverlayClose}
           persistedLayoutPreferences={tableProps.taskTableLayoutPreferences}
           onPersistedLayoutPreferencesChange={tableProps.onTaskTableLayoutPreferencesChange}
         />
@@ -2209,12 +2220,22 @@ function ActualQuickPanel({
   seconds,
   onClose,
   onOpenManual,
+  onPauseTimer,
+  onResumeTimer,
   onSave,
+  onStartTimer,
+  onStopTimer,
+  timer,
 }: {
   seconds: number;
   onClose: () => void;
   onOpenManual?: () => void;
+  onPauseTimer?: () => void;
+  onResumeTimer?: () => void;
   onSave?: (seconds: number) => void;
+  onStartTimer?: () => void;
+  onStopTimer?: () => void;
+  timer?: RunningTaskTimer | null;
 }) {
   const [draft, setDraft] = useState(seconds > 0 ? String(Math.round(seconds / 60)) : "");
 
@@ -2226,6 +2247,9 @@ function ActualQuickPanel({
   return (
     <QuickPanelShell onClose={onClose} title="Actual Time">
       <p className="mb-3 text-sm text-[#7d7597] dark:text-white/55">Current time: {formatListActual(seconds)}</p>
+      <div className="mb-3 flex flex-wrap gap-2">
+        {timer ? <><TaskTableChipButton className="gap-2" onClick={timer.pausedAt ? onResumeTimer : onPauseTimer} toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}>{timer.pausedAt ? <CirclePlay className="h-3.5 w-3.5" /> : <CirclePause className="h-3.5 w-3.5" />}{timer.pausedAt ? "Resume timer" : "Pause timer"}</TaskTableChipButton><TaskTableChipButton className="gap-2" onClick={onStopTimer} toneClassName="border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]"><TimerReset className="h-3.5 w-3.5" />Stop & Save</TaskTableChipButton></> : <TaskTableChipButton className="gap-2" onClick={onStartTimer} toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}><CirclePlay className="h-3.5 w-3.5" />Start timer</TaskTableChipButton>}
+      </div>
       <div className="flex flex-col gap-2 sm:flex-row">
         <input
           className={`${QUICK_PANEL_TEXT_INPUT_CLASS} flex-1`}
@@ -2349,6 +2373,10 @@ function TasksSimpleList({
   const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
   const tasks = tableProps.tasks;
   const rowContext = tableProps.rowContext;
+  const runningTimerByTaskId = useMemo(
+    () => new Map((tableProps.runningTaskTimers ?? []).map((timer) => [timer.taskId, timer] as const)),
+    [tableProps.runningTaskTimers],
+  );
   const visibleTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
   const toggleTaskMetadata = (taskId: string) => {
     setVisibleMetadataTaskIds((current) => {
@@ -2699,12 +2727,16 @@ function TasksSimpleList({
               onPauseTaskTimer={tableProps.onPauseTaskTimer}
               onPreviousTaskTimer={tableProps.onPreviousTaskTimer}
               onReorderChildTask={tableProps.onReorderChildTask}
-              onInspectorClose={() => tableProps.onRequestedOpenTaskHandled?.(tableProps.requestedOpenTaskId ?? "")}
+              onInspectorClose={() => {
+                tableProps.onRequestedOpenTaskHandled?.(tableProps.requestedOpenTaskId ?? "");
+                tableProps.onRequestedOpenTaskOverlayClose?.();
+              }}
               onRestoreTask={tableProps.onRestoreTask}
               onResumeTaskTimer={tableProps.onResumeTaskTimer}
               onSelectAllVisible={tableProps.onSelectAllVisible}
               onStartTaskTimer={tableProps.onStartTaskTimer}
               onStopTaskTimer={tableProps.onStopTaskTimer}
+              onDiscardTaskTimer={tableProps.onDiscardTaskTimer}
               onTaskActualSecondsChange={tableProps.onSetActualSeconds}
               onTaskDueChange={tableProps.onSetDue}
               onTaskEnergyChange={tableProps.onSetEnergy}
@@ -2751,7 +2783,7 @@ function TasksSimpleList({
               statusChangeScrollPreviousVisibleTaskIds={tableProps.statusChangeScrollPreviousVisibleTaskIds}
               statusChangeScrollSourceTaskId={tableProps.statusChangeScrollSourceTaskId}
               statusChangeScrollToken={tableProps.statusChangeScrollToken}
-              visibleColumns={["status_icon", "title"]}
+              visibleColumns={OVERLAY_VISIBLE_COLUMNS}
             />
           ) : null}
           {tasks.map((task) => {
@@ -3091,9 +3123,7 @@ function TasksSimpleList({
                     <MetadataChipButton active={activePanelMode === "estimated"} onClick={() => openQuickPanel(task.id, "estimated")}>
                       <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListDuration(task.estimated_minutes)}</span>
                     </MetadataChipButton>
-                    <MetadataChipButton active={activePanelMode === "actual"} onClick={() => openQuickPanel(task.id, "actual")}>
-                      <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListActual(task.actual_seconds)}</span>
-                    </MetadataChipButton>
+                    {runningTimerByTaskId.get(task.id) ? <TaskTimerStateChip onClick={() => openQuickPanel(task.id, "actual")} timer={runningTimerByTaskId.get(task.id)!} /> : <MetadataChipButton active={activePanelMode === "actual"} onClick={() => openQuickPanel(task.id, "actual")}><span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatListActual(task.actual_seconds)}</span></MetadataChipButton>}
                     <MetadataChipButton active={activePanelMode === "energy"} onClick={() => openQuickPanel(task.id, "energy")} toneClassName={energyTone(task.energy)}>
                       {formatEnergyChipLabel(task.energy)}
                     </MetadataChipButton>
@@ -3182,10 +3212,15 @@ function TasksSimpleList({
             ) : null}
             {activePanelMode === "actual" ? (
               <ActualQuickPanel
+                onPauseTimer={() => tableProps.onPauseTaskTimer?.(task.id)}
                 onClose={closeQuickPanel}
                 onOpenManual={tableProps.onOpenTaskActualTime ? () => tableProps.onOpenTaskActualTime?.(task.id) : undefined}
+                onResumeTimer={() => tableProps.onResumeTaskTimer?.(task.id)}
                 onSave={(seconds) => tableProps.onSetActualSeconds?.(task.id, seconds)}
                 seconds={task.actual_seconds}
+                onStartTimer={() => tableProps.onStartTaskTimer?.({ baseSeconds: task.actual_seconds, pausedAt: null, startedActualSeconds: task.actual_seconds, startedAt: Date.now(), taskId: task.id, title: task.title })}
+                onStopTimer={() => tableProps.onStopTaskTimer?.(task.id)}
+                timer={runningTimerByTaskId.get(task.id) ?? null}
               />
             ) : null}
             {activePanelMode === "energy" ? (
