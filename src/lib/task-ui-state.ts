@@ -3,7 +3,7 @@ import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 
 export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "grid";
-export type TasksSurface = "tasks" | "paths" | "report" | "on_time";
+export type TasksSurface = "tasks" | "paths" | "report" | "on_time" | "brainstorm";
 export type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
 export type AppPage =
   | "Home"
@@ -222,7 +222,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     duplicateTitleMode: state.duplicateTitleMode === true,
     selectedBucket: nextBucket,
     statusFilters: Array.isArray(state.statusFilters) ? state.statusFilters : [],
-    tasksSurface: state.tasksSurface === "paths" || state.tasksSurface === "report" || state.tasksSurface === "on_time"
+    tasksSurface: state.tasksSurface === "paths" || state.tasksSurface === "report" || state.tasksSurface === "on_time" || state.tasksSurface === "brainstorm"
       ? state.tasksSurface
       : "tasks",
     view: nextView,

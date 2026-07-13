@@ -168,6 +168,11 @@ test("report workspace tabs are identified by their active surface", () => {
   }), false);
 });
 
+test("task ui state migration preserves the Brainstorm surface", () => {
+  const migrated = migrateLegacyTaskUiState({ ...DEFAULT_TASK_UI_STATE, tasksSurface: "brainstorm" });
+  assert.equal(migrated.tasksSurface, "brainstorm");
+});
+
 test("task workspace tab reorder preserves active tab id", () => {
   const state = normalizeTaskWorkspaceTabsState({
     activeTabId: "workspace-2",

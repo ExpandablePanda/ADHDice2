@@ -5,6 +5,7 @@ import type { TasksSurface, TaskViewMode } from "@/lib/task-ui-state";
 
 type TaskPageProps = {
   alternateViewPanel: ReactNode;
+  brainstormWorkspacePanel: ReactNode;
   flows: ReactNode;
   listViewPanel: ReactNode;
   onTimeWorkspacePanel: ReactNode;
@@ -21,6 +22,7 @@ type TaskPageProps = {
 
 export function TaskPage({
   alternateViewPanel,
+  brainstormWorkspacePanel,
   flows,
   listViewPanel,
   onTimeWorkspacePanel,
@@ -47,6 +49,8 @@ export function TaskPage({
         reportWorkspacePanel
       ) : surface === "on_time" ? (
         <>{onTimeWorkspacePanel}{showTableOverlayOnTime ? tableViewPanel : null}</>
+      ) : surface === "brainstorm" ? (
+        brainstormWorkspacePanel
       ) : (
         <>
           {operationsHeader}

@@ -5,7 +5,7 @@ import { ArrowDown, ArrowUp, Clock3, Cloud, CloudOff, MapPin, Pause, Play, Rotat
 import type { OnTimePlanSyncState } from "@/hooks/useOnTimePlan";
 import type { Task, TaskActualTimeEntry, TaskStatus } from "@/lib/database.types";
 import type { RunningTaskTimer } from "@/components/ui/task-management-table-v2";
-import type { OnTimePlanItem, OnTimePlanV1 } from "@/lib/on-time-plan-state";
+import { getOnTimeDestinationLabel, getOnTimeManualTravelMinutes, withOnTimeDestinationLabel, withOnTimeManualTravelMinutes, type OnTimePlanItem, type OnTimePlanUpdate, type OnTimePlanV2 } from "@/lib/on-time-plan-state";
 import { buildTaskOccurrenceIdentity } from "@/lib/task-duration-evidence";
 import { calculateOnTimeSchedule, calculateOnTimeSequentialFinishes, getOnTimeElapsedSecondsByItemId, isLinkedItemOccurrenceCurrent, moveOnTimeItem, occurrenceIdentityMatches, ON_TIME_COMPLETE_STATUSES, type OnTimeSequentialFinish } from "@/lib/on-time-planner";
 import { TASK_TABLE_INPUT_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
@@ -19,8 +19,8 @@ type Props = {
   actualTimeEntries: TaskActualTimeEntry[]; error: string | null; learnedStatisticsByTaskId: Record<string, Statistics>;
   onOpenTask: (taskId: string) => void; onPauseTimer: (taskId: string) => void; onResumeTimer: (taskId: string) => void; onStartTimer: (task: Task) => void; onStopAndSaveTimer: (taskId: string) => void;
   onSetTaskStatus: (task: Task, status: TaskStatus) => void;
-  plan: OnTimePlanV1; remoteUpdateNotice: boolean; resetPlan: () => void; syncState: OnTimePlanSyncState; tasks: Task[]; timers: RunningTaskTimer[];
-  updatePlan: (changes: Partial<Omit<OnTimePlanV1, "schemaVersion" | "clientUpdatedAt">>) => void;
+  plan: OnTimePlanV2; remoteUpdateNotice: boolean; resetPlan: () => void; syncState: OnTimePlanSyncState; tasks: Task[]; timers: RunningTaskTimer[];
+  updatePlan: (changes: OnTimePlanUpdate) => void;
 };
 
 function usePlannerClock(secondTick: boolean) {
@@ -45,6 +45,8 @@ export function OnTimePlannerWorkspace(props: Props) {
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const linkedTaskIds = useMemo(() => new Set(plan.items.flatMap((item) => item.kind === "task" ? [item.taskId] : [])), [plan.items]);
   const relevantRunningTimer = useMemo(() => plan.items.some((item) => item.kind === "task" && timers.some((timer) => timer.pausedAt === null && timer.taskId === item.taskId && occurrenceIdentityMatches(item, timer))), [plan.items, timers]);
+  const destinationLabel = getOnTimeDestinationLabel(plan);
+  const travelMinutes = getOnTimeManualTravelMinutes(plan);
   const now = usePlannerClock(relevantRunningTimer);
   const elapsedSecondsByItemId = useMemo(() => getOnTimeElapsedSecondsByItemId({ entries: actualTimeEntries, items: plan.items, now, timers }), [actualTimeEntries, now, plan.items, timers]);
   const completionByItemId = useMemo(() => Object.fromEntries(plan.items.map((item) => {
@@ -52,9 +54,9 @@ export function OnTimePlannerWorkspace(props: Props) {
     const task = tasksById.get(item.taskId);
     return [item.id, Boolean(task && isLinkedItemOccurrenceCurrent(item, task) && ON_TIME_COMPLETE_STATUSES.has(task.status))];
   })), [plan.items, tasksById]);
-  const calculation = useMemo(() => calculateOnTimeSchedule({ now, arriveAt: plan.arriveAt, travelMinutes: plan.travelMinutes, arrivalBufferMinutes: plan.arrivalBufferMinutes, items: plan.items, completionByItemId, elapsedSecondsByItemId }), [completionByItemId, elapsedSecondsByItemId, now, plan]);
+  const calculation = useMemo(() => calculateOnTimeSchedule({ now, arriveAt: plan.arriveAt, travelMinutes, arrivalBufferMinutes: plan.arrivalBufferMinutes, items: plan.items, completionByItemId, elapsedSecondsByItemId }), [completionByItemId, elapsedSecondsByItemId, now, plan, travelMinutes]);
   const finishes = useMemo(() => calculateOnTimeSequentialFinishes({ now, items: plan.items, completionByItemId, elapsedSecondsByItemId }), [completionByItemId, elapsedSecondsByItemId, now, plan.items]);
-  const syncLabel = syncState === "unavailable" ? "On-Time sync unavailable" : syncState === "saving" ? "Saving…" : syncState === "synced" ? "Synced" : syncState === "loading" ? "Loading plan…" : "Offline — cached locally";
+  const syncLabel = syncState === "update_required" ? "Update required on another client" : syncState === "unavailable" ? "On-Time sync unavailable" : syncState === "saving" ? "Saving…" : syncState === "synced" ? "Synced" : syncState === "loading" ? "Loading plan…" : "Offline — cached locally";
   const setItems = (items: OnTimePlanItem[]) => updatePlan({ items });
   const patchItem = (id: string, changes: Partial<OnTimePlanItem>) => setItems(plan.items.map((item) => item.id === id ? { ...item, ...changes } as OnTimePlanItem : item));
   const removeItem = (id: string) => setItems(plan.items.filter((item) => item.id !== id));
@@ -78,7 +80,7 @@ export function OnTimePlannerWorkspace(props: Props) {
       {!plan.items.length ? <div className="mt-4 rounded-[1.2rem] border border-dashed border-[#dcd3ee] bg-[#fbfaff] px-4 py-8 text-center dark:border-white/12 dark:bg-white/[0.03]"><p className="font-medium text-[#5f587d] dark:text-white/70">No preparation items yet</p></div> : <OnTimePlannerSortableList items={plan.items} onReorder={setItems}>{(item, index, handle) => <PlannerItemCard completion={completionByItemId[item.id] ?? false} elapsed={elapsedSecondsByItemId[item.id] ?? 0} finish={finishes[item.id]} handle={handle} index={index} item={item} learned={item.kind === "task" ? learnedStatisticsByTaskId[item.taskId] : undefined} onMove={(direction) => setItems(moveOnTimeItem(plan.items, item.id, direction))} onOpen={onOpenTask} onPatch={(changes) => patchItem(item.id, changes)} onPause={onPauseTimer} onRelink={(task) => { const identity = buildTaskOccurrenceIdentity(task); patchItem(item.id, { occurrenceKey: identity.occurrenceKey, occurrenceDueOn: identity.occurrenceDueOn, titleSnapshot: task.title }); }} onRemove={() => removeItem(item.id)} onResume={onResumeTimer} onSetTaskStatus={onSetTaskStatus} onStart={onStartTimer} onStopAndSave={onStopAndSaveTimer} task={item.kind === "task" ? tasksById.get(item.taskId) : undefined} timer={item.kind === "task" ? timers.find((timer) => timer.taskId === item.taskId && occurrenceIdentityMatches(item, timer)) : undefined} total={plan.items.length} />}</OnTimePlannerSortableList>}
     </div>
 
-    <div className="order-3 rounded-[1.5rem] border border-[#e7e1f3] bg-white/90 p-4 dark:border-white/10 dark:bg-white/[0.05]"><div className="mb-4 flex items-center gap-2"><MapPin size={17} className="text-[#6f57f6]" /><h3 className="font-semibold text-[#3b3458] dark:text-white">Destination and timing</h3></div><div className="space-y-3"><Field label="Destination"><input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => updatePlan({ destinationLabel: event.target.value })} placeholder="Where do you need to be?" value={plan.destinationLabel} /></Field><Field label="Arrive by"><input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => updatePlan({ arriveAt: event.target.value ? new Date(event.target.value).toISOString() : null })} type="datetime-local" value={toLocalInput(plan.arriveAt)} /></Field><p className="text-xs text-[#857e9f]">Timezone: {plan.timezone}</p><div className="grid grid-cols-2 gap-3"><Field label="Travel minutes"><input className={TASK_TABLE_INPUT_CLASS} min="0" onChange={(event) => updatePlan({ travelMinutes: event.target.value === "" ? null : Number(event.target.value) })} type="number" value={plan.travelMinutes ?? ""} /></Field><Field label="Arrival buffer"><input className={TASK_TABLE_INPUT_CLASS} min="0" onChange={(event) => updatePlan({ arrivalBufferMinutes: Number(event.target.value) })} type="number" value={plan.arrivalBufferMinutes} /></Field></div></div></div>
+    <div className="order-3 rounded-[1.5rem] border border-[#e7e1f3] bg-white/90 p-4 dark:border-white/10 dark:bg-white/[0.05]"><div className="mb-4 flex items-center gap-2"><MapPin size={17} className="text-[#6f57f6]" /><h3 className="font-semibold text-[#3b3458] dark:text-white">Destination and timing</h3></div><div className="space-y-3"><Field label="Destination"><input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => updatePlan(withOnTimeDestinationLabel(event.target.value))} placeholder="Where do you need to be?" value={destinationLabel} /></Field><Field label="Arrive by"><input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => updatePlan({ arriveAt: event.target.value ? new Date(event.target.value).toISOString() : null })} type="datetime-local" value={toLocalInput(plan.arriveAt)} /></Field><p className="text-xs text-[#857e9f]">Timezone: {plan.timezone}</p><div className="grid grid-cols-2 gap-3"><Field label="Travel minutes"><input className={TASK_TABLE_INPUT_CLASS} min="0" onChange={(event) => updatePlan(withOnTimeManualTravelMinutes(plan, event.target.value === "" ? null : Number(event.target.value)))} type="number" value={travelMinutes ?? ""} /></Field><Field label="Arrival buffer"><input className={TASK_TABLE_INPUT_CLASS} min="0" onChange={(event) => updatePlan({ arrivalBufferMinutes: Number(event.target.value) })} type="number" value={plan.arrivalBufferMinutes} /></Field></div></div></div>
   </section>;
 }
 

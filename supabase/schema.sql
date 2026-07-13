@@ -243,6 +243,16 @@ create table public.adhdice_on_time_plans (
   constraint adhdice_on_time_plans_plan_state_object check (jsonb_typeof(plan_state) = 'object')
 );
 
+create table public.adhdice_brainstorm_state (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  source_markdown text not null default '',
+  answers jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  client_updated_at timestamptz not null,
+  constraint adhdice_brainstorm_state_answers_object check (jsonb_typeof(answers) = 'object')
+);
+
 create table public.adhdice_health_profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   preferred_weight_unit text not null default 'lb' check (preferred_weight_unit in ('lb', 'kg')),
@@ -435,6 +445,7 @@ alter table public.adhdice_task_subtasks enable row level security;
 alter table public.adhdice_legacy_subtask_promotions enable row level security;
 alter table public.adhdice_task_grid_layouts enable row level security;
 alter table public.adhdice_on_time_plans enable row level security;
+alter table public.adhdice_brainstorm_state enable row level security;
 alter table public.adhdice_health_profiles enable row level security;
 alter table public.adhdice_health_checkins enable row level security;
 alter table public.adhdice_health_food_library enable row level security;
@@ -768,6 +779,15 @@ create policy "Users can update their own On-Time plan"
 create policy "Users can delete their own On-Time plan"
   on public.adhdice_on_time_plans for delete using (auth.uid() = user_id);
 
+create policy "Users can read their own Brainstorm state"
+  on public.adhdice_brainstorm_state for select using (auth.uid() = user_id);
+create policy "Users can create their own Brainstorm state"
+  on public.adhdice_brainstorm_state for insert with check (auth.uid() = user_id);
+create policy "Users can update their own Brainstorm state"
+  on public.adhdice_brainstorm_state for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users can delete their own Brainstorm state"
+  on public.adhdice_brainstorm_state for delete using (auth.uid() = user_id);
+
 create policy "Users can read their own health profiles"
   on public.adhdice_health_profiles
   for select
@@ -1029,6 +1049,11 @@ create trigger adhdice_on_time_plans_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
+create trigger adhdice_brainstorm_state_set_updated_at
+  before update on public.adhdice_brainstorm_state
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
 create trigger adhdice_health_profiles_set_updated_at
   before update on public.adhdice_health_profiles
   for each row
@@ -1073,6 +1098,7 @@ alter publication supabase_realtime add table public.adhdice_task_actual_time_en
 alter publication supabase_realtime add table public.adhdice_task_subtasks;
 alter publication supabase_realtime add table public.adhdice_task_grid_layouts;
 alter publication supabase_realtime add table public.adhdice_on_time_plans;
+alter publication supabase_realtime add table public.adhdice_brainstorm_state;
 alter publication supabase_realtime add table public.adhdice_health_profiles;
 alter publication supabase_realtime add table public.adhdice_health_checkins;
 alter publication supabase_realtime add table public.adhdice_health_food_library;

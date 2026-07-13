@@ -442,27 +442,44 @@ begin
       continue;
     end if;
 
-    v_next_status := public.adhdice_resolve_recurring_due_status(
-      v_due_on,
-      v_task.due_time,
-      v_effective_date,
-      v_local_now_time
-    );
+    if v_task.status = 'in_progress' then
+      v_next_status := public.adhdice_resolve_recurring_due_status(
+        v_due_on,
+        v_task.due_time,
+        v_effective_date,
+        v_local_now_time
+      );
 
-    update public.adhdice_clean_tasks
-      set
-        due_on = v_due_on,
-        status = v_next_status,
-        completed_at = null,
-        active_status_logical_date = null,
-        active_occurrence_due_on = null
-      where id = v_task.id
-        and user_id = p_user_id
-        and (
-          due_on is distinct from v_due_on
-          or status is distinct from v_next_status
-          or completed_at is not null
-        );
+      update public.adhdice_clean_tasks
+        set
+          due_on = v_due_on,
+          status = v_next_status,
+          completed_at = null,
+          active_status_logical_date = null,
+          active_occurrence_due_on = null
+        where id = v_task.id
+          and user_id = p_user_id
+          and (
+            due_on is distinct from v_due_on
+            or status is distinct from v_next_status
+            or completed_at is not null
+          );
+    else
+      update public.adhdice_clean_tasks
+        set
+          status = 'missed',
+          completed_at = null,
+          active_status_logical_date = null,
+          active_occurrence_due_on = null
+        where id = v_task.id
+          and user_id = p_user_id
+          and (
+            status is distinct from 'missed'
+            or completed_at is not null
+            or active_status_logical_date is not null
+            or active_occurrence_due_on is not null
+          );
+    end if;
 
     get diagnostics v_row_count = row_count;
     v_changed_task_count := v_changed_task_count + v_row_count;

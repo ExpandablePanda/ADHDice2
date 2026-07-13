@@ -45,6 +45,13 @@ export function TasksSurfaceSwitch({
         >
           On-Time
         </AdhdChip>
+        <AdhdChip
+          aria-pressed={value === "brainstorm"}
+          onClick={() => onChange("brainstorm")}
+          toneClassName={value === "brainstorm" ? TASKS_SURFACE_ACTIVE_CHIP_CLASS : TASKS_SURFACE_INACTIVE_CHIP_CLASS}
+        >
+          Brainstorm
+        </AdhdChip>
       </div>
     </div>
   );

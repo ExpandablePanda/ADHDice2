@@ -17,6 +17,7 @@ import type { TaskWorkspaceTab, TasksSurface, TaskViewMode } from "@/lib/task-ui
 type TasksPageOrchestratorProps = {
   activeTabId: string;
   alternateViewPanel: ReactNode;
+  brainstormWorkspacePanel: ReactNode;
   flows: ReactNode;
   listViewPanel: ReactNode;
   onAddTab: () => void;
@@ -39,6 +40,7 @@ type TasksPageOrchestratorProps = {
 export function TasksWorkspace({
   activeTabId,
   alternateViewPanel,
+  brainstormWorkspacePanel,
   flows,
   listViewPanel,
   onAddTab,
@@ -149,6 +151,7 @@ export function TasksWorkspace({
     <>
       <TaskPage
         alternateViewPanel={alternateViewPanel}
+        brainstormWorkspacePanel={brainstormWorkspacePanel}
         flows={flows}
         listViewPanel={listViewPanel}
         onTimeWorkspacePanel={onTimeWorkspacePanel}

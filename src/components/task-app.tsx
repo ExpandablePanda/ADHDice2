@@ -81,6 +81,7 @@ import { TaskListRuleRowEditor } from "./task-app/task-list-rule-row-editor";
 import { PathsWorkspace } from "./task-app/paths-workspace";
 import { TaskReportWorkspace } from "./task-app/task-report-workspace";
 import { OnTimePlannerWorkspace } from "./task-app/on-time-planner-workspace";
+import { BrainstormWorkspace } from "./task-app/brainstorm-workspace";
 import { TaskRewardModal } from "./task-app/task-reward-modal";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
@@ -132,6 +133,7 @@ import { useTaskPriorityRoutingController } from "@/hooks/useTaskPriorityRouting
 import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportController";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
+import { useBrainstormState } from "@/hooks/useBrainstormState";
 import {
   getDisplayFocusCategories,
   isSystemCountdownCategoryId,
@@ -483,7 +485,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.27.3";
+const APP_VERSION = "6.29.1";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1347,6 +1349,10 @@ export function TaskApp() {
     currentUserId,
     userTimeZone,
     activePage === "Tasks" && taskUiState.tasksSurface === "on_time",
+  );
+  const brainstormState = useBrainstormState(
+    currentUserId,
+    activePage === "Tasks" && taskUiState.tasksSurface === "brainstorm",
   );
   const [focusAlarmAudioBlocked, setFocusAlarmAudioBlocked] = useState(false);
   const lastResetDateRef = useRef<string>("");
@@ -5139,6 +5145,16 @@ export function TaskApp() {
                 tasksSurface: "tasks",
               },
             })}
+            brainstormWorkspacePanel={(
+              <BrainstormWorkspace
+                error={brainstormState.error}
+                remoteUpdateNotice={brainstormState.remoteUpdateNotice}
+                resetState={brainstormState.resetState}
+                state={brainstormState.state}
+                syncState={brainstormState.syncState}
+                updateState={brainstormState.updateState}
+              />
+            )}
             onCloseTab={closeTaskWorkspaceTab}
             onTimeWorkspacePanel={(
               <OnTimePlannerWorkspace
