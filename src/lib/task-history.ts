@@ -1,6 +1,6 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
-import { getMonthlyOccurrenceDateKey, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import { calcNextDueDateFromDate, getMonthlyOccurrenceDateKey, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
 
 export function isTaskCompletedForHistory(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "complete";
@@ -276,12 +276,59 @@ type TaskHistoryLiveStatusContext = {
 
 type TaskHistoryLiveStatusOptions = {
   calcNextDueDateFromDate?: (task: Task, referenceDateKey: string) => string | null;
+  editedHistoryDateKeys?: string[];
 };
 
 function getSortedHistoryThroughDay(history: DbTaskHistory[], currentDayKey: string) {
   return history
     .filter((entry) => entry.entry_date <= currentDayKey)
     .sort((left, right) => compareDateKeys(left.entry_date, right.entry_date));
+}
+
+function isResolvingRecurringHistoryStatus(status: TaskStatus | undefined) {
+  return status === "done" || status === "did_my_best";
+}
+
+/** Reconciles a History Calendar completion from its edited occurrence date. */
+function resolveCalendarRecurringActiveOccurrence(
+  task: Task,
+  history: DbTaskHistory[],
+  context: TaskHistoryLiveStatusContext,
+  options: TaskHistoryLiveStatusOptions,
+): { completedAt: null; dueOn: string; status: TaskStatus } | null {
+  if (task.repeat_frequency === "none") {
+    return null;
+  }
+
+  const editedHistoryDateKeys = options.editedHistoryDateKeys ?? [context.currentDayKey];
+  const historyByDate = new Map(history.map((entry) => [entry.entry_date, entry]));
+  const completionDateKey = editedHistoryDateKeys
+    .filter((dateKey) => dateKey <= context.currentDayKey && isResolvingRecurringHistoryStatus(historyByDate.get(dateKey)?.status))
+    .sort()
+    .at(-1);
+  if (!completionDateKey) {
+    return null;
+  }
+
+  const calculateNextDueDate = options.calcNextDueDateFromDate ?? calcNextDueDateFromDate;
+  const nextDueDate = calculateNextDueDate(task, completionDateKey);
+  if (!nextDueDate) {
+    return null;
+  }
+
+  return {
+    completedAt: null,
+    dueOn: nextDueDate,
+    status: nextDueDate < context.currentDayKey
+      ? "missed"
+      : resolveRecurringLiveStatusFromNextDueDate(task, {
+        currentDayKey: context.currentDayKey,
+        dayStartTime: context.dayStartTime,
+        nextDueDate,
+        now: context.now,
+        timezone: context.timezone,
+      }),
+  };
 }
 
 export function resolveLiveTaskStatusFromHistory(
@@ -295,6 +342,16 @@ export function resolveLiveTaskStatusFromHistory(
   }: TaskHistoryLiveStatusContext,
   options: TaskHistoryLiveStatusOptions = {},
 ): { completedAt: string | null; dueOn?: string | null; status: TaskStatus } {
+  const calendarReconciliation = resolveCalendarRecurringActiveOccurrence(task, history, {
+    currentDayKey,
+    dayStartTime,
+    now,
+    timezone,
+  }, options);
+  if (calendarReconciliation) {
+    return calendarReconciliation;
+  }
+
   if (task.status === "delayed" && task.due_on && task.due_on > currentDayKey) {
     return {
       completedAt: null,
@@ -316,29 +373,6 @@ export function resolveLiveTaskStatusFromHistory(
         timezone,
       }),
     };
-  }
-
-  if (
-    task.repeat_frequency !== "none"
-    && task.due_on
-    && task.due_on <= currentDayKey
-    && latestEntry?.entry_date === currentDayKey
-    && (latestEntry.status === "done" || latestEntry.status === "did_my_best" || latestEntry.status === "missed")
-  ) {
-    const nextDueDate = options.calcNextDueDateFromDate?.(task, currentDayKey) ?? null;
-    if (nextDueDate) {
-      return {
-        completedAt: null,
-        dueOn: nextDueDate,
-        status: resolveRecurringLiveStatusFromNextDueDate(task, {
-          currentDayKey,
-          dayStartTime,
-          nextDueDate,
-          now,
-          timezone,
-        }),
-      };
-    }
   }
 
   if (latestEntry?.status === "missed") {
@@ -654,6 +688,43 @@ function isHistoricalRecurringDueDate(task: Task, dateKey: string) {
   }
 
   return false;
+}
+
+function isResolvingRecurringHistoryEntry(entry: DbTaskHistory | undefined) {
+  return entry?.status === "done" || entry?.status === "did_my_best" || entry?.status === "complete";
+}
+
+/**
+ * Returns only missing scheduled occurrences after a manually saved Missed
+ * entry. Existing history is preserved, and the first later completion is the
+ * exclusive boundary so recurrence can rebase from that completion.
+ */
+export function buildMissingScheduledMissedHistoryDateKeys(
+  task: Task,
+  history: DbTaskHistory[],
+  missedDateKey: string,
+  currentDayKey: string,
+) {
+  if (task.repeat_frequency === "none" || missedDateKey >= currentDayKey) {
+    return [] as string[];
+  }
+
+  const historyByDate = new Map(history.map((entry) => [entry.entry_date, entry]));
+  const resolvingBoundary = history
+    .filter((entry) => entry.entry_date > missedDateKey && isResolvingRecurringHistoryEntry(entry))
+    .map((entry) => entry.entry_date)
+    .sort()
+    .at(0);
+  const endExclusive = resolvingBoundary ?? currentDayKey;
+  const missingDates: string[] = [];
+  let cursor = shiftDateKey(missedDateKey, 1);
+  while (cursor < endExclusive) {
+    if (isHistoricalRecurringDueDate(task, cursor) && !historyByDate.has(cursor)) {
+      missingDates.push(cursor);
+    }
+    cursor = shiftDateKey(cursor, 1);
+  }
+  return missingDates;
 }
 
 export function buildTaskDueDateSet(task: Task, startDateKey: string, endDateKey: string, history: DbTaskHistory[] = []) {

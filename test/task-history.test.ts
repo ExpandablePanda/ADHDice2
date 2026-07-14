@@ -6,6 +6,7 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import {
   buildTaskHistoryFacts,
   buildTaskHistoryCalendarDueDateSet,
+  buildMissingScheduledMissedHistoryDateKeys,
   buildOverdueTaskMissedDateKeys,
   buildTaskDueDateSet,
   computeTaskHistoryStats,
@@ -78,6 +79,77 @@ test("calendar virtual states distinguish upcoming and not-due dates without ove
     nextDueDateKey: "2026-06-22",
     todayDateKey: "2026-06-21",
   }), null);
+});
+
+test("calendar missed backfill fills only missing scheduled dates through the first later completion", () => {
+  const task = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-09",
+    id: "calendar-missed-gap-daily",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "missed",
+    title: "Daily missed gap",
+  });
+  const history = [
+    createHistoryEntry({ entryDate: "2026-07-09", id: "missed-anchor", status: "missed", taskId: task.id, wasCompleted: false }),
+    createHistoryEntry({ entryDate: "2026-07-13", id: "done-boundary", status: "done", taskId: task.id, wasCompleted: true }),
+  ];
+
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(task, history, "2026-07-09", "2026-07-13"), [
+    "2026-07-10", "2026-07-11", "2026-07-12",
+  ]);
+  const firstBackfill = buildMissingScheduledMissedHistoryDateKeys(task, history, "2026-07-09", "2026-07-13");
+  const savedBackfill = firstBackfill.map((entryDate, index) => createHistoryEntry({
+    entryDate,
+    id: `backfilled-${index}`,
+    status: "missed",
+    taskId: task.id,
+    wasCompleted: false,
+  }));
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(task, [...history, ...savedBackfill], "2026-07-09", "2026-07-13"), []);
+});
+
+test("calendar missed backfill preserves saved history, stops at Did My Best or Complete, and excludes today", () => {
+  const task = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-09",
+    id: "calendar-missed-boundaries",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "missed",
+    title: "Daily missed boundaries",
+  });
+  const existingMissed = createHistoryEntry({ entryDate: "2026-07-10", id: "existing-missed", status: "missed", taskId: task.id, wasCompleted: false });
+  const best = createHistoryEntry({ entryDate: "2026-07-13", id: "best-boundary", status: "did_my_best", taskId: task.id, wasCompleted: true });
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(task, [existingMissed, best], "2026-07-09", "2026-07-14"), [
+    "2026-07-11", "2026-07-12",
+  ]);
+  const complete = createHistoryEntry({ entryDate: "2026-07-12", eventType: "completed_permanently", id: "complete-boundary", status: "complete", taskId: task.id, wasCompleted: true });
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(task, [complete], "2026-07-09", "2026-07-14"), [
+    "2026-07-10", "2026-07-11",
+  ]);
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(task, [], "2026-07-09", "2026-07-13"), [
+    "2026-07-10", "2026-07-11", "2026-07-12",
+  ]);
+});
+
+test("calendar missed backfill uses the existing interval, weekly, monthly, and custom recurrence dates", () => {
+  const base = {
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-01",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "missed" as const,
+    title: "Scheduled backfill",
+  };
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(createTask({ ...base, id: "interval", repeat_frequency: "daily", repeat_interval: 3 }), [], "2026-07-01", "2026-07-10"), ["2026-07-04", "2026-07-07"]);
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(createTask({ ...base, id: "weekly", repeat_days_of_week: [1, 3], repeat_frequency: "weekly" }), [], "2026-07-01", "2026-07-10"), ["2026-07-06", "2026-07-08"]);
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(createTask({ ...base, id: "monthly-fixed", repeat_day_of_month: 15, repeat_frequency: "monthly" }), [], "2026-07-01", "2026-09-01"), ["2026-07-15", "2026-08-15"]);
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(createTask({ ...base, due_on: "2026-07-07", id: "monthly-ordinal", repeat_frequency: "monthly", repeat_monthly_mode: "ordinal_weekday", repeat_monthly_ordinal: "first", repeat_monthly_weekday: 2 }), [], "2026-07-07", "2026-09-01"), ["2026-08-04"]);
+  assert.deepEqual(buildMissingScheduledMissedHistoryDateKeys(createTask({ ...base, id: "custom", repeat_frequency: "custom", repeat_interval: 4 }), [], "2026-07-01", "2026-07-12"), ["2026-07-05", "2026-07-09"]);
 });
 
 test("calendar virtual states show delayed spans for delayed future tasks until the due date", () => {
@@ -506,8 +578,198 @@ test("current-day recurring history edit resolves to the next active occurrence"
   });
 
   assert.equal(result.dueOn, "2026-07-01");
-  assert.equal(result.status, "not_due");
+  assert.equal(result.status, "upcoming");
   assert.equal(result.completedAt, null);
+});
+
+test("calendar rebases a missed daily recurrence from yesterday's edited completion without advancing twice", () => {
+  const task = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-10",
+    id: "calendar-rebase-daily",
+    repeat_frequency: "daily",
+    repeat_interval: 4,
+    sort_order: 1,
+    status: "missed",
+    title: "TestDelayNotDue1",
+  });
+  const history = [
+    createHistoryEntry({ entryDate: "2026-07-10", id: "old-missed", status: "missed", taskId: task.id, wasCompleted: false }),
+    createHistoryEntry({ entryDate: "2026-07-12", id: "rebase-done", status: "done", taskId: task.id, wasCompleted: true }),
+  ];
+  const context = {
+    currentDayKey: "2026-07-13",
+    dayStartTime: "06:00",
+    now: new Date("2026-07-13T12:00:00.000Z"),
+    timezone: "America/New_York",
+  };
+
+  const result = resolveLiveTaskStatusFromHistory(task, history, context, {
+    editedHistoryDateKeys: ["2026-07-12"],
+  });
+  assert.deepEqual(result, { completedAt: null, dueOn: "2026-07-16", status: "upcoming" });
+  assert.equal(history.find((entry) => entry.entry_date === "2026-07-10")?.status, "missed");
+
+  const repeatedSave = resolveLiveTaskStatusFromHistory({ ...task, due_on: result.dueOn, status: result.status }, history, context, {
+    editedHistoryDateKeys: ["2026-07-12"],
+  });
+  assert.equal(repeatedSave.dueOn, "2026-07-16");
+  assert.equal(repeatedSave.status, "upcoming");
+});
+
+test("calendar rebases Did My Best from its edited completion date", () => {
+  const task = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-10",
+    id: "calendar-rebase-best",
+    repeat_frequency: "daily",
+    repeat_interval: 4,
+    sort_order: 1,
+    status: "missed",
+    title: "Rebase Did My Best",
+  });
+  const result = resolveLiveTaskStatusFromHistory(task, [
+    createHistoryEntry({ entryDate: "2026-07-12", id: "anchor-best", status: "did_my_best", taskId: task.id, wasCompleted: true }),
+  ], {
+    currentDayKey: "2026-07-13",
+    dayStartTime: "06:00",
+    now: new Date("2026-07-13T12:00:00.000Z"),
+    timezone: "America/New_York",
+  }, { editedHistoryDateKeys: ["2026-07-12"] });
+
+  assert.deepEqual(result, { completedAt: null, dueOn: "2026-07-16", status: "upcoming" });
+});
+
+test("calendar uses the latest resolving selected date once and ignores non-resolving edits", () => {
+  const task = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-10",
+    id: "calendar-consecutive-anchors",
+    repeat_frequency: "daily",
+    repeat_interval: 4,
+    sort_order: 1,
+    status: "missed",
+    title: "Calendar rebase selection",
+  });
+  const context = {
+    currentDayKey: "2026-07-13",
+    dayStartTime: "06:00",
+    now: new Date("2026-07-13T12:00:00.000Z"),
+    timezone: "America/New_York",
+  };
+
+  const multiSelect = resolveLiveTaskStatusFromHistory(task, [
+    createHistoryEntry({ entryDate: "2026-07-10", id: "earlier-done", status: "done", taskId: task.id, wasCompleted: true }),
+    createHistoryEntry({ entryDate: "2026-07-12", id: "latest-best", status: "did_my_best", taskId: task.id, wasCompleted: true }),
+  ], context, { editedHistoryDateKeys: ["2026-07-10", "2026-07-12"] });
+  assert.deepEqual(multiSelect, { completedAt: null, dueOn: "2026-07-16", status: "upcoming" });
+
+  const missedEdit = resolveLiveTaskStatusFromHistory(task, [
+    createHistoryEntry({ entryDate: "2026-07-12", id: "later-missed", status: "missed", taskId: task.id, wasCompleted: false }),
+  ], context, { editedHistoryDateKeys: ["2026-07-12"] });
+  assert.equal(missedEdit.dueOn, undefined);
+  assert.equal(missedEdit.status, "missed");
+});
+
+test("calendar reconciliation calculates every cadence from the edited completion date", () => {
+  const context = {
+    currentDayKey: "2026-07-08",
+    dayStartTime: "06:00",
+    now: new Date("2026-07-08T12:00:00.000Z"),
+    timezone: "America/New_York",
+  };
+  const cases = [
+    { dueOn: "2026-07-01", editedOn: "2026-07-05", expectedDueOn: "2026-07-08", name: "daily interval", overrides: { repeat_frequency: "daily" as const, repeat_interval: 3 } },
+    { dueOn: "2026-07-06", editedOn: "2026-07-08", expectedDueOn: "2026-07-13", name: "weekly", overrides: { repeat_days_of_week: [1], repeat_frequency: "weekly" as const } },
+    { dueOn: "2026-06-30", editedOn: "2026-07-08", expectedDueOn: "2026-08-31", name: "monthly fixed", overrides: { repeat_day_of_month: 31, repeat_frequency: "monthly" as const } },
+    { dueOn: "2026-07-07", editedOn: "2026-07-08", expectedDueOn: "2026-08-04", name: "monthly ordinal", overrides: { repeat_frequency: "monthly" as const, repeat_monthly_mode: "ordinal_weekday" as const, repeat_monthly_ordinal: "first" as const, repeat_monthly_weekday: 2 } },
+    { dueOn: "2026-07-01", editedOn: "2026-07-05", expectedDueOn: "2026-07-08", name: "custom interval", overrides: { repeat_frequency: "custom" as const, repeat_interval: 3 } },
+  ];
+
+  for (const cadence of cases) {
+    const task = createTask({
+      created_at: "2026-06-01T08:00:00.000Z",
+      due_on: cadence.dueOn,
+      id: `calendar-${cadence.name}`,
+      sort_order: 1,
+      status: "missed",
+      title: cadence.name,
+      ...cadence.overrides,
+    });
+    const result = resolveLiveTaskStatusFromHistory(task, [
+      createHistoryEntry({ entryDate: cadence.editedOn, id: `done-${cadence.name}`, status: "done", taskId: task.id, wasCompleted: true }),
+    ], context, { editedHistoryDateKeys: [cadence.editedOn] });
+    assert.equal(result.dueOn, cadence.expectedDueOn, cadence.name);
+  }
+});
+
+test("calendar reconciliation retains existing future due status classification", () => {
+  const task = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-06",
+    id: "calendar-future-status",
+    repeat_frequency: "weekly",
+    repeat_days_of_week: [1],
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "missed",
+    title: "Future status",
+  });
+  const context = {
+    currentDayKey: "2026-07-07",
+    dayStartTime: "06:00",
+    now: new Date("2026-07-07T12:00:00.000Z"),
+    timezone: "America/New_York",
+  };
+  const upcoming = resolveLiveTaskStatusFromHistory(task, [
+    createHistoryEntry({ entryDate: "2026-07-06", id: "future-upcoming", status: "done", taskId: task.id, wasCompleted: true }),
+  ], context, { editedHistoryDateKeys: ["2026-07-06"] });
+  assert.deepEqual(upcoming, { completedAt: null, dueOn: "2026-07-13", status: "upcoming" });
+
+  const notDue = resolveLiveTaskStatusFromHistory({ ...task, repeat_interval: 2 }, [
+    createHistoryEntry({ entryDate: "2026-07-06", id: "future-not-due", status: "done", taskId: task.id, wasCompleted: true }),
+  ], context, { editedHistoryDateKeys: ["2026-07-06"] });
+  assert.deepEqual(notDue, { completedAt: null, dueOn: "2026-07-20", status: "not_due" });
+});
+
+test("calendar rebase resolves due-today, overdue, and trajectory states from the edited completion", () => {
+  const task = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-10",
+    id: "calendar-rebase-statuses",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "missed",
+    title: "Calendar rebase statuses",
+  });
+  const doneOnTwelfth = [
+    createHistoryEntry({ entryDate: "2026-07-10", id: "preserved-missed", status: "missed", taskId: task.id, wasCompleted: false }),
+    createHistoryEntry({ entryDate: "2026-07-12", id: "rebase-status-done", status: "done", taskId: task.id, wasCompleted: true }),
+  ];
+  const pending = resolveLiveTaskStatusFromHistory(task, doneOnTwelfth, {
+    currentDayKey: "2026-07-13",
+    dayStartTime: "06:00",
+    now: new Date("2026-07-13T12:00:00.000Z"),
+    timezone: "America/New_York",
+  }, { editedHistoryDateKeys: ["2026-07-12"] });
+  assert.deepEqual(pending, { completedAt: null, dueOn: "2026-07-13", status: "pending" });
+
+  const overdue = resolveLiveTaskStatusFromHistory(task, doneOnTwelfth, {
+    currentDayKey: "2026-07-14",
+    dayStartTime: "06:00",
+    now: new Date("2026-07-14T12:00:00.000Z"),
+    timezone: "America/New_York",
+  }, { editedHistoryDateKeys: ["2026-07-12"] });
+  assert.deepEqual(overdue, { completedAt: null, dueOn: "2026-07-13", status: "missed" });
+
+  const rebasedTask = { ...task, due_on: "2026-07-16", repeat_interval: 4, status: "upcoming" as const };
+  const dueDates = buildTaskHistoryCalendarDueDateSet(rebasedTask, "2026-07-10", "2026-07-16", "2026-07-13", doneOnTwelfth);
+  assert.equal(dueDates.has("2026-07-13"), false);
+  assert.equal(dueDates.has("2026-07-14"), false);
+  assert.equal(dueDates.has("2026-07-15"), false);
+  assert.equal(dueDates.has("2026-07-16"), true);
+  assert.equal(getTaskHistoryCalendarVirtualState({ dateKey: "2026-07-13", hasHistoryEntry: false, isDue: false, nextDueDateKey: "2026-07-16", todayDateKey: "2026-07-13" }), "upcoming");
 });
 
 test("future-due recurring live status ignores today history facts", () => {
@@ -533,7 +795,7 @@ test("future-due recurring live status ignores today history facts", () => {
   });
 
   assert.equal(result.dueOn, undefined);
-  assert.equal(result.status, "not_due");
+  assert.equal(result.status, "upcoming");
   assert.equal(result.completedAt, null);
 });
 

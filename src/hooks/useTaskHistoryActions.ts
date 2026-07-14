@@ -6,7 +6,7 @@ import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus,
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
-import { resolveLiveTaskStatusFromHistory } from "@/lib/task-history";
+import { buildMissingScheduledMissedHistoryDateKeys, resolveLiveTaskStatusFromHistory } from "@/lib/task-history";
 
 type Message = {
   text: string;
@@ -27,6 +27,7 @@ type UseTaskHistoryActionsOptions = {
   setTaskHistory: Dispatch<SetStateAction<DbTaskHistory[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
+  taskHistory?: DbTaskHistory[];
   tasks: Task[];
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
@@ -46,11 +47,12 @@ export function useTaskHistoryActions({
   setTaskHistory,
   setTasks,
   sortTasksForUi,
+  taskHistory = [],
   tasks,
   timezone,
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskHistoryActionsOptions) {
-  async function syncLiveTaskStatus(taskId: string, nextHistory: DbTaskHistory[]) {
+  async function syncLiveTaskStatus(taskId: string, nextHistory: DbTaskHistory[], editedHistoryDateKeys?: string[]) {
     const task = tasks.find((candidate) => candidate.id === taskId);
     if (!task) {
       return true;
@@ -61,7 +63,7 @@ export function useTaskHistoryActions({
       dayStartTime,
       now,
       timezone,
-    }, { calcNextDueDateFromDate });
+    }, { calcNextDueDateFromDate, editedHistoryDateKeys });
 
     if (
       task.status === nextTaskState.status
@@ -141,7 +143,7 @@ export function useTaskHistoryActions({
       });
 
       if (options?.syncLiveTask) {
-        return syncLiveTaskStatus(taskId, nextHistory);
+        return syncLiveTaskStatus(taskId, nextHistory, [entryDate]);
       }
 
       return true;
@@ -184,7 +186,7 @@ export function useTaskHistoryActions({
       });
 
       if (options?.syncLiveTask) {
-        return syncLiveTaskStatus(taskId, nextHistory);
+        return syncLiveTaskStatus(taskId, nextHistory, [entryDate]);
       }
     }
 
@@ -227,11 +229,22 @@ export function useTaskHistoryActions({
       });
 
       return options?.syncLiveTask
-        ? syncLiveTaskStatus(taskId, nextTaskHistory)
+        ? syncLiveTaskStatus(taskId, nextTaskHistory, uniqueEntryDates)
         : true;
     }
 
-    const payloads: TaskHistoryInsert[] = uniqueEntryDates.map((entryDate) => ({
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    const existingTaskHistory = taskHistory.filter((entry) => entry.task_id === taskId);
+    const missingMissedDates = status === "missed" && task
+      ? uniqueEntryDates.flatMap((entryDate) => buildMissingScheduledMissedHistoryDateKeys(
+        task,
+        existingTaskHistory,
+        entryDate,
+        currentDayKey,
+      ))
+      : [];
+    const entryDatesToUpsert = Array.from(new Set([...uniqueEntryDates, ...missingMissedDates])).sort();
+    const payloads: TaskHistoryInsert[] = entryDatesToUpsert.map((entryDate) => ({
       entry_date: entryDate,
       status,
       task_id: taskId,
@@ -262,8 +275,22 @@ export function useTaskHistoryActions({
       return merged;
     });
 
+    const laterCompletionDateKey = status === "missed"
+      ? nextTaskHistory
+        .filter((entry) => (
+          (entry.status === "done" || entry.status === "did_my_best")
+          && uniqueEntryDates.some((entryDate) => entry.entry_date > entryDate)
+        ))
+        .map((entry) => entry.entry_date)
+        .sort()
+        .at(0)
+      : null;
+
     return options?.syncLiveTask
-      ? syncLiveTaskStatus(taskId, nextTaskHistory)
+      ? syncLiveTaskStatus(taskId, nextTaskHistory, [
+        ...uniqueEntryDates,
+        ...(laterCompletionDateKey ? [laterCompletionDateKey] : []),
+      ])
       : true;
   }
 
