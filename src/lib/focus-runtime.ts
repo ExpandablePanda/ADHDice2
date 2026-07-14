@@ -12,6 +12,8 @@ export type FocusRuntimeRow = {
   current_run_started_at: string | null;
   accumulated_seconds: number;
   revision: number;
+  closed_at: string | null;
+  close_reason: "reset" | "completed" | "stopped" | null;
   created_at: string;
   updated_at: string;
 };
@@ -23,6 +25,7 @@ export function focusRuntimeSlotKey(row: Pick<FocusRuntimeRow, "runtime_kind" | 
 }
 
 export function mapFocusRuntimeRow(row: FocusRuntimeRow): ActiveFocusSession | null {
+  if (row.closed_at) return null;
   const categoryId = focusRuntimeSlotKey(row);
   if (!categoryId) return null;
   return {
@@ -72,6 +75,22 @@ export function reconcileFocusRuntimeSnapshot(rows: FocusRuntimeRow[]) {
   // A server fetch is authoritative: this intentionally drops local rows omitted
   // from the snapshot, including the empty-snapshot case.
   return mapFocusRuntimeRows(rows);
+}
+
+export function applyFocusRuntimeRealtimeRow(
+  sessions: Record<string, ActiveFocusSession>,
+  row: FocusRuntimeRow,
+  closedRevisions: Map<string, number>,
+) {
+  if (row.closed_at) {
+    closedRevisions.set(row.session_id, Math.max(closedRevisions.get(row.session_id) ?? 0, row.revision));
+    if (closedRevisions.size > 100) closedRevisions.delete(closedRevisions.keys().next().value!);
+    return removeFocusRuntimeFromSessions(sessions, { session_id: row.session_id });
+  }
+  if ((closedRevisions.get(row.session_id) ?? 0) >= row.revision) return sessions;
+  const session = mapFocusRuntimeRow(row);
+  if (!session || !isNewerFocusRuntimeSnapshot(session, sessions[session.categoryId])) return sessions;
+  return { ...sessions, [session.categoryId]: session };
 }
 
 export function isCurrentFocusRuntimeSnapshotRequest(requestGeneration: number, currentGeneration: number) {

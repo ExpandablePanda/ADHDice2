@@ -18,9 +18,8 @@ import { getLogicalDayKey } from "@/lib/logical-day";
 import { todayISO } from "@/lib/utils";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import {
-  isNewerFocusRuntimeSnapshot,
+  applyFocusRuntimeRealtimeRow,
   isCurrentFocusRuntimeSnapshotRequest,
-  mapFocusRuntimeRow,
   reconcileFocusRuntimeSnapshot,
   removeFocusRuntimeFromSessions,
   type FocusRuntimeRow,
@@ -311,6 +310,7 @@ export function useFocus(
   const suppressCategoryReload = useRef(false);
   const activeSessionsRef = useRef(activeSessions);
   const runtimeRequestGenerationRef = useRef(0);
+  const runtimeClosedRevisionsRef = useRef(new Map<string, number>());
   const counterRequestGenerationRef = useRef(0);
   const focusCounterStateRef = useRef(focusCounterState);
   const runtimeOperationIdsRef = useRef(new Map<string, string>());
@@ -332,6 +332,11 @@ export function useFocus(
     counterRequestGenerationRef.current += 1;
     const nextState = { counters: [], history: [], ownerUserId: userId };
     focusCounterStateRef.current = nextState;
+  }, [userId]);
+
+  useEffect(() => {
+    runtimeRequestGenerationRef.current += 1;
+    runtimeClosedRevisionsRef.current.clear();
   }, [userId]);
 
   useEffect(() => {
@@ -364,12 +369,9 @@ export function useFocus(
   }, [client, setMessage, userId]);
 
   const applyRuntimeRow = useCallback((row: FocusRuntimeRow) => {
-    const session = mapFocusRuntimeRow(row);
-    if (!session) return;
     runtimeRequestGenerationRef.current += 1;
     setActiveSessions((current) => {
-      if (!isNewerFocusRuntimeSnapshot(session, current[session.categoryId])) return current;
-      const next = { ...current, [session.categoryId]: session };
+      const next = applyFocusRuntimeRealtimeRow(current, row, runtimeClosedRevisionsRef.current);
       activeSessionsRef.current = next;
       return next;
     });
@@ -380,8 +382,9 @@ export function useFocus(
     const generation = ++runtimeRequestGenerationRef.current;
     const { data, error } = await client
       .from("adhdice_focus_active_sessions")
-      .select("session_id,user_id,runtime_kind,category_id,mode,mode_authoritative,countdown_target_seconds,state,current_run_started_at,accumulated_seconds,revision,created_at,updated_at")
-      .eq("user_id", userId);
+      .select("session_id,user_id,runtime_kind,category_id,mode,mode_authoritative,countdown_target_seconds,state,current_run_started_at,accumulated_seconds,revision,closed_at,close_reason,created_at,updated_at")
+      .eq("user_id", userId)
+      .is("closed_at", null);
     if (error) {
       if (!/does not exist|schema cache/i.test(error.message)) setMessage({ tone: "warn", text: `Focus timer sync failed: ${error.message}` });
       return;
@@ -859,7 +862,9 @@ export function useFocus(
       return;
     }
     runtimeOperationIdsRef.current.delete(lifecycleKey);
-    const inserted = (completedResult as FocusRuntimeRpcResult)?.completed_session;
+    const completionResult = completedResult as FocusRuntimeRpcResult;
+    if (completionResult.runtime) applyRuntimeRow(completionResult.runtime);
+    const inserted = completionResult.completed_session;
     if (!inserted) { setMessage({ tone: "warn", text: "Focus session saved, but the response was empty." }); return; }
 
     const nextEntry = mergeStoredFocusHistory([
@@ -907,7 +912,7 @@ export function useFocus(
   async function handleResetTimer(categoryId: string) {
     if (!client || !userId) return;
 
-    const result = await transitionFocusRuntime(categoryId, isSystemCountdownCategoryId(categoryId) ? "reset" : "delete");
+    const result = await transitionFocusRuntime(categoryId, "reset");
     if (result) setMessage({ tone: "good", text: "Timer reset." });
   }
 

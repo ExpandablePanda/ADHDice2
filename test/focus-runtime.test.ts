@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyFocusRuntimeRealtimeRow,
   getAuthoritativeFocusElapsedSeconds,
   getAuthoritativeFocusRemainingSeconds,
   isCurrentFocusRuntimeSnapshotRequest,
@@ -21,6 +22,8 @@ const row = {
   current_run_started_at: "2026-07-14T12:00:00.000Z",
   accumulated_seconds: 120,
   revision: 4,
+  closed_at: null,
+  close_reason: null,
   created_at: "2026-07-14T11:00:00.000Z",
   updated_at: "2026-07-14T12:00:00.000Z",
 };
@@ -86,11 +89,68 @@ test("a newer DELETE generation prevents an older hydration response from resurr
   assert.equal(isCurrentFocusRuntimeSnapshotRequest(afterDeleteGeneration, afterDeleteGeneration), true);
 });
 
-test("simulated cross-device reset converges through an authoritative DELETE", () => {
+test("legacy hard-delete payloads still converge during deployment compatibility", () => {
   const desktop = mapFocusRuntimeRows([row]);
   const mobile = mapFocusRuntimeRows([row]);
   const server = removeFocusRuntimeFromSessions(desktop, { session_id: row.session_id });
   const mobileAfterDelete = removeFocusRuntimeFromSessions(mobile, { session_id: row.session_id });
   assert.deepEqual(server, {});
   assert.deepEqual(mobileAfterDelete, server);
+});
+
+test("closed Realtime UPDATE removes only the matching category runtime", () => {
+  const other = { ...row, session_id: "44444444-4444-4444-8444-444444444444", category_id: "55555555-5555-4555-8555-555555555555" };
+  const sessions = mapFocusRuntimeRows([row, other]);
+  const tombstones = new Map<string, number>();
+  const next = applyFocusRuntimeRealtimeRow(sessions, {
+    ...row,
+    state: "paused",
+    current_run_started_at: null,
+    revision: 5,
+    closed_at: "2026-07-14T12:02:00.000Z",
+    close_reason: "reset",
+    updated_at: "2026-07-14T12:02:00.000Z",
+  }, tombstones);
+  assert.equal(next[row.category_id], undefined);
+  assert.equal(next[other.category_id]?.sessionId, other.session_id);
+  assert.equal(tombstones.get(row.session_id), 5);
+});
+
+test("standalone closed UPDATE removes only the standalone runtime", () => {
+  const standalone = { ...row, session_id: "66666666-6666-4666-8666-666666666666", runtime_kind: "standalone_countdown" as const, category_id: null };
+  const sessions = mapFocusRuntimeRows([row, standalone]);
+  const next = applyFocusRuntimeRealtimeRow(sessions, {
+    ...standalone,
+    revision: 5,
+    closed_at: "2026-07-14T12:02:00.000Z",
+    close_reason: "stopped",
+  }, new Map());
+  assert.equal(next.__adhdice_system_countdown__, undefined);
+  assert.equal(next[row.category_id]?.sessionId, row.session_id);
+});
+
+test("closed rows never hydrate as active and empty/open snapshots still reconcile", () => {
+  const closed = { ...row, revision: 5, closed_at: "2026-07-14T12:02:00.000Z", close_reason: "completed" as const };
+  assert.deepEqual(reconcileFocusRuntimeSnapshot([closed]), {});
+  assert.deepEqual(reconcileFocusRuntimeSnapshot([]), {});
+  assert.equal(reconcileFocusRuntimeSnapshot([row])[row.category_id]?.sessionId, row.session_id);
+});
+
+test("a closed tombstone rejects older open UPDATEs but permits a new session in the slot", () => {
+  const tombstones = new Map<string, number>();
+  const closed = { ...row, revision: 5, closed_at: "2026-07-14T12:02:00.000Z", close_reason: "reset" as const };
+  const afterClose = applyFocusRuntimeRealtimeRow(mapFocusRuntimeRows([row]), closed, tombstones);
+  const afterOlderUpdate = applyFocusRuntimeRealtimeRow(afterClose, { ...row, revision: 4 }, tombstones);
+  assert.deepEqual(afterOlderUpdate, {});
+  const replacement = { ...row, session_id: "99999999-9999-4999-8999-999999999999", revision: 1 };
+  assert.equal(applyFocusRuntimeRealtimeRow(afterOlderUpdate, replacement, tombstones)[row.category_id]?.sessionId, replacement.session_id);
+});
+
+test("pause and resume UPDATEs remain revision-ordered live synchronization", () => {
+  const tombstones = new Map<string, number>();
+  const paused = { ...row, state: "paused" as const, current_run_started_at: null, accumulated_seconds: 180, revision: 5 };
+  const afterPause = applyFocusRuntimeRealtimeRow(mapFocusRuntimeRows([row]), paused, tombstones);
+  assert.equal(afterPause[row.category_id]?.isRunning, false);
+  const resumed = { ...paused, state: "running" as const, current_run_started_at: "2026-07-14T12:03:00.000Z", revision: 6 };
+  assert.equal(applyFocusRuntimeRealtimeRow(afterPause, resumed, tombstones)[row.category_id]?.isRunning, true);
 });

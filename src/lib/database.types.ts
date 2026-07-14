@@ -794,6 +794,8 @@ export type ActiveFocusSession = {
   accumulated_seconds: number;
   is_running: boolean;
   revision: number;
+  closed_at: string | null;
+  close_reason: "reset" | "completed" | "stopped" | null;
   created_at: string;
   updated_at: string;
 };
@@ -812,10 +814,12 @@ export type ActiveFocusSessionInsert = {
   accumulated_seconds?: number;
   is_running?: boolean;
   revision?: number;
+  closed_at?: string | null;
+  close_reason?: "reset" | "completed" | "stopped" | null;
 };
 
 export type ActiveFocusSessionUpdate = Partial<
-  Pick<ActiveFocusSession, "mode" | "mode_authoritative" | "countdown_target_seconds" | "state" | "current_run_started_at" | "start_time" | "accumulated_seconds" | "is_running" | "revision">
+  Pick<ActiveFocusSession, "mode" | "mode_authoritative" | "countdown_target_seconds" | "state" | "current_run_started_at" | "start_time" | "accumulated_seconds" | "is_running" | "revision" | "closed_at" | "close_reason">
 >;
 
 export type FocusRuntimeOperation = {
