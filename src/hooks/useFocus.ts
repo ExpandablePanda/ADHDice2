@@ -1,11 +1,9 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, PendingFocusDailySurplus } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusDailyGoalAdjustment as DbFocusDailyGoalAdjustment, FocusSession as DbFocusSession } from "@/lib/database.types";
-import type { AppendEconomyEventOpts } from "@/hooks/useEconomy";
 import { buildFocusGoalPlan, getMondayWeekRange, getPromptedDailySurplusSeconds, normalizeCarryoverMode, normalizeDistributionMode, normalizePriorityLevel } from "@/lib/focus-goals";
 import {
-  adjustActiveFocusSession,
   dedupeCategoriesByName,
   isSystemCountdownCategoryId,
   resolveFocusCategory,
@@ -18,9 +16,34 @@ import {
 } from "@/lib/focus-utils";
 import { getLogicalDayKey } from "@/lib/logical-day";
 import { todayISO } from "@/lib/utils";
+import { createBrowserUuidV4 } from "@/lib/browser-uuid";
+import {
+  isNewerFocusRuntimeSnapshot,
+  isCurrentFocusRuntimeSnapshotRequest,
+  mapFocusRuntimeRow,
+  reconcileFocusRuntimeSnapshot,
+  removeFocusRuntimeFromSessions,
+  type FocusRuntimeRow,
+} from "@/lib/focus-runtime";
+import {
+  FOCUS_COUNTER_DEVICE_ID_STORAGE_KEY,
+  applyAuthoritativeFocusCounterEvent,
+  applyAuthoritativeFocusCounterRow,
+  buildLegacyFocusCounterSnapshot,
+  getFocusCounterBackupStorageKey,
+  getFocusCounterMigrationBatchStorageKey,
+  isCurrentFocusCounterSnapshotRequest,
+  reconcileFocusCounterHistorySnapshot,
+  reconcileFocusCounterSnapshot,
+  type FocusCounterEventRow,
+  type FocusCounterMigrationResult,
+  type FocusCounterMutationResult,
+  type FocusCounterRow,
+} from "@/lib/focus-counter-sync";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
+type FocusRuntimeRpcResult = { runtime?: FocusRuntimeRow | null; deleted_session_id?: string; completed_session?: DbFocusSession; was_replayed?: boolean };
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
 
@@ -146,7 +169,11 @@ function readFocusCounters(userId: string | null | undefined) {
   if (!userId) {
     return [];
   }
-  return parseStoredJson<FocusCounter[]>(getFocusCountersStorageKey(userId), []);
+  return parseStoredJson<FocusCounter[]>(getFocusCountersStorageKey(userId), []).map((counter, index) => ({
+    ...counter,
+    sortOrder: Number.isFinite(counter.sortOrder) ? counter.sortOrder : index,
+    revision: Number.isFinite(counter.revision) ? counter.revision : 0,
+  }));
 }
 
 function readFocusCounterHistory(userId: string | null | undefined) {
@@ -192,32 +219,10 @@ export function mapFocusDailyGoalAdjustmentRow(row: DbFocusDailyGoalAdjustment):
 }
 
 export function mapActiveSessions(
-  rows: Array<{
-    category_id: string;
-    start_time: string | null;
-    accumulated_seconds: number;
-    is_running: boolean;
-  }>,
-  userId?: string | null,
+  rows: FocusRuntimeRow[],
+  _userId?: string | null,
 ): Record<string, ActiveFocusSession> {
-  const countdownMetadata = readCountdownMetadata();
-  const sessions = rows.reduce<Record<string, ActiveFocusSession>>((accumulator, row) => {
-    const metadata = countdownMetadata[row.category_id];
-    accumulator[row.category_id] = {
-      categoryId: row.category_id,
-      startTime: row.start_time ? Date.parse(row.start_time) : null,
-      accumulatedSeconds: row.accumulated_seconds,
-      isRunning: row.is_running,
-      mode: metadata?.mode === "countdown" ? "countdown" : "countup",
-      countdownTargetSeconds: metadata?.mode === "countdown" ? metadata.targetSeconds ?? null : null,
-    };
-    return accumulator;
-  }, {});
-  const localCountdownSession = readLocalActiveSession(userId);
-  if (localCountdownSession) {
-    sessions[localCountdownSession.categoryId] = localCountdownSession;
-  }
-  return sessions;
+  return reconcileFocusRuntimeSnapshot(rows);
 }
 
 export function mapFocusSessionRow(row: DbFocusSession): HistoricalFocusSession {
@@ -296,7 +301,6 @@ export function useFocus(
   client: SupabaseClient,
   userId: string | null,
   setMessage: SetMessage,
-  appendEconomyEvent: (opts: AppendEconomyEventOpts) => Promise<void>,
 ) {
   const [focusCategories, setFocusCategories] = useState<FocusCategory[]>([]);
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
@@ -305,37 +309,29 @@ export function useFocus(
   const [pendingDailyGoalSurplus, setPendingDailyGoalSurplus] = useState<PendingFocusDailySurplus | null>(null);
   const [focusCounterState, setFocusCounterState] = useState<FocusCounterState>({ counters: [], history: [], ownerUserId: null });
   const suppressCategoryReload = useRef(false);
+  const activeSessionsRef = useRef(activeSessions);
+  const runtimeRequestGenerationRef = useRef(0);
+  const counterRequestGenerationRef = useRef(0);
+  const focusCounterStateRef = useRef(focusCounterState);
+  const runtimeOperationIdsRef = useRef(new Map<string, string>());
+  const runtimeCreateSessionIdsRef = useRef(new Map<string, string>());
+  const completingRuntimeIdsRef = useRef(new Set<string>());
+  const migratedRuntimeUserRef = useRef<string | null>(null);
   const focusCounters = focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
   const focusCounterHistory = focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
 
-  const setFocusCounters: Dispatch<SetStateAction<FocusCounter[]>> = (updater) => {
-    setFocusCounterState((current) => {
-      const nextCounters = typeof updater === "function"
-        ? updater(current.counters)
-        : updater;
-      saveFocusCounters(userId, nextCounters);
-      return {
-        ...current,
-        counters: nextCounters,
-      };
-    });
-  };
+  useEffect(() => {
+    activeSessionsRef.current = activeSessions;
+  }, [activeSessions]);
 
   useEffect(() => {
-    const nextState = !userId
-      ? { counters: [], history: [], ownerUserId: null }
-      : {
-          counters: readFocusCounters(userId),
-          history: readFocusCounterHistory(userId),
-          ownerUserId: userId,
-        };
-    const timeoutId = window.setTimeout(() => {
-      setFocusCounterState(nextState);
-    }, 0);
+    focusCounterStateRef.current = focusCounterState;
+  }, [focusCounterState]);
 
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
+  useEffect(() => {
+    counterRequestGenerationRef.current += 1;
+    const nextState = { counters: [], history: [], ownerUserId: userId };
+    focusCounterStateRef.current = nextState;
   }, [userId]);
 
   useEffect(() => {
@@ -367,40 +363,341 @@ export function useFocus(
       });
   }, [client, setMessage, userId]);
 
-  async function persistActiveSession(categoryId: string, nextSession: ActiveFocusSession) {
-    if (!client || !userId) return false;
+  const applyRuntimeRow = useCallback((row: FocusRuntimeRow) => {
+    const session = mapFocusRuntimeRow(row);
+    if (!session) return;
+    runtimeRequestGenerationRef.current += 1;
+    setActiveSessions((current) => {
+      if (!isNewerFocusRuntimeSnapshot(session, current[session.categoryId])) return current;
+      const next = { ...current, [session.categoryId]: session };
+      activeSessionsRef.current = next;
+      return next;
+    });
+  }, []);
 
-    if (isSystemCountdownCategoryId(categoryId)) {
-      writeLocalActiveSession(userId, nextSession);
-      persistCountdownMetadata(categoryId, nextSession);
-      if (typeof BroadcastChannel !== "undefined") {
-        new BroadcastChannel("adhdice_focus_sync").postMessage("toggle");
-      }
-      return true;
-    }
-
-    const { error } = await client
+  const hydrateFocusRuntimes = useCallback(async () => {
+    if (!client || !userId) return;
+    const generation = ++runtimeRequestGenerationRef.current;
+    const { data, error } = await client
       .from("adhdice_focus_active_sessions")
-      .upsert(
-        {
-          user_id: userId,
-          category_id: categoryId,
-          start_time: nextSession.startTime ? new Date(nextSession.startTime).toISOString() : null,
-          accumulated_seconds: nextSession.accumulatedSeconds,
-          is_running: nextSession.isRunning,
-        },
-        { onConflict: "user_id,category_id" },
-      );
-
+      .select("session_id,user_id,runtime_kind,category_id,mode,mode_authoritative,countdown_target_seconds,state,current_run_started_at,accumulated_seconds,revision,created_at,updated_at")
+      .eq("user_id", userId);
     if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return false;
+      if (!/does not exist|schema cache/i.test(error.message)) setMessage({ tone: "warn", text: `Focus timer sync failed: ${error.message}` });
+      return;
     }
-    persistCountdownMetadata(categoryId, nextSession);
+    if (!isCurrentFocusRuntimeSnapshotRequest(generation, runtimeRequestGenerationRef.current)) return;
+    const rows = (data ?? []) as Array<FocusRuntimeRow & { mode_authoritative?: boolean }>;
+    setActiveSessions(() => {
+      const next = reconcileFocusRuntimeSnapshot(rows);
+      activeSessionsRef.current = next;
+      return next;
+    });
+
+    if (migratedRuntimeUserRef.current === userId) return;
+    migratedRuntimeUserRef.current = userId;
+    const legacyMetadata = readCountdownMetadata();
+    const legacyStandalone = readLocalActiveSession(userId);
+    const migrationKeyPrefix = `adhdice_focus_runtime_migration_op:${userId}:`;
+    const getMigrationOperationId = (slot: string) => {
+      const key = `${migrationKeyPrefix}${slot}`;
+      const stored = window.localStorage.getItem(key);
+      if (stored) return stored;
+      const operationId = createBrowserUuidV4();
+      window.localStorage.setItem(key, operationId);
+      return operationId;
+    };
+
+    for (const row of rows) {
+      if (row.runtime_kind !== "category" || !row.category_id) continue;
+      const metadata = legacyMetadata[row.category_id];
+      if (metadata?.mode !== "countdown" || !metadata.targetSeconds) continue;
+      if (row.mode_authoritative) {
+        delete legacyMetadata[row.category_id];
+        writeCountdownMetadata(legacyMetadata);
+        continue;
+      }
+      const { data: migrated, error: migrationError } = await client.rpc("adhdice_migrate_focus_runtime", {
+        p_operation_id: getMigrationOperationId(row.category_id),
+        p_runtime_kind: "category",
+        p_category_id: row.category_id,
+        p_session_id: row.session_id,
+        p_expected_revision: row.revision,
+        p_mode: "countdown",
+        p_countdown_target_seconds: metadata.targetSeconds,
+      });
+      if (!migrationError && migrated) {
+        const result = migrated as FocusRuntimeRpcResult;
+        if (result.runtime) applyRuntimeRow(result.runtime);
+        delete legacyMetadata[row.category_id];
+        writeCountdownMetadata(legacyMetadata);
+        window.localStorage.removeItem(`${migrationKeyPrefix}${row.category_id}`);
+      }
+    }
+
+    if (legacyStandalone) {
+      const { data: migrated, error: migrationError } = await client.rpc("adhdice_migrate_focus_runtime", {
+        p_operation_id: getMigrationOperationId("standalone"),
+        p_runtime_kind: "standalone_countdown",
+        p_session_id: legacyStandalone.sessionId && isUuid(legacyStandalone.sessionId) ? legacyStandalone.sessionId : createBrowserUuidV4(),
+        p_mode: "countdown",
+        p_countdown_target_seconds: legacyStandalone.countdownTargetSeconds ?? 60,
+        p_legacy_started_at: legacyStandalone.startTime ? new Date(legacyStandalone.startTime).toISOString() : null,
+        p_legacy_accumulated_seconds: legacyStandalone.accumulatedSeconds,
+        p_legacy_is_running: legacyStandalone.isRunning,
+      });
+      if (!migrationError && migrated) {
+        const result = migrated as FocusRuntimeRpcResult;
+        if (result.runtime) applyRuntimeRow(result.runtime);
+        writeLocalActiveSession(userId, null);
+        delete legacyMetadata[legacyStandalone.categoryId];
+        writeCountdownMetadata(legacyMetadata);
+        window.localStorage.removeItem(`${migrationKeyPrefix}standalone`);
+      }
+    }
+  }, [applyRuntimeRow, client, setMessage, userId]);
+
+  useEffect(() => {
+    if (!client || !userId) {
+      migratedRuntimeUserRef.current = null;
+      return;
+    }
+    void hydrateFocusRuntimes();
+    const channel = client
+      .channel(`focus-runtime:${userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "adhdice_focus_active_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
+        if (payload.eventType === "DELETE") {
+          const deleted = payload.old as Partial<FocusRuntimeRow>;
+          runtimeRequestGenerationRef.current += 1;
+          setActiveSessions((current) => {
+            const next = removeFocusRuntimeFromSessions(current, deleted);
+            activeSessionsRef.current = next;
+            return next;
+          });
+          return;
+        }
+        if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+          applyRuntimeRow(payload.new as FocusRuntimeRow);
+        }
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
+        const entry = mapFocusSessionRow(payload.new as DbFocusSession);
+        setFocusHistory((current) => {
+          const next = [entry, ...current.filter((candidate) => candidate.id !== entry.id)];
+          saveFocusHistory(next);
+          return next;
+        });
+      })
+      .subscribe((status) => {
+        if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status)) void hydrateFocusRuntimes();
+      });
+    const refetchWhenVisible = () => { if (document.visibilityState === "visible") void hydrateFocusRuntimes(); };
+    const refetch = () => { void hydrateFocusRuntimes(); };
+    document.addEventListener("visibilitychange", refetchWhenVisible);
+    window.addEventListener("pageshow", refetch);
+    window.addEventListener("online", refetch);
+    const broadcast = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("adhdice_focus_sync") : null;
+    if (broadcast) broadcast.onmessage = refetch;
+    return () => {
+      document.removeEventListener("visibilitychange", refetchWhenVisible);
+      window.removeEventListener("pageshow", refetch);
+      window.removeEventListener("online", refetch);
+      broadcast?.close();
+      void client.removeChannel(channel);
+    };
+  }, [applyRuntimeRow, client, hydrateFocusRuntimes, userId]);
+
+  const replaceFocusCounterState = useCallback((ownerUserId: string, counters: FocusCounter[], history: FocusCounterHistoryEntry[]) => {
+    const nextState = { counters, history, ownerUserId };
+    focusCounterStateRef.current = nextState;
+    saveFocusCounters(ownerUserId, counters);
+    saveFocusCounterHistory(ownerUserId, history);
+    setFocusCounterState(nextState);
+  }, []);
+
+  const hydrateFocusCounters = useCallback(async () => {
+    if (!client || !userId) return;
+    const generation = ++counterRequestGenerationRef.current;
+    const [counterResponse, eventResponse] = await Promise.all([
+      client
+        .from("adhdice_focus_counters")
+        .select("*")
+        .eq("user_id", userId)
+        .is("deleted_at", null)
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true }),
+      client
+        .from("adhdice_focus_counter_events")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false }),
+    ]);
+    const error = counterResponse.error ?? eventResponse.error;
+    if (error) {
+      if (!/does not exist|schema cache/i.test(error.message)) {
+        setMessage({ tone: "warn", text: `Focus counter sync failed: ${error.message}` });
+      }
+      return;
+    }
+    if (!isCurrentFocusCounterSnapshotRequest(generation, counterRequestGenerationRef.current)) return;
+    replaceFocusCounterState(
+      userId,
+      reconcileFocusCounterSnapshot((counterResponse.data ?? []) as FocusCounterRow[]),
+      reconcileFocusCounterHistorySnapshot((eventResponse.data ?? []) as FocusCounterEventRow[]),
+    );
+  }, [client, replaceFocusCounterState, setMessage, userId]);
+
+  const applyFocusCounterMutationResult = useCallback((result: FocusCounterMutationResult) => {
+    if (!userId) return;
+    if (focusCounterStateRef.current.ownerUserId !== userId) return;
+    counterRequestGenerationRef.current += 1;
+    setFocusCounterState((current) => {
+      if (current.ownerUserId !== userId) return current;
+      const counters = result.counter ? applyAuthoritativeFocusCounterRow(current.counters, result.counter) : current.counters;
+      const history = result.event ? applyAuthoritativeFocusCounterEvent(current.history, result.event) : current.history;
+      const next = { counters, history, ownerUserId: userId };
+      focusCounterStateRef.current = next;
+      saveFocusCounters(userId, counters);
+      saveFocusCounterHistory(userId, history);
+      return next;
+    });
+  }, [userId]);
+
+  useEffect(() => {
+    if (!client || !userId) return;
+    let cancelled = false;
+    const legacyCounters = readFocusCounters(userId);
+    const legacyHistory = readFocusCounterHistory(userId);
+
+    const migrateThenHydrate = async () => {
+      let deviceId = window.localStorage.getItem(FOCUS_COUNTER_DEVICE_ID_STORAGE_KEY);
+      if (!deviceId) {
+        deviceId = createBrowserUuidV4();
+        window.localStorage.setItem(FOCUS_COUNTER_DEVICE_ID_STORAGE_KEY, deviceId);
+      }
+      const batchKey = getFocusCounterMigrationBatchStorageKey(userId, deviceId);
+      let migrationBatchId = window.localStorage.getItem(batchKey);
+      if (!migrationBatchId) {
+        migrationBatchId = createBrowserUuidV4();
+        window.localStorage.setItem(batchKey, migrationBatchId);
+      }
+      const submittedSnapshot = buildLegacyFocusCounterSnapshot(legacyCounters, legacyHistory);
+      const { data, error } = await client.rpc("adhdice_migrate_focus_counters", {
+        p_device_installation_id: deviceId,
+        p_migration_batch_id: migrationBatchId,
+        p_submitted_snapshot: submittedSnapshot,
+      });
+      if (cancelled) return;
+      if (error) {
+        if (!/does not exist|schema cache/i.test(error.message)) {
+          setMessage({ tone: "warn", text: `Focus counter migration failed: ${error.message}` });
+        }
+        return;
+      }
+      const result = data as FocusCounterMigrationResult;
+      if (result.local_differed) {
+        window.localStorage.setItem(
+          getFocusCounterBackupStorageKey(userId, migrationBatchId),
+          JSON.stringify({ backedUpAt: new Date().toISOString(), snapshot: submittedSnapshot }),
+        );
+        setMessage({ tone: "warn", text: "This device’s local Focus counters differed from the synced counters. A local backup was saved and the server version was adopted." });
+      }
+      replaceFocusCounterState(
+        userId,
+        reconcileFocusCounterSnapshot(result.counters ?? []),
+        reconcileFocusCounterHistorySnapshot(result.events ?? []),
+      );
+      await hydrateFocusCounters();
+    };
+    void migrateThenHydrate();
+
+    const channel = client
+      .channel(`focus-counters:${userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "adhdice_focus_counters", filter: `user_id=eq.${userId}` }, (payload) => {
+        if (payload.eventType !== "INSERT" && payload.eventType !== "UPDATE") return;
+        if (focusCounterStateRef.current.ownerUserId !== userId) return;
+        counterRequestGenerationRef.current += 1;
+        const row = payload.new as FocusCounterRow;
+        setFocusCounterState((current) => {
+          if (current.ownerUserId !== userId) return current;
+          const counters = applyAuthoritativeFocusCounterRow(current.counters, row);
+          const next = { ...current, counters };
+          focusCounterStateRef.current = next;
+          saveFocusCounters(userId, counters);
+          return next;
+        });
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_counter_events", filter: `user_id=eq.${userId}` }, (payload) => {
+        if (focusCounterStateRef.current.ownerUserId !== userId) return;
+        counterRequestGenerationRef.current += 1;
+        const row = payload.new as FocusCounterEventRow;
+        setFocusCounterState((current) => {
+          if (current.ownerUserId !== userId) return current;
+          const history = applyAuthoritativeFocusCounterEvent(current.history, row);
+          const next = { ...current, history };
+          focusCounterStateRef.current = next;
+          saveFocusCounterHistory(userId, history);
+          return next;
+        });
+      })
+      .subscribe((status) => {
+        if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status)) void hydrateFocusCounters();
+      });
+    const refetchWhenVisible = () => { if (document.visibilityState === "visible") void hydrateFocusCounters(); };
+    const refetch = () => { void hydrateFocusCounters(); };
+    document.addEventListener("visibilitychange", refetchWhenVisible);
+    window.addEventListener("pageshow", refetch);
+    window.addEventListener("online", refetch);
+    const broadcast = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("adhdice_focus_counter_sync") : null;
+    if (broadcast) broadcast.onmessage = refetch;
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", refetchWhenVisible);
+      window.removeEventListener("pageshow", refetch);
+      window.removeEventListener("online", refetch);
+      broadcast?.close();
+      void client.removeChannel(channel);
+    };
+  }, [client, hydrateFocusCounters, replaceFocusCounterState, setMessage, userId]);
+
+  async function transitionFocusRuntime(categoryId: string, action: string, args: Record<string, unknown> = {}) {
+    if (!client || !userId) return null;
+    const current = activeSessionsRef.current[categoryId];
+    const lifecycleKey = `${categoryId}:${current?.sessionId ?? "new"}:${current?.revision ?? 0}:${action}:${JSON.stringify(args)}`;
+    let operationId = runtimeOperationIdsRef.current.get(lifecycleKey);
+    if (!operationId) {
+      operationId = createBrowserUuidV4();
+      runtimeOperationIdsRef.current.set(lifecycleKey, operationId);
+    }
+    runtimeRequestGenerationRef.current += 1;
+    const { data, error } = await client.rpc("adhdice_transition_focus_runtime", {
+      p_operation_id: operationId,
+      p_action: action,
+      p_session_id: current?.sessionId ?? null,
+      p_expected_revision: current?.revision ?? null,
+      ...args,
+    });
+    if (error) {
+      setMessage({ tone: "warn", text: `Focus timer update failed: ${error.message}` });
+      if (/stale|revision|no longer exists/i.test(`${error.message} ${error.details ?? ""}`)) await hydrateFocusRuntimes();
+      return null;
+    }
+    runtimeOperationIdsRef.current.delete(lifecycleKey);
+    const result = data as FocusRuntimeRpcResult;
+    if (result.runtime) applyRuntimeRow(result.runtime);
+    if (result.deleted_session_id) {
+      setActiveSessions((sessions) => {
+        const next = removeFocusRuntimeFromSessions(sessions, { session_id: result.deleted_session_id });
+        activeSessionsRef.current = next;
+        return next;
+      });
+    }
     if (typeof BroadcastChannel !== "undefined") {
-      new BroadcastChannel("adhdice_focus_sync").postMessage("toggle");
+      const broadcast = new BroadcastChannel("adhdice_focus_sync");
+      broadcast.postMessage("transition");
+      broadcast.close();
     }
-    return true;
+    return result;
   }
 
   function queueDailySurplusPrompt(previousHistory: HistoricalFocusSession[], nextHistory: HistoricalFocusSession[], entry: HistoricalFocusSession) {
@@ -487,70 +784,38 @@ export function useFocus(
 
   async function handleToggleTimer(categoryId: string, options?: { countdownTargetSeconds?: number | null; mode?: "countdown" | "countup" }) {
     if (!client || !userId) return;
-
-    const current = activeSessions[categoryId] ?? {
-      categoryId,
-      startTime: null,
-      accumulatedSeconds: 0,
-      isRunning: false,
-      mode: options?.mode ?? "countup",
-      countdownTargetSeconds: options?.countdownTargetSeconds ?? null,
-    };
-    const now = Date.now();
-    const shouldCreateCountdown = !activeSessions[categoryId] && options?.mode === "countdown";
-    const nextSession = shouldCreateCountdown
-      ? {
-          ...current,
-          isRunning: false,
-          startTime: null,
-          mode: "countdown" as const,
-          countdownTargetSeconds: options?.countdownTargetSeconds ?? null,
-        }
-      : current.isRunning
-      ? {
-          ...current,
-          isRunning: false,
-          startTime: null,
-          accumulatedSeconds: current.accumulatedSeconds +
-            (current.startTime ? Math.floor((now - current.startTime) / 1000) : 0),
-        }
-      : {
-          ...current,
-          isRunning: true,
-          startTime: now,
-          mode: shouldCreateCountdown ? "countdown" : current.mode ?? "countup",
-          countdownTargetSeconds: shouldCreateCountdown ? options.countdownTargetSeconds ?? null : current.countdownTargetSeconds ?? null,
-        };
-
-    setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
-    await persistActiveSession(categoryId, nextSession);
+    const current = activeSessionsRef.current[categoryId];
+    if (!current) {
+      const isStandalone = isSystemCountdownCategoryId(categoryId);
+      let sessionId = runtimeCreateSessionIdsRef.current.get(categoryId);
+      if (!sessionId) {
+        sessionId = createBrowserUuidV4();
+        runtimeCreateSessionIdsRef.current.set(categoryId, sessionId);
+      }
+      const result = await transitionFocusRuntime(categoryId, "create", {
+        p_session_id: sessionId,
+        p_runtime_kind: isStandalone ? "standalone_countdown" : "category",
+        p_category_id: isStandalone ? null : categoryId,
+        p_mode: options?.mode === "countdown" || isStandalone ? "countdown" : "count_up",
+        p_countdown_target_seconds: options?.countdownTargetSeconds ?? null,
+        p_start: options?.mode !== "countdown",
+      });
+      if (result) runtimeCreateSessionIdsRef.current.delete(categoryId);
+      return;
+    }
+    await transitionFocusRuntime(categoryId, current.isRunning ? "pause" : "resume");
   }
 
   async function handleSetCountdownTarget(categoryId: string, targetSeconds: number, options?: { start?: boolean }) {
     if (!client || !userId) return;
 
-    const current = activeSessions[categoryId];
+    const current = activeSessionsRef.current[categoryId];
     if (!current) return;
-
-    const nextTargetSeconds = Math.max(60, targetSeconds);
-    const shouldStart = options?.start === true;
-    const nextStartTime = shouldStart ? Date.now() : current.isRunning ? Date.now() : null;
-    const nextSession: ActiveFocusSession = {
-      ...current,
-      mode: "countdown",
-      countdownTargetSeconds: nextTargetSeconds,
-      accumulatedSeconds: shouldStart
-        ? 0
-        : current.mode === "countdown"
-        ? Math.min(current.accumulatedSeconds, nextTargetSeconds)
-        : 0,
-      isRunning: shouldStart ? true : current.isRunning,
-      startTime: nextStartTime,
-    };
-
-    setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
-    const persisted = await persistActiveSession(categoryId, nextSession);
-    if (persisted) {
+    const result = await transitionFocusRuntime(categoryId, "configure", {
+      p_countdown_target_seconds: Math.max(60, targetSeconds),
+      p_start: options?.start === true,
+    });
+    if (result) {
       setMessage({ tone: "good", text: "Countdown updated." });
     }
   }
@@ -560,65 +825,42 @@ export function useFocus(
     data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string; completionTime?: string },
   ) {
     if (!client || !userId) return;
-    if (isSystemCountdownCategoryId(categoryId)) return;
-
-    const activeSession = activeSessions[categoryId];
-    if (!activeSession) return;
+    const activeSession = activeSessionsRef.current[categoryId];
+    if (!activeSession?.sessionId || activeSession.revision === undefined) return;
 
     const category = resolveFocusCategory(categoryId, focusCategories);
     if (!category) return;
 
-    const now = Date.now();
-    const elapsed = activeSession.isRunning && activeSession.startTime
-      ? Math.floor((now - activeSession.startTime) / 1000)
-      : 0;
-    const elapsedTotalSeconds = activeSession.accumulatedSeconds + elapsed;
-    const totalSeconds = activeSession.mode === "countdown" && activeSession.countdownTargetSeconds
-      ? Math.min(elapsedTotalSeconds, activeSession.countdownTargetSeconds)
-      : elapsedTotalSeconds;
-    if (totalSeconds < 1) return;
-
+    if (completingRuntimeIdsRef.current.has(activeSession.sessionId)) return;
+    completingRuntimeIdsRef.current.add(activeSession.sessionId);
     const sessionDate = data?.date ?? (activeSession.startTime ? getLogicalDayKey(new Date(activeSession.startTime)) : todayISO());
-    const completedAt = completionIsoFromDateTime(sessionDate, data?.completionTime) ?? new Date(now).toISOString();
-    const payload = {
-      user_id: userId,
-      category_id: isSystemCountdownCategoryId(categoryId) ? null : categoryId,
-      title_snapshot: sanitizeFocusLabel(data?.title ?? category.title, "Untitled Session"),
-      focus_type_snapshot: sanitizeFocusLabel(data?.focusType ?? category.focusType, "Work"),
-      focus_subtype_snapshot: sanitizeOptionalFocusLabel(data?.focusSubtype ?? category.focusSubtype),
-      focus_subtype_2_snapshot: sanitizeOptionalFocusLabel(data?.focusSubtype2 ?? category.focusSubtype2),
-      session_date: sessionDate,
-      duration_seconds: totalSeconds,
-      notes: data?.notes || null,
-      started_at: activeSession.startTime ? new Date(activeSession.startTime).toISOString() : null,
-      ended_at: completedAt,
-      source: "timer" as const,
-    };
-
-    const { data: inserted, error } = await client
-      .from("adhdice_focus_sessions")
-      .insert(payload)
-      .select("*")
-      .single();
-
-    if (error) { setMessage({ tone: "warn", text: error.message }); return; }
+    const lifecycleKey = `complete:${activeSession.sessionId}`;
+    let operationId = runtimeOperationIdsRef.current.get(lifecycleKey);
+    if (!operationId) {
+      operationId = createBrowserUuidV4();
+      runtimeOperationIdsRef.current.set(lifecycleKey, operationId);
+    }
+    runtimeRequestGenerationRef.current += 1;
+    const { data: completedResult, error } = await client.rpc("adhdice_complete_focus_runtime", {
+      p_operation_id: operationId,
+      p_session_id: activeSession.sessionId,
+      p_expected_revision: activeSession.revision,
+      p_title: sanitizeFocusLabel(data?.title ?? category.title, "Untitled Session"),
+      p_focus_type: sanitizeFocusLabel(data?.focusType ?? category.focusType, "Work"),
+      p_focus_subtype: sanitizeOptionalFocusLabel(data?.focusSubtype ?? category.focusSubtype),
+      p_focus_subtype_2: sanitizeOptionalFocusLabel(data?.focusSubtype2 ?? category.focusSubtype2),
+      p_notes: data?.notes || null,
+      p_session_date: sessionDate,
+    });
+    completingRuntimeIdsRef.current.delete(activeSession.sessionId);
+    if (error) {
+      setMessage({ tone: "warn", text: `Focus completion failed: ${error.message}` });
+      if (/stale|revision|no longer exists/i.test(`${error.message} ${error.details ?? ""}`)) await hydrateFocusRuntimes();
+      return;
+    }
+    runtimeOperationIdsRef.current.delete(lifecycleKey);
+    const inserted = (completedResult as FocusRuntimeRpcResult)?.completed_session;
     if (!inserted) { setMessage({ tone: "warn", text: "Focus session saved, but the response was empty." }); return; }
-
-    let deleteError: { message: string } | null = null;
-    if (!isSystemCountdownCategoryId(categoryId)) {
-      const deleteResult = await client
-        .from("adhdice_focus_active_sessions")
-        .delete()
-        .eq("user_id", userId)
-        .eq("category_id", categoryId);
-      deleteError = deleteResult.error;
-    }
-
-    if (deleteError) { setMessage({ tone: "warn", text: deleteError.message }); return; }
-    persistCountdownMetadata(categoryId, null);
-    if (isSystemCountdownCategoryId(categoryId)) {
-      writeLocalActiveSession(userId, null);
-    }
 
     const nextEntry = mergeStoredFocusHistory([
       {
@@ -631,145 +873,50 @@ export function useFocus(
     ])[0];
 
     const previousHistorySnapshot = focusHistory;
-    const nextHistorySnapshot = [nextEntry, ...focusHistory];
+    const nextHistorySnapshot = [nextEntry, ...focusHistory.filter((entry) => entry.id !== nextEntry.id)];
     setFocusHistory((prev) => {
-      const nextHistory = [nextEntry, ...prev];
+      const nextHistory = [nextEntry, ...prev.filter((entry) => entry.id !== nextEntry.id)];
       saveFocusHistory(nextHistory);
       return nextHistory;
     });
-    queueDailySurplusPrompt(previousHistorySnapshot, nextHistorySnapshot, nextEntry);
+    if (!isSystemCountdownCategoryId(categoryId)) queueDailySurplusPrompt(previousHistorySnapshot, nextHistorySnapshot, nextEntry);
     setActiveSessions((prev) => {
+      if (prev[categoryId]?.sessionId !== activeSession.sessionId) return prev;
       const next = { ...prev };
       delete next[categoryId];
+      activeSessionsRef.current = next;
       return next;
     });
     setMessage({ tone: "good", text: "Focus session saved." });
 
-    const focusMinutes = Math.floor(totalSeconds / 60);
-    if (focusMinutes >= 1) {
-      void appendEconomyEvent({
-        source: "focus",
-        refId: inserted.id,
-        points: 0,
-        xp: Math.floor(focusMinutes * 1.5),
-        reason: `Focus session: ${focusMinutes}m`,
-      });
-    }
-
     if (typeof BroadcastChannel !== "undefined") {
-      new BroadcastChannel("adhdice_focus_sync").postMessage("finish");
+      const broadcast = new BroadcastChannel("adhdice_focus_sync");
+      broadcast.postMessage("finish");
+      broadcast.close();
     }
   }
 
   async function handleAdjustTimer(categoryId: string, deltaSeconds: number) {
     if (!client || !userId) return;
 
-    const current = activeSessions[categoryId] ?? {
-      categoryId,
-      startTime: null,
-      accumulatedSeconds: 0,
-      isRunning: false,
-    };
-    if (current.mode === "countdown" && current.countdownTargetSeconds) {
-      const now = Date.now();
-      const elapsed = current.isRunning && current.startTime
-        ? Math.max(0, Math.floor((now - current.startTime) / 1000))
-        : 0;
-      const nextSession: ActiveFocusSession = {
-        ...current,
-        accumulatedSeconds: current.accumulatedSeconds + elapsed,
-        countdownTargetSeconds: Math.max(60, current.countdownTargetSeconds + deltaSeconds),
-        startTime: current.isRunning ? now : null,
-      };
-      setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
-      const persisted = await persistActiveSession(categoryId, nextSession);
-      if (persisted) {
-        setMessage({ tone: "good", text: "Timer adjusted." });
-      }
-      return;
-    }
-
-    const nextSession = adjustActiveFocusSession(current, deltaSeconds, Date.now());
-
-    setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
-
-    const { error } = await client
-      .from("adhdice_focus_active_sessions")
-      .upsert(
-        {
-          user_id: userId,
-          category_id: categoryId,
-          start_time: nextSession.startTime ? new Date(nextSession.startTime).toISOString() : null,
-          accumulated_seconds: nextSession.accumulatedSeconds,
-          is_running: nextSession.isRunning,
-        },
-        { onConflict: "user_id,category_id" },
-      );
-
-    if (error) { setMessage({ tone: "warn", text: error.message }); return; }
-    persistCountdownMetadata(categoryId, nextSession);
-
-    setMessage({ tone: "good", text: "Timer adjusted." });
-    if (typeof BroadcastChannel !== "undefined") {
-      new BroadcastChannel("adhdice_focus_sync").postMessage("adjust");
-    }
+    if (!activeSessionsRef.current[categoryId]) return;
+    const result = await transitionFocusRuntime(categoryId, "adjust", { p_delta_seconds: deltaSeconds });
+    if (result) setMessage({ tone: "good", text: "Timer adjusted." });
   }
 
   async function handleResetTimer(categoryId: string) {
     if (!client || !userId) return;
 
-    if (isSystemCountdownCategoryId(categoryId)) {
-      const current = activeSessions[categoryId];
-      if (!current) return;
-
-      const nextSession: ActiveFocusSession = {
-        ...current,
-        accumulatedSeconds: 0,
-        isRunning: current.mode === "countdown" && Boolean(current.countdownTargetSeconds),
-        startTime: current.mode === "countdown" && current.countdownTargetSeconds ? Date.now() : null,
-      };
-      setActiveSessions((prev) => ({ ...prev, [categoryId]: nextSession }));
-      const persisted = await persistActiveSession(categoryId, nextSession);
-      if (persisted) {
-        setMessage({ tone: "good", text: "Timer reset." });
-      }
-      return;
-    }
-
-    const { error } = await client
-      .from("adhdice_focus_active_sessions")
-      .delete()
-      .eq("user_id", userId)
-      .eq("category_id", categoryId);
-
-    if (error) { setMessage({ tone: "warn", text: error.message }); return; }
-
-    setActiveSessions((prev) => {
-      const next = { ...prev };
-      delete next[categoryId];
-      return next;
-    });
-    persistCountdownMetadata(categoryId, null);
-    setMessage({ tone: "good", text: "Timer reset." });
+    const result = await transitionFocusRuntime(categoryId, isSystemCountdownCategoryId(categoryId) ? "reset" : "delete");
+    if (result) setMessage({ tone: "good", text: "Timer reset." });
   }
 
   async function handleDeleteTimer(categoryId: string) {
     if (!client || !userId) return;
 
-    if (isSystemCountdownCategoryId(categoryId)) {
-      setActiveSessions((prev) => {
-        const next = { ...prev };
-        delete next[categoryId];
-        return next;
-      });
-      persistCountdownMetadata(categoryId, null);
-      writeLocalActiveSession(userId, null);
-      setMessage({ tone: "good", text: "Timer deleted." });
-      if (typeof BroadcastChannel !== "undefined") {
-        new BroadcastChannel("adhdice_focus_sync").postMessage("toggle");
-      }
-      return;
-    }
+    if (!activeSessionsRef.current[categoryId]) return;
+    const result = await transitionFocusRuntime(categoryId, "delete");
+    if (result) setMessage({ tone: "good", text: "Timer deleted." });
   }
 
   async function handleManualFocusEntry(data: {
@@ -1026,7 +1173,44 @@ export function useFocus(
     setMessage({ tone: "good", text: "Focus entry deleted." });
   }
 
-  function handleCreateFocusCounter(input: {
+  async function mutateFocusCounter(
+    counterId: string,
+    action: "create" | "adjust" | "set_value" | "update" | "delete",
+    expectedRevision: number | null,
+    payload: Record<string, unknown>,
+  ) {
+    if (!client || !userId) return null;
+    const operationId = createBrowserUuidV4();
+    counterRequestGenerationRef.current += 1;
+    const { data, error } = await client.rpc("adhdice_mutate_focus_counter", {
+      p_operation_id: operationId,
+      p_counter_id: counterId,
+      p_expected_revision: expectedRevision,
+      p_action: action,
+      p_action_payload: { ...payload, client_created_at: new Date().toISOString() },
+    });
+    if (focusCounterStateRef.current.ownerUserId !== userId) return null;
+    if (error) {
+      setMessage({ tone: "warn", text: `Focus counter update failed: ${error.message}` });
+      await hydrateFocusCounters();
+      return null;
+    }
+    const result = data as FocusCounterMutationResult;
+    applyFocusCounterMutationResult(result);
+    if (!result.ok || result.conflict) {
+      setMessage({ tone: "warn", text: "That counter changed on another device. The current server value has been restored." });
+      await hydrateFocusCounters();
+      return null;
+    }
+    if (typeof BroadcastChannel !== "undefined") {
+      const broadcast = new BroadcastChannel("adhdice_focus_counter_sync");
+      broadcast.postMessage("mutation");
+      broadcast.close();
+    }
+    return result;
+  }
+
+  async function handleCreateFocusCounter(input: {
     color: string;
     goal: number;
     icon: string;
@@ -1034,108 +1218,55 @@ export function useFocus(
     step: number;
     title: string;
   }) {
-    const timestamp = new Date().toISOString();
-    const nextCounter: FocusCounter = {
+    const result = await mutateFocusCounter(createBrowserUuidV4(), "create", null, {
       color: input.color,
-      createdAt: timestamp,
       goal: Math.max(1, Math.floor(input.goal)),
       icon: input.icon.trim() || "Hash",
-      id: createClientSideId("focus-counter"),
       step: Math.max(1, Math.floor(input.step)),
       title: input.title.trim() || "Counter",
-      updatedAt: timestamp,
       value: Math.floor(input.initialValue),
+    });
+    if (result) setMessage({ tone: "good", text: "Counter created." });
+  }
+
+  async function handleUpdateFocusCounter(counterId: string, updates: Partial<Pick<FocusCounter, "color" | "goal" | "icon" | "step" | "title" | "value">>) {
+    const target = focusCounterStateRef.current.ownerUserId === userId
+      ? focusCounterStateRef.current.counters.find((counter) => counter.id === counterId)
+      : undefined;
+    if (!target) return;
+    const valueChanged = updates.value !== undefined && Math.floor(updates.value) !== target.value;
+    const sanitizedUpdates: Partial<Pick<FocusCounter, "color" | "goal" | "icon" | "step" | "title" | "value">> = {
+      ...updates,
+      ...(updates.goal !== undefined ? { goal: Math.max(1, Math.floor(updates.goal)) } : {}),
+      ...(updates.step !== undefined ? { step: Math.max(1, Math.floor(updates.step)) } : {}),
+      ...(updates.title !== undefined ? { title: updates.title.trim() || target.title } : {}),
+      ...(updates.value !== undefined ? { value: Math.floor(updates.value) } : {}),
     };
-    setFocusCounters((prev) => {
-      const nextCounters = [nextCounter, ...prev];
-      saveFocusCounters(userId, nextCounters);
-      return nextCounters;
-    });
-    setMessage({ tone: "good", text: "Counter created." });
+    if (!valueChanged) delete sanitizedUpdates.value;
+    const result = await mutateFocusCounter(counterId, valueChanged ? "set_value" : "update", target.revision, sanitizedUpdates);
+    if (result) setMessage({ tone: "good", text: "Counter updated." });
   }
 
-  function handleUpdateFocusCounter(counterId: string, updates: Partial<Pick<FocusCounter, "color" | "goal" | "icon" | "step" | "title" | "value">>) {
-    setFocusCounters((prev) => {
-      const nextCounters = prev.map((counter) => (
-        counter.id === counterId
-          ? {
-              ...counter,
-              ...updates,
-              goal: updates.goal !== undefined ? Math.max(1, Math.floor(updates.goal)) : counter.goal,
-              step: updates.step !== undefined ? Math.max(1, Math.floor(updates.step)) : counter.step,
-              title: updates.title !== undefined ? (updates.title.trim() || counter.title) : counter.title,
-              value: updates.value !== undefined ? Math.floor(updates.value) : counter.value,
-              updatedAt: new Date().toISOString(),
-            }
-          : counter
-      ));
-      saveFocusCounters(userId, nextCounters);
-      return nextCounters;
-    });
-    setMessage({ tone: "good", text: "Counter updated." });
-  }
-
-  function handleDeleteFocusCounter(counterId: string) {
-    const targetCounter = focusCounters.find((counter) => counter.id === counterId);
+  async function handleDeleteFocusCounter(counterId: string) {
+    const targetCounter = focusCounterStateRef.current.ownerUserId === userId
+      ? focusCounterStateRef.current.counters.find((counter) => counter.id === counterId)
+      : undefined;
     if (!targetCounter) {
       return;
     }
     if (!window.confirm(`Delete "${targetCounter.title}"? This cannot be undone.`)) {
       return;
     }
-    setFocusCounterState((current) => {
-      if (current.ownerUserId !== userId) {
-        return current;
-      }
-      const nextCounters = current.counters.filter((counter) => counter.id !== counterId);
-      const nextHistory = current.history.filter((entry) => entry.counterId !== counterId);
-      saveFocusCounters(userId, nextCounters);
-      saveFocusCounterHistory(userId, nextHistory);
-      return {
-        counters: nextCounters,
-        history: nextHistory,
-        ownerUserId: current.ownerUserId,
-      };
-    });
-    setMessage({ tone: "good", text: "Counter deleted." });
+    const result = await mutateFocusCounter(counterId, "delete", targetCounter.revision, {});
+    if (result) setMessage({ tone: "good", text: "Counter deleted." });
   }
 
-  function handleAdjustFocusCounter(counterId: string, direction: 1 | -1) {
-    setFocusCounterState((current) => {
-      if (current.ownerUserId !== userId) {
-        return current;
-      }
-      const targetCounter = current.counters.find((counter) => counter.id === counterId);
-      if (!targetCounter) {
-        return current;
-      }
-
-      const delta = targetCounter.step * direction;
-      const nextValue = targetCounter.value + delta;
-      const timestamp = new Date().toISOString();
-      const nextCounters = current.counters.map((counter) => (
-        counter.id === counterId
-          ? { ...counter, updatedAt: timestamp, value: nextValue }
-          : counter
-      ));
-      const historyEntry: FocusCounterHistoryEntry = {
-        counterId,
-        counterTitleSnapshot: targetCounter.title,
-        createdAt: timestamp,
-        delta,
-        id: createClientSideId("focus-counter-history"),
-        nextValue,
-        stepSnapshot: targetCounter.step,
-      };
-      const nextHistory = [historyEntry, ...current.history].slice(0, 120);
-      saveFocusCounters(userId, nextCounters);
-      saveFocusCounterHistory(userId, nextHistory);
-      return {
-        counters: nextCounters,
-        history: nextHistory,
-        ownerUserId: current.ownerUserId,
-      };
-    });
+  async function handleAdjustFocusCounter(counterId: string, direction: 1 | -1) {
+    const target = focusCounterStateRef.current.ownerUserId === userId
+      ? focusCounterStateRef.current.counters.find((counter) => counter.id === counterId)
+      : undefined;
+    if (!target) return;
+    await mutateFocusCounter(counterId, "adjust", target.revision, { direction });
   }
 
   return {
@@ -1143,9 +1274,10 @@ export function useFocus(
     focusCounters,
     focusCounterHistory,
     setFocusCategories,
-    setFocusCounters,
     activeSessions,
     setActiveSessions,
+    refreshFocusRuntimes: hydrateFocusRuntimes,
+    refreshFocusCounters: hydrateFocusCounters,
     focusHistory,
     focusDailyGoalAdjustments,
     pendingDailyGoalSurplus,

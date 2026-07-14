@@ -693,6 +693,51 @@ export type FocusDailyGoalAdjustmentUpdate = Partial<
   >
 >;
 
+export type FocusCounterRow = {
+  id: string;
+  user_id: string;
+  title: string;
+  color: string;
+  icon: string;
+  value: number;
+  step: number;
+  goal: number;
+  sort_order: number;
+  revision: number;
+  deleted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FocusCounterEventRow = {
+  id: string;
+  operation_id: string;
+  user_id: string;
+  counter_id: string;
+  event_type: "create" | "adjust" | "set_value" | "update" | "delete" | "migrate";
+  delta: number | null;
+  previous_value: number | null;
+  next_value: number | null;
+  title_snapshot: string | null;
+  step_snapshot: number | null;
+  payload: Record<string, unknown> | null;
+  client_created_at: string | null;
+  created_at: string;
+};
+
+export type FocusCounterMigrationRow = {
+  id: string;
+  user_id: string;
+  device_installation_id: string;
+  migration_batch_id: string;
+  submitted_snapshot: Record<string, unknown>;
+  status: "processing" | "migrated" | "server_adopted";
+  local_differed: boolean;
+  result_payload: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type FocusSession = {
   id: string;
   user_id: string;
@@ -707,6 +752,7 @@ export type FocusSession = {
   started_at: string | null;
   ended_at: string | null;
   source: "timer" | "manual" | "import";
+  runtime_session_id: string | null;
   created_at: string;
 };
 
@@ -724,35 +770,62 @@ export type FocusSessionInsert = {
   started_at?: string | null;
   ended_at?: string | null;
   source?: "timer" | "manual" | "import";
+  runtime_session_id?: string | null;
 };
 
 export type FocusSessionUpdate = Partial<
   Pick<
     FocusSession,
-    "category_id" | "title_snapshot" | "focus_type_snapshot" | "focus_subtype_snapshot" | "focus_subtype_2_snapshot" | "session_date" | "duration_seconds" | "notes" | "started_at" | "ended_at" | "source"
+    "category_id" | "title_snapshot" | "focus_type_snapshot" | "focus_subtype_snapshot" | "focus_subtype_2_snapshot" | "session_date" | "duration_seconds" | "notes" | "started_at" | "ended_at" | "source" | "runtime_session_id"
   >
 >;
 
 export type ActiveFocusSession = {
+  session_id: string;
   user_id: string;
-  category_id: string;
+  runtime_kind: "category" | "standalone_countdown";
+  category_id: string | null;
+  mode: "count_up" | "countdown";
+  mode_authoritative: boolean;
+  countdown_target_seconds: number | null;
+  state: "running" | "paused";
+  current_run_started_at: string | null;
   start_time: string | null;
   accumulated_seconds: number;
   is_running: boolean;
+  revision: number;
+  created_at: string;
   updated_at: string;
 };
 
 export type ActiveFocusSessionInsert = {
+  session_id?: string;
   user_id: string;
-  category_id: string;
+  runtime_kind?: "category" | "standalone_countdown";
+  category_id?: string | null;
+  mode?: "count_up" | "countdown";
+  mode_authoritative?: boolean;
+  countdown_target_seconds?: number | null;
+  state?: "running" | "paused";
+  current_run_started_at?: string | null;
   start_time?: string | null;
   accumulated_seconds?: number;
   is_running?: boolean;
+  revision?: number;
 };
 
 export type ActiveFocusSessionUpdate = Partial<
-  Pick<ActiveFocusSession, "start_time" | "accumulated_seconds" | "is_running">
+  Pick<ActiveFocusSession, "mode" | "mode_authoritative" | "countdown_target_seconds" | "state" | "current_run_started_at" | "start_time" | "accumulated_seconds" | "is_running" | "revision">
 >;
+
+export type FocusRuntimeOperation = {
+  user_id: string;
+  operation_id: string;
+  operation_kind: string;
+  runtime_session_id: string | null;
+  result_payload: unknown;
+  created_at: string;
+};
 
 export type PrizeCell = {
   id: string;
@@ -1446,6 +1519,12 @@ export type Database = {
         Update: ActiveFocusSessionUpdate;
         Relationships: [];
       };
+      adhdice_focus_runtime_operations: {
+        Row: FocusRuntimeOperation;
+        Insert: Omit<FocusRuntimeOperation, "created_at"> & { created_at?: string };
+        Update: Partial<FocusRuntimeOperation>;
+        Relationships: [];
+      };
       adhdice_task_active_timers: {
         Row: ActiveTaskTimer;
         Insert: ActiveTaskTimerInsert;
@@ -1456,6 +1535,24 @@ export type Database = {
         Row: FocusCategory;
         Insert: FocusCategoryInsert;
         Update: FocusCategoryUpdate;
+        Relationships: [];
+      };
+      adhdice_focus_counters: {
+        Row: FocusCounterRow;
+        Insert: Omit<FocusCounterRow, "created_at" | "deleted_at" | "revision" | "updated_at"> & Partial<Pick<FocusCounterRow, "created_at" | "deleted_at" | "revision" | "updated_at">>;
+        Update: Partial<FocusCounterRow>;
+        Relationships: [];
+      };
+      adhdice_focus_counter_events: {
+        Row: FocusCounterEventRow;
+        Insert: Omit<FocusCounterEventRow, "created_at" | "id"> & Partial<Pick<FocusCounterEventRow, "created_at" | "id">>;
+        Update: Partial<FocusCounterEventRow>;
+        Relationships: [];
+      };
+      adhdice_focus_counter_migrations: {
+        Row: FocusCounterMigrationRow;
+        Insert: Omit<FocusCounterMigrationRow, "created_at" | "id" | "updated_at"> & Partial<Pick<FocusCounterMigrationRow, "created_at" | "id" | "updated_at">>;
+        Update: Partial<FocusCounterMigrationRow>;
         Relationships: [];
       };
       adhdice_focus_daily_goal_adjustments: {
@@ -1641,6 +1738,68 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_mutate_focus_counter: {
+        Args: {
+          p_operation_id: string;
+          p_counter_id: string;
+          p_expected_revision: number | null;
+          p_action: string;
+          p_action_payload?: unknown;
+        };
+        Returns: unknown;
+      };
+      adhdice_migrate_focus_counters: {
+        Args: {
+          p_device_installation_id: string;
+          p_migration_batch_id: string;
+          p_submitted_snapshot: unknown;
+        };
+        Returns: unknown;
+      };
+      adhdice_transition_focus_runtime: {
+        Args: {
+          p_operation_id: string;
+          p_action: string;
+          p_session_id?: string | null;
+          p_expected_revision?: number | null;
+          p_runtime_kind?: string | null;
+          p_category_id?: string | null;
+          p_mode?: string | null;
+          p_countdown_target_seconds?: number | null;
+          p_start?: boolean;
+          p_delta_seconds?: number;
+        };
+        Returns: unknown;
+      };
+      adhdice_complete_focus_runtime: {
+        Args: {
+          p_operation_id: string;
+          p_session_id: string;
+          p_expected_revision: number;
+          p_title: string;
+          p_focus_type: string;
+          p_focus_subtype?: string | null;
+          p_focus_subtype_2?: string | null;
+          p_notes?: string | null;
+          p_session_date?: string;
+        };
+        Returns: unknown;
+      };
+      adhdice_migrate_focus_runtime: {
+        Args: {
+          p_operation_id: string;
+          p_runtime_kind: string;
+          p_category_id?: string | null;
+          p_session_id?: string | null;
+          p_expected_revision?: number | null;
+          p_mode?: string;
+          p_countdown_target_seconds?: number | null;
+          p_legacy_started_at?: string | null;
+          p_legacy_accumulated_seconds?: number;
+          p_legacy_is_running?: boolean;
+        };
+        Returns: unknown;
+      };
       adhdice_award_pending_reward_dice: {
         Args: {
           p_operation_id: string;

@@ -116,7 +116,7 @@ import {
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievements } from "@/hooks/useAchievements";
-import { useFocus, mapFocusCategoryRow, mapActiveSessions, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
+import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
 import { useScratchNotes } from "@/hooks/useScratchNotes";
 import { useTaskActions } from "@/hooks/useTaskActions";
@@ -485,7 +485,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.29.8";
+const APP_VERSION = "6.29.13";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1070,7 +1070,7 @@ export function TaskApp() {
     focusCategories, setFocusCategories,
     focusCounters,
     focusCounterHistory,
-    activeSessions, setActiveSessions,
+    activeSessions, setActiveSessions, refreshFocusRuntimes, refreshFocusCounters,
     focusHistory, setFocusHistory,
     focusDailyGoalAdjustments,
     pendingDailyGoalSurplus,
@@ -1080,7 +1080,7 @@ export function TaskApp() {
     handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory, handleSaveDailyGoalAdjustment,
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
     handleAdjustFocusCounter, handleCreateFocusCounter, handleDeleteFocusCounter, handleUpdateFocusCounter,
-  } = useFocus(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent);
+  } = useFocus(supabase, session?.user?.id ?? null, setMessage);
   const {
     awards: healthAwards,
     checkIns: healthCheckIns,
@@ -1176,10 +1176,19 @@ export function TaskApp() {
 
   useEffect(() => {
     const checkFinishedCountdown = () => {
+      for (const session of Object.values(activeSessions)) {
+        if (
+          session.mode === "countdown"
+          && session.isRunning
+          && Boolean(session.countdownTargetSeconds)
+          && getCountdownRemainingSeconds(session, Date.now()) === 0
+        ) {
+          void handleFinishTimer(session.categoryId);
+        }
+      }
       const finishedSession = findFinishedCountdownSession(activeSessions, Date.now());
       const nextSessionKey = getCountdownAlertSessionKey(finishedSession);
       if (!nextSessionKey) {
-        setActiveCountdownAlertSessionKey(null);
         return;
       }
       if (nextSessionKey === dismissedCountdownAlertSessionKey) {
@@ -1513,7 +1522,6 @@ export function TaskApp() {
     currentUser: session?.user,
     isMissingTaskListManualMembershipsTableError,
     isMissingTaskListsTableError,
-    mapActiveSessions,
     mapFocusCategoryRow,
     mapFocusSessionRow,
     mapTaskFocusDayRows,
@@ -1563,7 +1571,6 @@ export function TaskApp() {
     saveFocusCategories,
     saveFocusHistory,
     shouldSkipTaskReload,
-    setActiveSessions,
     setAvailableTaskNotes,
     setEconomy,
     setFocusCategories,
@@ -1642,7 +1649,7 @@ export function TaskApp() {
             tone: "neutral",
             text: `ADHDice ${deployedVersion} update was already attempted recently, so Refresh skipped another reload to avoid a loop.`,
           });
-          await softRefreshWorkspace();
+          await Promise.all([softRefreshWorkspace(), refreshFocusRuntimes(), refreshFocusCounters()]);
           return;
         }
 
@@ -1653,7 +1660,7 @@ export function TaskApp() {
         return;
       }
 
-      await softRefreshWorkspace();
+      await Promise.all([softRefreshWorkspace(), refreshFocusRuntimes(), refreshFocusCounters()]);
     } finally {
       setRefreshStatus("idle");
     }
@@ -2047,50 +2054,6 @@ export function TaskApp() {
 
     return () => window.clearTimeout(timeout);
   }, [focusAlarmEnabled, focusAlarmIntervalMinutes, focusAlarmNextRingAt]);
-
-  useEffect(() => {
-    if (!supabase || !session?.user) return;
-    const userId = session.user.id;
-
-    async function refetchActiveSessions() {
-      const { data, error } = await supabase!
-        .from("adhdice_focus_active_sessions")
-        .select("*")
-        .eq("user_id", userId);
-      if (!error && data) {
-        setActiveSessions(mapActiveSessions(data, userId));
-      }
-    }
-
-    const channel = typeof BroadcastChannel !== "undefined"
-      ? new BroadcastChannel("adhdice_focus_sync")
-      : null;
-
-    if (channel) {
-      channel.onmessage = () => { void refetchActiveSessions(); };
-    }
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void refetchActiveSessions();
-      }
-    };
-
-    const handlePageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) {
-        void refetchActiveSessions();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("pageshow", handlePageShow);
-
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("pageshow", handlePageShow);
-      channel?.close();
-    };
-  }, [session?.user?.id, supabase]);
 
   const todayKey = useMemo(
     () => getLogicalDayKey(new Date(logicalDayNow), { dayStartTime, timezone: userTimeZone }),

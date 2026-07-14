@@ -7,6 +7,7 @@ import {
   TaskTableChipButton,
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
+import { attachDailyOverallGoalSeconds } from "@/lib/focus-activity";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { type FocusCategory, type HistoricalFocusSession, type FocusLabelOptions, type FocusSubtype, type FocusType } from "@/lib/types";
 import { formatLocalDate } from "@/lib/utils";
@@ -760,16 +761,11 @@ function buildActivityOverallBars(
   const categoryById = new Map(categories.map((category) => [category.id, category]));
 
   if (scope === "daily") {
-    return buildDistributionBars(sessions, scope, range)
-      .map((bar) => {
-        const session = sessions.find((item) => item.id === bar.key);
-
-        return {
-          ...bar,
-          goalSeconds: session ? getSessionCategoryDailyGoalSeconds(session, categoryById) || undefined : undefined,
-        };
-      })
-      .slice(0, 7);
+    return attachDailyOverallGoalSeconds(
+      buildDistributionBars(sessions, scope, range),
+      sessions,
+      (session) => getSessionCategoryDailyGoalSeconds(session, categoryById),
+    );
   }
 
   const totalsByDate = buildDailyTotalsByDate(sessions);

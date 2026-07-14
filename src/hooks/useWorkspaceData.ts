@@ -35,12 +35,6 @@ type Message = {
 type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   activePage: AppPage;
   currentUser: User | null | undefined;
-  mapActiveSessions: (rows: Array<{ accumulated_seconds: number; category_id: string; is_running: boolean; start_time: string | null }>, userId?: string | null) => Record<string, {
-    accumulatedSeconds: number;
-    categoryId: string;
-    isRunning: boolean;
-    startTime: number | null;
-  }>;
   mapFocusCategoryRow: (row: DbFocusCategory) => FocusCategory;
   mapFocusSessionRow: (row: DbFocusSession) => HistoricalFocusSession;
   mapTaskFocusDayRows: (rows: DbTaskFocusDay[], tasks: Task[]) => Record<string, string[]>;
@@ -59,12 +53,6 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   saveFocusCategories: (categories: FocusCategory[]) => void;
   saveFocusHistory: (history: HistoricalFocusSession[]) => void;
   shouldSkipTaskReload?: (change: { eventType: string; taskId: string | null }) => boolean;
-  setActiveSessions: Dispatch<SetStateAction<Record<string, {
-    accumulatedSeconds: number;
-    categoryId: string;
-    isRunning: boolean;
-    startTime: number | null;
-  }>>>;
   setAvailableTaskNotes: Dispatch<SetStateAction<TaskEditorLinkedNote[]>>;
   setEconomy: Dispatch<SetStateAction<{ level: number; points: number; tokens: number; xp: number }>>;
   setFocusCategories: Dispatch<SetStateAction<FocusCategory[]>>;
@@ -140,7 +128,6 @@ function logWorkspaceTiming(step: string, startedAt: number, details: Record<str
 export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   activePage,
   currentUser,
-  mapActiveSessions,
   mapFocusCategoryRow,
   mapFocusSessionRow,
   mapTaskFocusDayRows,
@@ -159,7 +146,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   saveFocusCategories,
   saveFocusHistory,
   shouldSkipTaskReload,
-  setActiveSessions,
   setAvailableTaskNotes,
   setEconomy,
   setFocusCategories,
@@ -496,11 +482,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .order("sort_order", { ascending: true })
           .order("created_at", { ascending: true }),
         client
-          .from("adhdice_focus_active_sessions")
-          .select("*")
-          .eq("user_id", userId)
-          .order("updated_at", { ascending: false }),
-        client
           .from("adhdice_focus_sessions")
           .select("*")
           .eq("user_id", userId)
@@ -578,7 +559,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       const secondaryCoreStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-      const [categoryResult, activeResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult] = await secondaryCoreRequest;
+      const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult] = await secondaryCoreRequest;
 
       if (!isActive) {
         return;
@@ -586,7 +567,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const secondaryErrors = [
         categoryResult.error,
-        activeResult.error,
         historyResult.error,
         focusDayResult.error,
         taskListsResult.error && !isMissingTaskListsTableError(taskListsResult.error.message) ? taskListsResult.error : null,
@@ -600,7 +580,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       let nextCategories = mergeStoredFocusCategories((categoryResult.data ?? []).map(mapFocusCategoryRow));
-      let nextActiveSessions = mapActiveSessions(activeResult.data ?? [], userId);
       let nextFocusHistory = mergeStoredFocusHistory((historyResult.data ?? []).map((row) => mapFocusSessionRow(row)));
       let nextFocusedTaskIdsByDate = mapTaskFocusDayRows(focusDayResult.data ?? [], taskResult.data ?? []);
       const nextTaskLists = (taskListsResult.error && isMissingTaskListsTableError(taskListsResult.error.message))
@@ -613,23 +592,17 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       if (
         nextCategories.length === 0 &&
-        Object.keys(nextActiveSessions).length === 0 &&
         nextFocusHistory.length === 0
       ) {
         const migrated = await migrateLocalFocusState(client, user);
         if (migrated) {
-          const [freshCategories, freshActive, freshHistory] = await Promise.all([
+          const [freshCategories, freshHistory] = await Promise.all([
             client
               .from("adhdice_focus_categories")
               .select("*")
               .eq("user_id", userId)
               .order("sort_order", { ascending: true })
               .order("created_at", { ascending: true }),
-            client
-              .from("adhdice_focus_active_sessions")
-              .select("*")
-              .eq("user_id", userId)
-              .order("updated_at", { ascending: false }),
             client
               .from("adhdice_focus_sessions")
               .select("*")
@@ -641,13 +614,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           if (!freshCategories.error && freshCategories.data) {
             nextCategories = mergeStoredFocusCategories(freshCategories.data.map(mapFocusCategoryRow));
           }
-          if (!freshActive.error && freshActive.data) {
-            nextActiveSessions = mapActiveSessions(freshActive.data, userId);
-          }
           if (!freshHistory.error && freshHistory.data) {
             nextFocusHistory = mergeStoredFocusHistory(freshHistory.data.map((row) => mapFocusSessionRow(row)));
           }
-          if (!freshCategories.error && !freshActive.error && !freshHistory.error) {
+          if (!freshCategories.error && !freshHistory.error) {
             setMessage({
               tone: "good",
               text: "Imported your saved local focus data into your account.",
@@ -676,7 +646,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       setFocusCategories((current) => keepCurrentIfStructurallyEqual(current, nextCategories));
-      setActiveSessions((current) => keepCurrentIfStructurallyEqual(current, nextActiveSessions));
       setFocusHistory((current) => keepCurrentIfStructurallyEqual(current, nextFocusHistory));
       setFocusedTaskIdsByDate((current) => keepCurrentIfStructurallyEqual(current, nextFocusedTaskIdsByDate));
       if (taskListLoadGeneration === taskListDataGeneration.current) {
@@ -687,7 +656,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       saveFocusCategories(nextCategories);
       saveFocusHistory(nextFocusHistory);
       logWorkspaceTiming("Secondary workspace core ready", secondaryCoreStartedAt, {
-        activeSessions: Object.keys(nextActiveSessions).length,
         categories: nextCategories.length,
         focusDays: Object.keys(nextFocusedTaskIdsByDate).length,
         focusHistory: nextFocusHistory.length,
@@ -842,18 +810,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           if (!suppressCategoryReload.current) {
             void loadCoreWorkspaceData({ silent: true });
           }
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "adhdice_focus_active_sessions",
-          filter: `user_id=eq.${userId}`,
-        },
-        () => {
-          void loadCoreWorkspaceData({ silent: true });
         },
       )
       .on(

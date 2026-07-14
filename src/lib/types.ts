@@ -52,11 +52,14 @@ export type PendingFocusDailySurplus = {
 
 export type ActiveFocusSession = {
   categoryId: string;
+  sessionId?: string;
   startTime: number | null;
   accumulatedSeconds: number;
   isRunning: boolean;
   mode?: "countdown" | "countup";
   countdownTargetSeconds?: number | null;
+  revision?: number;
+  updatedAt?: string;
 };
 
 export type HistoricalFocusSession = {
@@ -89,6 +92,9 @@ export type FocusCounter = {
   value: number;
   step: number;
   goal: number;
+  sortOrder: number;
+  revision: number;
+  deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -98,7 +104,9 @@ export type FocusCounterHistoryEntry = {
   counterId: string;
   counterTitleSnapshot: string;
   delta: number;
+  previousValue?: number;
   nextValue: number;
   stepSnapshot: number;
+  eventType?: "create" | "adjust" | "set_value" | "update" | "delete" | "migrate";
   createdAt: string;
 };
