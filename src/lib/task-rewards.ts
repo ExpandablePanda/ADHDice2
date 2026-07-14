@@ -277,6 +277,12 @@ export function buildTaskRewardBankSession(
   rollDice: (count: number) => number[] = rollD6Dice,
 ): TaskRewardBankSession {
   const resolutions = pendingRewards.map((pendingReward) => buildTaskRewardResolution(pendingReward, rollDice));
+  return buildTaskRewardBankSessionFromResolutions(resolutions);
+}
+
+export function buildTaskRewardBankSessionFromResolutions(
+  resolutions: TaskRewardResolution[],
+): TaskRewardBankSession {
   const allBaseRolls = resolutions.flatMap((resolution) => resolution.baseRolls);
 
   return {

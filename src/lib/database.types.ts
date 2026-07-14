@@ -585,6 +585,34 @@ export type TaskRewardClaimInsert = {
   awarded_token?: boolean;
 };
 
+export type PendingRewardDiceAccount = {
+  user_id: string;
+  pending_dice: number;
+  revision: number;
+  updated_at: string;
+};
+
+export type PendingRewardDiceOperation = {
+  id: string;
+  user_id: string;
+  operation_id: string;
+  operation_type: "award" | "claim" | "legacy_migration";
+  request_payload: unknown;
+  result_payload: unknown;
+  created_at: string;
+};
+
+export type PendingRewardDiceItem = {
+  id: string;
+  user_id: string;
+  source_operation_id: string;
+  source_item_index: number;
+  dice_count: number;
+  reward_payload: unknown;
+  claimed_operation_id: string | null;
+  created_at: string;
+};
+
 export type FocusCategory = {
   id: string;
   user_id: string;
@@ -749,6 +777,10 @@ export type PrizeCellUpdate = Partial<Pick<PrizeCell, "label" | "is_claimed">>;
 export type RollHistoryEntry = {
   id: string;
   user_id: string;
+  operation_id: string | null;
+  reward_applied: boolean;
+  reward_free_rolls: number;
+  reward_tokens: number;
   roll_result: number;
   points_spent: number;
   prize_label: string | null;
@@ -758,6 +790,10 @@ export type RollHistoryEntry = {
 export type RollHistoryInsert = {
   id?: string;
   user_id: string;
+  operation_id?: string | null;
+  reward_applied?: boolean;
+  reward_free_rolls?: number;
+  reward_tokens?: number;
   roll_result: number;
   points_spent?: number;
   prize_label?: string | null;
@@ -1464,6 +1500,24 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      adhdice_pending_reward_dice: {
+        Row: PendingRewardDiceAccount;
+        Insert: { user_id: string; pending_dice?: number; revision?: number; updated_at?: string };
+        Update: Partial<Pick<PendingRewardDiceAccount, "pending_dice" | "revision" | "updated_at">>;
+        Relationships: [];
+      };
+      adhdice_pending_reward_dice_operations: {
+        Row: PendingRewardDiceOperation;
+        Insert: Omit<PendingRewardDiceOperation, "id" | "created_at"> & { id?: string; created_at?: string };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      adhdice_pending_reward_dice_items: {
+        Row: PendingRewardDiceItem;
+        Insert: Omit<PendingRewardDiceItem, "id" | "created_at" | "claimed_operation_id"> & { id?: string; created_at?: string; claimed_operation_id?: string | null };
+        Update: Pick<PendingRewardDiceItem, "claimed_operation_id">;
+        Relationships: [];
+      };
       adhdice_notes: {
         Row: Note;
         Insert: NoteInsert;
@@ -1587,6 +1641,70 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_award_pending_reward_dice: {
+        Args: {
+          p_operation_id: string;
+          p_task_id: string;
+          p_subtask_id: string | null;
+          p_reward_date: string;
+          p_streak_length: number;
+          p_reward_payload: unknown;
+        };
+        Returns: Array<{
+          pending_dice: number;
+          revision: number;
+          updated_at: string;
+          result_payload: unknown;
+          was_replayed: boolean;
+        }>;
+      };
+      adhdice_migrate_pending_reward_dice: {
+        Args: {
+          p_operation_id: string;
+          p_reported_legacy_balance: number;
+          p_legacy_rewards?: unknown;
+        };
+        Returns: Array<{
+          pending_dice: number;
+          revision: number;
+          updated_at: string;
+          result_payload: unknown;
+          was_replayed: boolean;
+        }>;
+      };
+      adhdice_claim_pending_reward_dice: {
+        Args: { p_operation_id: string };
+        Returns: Array<{
+          pending_dice: number;
+          revision: number;
+          updated_at: string;
+          result_payload: unknown;
+          was_replayed: boolean;
+        }>;
+      };
+      adhdice_execute_roll: {
+        Args: {
+          p_operation_id: string;
+          p_point_cost: number;
+          p_requested_result: number;
+          p_free_roll_award?: number;
+          p_token_award?: number;
+        };
+        Returns: Array<{
+          operation_id: string;
+          history_id: string;
+          roll_result: number;
+          points_spent: number;
+          free_roll_bank: number;
+          points: number;
+          xp: number;
+          level: number;
+          tokens: number;
+          profile_updated_at: string;
+          rolled_at: string;
+          was_replayed: boolean;
+        }>;
+      };
       reorder_task_lists: {
         Args: { ordered_list_ids: string[] };
         Returns: TaskList[];

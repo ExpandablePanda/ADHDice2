@@ -1085,6 +1085,7 @@ create trigger adhdice_health_metric_entries_set_updated_at
   execute function public.adhdice_clean_set_updated_at();
 
 alter publication supabase_realtime add table public.adhdice_clean_tasks;
+alter publication supabase_realtime add table public.adhdice_user_profiles;
 alter publication supabase_realtime add table public.adhdice_focus_categories;
 alter publication supabase_realtime add table public.adhdice_focus_sessions;
 alter publication supabase_realtime add table public.adhdice_focus_active_sessions;

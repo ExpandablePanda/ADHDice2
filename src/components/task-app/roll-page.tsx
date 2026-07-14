@@ -32,6 +32,13 @@ import {
   type RollPrizeTier,
   type SystemMasterPrizeDefinition,
 } from "@/lib/roll-rewards";
+import {
+  createRollOperationId,
+  getProfileSnapshotTimestamp,
+  shouldApplyAuthoritativeProfileSnapshot,
+  shouldApplyProfileHydration,
+  type RollProfileSnapshot,
+} from "@/lib/roll-profile-sync";
 import { withBasePath } from "@/lib/utils";
 
 const Dice3DCanvas = lazy(() => import("../dice-3d").then((module) => ({ default: module.Dice3DCanvas })));
@@ -151,7 +158,13 @@ type RollPageProps = {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   currentUser: User;
   isDark: boolean;
-  onSpendPoints: (delta: number, reason: string) => void;
+};
+
+type PendingRollOperation = {
+  cost: number;
+  mode: PendingRollMode;
+  operationId: string;
+  requestedResult: number;
 };
 
 function rewardTone(cell: ResolvedBoardCell) {
@@ -178,7 +191,6 @@ export function RollPageComponent({
   client,
   currentUser,
   isDark,
-  onSpendPoints,
 }: RollPageProps) {
   const [points, setPoints] = useState<number | null>(null);
   const [tokens, setTokens] = useState<number | null>(null);
@@ -186,6 +198,7 @@ export function RollPageComponent({
   const [history, setHistory] = useState<RollHistoryEntry[]>([]);
   const [prizeBasket, setPrizeBasket] = useState<RollPrizeBasketEntry[]>([]);
   const [phase, setPhase] = useState<RollPhase>("idle");
+  const [isRollRequestPending, setIsRollRequestPending] = useState(false);
   const [lastRoll, setLastRoll] = useState<number | null>(null);
   const [rollingFace, setRollingFace] = useState<number | null>(null);
   const [showVault, setShowVault] = useState(false);
@@ -215,19 +228,29 @@ export function RollPageComponent({
   const [d20Style] = useState<D20VisualStyle>(DEFAULT_D20_VISUAL_STYLE);
   const masterPrizes = SYSTEM_MASTER_PRIZES;
   const pendingResult = useRef<number | null>(null);
-  const pendingCost = useRef<number>(0);
+  const pendingHistoryId = useRef<string | null>(null);
   const pendingNeedsHistory = useRef(false);
+  const pendingOperation = useRef<PendingRollOperation | null>(null);
+  const activeOperationId = useRef<string | null>(null);
+  const activeOperationResult = useRef<number | null>(null);
   const pendingRollModeRef = useRef<PendingRollMode>({ kind: "board", multiplier: 1 });
   const rollSettleTimeoutRef = useRef<number | null>(null);
   const rollResolveTimeoutRef = useRef<number | null>(null);
   const autoRollTimeoutRef = useRef<number | null>(null);
-  const applyProfileSnapshot = useCallback((profile: { free_roll_bank?: number | null; points?: number | null; tokens?: number | null } | null) => {
+  const profileHydrationGenerationRef = useRef(0);
+  const latestProfileTimestampRef = useRef(0);
+  const applyProfileSnapshot = useCallback((profile: RollProfileSnapshot | null) => {
     if (!profile) {
-      return;
+      return false;
     }
-    setPoints(profile.points ?? 0);
-    setTokens(profile.tokens ?? 0);
-    setFreeRollBank(profile.free_roll_bank ?? 0);
+    if (!shouldApplyAuthoritativeProfileSnapshot(profile, latestProfileTimestampRef.current)) {
+      return false;
+    }
+    latestProfileTimestampRef.current = getProfileSnapshotTimestamp(profile);
+    setPoints(profile.points);
+    setTokens(profile.tokens);
+    setFreeRollBank(profile.free_roll_bank);
+    return true;
   }, []);
 
   useEffect(() => {
@@ -244,25 +267,47 @@ export function RollPageComponent({
     };
   }, []);
 
-  async function loadProfileSnapshot() {
-    const { data } = await client
-      .from("adhdice_user_profiles")
-      .select("points, tokens, free_roll_bank")
-      .eq("user_id", currentUser.id)
-      .single();
-    return data ?? null;
-  }
-
-  async function persistProfileValues(updates: { free_roll_bank?: number; points?: number; tokens?: number }) {
-    const { data } = await client
+  async function persistProfileValues(updates: { points?: number; tokens?: number }) {
+    const { data, error } = await client
       .from("adhdice_user_profiles")
       .update(updates)
       .eq("user_id", currentUser.id)
-      .select("points, tokens, free_roll_bank")
+      .select("points, tokens, free_roll_bank, updated_at")
       .single();
-    applyProfileSnapshot(data ?? null);
-    return data ?? null;
+    if (error) {
+      throw error;
+    }
+    applyProfileSnapshot(data as RollProfileSnapshot);
+    return data as RollProfileSnapshot;
   }
+
+  const refreshProfileSnapshot = useCallback(async () => {
+    const generation = profileHydrationGenerationRef.current + 1;
+    profileHydrationGenerationRef.current = generation;
+    const token = {
+      authoritativeTimestamp: latestProfileTimestampRef.current,
+      generation,
+    };
+    const { data, error } = await client
+      .from("adhdice_user_profiles")
+      .select("points, tokens, free_roll_bank, updated_at")
+      .eq("user_id", currentUser.id)
+      .single();
+
+    if (error || !data) {
+      return false;
+    }
+    const snapshot = data as RollProfileSnapshot;
+    if (!shouldApplyProfileHydration({
+      currentAuthoritativeTimestamp: latestProfileTimestampRef.current,
+      currentGeneration: profileHydrationGenerationRef.current,
+      snapshot,
+      token,
+    })) {
+      return false;
+    }
+    return applyProfileSnapshot(snapshot);
+  }, [applyProfileSnapshot, client, currentUser.id]);
 
   async function persistDailyBoardState({
     claimedKeys,
@@ -423,8 +468,7 @@ export function RollPageComponent({
   useEffect(() => {
     void (async () => {
       const today = getLocalDateStamp();
-      const [profileRes, historyRes, vaultRes, basketRes, poolRes, dailyBoardRes] = await Promise.all([
-        client.from("adhdice_user_profiles").select("points, tokens, free_roll_bank").eq("user_id", currentUser.id).single(),
+      const [historyRes, vaultRes, basketRes, poolRes, dailyBoardRes] = await Promise.all([
         client.from("adhdice_roll_history").select("*").eq("user_id", currentUser.id).order("rolled_at", { ascending: false }).limit(10),
         client.from("adhdice_vault_prizes").select("*").eq("user_id", currentUser.id).order("created_at"),
         client.from("adhdice_roll_prize_basket").select("*").eq("user_id", currentUser.id).order("created_at", { ascending: false }),
@@ -432,7 +476,6 @@ export function RollPageComponent({
         client.from("adhdice_roll_daily_boards").select("*").eq("user_id", currentUser.id).eq("board_date", today).maybeSingle(),
       ]);
 
-      applyProfileSnapshot(profileRes.data ?? null);
       if (historyRes.data) setHistory(historyRes.data as RollHistoryEntry[]);
       if (vaultRes.data) setVaultPrizes(vaultRes.data as VaultPrize[]);
       if (basketRes.data) setPrizeBasket(basketRes.data as RollPrizeBasketEntry[]);
@@ -481,18 +524,13 @@ export function RollPageComponent({
         });
       }
     })();
-  }, [applyProfileSnapshot, client, createAndPersistDailyBoard, currentUser.id, masterPrizes]);
+  }, [client, createAndPersistDailyBoard, currentUser.id, masterPrizes]);
 
   useEffect(() => {
     let isActive = true;
     let profileChannel: RealtimeChannel | null = null;
 
-    void loadProfileSnapshot().then((profile) => {
-      if (!isActive) {
-        return;
-      }
-      applyProfileSnapshot(profile);
-    });
+    void refreshProfileSnapshot();
 
     profileChannel = client
       .channel(`adhdice_roll_profile:${currentUser.id}`)
@@ -505,28 +543,44 @@ export function RollPageComponent({
           filter: `user_id=eq.${currentUser.id}`,
         },
         (payload) => {
-          const nextProfile = payload.new as { free_roll_bank?: number | null; points?: number | null; tokens?: number | null } | null;
+          const nextProfile = payload.new as RollProfileSnapshot | null;
           if (nextProfile) {
             applyProfileSnapshot(nextProfile);
             return;
           }
-          void loadProfileSnapshot().then((profile) => {
-            if (!isActive) {
-              return;
-            }
-            applyProfileSnapshot(profile);
-          });
+          void refreshProfileSnapshot();
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (!isActive) {
+          return;
+        }
+        if (status === "SUBSCRIBED" || status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          void refreshProfileSnapshot();
+        }
+      });
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshProfileSnapshot();
+      }
+    };
+    const handlePageShow = () => { void refreshProfileSnapshot(); };
+    const handleOnline = () => { void refreshProfileSnapshot(); };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("online", handleOnline);
 
     return () => {
       isActive = false;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("online", handleOnline);
       if (profileChannel) {
         void client.removeChannel(profileChannel);
       }
     };
-  }, [applyProfileSnapshot, client, currentUser.id]);
+  }, [applyProfileSnapshot, client, currentUser.id, refreshProfileSnapshot]);
 
   const smallPrizes = useMemo(
     () => rollRewardPrizes.filter((prize) => prize.tier === "small"),
@@ -551,6 +605,7 @@ export function RollPageComponent({
       : "Today's board is missing prize assignments. Add at least one Small prize and one Big prize, then press Fill Board."
     : "Boards reshuffle daily at 6:00 AM. You can also press Fill Board after editing prizes to rebuild today's board.";
   const canRoll = phase === "idle"
+    && !isRollRequestPending
     && points !== null
     && freeRollBank !== null
     && (
@@ -625,29 +680,7 @@ export function RollPageComponent({
     }
   }
 
-  async function spendRoll(cost: number) {
-    if (points === null || freeRollBank === null || cost <= 0) {
-      return 0;
-    }
-
-    const latestProfile = await loadProfileSnapshot();
-    const latestPoints = latestProfile?.points ?? points;
-    const latestFreeRollBank = latestProfile?.free_roll_bank ?? freeRollBank;
-
-    if (latestFreeRollBank > 0) {
-      const nextBank = latestFreeRollBank - 1;
-      setFreeRollBank(nextBank);
-      await persistProfileValues({ free_roll_bank: nextBank });
-      return 0;
-    }
-
-    const newBalance = Math.max(0, latestPoints - cost);
-    setPoints(newBalance);
-    onSpendPoints(-cost, "Dice roll");
-    return cost;
-  }
-
-  function startRoll({
+  async function startRoll({
     cost,
     forcedResult,
     mode = { kind: "board", multiplier: 1 },
@@ -656,16 +689,78 @@ export function RollPageComponent({
     forcedResult?: number;
     mode?: PendingRollMode;
   }) {
-    if (points === null || phase !== "idle") {
+    if (points === null || phase !== "idle" || isRollRequestPending) {
       return;
     }
 
-    const result = forcedResult ?? getSecureRandomIntInclusive(20);
-    pendingResult.current = result;
-    pendingRollModeRef.current = mode;
-    pendingNeedsHistory.current = true;
-    resetPendingActions();
+    let operation = pendingOperation.current;
+    if (!operation) {
+      try {
+        operation = {
+          cost,
+          mode,
+          operationId: createRollOperationId(),
+          requestedResult: forcedResult ?? getSecureRandomIntInclusive(20),
+        };
+      } catch (error) {
+        setResolution({
+          kind: "final",
+          title: "Roll not started",
+          detail: error instanceof Error ? error.message : "Could not create a secure roll operation ID.",
+        });
+        return;
+      }
+    }
+    pendingOperation.current = operation;
+    setIsRollRequestPending(true);
     setResolution(null);
+
+    const { data, error } = await client.rpc("adhdice_execute_roll", {
+      p_free_roll_award: 0,
+      p_operation_id: operation.operationId,
+      p_point_cost: operation.cost,
+      p_requested_result: operation.requestedResult,
+      p_token_award: 0,
+    });
+    const resultRow = data?.[0];
+    setIsRollRequestPending(false);
+
+    if (error || !resultRow) {
+      setResolution({
+        kind: "final",
+        title: "Roll not completed",
+        detail: error?.message ?? "The server did not return a roll result. Try again to safely retry the same operation.",
+      });
+      return;
+    }
+
+    applyProfileSnapshot({
+      free_roll_bank: resultRow.free_roll_bank,
+      points: resultRow.points,
+      tokens: resultRow.tokens,
+      updated_at: resultRow.profile_updated_at,
+    });
+    const result = resultRow.roll_result;
+    pendingOperation.current = null;
+    pendingResult.current = result;
+    pendingRollModeRef.current = operation.mode;
+    activeOperationId.current = resultRow.operation_id;
+    activeOperationResult.current = result;
+    pendingHistoryId.current = resultRow.history_id;
+    pendingNeedsHistory.current = true;
+    pushHistory({
+      id: resultRow.history_id,
+      operation_id: resultRow.operation_id,
+      points_spent: resultRow.points_spent,
+      prize_label: null,
+      reward_applied: false,
+      reward_free_rolls: 0,
+      reward_tokens: 0,
+      roll_result: result,
+      rolled_at: resultRow.rolled_at,
+      user_id: currentUser.id,
+    });
+    resetPendingActions();
     setLastRoll(null);
     setRollingFace(result);
     setPhase("rolling");
@@ -681,10 +776,6 @@ export function RollPageComponent({
       autoRollTimeoutRef.current = null;
     }
 
-    void spendRoll(cost).then((actualCost) => {
-      pendingCost.current = actualCost;
-    });
-
     new Audio(withBasePath("/dice-roll.wav")).play().catch(() => {});
     rollSettleTimeoutRef.current = window.setTimeout(() => {
       setPhase("settling");
@@ -698,7 +789,7 @@ export function RollPageComponent({
     if (!canRoll) {
       return;
     }
-    startRoll({ cost: UNIVERSAL_ROLL_CONFIG.cost });
+    void startRoll({ cost: UNIVERSAL_ROLL_CONFIG.cost });
   }
 
   function handleManualRollSubmit() {
@@ -709,7 +800,7 @@ export function RollPageComponent({
 
     setShowManualRollInput(false);
     setManualRollValue("");
-    startRoll({ cost: UNIVERSAL_ROLL_CONFIG.cost, forcedResult: parsed });
+    void startRoll({ cost: UNIVERSAL_ROLL_CONFIG.cost, forcedResult: parsed });
   }
 
   async function finalizeResolvedHistory({
@@ -726,12 +817,31 @@ export function RollPageComponent({
     }
 
     pendingNeedsHistory.current = false;
-    await insertHistoryEntry({
-      user_id: currentUser.id,
-      roll_result: roll,
-      points_spent: pendingCost.current,
-      prize_label: rewardName ?? detail,
-    });
+    const historyId = pendingHistoryId.current;
+    pendingHistoryId.current = null;
+    if (!historyId) {
+      activeOperationId.current = null;
+      activeOperationResult.current = null;
+      return;
+    }
+    const { data, error } = await client
+      .from("adhdice_roll_history")
+      .update({ prize_label: rewardName ?? detail })
+      .eq("id", historyId)
+      .eq("user_id", currentUser.id)
+      .select("*")
+      .single();
+    if (error) {
+      setManagerFeedback({ tone: "warn", text: `Roll saved, but its reward label could not update: ${error.message}` });
+      activeOperationId.current = null;
+      activeOperationResult.current = null;
+      return;
+    }
+    if (data) {
+      pushHistory(data as RollHistoryEntry);
+    }
+    activeOperationId.current = null;
+    activeOperationResult.current = null;
   }
 
   async function scheduleFollowUpRoll({
@@ -749,22 +859,49 @@ export function RollPageComponent({
       detail,
     });
     autoRollTimeoutRef.current = window.setTimeout(() => {
-      startRoll({ cost: 0, mode });
+      void startRoll({ cost: 0, mode });
     }, 800);
   }
 
+  async function applyRollBalanceReward({ freeRolls = 0, awardedTokens = 0 }: { freeRolls?: number; awardedTokens?: number }) {
+    const operationId = activeOperationId.current;
+    const requestedResult = activeOperationResult.current;
+    if (!operationId || requestedResult === null) {
+      setResolution({ kind: "final", title: "Reward not saved", detail: "The active roll operation could not be identified." });
+      return false;
+    }
+
+    const { data, error } = await client.rpc("adhdice_execute_roll", {
+      p_free_roll_award: freeRolls,
+      p_operation_id: operationId,
+      p_point_cost: 0,
+      p_requested_result: requestedResult,
+      p_token_award: awardedTokens,
+    });
+    const resultRow = data?.[0];
+    if (error || !resultRow) {
+      setResolution({
+        kind: "final",
+        title: "Reward not saved",
+        detail: error?.message ?? "The server did not return the authoritative reward balance.",
+      });
+      return false;
+    }
+    applyProfileSnapshot({
+      free_roll_bank: resultRow.free_roll_bank,
+      points: resultRow.points,
+      tokens: resultRow.tokens,
+      updated_at: resultRow.profile_updated_at,
+    });
+    return true;
+  }
+
   async function awardFreeRolls(amount: number) {
-    const latestProfile = await loadProfileSnapshot();
-    const nextBank = (latestProfile?.free_roll_bank ?? freeRollBank ?? 0) + amount;
-    setFreeRollBank(nextBank);
-    await persistProfileValues({ free_roll_bank: nextBank });
+    return applyRollBalanceReward({ freeRolls: amount });
   }
 
   async function awardTokens(amount: number) {
-    const latestProfile = await loadProfileSnapshot();
-    const nextTokens = (latestProfile?.tokens ?? tokens ?? 0) + amount;
-    setTokens(nextTokens);
-    await persistProfileValues({ tokens: nextTokens });
+    return applyRollBalanceReward({ awardedTokens: amount });
   }
 
   async function consumePoolChoiceIfNeeded(candidate: ChooseCandidate, scope: ChoosePrizeScope) {
@@ -788,7 +925,7 @@ export function RollPageComponent({
     const action = reward.action;
     if (action.type === "bank_rolls") {
       const totalAmount = action.amount * multiplier;
-      await awardFreeRolls(totalAmount);
+      if (!await awardFreeRolls(totalAmount)) return;
       const detail = `Added ${totalAmount} free roll${totalAmount === 1 ? "" : "s"} to your bank.`;
       setResolution({
         kind: "final",
@@ -802,7 +939,7 @@ export function RollPageComponent({
 
     if (action.type === "grant_tokens") {
       const totalAmount = action.amount * multiplier;
-      await awardTokens(totalAmount);
+      if (!await awardTokens(totalAmount)) return;
       const detail = `Added ${totalAmount} token${totalAmount === 1 ? "" : "s"} to your economy.`;
       setResolution({
         kind: "final",
@@ -977,7 +1114,7 @@ export function RollPageComponent({
       const didWin = roll > rollMode.reward.threshold;
       if (didWin) {
         if (rollMode.reward.type === "conditional_bank_rolls") {
-          await awardFreeRolls(totalAmount);
+          if (!await awardFreeRolls(totalAmount)) return;
           const detail = `Check roll ${roll} beat ${rollMode.reward.threshold}. Banked ${totalAmount} free rolls.`;
           setResolution({
             kind: "final",
@@ -993,7 +1130,7 @@ export function RollPageComponent({
           return;
         }
 
-        await awardTokens(totalAmount);
+        if (!await awardTokens(totalAmount)) return;
         const detail = `Check roll ${roll} beat ${rollMode.reward.threshold}. Added ${totalAmount} tokens to your economy.`;
         setResolution({
           kind: "final",
@@ -1380,7 +1517,9 @@ export function RollPageComponent({
                 type="button"
                 className="ui-pill-button-strong-light w-full transition active:scale-[0.98] disabled:opacity-40"
               >
-                {phase === "idle"
+                {isRollRequestPending
+                  ? "Checking balance…"
+                  : phase === "idle"
                   ? `Roll D20${UNIVERSAL_ROLL_CONFIG.cost > 0 ? ` — ${UNIVERSAL_ROLL_CONFIG.cost} pts` : ""}`
                   : phase === "rolling"
                     ? "Rolling…"

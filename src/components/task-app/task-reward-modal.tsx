@@ -1,21 +1,22 @@
 "use client";
 
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { ErrorBoundary } from "../error-boundary";
 import type { DicePhase } from "../dice-3d";
 import { ModalShell } from "../modal-shell";
 import {
-  buildTaskRewardBankSession,
+  chunkDiceRolls,
+  getPendingRewardDiceCount,
   type PendingTaskReward,
-  type TaskRewardResolution,
+  type TaskRewardBankSession,
 } from "@/lib/task-rewards";
 
 const RewardDice3DCanvas = lazy(() => import("../dice-3d").then((module) => ({ default: module.RewardDice3DCanvas })));
 
 type TaskRewardModalProps = {
   isDark: boolean;
-  onClaim: (resolutions: TaskRewardResolution[]) => Promise<boolean>;
+  onClaim: () => Promise<TaskRewardBankSession | null>;
   onClose: () => void;
   pendingRewards: PendingTaskReward[];
   variant?: "global" | "table";
@@ -41,27 +42,28 @@ export function TaskRewardModal({
   const [batchIndex, setBatchIndex] = useState(0);
   const [isClaiming, setIsClaiming] = useState(false);
   const [isAutoAdvancePaused, setIsAutoAdvancePaused] = useState(false);
-  const sessionRef = useRef(buildTaskRewardBankSession(pendingRewards));
-  const session = sessionRef.current;
+  const [session, setSession] = useState<TaskRewardBankSession | null>(null);
+  const pendingDiceCount = getPendingRewardDiceCount(pendingRewards);
+  const previewBatches = chunkDiceRolls(Array.from({ length: pendingDiceCount }, () => 1), 6);
 
-  const baseRollBatches = session.baseRollBatches;
+  const baseRollBatches = session?.baseRollBatches ?? previewBatches;
   const batchCount = baseRollBatches.length;
   const activeBatch = baseRollBatches[batchIndex] ?? [];
   const activeBatchNumber = batchCount === 0 ? 0 : batchIndex + 1;
   const breakdownEntries = useMemo(() =>
-    session.resolutions.map((resolution) => ({
+    (session?.resolutions ?? []).map((resolution) => ({
       baseExpression: resolution.baseRolls.join(" + "),
       claimTitle: resolution.claimRefs[0]?.title ?? resolution.tasks[0]?.title ?? "Completed task",
       finalPoints: resolution.finalPoints,
       multiplierRoll: resolution.multiplierRoll,
     })),
-  [session.resolutions]);
+  [session]);
   const activeBatchSummary = useMemo(() => activeBatch.join(" + "), [activeBatch]);
-  const totalDiceLabel = formatPendingDiceLabel(session.diceCount);
+  const totalDiceLabel = formatPendingDiceLabel(session?.diceCount ?? pendingDiceCount);
   const batchPhase: DicePhase = stage === "batch_rolling" ? "rolling" : stage === "batch_revealed" || stage === "result" ? "settling" : "idle";
 
   useEffect(() => {
-    sessionRef.current = buildTaskRewardBankSession(pendingRewards);
+    setSession(null);
     setStage("intro");
     setBatchIndex(0);
     setIsClaiming(false);
@@ -111,7 +113,13 @@ export function TaskRewardModal({
     }
   }, [batchCount, batchIndex, isAutoAdvancePaused, isClaiming, stage]);
 
-  function startRewardRoll() {
+  async function startRewardRoll() {
+    if (isClaiming) return;
+    setIsClaiming(true);
+    const authoritativeSession = await onClaim();
+    setIsClaiming(false);
+    if (!authoritativeSession) return;
+    setSession(authoritativeSession);
     setBatchIndex(0);
     setIsAutoAdvancePaused(false);
     setStage("batch_wait");
@@ -124,12 +132,8 @@ export function TaskRewardModal({
 
     setIsClaiming(true);
     try {
-      const claimed = await onClaim(session.resolutions);
       setIsClaiming(false);
       onClose();
-      if (!claimed) {
-        return;
-      }
     } catch (error) {
       setIsClaiming(false);
       throw error;
@@ -179,7 +183,7 @@ export function TaskRewardModal({
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Pending dice</p>
-                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session.diceCount}</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session?.diceCount ?? pendingDiceCount}</p>
                 </div>
                 <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Visual batches</p>
@@ -205,10 +209,11 @@ export function TaskRewardModal({
               <div className="flex justify-center">
                 <button
                   className="ui-pill-button-strong-light"
-                  onClick={startRewardRoll}
+                  disabled={isClaiming}
+                  onClick={() => { void startRewardRoll(); }}
                   type="button"
                 >
-                  Roll banked dice
+                  {isClaiming ? "Preparing roll..." : "Roll banked dice"}
                 </button>
               </div>
             </div>
@@ -281,24 +286,24 @@ export function TaskRewardModal({
             <div className="space-y-5">
               <div className="text-center">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#8e88a9] dark:text-white/35">Final reward</p>
-                <h3 className="mt-2 text-4xl font-black text-[#6f57f6] dark:text-[#cabfff]">{session.totalFinalPoints} points</h3>
+                <h3 className="mt-2 text-4xl font-black text-[#6f57f6] dark:text-[#cabfff]">{session?.totalFinalPoints ?? 0} points</h3>
                 <p className="mt-2 text-sm text-[#7d7698] dark:text-white/50">
-                  {session.totalBasePoints} base points across {session.diceCount} dice, with existing reward multipliers preserved per completed task.
+                  {session?.totalBasePoints ?? 0} base points across {session?.diceCount ?? 0} dice, with existing reward multipliers preserved per completed task.
                 </p>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Base total</p>
-                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session.totalBasePoints}</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session?.totalBasePoints ?? 0}</p>
                 </div>
                 <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">XP</p>
-                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session.totalXp}</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session?.totalXp ?? 0}</p>
                 </div>
                 <div className="rounded-[1rem] bg-white/80 px-4 py-4 text-center dark:bg-white/[0.05]">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/35">Tokens</p>
-                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session.totalTokens}</p>
+                  <p className="mt-2 text-3xl font-black text-[#17203a] dark:text-white">{session?.totalTokens ?? 0}</p>
                 </div>
               </div>
 

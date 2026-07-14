@@ -4,6 +4,7 @@ import type {
   TaskRewardClaimInsert,
   TaskRewardMode,
   TaskRewardRollInsert,
+  UserProfileInsert,
 } from "@/lib/database.types";
 import { getLevelFromXp, getLevelUpsEarned } from "@/lib/economy-levels";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
@@ -128,14 +129,17 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
       const newTokens = currentTokens + levelUpsEarned;
       const newFreeRollBank = currentFreeRollBank + levelUpsEarned;
 
-      await client.from("adhdice_user_profiles").upsert({
-        free_roll_bank: newFreeRollBank,
+      const profileUpdate: UserProfileInsert = {
         user_id: userId,
         points: newPoints,
         xp: newXp,
         level: newLevel,
         tokens: newTokens,
-      });
+      };
+      if (levelUpsEarned > 0) {
+        profileUpdate.free_roll_bank = newFreeRollBank;
+      }
+      await client.from("adhdice_user_profiles").upsert(profileUpdate);
 
       setEconomy({ level: newLevel, xp: newXp, points: newPoints, tokens: newTokens });
 
@@ -235,15 +239,19 @@ export function useEconomy(client: SupabaseClient, userId: string | null) {
           : basePayload;
       });
 
-      const [profileUpdate, ledgerInsert, rewardClaimInsert] = await Promise.all([
-        client.from("adhdice_user_profiles").upsert({
-          free_roll_bank: newFreeRollBank,
+      const nextProfileUpdate: UserProfileInsert = {
           user_id: userId,
           level: newLevel,
           points: newPoints,
           tokens: newTokens,
           xp: newXp,
-        }),
+      };
+      if (levelUpsEarned > 0) {
+        nextProfileUpdate.free_roll_bank = newFreeRollBank;
+      }
+
+      const [profileUpdate, ledgerInsert, rewardClaimInsert] = await Promise.all([
+        client.from("adhdice_user_profiles").upsert(nextProfileUpdate),
         client.from("adhdice_point_ledger").insert({
           user_id: userId,
           delta: opts.finalPoints,

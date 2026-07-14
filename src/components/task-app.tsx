@@ -485,7 +485,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.29.5";
+const APP_VERSION = "6.29.8";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1065,7 +1065,7 @@ export function TaskApp() {
   const countdownAlarmGainRef = useRef<GainNode | null>(null);
   const countdownAlarmOscillatorRef = useRef<OscillatorNode | null>(null);
   const countdownAlarmPulseIntervalRef = useRef<number | null>(null);
-  const { economy, setEconomy, appendEconomyEvent, commitTaskReward, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
+  const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
     focusCategories, setFocusCategories,
     focusCounters,
@@ -2741,12 +2741,12 @@ export function TaskApp() {
   } = useTaskRewardController({
     calcNextDueDateFromDate,
     client,
-    commitTaskReward,
     currentDayKey: todayKey,
     currentUserId: session?.user?.id ?? null,
     dayStartTime,
     logicalDayNow,
     setMessage,
+    setEconomy,
     setTaskHistory,
     setTaskSubtasks,
     setTasks,
@@ -5625,15 +5625,6 @@ export function TaskApp() {
             client={client}
             currentUser={currentUser}
             isDark={theme === "dark"}
-            onSpendPoints={(delta, reason) =>
-              void appendEconomyEvent({
-                source: "roll",
-                refId: currentUser.id,
-                points: delta,
-                xp: 0,
-                reason,
-              })
-            }
           />
         ) : activePage === "Stats" ? (
           <TaskStatsPage
