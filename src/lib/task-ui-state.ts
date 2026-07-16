@@ -3,7 +3,7 @@ import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 
 export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "grid";
-export type TasksSurface = "tasks" | "paths" | "report" | "on_time" | "brainstorm";
+export type TasksSurface = "tasks" | "paths" | "report" | "on_time" | "brainstorm" | "completed_milestones";
 export type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
 export type AppPage =
   | "Home"
@@ -60,7 +60,7 @@ export const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
 export const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
 export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
-export const TASK_UI_SCHEMA_VERSION = 7;
+export const TASK_UI_SCHEMA_VERSION = 8;
 export const DEFAULT_TASK_WORKSPACE_TAB_ID = "workspace-1";
 export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
@@ -222,7 +222,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     duplicateTitleMode: state.duplicateTitleMode === true,
     selectedBucket: nextBucket,
     statusFilters: Array.isArray(state.statusFilters) ? state.statusFilters : [],
-    tasksSurface: state.tasksSurface === "paths" || state.tasksSurface === "report" || state.tasksSurface === "on_time" || state.tasksSurface === "brainstorm"
+    tasksSurface: state.tasksSurface === "paths" || state.tasksSurface === "report" || state.tasksSurface === "on_time" || state.tasksSurface === "brainstorm" || state.tasksSurface === "completed_milestones"
       ? state.tasksSurface
       : "tasks",
     view: nextView,

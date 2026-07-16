@@ -180,6 +180,10 @@ export function getTaskDisplayStatusWithHistory(
   history: DbTaskHistory[],
   todayDateKey: string,
 ): TaskStatus {
+  if (task.status === "in_progress") {
+    return "in_progress";
+  }
+
   if (task.repeat_frequency === "none" || history.length === 0) {
     return getTaskDisplayStatusForDate(task, todayDateKey);
   }

@@ -1,6 +1,6 @@
 # ADHDice UI Design System
 
-Last reviewed: 2026-06-04
+Last reviewed: 2026-07-14
 
 This file is the default reference for new chips, pills, and text-labeled interactive controls in ADHDice.
 
@@ -40,6 +40,35 @@ Chip rules:
   - red for `Missed` / destructive states
   - gray for inactive / empty states
 
+### Icon + label controls
+
+All chip or button controls containing both an icon and a visible label must use explicit `inline-flex` alignment and `gap-1.5` by default. Use `gap-2` only when an established larger control family already uses it. Never rely on JSX whitespace, literal spaces in labels, or one-off icon margins when a flex gap is available. Text-only chips do not need a gap.
+
+Use the shared constant with the current chip primitive:
+
+```tsx
+<TaskTableChipButton className={TASK_TABLE_ICON_LABEL_GAP_CLASS}>
+  <Pause aria-hidden="true" size={12} />
+  Pause task timer
+</TaskTableChipButton>
+```
+
+Manual QA must verify icon/label spacing at desktop and narrow mobile widths.
+
+### Horizontal overflow arrows
+
+The approved horizontally overflowing chart/card pattern is implemented by `ActivitySummaryCard` in `src/components/focus-history.tsx`, with measurement helpers in `src/lib/focus-activity-scroll.ts`. Reuse those paths rather than recreating the interaction or arrow appearance.
+
+- Use a relative outer shell around a native horizontal scroll viewport.
+- Visually hide the native scrollbar with the existing `adhdice-scrollbar` utility while preserving native touch, trackpad, keyboard, wheel, and supported horizontal scrolling.
+- Keep the scroll region focusable and give overlay buttons accessible direction-specific labels.
+- Render circular left/right overlay controls only when overflow exists in that direction. Do not use up/down arrows for a horizontal-only surface.
+- Measure boundaries with approximately `2px` tolerance.
+- Scroll by approximately `max(160px, clientWidth * 0.75)` and respect reduced-motion preferences.
+- Use `ResizeObserver` or equivalent measurement for viewport/content changes, and recompute when data, mode, range, or resize state changes.
+- Leave enough viewport/content padding that arrows do not obscure the first or last content.
+- Do not alter or cap underlying data merely to avoid overflow.
+
 ## Text controls
 
 Rules for any interactive control with visible text:
@@ -66,3 +95,8 @@ The current task-table implementation in `src/components/ui/task-management-tabl
 The reusable implementation entry point for that language is `src/components/ui/task-table-primitives.tsx`.
 
 The repo audit entry point for drift is `npm run audit:text-buttons`.
+
+## Codex implementation checklist
+
+- Before completion, inspect every new icon-and-label chip/button for explicit `inline-flex` alignment and `gap-1.5` (or an already-established larger-family `gap-2`), and verify desktop plus narrow-mobile spacing.
+- For horizontal chart/card overflow, reuse the Focus Activity shell, measurement helpers, directional arrow behavior, accessibility labels, and reduced-motion contract.

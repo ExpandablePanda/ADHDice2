@@ -444,18 +444,24 @@ export function SessionFinishModal({
 
 export function ManualEntryModal({
   categories,
+  completionError = null,
   initialDurationSeconds,
   initialTitle,
   labelOptions,
+  mode = "entry",
   onClear,
+  onRetryCompletion,
   onSave,
   onClose,
 }: {
   categories: FocusCategory[];
+  completionError?: string | null;
   initialDurationSeconds?: number;
   initialTitle?: string;
   labelOptions: FocusLabelOptions;
+  mode?: "entry" | "saving_evidence" | "completing" | "failed_completion";
   onClear?: () => Promise<boolean> | boolean;
+  onRetryCompletion?: () => Promise<boolean> | boolean;
   onSave: (data: { categoryId: string | null; title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; durationSeconds: number; date: string; completionTime?: string; notes: string }) => Promise<boolean>;
   onClose: () => void;
 }) {
@@ -472,6 +478,7 @@ export function ManualEntryModal({
   const [notes, setNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  const evidenceSaved = mode === "completing" || mode === "failed_completion";
 
   const handleCategoryChange = (id: string) => {
     setCatId(id);
@@ -489,6 +496,7 @@ export function ManualEntryModal({
   };
 
   const submit = async () => {
+    if (mode !== "entry") return;
     const totalSeconds = (parseInt(hours) || 0) * 3600 + (parseInt(minutes) || 0) * 60;
     if (totalSeconds <= 0 || !title.trim() || !focusType.trim()) return;
     setIsSaving(true);
@@ -522,8 +530,9 @@ export function ManualEntryModal({
   };
 
   return (
-    <ModalShell className="adhdice-scrollbar w-full max-w-2xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]" onClose={onClose}>
-        <h2 className="ui-display-font text-center text-3xl tracking-[0.08em] text-[#6f57f6] dark:text-[#cabfff]">Manual Entry</h2>
+    <ModalShell className="adhdice-scrollbar w-full max-w-2xl max-h-[82vh] overflow-y-auto rounded-[var(--radius-modal)] border p-8 shadow-[var(--shadow-modal)] border-[var(--border-soft)] bg-[var(--surface-elevated)] dark:border-white/10 dark:bg-[#171329]" onClose={mode === "entry" ? onClose : () => undefined}>
+        <h2 className="ui-display-font text-center text-3xl tracking-[0.08em] text-[#6f57f6] dark:text-[#cabfff]">{evidenceSaved ? "Actual Time Saved" : "Manual Entry"}</h2>
+        {evidenceSaved ? <div className={`mt-6 rounded-[1.25rem] border px-4 py-3 text-sm font-semibold ${mode === "failed_completion" ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/25 dark:bg-rose-500/10 dark:text-rose-200" : "border-[#ddd2ff] bg-[#f5f1ff] text-[#5b46cf] dark:border-white/10 dark:bg-white/[0.05] dark:text-[#cabfff]"}`}>{mode === "failed_completion" ? completionError : "Actual-time evidence is saved. Finishing the task now…"}</div> : null}
 
         <div className="mt-10 space-y-6">
           <SearchableManualPillSelect
@@ -603,7 +612,7 @@ export function ManualEntryModal({
         </div>
 
         <div className="mt-10 flex gap-4">
-          {onClear ? (
+          {onClear && !evidenceSaved ? (
             <button
               className="ui-pill-button-danger-light transition hover:bg-[#ffe6ea] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"
               disabled={isSaving || isClearing}
@@ -613,22 +622,28 @@ export function ManualEntryModal({
               {isClearing ? "Clearing..." : "Clear Actual Time"}
             </button>
           ) : null}
-          <button
+          {!evidenceSaved ? <button
             className="ui-pill-button-light transition hover:bg-white/5 dark:bg-transparent dark:text-white dark:rounded-full"
             onClick={onClose}
             type="button"
             disabled={isSaving || isClearing}
           >
             Cancel
-          </button>
-          <button
+          </button> : null}
+          {mode === "failed_completion" ? <button
             className="ui-pill-button-strong-light transition hover:scale-105 dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
-            disabled={isSaving || isClearing || !title.trim() || !focusType.trim()}
+            onClick={() => { void onRetryCompletion?.(); }}
+            type="button"
+          >
+            Retry completion
+          </button> : <button
+            className="ui-pill-button-strong-light transition hover:scale-105 dark:rounded-full dark:bg-[#6f57f6] dark:text-white dark:shadow-xl dark:shadow-[#6f57f6]/30"
+            disabled={mode !== "entry" || isSaving || isClearing || !title.trim() || !focusType.trim()}
             onClick={() => void submit()}
             type="button"
           >
-            {isSaving ? "Saving..." : "Log Entry"}
-          </button>
+            {mode === "completing" ? "Completing task…" : mode === "saving_evidence" ? "Saving evidence…" : isSaving ? "Saving..." : "Log Entry"}
+          </button>}
         </div>
     </ModalShell>
   );

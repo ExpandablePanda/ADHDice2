@@ -26,6 +26,7 @@ type TaskEditFlowsProps = {
     modalLabel: string;
     onClose: () => void;
     onConfirm: () => void;
+    pending?: boolean;
     taskTitle: string;
     title: string;
   } | null;
@@ -97,7 +98,7 @@ export function TaskEditFlows({
         </ModalShell>
       ) : null}
       {completeFlow ? (
-        <ModalShell className="w-full max-w-lg rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label={completeFlow.modalLabel} onClose={completeFlow.onClose}>
+        <ModalShell className="w-full max-w-lg rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label={completeFlow.modalLabel} onClose={completeFlow.pending ? undefined : completeFlow.onClose}>
           <div className="space-y-5">
             <div>
               <p className="text-sm font-black uppercase tracking-[0.18em] text-[#256947] dark:text-[#94d0ad]">Complete</p>
@@ -111,6 +112,7 @@ export function TaskEditFlows({
             <div className="flex justify-end gap-3">
               <button
                 className="ui-pill-button-light transition"
+                disabled={completeFlow.pending}
                 onClick={completeFlow.onClose}
                 type="button"
               >
@@ -118,10 +120,11 @@ export function TaskEditFlows({
               </button>
               <button
                 className="rounded-full border border-[#5d9b76] bg-white px-4 py-2 text-sm font-semibold text-[#256947] transition hover:bg-[#f3fbf5] dark:border-[#44785a] dark:bg-[#13251a] dark:text-[#9ed7b2] dark:hover:bg-[#193222]"
+                disabled={completeFlow.pending}
                 onClick={completeFlow.onConfirm}
                 type="button"
               >
-                {completeFlow.confirmLabel}
+                {completeFlow.pending ? "Completing…" : completeFlow.confirmLabel}
               </button>
             </div>
           </div>

@@ -18,11 +18,12 @@ type TasksPageOrchestratorProps = {
   activeTabId: string;
   alternateViewPanel: ReactNode;
   brainstormWorkspacePanel: ReactNode;
+  completedMilestonesWorkspacePanel: ReactNode;
   flows: ReactNode;
   listViewPanel: ReactNode;
   onAddTab: () => void;
   onTimeWorkspacePanel: ReactNode;
-  showTableOverlayOnTime?: boolean;
+  showSharedTaskEditorOverlay?: boolean;
   onCloseTab: (tabId: string) => void;
   onReorderTab: (tabId: string, targetIndex: number) => void;
   onRenameTab: (tabId: string, nextLabel: string) => void;
@@ -41,11 +42,12 @@ export function TasksWorkspace({
   activeTabId,
   alternateViewPanel,
   brainstormWorkspacePanel,
+  completedMilestonesWorkspacePanel,
   flows,
   listViewPanel,
   onAddTab,
   onTimeWorkspacePanel,
-  showTableOverlayOnTime,
+  showSharedTaskEditorOverlay,
   onCloseTab,
   onReorderTab,
   onRenameTab,
@@ -152,10 +154,11 @@ export function TasksWorkspace({
       <TaskPage
         alternateViewPanel={alternateViewPanel}
         brainstormWorkspacePanel={brainstormWorkspacePanel}
+        completedMilestonesWorkspacePanel={completedMilestonesWorkspacePanel}
         flows={flows}
         listViewPanel={listViewPanel}
         onTimeWorkspacePanel={onTimeWorkspacePanel}
-        showTableOverlayOnTime={showTableOverlayOnTime}
+        showSharedTaskEditorOverlay={showSharedTaskEditorOverlay}
         operationsHeader={<TaskOperationsHeader {...operationsHeaderProps} />}
         pathsWorkspacePanel={pathsWorkspacePanel}
         reportWorkspacePanel={reportWorkspacePanel}

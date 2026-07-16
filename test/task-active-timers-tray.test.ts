@@ -44,7 +44,32 @@ test("tray uses the shared actual-time handoff and the dedicated delete-only dis
   assert.match(traySource, /createPortal\(/);
   assert.match(listSource, /TaskTimerStateChip onClick=\{\(\) => openQuickPanel\(task\.id, "actual"\)\} timer=\{runningTimerByTaskId\.get\(task\.id\)!\}/);
   assert.match(traySource, /Discard \{formatElapsed\(unsavedSeconds\)\}/);
-  assert.match(appSource, /view: current\.view === "list" \? "list" : "table"/);
-  assert.match(appSource, /setRequestedListOverlayTaskId\(taskId\)/);
+  const goToTaskSource = appSource.slice(appSource.indexOf("function goToActiveTimerTask"), appSource.indexOf("function cycleHudTaskTimer"));
+  assert.match(goToTaskSource, /openSharedTaskEditor\(taskId, \{ timer \}\)/);
+  assert.match(goToTaskSource, /setIsActiveTimersTrayOpen\(false\)/);
+  assert.doesNotMatch(goToTaskSource, /tasksSurface|view:|setRequestedListOverlayTaskId|highlight|scroll|pause|resume|stop|discard|evidence/i);
+  assert.match(traySource, /onClick=\{\(\) => onGoToTask\(timer\.taskId\)\}/);
   assert.doesNotMatch(tableSource, /setLocalTimerNow\(Date\.now\(\)\);\s*}, 1000\)/);
+});
+
+test("terminal task actions stage active timers through one shared evidence flow", async () => {
+  const [appSource, hookSource] = await Promise.all([
+    readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/hooks/useTaskTimers.ts", import.meta.url), "utf8"),
+  ]);
+  const updateStatusSource = appSource.slice(appSource.indexOf("async function updateTaskStatus"), appSource.indexOf("async function toggleTaskPinned"));
+  const completeSource = appSource.slice(appSource.indexOf("async function confirmPendingTaskComplete"), appSource.indexOf("function buildTaskStatusUpdate"));
+  assert.match(updateStatusSource, /status === "done" \|\| status === "did_my_best"/);
+  assert.doesNotMatch(updateStatusSource, /status === "missed"/);
+  assert.match(updateStatusSource, /stageTimedTaskCompletion/);
+  assert.match(completeSource, /stageTimedTaskCompletion\(task, \{ kind: "complete" \}, completeAction\.onTimeOrigin\)/);
+  assert.match(appSource, /const stoppedTimer = await persistStoppedTaskTimer\(task\.id\)/);
+  assert.match(appSource, /setTaskActualTimeEntryTaskId\(task\.id\)/);
+  assert.match(appSource, /phase: "evidence_saved_awaiting_completion"/);
+  assert.match(appSource, /confirmPendingTaskComplete\(true, task, intent\.completePayload\)/);
+  assert.match(appSource, /updateTaskStatus\(task, intent\.terminalAction, true, intent\.onTimeOrigin \?\? undefined\)/);
+  assert.match(appSource, /await persistRestoredTaskTimer\(timedIntent\.stoppedTimer\)/);
+  assert.match(hookSource, /async function restoreStoppedTaskTimer/);
+  assert.match(hookSource, /is_running: false/);
+  assert.match(hookSource, /start_time: null/);
 });

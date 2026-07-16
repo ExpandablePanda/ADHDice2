@@ -7,6 +7,7 @@ export type BuiltInTaskListId =
   | "all"
   | "inbox"
   | "today"
+  | "milestones"
   | "focus"
   | "priority_1_2"
   | "priority_3_4"
@@ -75,7 +76,7 @@ export type TaskListManualMembership = {
   user_id: string;
 };
 
-const APP_OWNED_SYSTEM_LIST_IDS = new Set<TaskListId>(["all", "routine"]);
+const APP_OWNED_SYSTEM_LIST_IDS = new Set<TaskListId>(["all", "milestones", "routine"]);
 
 export function isAppOwnedSystemTaskListId(value: string | null | undefined): value is TaskListId {
   return Boolean(value && APP_OWNED_SYSTEM_LIST_IDS.has(value as TaskListId));
@@ -101,7 +102,7 @@ export function isManualTaskListDestination(list: Pick<TaskListDefinition, "id" 
 }
 
 export function isTaskListSettingsEligible(list: Pick<TaskListDefinition, "id">) {
-  return list.id !== "routine";
+  return list.id !== "routine" && list.id !== "milestones";
 }
 
 export function isPrimaryRailTaskListEligible(list: Pick<TaskListDefinition, "id" | "isVisible">) {
@@ -129,6 +130,8 @@ export function hasTaskListMembership(
 }
 
 export type TaskListEvaluationContext = {
+  activeMilestoneTaskIds?: ReadonlySet<string>;
+  milestoneTaskIds?: ReadonlySet<string>;
   currentStreakByTaskId: Record<string, number>;
   focusedTaskIds: Set<string>;
   focusFilterFactsByTaskId?: Record<string, ReturnType<typeof getTaskFocusFilterFacts>>;
@@ -193,6 +196,7 @@ export const BUILT_IN_TASK_LIST_IDS: BuiltInTaskListId[] = [
   "all",
   "inbox",
   "today",
+  "milestones",
   "focus",
   "priority_1_2",
   "priority_3_4",
@@ -248,6 +252,18 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       },
       sortOrder: 2,
       type: "system",
+    },
+    {
+      description: "Active finite goals with locked trophy tiers and target dates.",
+      id: "milestones",
+      isDeletable: false,
+      isEditable: false,
+      isVisible: true,
+      membershipMode: "system",
+      name: "Milestones",
+      rules: null,
+      sortOrder: 3.5,
+      type: "smart",
     },
     {
       description: "Tasks marked for focus today.",
@@ -458,6 +474,14 @@ export function evaluateTaskListMemberships(
       id: listId,
       isManual: lookup.listById.get(listId)?.membershipMode !== "system",
       source: "manual",
+    });
+  }
+
+  if (context.milestoneTaskIds?.has(task.id) && task.status !== "trashed") {
+    memberships.set("milestones", {
+      id: "milestones",
+      isManual: false,
+      source: "rule",
     });
   }
   if (perf) {

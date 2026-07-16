@@ -34,6 +34,7 @@ import {
   isCurrentFocusCounterSnapshotRequest,
   reconcileFocusCounterHistorySnapshot,
   reconcileFocusCounterSnapshot,
+  shouldNotifyFocusCounterMigrationDivergence,
   type FocusCounterEventRow,
   type FocusCounterMigrationResult,
   type FocusCounterMutationResult,
@@ -598,7 +599,7 @@ export function useFocus(
         return;
       }
       const result = data as FocusCounterMigrationResult;
-      if (result.local_differed) {
+      if (shouldNotifyFocusCounterMigrationDivergence(result)) {
         window.localStorage.setItem(
           getFocusCounterBackupStorageKey(userId, migrationBatchId),
           JSON.stringify({ backedUpAt: new Date().toISOString(), snapshot: submittedSnapshot }),

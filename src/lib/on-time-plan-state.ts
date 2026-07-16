@@ -1,5 +1,10 @@
 export type OnTimePlanItem = LinkedPlanItem | TemporaryPlanItem;
 
+export type OnTimeExecutionSnapshot = {
+  startedAt: string;
+  plannedSeconds: number;
+};
+
 export type LinkedPlanItem = {
   id: string;
   kind: "task";
@@ -10,6 +15,7 @@ export type LinkedPlanItem = {
   occurrenceDueOn: string | null;
   plannedSeconds: number | null;
   durationSource: "manual" | "typical" | "custom";
+  execution: OnTimeExecutionSnapshot | null;
 };
 
 export type TemporaryPlanItem = {
@@ -18,6 +24,7 @@ export type TemporaryPlanItem = {
   title: string;
   plannedSeconds: number | null;
   completed: boolean;
+  execution: OnTimeExecutionSnapshot | null;
 };
 
 export type OnTimePlanV1 = {
@@ -31,8 +38,8 @@ export type OnTimePlanV1 = {
   clientUpdatedAt: string;
 };
 
-export type OnTimePlanV2 = {
-  schemaVersion: 2;
+export type OnTimePlanV3 = {
+  schemaVersion: 3;
   destination: {
     source: "manual" | "google_place";
     label: string;
@@ -50,8 +57,37 @@ export type OnTimePlanV2 = {
   clientUpdatedAt: string;
 };
 
-export type OnTimePlanUpdate = Partial<Omit<OnTimePlanV2, "schemaVersion" | "clientUpdatedAt">>;
-export type OnTimePlanSchemaVersion = 0 | 1 | 2;
+export type OnTimePlanUpdate = Partial<Omit<OnTimePlanV3, "schemaVersion" | "clientUpdatedAt">>;
+export type OnTimePlanSchemaVersion = 0 | 1 | 2 | 3;
+
+export type OnTimeLinkedItemOrigin = {
+  itemId: string;
+  occurrenceDueOn: string | null;
+  occurrenceKey: string | null;
+  taskId: string;
+};
+
+export function clearMatchingOnTimeExecution(
+  plan: OnTimePlanV3,
+  origin: OnTimeLinkedItemOrigin,
+): OnTimePlanV3 | null {
+  let changed = false;
+  const items = plan.items.map((item) => {
+    if (
+      item.kind !== "task"
+      || item.id !== origin.itemId
+      || item.taskId !== origin.taskId
+      || item.occurrenceKey !== origin.occurrenceKey
+      || item.occurrenceDueOn !== origin.occurrenceDueOn
+      || item.execution === null
+    ) {
+      return item;
+    }
+    changed = true;
+    return { ...item, execution: null };
+  });
+  return changed ? { ...plan, items } : null;
+}
 
 const MAX_MINUTES = 7 * 24 * 60;
 const MAX_TRAVEL_SECONDS = MAX_MINUTES * 60;
@@ -74,6 +110,14 @@ function nullablePositiveNumber(value: unknown, max: number): number | null {
   return normalized !== null && normalized > 0 ? normalized : null;
 }
 
+function normalizeExecution(value: unknown): OnTimeExecutionSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const execution = value as Record<string, unknown>;
+  const startedAt = validIso(execution.startedAt);
+  const plannedSeconds = nullablePositiveNumber(execution.plannedSeconds, MAX_ITEM_SECONDS);
+  return startedAt && plannedSeconds ? { startedAt, plannedSeconds } : null;
+}
+
 function normalizeItem(value: unknown): OnTimePlanItem | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
@@ -93,6 +137,7 @@ function normalizeItem(value: unknown): OnTimePlanItem | null {
       occurrenceDueOn: typeof item.occurrenceDueOn === "string" ? item.occurrenceDueOn : null,
       plannedSeconds: nullablePositiveNumber(item.plannedSeconds, MAX_ITEM_SECONDS),
       durationSource: source === "typical" || source === "custom" ? source : "manual",
+      execution: normalizeExecution(item.execution),
     };
   }
   if (item.kind === "temporary") {
@@ -102,6 +147,7 @@ function normalizeItem(value: unknown): OnTimePlanItem | null {
       title: typeof item.title === "string" ? item.title : "Untitled item",
       plannedSeconds: nullablePositiveNumber(item.plannedSeconds, MAX_ITEM_SECONDS),
       completed: item.completed === true,
+      execution: normalizeExecution(item.execution),
     };
   }
   return null;
@@ -110,12 +156,12 @@ function normalizeItem(value: unknown): OnTimePlanItem | null {
 export function getOnTimePlanSchemaVersion(value: unknown): OnTimePlanSchemaVersion {
   if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
   const version = (value as Record<string, unknown>).schemaVersion;
-  return version === 2 ? 2 : version === 1 || version === undefined ? 1 : 0;
+  return version === 3 ? 3 : version === 2 ? 2 : version === 1 || version === undefined ? 1 : 0;
 }
 
-export function createEmptyOnTimePlan(timezone = "UTC", clientUpdatedAt = EPOCH): OnTimePlanV2 {
+export function createEmptyOnTimePlan(timezone = "UTC", clientUpdatedAt = EPOCH): OnTimePlanV3 {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     destination: { source: "manual", label: "", placeId: null },
     originMode: "current_location",
     travel: { selectedSource: "manual", manualDurationSeconds: null },
@@ -127,8 +173,46 @@ export function createEmptyOnTimePlan(timezone = "UTC", clientUpdatedAt = EPOCH)
   };
 }
 
+export function reconcileOnTimeManualDurationAfterTaskSave(
+  plan: OnTimePlanV3,
+  savedTask: Pick<import("@/lib/database.types").Task, "id">,
+  authoritativeManualEstimateMinutes: number | null | undefined,
+) {
+  const plannedSeconds = typeof authoritativeManualEstimateMinutes === "number"
+    && Number.isFinite(authoritativeManualEstimateMinutes)
+    && authoritativeManualEstimateMinutes > 0
+    ? Math.round(authoritativeManualEstimateMinutes * 60)
+    : null;
+  const items = plan.items.map((item) => (
+    item.kind === "task"
+      && item.taskId === savedTask.id
+      && item.durationSource === "manual"
+      && item.plannedSeconds !== plannedSeconds
+      ? { ...item, plannedSeconds }
+      : item
+  ));
+  return items.some((item, index) => item !== plan.items[index]) ? { ...plan, items } : plan;
+}
+
+export function reconcileOnTimeManualDurationsFromTasks(
+  plan: OnTimePlanV3,
+  tasks: ReadonlyArray<Pick<import("@/lib/database.types").Task, "estimated_minutes" | "id">>,
+) {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const items = plan.items.map((item) => {
+    if (item.kind !== "task" || item.durationSource !== "manual") return item;
+    if (!taskById.has(item.taskId)) return item;
+    const estimate = taskById.get(item.taskId)?.estimated_minutes;
+    const plannedSeconds = typeof estimate === "number" && Number.isFinite(estimate) && estimate > 0
+      ? Math.round(estimate * 60)
+      : null;
+    return item.plannedSeconds === plannedSeconds ? item : { ...item, plannedSeconds };
+  });
+  return items.some((item, index) => item !== plan.items[index]) ? { ...plan, items } : plan;
+}
+
 function normalizeDestination(plan: Record<string, unknown>) {
-  if (getOnTimePlanSchemaVersion(plan) !== 2) {
+  if (getOnTimePlanSchemaVersion(plan) < 2) {
     return {
       source: "manual" as const,
       label: typeof plan.destinationLabel === "string" ? plan.destinationLabel.slice(0, 300) : "",
@@ -145,7 +229,7 @@ function normalizeDestination(plan: Record<string, unknown>) {
 }
 
 function normalizeTravel(plan: Record<string, unknown>) {
-  if (getOnTimePlanSchemaVersion(plan) !== 2) {
+  if (getOnTimePlanSchemaVersion(plan) < 2) {
     const minutes = nullableNumber(plan.travelMinutes, MAX_MINUTES);
     return { selectedSource: "manual" as const, manualDurationSeconds: minutes === null ? null : minutes * 60 };
   }
@@ -159,13 +243,13 @@ function normalizeTravel(plan: Record<string, unknown>) {
   };
 }
 
-export function normalizeOnTimePlan(value: unknown, fallbackTimezone = "UTC"): OnTimePlanV2 {
+export function normalizeOnTimePlan(value: unknown, fallbackTimezone = "UTC"): OnTimePlanV3 {
   if (!value || typeof value !== "object" || Array.isArray(value)) return createEmptyOnTimePlan(fallbackTimezone);
   const plan = value as Record<string, unknown>;
   const destination = normalizeDestination(plan);
   const travel = normalizeTravel(plan);
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     destination,
     originMode: "current_location",
     travel: destination.source === "manual" ? { ...travel, selectedSource: "manual" } : travel,
@@ -177,28 +261,28 @@ export function normalizeOnTimePlan(value: unknown, fallbackTimezone = "UTC"): O
   };
 }
 
-export function getOnTimeDestinationLabel(plan: OnTimePlanV2) { return plan.destination.label; }
-export function getOnTimeManualTravelMinutes(plan: OnTimePlanV2) {
+export function getOnTimeDestinationLabel(plan: OnTimePlanV3) { return plan.destination.label; }
+export function getOnTimeManualTravelMinutes(plan: OnTimePlanV3) {
   return plan.travel.manualDurationSeconds === null ? null : plan.travel.manualDurationSeconds / 60;
 }
 export function withOnTimeDestinationLabel(label: string): OnTimePlanUpdate {
   return { destination: { source: "manual", label, placeId: null } };
 }
-export function withOnTimeManualTravelMinutes(plan: OnTimePlanV2, minutes: number | null): OnTimePlanUpdate {
+export function withOnTimeManualTravelMinutes(plan: OnTimePlanV3, minutes: number | null): OnTimePlanUpdate {
   return { travel: { ...plan.travel, selectedSource: "manual", manualDurationSeconds: minutes === null ? null : minutes * 60 } };
 }
 
-export function onTimePlanSignature(plan: OnTimePlanV2): string {
+export function onTimePlanSignature(plan: OnTimePlanV3): string {
   return JSON.stringify(normalizeOnTimePlan(plan));
 }
 
-export function onTimePlansEqual(left: OnTimePlanV2, right: OnTimePlanV2): boolean {
+export function onTimePlansEqual(left: OnTimePlanV3, right: OnTimePlanV3): boolean {
   return onTimePlanSignature(left) === onTimePlanSignature(right);
 }
 
 export function compareOnTimePlanPriority(
-  left: { plan: OnTimePlanV2; sourceSchemaVersion: OnTimePlanSchemaVersion },
-  right: { plan: OnTimePlanV2; sourceSchemaVersion: OnTimePlanSchemaVersion },
+  left: { plan: OnTimePlanV3; sourceSchemaVersion: OnTimePlanSchemaVersion },
+  right: { plan: OnTimePlanV3; sourceSchemaVersion: OnTimePlanSchemaVersion },
 ) {
   if (left.sourceSchemaVersion !== right.sourceSchemaVersion) return left.sourceSchemaVersion > right.sourceSchemaVersion ? 1 : -1;
   const leftTimestamp = Date.parse(left.plan.clientUpdatedAt) || 0;
@@ -209,10 +293,10 @@ export function compareOnTimePlanPriority(
   return leftSignature === rightSignature ? 0 : leftSignature > rightSignature ? 1 : -1;
 }
 
-export function isMeaningfulOnTimePlan(plan: OnTimePlanV2): boolean {
+export function isMeaningfulOnTimePlan(plan: OnTimePlanV3): boolean {
   return Boolean(plan.destination.label.trim() || plan.arriveAt || plan.travel.manualDurationSeconds !== null || plan.arrivalBufferMinutes || plan.items.length);
 }
 
-export function updateOnTimePlan(plan: OnTimePlanV2, changes: OnTimePlanUpdate, now = new Date()): OnTimePlanV2 {
-  return normalizeOnTimePlan({ ...plan, ...changes, schemaVersion: 2, clientUpdatedAt: now.toISOString() }, plan.timezone);
+export function updateOnTimePlan(plan: OnTimePlanV3, changes: OnTimePlanUpdate, now = new Date()): OnTimePlanV3 {
+  return normalizeOnTimePlan({ ...plan, ...changes, schemaVersion: 3, clientUpdatedAt: now.toISOString() }, plan.timezone);
 }

@@ -83,6 +83,10 @@ import { TaskReportWorkspace } from "./task-app/task-report-workspace";
 import { OnTimePlannerWorkspace } from "./task-app/on-time-planner-workspace";
 import { BrainstormWorkspace } from "./task-app/brainstorm-workspace";
 import { TaskRewardModal } from "./task-app/task-reward-modal";
+import { DetachAndPromoteMilestoneModal, MilestoneCorrectionModal, MilestoneSetupModal } from "./task-app/milestone-setup-modal";
+import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
+import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
+import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
@@ -102,7 +106,7 @@ import {
 } from "./task-app/task-editor-model";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
-import { TaskManagementTableV2, type RunningTaskTimer } from "@/components/ui/task-management-table-v2";
+import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
 import {
@@ -133,6 +137,12 @@ import { useTaskPriorityRoutingController } from "@/hooks/useTaskPriorityRouting
 import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportController";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
+import { useMilestoneData } from "@/hooks/useMilestoneData";
+import { createBrowserUuidV4 } from "@/lib/browser-uuid";
+import { clearMatchingOnTimeExecution, reconcileOnTimeManualDurationsFromTasks, type OnTimeLinkedItemOrigin } from "@/lib/on-time-plan-state";
+import { occurrenceIdentityMatches } from "@/lib/on-time-planner";
+import { buildTaskOccurrenceIdentity } from "@/lib/task-duration-evidence";
+import { isTimedCompletionEvidenceSaved, type TimedCompletionWorkflow } from "@/lib/task-timed-completion";
 import { useBrainstormState } from "@/hooks/useBrainstormState";
 import {
   getDisplayFocusCategories,
@@ -174,7 +184,7 @@ import {
   type HistoricalFocusSession,
 } from "@/lib/types";
 import { formatLocalDate, todayISO, withBasePath } from "@/lib/utils";
-import { getBrowserTimeZone, getLogicalDayKey, saveLogicalDaySettings } from "@/lib/logical-day";
+import { formatDateKeyInTimeZone, getBrowserTimeZone, getLogicalDayKey, saveLogicalDaySettings } from "@/lib/logical-day";
 import { runStorageMigrations } from "@/lib/storage-migrations";
 import { buildProfileSnapshot, DEFAULT_PROFILE, saveProfile, type UserProfile, useProfileStore } from "@/lib/profile-store";
 import {
@@ -212,6 +222,7 @@ import {
   getTaskCompleteConfirmationDescription,
 } from "@/lib/task-complete";
 import { filterPromotedLegacySubtasks } from "@/lib/task-legacy-step-promotion";
+import { buildMilestoneLifecycleArgs, canDetachAndPromoteTaskToMilestone, canPromoteTaskToMilestone, formatMilestoneRpcError, getMilestoneEligibility, mergeAuthoritativeMilestoneTask, shouldReverseCompletedMilestoneForStatusChange } from "@/lib/milestones";
 import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
 import {
   buildTaskHistoryFacts,
@@ -255,6 +266,7 @@ import {
 import type {
   FocusCategory as DbFocusCategory,
   LegacySubtaskPromotion as DbLegacySubtaskPromotion,
+  Milestone,
   Note,
   Task,
   TaskEnergy,
@@ -297,6 +309,16 @@ const TestTaskTablePrototype = dynamic(() => import("./task-app/test-task-table-
 type Message = {
   tone: "neutral" | "good" | "warn";
   text: string;
+};
+
+type PendingCompleteAction = {
+  focusToday?: boolean;
+  linkedNoteIds?: string[];
+  onTimeOrigin?: OnTimeLinkedItemOrigin;
+  source: "editor" | "status";
+  subtasks?: TaskSubtaskDraft[];
+  taskId: string;
+  values?: TaskUpdate;
 };
 
 type HudNotificationItem = {
@@ -485,7 +507,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.29.14";
+const APP_VERSION = "6.29.28";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1315,14 +1337,15 @@ export function TaskApp() {
   const [shrinkAllColumnsToken, setShrinkAllColumnsToken] = useState(0);
   const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
-  const [pendingCompleteAction, setPendingCompleteAction] = useState<{
-    focusToday?: boolean;
-    linkedNoteIds?: string[];
-    source: "editor" | "status";
-    subtasks?: TaskSubtaskDraft[];
-    taskId: string;
-    values?: TaskUpdate;
-  } | null>(null);
+  const [pendingCompleteAction, setPendingCompleteAction] = useState<PendingCompleteAction | null>(null);
+  const [pendingTimedCompletion, setPendingTimedCompletion] = useState<TimedCompletionWorkflow<PendingCompleteAction> | null>(null);
+  const pendingTimedCompletionRef = useRef<TimedCompletionWorkflow<PendingCompleteAction> | null>(null);
+  const pendingOnTimeTimerSaveOriginRef = useRef<OnTimeLinkedItemOrigin | null>(null);
+  const timedCompletionFailureRef = useRef<string | null>(null);
+  const setTaskUpdateMessage = useCallback<typeof setMessage>((value) => {
+    if (typeof value !== "function" && value?.tone === "warn") timedCompletionFailureRef.current = value.text;
+    setMessage(value);
+  }, []);
   const [taskEditorStatusResetSignal, setTaskEditorStatusResetSignal] = useState<{
     status: TaskStatus;
     taskId: string;
@@ -1332,7 +1355,16 @@ export function TaskApp() {
   const [taskActualTimeEntryTaskId, setTaskActualTimeEntryTaskId] = useState<string | null>(null);
   const [taskActualTimeEntryPrefill, setTaskActualTimeEntryPrefill] = useState<{ durationSeconds: number; occurrenceDueOn?: string | null; occurrenceKey?: string | null; source?: TaskDurationEvidence["source"]; title: string } | null>(null);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
-  const [onTimeSharedOverlayTaskId, setOnTimeSharedOverlayTaskId] = useState<string | null>(null);
+  const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
+  const [milestoneSetupTaskId, setMilestoneSetupTaskId] = useState<string | null>(null);
+  const [milestoneCorrectionId, setMilestoneCorrectionId] = useState<string | null>(null);
+  const [pendingDetachMilestoneTaskId, setPendingDetachMilestoneTaskId] = useState<string | null>(null);
+  const [isDetachingMilestoneTask, setIsDetachingMilestoneTask] = useState(false);
+  const [pendingMilestoneLifecycle, setPendingMilestoneLifecycle] = useState<{ action: MilestoneLifecycleAction; milestoneId: string } | null>(null);
+  const [isMilestoneLifecyclePending, setIsMilestoneLifecyclePending] = useState(false);
+  const milestoneOperationIdsRef = useRef(new Map<string, string>());
+  const [taskEditorFocusRequest, setTaskEditorFocusRequest] = useState<TaskEditorFocusRequest | null>(null);
+  const taskEditorFocusTokenRef = useRef(0);
   const [suppressDetachedListNoticeTaskId, setSuppressDetachedListNoticeTaskId] = useState<string | null>(null);
   const [activeTaskTimerIndex, setActiveTaskTimerIndex] = useState(0);
   const [isActiveTimersTrayOpen, setIsActiveTimersTrayOpen] = useState(false);
@@ -1345,8 +1377,10 @@ export function TaskApp() {
     pauseTaskTimer: persistPausedTaskTimer,
     resumeTaskTimer: persistResumedTaskTimer,
     stopTaskTimer: persistStoppedTaskTimer,
+    restoreStoppedTaskTimer: persistRestoredTaskTimer,
     discardTaskTimer: persistDiscardedTaskTimer,
   } = useTaskTimers(supabase, session?.user?.id ?? null, setMessage);
+  const milestoneData = useMilestoneData(supabase, session?.user?.id ?? null, setMessage);
   const gridColumns = useResponsiveTaskGridColumns({
     maxColumns: TASK_GRID_MAX_COLUMNS,
     phoneColumns: TASK_GRID_PHONE_COLUMNS,
@@ -1359,6 +1393,9 @@ export function TaskApp() {
     userTimeZone,
     activePage === "Tasks" && taskUiState.tasksSurface === "on_time",
   );
+  useEffect(() => {
+    onTimePlan.updatePlanFromCurrent((current) => reconcileOnTimeManualDurationsFromTasks(current, tasks));
+  }, [onTimePlan.updatePlanFromCurrent, tasks]);
   const brainstormState = useBrainstormState(
     currentUserId,
     activePage === "Tasks" && taskUiState.tasksSurface === "brainstorm",
@@ -2059,6 +2096,10 @@ export function TaskApp() {
     () => getLogicalDayKey(new Date(logicalDayNow), { dayStartTime, timezone: userTimeZone }),
     [dayStartTime, logicalDayNow, userTimeZone],
   );
+  const milestoneLocalDate = useMemo(
+    () => formatDateKeyInTimeZone(new Date(logicalDayNow), userTimeZone),
+    [logicalDayNow, userTimeZone],
+  );
 
   useEffect(() => {
     const client = supabase;
@@ -2156,6 +2197,14 @@ export function TaskApp() {
   const focusedTaskIdsRef = useRef(focusedTaskIds);
   focusedTaskIdsRef.current = focusedTaskIds;
   const focusedTaskIdSet = useMemo(() => new Set(focusedTaskIds), [focusedTaskIds]);
+  const milestonePromotionTaskIds = useMemo(
+    () => new Set(tasks.filter((task) => canPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)).map((task) => task.id)),
+    [milestoneData.milestoneByTaskId, tasks],
+  );
+  const milestoneDetachPromotionTaskIds = useMemo(
+    () => new Set(tasks.filter((task) => canDetachAndPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)).map((task) => task.id)),
+    [milestoneData.milestoneByTaskId, tasks],
+  );
   const toggleFocusTodayForTask = useCallback((taskId: string) => {
     if (focusedTaskIds.includes(taskId)) {
       void saveFocusSelection(focusedTaskIds.filter((id) => id !== taskId));
@@ -2170,7 +2219,7 @@ export function TaskApp() {
       byId.set(list.id, list);
     }
     for (const list of taskLists) {
-      if (list.id === "routine") {
+      if (list.id === "routine" || list.id === "milestones") {
         continue;
       }
       byId.set(list.id, list);
@@ -2220,7 +2269,7 @@ export function TaskApp() {
     ),
     [taskHistoryByTaskId, tasks, todayKey],
   );
-  const pathsTaskDisplayStatusByTaskId = useMemo(
+  const taskDisplayStatusByTaskId = useMemo(
     () => Object.fromEntries(
       tasks.map((task) => [
         task.id,
@@ -2285,6 +2334,8 @@ export function TaskApp() {
     taskGridLayout,
   });
   const taskListEvaluationContext = useMemo<TaskListEvaluationContext>(() => ({
+    activeMilestoneTaskIds: milestoneData.activeMilestoneTaskIds,
+    milestoneTaskIds: milestoneData.milestoneTaskIds,
     currentStreakByTaskId,
     focusedTaskIds: focusedTaskIdSet,
     hasStepsByTaskId,
@@ -2297,7 +2348,7 @@ export function TaskApp() {
     manualMembershipsByTaskId,
     taskHistoryByTaskId,
     todayDateKey: todayKey,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -2334,6 +2385,8 @@ export function TaskApp() {
       focusedTaskIds,
       listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
       listVisibleColumns: taskUiState.visibleColumnsByView.table,
+      milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
+      milestoneTaskIds: milestoneData.milestoneTaskIds,
       taskActualTimeEntryTaskId,
       taskEditorTaskId,
       taskGridLayout,
@@ -2357,6 +2410,8 @@ export function TaskApp() {
       bucketContext,
       effectiveSearchQuery,
       focusedTaskIds,
+      milestoneData.milestoneSearchTokensByTaskId,
+      milestoneData.milestoneTaskIds,
       taskActualTimeEntryTaskId,
       taskEditorTaskId,
       taskGridLayout,
@@ -2394,6 +2449,7 @@ export function TaskApp() {
     listRailOptions,
     lowEnergyTasks,
     manualListOptions,
+    milestoneFilteredTasksSorted,
     momentumPercent,
     overdueTasks,
     planningCandidates,
@@ -2446,6 +2502,8 @@ export function TaskApp() {
       nextTasks = trashFilteredTasksSorted;
     } else if (taskUiState.selectedBucket === "all") {
       nextTasks = filteredTasksSorted;
+    } else if (taskUiState.selectedBucket === "milestones") {
+      nextTasks = milestoneFilteredTasksSorted;
     } else if (taskUiState.selectedBucket === "pinned") {
       nextTasks = filteredTasksSorted.filter(isTaskPinned);
     } else {
@@ -2461,7 +2519,7 @@ export function TaskApp() {
     }
 
     return nextTasks;
-  }, [activePage, archiveFilteredTasksSorted, filteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
+  }, [activePage, archiveFilteredTasksSorted, filteredTasksSorted, milestoneFilteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const visiblePinnedTaskCount = useMemo(
     () => filteredTasksSorted.filter(isTaskPinned).length,
@@ -2781,6 +2839,7 @@ export function TaskApp() {
       currentUserId: currentUserIdText,
       deleteTaskRow: (taskId, expectedTask) => deleteTaskRow(client, taskId, { expectedTask }),
       markPendingTaskMutations,
+      mutateMilestoneTask,
       setMessage,
       setTaskRouting,
       setTasks,
@@ -2896,7 +2955,7 @@ export function TaskApp() {
       markPendingTaskMutations,
       onTasksCompleted: queueTaskRewards,
       reconcileOverdueTaskMisses,
-      setMessage,
+      setMessage: setTaskUpdateMessage,
       setTasks,
       sortTasksForUi,
       tasks,
@@ -3491,6 +3550,57 @@ export function TaskApp() {
     });
     return true;
   }, [applyTaskMutationWithoutHistory, setMessage, tasks]);
+  const openMilestoneSetup = useCallback((taskId: string) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task || !canPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)) {
+      setMessage({ tone: "warn", text: "This task is no longer eligible for Milestone promotion." });
+      return;
+    }
+    setMilestoneSetupTaskId(taskId);
+  }, [milestoneData.milestoneByTaskId, setMessage, tasks]);
+  const requestDetachAndPromoteMilestone = useCallback((taskId: string) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task || !canDetachAndPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)) {
+      setMessage({ tone: "warn", text: "This Step or Substep can no longer be detached for Milestone promotion." });
+      return;
+    }
+    setPendingDetachMilestoneTaskId(taskId);
+  }, [milestoneData.milestoneByTaskId, setMessage, tasks]);
+  const confirmDetachAndPromoteMilestone = useCallback(async () => {
+    const taskId = pendingDetachMilestoneTaskId;
+    if (!taskId || isDetachingMilestoneTask) return;
+    setIsDetachingMilestoneTask(true);
+    const didDetach = await unlinkSameTableTask(taskId);
+    setIsDetachingMilestoneTask(false);
+    if (!didDetach) return;
+    setPendingDetachMilestoneTaskId(null);
+    setMilestoneSetupTaskId(taskId);
+  }, [isDetachingMilestoneTask, pendingDetachMilestoneTaskId, unlinkSameTableTask]);
+  function renderMilestoneInspectorExtension(taskId: string) {
+    const task = tasks.find((entry) => entry.id === taskId);
+    if (!task) return null;
+    const milestone = milestoneData.milestoneByTaskId.get(taskId) ?? null;
+    const eligibility = getMilestoneEligibility(task);
+    const promotionBlockedReason = milestone ? null
+      : eligibility.reason === "child_task" ? "Steps and Substeps must be detached into parent tasks before Milestone promotion."
+      : eligibility.reason === "indefinitely_recurring" ? "A Milestone requires a finite endpoint. Indefinitely recurring tasks are not eligible."
+      : eligibility.reason === "closed_task" ? "Complete, archived, and trashed tasks cannot be promoted to Milestones."
+      : null;
+    return (
+      <MilestoneInspectorSection
+        localDate={milestoneLocalDate}
+        milestone={milestone}
+        nowMs={logicalDayNow}
+        onAbandon={() => milestone && setPendingMilestoneLifecycle({ action: "abandon", milestoneId: milestone.id })}
+        onComplete={() => requestTaskComplete(task, { source: "status" })}
+        onCorrect={() => milestone && setMilestoneCorrectionId(milestone.id)}
+        onPromote={() => openMilestoneSetup(task.id)}
+        onReverse={() => milestone && setPendingMilestoneLifecycle({ action: "reverse", milestoneId: milestone.id })}
+        promotionBlockedReason={promotionBlockedReason}
+        task={task}
+      />
+    );
+  }
   const moveTaskIntoParent = useCallback(async (taskId: string, parentTaskId: string) => {
     const task = tasks.find((entry) => entry.id === taskId);
     const parentTask = tasks.find((entry) => entry.id === parentTaskId);
@@ -3655,14 +3765,19 @@ export function TaskApp() {
   }
 
   async function startHudTaskTimer(timer: RunningTaskTimer) {
-    const existingIndex = runningTaskTimers.findIndex((entry) => entry.taskId === timer.taskId);
-    if (existingIndex >= 0) {
-      setActiveTaskTimerIndex(existingIndex);
-      return;
-    }
-    setActiveTaskTimerIndex(runningTaskTimers.length);
     const task = tasks.find((candidate) => candidate.id === timer.taskId);
     const evidence = task ? buildTaskDurationEvidence(task, "task_timer") : null;
+    const existingIndex = runningTaskTimers.findIndex((entry) => entry.taskId === timer.taskId);
+    if (existingIndex >= 0) {
+      const existing = runningTaskTimers[existingIndex];
+      if (!existing || !evidence || !occurrenceIdentityMatches(existing, evidence)) {
+        setMessage({ tone: "warn", text: "A task timer from another occurrence is already active. Stop or save it before starting this deadline." });
+        return false;
+      }
+      setActiveTaskTimerIndex(existingIndex);
+      return true;
+    }
+    setActiveTaskTimerIndex(runningTaskTimers.length);
     const started = await persistTaskTimer({
       ...timer,
       occurrenceDueOn: evidence?.occurrenceDueOn ?? null,
@@ -3673,6 +3788,7 @@ export function TaskApp() {
     if (started) {
       setIsActiveTimersTrayOpen(true);
     }
+    return Boolean(started);
   }
 
   function pauseHudTaskTimer(taskId: string) {
@@ -3683,12 +3799,18 @@ export function TaskApp() {
     void persistResumedTaskTimer(taskId);
   }
 
-  function stopHudTaskTimer(taskId: string) {
+  function clearOnTimeExecution(origin: OnTimeLinkedItemOrigin | null | undefined) {
+    if (!origin) return;
+    onTimePlan.updatePlanFromCurrent((current) => clearMatchingOnTimeExecution(current, origin));
+  }
+
+  function stopHudTaskTimer(taskId: string, onTimeOrigin?: OnTimeLinkedItemOrigin) {
     void (async () => {
       const stoppedTimer = await persistStoppedTaskTimer(taskId);
       if (!stoppedTimer) {
         return;
       }
+      pendingOnTimeTimerSaveOriginRef.current = onTimeOrigin ?? null;
       setTaskActualTimeEntryTaskId(taskId);
       setTaskActualTimeEntryPrefill({
         durationSeconds: Math.max(0, stoppedTimer.elapsedSeconds),
@@ -3700,23 +3822,98 @@ export function TaskApp() {
     })();
   }
 
+  function setTimedCompletionIntent(intent: TimedCompletionWorkflow<PendingCompleteAction> | null) {
+    pendingTimedCompletionRef.current = intent;
+    setPendingTimedCompletion(intent);
+  }
+
+  async function stageTimedTaskCompletion(
+    task: Task,
+    action: { kind: "complete" } | { kind: "status"; status: "done" | "did_my_best" },
+    onTimeOrigin?: OnTimeLinkedItemOrigin,
+  ): Promise<"none" | "staged" | "failed"> {
+    if (pendingTimedCompletionRef.current) {
+      return "failed";
+    }
+    const activeTimer = runningTaskTimers.find((timer) => timer.taskId === task.id);
+    if (!activeTimer) {
+      return "none";
+    }
+    const terminalAction = action.kind === "status" ? action.status : "complete";
+    const completePayload = action.kind === "complete" ? pendingCompleteAction : null;
+    setTimedCompletionIntent({
+      completePayload,
+      completionError: null,
+      evidenceId: null,
+      latestTask: null,
+      occurrenceDueOn: activeTimer.occurrenceDueOn ?? null,
+      occurrenceKey: activeTimer.occurrenceKey ?? null,
+      onTimeOrigin: onTimeOrigin ?? null,
+      phase: "stopping_timer",
+      stoppedTimer: null,
+      taskId: task.id,
+      terminalAction,
+    });
+    if (action.kind === "complete") setPendingCompleteAction(null);
+    const stoppedTimer = await persistStoppedTaskTimer(task.id);
+    if (!stoppedTimer) {
+      setTimedCompletionIntent(null);
+      if (completePayload) setPendingCompleteAction(completePayload);
+      return "failed";
+    }
+    setTimedCompletionIntent({
+      completePayload,
+      completionError: null,
+      evidenceId: null,
+      latestTask: null,
+      occurrenceDueOn: stoppedTimer.occurrenceDueOn ?? null,
+      occurrenceKey: stoppedTimer.occurrenceKey ?? null,
+      onTimeOrigin: onTimeOrigin ?? null,
+      phase: "awaiting_evidence",
+      stoppedTimer,
+      taskId: task.id,
+      terminalAction,
+    });
+    setTaskActualTimeEntryPrefill({
+      durationSeconds: Math.max(0, stoppedTimer.elapsedSeconds),
+      occurrenceDueOn: stoppedTimer.occurrenceDueOn,
+      occurrenceKey: stoppedTimer.occurrenceKey,
+      source: "task_timer",
+      title: stoppedTimer.title,
+    });
+    setTaskActualTimeEntryTaskId(task.id);
+    return "staged";
+  }
+
   function requestTaskTimerDiscard(taskId: string) {
     setPendingTaskTimerDiscardId(taskId);
     setIsActiveTimersTrayOpen(true);
   }
 
-  function goToActiveTimerTask(taskId: string) {
-    const nextTaskWorkspaceTabId = taskWorkspaceTabsState.tabs.find((tab) => !isReportTaskWorkspaceTab(tab))?.id
-      ?? taskWorkspaceTabsState.activeTabId;
+  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; timer?: RunningTaskTimer | null }) {
+    const task = tasks.find((entry) => entry.id === taskId) ?? null;
+    const timer = options?.timer ?? null;
+    const taskOccurrence = task ? buildTaskOccurrenceIdentity(task) : null;
+    const occurrenceIsClearlyStale = Boolean(timer?.occurrenceKey && taskOccurrence?.occurrenceKey
+      && !occurrenceIdentityMatches(timer, taskOccurrence));
+    if (!task || task.status === "trashed" || task.status === "archived" || occurrenceIsClearlyStale) {
+      setMessage({ tone: "warn", text: occurrenceIsClearlyStale ? "That timer belongs to an older task occurrence." : "That task is no longer available to edit." });
+      return false;
+    }
+
     setActivePage("Tasks");
-    setActiveTaskWorkspaceTab(nextTaskWorkspaceTabId);
     setSuppressDetachedListNoticeTaskId(null);
-    setTaskUiState((current) => ({
-      ...current,
-      tasksSurface: "tasks",
-      view: current.view === "list" ? "list" : "table",
-    }));
-    setRequestedListOverlayTaskId(taskId);
+    setSharedTaskEditorOverlayTaskId(taskId);
+    setTaskEditorFocusRequest(options?.initialField
+      ? { field: options.initialField, taskId, token: ++taskEditorFocusTokenRef.current }
+      : null);
+    return true;
+  }
+
+  function goToActiveTimerTask(taskId: string) {
+    const timer = runningTaskTimers.find((entry) => entry.taskId === taskId) ?? null;
+    openSharedTaskEditor(taskId, { timer });
+    setIsActiveTimersTrayOpen(false);
   }
 
   function cycleHudTaskTimer(direction: "next" | "previous") {
@@ -3806,7 +4003,7 @@ export function TaskApp() {
       tasks={selectedBucketTasks}
     />
   );
-  const sharedOverlayTaskId = onTimeSharedOverlayTaskId ?? requestedListOverlayTaskId;
+  const sharedOverlayTaskId = sharedTaskEditorOverlayTaskId ?? requestedListOverlayTaskId;
   const requestedOpenListTask = sharedOverlayTaskId
     ? tasks.find((task) => task.id === sharedOverlayTaskId) ?? null
     : null;
@@ -3895,6 +4092,7 @@ export function TaskApp() {
     task: Task,
     entry: { date: string; durationSeconds: number; notes: string; title: string },
     evidence?: TaskDurationEvidence,
+    onEvidenceSaved?: (entryId: string) => void,
   ) {
     if (!currentUser || !supabase) {
       return false;
@@ -3939,6 +4137,7 @@ export function TaskApp() {
 
     if (insertedEntry) {
       setTaskActualTimeEntries((current) => [insertedEntry, ...current]);
+      onEvidenceSaved?.(insertedEntry.id);
     }
 
     const nextActualSeconds = (task.actual_seconds ?? 0) + entry.durationSeconds;
@@ -3959,18 +4158,88 @@ export function TaskApp() {
       return false;
     }
 
+    const timedIntent = pendingTimedCompletionRef.current;
+    if (timedIntent && timedIntent.phase !== "awaiting_evidence") return false;
+    if (timedIntent) setTimedCompletionIntent({ ...timedIntent, phase: "saving_evidence" });
+    let evidenceId: string | null = null;
     const success = await logActualTimeForTask(taskForActualTimeEntry, entry, taskActualTimeEntryPrefill?.occurrenceKey
-      ? {
-          estimateEligible: true,
-          occurrenceDueOn: taskActualTimeEntryPrefill.occurrenceDueOn ?? null,
-          occurrenceKey: taskActualTimeEntryPrefill.occurrenceKey,
-          source: taskActualTimeEntryPrefill.source ?? "manual",
-        }
-      : undefined);
-    if (success) {
-      setTaskActualTimeEntryTaskId(null);
+        ? {
+            estimateEligible: true,
+            occurrenceDueOn: taskActualTimeEntryPrefill.occurrenceDueOn ?? null,
+            occurrenceKey: taskActualTimeEntryPrefill.occurrenceKey,
+            source: taskActualTimeEntryPrefill.source ?? "manual",
+          }
+        : undefined, (insertedId) => { evidenceId = insertedId; });
+    if (!success) {
+      if (timedIntent) setTimedCompletionIntent({ ...timedIntent, phase: "awaiting_evidence" });
+      return false;
     }
-    return success;
+    if (timedIntent) {
+      const { data: latestTask, error: latestTaskError } = await client
+        .from("adhdice_clean_tasks")
+        .select("*")
+        .eq("user_id", currentUserIdText)
+        .eq("id", timedIntent.taskId)
+        .single();
+      if (latestTaskError || !latestTask || !evidenceId) {
+        const failure = latestTaskError?.message ?? "Actual-time evidence saved, but the latest task row could not be loaded for completion.";
+        const fallbackTask = tasks.find((task) => task.id === timedIntent.taskId) ?? taskForActualTimeEntry;
+        setTimedCompletionIntent({ ...timedIntent, completionError: failure, evidenceId: evidenceId ?? "saved", latestTask: fallbackTask, phase: "failed_completion" });
+        return false;
+      }
+      setTasks((current) => sortTasksForUi(current.map((task) => task.id === latestTask.id ? latestTask : task)));
+      const savedIntent: TimedCompletionWorkflow<PendingCompleteAction> = { ...timedIntent, completionError: null, evidenceId, latestTask, phase: "evidence_saved_awaiting_completion" };
+      setTimedCompletionIntent(savedIntent);
+      const finalized = await finalizePendingTimedCompletion(savedIntent);
+      if (!finalized) {
+        return false;
+      }
+      setTimedCompletionIntent({ ...savedIntent, phase: "complete" });
+      setTimedCompletionIntent(null);
+    } else if (pendingOnTimeTimerSaveOriginRef.current) {
+      clearOnTimeExecution(pendingOnTimeTimerSaveOriginRef.current);
+      pendingOnTimeTimerSaveOriginRef.current = null;
+    }
+    setTaskActualTimeEntryTaskId(null);
+    setTaskActualTimeEntryPrefill(null);
+    return true;
+  }
+
+  async function finalizePendingTimedCompletion(intent: TimedCompletionWorkflow<PendingCompleteAction>) {
+    if (!isTimedCompletionEvidenceSaved(intent) || !intent.evidenceId || !intent.stoppedTimer) return false;
+    timedCompletionFailureRef.current = null;
+    let task = intent.latestTask;
+    if (!task) {
+      const { data, error } = await client.from("adhdice_clean_tasks").select("*").eq("user_id", currentUserIdText).eq("id", intent.taskId).single();
+      if (error) timedCompletionFailureRef.current = error.message;
+      task = data ?? null;
+    }
+    if (!task) {
+      const failure = timedCompletionFailureRef.current ?? "The task could not be found, so completion was not finalized.";
+      setMessage({ tone: "warn", text: failure });
+      setTimedCompletionIntent({ ...intent, completionError: failure, phase: "failed_completion" });
+      return false;
+    }
+    const completingIntent: TimedCompletionWorkflow<PendingCompleteAction> = { ...intent, completionError: null, latestTask: task, phase: "completing_task" };
+    setTimedCompletionIntent(completingIntent);
+    const finalized = intent.terminalAction === "complete"
+      ? await confirmPendingTaskComplete(true, task, intent.completePayload)
+      : await updateTaskStatus(task, intent.terminalAction, true, intent.onTimeOrigin ?? undefined);
+    if (finalized) return true;
+    const failure = timedCompletionFailureRef.current ?? "Task completion failed after actual-time evidence was saved.";
+    setTimedCompletionIntent({ ...completingIntent, completionError: failure, phase: "failed_completion" });
+    return false;
+  }
+
+  async function retryPendingTimedCompletion() {
+    const intent = pendingTimedCompletionRef.current;
+    if (!intent || intent.phase !== "failed_completion") return false;
+    const finalized = await finalizePendingTimedCompletion(intent);
+    if (!finalized) return false;
+    setTimedCompletionIntent(null);
+    setTaskActualTimeEntryTaskId(null);
+    setTaskActualTimeEntryPrefill(null);
+    return true;
   }
 
   async function clearActualTimeForTask(task: Task) {
@@ -4103,7 +4372,26 @@ export function TaskApp() {
     }
   }
 
-  function closeActualTimeEntry() {
+  async function closeActualTimeEntry() {
+    const timedIntent = pendingTimedCompletionRef.current;
+    if (timedIntent) {
+      if (isTimedCompletionEvidenceSaved(timedIntent)) {
+        return;
+      }
+      if (!timedIntent.stoppedTimer) return;
+      const restored = await persistRestoredTaskTimer(timedIntent.stoppedTimer);
+      if (!restored) {
+        return;
+      }
+      if (timedIntent.terminalAction === "complete") {
+        const pendingTask = tasks.find((task) => task.id === timedIntent.taskId);
+        if (timedIntent.completePayload?.source === "editor" && pendingTask) {
+          setTaskEditorStatusResetSignal((current) => ({ status: pendingTask.status, taskId: pendingTask.id, token: (current?.token ?? 0) + 1 }));
+        }
+      }
+      setTimedCompletionIntent(null);
+    }
+    pendingOnTimeTimerSaveOriginRef.current = null;
     setTaskActualTimeEntryTaskId(null);
     setTaskActualTimeEntryPrefill(null);
   }
@@ -4151,6 +4439,7 @@ export function TaskApp() {
     options?: {
       focusToday?: boolean;
       linkedNoteIds?: string[];
+      onTimeOrigin?: OnTimeLinkedItemOrigin;
       source?: "editor" | "status";
       subtasks?: TaskSubtaskDraft[];
       values?: TaskUpdate;
@@ -4172,6 +4461,7 @@ export function TaskApp() {
     setPendingCompleteAction({
       focusToday: options?.focusToday,
       linkedNoteIds: options?.linkedNoteIds,
+      onTimeOrigin: options?.onTimeOrigin,
       source: options?.source ?? "status",
       subtasks: options?.subtasks,
       taskId: task.id,
@@ -4180,56 +4470,103 @@ export function TaskApp() {
     return true;
   }
 
-  async function confirmPendingTaskComplete() {
-    if (!pendingCompleteAction || !session?.user?.id) {
-      return;
+  async function confirmPendingTaskComplete(bypassTimedCompletion = false, authoritativeTask?: Task, actionOverride?: PendingCompleteAction | null) {
+    const completeAction = actionOverride ?? pendingCompleteAction;
+    const fail = (text: string) => {
+      timedCompletionFailureRef.current = text;
+      setMessage({ tone: "warn", text });
+      return false;
+    };
+    if (!completeAction || !session?.user?.id) {
+      return false;
     }
 
-    const task = tasks.find((entry) => entry.id === pendingCompleteAction.taskId);
+    const task = authoritativeTask ?? tasks.find((entry) => entry.id === completeAction.taskId);
     if (!task) {
       setPendingCompleteAction(null);
-      return;
+      return false;
     }
 
     const eligibility = canTaskBeMarkedComplete(task.id, tasks);
     if (!eligibility.canComplete) {
       setPendingCompleteAction(null);
-      setMessage({ tone: "warn", text: COMPLETE_BLOCKED_MESSAGE });
-      return;
+      return fail(COMPLETE_BLOCKED_MESSAGE);
+    }
+
+    if (!bypassTimedCompletion) {
+      const staged = await stageTimedTaskCompletion(task, { kind: "complete" }, completeAction.onTimeOrigin);
+      if (staged !== "none") {
+        return false;
+      }
     }
 
     if (shouldReconcileOverdueTaskMisses(task, todayKey)) {
       const historyReconciled = await reconcileOverdueTaskMisses(task);
       if (!historyReconciled) {
-        return;
+        return false;
       }
     }
 
-    const completeUpdateValues = buildCompleteTaskUpdateValues(task, pendingCompleteAction.values);
+    const activeMilestone = milestoneData.milestoneByTaskId.get(task.id);
+    if (activeMilestone?.status === "active" && activeMilestone.task_trashed_at === null) {
+      if (isMilestoneLifecyclePending) return false;
+      const operationKey = `complete:${activeMilestone.id}`;
+      const operationId = milestoneOperationIdsRef.current.get(operationKey) ?? createBrowserUuidV4();
+      milestoneOperationIdsRef.current.set(operationKey, operationId);
+      setIsMilestoneLifecyclePending(true);
+      markPendingTaskMutations([task.id]);
+      const completion = await milestoneData.completeMilestone(buildMilestoneLifecycleArgs(task, activeMilestone, operationId));
+      clearPendingTaskMutations([task.id]);
+      setIsMilestoneLifecyclePending(false);
+      if (completion.error || !completion.result?.task_row) {
+        return fail(formatMilestoneRpcError(completion.error ?? "No completed task row was returned."));
+      }
+      milestoneOperationIdsRef.current.delete(operationKey);
+      const completedTask = completion.result.task_row;
+      setTasks((current) => sortTasksForUi(mergeAuthoritativeMilestoneTask(current, completedTask)));
+      const linkedNoteIds = completeAction.linkedNoteIds ?? [];
+      const subtasks = completeAction.subtasks ?? [];
+      if (subtasks.length > 0) {
+        const subtasksResult = await replaceTaskSubtasks(task.id, subtasks);
+        if (!subtasksResult.saved) return fail("The Milestone completed, but its Steps could not be saved.");
+      }
+      if (completeAction.source === "editor") {
+        const linkedNotesSaved = await syncTaskNoteLinks(task.id, linkedNoteIds);
+        if (!linkedNotesSaved) return fail("The Milestone completed, but its linked notes could not be saved.");
+      }
+      routeTask(task.id, null);
+      if (focusedTaskIds.includes(task.id)) void saveFocusSelection(focusedTaskIds.filter((id) => id !== task.id));
+      await queueTaskRewards([{ previousStatus: task.status, task: completedTask }]);
+      if (completeAction.source === "editor") closeTaskEditorWithReset();
+      if (selectedListTaskIds.includes(task.id)) clearListTaskSelection();
+      setPendingCompleteAction(null);
+      setMessage({ tone: "good", text: `“${completedTask.title}” completed. ${activeMilestone.current_tier[0]!.toUpperCase() + activeMilestone.current_tier.slice(1)} trophy awarded.` });
+      clearOnTimeExecution(completeAction.onTimeOrigin);
+      return true;
+    }
+
+    const completeUpdateValues = buildCompleteTaskUpdateValues(task, completeAction.values);
     const { conflict, data, error } = await runGuardedTaskRowUpdate(task.id, completeUpdateValues, {
       expectedTask: task,
     });
 
     if (error) {
-      setMessage({ tone: "warn", text: error.message });
-      return;
+      return fail(error.message);
     }
 
     if (conflict) {
       if (conflict.latestTask) {
         setTasks((current) => sortTasksForUi(current.map((currentTask) => currentTask.id === task.id ? conflict.latestTask ?? currentTask : currentTask)));
       }
-      setMessage({ tone: "warn", text: buildTaskUpdateConflictMessage(conflict) });
-      return;
+      return fail(buildTaskUpdateConflictMessage(conflict));
     }
 
     if (!data) {
-      setMessage({ tone: "warn", text: "Task completion succeeded, but no updated task row came back from Supabase." });
-      return;
+      return fail("Task completion succeeded, but no updated task row came back from Supabase.");
     }
 
-    const linkedNoteIds = pendingCompleteAction.linkedNoteIds ?? [];
-    const subtasks = pendingCompleteAction.subtasks ?? [];
+    const linkedNoteIds = completeAction.linkedNoteIds ?? [];
+    const subtasks = completeAction.subtasks ?? [];
     const historyPayload = buildCompleteHistoryPayload({
       due_on: completeUpdateValues.due_on ?? task.due_on,
       id: task.id,
@@ -4250,23 +4587,20 @@ export function TaskApp() {
         status: task.status,
         trashed_at: task.trashed_at,
       }, { expectedTask: data });
-      setMessage({ tone: "warn", text: historyError.message });
-      return;
+      return fail(historyError.message);
     }
 
     if (subtasks.length > 0) {
       const subtasksResult = await replaceTaskSubtasks(task.id, subtasks);
       if (!subtasksResult.saved) {
-        setMessage({ tone: "warn", text: "Task was marked Complete, but its Steps could not be saved." });
-        return;
+        return fail("Task was marked Complete, but its Steps could not be saved.");
       }
     }
 
-    if (pendingCompleteAction.source === "editor") {
+    if (completeAction.source === "editor") {
       const linkedNotesSaved = await syncTaskNoteLinks(task.id, linkedNoteIds);
       if (!linkedNotesSaved) {
-        setMessage({ tone: "warn", text: "Task was marked Complete, but its linked notes could not be saved." });
-        return;
+        return fail("Task was marked Complete, but its linked notes could not be saved.");
       }
     }
 
@@ -4288,7 +4622,7 @@ export function TaskApp() {
 
     await queueTaskRewards([{ previousStatus: task.status, task: data }]);
 
-    if (pendingCompleteAction.source === "editor") {
+    if (completeAction.source === "editor") {
       closeTaskEditorWithReset();
     }
     if (selectedListTaskIds.includes(task.id)) {
@@ -4301,6 +4635,8 @@ export function TaskApp() {
         ? `"${data.title}" marked Complete and kept with its parent.`
         : `"${data.title}" marked Complete and moved to Archive.`,
     });
+    clearOnTimeExecution(completeAction.onTimeOrigin);
+    return true;
   }
 
   function buildTaskStatusUpdate(task: Task, status: TaskStatus) {
@@ -4333,20 +4669,38 @@ export function TaskApp() {
     return { status };
   }
 
-  function updateTaskStatus(task: Task, status: TaskStatus) {
+  async function updateTaskStatus(task: Task, status: TaskStatus, bypassTimedCompletion = false, onTimeOrigin?: OnTimeLinkedItemOrigin) {
+    const milestone = milestoneData.milestoneByTaskId.get(task.id);
+    if (shouldReverseCompletedMilestoneForStatusChange(task, milestone, status)) {
+      setPendingMilestoneLifecycle({ action: "reverse", milestoneId: milestone!.id });
+      return false;
+    }
     if (status === "complete") {
-      requestTaskComplete(task, { source: "status" });
-      return Promise.resolve(false);
+      requestTaskComplete(task, { onTimeOrigin, source: "status" });
+      return false;
+    }
+
+    if (status === "done" || status === "did_my_best") {
+      if (!bypassTimedCompletion) {
+        const staged = await stageTimedTaskCompletion(task, { kind: "status", status }, onTimeOrigin);
+        if (staged !== "none") {
+          return false;
+        }
+      }
     }
 
     const values = buildTaskStatusUpdate(task, status);
-    return updateTask(
+    const updated = await updateTask(
       task.id,
       values,
-      status === "archived" || status === "trashed"
+      bypassTimedCompletion || status === "archived" || status === "trashed"
         ? { expectedTask: task }
         : undefined,
     );
+    if (updated && status !== "missed" && (status === "done" || status === "did_my_best")) {
+      clearOnTimeExecution(onTimeOrigin);
+    }
+    return updated;
   }
 
   async function toggleTaskPinned(taskId: string) {
@@ -4447,6 +4801,23 @@ export function TaskApp() {
     });
   }
 
+  async function mutateMilestoneTask(action: "delete" | "trash", task: Task) {
+    const milestone = milestoneData.milestoneByTaskId.get(task.id);
+    if (!milestone) return { deleted: false, error: null, handled: false, task: null };
+    const operationKey = `${action}:${milestone.id}`;
+    const operationId = milestoneOperationIdsRef.current.get(operationKey) ?? createBrowserUuidV4();
+    milestoneOperationIdsRef.current.set(operationKey, operationId);
+    const args = buildMilestoneLifecycleArgs(task, milestone, operationId);
+    const mutation = action === "delete"
+      ? await milestoneData.deleteMilestoneTaskPermanently(args)
+      : await milestoneData.trashMilestoneTask(args);
+    if (mutation.error || !mutation.result) {
+      return { deleted: false, error: formatMilestoneRpcError(mutation.error ?? "No Milestone task result was returned."), handled: true, task: null };
+    }
+    milestoneOperationIdsRef.current.delete(operationKey);
+    return { deleted: action === "delete", error: null, handled: true, task: mutation.result.task_row };
+  }
+
   async function openSingleTaskDeleteModal(taskId: string) {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task) {
@@ -4469,6 +4840,23 @@ export function TaskApp() {
     }
 
     optimisticallyMoveTaskToTrash(taskId);
+
+    const milestone = milestoneData.milestoneByTaskId.get(taskId);
+    if (milestone) {
+      markPendingTaskMutations([taskId]);
+      const mutation = await mutateMilestoneTask("trash", task);
+      clearPendingTaskMutations([taskId]);
+      if (mutation.error || !mutation.task) {
+        restoreTaskSnapshot(task, previousRoutingBucket);
+        setMessage({ tone: "warn", text: mutation.error ?? "Could not move the Milestone task to Trash." });
+        return;
+      }
+      setTasks((current) => sortTasksForUi(mergeAuthoritativeMilestoneTask(current, mutation.task)));
+      setMessage({ tone: "good", text: "Task moved to trash. Its Milestone dates continue unchanged." });
+      if (focusedTaskIds.includes(taskId)) void saveFocusSelection(focusedTaskIds.filter((id) => id !== taskId));
+      if (selectedListTaskIds.includes(taskId)) clearListTaskSelection();
+      return;
+    }
 
     const didTrash = await updateTask(taskId, buildTaskStatusUpdate(task, "trashed"), { expectedTask: task });
     if (!didTrash) {
@@ -4493,6 +4881,25 @@ export function TaskApp() {
     const previousRoutingBucket = taskRouting[taskId];
     optimisticallyRestoreTaskToInbox(taskId);
     routeTask(taskId, "inbox");
+    const milestone = milestoneData.milestoneByTaskId.get(taskId);
+    if (milestone) {
+      const operationKey = `restore:${milestone.id}`;
+      const operationId = milestoneOperationIdsRef.current.get(operationKey) ?? createBrowserUuidV4();
+      milestoneOperationIdsRef.current.set(operationKey, operationId);
+      markPendingTaskMutations([taskId]);
+      const mutation = await milestoneData.restoreMilestoneTask(buildMilestoneLifecycleArgs(task, milestone, operationId));
+      clearPendingTaskMutations([taskId]);
+      if (mutation.error || !mutation.result?.task_row) {
+        restoreTaskSnapshot(task, previousRoutingBucket);
+        setMessage({ tone: "warn", text: formatMilestoneRpcError(mutation.error ?? "No restored task row was returned.") });
+        return;
+      }
+      milestoneOperationIdsRef.current.delete(operationKey);
+      setTasks((current) => sortTasksForUi(mergeAuthoritativeMilestoneTask(current, mutation.result!.task_row)));
+      setMessage({ tone: "good", text: "Task restored. Only future Milestone reminders were recreated." });
+      if (selectedListTaskIds.includes(taskId)) clearListTaskSelection();
+      return;
+    }
     const didRestore = await updateTask(taskId, buildTaskStatusUpdate(task, "pending"), { expectedTask: task });
     if (!didRestore) {
       restoreTaskSnapshot(task, previousRoutingBucket);
@@ -4506,6 +4913,54 @@ export function TaskApp() {
     if (selectedListTaskIds.includes(taskId)) {
       clearListTaskSelection();
     }
+  }
+
+  async function confirmMilestoneLifecycle(reason: string | null) {
+    if (!pendingMilestoneLifecycle || isMilestoneLifecyclePending) return;
+    const milestone = milestoneData.milestones.find((entry) => entry.id === pendingMilestoneLifecycle.milestoneId);
+    if (!milestone) {
+      setPendingMilestoneLifecycle(null);
+      return;
+    }
+    const operationKey = `${pendingMilestoneLifecycle.action}:${milestone.id}`;
+    const operationId = milestoneOperationIdsRef.current.get(operationKey) ?? createBrowserUuidV4();
+    milestoneOperationIdsRef.current.set(operationKey, operationId);
+    setIsMilestoneLifecyclePending(true);
+    if (pendingMilestoneLifecycle.action === "abandon") {
+      const mutation = await milestoneData.abandonMilestone({
+        p_expected_milestone_revision: milestone.revision,
+        p_milestone_id: milestone.id,
+        p_operation_id: operationId,
+        p_reason: reason,
+      });
+      setIsMilestoneLifecyclePending(false);
+      if (mutation.error) {
+        setMessage({ tone: "warn", text: formatMilestoneRpcError(mutation.error) });
+        return;
+      }
+      milestoneOperationIdsRef.current.delete(operationKey);
+      setPendingMilestoneLifecycle(null);
+      setMessage({ tone: "good", text: "Milestone abandoned. The task was not changed." });
+      return;
+    }
+    const task = milestone.task_id ? tasks.find((entry) => entry.id === milestone.task_id) : null;
+    if (!task) {
+      setIsMilestoneLifecyclePending(false);
+      setMessage({ tone: "warn", text: "The attached task is no longer available." });
+      return;
+    }
+    markPendingTaskMutations([task.id]);
+    const mutation = await milestoneData.reverseMilestoneCompletion(buildMilestoneLifecycleArgs(task, milestone, operationId));
+    clearPendingTaskMutations([task.id]);
+    setIsMilestoneLifecyclePending(false);
+    if (mutation.error || !mutation.result?.task_row) {
+      setMessage({ tone: "warn", text: formatMilestoneRpcError(mutation.error ?? "No restored task row was returned.") });
+      return;
+    }
+    milestoneOperationIdsRef.current.delete(operationKey);
+    setTasks((current) => sortTasksForUi(mergeAuthoritativeMilestoneTask(current, mutation.result!.task_row)));
+    setPendingMilestoneLifecycle(null);
+    setMessage({ tone: "good", text: "Milestone completion undone. Trophy and aura revoked; locked dates preserved." });
   }
 
   function closeBatchDeleteModal() {
@@ -4546,7 +5001,16 @@ export function TaskApp() {
     initialTitle: taskActualTimeEntryPrefill?.title || taskForActualTimeEntry.title,
     onClear: handleActualTimeEntryClear,
     labelOptions: taskFocusLabelOptions,
+    completionError: pendingTimedCompletion?.completionError ?? null,
+    mode: pendingTimedCompletion?.phase === "failed_completion"
+      ? "failed_completion" as const
+      : pendingTimedCompletion?.phase === "evidence_saved_awaiting_completion" || pendingTimedCompletion?.phase === "completing_task"
+        ? "completing" as const
+        : pendingTimedCompletion?.phase === "saving_evidence"
+          ? "saving_evidence" as const
+          : "entry" as const,
     onClose: closeActualTimeEntry,
+    onRetryCompletion: retryPendingTimedCompletion,
     onSave: handleActualTimeEntrySave,
   } : null;
 
@@ -4744,6 +5208,7 @@ export function TaskApp() {
     onOpenComposer: openInlineNewListTaskComposer,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
+    onOpenCompletedMilestones: () => setTaskUiState((prev) => ({ ...prev, tasksSurface: "completed_milestones" })),
     onReorderLists: (orderedListIds: string[]) => reorderTaskLists(orderedListIds as TaskListId[]),
     onSelectBucket: setSelectedBucket,
     onReorderListColumns: reorderListColumns,
@@ -4782,10 +5247,11 @@ export function TaskApp() {
     });
   };
   const openTaskInSharedTasksEditorFromOnTime = (taskId: string) => {
-    setOnTimeSharedOverlayTaskId(taskId);
+    openSharedTaskEditor(taskId, { initialField: "estimated_time" });
   };
-  const returnToOnTimeAfterSharedOverlay = () => {
-    setOnTimeSharedOverlayTaskId(null);
+  const closeSharedTaskEditorOverlay = () => {
+    setSharedTaskEditorOverlayTaskId(null);
+    setTaskEditorFocusRequest(null);
   };
   const scratchPaperData: ScratchPaperData = {
     error: scratchNotes.error,
@@ -4853,6 +5319,12 @@ export function TaskApp() {
   const handleRenameTaskWorkspaceTab = (tabId: string, nextLabel: string) => {
     renameTaskWorkspaceTab(tabId, nextLabel);
   };
+  const milestoneSetupTask = milestoneSetupTaskId ? tasks.find((task) => task.id === milestoneSetupTaskId) ?? null : null;
+  const milestoneCorrection = milestoneCorrectionId ? milestoneData.milestones.find((milestone) => milestone.id === milestoneCorrectionId) ?? null : null;
+  const pendingMilestoneLifecycleRecord = pendingMilestoneLifecycle
+    ? milestoneData.milestones.find((milestone) => milestone.id === pendingMilestoneLifecycle.milestoneId) ?? null
+    : null;
+  const pendingDetachMilestoneTask = pendingDetachMilestoneTaskId ? tasks.find((task) => task.id === pendingDetachMilestoneTaskId) ?? null : null;
 
   return (
     <main
@@ -5072,7 +5544,8 @@ export function TaskApp() {
           <TasksWorkspace
             activeTabId={taskWorkspaceTabsState.activeTabId}
             flows={(
-              <TaskEditFlows
+              <>
+                <TaskEditFlows
                 actualTimeEntryFlow={actualTimeEntryFlow}
                 batchDeleteFlow={batchDeleteFlow}
                 batchEditFlow={batchEditFlow}
@@ -5082,16 +5555,23 @@ export function TaskApp() {
                   }
                   const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
                   const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
+                  const pendingCompleteMilestone = pendingCompleteTask ? milestoneData.milestoneByTaskId.get(pendingCompleteTask.id) : null;
+                  const isMilestoneComplete = pendingCompleteMilestone?.status === "active" && pendingCompleteMilestone.task_trashed_at === null;
                   return {
-                  confirmLabel: "Mark Complete",
-                  description: getTaskCompleteConfirmationDescription(completeFlowTask),
+                  confirmLabel: isMilestoneComplete ? "Complete Milestone" : "Mark Complete",
+                  description: isMilestoneComplete
+                    ? "The task will be permanently completed. The locked trophy will be awarded. Aura eligibility depends on the locked target and grace dates."
+                    : getTaskCompleteConfirmationDescription(completeFlowTask),
                   modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
                     ? "Mark step complete"
                     : "Mark task permanently complete",
                   onClose: () => setPendingCompleteAction(null),
                   onConfirm: () => { void confirmPendingTaskComplete(); },
+                  pending: isMilestoneComplete && isMilestoneLifecyclePending,
                   taskTitle: pendingCompleteTask?.title ?? "Task",
-                  title: (pendingCompleteTask?.parent_task_id ?? null)
+                  title: isMilestoneComplete
+                    ? "Complete Milestone and award trophy?"
+                    : (pendingCompleteTask?.parent_task_id ?? null)
                     ? "Mark this Step Complete?"
                     : "Mark permanently Complete?",
                 };
@@ -5100,7 +5580,50 @@ export function TaskApp() {
                 momentumFlow={momentumFlow}
                 taskEditorFlow={taskEditorFlow}
                 taskHistoryFlow={taskHistoryFlow}
-              />
+                />
+                {milestoneSetupTask ? (
+                  <MilestoneSetupModal
+                    localDate={milestoneLocalDate}
+                    onClose={() => setMilestoneSetupTaskId(null)}
+                    onLock={milestoneData.lockMilestone}
+                    onSuccess={(milestone) => {
+                      setMilestoneSetupTaskId(null);
+                      setMessage({ tone: "good", text: `“${milestone.task_title_snapshot}” is now a Milestone.` });
+                      if (milestone.task_id) openSharedTaskEditor(milestone.task_id);
+                    }}
+                    task={milestoneSetupTask}
+                    timezone={userTimeZone}
+                  />
+                ) : null}
+                {milestoneCorrection ? (
+                  <MilestoneCorrectionModal
+                    milestone={milestoneCorrection}
+                    onClose={() => setMilestoneCorrectionId(null)}
+                    onCorrect={milestoneData.correctMilestone}
+                    onSuccess={() => {
+                      setMilestoneCorrectionId(null);
+                      setMessage({ tone: "good", text: "Milestone setup corrected." });
+                    }}
+                  />
+                ) : null}
+                {pendingDetachMilestoneTask ? (
+                  <DetachAndPromoteMilestoneModal
+                    onCancel={() => setPendingDetachMilestoneTaskId(null)}
+                    onConfirm={() => { void confirmDetachAndPromoteMilestone(); }}
+                    pending={isDetachingMilestoneTask}
+                    task={pendingDetachMilestoneTask}
+                  />
+                ) : null}
+                {pendingMilestoneLifecycle && pendingMilestoneLifecycleRecord ? (
+                  <MilestoneLifecycleModal
+                    action={pendingMilestoneLifecycle.action}
+                    milestone={pendingMilestoneLifecycleRecord}
+                    onCancel={() => setPendingMilestoneLifecycle(null)}
+                    onConfirm={(reason) => { void confirmMilestoneLifecycle(reason); }}
+                    pending={isMilestoneLifecyclePending}
+                  />
+                ) : null}
+              </>
             )}
             onAddTab={() => createTaskWorkspaceTab({
               isRailHidden: false,
@@ -5119,6 +5642,15 @@ export function TaskApp() {
                 updateState={brainstormState.updateState}
               />
             )}
+            completedMilestonesWorkspacePanel={(
+              <CompletedMilestonesWorkspace
+                error={milestoneData.loadError}
+                loading={milestoneData.isLoading}
+                milestones={milestoneData.milestones}
+                onOpenTask={openTaskInSharedTasksEditorFromPaths}
+                tasks={tasks}
+              />
+            )}
             onCloseTab={closeTaskWorkspaceTab}
             onTimeWorkspacePanel={(
               <OnTimePlannerWorkspace
@@ -5126,21 +5658,23 @@ export function TaskApp() {
                 error={onTimePlan.error}
                 learnedStatisticsByTaskId={learnedTaskDurationStatisticsByTaskId}
                 onOpenTask={openTaskInSharedTasksEditorFromOnTime}
-                onSetTaskStatus={(task, status) => { void updateTaskStatus(task, status); }}
+                onSetTaskStatus={(task, status, origin) => { void updateTaskStatus(task, status, false, origin); }}
                 onPauseTimer={pauseHudTaskTimer}
                 onResumeTimer={resumeHudTaskTimer}
-                onStartTimer={(task) => { void startHudTaskTimer({ baseSeconds: task.actual_seconds, pausedAt: null, startedActualSeconds: task.actual_seconds, startedAt: Date.now(), taskId: task.id, title: task.title }); }}
-                onStopAndSaveTimer={stopHudTaskTimer}
+                onStartTimer={(task, startedAt) => startHudTaskTimer({ baseSeconds: task.actual_seconds, pausedAt: null, startedActualSeconds: task.actual_seconds, startedAt, taskId: task.id, title: task.title })}
+                onStopAndSaveTimer={(taskId, origin) => stopHudTaskTimer(taskId, origin)}
                 plan={onTimePlan.plan}
                 remoteUpdateNotice={onTimePlan.remoteUpdateNotice}
                 resetPlan={onTimePlan.resetPlan}
                 syncState={onTimePlan.syncState}
+                taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
                 tasks={tasks}
                 timers={runningTaskTimers}
                 updatePlan={onTimePlan.updatePlan}
+                updatePlanFromCurrent={onTimePlan.updatePlanFromCurrent}
               />
             )}
-            showTableOverlayOnTime={Boolean(onTimeSharedOverlayTaskId)}
+            showSharedTaskEditorOverlay={Boolean(sharedTaskEditorOverlayTaskId)}
             onReorderTab={reorderTaskWorkspaceTab}
             onRenameTab={handleRenameTaskWorkspaceTab}
             onSurfaceChange={handleTaskWorkspaceSurfaceChange}
@@ -5156,7 +5690,7 @@ export function TaskApp() {
                   }
                   void updateTaskStatus(task, status);
                 }}
-                taskDisplayStatusByTaskId={pathsTaskDisplayStatusByTaskId}
+                taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
                 tasks={tasks}
                 userId={currentUserId}
               />
@@ -5268,7 +5802,11 @@ export function TaskApp() {
                   onRequestedOpenTaskHandled: (taskId) => {
                     setRequestedListOverlayTaskId((current) => (current === taskId ? null : current));
                   },
-                  onRequestedOpenTaskOverlayClose: returnToOnTimeAfterSharedOverlay,
+                  requestedEditorFocus: taskEditorFocusRequest,
+                  onRequestedEditorFocusHandled: (token) => {
+                    setTaskEditorFocusRequest((current) => current?.token === token ? null : current);
+                  },
+                  onRequestedOpenTaskOverlayClose: closeSharedTaskEditorOverlay,
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
                   onSetPriority: applyTaskPriorityChange,
@@ -5321,17 +5859,22 @@ export function TaskApp() {
                   onToggleTaskSelection: toggleListTaskSelection,
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
+                  onPromoteTaskToMilestone: openMilestoneSetup,
+                  onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
+                  milestonePromotionTaskIds,
+                  milestoneDetachPromotionTaskIds,
+                  renderFullInspectorExtension: renderMilestoneInspectorExtension,
                   requestedOpenTask: requestedOpenListTask,
                   requestedOpenTaskId: sharedOverlayTaskId,
-                  overlayOnly: taskUiState.tasksSurface === "on_time" && Boolean(onTimeSharedOverlayTaskId),
+                  overlayOnly: Boolean(sharedTaskEditorOverlayTaskId) && (taskUiState.tasksSurface !== "tasks" || taskUiState.view !== "table"),
                   suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
-                  tasks: taskUiState.tasksSurface === "on_time" && onTimeSharedOverlayTaskId ? tasks : selectedBucketTasks,
+                  tasks: sharedTaskEditorOverlayTaskId ? tasks : selectedBucketTasks,
                   rowContext: {
                     focusedTaskIdSet,
                     linkedNotesByTaskId: taskLinkedNotesByTaskId,
-                    listDefinitions: availableTaskLists.filter(isManualTaskListDestination),
+                    listDefinitions: availableTaskLists,
                     listMembershipsByTaskId: taskListMembershipsByTaskId,
                     subtasksByTaskId: taskSubtasksByTaskId,
                     taskHistoryByTaskId,
@@ -5475,6 +6018,11 @@ export function TaskApp() {
                   onToggleTaskSelection: toggleListTaskSelection,
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
+                  onPromoteTaskToMilestone: openMilestoneSetup,
+                  onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
+                  milestonePromotionTaskIds,
+                  milestoneDetachPromotionTaskIds,
+                  renderFullInspectorExtension: renderMilestoneInspectorExtension,
                   requestedOpenTask: requestedOpenListTask,
                   requestedOpenTaskId: requestedListOverlayTaskId,
                   suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
@@ -5484,7 +6032,7 @@ export function TaskApp() {
                   rowContext: {
                     focusedTaskIdSet,
                     linkedNotesByTaskId: taskLinkedNotesByTaskId,
-                    listDefinitions: availableTaskLists.filter(isManualTaskListDestination),
+                    listDefinitions: availableTaskLists,
                     listMembershipsByTaskId: taskListMembershipsByTaskId,
                     subtasksByTaskId: taskSubtasksByTaskId,
                     taskHistoryByTaskId,

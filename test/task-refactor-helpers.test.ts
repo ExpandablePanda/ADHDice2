@@ -23,7 +23,7 @@ import { isValidDateKey, normalizeTaskFocusIds } from "../src/lib/task-focus-day
 import { normalizeLogoSrc } from "../src/lib/profile-store.ts";
 import { buildAgentPlanTaskItem } from "../src/lib/task-agent-plan.ts";
 import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
-import { matchesTaskListRules } from "../src/lib/task-lists.ts";
+import { isManualTaskListDestination, matchesTaskListRules } from "../src/lib/task-lists.ts";
 import { buildFocusLabelOptions } from "../src/lib/task-focus-labels.ts";
 import { buildWidgetTypeGuard, parseTaskGridLayoutJson } from "../src/lib/task-grid-parser.ts";
 import { mapTaskListManualMembershipRow } from "../src/lib/task-list-mappers.ts";
@@ -338,6 +338,32 @@ test("task table row helper maps task directly to live table shape", () => {
   assert.deepEqual(row.priorities, ["focus", "important"]);
   assert.deepEqual(row.lists, ["Custom"]);
   assert.equal(row.subtasks[0]?.title, "Step");
+});
+
+test("full Table row definitions resolve Routine without exposing it as a manual destination", () => {
+  const routine = {
+    description: "",
+    id: "routine" as const,
+    isDeletable: false,
+    isEditable: false,
+    isVisible: true,
+    membershipMode: "system" as const,
+    name: "Routine",
+    rules: null,
+    sortOrder: 1,
+    type: "builtin" as const,
+  };
+  const row = buildTaskTableRow(createTask({ id: "routine-task", title: "Routine task" }), {
+    focusedTaskIdSet: new Set(),
+    linkedNotes: [],
+    listDefinitions: [routine],
+    listMemberships: [{ id: "routine", isManual: true }],
+    subtasks: [],
+    taskHistory: [],
+    todayDateKey: "2026-07-14",
+  });
+  assert.deepEqual(row.lists, ["Routine"]);
+  assert.equal(isManualTaskListDestination(routine), false);
 });
 
 test("task list rule evaluation memoizes duplicate list references", () => {

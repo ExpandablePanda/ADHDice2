@@ -12,8 +12,8 @@ import {
   onTimePlanSignature,
   updateOnTimePlan,
   type OnTimePlanSchemaVersion,
+  type OnTimePlanV3,
   type OnTimePlanUpdate,
-  type OnTimePlanV2,
 } from "@/lib/on-time-plan-state";
 
 const CACHE_PREFIX = "adhdice-on-time-plan";
@@ -29,13 +29,13 @@ function timestamp(value: string) { const parsed = Date.parse(value); return Num
 export type OnTimePlanSyncState = "loading" | "saving" | "synced" | "offline" | "unavailable" | "update_required";
 
 export function useOnTimePlan(userId: string | null, timezone: string, active: boolean) {
-  const [plan, setPlan] = useState<OnTimePlanV2>(() => createEmptyOnTimePlan(timezone));
+  const [plan, setPlan] = useState<OnTimePlanV3>(() => createEmptyOnTimePlan(timezone));
   const [syncState, setSyncState] = useState<OnTimePlanSyncState>(userId ? "loading" : "offline");
   const [error, setError] = useState<string | null>(null);
   const [remoteUpdateNotice, setRemoteUpdateNotice] = useState(false);
   const planRef = useRef(plan);
   const sourceSchemaVersionRef = useRef<OnTimePlanSchemaVersion>(0);
-  const migratingV1Ref = useRef(false);
+  const migratingLegacyRef = useRef(false);
   const dirtyRef = useRef(false);
   const supportedRef = useRef(true);
   const hydratedUserRef = useRef<string | null>(null);
@@ -46,7 +46,7 @@ export function useOnTimePlan(userId: string | null, timezone: string, active: b
 
   useEffect(() => { planRef.current = plan; }, [plan]);
 
-  const persistCache = useCallback((next: OnTimePlanV2, currentUserId: string) => {
+  const persistCache = useCallback((next: OnTimePlanV3, currentUserId: string) => {
     try { window.localStorage.setItem(cacheKey(currentUserId), JSON.stringify(next)); } catch { /* cache is best effort */ }
   }, []);
 
@@ -75,7 +75,7 @@ export function useOnTimePlan(userId: string | null, timezone: string, active: b
         applyRemoteRef.current(currentRow.plan_state, currentRow.client_updated_at);
         return;
       }
-      if (remoteSourceSchemaVersion > 0 && sourceSchemaVersionRef.current > remoteSourceSchemaVersion && !migratingV1Ref.current) {
+      if (remoteSourceSchemaVersion > 0 && sourceSchemaVersionRef.current > remoteSourceSchemaVersion && !migratingLegacyRef.current) {
         staleClientDetected = true;
         setSyncState("update_required");
         setError("An older ADHDice client attempted to replace this On-Time plan. Update that client before editing On-Time.");
@@ -90,8 +90,8 @@ export function useOnTimePlan(userId: string | null, timezone: string, active: b
       return;
     }
     if (onTimePlanSignature(planRef.current) === onTimePlanSignature(outgoing)) dirtyRef.current = false;
-    sourceSchemaVersionRef.current = 2;
-    migratingV1Ref.current = false;
+    sourceSchemaVersionRef.current = 3;
+    migratingLegacyRef.current = false;
     if (!staleClientDetected) setError(null);
     setSyncState(staleClientDetected ? "update_required" : dirtyRef.current ? "saving" : "synced");
   }, [timezone, userId]);
@@ -114,10 +114,10 @@ export function useOnTimePlan(userId: string | null, timezone: string, active: b
     );
     if (priority > 0) {
       const changed = onTimePlanSignature(remote) !== onTimePlanSignature(local);
-      const requiresMigrationWrite = remoteSourceSchemaVersion === 1;
+      const requiresMigrationWrite = remoteSourceSchemaVersion < 3;
       dirtyRef.current = requiresMigrationWrite;
-      migratingV1Ref.current = requiresMigrationWrite;
-      sourceSchemaVersionRef.current = requiresMigrationWrite ? 2 : remoteSourceSchemaVersion;
+      migratingLegacyRef.current = requiresMigrationWrite;
+      sourceSchemaVersionRef.current = requiresMigrationWrite ? 3 : remoteSourceSchemaVersion;
       planRef.current = remote;
       setPlan(remote);
       persistCache(remote, userId);
@@ -145,7 +145,7 @@ export function useOnTimePlan(userId: string | null, timezone: string, active: b
     if (!userId) return;
     supportedRef.current = true;
     dirtyRef.current = false;
-    migratingV1Ref.current = false;
+    migratingLegacyRef.current = false;
     let cached = createEmptyOnTimePlan(timezone);
     let cachedSourceSchemaVersion: OnTimePlanSchemaVersion = 0;
     try {
@@ -172,8 +172,8 @@ export function useOnTimePlan(userId: string | null, timezone: string, active: b
       if (data) applyRemote(data.plan_state, data.client_updated_at);
       else if (isMeaningfulOnTimePlan(cached)) {
         dirtyRef.current = true;
-        sourceSchemaVersionRef.current = 2;
-        migratingV1Ref.current = cachedSourceSchemaVersion === 1;
+        sourceSchemaVersionRef.current = 3;
+        migratingLegacyRef.current = cachedSourceSchemaVersion < 3;
         persistCache(cached, userId);
         scheduleWrite();
       }
@@ -198,29 +198,40 @@ export function useOnTimePlan(userId: string | null, timezone: string, active: b
 
   useEffect(() => { if (!active && dirtyRef.current) void flush(); }, [active, flush]);
 
-  const updatePlan = useCallback((changes: OnTimePlanUpdate) => {
+  const updatePlanFromCurrent = useCallback((updater: (currentPlan: OnTimePlanV3) => OnTimePlanV3 | null) => {
     if (!userId) return;
-    const next = updateOnTimePlan(planRef.current, changes);
+    const current = planRef.current;
+    const proposed = updater(current);
+    if (!proposed) return;
+    const normalized = normalizeOnTimePlan(proposed, current.timezone);
+    const comparable = normalizeOnTimePlan({ ...normalized, clientUpdatedAt: current.clientUpdatedAt }, current.timezone);
+    if (onTimePlanSignature(comparable) === onTimePlanSignature(current)) return;
+    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1));
+    const next = normalizeOnTimePlan({ ...normalized, clientUpdatedAt: nextTimestamp.toISOString() }, current.timezone);
     dirtyRef.current = true;
-    sourceSchemaVersionRef.current = 2;
-    migratingV1Ref.current = false;
+    sourceSchemaVersionRef.current = 3;
+    migratingLegacyRef.current = false;
     planRef.current = next;
     setPlan(next);
     persistCache(next, userId);
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
+  const updatePlan = useCallback((changes: OnTimePlanUpdate) => {
+    updatePlanFromCurrent((current) => updateOnTimePlan(current, changes));
+  }, [updatePlanFromCurrent]);
+
   const resetPlan = useCallback(() => {
     if (!userId) return;
     const next = createEmptyOnTimePlan(timezone, new Date().toISOString());
     dirtyRef.current = true;
-    sourceSchemaVersionRef.current = 2;
-    migratingV1Ref.current = false;
+    sourceSchemaVersionRef.current = 3;
+    migratingLegacyRef.current = false;
     planRef.current = next;
     setPlan(next);
     persistCache(next, userId);
     scheduleWrite();
   }, [persistCache, scheduleWrite, timezone, userId]);
 
-  return { plan, updatePlan, resetPlan, flush, syncState, error, remoteUpdateNotice };
+  return { plan, updatePlan, updatePlanFromCurrent, resetPlan, flush, syncState, error, remoteUpdateNotice };
 }

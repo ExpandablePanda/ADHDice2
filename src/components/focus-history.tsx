@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import { TrendingUp } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
+import { ChevronLeft, ChevronRight, TrendingUp } from "lucide-react";
 import { ModalShell } from "./modal-shell";
 import { FocusPillSelect, FocusSuggestionInput } from "./focus-form-controls";
 import {
@@ -8,6 +8,7 @@ import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
 import { attachDailyOverallGoalSeconds } from "@/lib/focus-activity";
+import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "@/lib/focus-activity-scroll";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { type FocusCategory, type HistoricalFocusSession, type FocusLabelOptions, type FocusSubtype, type FocusType } from "@/lib/types";
 import { formatLocalDate } from "@/lib/utils";
@@ -1989,6 +1990,11 @@ function FocusActivitySummaryCard({
   const rangeTriggerRef = useRef<HTMLButtonElement | null>(null);
   const rangePickerRef = useRef<HTMLDivElement | null>(null);
   const selectedRangeOptionRef = useRef<HTMLButtonElement | null>(null);
+  const activityScrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const activityBarStripRef = useRef<HTMLDivElement | null>(null);
+  const [activityScrollAvailability, setActivityScrollAvailability] = useState({ canScrollLeft: false, canScrollRight: false });
+  const [hasInteractedWithActivityChart, setHasInteractedWithActivityChart] = useState(false);
+  const prefersReducedMotion = useReducedMotion();
   const bars = selectedMode === "overall" ? overallBars : categoryBars;
   const currentRange = useMemo(() => getScopeRange(scope, currentDate), [currentDate, scope]);
   const rangeOptions = useMemo(
@@ -2008,6 +2014,45 @@ function FocusActivitySummaryCard({
   const maxSeconds = useMemo(() => (
     data.reduce((max, item) => Math.max(max, item.seconds, item.goalSeconds), 0)
   ), [data]);
+
+  const measureActivityScroll = useCallback(() => {
+    const viewport = activityScrollViewportRef.current;
+    if (!viewport) return;
+    const next = getFocusActivityScrollAvailability(viewport);
+    setActivityScrollAvailability((current) => (
+      current.canScrollLeft === next.canScrollLeft && current.canScrollRight === next.canScrollRight ? current : next
+    ));
+  }, []);
+
+  const markActivityChartInteracted = useCallback(() => {
+    setHasInteractedWithActivityChart(true);
+  }, []);
+
+  const scrollActivityChart = useCallback((direction: -1 | 1) => {
+    const viewport = activityScrollViewportRef.current;
+    if (!viewport) return;
+    markActivityChartInteracted();
+    viewport.scrollBy({
+      behavior: getFocusActivityScrollBehavior(Boolean(prefersReducedMotion)),
+      left: direction * getFocusActivityScrollDistance(viewport.clientWidth),
+    });
+  }, [markActivityChartInteracted, prefersReducedMotion]);
+
+  useEffect(() => {
+    const viewport = activityScrollViewportRef.current;
+    const strip = activityBarStripRef.current;
+    if (!viewport) return;
+    const frame = window.requestAnimationFrame(measureActivityScroll);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measureActivityScroll);
+    observer?.observe(viewport);
+    if (strip) observer?.observe(strip);
+    window.addEventListener("resize", measureActivityScroll);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", measureActivityScroll);
+    };
+  }, [currentDate, data.length, measureActivityScroll, scope, selectedMode]);
 
   const chartVariants = {
     hidden: { opacity: 0 },
@@ -2216,16 +2261,25 @@ function FocusActivitySummaryCard({
               {scope === "daily" ? "No sessions logged for this day yet." : "No focused time logged across this scope yet."}
             </div>
           ) : (
-            <div
-              aria-label="Activity chart"
-              className="min-w-0 w-full overflow-x-auto overscroll-x-contain pb-7"
-              role="group"
-            >
-              <motion.div
+            <div className="relative min-w-0 w-full">
+              <div
+                aria-label="Focus activity horizontal bar chart"
+                className="adhdice-scrollbar min-w-0 w-full overflow-x-auto overscroll-x-contain pb-7"
+                onKeyDown={markActivityChartInteracted}
+                onPointerDown={markActivityChartInteracted}
+                onScroll={measureActivityScroll}
+                onTouchStart={markActivityChartInteracted}
+                onWheel={markActivityChartInteracted}
+                ref={activityScrollViewportRef}
+                role="region"
+                tabIndex={0}
+              >
+                <motion.div
                 animate="visible"
                 className="flex h-48 min-w-full items-end justify-between gap-3 pb-1 sm:gap-4"
                 initial="hidden"
                 key={`${scope}-${selectedMode}-${currentDate}`}
+                ref={activityBarStripRef}
                 variants={chartVariants}
               >
                 {data.map((item, index) => {
@@ -2275,7 +2329,28 @@ function FocusActivitySummaryCard({
                     </div>
                   );
                 })}
-              </motion.div>
+                </motion.div>
+              </div>
+              {activityScrollAvailability.canScrollLeft ? (
+                <button
+                  aria-label="Scroll activity chart left"
+                  className="absolute left-1 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-[#ddd2ff] bg-white/95 text-[#6f57f6] shadow-lg transition hover:bg-[#f5f1ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b6a7ff] dark:border-white/15 dark:bg-[#241d3f]/95 dark:text-[#cabfff]"
+                  onClick={() => scrollActivityChart(-1)}
+                  type="button"
+                >
+                  <ChevronLeft aria-hidden="true" className="h-5 w-5" />
+                </button>
+              ) : null}
+              {activityScrollAvailability.canScrollRight ? (
+                <button
+                  aria-label="Scroll activity chart right"
+                  className={`absolute right-1 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-[#ddd2ff] bg-white/95 text-[#6f57f6] shadow-lg transition hover:bg-[#f5f1ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b6a7ff] dark:border-white/15 dark:bg-[#241d3f]/95 dark:text-[#cabfff] ${!prefersReducedMotion && !hasInteractedWithActivityChart ? "animate-pulse" : ""}`}
+                  onClick={() => scrollActivityChart(1)}
+                  type="button"
+                >
+                  <ChevronRight aria-hidden="true" className="h-5 w-5" />
+                </button>
+              ) : null}
             </div>
           )}
 

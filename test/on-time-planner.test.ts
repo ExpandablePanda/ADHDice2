@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildOnTimeHierarchy, calculateOnTimeSchedule, calculateOnTimeSequentialFinishes, getOnTimeDropIndex, getOnTimeElapsedSecondsByItemId, isLinkedItemOccurrenceCurrent, isOnTimeTaskEligible, moveOnTimeItem, reorderOnTimeItems } from "../src/lib/on-time-planner.ts";
+import { buildOnTimeHierarchy, calculateOnTimeSchedule, calculateOnTimeSequentialFinishes, classifyOnTimeRowState, createElapsedAwareOnTimeExecutionSnapshot, createOnTimeExecutionSnapshot, formatOnTimeArrivalDetail, formatOnTimeCountdown, formatOnTimeOperationalCountdown, formatUnsignedOperationalDuration, getOnTimeDropIndex, getOnTimeElapsedSecondsByItemId, getOnTimeExecutionTiming, isLinkedItemOccurrenceCurrent, isOnTimeTaskEligible, moveOnTimeItem, reorderOnTimeItems } from "../src/lib/on-time-planner.ts";
 import type { OnTimePlanItem } from "../src/lib/on-time-plan-state.ts";
 import type { Task, TaskActualTimeEntry } from "../src/lib/database.types.ts";
+import type { TaskHistory } from "../src/lib/database.types.ts";
+import { getTaskDisplayStatusWithHistory } from "../src/lib/task-cockpit.ts";
 import type { RunningTaskTimer } from "../src/components/ui/task-management-table-v2.tsx";
 
-const item = (id: string, seconds: number | null, completed = false): OnTimePlanItem => ({ id, kind: "temporary", title: id, plannedSeconds: seconds, completed });
+const item = (id: string, seconds: number | null, completed = false): OnTimePlanItem => ({ id, kind: "temporary", title: id, plannedSeconds: seconds, completed, execution: null });
 const base = { now: "2026-07-12T10:00:00Z", arriveAt: "2026-07-12T12:00:00Z", travelMinutes: 30, arrivalBufferMinutes: 10, items: [item("a", 1800)] };
 
 test("arrival buffer, leave-by, and begin-preparing math", () => {
@@ -61,16 +63,90 @@ test("picker eligibility includes hierarchy tasks and excludes unavailable or du
   assert.equal(isOnTimeTaskEligible(task({ trashed_at: "2026-01-02T00:00:00Z" }), new Set()), false);
 });
 
+test("authoritative display status preserves due-today, future, recurrence, Step, and Substep parity", () => {
+  const today = "2026-07-12";
+  const dueToday = task({ due_on: today, status: "upcoming" });
+  const future = task({ due_on: "2026-07-13", status: "upcoming" });
+  const step = task({ id: "step", parent_task_id: dueToday.id, due_on: today, status: "upcoming" });
+  const substep = task({ id: "substep", parent_task_id: step.id, due_on: today, status: "upcoming" });
+  assert.equal(getTaskDisplayStatusWithHistory(dueToday, [], today), "pending");
+  assert.equal(getTaskDisplayStatusWithHistory(future, [], today), "upcoming");
+  assert.equal(getTaskDisplayStatusWithHistory(step, [], today), "pending");
+  assert.equal(getTaskDisplayStatusWithHistory(substep, [], today), "pending");
+  const recurring = task({ due_on: today, repeat_frequency: "daily", status: "pending" });
+  const history = [{ id: "history", task_id: recurring.id, user_id: "user", entry_date: today, occurrence_key: `occurrence:${today}`, occurrence_due_on: today, status: "missed", event_type: "status", counted_as_due_occurrence: true, was_completed: false, created_at: `${today}T12:00:00Z`, updated_at: `${today}T12:00:00Z` }] as TaskHistory[];
+  assert.equal(getTaskDisplayStatusWithHistory(recurring, history, today), "missed");
+});
+
+test("raw In Progress narrowly overrides anchored occurrence history for parents, Steps, and Substeps", () => {
+  const today = "2026-07-15";
+  const dueOn = "2026-07-12";
+  const historyFor = (taskId: string, status: "missed" | "done" | "did_my_best") => [{
+    id: `history-${taskId}-${status}`, task_id: taskId, user_id: "user", entry_date: dueOn,
+    occurrence_key: `occurrence:${dueOn}`, occurrence_due_on: dueOn, status, event_type: "status",
+    counted_as_due_occurrence: true, was_completed: status !== "missed",
+    created_at: `${dueOn}T12:00:00Z`, updated_at: `${dueOn}T12:00:00Z`,
+  }] as TaskHistory[];
+
+  for (const [id, parentTaskId] of [["parent", null], ["step", "parent"], ["substep", "step"]] as const) {
+    const recurring = task({ id, parent_task_id: parentTaskId, due_on: dueOn, repeat_frequency: "daily", status: "in_progress" });
+    const history = historyFor(id, "missed");
+    assert.equal(getTaskDisplayStatusWithHistory(recurring, history, today), "in_progress");
+    assert.equal(history.length, 1);
+  }
+  for (const status of ["done", "did_my_best"] as const) {
+    const recurring = task({ id: `terminal-${status}`, due_on: dueOn, repeat_frequency: "daily", status: "in_progress" });
+    assert.equal(getTaskDisplayStatusWithHistory(recurring, historyFor(recurring.id, status), today), "in_progress");
+  }
+  const missed = task({ id: "raw-missed", due_on: dueOn, repeat_frequency: "daily", status: "missed" });
+  assert.equal(getTaskDisplayStatusWithHistory(missed, historyFor(missed.id, "missed"), today), "missed");
+  const pending = task({ id: "raw-pending", due_on: dueOn, repeat_frequency: "daily", status: "pending" });
+  assert.equal(getTaskDisplayStatusWithHistory(pending, historyFor(pending.id, "done"), today), "done");
+  assert.equal(getTaskDisplayStatusWithHistory(task({ status: "in_progress" }), [], today), "in_progress");
+});
+
 test("occurrence advancement is stale and completion statuses contribute zero only while current", () => {
-  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 600, durationSource: "manual" };
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 600, durationSource: "manual", execution: null };
   const current = task({ repeat_frequency: "daily", active_occurrence_due_on: "2026-07-12", status: "done" });
   assert.equal(isLinkedItemOccurrenceCurrent(linked, current), true);
   assert.equal(calculateOnTimeSchedule({ ...base, items: [linked], completionByItemId: { linked: true } }).remainingPreparationSeconds, 0);
   assert.equal(isLinkedItemOccurrenceCurrent(linked, { ...current, active_occurrence_due_on: "2026-07-13" }), false);
 });
 
+test("linked terminal row states keep Missed visible and active while true terminal statuses resolve", () => {
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: null, occurrenceDueOn: null, plannedSeconds: 600, durationSource: "manual", execution: null };
+  for (const [status, label] of [["done", "Done"], ["did_my_best", "Did My Best"], ["complete", "Complete"]] as const) {
+    const state = classifyOnTimeRowState(linked, status);
+    assert.equal(state.scheduleResolved, true);
+    assert.equal(state.visibleLabel, label);
+    assert.equal(state.renderActiveTiming, false);
+  }
+  assert.deepEqual(classifyOnTimeRowState(linked, "missed"), { scheduleResolved: false, semanticallyCompleted: false, visibleLabel: "Missed", renderActiveTiming: true });
+  assert.equal(calculateOnTimeSchedule({ ...base, items: [linked], completionByItemId: { linked: false } }).remainingPreparationSeconds, 600);
+  for (const status of ["pending", "in_progress", "delayed", "upcoming", "not_due"] as const) {
+    assert.deepEqual(classifyOnTimeRowState(linked, status), { scheduleResolved: false, semanticallyCompleted: false, visibleLabel: null, renderActiveTiming: true });
+  }
+  assert.equal(classifyOnTimeRowState(item("temporary", 60, true)).visibleLabel, "Completed");
+});
+
+test("arrival detail and operational countdown preserve exact schedule classifications", () => {
+  assert.equal(formatOnTimeArrivalDetail(899), "Arriving 15 min early");
+  assert.equal(formatOnTimeArrivalDetail(-361), "Arriving 6 min late");
+  assert.equal(formatOnTimeArrivalDetail(29), "Arriving on time");
+  assert.equal(formatOnTimeArrivalDetail(-29), "Arriving on time");
+  assert.equal(formatUnsignedOperationalDuration(3661), "1:01:01");
+  const calculation = calculateOnTimeSchedule(base);
+  assert.equal(formatOnTimeOperationalCountdown(calculation, Date.parse("2026-07-12T10:00:00Z")), "Begin preparing in 50:00");
+  assert.equal(formatOnTimeOperationalCountdown(calculation, Date.parse("2026-07-12T11:00:00Z")), "Leave in 20:00");
+  assert.equal(formatOnTimeOperationalCountdown(calculation, Date.parse("2026-07-12T11:20:00Z")), "Leave now");
+  assert.equal(formatOnTimeOperationalCountdown(calculation, Date.parse("2026-07-12T11:21:01Z")), "1:01 past leave time");
+  assert.equal(formatOnTimeOperationalCountdown(calculation, Date.parse("2026-07-12T11:50:00Z")), "Target arrival now");
+  assert.equal(formatOnTimeOperationalCountdown(calculation, Date.parse("2026-07-12T11:51:01Z")), "1:01 past target arrival");
+  assert.equal(formatOnTimeOperationalCountdown({ ...calculation, projectionTrusted: false }, Date.parse("2026-07-12T10:00:00Z")), null);
+});
+
 test("timer deduction counts exact task-timer evidence and active delta without its saved baseline", () => {
-  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 1000, durationSource: "manual" };
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "occurrence:2026-07-12", occurrenceDueOn: "2026-07-12", plannedSeconds: 1000, durationSource: "manual", execution: null };
   const entry = (source: TaskActualTimeEntry["source"], duration: number, occurrenceKey = linked.occurrenceKey): TaskActualTimeEntry => ({ id: `${source}-${duration}`, task_id: "task-a", user_id: "user", entry_date: "2026-07-12", title_snapshot: "Parent", duration_seconds: duration, notes: null, occurrence_key: occurrenceKey, occurrence_due_on: "2026-07-12", source, estimate_eligible: true, exclusion_reason: null, completion_history_id: null, completion_completed_at: null, created_at: "2026-07-12T00:00:00Z" });
   const timer: RunningTaskTimer = { baseSeconds: 500, startedActualSeconds: 400, startedAt: 1_000, pausedAt: null, taskId: "task-a", title: "Parent", occurrenceKey: linked.occurrenceKey, occurrenceDueOn: linked.occurrenceDueOn };
   const elapsed = getOnTimeElapsedSecondsByItemId({ entries: [entry("task_timer", 300), entry("manual", 200), entry("import", 200), entry("task_timer", 900, "occurrence:other")], items: [linked], now: 11_000, timers: [timer] });
@@ -112,7 +188,7 @@ test("drop index uses stable fixed midpoints and final order changes only once",
 });
 
 test("active and paused timer deductions shift sequential finishes without exceeding planned time", () => {
-  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "lifetime:task-a", occurrenceDueOn: null, plannedSeconds: 600, durationSource: "manual" };
+  const linked: OnTimePlanItem = { id: "linked", kind: "task", taskId: "task-a", titleSnapshot: "Parent", hierarchySnapshot: [], occurrenceKey: "lifetime:task-a", occurrenceDueOn: null, plannedSeconds: 600, durationSource: "manual", execution: null };
   const running: RunningTaskTimer = { baseSeconds: 120, startedActualSeconds: 120, startedAt: 1_000, pausedAt: null, taskId: "task-a", title: "Parent", occurrenceKey: "lifetime:task-a", occurrenceDueOn: null };
   const paused = { ...running, pausedAt: 121_000 };
   const runningElapsed = getOnTimeElapsedSecondsByItemId({ entries: [], items: [linked], now: 181_000, timers: [running] });
@@ -121,4 +197,53 @@ test("active and paused timer deductions shift sequential finishes without excee
   assert.equal(pausedElapsed.linked, 120);
   assert.equal(calculateOnTimeSequentialFinishes({ now: "2026-07-12T10:00:00Z", items: [linked], elapsedSecondsByItemId: runningElapsed }).linked?.estimatedFinishAt, "2026-07-12T10:07:00.000Z");
   assert.equal(calculateOnTimeSequentialFinishes({ now: "2026-07-12T10:00:00Z", items: [linked], elapsedSecondsByItemId: { linked: 9999 } }).linked?.estimatedFinishAt, "2026-07-12T10:00:00.000Z");
+});
+
+test("execution timing anchors ETA, catches up after background time, crosses zero, and formats hour scale", () => {
+  const execution = createOnTimeExecutionSnapshot(1_200, "2026-07-12T10:00:00Z");
+  assert.deepEqual(execution, { startedAt: "2026-07-12T10:00:00.000Z", plannedSeconds: 1_200 });
+  const halfway = getOnTimeExecutionTiming(execution, "2026-07-12T10:10:00Z");
+  assert.equal(halfway?.remainingSeconds, 600);
+  assert.equal(halfway?.estimatedFinishAt, "2026-07-12T10:20:00.000Z");
+  assert.equal(getOnTimeExecutionTiming(execution, "2026-07-12T10:20:00Z")?.remainingSeconds, 0);
+  assert.equal(getOnTimeExecutionTiming(execution, "2026-07-12T10:23:42Z")?.remainingSeconds, -222);
+  assert.equal(formatOnTimeCountdown(600), "10:00");
+  assert.equal(formatOnTimeCountdown(0), "00:00");
+  assert.equal(formatOnTimeCountdown(-222), "-3:42");
+  assert.equal(formatOnTimeCountdown(3_661), "1:01:01");
+  assert.equal(formatOnTimeCountdown(-3_661), "-1:01:01");
+});
+
+test("elapsed-aware Start adopts matching work while Restart creates a fresh full deadline", () => {
+  const clickNow = Date.parse("2026-07-12T10:10:00Z");
+  const started = createElapsedAwareOnTimeExecutionSnapshot({ elapsedSeconds: 420, intent: "start", plannedSeconds: 600, startedAt: clickNow });
+  const restarted = createElapsedAwareOnTimeExecutionSnapshot({ elapsedSeconds: 420, intent: "restart", plannedSeconds: 600, startedAt: clickNow });
+  assert.deepEqual(started, { startedAt: "2026-07-12T10:03:00.000Z", plannedSeconds: 600 });
+  assert.equal(getOnTimeExecutionTiming(started, clickNow)?.remainingSeconds, 180);
+  assert.equal(getOnTimeExecutionTiming(started, clickNow)?.estimatedFinishAt, "2026-07-12T10:13:00.000Z");
+  assert.deepEqual(restarted, { startedAt: "2026-07-12T10:10:00.000Z", plannedSeconds: 600 });
+  assert.equal(getOnTimeExecutionTiming(restarted, clickNow)?.remainingSeconds, 600);
+  const overtime = createElapsedAwareOnTimeExecutionSnapshot({ elapsedSeconds: 900, intent: "start", plannedSeconds: 600, startedAt: clickNow });
+  assert.equal(getOnTimeExecutionTiming(overtime, clickNow)?.remainingSeconds, -300);
+  assert.deepEqual(createElapsedAwareOnTimeExecutionSnapshot({ elapsedSeconds: Number.NaN, intent: "start", plannedSeconds: 600, startedAt: clickNow }), restarted);
+});
+
+test("execution snapshot overrides timer evidence, retains captured duration, and clamps only future contribution", () => {
+  const execution = createOnTimeExecutionSnapshot(1_200, "2026-07-12T10:00:00Z");
+  const running = { ...item("running", 3_600), execution };
+  const next = item("next", 300);
+  const halfway = calculateOnTimeSequentialFinishes({ now: "2026-07-12T10:10:00Z", items: [running, next], elapsedSecondsByItemId: { running: 999 } });
+  assert.equal(halfway.running?.estimatedFinishAt, "2026-07-12T10:20:00.000Z");
+  assert.equal(halfway.next?.estimatedFinishAt, "2026-07-12T10:25:00.000Z");
+  assert.equal(calculateOnTimeSchedule({ ...base, now: "2026-07-12T10:10:00Z", items: [running], elapsedSecondsByItemId: { running: 999 } }).remainingPreparationSeconds, 600);
+  const overtime = calculateOnTimeSequentialFinishes({ now: "2026-07-12T10:25:00Z", items: [running, next] });
+  assert.equal(overtime.running?.estimatedFinishAt, "2026-07-12T10:20:00.000Z");
+  assert.equal(overtime.next?.estimatedFinishAt, "2026-07-12T10:30:00.000Z");
+});
+
+test("multiple execution snapshots remain independent", () => {
+  const first = { ...item("first", 600), execution: createOnTimeExecutionSnapshot(600, "2026-07-12T10:00:00Z") };
+  const second = { ...item("second", 900), execution: createOnTimeExecutionSnapshot(900, "2026-07-12T10:02:00Z") };
+  assert.equal(getOnTimeExecutionTiming(first.execution, "2026-07-12T10:05:00Z")?.remainingSeconds, 300);
+  assert.equal(getOnTimeExecutionTiming(second.execution, "2026-07-12T10:05:00Z")?.remainingSeconds, 720);
 });

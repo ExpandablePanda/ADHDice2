@@ -54,6 +54,12 @@ export type FocusCounterMigrationResult = {
   was_replayed?: boolean;
 };
 
+export function shouldNotifyFocusCounterMigrationDivergence(
+  result: Pick<FocusCounterMigrationResult, "local_differed" | "was_replayed">,
+) {
+  return result.local_differed && !result.was_replayed;
+}
+
 export function mapFocusCounterRow(row: FocusCounterRow): FocusCounter {
   return {
     id: row.id,

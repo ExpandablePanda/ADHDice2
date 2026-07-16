@@ -673,6 +673,7 @@ export function TaskOperationsHeader({
   onOpenFocusPlanner,
   onOpenImport,
   onOpenListSettings,
+  onOpenCompletedMilestones,
   onOpenMomentumDetails,
   onOpenTrash,
   onReorderLists,
@@ -721,6 +722,7 @@ export function TaskOperationsHeader({
   onOpenFocusPlanner: () => void;
   onOpenImport: () => void;
   onOpenListSettings: () => void;
+  onOpenCompletedMilestones?: () => void;
   onOpenMomentumDetails: () => void;
   onOpenTrash: () => void;
   onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
@@ -823,6 +825,7 @@ export function TaskOperationsHeader({
               <TaskChipButton onClick={onOpenComposer} tone="primary">
                 New Task
               </TaskChipButton>
+              {selectedBucket === "milestones" && onOpenCompletedMilestones ? <TaskChipButton onClick={onOpenCompletedMilestones}>Completed Milestones</TaskChipButton> : null}
               <TaskChipButton active={selectedBucket === "archive"} onClick={() => startTransition(onOpenArchive)}>
                 <span className="inline-flex items-center gap-2">
                   <BookOpen className="h-3.5 w-3.5" />

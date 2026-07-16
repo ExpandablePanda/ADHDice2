@@ -9,6 +9,7 @@ function joinClasses(...values: Array<string | false | null | undefined>) {
 
 export const TASK_TABLE_CHIP_TEXT_CLASS = "text-[13px] font-medium leading-none tracking-normal";
 export const TASK_TABLE_CHIP_BASE_CLASS = `inline-flex items-center justify-center rounded-full border px-2 py-1 whitespace-nowrap ${TASK_TABLE_CHIP_TEXT_CLASS}`;
+export const TASK_TABLE_ICON_LABEL_GAP_CLASS = "gap-1.5";
 export const TASK_TABLE_CONTROL_FONT_CLASS = "[font-family:inherit]";
 export const TASK_TABLE_TEXT_CLASS = "text-[14px] font-medium normal-case tracking-normal";
 export const TASK_TABLE_HEADER_TEXT_CLASS = `${TASK_TABLE_TEXT_CLASS} text-[#938ab8] dark:text-white/42`;

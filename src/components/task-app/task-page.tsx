@@ -6,10 +6,11 @@ import type { TasksSurface, TaskViewMode } from "@/lib/task-ui-state";
 type TaskPageProps = {
   alternateViewPanel: ReactNode;
   brainstormWorkspacePanel: ReactNode;
+  completedMilestonesWorkspacePanel: ReactNode;
   flows: ReactNode;
   listViewPanel: ReactNode;
   onTimeWorkspacePanel: ReactNode;
-  showTableOverlayOnTime?: boolean;
+  showSharedTaskEditorOverlay?: boolean;
   operationsHeader: ReactNode;
   pathsWorkspacePanel: ReactNode;
   reportWorkspacePanel: ReactNode;
@@ -23,10 +24,11 @@ type TaskPageProps = {
 export function TaskPage({
   alternateViewPanel,
   brainstormWorkspacePanel,
+  completedMilestonesWorkspacePanel,
   flows,
   listViewPanel,
   onTimeWorkspacePanel,
-  showTableOverlayOnTime = false,
+  showSharedTaskEditorOverlay = false,
   operationsHeader,
   pathsWorkspacePanel,
   reportWorkspacePanel,
@@ -48,9 +50,11 @@ export function TaskPage({
       ) : surface === "report" ? (
         reportWorkspacePanel
       ) : surface === "on_time" ? (
-        <>{onTimeWorkspacePanel}{showTableOverlayOnTime ? tableViewPanel : null}</>
+        onTimeWorkspacePanel
       ) : surface === "brainstorm" ? (
         brainstormWorkspacePanel
+      ) : surface === "completed_milestones" ? (
+        completedMilestonesWorkspacePanel
       ) : (
         <>
           {operationsHeader}
@@ -61,6 +65,7 @@ export function TaskPage({
               : alternateViewPanel}
         </>
       )}
+      {showSharedTaskEditorOverlay && !(surface === "tasks" && view === "table") ? tableViewPanel : null}
     </>
   );
 }

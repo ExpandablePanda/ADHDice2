@@ -31,6 +31,7 @@ type UseTaskCrudActionsOptions = {
   clearPendingTaskMutations?: (taskIds: string[]) => void;
   currentUserId: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
+  mutateMilestoneTask?: (action: "delete" | "trash", task: Task) => Promise<{ deleted: boolean; error: string | null; handled: boolean; task: Task | null }>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTaskRouting: Dispatch<SetStateAction<Record<string, TaskRoutingBucket>>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -47,6 +48,7 @@ export function useTaskCrudActions({
   clearPendingTaskMutations,
   currentUserId,
   markPendingTaskMutations,
+  mutateMilestoneTask,
   setMessage,
   setTaskRouting,
   setTasks,
@@ -188,6 +190,16 @@ export function useTaskCrudActions({
 
     for (const taskId of taskIds) {
       const expectedTask = taskSnapshots.get(taskId) ?? null;
+
+      if (expectedTask && mutateMilestoneTask) {
+        const milestoneResult = await mutateMilestoneTask(expectedTask.status === "trashed" ? "delete" : "trash", expectedTask);
+        if (milestoneResult.handled) {
+          if (milestoneResult.error) firstErrorMessage ??= milestoneResult.error;
+          else if (milestoneResult.deleted) deletedTaskIds.push(taskId);
+          else if (milestoneResult.task) movedToTrashTasks.push(milestoneResult.task);
+          continue;
+        }
+      }
 
       if (expectedTask && expectedTask.status !== "trashed") {
         const result = await updateTaskRowWithLegacyEnergyFallback(taskId, {

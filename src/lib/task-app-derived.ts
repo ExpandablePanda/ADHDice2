@@ -391,6 +391,8 @@ type ComputeTaskAppDerivedDataInput = {
   focusedTaskIds: string[];
   listColumnPickerOrder: string[];
   listVisibleColumns: string[];
+  milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
+  milestoneTaskIds?: ReadonlySet<string>;
   taskActualTimeEntryTaskId: string | null;
   taskEditorTaskId: string | null;
   taskGridLayout: TaskGridItem[];
@@ -412,6 +414,8 @@ export function computeTaskAppDerivedData({
   focusedTaskIds,
   listColumnPickerOrder,
   listVisibleColumns,
+  milestoneSearchTokensByTaskId,
+  milestoneTaskIds,
   taskActualTimeEntryTaskId,
   taskEditorTaskId,
   taskGridLayout,
@@ -543,7 +547,9 @@ export function computeTaskAppDerivedData({
       return true;
     }
 
-    if (matchesNormalizedSearchValue(task.title, normalizedSearchQuery) || matchesNormalizedSearchValues(task.tags, normalizedSearchQuery)) {
+    if (matchesNormalizedSearchValue(task.title, normalizedSearchQuery)
+      || matchesNormalizedSearchValues(task.tags, normalizedSearchQuery)
+      || matchesNormalizedSearchValues(milestoneSearchTokensByTaskId?.get(task.id), normalizedSearchQuery)) {
       return true;
     }
 
@@ -593,6 +599,13 @@ export function computeTaskAppDerivedData({
   const visibleSortingStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const filteredTasksSorted = activePage === "Tasks"
     ? sortTasksForCockpit(filteredVisibleTasks, bucketContext)
+    : EMPTY_TASKS;
+  const milestoneFilteredTasksSorted = activePage === "Tasks"
+    ? sortTasksForCockpit(primaryTasks.filter((task) => (
+      milestoneTaskIds?.has(task.id)
+      && task.status !== "trashed"
+      && matchesTaskFilters(task)
+    )), bucketContext)
     : EMPTY_TASKS;
   logTaskDeriveStep("visible task sorting", visibleSortingStartedAt, {
     matchingTasks: filteredTasksSorted.length,
@@ -662,7 +675,9 @@ export function computeTaskAppDerivedData({
     }
     : undefined;
   const membershipStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const membershipSourceTasks = taskUiState.duplicateTitleMode ? duplicateGroupTasks : filteredTasksSorted;
+  const membershipSourceTasks = taskUiState.duplicateTitleMode
+    ? duplicateGroupTasks
+    : [...new Map([...filteredTasksSorted, ...milestoneFilteredTasksSorted].map((task) => [task.id, task])).values()];
   const taskListLookup = buildTaskListLookup(availableTaskLists);
   const taskDisplayStatusByTaskId = membershipSourceTasks.reduce<Record<string, TaskStatus>>((accumulator, task) => {
     accumulator[task.id] = getTaskDisplayStatusWithHistory(
@@ -813,6 +828,9 @@ export function computeTaskAppDerivedData({
       }
     }
   }
+  if (activePage === "Tasks") {
+    visibleListCounts.milestones = milestoneFilteredTasksSorted.length;
+  }
   logTaskDeriveStep("task-list rail/count generation", visibleCountStartedAt, {
     listsWithCounts: Object.keys(visibleListCounts).length,
     tasks: filteredTasksSorted.length,
@@ -953,6 +971,7 @@ export function computeTaskAppDerivedData({
     listRailOptions,
     lowEnergyTasks,
     manualListOptions,
+    milestoneFilteredTasksSorted,
     missingGridWidgetTypes,
     momentumPercent,
     overdueTasks,

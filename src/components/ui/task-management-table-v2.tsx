@@ -28,11 +28,13 @@ import {
   Tag,
   TimerReset,
   Trash2,
+  Trophy,
   X,
 } from "lucide-react";
 import type { TaskActualTimeEntry, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { buildChildTaskPreviewVisibility, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
+import { isTaskEditorChildRouteSettled, resolveTaskEditorFocusPhase } from "@/lib/task-editor-focus-request";
 import { getSelectedTaskPriorityToneClass, getTaskPrioritySelection, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TaskDelayPicker } from "@/components/task-app/task-delay-picker";
@@ -139,6 +141,12 @@ export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
 export type RunningTaskTimer = { baseSeconds: number; occurrenceDueOn?: string | null; occurrenceKey?: string | null; pausedAt?: number | null; startedActualSeconds: number; startedAt: number; taskId: string; title: string };
 export type TaskRowContextMenuQuickEditMode = "actual" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
+export type TaskEditorInitialField = "estimated_time";
+export type TaskEditorFocusRequest = {
+  field: TaskEditorInitialField;
+  taskId: string;
+  token: number;
+};
 type ChildTaskDragState = { depth: number; parentTaskId: string | null; taskId: string };
 type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string };
 type PendingTableReveal = {
@@ -376,6 +384,8 @@ type TaskRowContextMenuProps = {
   onOpenHistory?: () => void;
   onOpenQuickEdit?: (mode: TaskRowContextMenuQuickEditMode, sourceElement?: HTMLElement | null) => void;
   onOpenTimeLog?: () => void;
+  onPromoteToMilestone?: () => void;
+  onDetachAndPromoteToMilestone?: () => void;
   onRestoreTask?: () => void;
   onSelectAllVisible?: () => void;
   onToggleTaskSelection?: () => void;
@@ -405,6 +415,8 @@ export function TaskRowContextMenu({
   onOpenHistory,
   onOpenQuickEdit,
   onOpenTimeLog,
+  onPromoteToMilestone,
+  onDetachAndPromoteToMilestone,
   onRestoreTask,
   onSelectAllVisible,
   onToggleTaskSelection,
@@ -546,6 +558,22 @@ export function TaskRowContextMenu({
             >
               <span>Delay task</span>
               <CalendarDays className="h-3.5 w-3.5" />
+            </TaskTableChipButton>
+          ) : null}
+          {onPromoteToMilestone ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={onPromoteToMilestone}
+            >
+              <span>Promote to Milestone</span>
+            </TaskTableChipButton>
+          ) : null}
+          {onDetachAndPromoteToMilestone ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={onDetachAndPromoteToMilestone}
+            >
+              <span>Detach and promote to Milestone</span>
             </TaskTableChipButton>
           ) : null}
           {onUnlinkTask ? (
@@ -1032,10 +1060,17 @@ type TaskManagementTableV2Props = {
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
+  onPromoteTaskToMilestone?: (taskId: string) => void;
+  onDetachAndPromoteTaskToMilestone?: (taskId: string) => void;
+  milestonePromotionTaskIds?: ReadonlySet<string>;
+  milestoneDetachPromotionTaskIds?: ReadonlySet<string>;
+  renderFullInspectorExtension?: (taskId: string) => ReactNode;
   onReorderChildTask?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   overlayOnly?: boolean;
   onLoadMoreRows?: () => void;
   onRequestedOpenTaskHandled?: (taskId: string) => void;
+  requestedEditorFocus?: TaskEditorFocusRequest | null;
+  onRequestedEditorFocusHandled?: (token: number) => void;
   onFollowDetachedTask?: (taskId: string) => void;
   onDismissDetachedTask?: (taskId: string) => void;
   onPreviousTaskTimer?: () => void;
@@ -2205,10 +2240,17 @@ export function TaskManagementTableV2({
   onOpenChildTask,
   onMoveTaskIntoParent,
   onUnlinkTask,
+  onPromoteTaskToMilestone,
+  onDetachAndPromoteTaskToMilestone,
+  milestonePromotionTaskIds = new Set<string>(),
+  milestoneDetachPromotionTaskIds = new Set<string>(),
+  renderFullInspectorExtension,
   onReorderChildTask,
   overlayOnly = false,
   onLoadMoreRows,
   onRequestedOpenTaskHandled,
+  requestedEditorFocus = null,
+  onRequestedEditorFocusHandled,
   onFollowDetachedTask,
   onDismissDetachedTask,
   onPreviousTaskTimer,
@@ -2390,9 +2432,17 @@ export function TaskManagementTableV2({
   const lastRowsSignatureRef = useRef(buildPrototypeRowsSignature(rows));
   const pendingRowClickTimeoutRef = useRef<number | null>(null);
   const pendingMetadataTargetTaskIdRef = useRef<string | null>(null);
+  const estimatedTimeInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingEditorFocusFrameRef = useRef<{ frame: number; token: number } | null>(null);
+  const handledEditorFocusTokensRef = useRef(new Set<number>());
   const statusRailLongPressTimeoutRef = useRef<number | null>(null);
   const statusRailLongPressTriggeredRef = useRef(false);
   const recentInlineCommitRef = useRef<Map<string, { expiresAt: number; value: string }>>(new Map());
+  const selectMetadataPanel = useCallback((taskId: string, panelId: MetadataPanelId) => {
+    setActiveMetadataPanelByTaskId((current) => current[taskId] === panelId
+      ? current
+      : { ...current, [taskId]: panelId });
+  }, []);
   const effectiveRunningTimers = runningTaskTimers ?? localRunningTimers;
   const effectiveActiveTimerIndex = activeTaskTimerIndex ?? localActiveTimerIndex;
   const effectiveTimerNow = taskTimerNow ?? localTimerNow;
@@ -2913,6 +2963,13 @@ export function TaskManagementTableV2({
       return;
     }
 
+    const acknowledgeNormalOpen = () => {
+      if (requestedEditorFocus?.field === "estimated_time" && requestedEditorFocus.taskId === requestedOpenTaskId) {
+        return;
+      }
+      onRequestedOpenTaskHandled?.(requestedOpenTaskId);
+    };
+
     const requestedVisibleTask = tasks.find((task) => task.id === requestedOpenTaskId) ?? null;
     const requestedRetainedTask = requestedOpenTask?.id === requestedOpenTaskId ? requestedOpenTask : null;
     const requestedTask = requestedVisibleTask ?? requestedRetainedTask;
@@ -2921,27 +2978,32 @@ export function TaskManagementTableV2({
       return;
     }
 
+    if (isTaskEditorChildRouteSettled({ metadataTargetTaskId, requestedOpenTaskId, selectedTaskId })) {
+      acknowledgeNormalOpen();
+      return;
+    }
+
     if (pendingMetadataTargetTaskIdRef.current === requestedOpenTaskId && selectedTaskId && selectedTaskId !== requestedOpenTaskId) {
       setRetainedMetadataTargetTask(clonePrototypeTaskRow(requestedTask));
       setMetadataTargetTaskId(requestedOpenTaskId);
       pendingMetadataTargetTaskIdRef.current = null;
-      onRequestedOpenTaskHandled?.(requestedOpenTaskId);
+      acknowledgeNormalOpen();
       return;
     }
 
     if (childTaskParentInfoByTaskId.has(requestedOpenTaskId) && revealChildTaskInParentEditor(requestedOpenTaskId)) {
-      onRequestedOpenTaskHandled?.(requestedOpenTaskId);
+      acknowledgeNormalOpen();
       return;
     }
 
     if (selectedTaskId === requestedOpenTaskId && selectedTask?.id === requestedOpenTaskId) {
-      onRequestedOpenTaskHandled?.(requestedOpenTaskId);
+      acknowledgeNormalOpen();
       return;
     }
 
     if (requestedVisibleTask) {
       openInspector(requestedOpenTaskId, "full");
-      onRequestedOpenTaskHandled?.(requestedOpenTaskId);
+      acknowledgeNormalOpen();
       return;
     }
 
@@ -2955,8 +3017,67 @@ export function TaskManagementTableV2({
     setOverlayMode("full");
     setOpenColumnMenuId(null);
     setOverlayAnchor(null);
-    onRequestedOpenTaskHandled?.(requestedOpenTaskId);
-  }, [childTaskParentInfoByTaskId, onRequestedOpenTaskHandled, requestedOpenTask, requestedOpenTaskId, selectedTask, selectedTaskId, tasks]);
+    acknowledgeNormalOpen();
+  }, [childTaskParentInfoByTaskId, metadataTargetTaskId, onRequestedOpenTaskHandled, requestedEditorFocus, requestedOpenTask, requestedOpenTaskId, selectedTask, selectedTaskId, tasks]);
+
+  useEffect(() => {
+    const resolvedMetadataTask = metadataTargetTask ?? selectedTask;
+    const input = estimatedTimeInputRef.current;
+    const phase = resolveTaskEditorFocusPhase({
+      activeMetadataPanel: resolvedMetadataTask ? activeMetadataPanelByTaskId[resolvedMetadataTask.id] ?? "due" : null,
+      handled: requestedEditorFocus ? handledEditorFocusTokensRef.current.has(requestedEditorFocus.token) : false,
+      inputMounted: Boolean(input),
+      inputOwnsFocus: Boolean(input && typeof document !== "undefined" && document.activeElement === input),
+      request: requestedEditorFocus,
+      resolvedMetadataTaskId: resolvedMetadataTask?.id ?? null,
+      visibleOwner: Boolean(overlayMode === "full" && requestedOpenTaskId && requestedEditorFocus && requestedOpenTaskId === requestedEditorFocus.taskId),
+    });
+
+    if (phase === "select_panel" && resolvedMetadataTask) {
+      selectMetadataPanel(resolvedMetadataTask.id, "estimated");
+      return;
+    }
+    if (!requestedEditorFocus || (phase !== "focus_input" && phase !== "acknowledge")) {
+      return;
+    }
+
+    const token = requestedEditorFocus.token;
+    if (phase === "acknowledge") {
+      handledEditorFocusTokensRef.current.add(token);
+      onRequestedOpenTaskHandled?.(requestedEditorFocus.taskId);
+      onRequestedEditorFocusHandled?.(token);
+      return;
+    }
+    if (!input || pendingEditorFocusFrameRef.current?.token === token) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      if (pendingEditorFocusFrameRef.current?.token !== token) {
+        return;
+      }
+      pendingEditorFocusFrameRef.current = null;
+      const input = estimatedTimeInputRef.current;
+      if (!input || handledEditorFocusTokensRef.current.has(token)) {
+        return;
+      }
+      input.focus({ preventScroll: true });
+      input.select();
+      input.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (typeof document === "undefined" || document.activeElement !== input) {
+        return;
+      }
+      handledEditorFocusTokensRef.current.add(token);
+      onRequestedOpenTaskHandled?.(requestedEditorFocus.taskId);
+      onRequestedEditorFocusHandled?.(token);
+    });
+    pendingEditorFocusFrameRef.current = { frame, token };
+    return () => {
+      if (pendingEditorFocusFrameRef.current?.token === token) {
+        cancelAnimationFrame(pendingEditorFocusFrameRef.current.frame);
+        pendingEditorFocusFrameRef.current = null;
+      }
+    };
+  }, [activeMetadataPanelByTaskId, metadataTargetTask, onRequestedEditorFocusHandled, onRequestedOpenTaskHandled, overlayMode, requestedEditorFocus, requestedOpenTaskId, selectMetadataPanel, selectedTask]);
   const mergedListOptions = useMemo(() => {
     const byLabel = new Map<string, { id: string; label: string }>();
     for (const option of allListOptions) {
@@ -6244,6 +6365,7 @@ export function TaskManagementTableV2({
       const titleDraft = titleDraftsRef.current[task.id] ?? task.title;
       const isPinned = Boolean(task.pinnedAt);
       const isRoutine = taskHasList(task, "Routine");
+      const isMilestone = taskHasList(task, "Milestones");
       return (
         <div className="relative inline-flex min-w-0 max-w-full pl-[5px]">
           <span
@@ -6303,6 +6425,11 @@ export function TaskManagementTableV2({
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-0 [&>button]:h-6 [&>button]:w-6">
+              {isMilestone ? (
+                <span aria-label="Milestone" className="inline-flex h-6 w-6 items-center justify-center text-[#6f57f6] dark:text-[#cabfff]" role="img" title="Milestone">
+                  <Trophy aria-hidden="true" className="h-3.5 w-3.5" />
+                </span>
+              ) : null}
               {(task.status === "archived" || task.status === "trashed") && onRestoreTask ? (
                 <button
                   aria-label="Restore task to inbox"
@@ -6321,7 +6448,7 @@ export function TaskManagementTableV2({
                 <button
                   aria-label={isPinned ? "Unpin task" : "Pin task"}
                   aria-pressed={isPinned}
-                  className={isPinned ? `${ROW_ACTION_ICON_BUTTON_CLASS} border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]` : ROW_ACTION_ICON_BUTTON_CLASS}
+                  className={isPinned ? `${ROW_ACTION_ICON_BUTTON_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#5b3fd6] opacity-100 dark:border-[#57458f] dark:bg-[#2a2148] dark:text-[#cabfff]` : ROW_ACTION_ICON_BUTTON_CLASS}
                   onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -6329,14 +6456,14 @@ export function TaskManagementTableV2({
                   }}
                   type="button"
                 >
-                  <Pin className={`h-3.5 w-3.5 ${isPinned ? "fill-current" : ""}`} />
+                  <Pin className={`h-3.5 w-3.5 stroke-current stroke-[2.5] ${isPinned ? "fill-current" : ""}`} />
                 </button>
               ) : null}
               {onToggleTaskList ? (
                 <button
                   aria-label={isRoutine ? "Remove task from Routine" : "Add task to Routine"}
                   aria-pressed={isRoutine}
-                  className={isRoutine ? `${ROW_ACTION_ICON_BUTTON_CLASS} border-[#ddd2ff] bg-[#f3efff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]` : ROW_ACTION_ICON_BUTTON_CLASS}
+                  className={isRoutine ? `${ROW_ACTION_ICON_BUTTON_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#5b3fd6] opacity-100 dark:border-[#57458f] dark:bg-[#2a2148] dark:text-[#cabfff]` : ROW_ACTION_ICON_BUTTON_CLASS}
                   onPointerDown={stopRowActionPointerEvent}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -6344,7 +6471,7 @@ export function TaskManagementTableV2({
                   }}
                   type="button"
                 >
-                  <ListTodo className={`h-3.5 w-3.5 ${isRoutine ? "fill-current" : ""}`} />
+                  <ListTodo className={`h-3.5 w-3.5 stroke-current stroke-[2.5] ${isRoutine ? "fill-current" : ""}`} />
                 </button>
               ) : null}
               {onCreateChildTask ? (
@@ -8240,6 +8367,14 @@ export function TaskManagementTableV2({
                 setRowContextMenu(null);
                 openActualTimeEntryForTask(rowContextMenuTask.id);
               } : undefined}
+              onPromoteToMilestone={onPromoteTaskToMilestone && milestonePromotionTaskIds.has(rowContextMenuTask.id) ? () => {
+                setRowContextMenu(null);
+                onPromoteTaskToMilestone(rowContextMenuTask.id);
+              } : undefined}
+              onDetachAndPromoteToMilestone={onDetachAndPromoteTaskToMilestone && milestoneDetachPromotionTaskIds.has(rowContextMenuTask.id) ? () => {
+                setRowContextMenu(null);
+                onDetachAndPromoteTaskToMilestone(rowContextMenuTask.id);
+              } : undefined}
               onRestoreTask={onRestoreTask ? () => {
                 setRowContextMenu(null);
                 onRestoreTask(rowContextMenuTask.id);
@@ -8574,7 +8709,7 @@ export function TaskManagementTableV2({
                         },
                       )}
                       <div className="mt-3 flex gap-2">
-                        <input className={OVERLAY_INPUT_CLASS} inputMode="numeric" onChange={(event) => setEstimatedMinutesDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="Custom minutes" type="text" value={metadataEstimatedMinutesDraft} />
+                        <input ref={estimatedTimeInputRef} aria-label="Estimated Time" className={OVERLAY_INPUT_CLASS} inputMode="numeric" name="estimated_time" onChange={(event) => setEstimatedMinutesDrafts((current) => ({ ...current, [metadataTask.id]: event.target.value.replace(/[^\d]/g, "") }))} placeholder="Custom minutes" type="text" value={metadataEstimatedMinutesDraft} />
                         <TaskTableChipButton onClick={() => setTaskEstimatedMinutes(metadataTask.id, metadataEstimatedMinutesDraft ? Number.parseInt(metadataEstimatedMinutesDraft, 10) : null)} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">Apply</TaskTableChipButton>
                       </div>
                     </>
@@ -8873,14 +9008,14 @@ export function TaskManagementTableV2({
                   </div>
                 ) : null;
                 const fullEditorGridClass = useMobileFullOverlay
-                  ? "grid gap-3"
-                  : "grid gap-3 lg:grid-cols-[1.05fr_0.95fr]";
+                  ? "grid min-w-0 gap-3"
+                  : "grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]";
                 const fullEditorCardClass = useMobileFullOverlay
                   ? "min-w-0 w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
-                  : "rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]";
+                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]";
                 const fullMetadataCardClass = useMobileFullOverlay
                   ? "min-w-0 w-full max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
-                  : "rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start";
+                  : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start";
                 const titleInputClass = `${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] ${useMobileFullOverlay ? "text-[17px]" : "text-[18px]"}`;
                 const metadataTabRowClass = useMobileFullOverlay
                   ? "mt-3 flex min-w-0 flex-wrap gap-x-3 gap-y-2 text-[13px] leading-5"
@@ -8889,7 +9024,8 @@ export function TaskManagementTableV2({
                   ? "mt-5 min-w-0 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"
                   : "mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]";
                 const fullDesktopEditorContent = (
-                  <div className={fullEditorGridClass}>
+                  <div className="min-w-0 max-w-full" data-full-inspector-content="true">
+                    <div className={fullEditorGridClass} data-full-inspector-columns="true">
                     <div className={fullEditorCardClass}>
                       {selectedTaskParentInfo ? (
                         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -9004,7 +9140,7 @@ export function TaskManagementTableV2({
                                   ? "text-[#6f57f6] dark:text-[#cabfff]"
                                   : "text-[#8d87a7] hover:text-[#6f57f6] dark:text-white/45 dark:hover:text-[#cabfff]"
                               }`}
-                              onClick={() => setActiveMetadataPanelByTaskId((current) => ({ ...current, [metadataTask.id]: option.id }))}
+                              onClick={() => selectMetadataPanel(metadataTask.id, option.id)}
                               type="button"
                             >
                               <span>{option.label}</span>
@@ -9022,11 +9158,17 @@ export function TaskManagementTableV2({
                         {metadataPanelContent}
                       </div>
                     </section>
+                    </div>
+                    {renderFullInspectorExtension ? (
+                      <div className="mt-3 min-w-0 max-w-full" data-full-inspector-extension-region="true">
+                        {renderFullInspectorExtension(metadataTask.id)}
+                      </div>
+                    ) : null}
                   </div>
                 );
 
                 const fullDesktopEditorNode = (
-                  <div className="w-full max-w-[60rem]" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
+                  <div className="min-w-0 w-full max-w-[60rem]" ref={isFocusedOverlay || useMobileFullOverlay ? undefined : inspectorPanelRef}>
                     {fullDesktopEditorContent}
                   </div>
                 );
@@ -9035,7 +9177,7 @@ export function TaskManagementTableV2({
                   : useMobileFullOverlay
                     ? "flex min-h-0 flex-1 items-start justify-center overscroll-none px-3 pt-[calc(env(safe-area-inset-top)+0.25rem)] pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5"
                   : overlayMode === "full"
-                    ? "flex flex-1 items-start justify-center overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
+                    ? "flex flex-1 items-start justify-center overflow-x-hidden overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))]"
                     : "grid flex-1 gap-3 overflow-y-auto px-5 pt-4 pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:grid-cols-[1.1fr_0.9fr]";
 
                 return (
@@ -9132,7 +9274,7 @@ export function TaskManagementTableV2({
                     ref={inspectorPanelRef}
                   >
                     <div className="relative flex max-h-[calc(100dvh-1.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden overscroll-contain rounded-[1.6rem] border border-[#e7defc] bg-white shadow-[0_26px_70px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]">
-                      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
+                      <div className="adhdice-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
                         <div className="px-0 pb-3">
                           {fullDesktopEditorContent}
                         </div>

@@ -1,5 +1,5 @@
 "use client";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, CirclePause, CirclePlay, Clock3, Ellipsis, ExternalLink, Eye, EyeOff, Flame, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, TimerReset, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ChevronRight, CirclePause, CirclePlay, Clock3, Ellipsis, ExternalLink, Eye, EyeOff, Flame, Footprints, GripVertical, ListTodo, Pin, Skull, Tag, TimerReset, Trash2, Trophy, X } from "lucide-react";
 import {
   buildMoveIntoParentOptions,
   buildTaskRowContextMenuState,
@@ -12,6 +12,7 @@ import {
   type RowContextMenuState,
   type TaskManagementTableColumnId,
   type RunningTaskTimer,
+  type TaskEditorFocusRequest,
 } from "@/components/ui/task-management-table-v2";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
@@ -277,6 +278,11 @@ type TasksTableSourceProps = {
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
+  onPromoteTaskToMilestone?: (taskId: string) => void;
+  onDetachAndPromoteTaskToMilestone?: (taskId: string) => void;
+  milestonePromotionTaskIds?: ReadonlySet<string>;
+  milestoneDetachPromotionTaskIds?: ReadonlySet<string>;
+  renderFullInspectorExtension?: (taskId: string) => ReactNode;
   onReorderChildTask?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onFollowDetachedTask?: (taskId: string) => void;
   onDismissDetachedTask?: (taskId: string) => void;
@@ -336,6 +342,8 @@ type TasksTableSourceProps = {
     todayDateKey: string;
   };
   onRequestedOpenTaskHandled?: (taskId: string) => void;
+  requestedEditorFocus?: TaskEditorFocusRequest | null;
+  onRequestedEditorFocusHandled?: (token: number) => void;
   onRequestedOpenTaskOverlayClose?: () => void;
   taskTableLayoutPreferences?: TaskTableLayoutPreferences;
   onTaskTableLayoutPreferencesChange?: (nextPreferences: TaskTableLayoutPreferences) => void;
@@ -567,6 +575,11 @@ export function TasksTableAdapter({
           onOpenChildTask={tableProps.onOpenChildTask}
           onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
           onUnlinkTask={tableProps.onUnlinkTask}
+          onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
+          onDetachAndPromoteTaskToMilestone={tableProps.onDetachAndPromoteTaskToMilestone}
+          milestonePromotionTaskIds={tableProps.milestonePromotionTaskIds}
+          milestoneDetachPromotionTaskIds={tableProps.milestoneDetachPromotionTaskIds}
+          renderFullInspectorExtension={tableProps.renderFullInspectorExtension}
           onReorderChildTask={tableProps.onReorderChildTask}
           onFollowDetachedTask={tableProps.onFollowDetachedTask}
           onDismissDetachedTask={tableProps.onDismissDetachedTask}
@@ -616,6 +629,7 @@ export function TasksTableAdapter({
           runningTaskTimers={tableProps.runningTaskTimers}
           requestedOpenTaskId={tableProps.requestedOpenTaskId}
           requestedOpenTask={requestedOpenTaskRow}
+          requestedEditorFocus={tableProps.requestedEditorFocus}
           suppressDetachedNoticeTaskId={tableProps.suppressDetachedNoticeTaskId}
           secondaryBadgeLabel="Table view"
           selectedTaskIds={tableProps.selectedTaskIds}
@@ -626,6 +640,7 @@ export function TasksTableAdapter({
           visibleColumns={visibleColumns}
           activeTaskTimerIndex={tableProps.activeTaskTimerIndex}
           onRequestedOpenTaskHandled={tableProps.onRequestedOpenTaskHandled}
+          onRequestedEditorFocusHandled={tableProps.onRequestedEditorFocusHandled}
           onInspectorClose={tableProps.onRequestedOpenTaskOverlayClose}
           persistedLayoutPreferences={tableProps.taskTableLayoutPreferences}
           onPersistedLayoutPreferencesChange={tableProps.onTaskTableLayoutPreferencesChange}
@@ -2724,6 +2739,11 @@ function TasksSimpleList({
               onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
               onOpenTaskHistory={tableProps.onOpenTaskHistory}
               onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
+              onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
+              onDetachAndPromoteTaskToMilestone={tableProps.onDetachAndPromoteTaskToMilestone}
+              milestonePromotionTaskIds={tableProps.milestonePromotionTaskIds}
+              milestoneDetachPromotionTaskIds={tableProps.milestoneDetachPromotionTaskIds}
+              renderFullInspectorExtension={tableProps.renderFullInspectorExtension}
               onPauseTaskTimer={tableProps.onPauseTaskTimer}
               onPreviousTaskTimer={tableProps.onPreviousTaskTimer}
               onReorderChildTask={tableProps.onReorderChildTask}
@@ -2772,6 +2792,8 @@ function TasksSimpleList({
               overlayOnly
               requestedOpenTask={requestedOpenTaskRow}
               requestedOpenTaskId={tableProps.requestedOpenTaskId}
+              requestedEditorFocus={tableProps.requestedEditorFocus}
+              onRequestedEditorFocusHandled={tableProps.onRequestedEditorFocusHandled}
               rows={overlayRows}
               runningTaskTimers={tableProps.runningTaskTimers}
               selectedTaskIds={tableProps.selectedTaskIds}
@@ -2830,6 +2852,7 @@ function TasksSimpleList({
         const listMemberships = rowContext.listMembershipsByTaskId[task.id] ?? [];
         const isPinned = Boolean(task.pinned_at);
         const isRoutine = hasTaskManualListMembership(listMemberships, "routine");
+        const isMilestone = listMemberships.some((membership) => membership.id === "milestones");
         const stepPreviewGroup = tableProps.childTaskPreviewByParentTaskId?.[task.id];
         const effectiveStepPreviewGroup = stepPreviewGroup ?? (parentStepDraftTaskId === task.id
           ? {
@@ -2940,6 +2963,11 @@ function TasksSimpleList({
                   </div>
 
                   <div className="relative flex shrink-0 items-center gap-0.5" data-list-action-control="true">
+                    {isMilestone ? (
+                      <span aria-label="Milestone" className="inline-flex h-7 w-7 items-center justify-center text-[#6f57f6] dark:text-[#cabfff]" role="img" title="Milestone">
+                        <Trophy aria-hidden="true" className="h-3.5 w-3.5" />
+                      </span>
+                    ) : null}
                     {tableProps.onTogglePinned ? (
                       <AdhdIconButton
                         aria-label={isPinned ? `Unpin ${task.title}` : `Pin ${task.title}`}
@@ -3388,6 +3416,14 @@ function TasksSimpleList({
               }}
               onOpenTimeLog={tableProps.onOpenTaskActualTime ? () => {
                 tableProps.onOpenTaskActualTime?.(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
+              onPromoteToMilestone={tableProps.onPromoteTaskToMilestone && tableProps.milestonePromotionTaskIds?.has(rowContextMenuTask.id) ? () => {
+                tableProps.onPromoteTaskToMilestone?.(rowContextMenuTask.id);
+                setRowContextMenu(null);
+              } : undefined}
+              onDetachAndPromoteToMilestone={tableProps.onDetachAndPromoteTaskToMilestone && tableProps.milestoneDetachPromotionTaskIds?.has(rowContextMenuTask.id) ? () => {
+                tableProps.onDetachAndPromoteTaskToMilestone?.(rowContextMenuTask.id);
                 setRowContextMenu(null);
               } : undefined}
               onRestoreTask={tableProps.onRestoreTask ? () => {

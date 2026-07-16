@@ -8,6 +8,7 @@ import {
   isCurrentFocusCounterSnapshotRequest,
   reconcileFocusCounterHistorySnapshot,
   reconcileFocusCounterSnapshot,
+  shouldNotifyFocusCounterMigrationDivergence,
   type FocusCounterEventRow,
   type FocusCounterRow,
 } from "@/lib/focus-counter-sync";
@@ -122,4 +123,10 @@ test("legacy snapshot preserves values, negative values, history, and array orde
 test("divergent-device backups are versioned by user and migration batch", () => {
   assert.notEqual(getFocusCounterBackupStorageKey(userId, "batch-a"), getFocusCounterBackupStorageKey(userId, "batch-b"));
   assert.match(getFocusCounterBackupStorageKey(userId, "batch-a"), new RegExp(userId));
+});
+
+test("fresh divergent migrations notify once while replayed results hydrate silently", () => {
+  assert.equal(shouldNotifyFocusCounterMigrationDivergence({ local_differed: true, was_replayed: false }), true);
+  assert.equal(shouldNotifyFocusCounterMigrationDivergence({ local_differed: true, was_replayed: true }), false);
+  assert.equal(shouldNotifyFocusCounterMigrationDivergence({ local_differed: false, was_replayed: false }), false);
 });

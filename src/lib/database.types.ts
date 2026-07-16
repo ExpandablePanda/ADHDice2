@@ -402,6 +402,160 @@ export type TaskHistoryUpdate = Partial<
   Pick<TaskHistory, "status" | "event_type" | "counted_as_due_occurrence" | "was_completed" | "occurrence_key" | "occurrence_due_on">
 >;
 
+export type MilestoneStatus = "active" | "completed" | "abandoned";
+export type MilestoneTier = "bronze" | "silver" | "gold" | "platinum";
+export type MilestoneDeadlineKind = "none" | "preferred" | "firm";
+export type MilestoneCompletionTiming = "on_time" | "grace_period" | "late";
+export type MilestoneAuraKind = "none" | "standard" | "diamond";
+
+export type Milestone = {
+  id: string;
+  user_id: string;
+  task_id: string | null;
+  task_title_snapshot: string;
+  revision: number;
+  status: MilestoneStatus;
+  task_trashed_at: string | null;
+  last_restored_at: string | null;
+  rules_version: string;
+  questions_version: string;
+  answers_snapshot: Record<string, unknown>;
+  recommendation_snapshot: Record<string, unknown>;
+  recommended_tier: MilestoneTier;
+  recommended_target_date: string;
+  allowed_target_date_min: string;
+  allowed_target_date_max: string;
+  deadline_kind: MilestoneDeadlineKind;
+  external_deadline: string | null;
+  feasibility_warning: string | null;
+  rules_explanation: string;
+  initial_locked_tier: MilestoneTier;
+  initial_locked_target_date: string;
+  initial_aura_deadline: string;
+  current_tier: MilestoneTier;
+  current_target_date: string;
+  current_aura_deadline: string;
+  tier_raise_explanation: string | null;
+  setup_correction_used: boolean;
+  setup_corrected_at: string | null;
+  completion_timezone: string;
+  completion_timing: MilestoneCompletionTiming | null;
+  completion_date_key: string | null;
+  pre_completion_task_snapshot: Record<string, unknown> | null;
+  trophy_awarded_at: string | null;
+  trophy_revoked_at: string | null;
+  aura_kind: MilestoneAuraKind | null;
+  aura_awarded_at: string | null;
+  aura_revoked_at: string | null;
+  abandoned_at: string | null;
+  abandonment_reason: string | null;
+  promoted_at: string;
+  locked_at: string;
+  completed_at: string | null;
+  reversed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MilestoneInsert = Omit<
+  Milestone,
+  "id" | "revision" | "setup_correction_used" | "promoted_at" | "locked_at" | "created_at" | "updated_at"
+> & {
+  id?: string;
+  revision?: number;
+  setup_correction_used?: boolean;
+  promoted_at?: string;
+  locked_at?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type MilestoneUpdate = Partial<Omit<Milestone, "id" | "user_id" | "created_at">>;
+
+export type MilestoneTaskMutationResult = {
+  task_row: Task | null;
+  milestone_row: Milestone;
+  created_transition: boolean;
+};
+
+export type MilestoneOnlyMutationResult = {
+  milestone_row: Milestone;
+  created_transition: boolean;
+};
+
+export type MilestoneEventType =
+  | "promoted"
+  | "recommendation_generated"
+  | "locked"
+  | "corrected"
+  | "tier_raised"
+  | "completed_on_time"
+  | "completed_grace_period"
+  | "completed_late"
+  | "award_granted"
+  | "award_revoked"
+  | "completion_reversed"
+  | "abandoned"
+  | "task_trashed"
+  | "task_restored"
+  | "task_deleted_permanently";
+
+export type MilestoneEvent = {
+  id: string;
+  operation_id: string;
+  user_id: string;
+  milestone_id: string;
+  task_id: string | null;
+  event_type: MilestoneEventType;
+  previous_state: Record<string, unknown> | null;
+  next_state: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+  occurred_at: string;
+  created_at: string;
+};
+
+export type MilestoneEventInsert = Omit<MilestoneEvent, "id" | "metadata" | "occurred_at" | "created_at"> & {
+  id?: string;
+  metadata?: Record<string, unknown>;
+  occurred_at?: string;
+  created_at?: string;
+};
+
+export type MilestoneEventUpdate = Record<string, never>;
+
+export type MilestoneReminderKind = "seven_days" | "three_days" | "target_day" | "final_aura_day";
+export type MilestoneReminderStatus = "pending" | "delivered" | "dismissed" | "canceled" | "skipped";
+
+export type MilestoneReminder = {
+  id: string;
+  user_id: string;
+  milestone_id: string;
+  kind: MilestoneReminderKind;
+  schedule_version: number;
+  scheduled_date: string;
+  status: MilestoneReminderStatus;
+  delivered_at: string | null;
+  dismissed_at: string | null;
+  canceled_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MilestoneReminderInsert = Omit<
+  MilestoneReminder,
+  "id" | "schedule_version" | "status" | "created_at" | "updated_at"
+> & {
+  id?: string;
+  schedule_version?: number;
+  status?: MilestoneReminderStatus;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type MilestoneReminderUpdate = Partial<
+  Pick<MilestoneReminder, "status" | "delivered_at" | "dismissed_at" | "canceled_at">
+>;
+
 export type TaskActualTimeEntry = {
   id: string;
   task_id: string;
@@ -1469,6 +1623,24 @@ export type Database = {
         Update: TaskHistoryUpdate;
         Relationships: [];
       };
+      adhdice_milestones: {
+        Row: Milestone;
+        Insert: MilestoneInsert;
+        Update: MilestoneUpdate;
+        Relationships: [];
+      };
+      adhdice_milestone_events: {
+        Row: MilestoneEvent;
+        Insert: MilestoneEventInsert;
+        Update: MilestoneEventUpdate;
+        Relationships: [];
+      };
+      adhdice_milestone_reminders: {
+        Row: MilestoneReminder;
+        Insert: MilestoneReminderInsert;
+        Update: MilestoneReminderUpdate;
+        Relationships: [];
+      };
       adhdice_task_actual_time_entries: {
         Row: TaskActualTimeEntry;
         Insert: TaskActualTimeEntryInsert;
@@ -1742,6 +1914,65 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_lock_milestone: {
+        Args: {
+          p_task_id: string;
+          p_expected_task_revision: number;
+          p_operation_id: string;
+          p_questions_version: string;
+          p_rules_version: string;
+          p_answers_snapshot: Record<string, unknown>;
+          p_recommendation_snapshot: Record<string, unknown>;
+          p_recommended_tier: MilestoneTier;
+          p_recommended_target_date: string;
+          p_allowed_target_date_min: string;
+          p_allowed_target_date_max: string;
+          p_selected_tier: MilestoneTier;
+          p_selected_target_date: string;
+          p_deadline_kind: MilestoneDeadlineKind;
+          p_external_deadline: string | null;
+          p_feasibility_warning: string | null;
+          p_rules_explanation: string;
+          p_tier_raise_explanation: string | null;
+          p_completion_timezone: string;
+        };
+        Returns: Milestone;
+      };
+      adhdice_correct_milestone_setup: {
+        Args: {
+          p_milestone_id: string;
+          p_expected_revision: number;
+          p_operation_id: string;
+          p_corrected_tier: MilestoneTier;
+          p_corrected_target_date: string;
+          p_tier_raise_explanation: string | null;
+        };
+        Returns: Milestone;
+      };
+      adhdice_complete_milestone: {
+        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
+        Returns: MilestoneTaskMutationResult[];
+      };
+      adhdice_reverse_milestone_completion: {
+        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
+        Returns: MilestoneTaskMutationResult[];
+      };
+      adhdice_abandon_milestone: {
+        Args: { p_milestone_id: string; p_expected_milestone_revision: number; p_operation_id: string; p_reason?: string | null };
+        Returns: MilestoneOnlyMutationResult[];
+      };
+      adhdice_trash_milestone_task: {
+        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
+        Returns: MilestoneTaskMutationResult[];
+      };
+      adhdice_restore_milestone_task: {
+        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
+        Returns: MilestoneTaskMutationResult[];
+      };
+      adhdice_delete_milestone_task_permanently: {
+        Args: { p_task_id: string; p_milestone_id: string; p_expected_task_revision: number; p_expected_milestone_revision: number; p_operation_id: string };
+        Returns: MilestoneTaskMutationResult[];
+      };
       adhdice_mutate_focus_counter: {
         Args: {
           p_operation_id: string;
