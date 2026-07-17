@@ -5,3 +5,6 @@ export * from "@/lib/milestones/milestone-rules";
 export * from "@/lib/milestones/milestone-types";
 export * from "@/lib/milestones/milestone-ticket2";
 export * from "@/lib/milestones/milestone-lifecycle";
+export * from "@/lib/milestones/milestone-dashboard";
+export * from "@/lib/milestones/home-milestone-navigation";
+export * from "@/lib/milestones/milestone-report";

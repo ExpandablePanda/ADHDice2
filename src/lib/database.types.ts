@@ -1596,6 +1596,191 @@ export type AchievementUnlockInsert = {
 
 export type AchievementUnlockUpdate = Record<string, never>;
 
+export type AchievementProfile = {
+  user_id: string;
+  activation_operation_id: string;
+  activated_at: string;
+  catalog_version: string;
+  rules_version: string;
+  launch_mastery_version: string;
+  timezone: string;
+  logical_day_start: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AchievementProfileInsert = Omit<AchievementProfile, "created_at" | "updated_at"> & {
+  created_at?: string;
+  updated_at?: string;
+};
+export type AchievementProfileUpdate = Record<string, never>;
+
+export type AchievementOccurrence = {
+  id: string;
+  user_id: string;
+  source_kind: "task_history" | "focus_session" | "step_set";
+  source_id: string;
+  source_occurrence_key: string;
+  dedupe_key: string;
+  source_created_at: string | null;
+  first_qualified_at: string;
+  logical_date: string;
+  week_key: string;
+  week_start_date: string;
+  week_end_date: string;
+  month_key: string;
+  month_start_date: string;
+  month_end_date: string;
+  timezone: string;
+  logical_day_start: string;
+  entity_kind: "parent_task" | "step" | "focus_session" | "parent_step_set";
+  entity_id: string | null;
+  root_parent_id: string | null;
+  title_snapshot: string | null;
+  outcome_snapshot: "done" | "complete" | "did_my_best" | null;
+  active_duration_seconds: number | null;
+  is_currently_qualifying: boolean;
+  source_snapshot: Record<string, unknown>;
+  evaluator_version: string;
+  catalog_version: string;
+  created_at: string;
+};
+
+export type AchievementOccurrenceInsert = Omit<AchievementOccurrence, "created_at" | "id" | "is_currently_qualifying" | "source_created_at" | "source_snapshot"> & {
+  created_at?: string;
+  id?: string;
+  is_currently_qualifying?: boolean;
+  source_created_at?: string | null;
+  source_snapshot?: Record<string, unknown>;
+};
+export type AchievementOccurrenceUpdate = Record<string, never>;
+
+export type AchievementOccurrenceMatch = {
+  id: string;
+  user_id: string;
+  occurrence_id: string;
+  track_id: string;
+  catalog_version: string;
+  matched_at: string;
+};
+
+export type AchievementOccurrenceMatchInsert = Omit<AchievementOccurrenceMatch, "id" | "matched_at"> & {
+  id?: string;
+  matched_at?: string;
+};
+export type AchievementOccurrenceMatchUpdate = Record<string, never>;
+
+export type AchievementProgress = {
+  id: string;
+  user_id: string;
+  track_id: string;
+  current_value: number;
+  current_streak: number;
+  best_streak: number;
+  current_streak_start: string | null;
+  current_streak_end: string | null;
+  best_streak_start: string | null;
+  best_streak_end: string | null;
+  source_watermark: Record<string, unknown>;
+  recalculation_metadata: Record<string, unknown>;
+  evaluator_version: string;
+  catalog_version: string;
+  last_recalculated_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AchievementProgressInsert = Omit<AchievementProgress, "created_at" | "id" | "updated_at"> & {
+  created_at?: string;
+  id?: string;
+  updated_at?: string;
+};
+export type AchievementProgressUpdate = Partial<Omit<AchievementProgress, "id" | "user_id" | "track_id" | "created_at">>;
+
+export type AchievementEvaluationRun = {
+  id: string;
+  operation_id: string;
+  user_id: string;
+  mode: "immediate" | "recalculation";
+  status: "running" | "completed" | "failed";
+  catalog_version: string;
+  rules_version: string;
+  cursor_metadata: Record<string, unknown>;
+  window_metadata: Record<string, unknown>;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string;
+  completed_at: string | null;
+  created_at: string;
+};
+
+export type AchievementEvaluationRunInsert = Omit<AchievementEvaluationRun, "created_at" | "id" | "started_at"> & {
+  created_at?: string;
+  id?: string;
+  started_at?: string;
+};
+export type AchievementEvaluationRunUpdate = Partial<Pick<AchievementEvaluationRun, "completed_at" | "cursor_metadata" | "error_code" | "error_message" | "status" | "window_metadata">>;
+
+export type AchievementTierAward = {
+  id: string;
+  user_id: string;
+  track_id: string;
+  tier: "bronze" | "silver" | "gold" | "platinum";
+  award_key: string;
+  earned_at: string;
+  triggering_occurrence_id: string | null;
+  evaluation_run_id: string | null;
+  evaluator_version: string;
+  catalog_version: string;
+  created_at: string;
+};
+
+export type AchievementTierAwardInsert = Omit<AchievementTierAward, "created_at" | "id"> & {
+  created_at?: string;
+  id?: string;
+};
+export type AchievementTierAwardUpdate = Record<string, never>;
+
+export type AchievementCollectionAward = {
+  id: string;
+  user_id: string;
+  collection_id: string;
+  mastery_version: string;
+  catalog_version: string;
+  award_key: string;
+  required_track_ids_snapshot: string[];
+  required_tracks_fingerprint: string;
+  earned_at: string;
+  evaluation_run_id: string | null;
+  created_at: string;
+};
+
+export type AchievementCollectionAwardInsert = Omit<AchievementCollectionAward, "created_at" | "id"> & {
+  created_at?: string;
+  id?: string;
+};
+export type AchievementCollectionAwardUpdate = Record<string, never>;
+
+export type AchievementNotification = {
+  id: string;
+  user_id: string;
+  award_kind: "tier" | "collection";
+  tier_award_id: string | null;
+  collection_award_id: string | null;
+  dedupe_key: string;
+  status: "pending" | "delivered" | "seen";
+  created_at: string;
+  delivered_at: string | null;
+  seen_at: string | null;
+};
+
+export type AchievementNotificationInsert = Omit<AchievementNotification, "created_at" | "id" | "status"> & {
+  created_at?: string;
+  id?: string;
+  status?: AchievementNotification["status"];
+};
+export type AchievementNotificationUpdate = Partial<Pick<AchievementNotification, "delivered_at" | "seen_at" | "status">>;
+
 export type Database = {
   public: {
     Tables: {
@@ -1863,6 +2048,54 @@ export type Database = {
         Update: AchievementUnlockUpdate;
         Relationships: [];
       };
+      adhdice_achievement_profiles: {
+        Row: AchievementProfile;
+        Insert: AchievementProfileInsert;
+        Update: AchievementProfileUpdate;
+        Relationships: [];
+      };
+      adhdice_achievement_occurrences: {
+        Row: AchievementOccurrence;
+        Insert: AchievementOccurrenceInsert;
+        Update: AchievementOccurrenceUpdate;
+        Relationships: [];
+      };
+      adhdice_achievement_occurrence_matches: {
+        Row: AchievementOccurrenceMatch;
+        Insert: AchievementOccurrenceMatchInsert;
+        Update: AchievementOccurrenceMatchUpdate;
+        Relationships: [];
+      };
+      adhdice_achievement_progress: {
+        Row: AchievementProgress;
+        Insert: AchievementProgressInsert;
+        Update: AchievementProgressUpdate;
+        Relationships: [];
+      };
+      adhdice_achievement_evaluation_runs: {
+        Row: AchievementEvaluationRun;
+        Insert: AchievementEvaluationRunInsert;
+        Update: AchievementEvaluationRunUpdate;
+        Relationships: [];
+      };
+      adhdice_achievement_tier_awards: {
+        Row: AchievementTierAward;
+        Insert: AchievementTierAwardInsert;
+        Update: AchievementTierAwardUpdate;
+        Relationships: [];
+      };
+      adhdice_achievement_collection_awards: {
+        Row: AchievementCollectionAward;
+        Insert: AchievementCollectionAwardInsert;
+        Update: AchievementCollectionAwardUpdate;
+        Relationships: [];
+      };
+      adhdice_achievement_notifications: {
+        Row: AchievementNotification;
+        Insert: AchievementNotificationInsert;
+        Update: AchievementNotificationUpdate;
+        Relationships: [];
+      };
       adhdice_prize_board: {
         Row: PrizeCell;
         Insert: PrizeCellInsert;
@@ -1914,6 +2147,25 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_activate_achievement_profile: {
+        Args: {
+          p_operation_id: string;
+          p_catalog_version: string;
+          p_rules_version: string;
+          p_launch_mastery_version: string;
+          p_timezone: string;
+          p_logical_day_start?: string;
+        };
+        Returns: AchievementProfile;
+      };
+      adhdice_recalculate_achievements: {
+        Args: {
+          p_operation_id: string;
+          p_cursor?: Record<string, unknown>;
+          p_batch_size?: number;
+        };
+        Returns: Record<string, unknown>;
+      };
       adhdice_lock_milestone: {
         Args: {
           p_task_id: string;

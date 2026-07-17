@@ -138,6 +138,7 @@ import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportContro
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
+import { getHomeMilestoneNavigationState } from "@/lib/milestones";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import { clearMatchingOnTimeExecution, reconcileOnTimeManualDurationsFromTasks, type OnTimeLinkedItemOrigin } from "@/lib/on-time-plan-state";
 import { occurrenceIdentityMatches } from "@/lib/on-time-planner";
@@ -214,7 +215,7 @@ import {
   calcNextDueDateFromDate,
   shouldReconcileOverdueTaskMisses,
 } from "@/lib/task-repeat";
-import { computeTaskAppDerivedData, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
+import { buildCanonicalActiveStatusCounts, computeTaskAppDerivedData, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import {
   buildCompleteHistoryPayload,
   canTaskBeMarkedComplete,
@@ -507,7 +508,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.29.28";
+const APP_VERSION = "6.29.48";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2362,6 +2363,7 @@ export function TaskApp() {
     matchAny: taskUiState.matchAny,
     quickFilters: taskUiState.quickFilters,
     statusFilters: taskUiState.statusFilters,
+    view: taskUiState.view,
   }), [
     duplicateTitleModeActive,
     taskUiState.energyFilters,
@@ -2443,6 +2445,9 @@ export function TaskApp() {
     duplicateTitleGroups,
     focusPlannerTasks,
     filteredTasksSorted,
+    statusCountScopeTasksSorted,
+    statusCountScopeArchiveTasksSorted,
+    statusCountScopeTrashTasksSorted,
     archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     listColumnPickerColumns,
@@ -2454,6 +2459,8 @@ export function TaskApp() {
     overdueTasks,
     planningCandidates,
     searchMatchedStepParentTaskIds,
+    statusMatchedChildTaskIds,
+    statusMatchedStepParentTaskIds,
     selectedTaskForEditor,
     taskForActualTimeEntry,
     taskHierarchyDiagnostics,
@@ -2520,6 +2527,30 @@ export function TaskApp() {
 
     return nextTasks;
   }, [activePage, archiveFilteredTasksSorted, filteredTasksSorted, milestoneFilteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
+  const selectedTableStatusCountScopeTasks = useMemo(() => {
+    if (activePage !== "Tasks") return [];
+    if (taskUiState.selectedBucket === "all") return statusCountScopeTasksSorted;
+    if (taskUiState.selectedBucket === "pinned") return statusCountScopeTasksSorted.filter(isTaskPinned);
+    if (taskUiState.selectedBucket === "milestones") {
+      return statusCountScopeTasksSorted.filter((task) => (
+        milestoneData.milestoneTaskIds.has(task.id)
+      ));
+    }
+    if (taskUiState.selectedBucket === "archive") return statusCountScopeArchiveTasksSorted;
+    if (taskUiState.selectedBucket === "trash") return statusCountScopeTrashTasksSorted;
+    return statusCountScopeTasksSorted.filter((task) => (
+      (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === taskUiState.selectedBucket)
+    ));
+  }, [activePage, milestoneData.milestoneTaskIds, statusCountScopeArchiveTasksSorted, statusCountScopeTasksSorted, statusCountScopeTrashTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket]);
+  const tableStatusCounts = useMemo(
+    () => buildCanonicalActiveStatusCounts(
+      selectedTableStatusCountScopeTasks,
+      childTaskPreviewByParentTaskId,
+      taskHistoryByTaskId,
+      todayKey,
+    ),
+    [childTaskPreviewByParentTaskId, selectedTableStatusCountScopeTasks, taskHistoryByTaskId, todayKey],
+  );
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const visiblePinnedTaskCount = useMemo(
     () => filteredTasksSorted.filter(isTaskPinned).length,
@@ -4082,7 +4113,7 @@ export function TaskApp() {
             : [...prev.statusFilters, status],
         }))
       }
-      statusCounts={taskStatusCounts}
+      statusCounts={taskUiState.view === "table" ? tableStatusCounts : taskStatusCounts}
       selectedStatuses={taskUiState.statusFilters}
       selectedEnergies={taskUiState.energyFilters}
     />
@@ -5163,7 +5194,7 @@ export function TaskApp() {
               : [...prev.statusFilters, status],
           }))
         }
-        statusCounts={taskStatusCounts}
+        statusCounts={taskUiState.view === "table" ? tableStatusCounts : taskStatusCounts}
         selectedStatuses={taskUiState.statusFilters}
         selectedEnergies={taskUiState.energyFilters}
       />
@@ -5208,7 +5239,9 @@ export function TaskApp() {
     onOpenComposer: openInlineNewListTaskComposer,
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
-    onOpenCompletedMilestones: () => setTaskUiState((prev) => ({ ...prev, tasksSurface: "completed_milestones" })),
+    onOpenCompletedMilestones: () => {
+      setTaskUiState((prev) => ({ ...prev, tasksSurface: "completed_milestones" }));
+    },
     onReorderLists: (orderedListIds: string[]) => reorderTaskLists(orderedListIds as TaskListId[]),
     onSelectBucket: setSelectedBucket,
     onReorderListColumns: reorderListColumns,
@@ -5522,9 +5555,35 @@ export function TaskApp() {
             doneCount={doneTasks.length}
             lowEnergyTasks={lowEnergyTasks}
             momentumPercent={momentumPercent}
+            milestoneError={milestoneData.loadError}
+            milestoneLoading={milestoneData.isLoading}
+            milestones={milestoneData.milestones}
+            onOpenCompletedMilestones={() => {
+              setActivePage("Tasks");
+              handleTaskWorkspaceSurfaceChange("completed_milestones");
+              setTaskUiState((current) => getHomeMilestoneNavigationState("completed", current));
+            }}
+            onOpenMilestoneTask={(taskId) => {
+              setActivePage("Tasks");
+              handleTaskWorkspaceSurfaceChange("tasks");
+              setTaskUiState((current) => getHomeMilestoneNavigationState("active", current));
+              setRequestedListOverlayTaskId(taskId);
+            }}
+            onOpenMilestones={() => {
+              setActivePage("Tasks");
+              handleTaskWorkspaceSurfaceChange("tasks");
+              setTaskUiState((current) => getHomeMilestoneNavigationState("active", current));
+            }}
+            onOpenTrophyGallery={() => {
+              setActivePage("Tasks");
+              handleTaskWorkspaceSurfaceChange("completed_milestones");
+              setTaskUiState((current) => getHomeMilestoneNavigationState("completed", current));
+            }}
             overdueCount={overdueTasks.length}
             setActivePage={setActivePage}
+            tasks={tasks}
             todayCount={todayQueueTaskCount}
+            todayDateKey={todayKey}
             urgentTasks={urgentTasks}
           />
         ) : activePage === "Achievements" ? (
@@ -5646,9 +5705,11 @@ export function TaskApp() {
               <CompletedMilestonesWorkspace
                 error={milestoneData.loadError}
                 loading={milestoneData.isLoading}
+                lowStimulation={lowStim}
                 milestones={milestoneData.milestones}
                 onOpenTask={openTaskInSharedTasksEditorFromPaths}
                 tasks={tasks}
+                userId={session?.user?.id ?? null}
               />
             )}
             onCloseTab={closeTaskWorkspaceTab}
@@ -5703,6 +5764,7 @@ export function TaskApp() {
                 focusDailyGoalAdjustments={focusDailyGoalAdjustments}
                 focusHistory={focusHistory}
                 listMembershipsByTaskId={taskListMembershipsByTaskId}
+                milestones={milestoneData.milestones}
                 taskHistory={taskHistory}
                 tasks={tasks}
                 todayDateKey={todayKey}
@@ -5743,6 +5805,8 @@ export function TaskApp() {
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
                   onVisibleSearchMatchIdsChange: handleTableVisibleSearchMatchIdsChange,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
+                  statusMatchedChildTaskIds,
+                  statusMatchedStepParentTaskIds,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,

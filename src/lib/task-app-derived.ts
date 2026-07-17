@@ -27,7 +27,7 @@ import { isTaskInRecentTrash } from "@/lib/task-trash";
 import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
-type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "matchAny" | "quickFilters" | "statusFilters">;
+type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "matchAny" | "quickFilters" | "statusFilters" | "view">;
 
 type VisibleTaskBaseFacts = {
   isDoneTask: boolean;
@@ -128,6 +128,39 @@ export type TaskRailListOption = {
   isCustom: boolean;
   label: string;
 };
+
+function createEmptyTaskStatusCounts(): Record<TaskStatus, number> {
+  return {
+    pending: 0,
+    in_progress: 0,
+    delayed: 0,
+    done: 0,
+    missed: 0,
+    did_my_best: 0,
+    complete: 0,
+    upcoming: 0,
+    not_due: 0,
+    archived: 0,
+    trashed: 0,
+  };
+}
+
+/** Counts actual parent/Step/Substep rows; rendering-only ancestors are never inputs. */
+export function buildCanonicalActiveStatusCounts(
+  parentTasks: readonly Task[],
+  childTaskPreviewByParentTaskId: ChildTaskPreviewLookup,
+  taskHistoryByTaskId: Record<string, TaskHistory[]>,
+  todayDateKey: string,
+) {
+  const counts = createEmptyTaskStatusCounts();
+  for (const task of parentTasks) {
+    counts[getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey)] += 1;
+    for (const item of childTaskPreviewByParentTaskId[task.id]?.items ?? []) {
+      counts[item.status] += 1;
+    }
+  }
+  return counts;
+}
 
 function matchesNormalizedSearchValue(value: string | null | undefined, normalizedSearchQuery: string) {
   return typeof value === "string" && value.toLowerCase().includes(normalizedSearchQuery);
@@ -437,6 +470,8 @@ export function computeTaskAppDerivedData({
   const primaryHiddenChildTaskIds = new Set(taskPrimaryVisibility.primaryHiddenChildTaskIds);
   const normalizedSearchQuery = deferredSearchQuery.toLowerCase();
   const searchMatchedStepParentTaskIds = new Set<string>();
+  const statusMatchedStepParentTaskIds = new Set<string>();
+  const statusMatchedChildTaskIds = new Set<string>();
   logTaskDeriveStep("hierarchy diagnostics", hierarchyDiagnosticsStartedAt, {
     childTasks: taskHierarchyDiagnostics.childTaskIds.length,
     childTaskPreviewParents: Object.keys(childTaskPreviewByParentTaskId).length,
@@ -507,19 +542,7 @@ export function computeTaskAppDerivedData({
       doneTasks.push(task);
     }
     return accumulator;
-  }, {
-    pending: 0,
-    in_progress: 0,
-    delayed: 0,
-    done: 0,
-    missed: 0,
-    did_my_best: 0,
-    complete: 0,
-    upcoming: 0,
-    not_due: 0,
-    archived: 0,
-    trashed: 0,
-  });
+  }, createEmptyTaskStatusCounts());
   const allTaskTags = [...taskTagSet].sort();
   const urgentTasks = urgentFlaggedTasks.slice(0, 6);
   logTaskDeriveStep("base bucket and count aggregation", aggregateStartedAt, {
@@ -530,17 +553,31 @@ export function computeTaskAppDerivedData({
     tasks: primaryTasks.length,
   });
 
-  const matchesTaskFilters = (task: Task) => {
+  const matchesTaskFilters = (task: Task, options: { ignoreStatus?: boolean; trackMatches?: boolean } = {}) => {
+    const ignoreStatus = options.ignoreStatus ?? false;
+    const trackMatches = options.trackMatches ?? true;
     const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(task, filter, focusedTaskIds));
     const matchesQuickFilters = quickChecks.length === 0
       ? true
       : taskUiState.matchAny
         ? quickChecks.some(Boolean)
         : quickChecks.every(Boolean);
-    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(task.status);
     const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
-    if (!(matchesQuickFilters && matchesStatus && matchesEnergy)) {
+    if (!(matchesQuickFilters && matchesEnergy)) {
       return false;
+    }
+
+    const ownDisplayStatus = getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey);
+    const matchesOwnStatus = ignoreStatus || taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(ownDisplayStatus);
+    const matchingChildStatusItems = ignoreStatus || taskUiState.statusFilters.length === 0 || taskUiState.view !== "table"
+      ? []
+      : (childTaskPreviewByParentTaskId[task.id]?.items.filter((item) => taskUiState.statusFilters.includes(item.status)) ?? []);
+    if (!matchesOwnStatus && matchingChildStatusItems.length === 0) {
+      return false;
+    }
+    if (trackMatches && matchingChildStatusItems.length > 0) {
+      statusMatchedStepParentTaskIds.add(task.id);
+      for (const item of matchingChildStatusItems) statusMatchedChildTaskIds.add(item.id);
     }
 
     if (normalizedSearchQuery.length === 0) {
@@ -557,7 +594,7 @@ export function computeTaskAppDerivedData({
       matchesNormalizedSearchValue(subtask.title, normalizedSearchQuery)
     ));
     if (sourceSubtaskTitleMatch) {
-      searchMatchedStepParentTaskIds.add(task.id);
+      if (trackMatches) searchMatchedStepParentTaskIds.add(task.id);
       return true;
     }
 
@@ -566,7 +603,7 @@ export function computeTaskAppDerivedData({
       || matchesNormalizedSearchValues(item.tags, normalizedSearchQuery)
     )) ?? false;
     if (matchingChildSearch) {
-      searchMatchedStepParentTaskIds.add(task.id);
+      if (trackMatches) searchMatchedStepParentTaskIds.add(task.id);
       return true;
     }
 
@@ -580,7 +617,9 @@ export function computeTaskAppDerivedData({
       : taskUiState.matchAny
         ? quickChecks.some(Boolean)
         : quickChecks.every(Boolean);
-    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(task.status);
+    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(
+      getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey),
+    );
     const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
     return matchesQuickFilters && matchesStatus && matchesEnergy;
   };
@@ -588,6 +627,9 @@ export function computeTaskAppDerivedData({
   const visibleFilteringStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const filteredVisibleTasks = activePage === "Tasks"
     ? visibleTasks.filter(matchesTaskFilters)
+    : EMPTY_TASKS;
+  const statusCountScopeTasksSorted = activePage === "Tasks"
+    ? sortTasksForCockpit(visibleTasks.filter((task) => matchesTaskFilters(task, { ignoreStatus: true, trackMatches: false })), bucketContext)
     : EMPTY_TASKS;
   logTaskDeriveStep("visible task filtering", visibleFilteringStartedAt, {
     matchingTasks: filteredVisibleTasks.length,
@@ -616,6 +658,9 @@ export function computeTaskAppDerivedData({
   const filteredArchiveTasks = activePage === "Tasks"
     ? archiveTasks.filter(matchesTaskFilters)
     : EMPTY_TASKS;
+  const statusCountScopeArchiveTasksSorted = activePage === "Tasks"
+    ? sortTasksForCockpit(archiveTasks.filter((task) => matchesTaskFilters(task, { ignoreStatus: true, trackMatches: false })), bucketContext)
+    : EMPTY_TASKS;
   logTaskDeriveStep("archive task filtering", archiveFilteringStartedAt, {
     matchingTasks: filteredArchiveTasks.length,
     tasks: archiveTasks.length,
@@ -633,6 +678,9 @@ export function computeTaskAppDerivedData({
   const trashFilteringStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const filteredTrashTasks = activePage === "Tasks"
     ? recentlyDeletedTasks.filter(matchesTaskFilters)
+    : EMPTY_TASKS;
+  const statusCountScopeTrashTasksSorted = activePage === "Tasks"
+    ? sortTasksForCockpit(recentlyDeletedTasks.filter((task) => matchesTaskFilters(task, { ignoreStatus: true, trackMatches: false })), bucketContext)
     : EMPTY_TASKS;
   logTaskDeriveStep("trash task filtering", trashFilteringStartedAt, {
     matchingTasks: filteredTrashTasks.length,
@@ -677,7 +725,7 @@ export function computeTaskAppDerivedData({
   const membershipStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const membershipSourceTasks = taskUiState.duplicateTitleMode
     ? duplicateGroupTasks
-    : [...new Map([...filteredTasksSorted, ...milestoneFilteredTasksSorted].map((task) => [task.id, task])).values()];
+    : [...new Map([...filteredTasksSorted, ...milestoneFilteredTasksSorted, ...statusCountScopeTasksSorted].map((task) => [task.id, task])).values()];
   const taskListLookup = buildTaskListLookup(availableTaskLists);
   const taskDisplayStatusByTaskId = membershipSourceTasks.reduce<Record<string, TaskStatus>>((accumulator, task) => {
     accumulator[task.id] = getTaskDisplayStatusWithHistory(
@@ -977,7 +1025,12 @@ export function computeTaskAppDerivedData({
     overdueTasks,
     planningCandidates,
     filteredTasksSorted,
+    statusCountScopeTasksSorted,
+    statusCountScopeArchiveTasksSorted,
+    statusCountScopeTrashTasksSorted,
     searchMatchedStepParentTaskIds: Array.from(searchMatchedStepParentTaskIds),
+    statusMatchedChildTaskIds: Array.from(statusMatchedChildTaskIds),
+    statusMatchedStepParentTaskIds: Array.from(statusMatchedStepParentTaskIds),
     archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     selectedTaskForEditor,

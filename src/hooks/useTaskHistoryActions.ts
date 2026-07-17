@@ -133,12 +133,13 @@ export function useTaskHistoryActions({
         return false;
       }
 
-      const nextHistory: DbTaskHistory[] = [];
+      const nextHistory = taskHistory.filter((entry) =>
+        entry.task_id === taskId && entry.entry_date !== entryDate,
+      );
       setTaskHistory((current) => {
         const filtered = current.filter((entry) =>
           !(entry.task_id === taskId && entry.entry_date === entryDate),
         );
-        nextHistory.push(...filtered.filter((entry) => entry.task_id === taskId));
         return filtered;
       });
 
@@ -173,7 +174,12 @@ export function useTaskHistoryActions({
 
     if (data) {
       const mappedEntry = mapTaskHistoryRow(data);
-      const nextHistory: DbTaskHistory[] = [];
+      const nextHistory = [
+        mappedEntry,
+        ...taskHistory.filter((entry) =>
+          !(entry.task_id === mappedEntry.task_id && entry.entry_date === mappedEntry.entry_date),
+        ),
+      ].filter((entry) => entry.task_id === taskId);
       setTaskHistory((current) => {
         const merged = [
           mappedEntry,
@@ -181,7 +187,6 @@ export function useTaskHistoryActions({
             !(entry.task_id === mappedEntry.task_id && entry.entry_date === mappedEntry.entry_date),
           ),
         ];
-        nextHistory.push(...merged.filter((entry) => entry.task_id === taskId));
         return merged;
       });
 
@@ -218,13 +223,14 @@ export function useTaskHistoryActions({
         return false;
       }
 
-      let nextTaskHistory: DbTaskHistory[] = [];
       const selectedDateSet = new Set(uniqueEntryDates);
+      const nextTaskHistory = taskHistory.filter((entry) => (
+        entry.task_id === taskId && !selectedDateSet.has(entry.entry_date)
+      ));
       setTaskHistory((current) => {
         const filtered = current.filter((entry) => (
           entry.task_id !== taskId || !selectedDateSet.has(entry.entry_date)
         ));
-        nextTaskHistory = filtered.filter((entry) => entry.task_id === taskId);
         return filtered;
       });
 
@@ -263,7 +269,12 @@ export function useTaskHistoryActions({
 
     const mappedEntries = (data ?? []).map(mapTaskHistoryRow);
     const updatedDateSet = new Set(mappedEntries.map((entry) => entry.entry_date));
-    let nextTaskHistory: DbTaskHistory[] = [];
+    const nextTaskHistory = [
+      ...mappedEntries,
+      ...taskHistory.filter((entry) => (
+        entry.task_id !== taskId || !updatedDateSet.has(entry.entry_date)
+      )),
+    ].filter((entry) => entry.task_id === taskId);
     setTaskHistory((current) => {
       const merged = [
         ...mappedEntries,
@@ -271,7 +282,6 @@ export function useTaskHistoryActions({
           entry.task_id !== taskId || !updatedDateSet.has(entry.entry_date)
         )),
       ];
-      nextTaskHistory = merged.filter((entry) => entry.task_id === taskId);
       return merged;
     });
 

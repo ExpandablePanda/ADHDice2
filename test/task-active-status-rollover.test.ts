@@ -143,6 +143,16 @@ test("explicit successful handling still advances recurrence through finalizatio
   assert.equal(calcNextDueDateFromDate(task({ status: "did_my_best" }), "2026-07-12"), "2026-07-13");
 });
 
+test("history saves build the merged occurrence snapshot before syncing the live task", () => {
+  const source = readFileSync("src/hooks/useTaskHistoryActions.ts", "utf8");
+  const singleEntrySync = source.slice(source.indexOf("async function syncTaskHistoryEntry"), source.indexOf("async function syncTaskHistoryEntries"));
+  const multipleEntrySync = source.slice(source.indexOf("async function syncTaskHistoryEntries"), source.indexOf("return { syncTaskHistoryEntries"));
+  assert.match(singleEntrySync, /const nextHistory = \[\s*mappedEntry,[\s\S]*taskHistory\.filter/);
+  assert.match(singleEntrySync, /syncLiveTaskStatus\(taskId, nextHistory, \[entryDate\]\)/);
+  assert.match(multipleEntrySync, /const nextTaskHistory = \[\s*\.\.\.mappedEntries,[\s\S]*taskHistory\.filter/);
+  assert.match(multipleEntrySync, /syncLiveTaskStatus\(taskId, nextTaskHistory/);
+});
+
 test("repair excludes later resolutions and is idempotent after restoring the anchor", () => {
   const repairSql = readFileSync("supabase/repair_regular_recurring_missed_anchors.sql", "utf8");
   assert.ok(repairSql.indexOf("-- READ-ONLY PREVIEW") < repairSql.indexOf("-- MUTATING REPAIR"));

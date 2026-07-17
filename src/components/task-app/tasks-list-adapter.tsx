@@ -256,6 +256,8 @@ type TasksTableSourceProps = {
   highlightedTaskIds?: string[];
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
+  statusMatchedChildTaskIds?: string[];
+  statusMatchedStepParentTaskIds?: string[];
   currentListLabel?: string | null;
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
   overlayNode?: ReactNode;
@@ -550,6 +552,8 @@ export function TasksTableAdapter({
           highlightedTaskIds={tableProps.highlightedTaskIds}
           onVisibleSearchMatchIdsChange={tableProps.onVisibleSearchMatchIdsChange}
           searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
+          statusMatchedChildTaskIds={tableProps.statusMatchedChildTaskIds}
+          statusMatchedStepParentTaskIds={tableProps.statusMatchedStepParentTaskIds}
           className="max-w-none p-0"
           currentListLabel={tableProps.currentListLabel}
           enableInspector

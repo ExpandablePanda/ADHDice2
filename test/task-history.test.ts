@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { TaskHistory as DbTaskHistory } from "../src/lib/database.types.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
+import { getTaskDisplayStatusWithHistory } from "../src/lib/task-cockpit.ts";
 import {
   buildTaskHistoryFacts,
   buildTaskHistoryCalendarDueDateSet,
@@ -638,6 +639,55 @@ test("calendar rebases Did My Best from its edited completion date", () => {
   }, { editedHistoryDateKeys: ["2026-07-12"] });
 
   assert.deepEqual(result, { completedAt: null, dueOn: "2026-07-16", status: "upcoming" });
+});
+
+test("daily recurring outcomes stay historical while the new occurrence is Pending", () => {
+  const context = {
+    currentDayKey: "2026-07-17",
+    dayStartTime: "06:00",
+    now: new Date("2026-07-17T12:00:00.000Z"),
+    timezone: "America/New_York",
+  };
+  const julySixteenthBest = createHistoryEntry({
+    entryDate: "2026-07-16",
+    id: "july-sixteenth-best",
+    status: "did_my_best",
+    taskId: "daily-parent",
+    wasCompleted: true,
+  });
+  const completedParent = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-16",
+    id: "daily-parent",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "did_my_best",
+    title: "Daily parent",
+  });
+
+  const rolledForward = resolveLiveTaskStatusFromHistory(completedParent, [julySixteenthBest], context, {
+    editedHistoryDateKeys: ["2026-07-16"],
+  });
+  assert.deepEqual(rolledForward, { completedAt: null, dueOn: "2026-07-17", status: "pending" });
+  assert.equal(julySixteenthBest.status, "did_my_best");
+
+  const activeParent = { ...completedParent, due_on: rolledForward.dueOn ?? "2026-07-17", status: rolledForward.status };
+  assert.equal(getTaskDisplayStatusWithHistory(activeParent, [julySixteenthBest], context.currentDayKey), "pending");
+  assert.equal(getTaskDisplayStatusWithHistory(activeParent, [{ ...julySixteenthBest, id: "july-sixteenth-done", status: "done" }], context.currentDayKey), "pending");
+  assert.equal(getTaskDisplayStatusWithHistory({ ...activeParent, due_on: "2026-07-18", status: "upcoming" }, [julySixteenthBest], context.currentDayKey), "upcoming");
+  assert.equal(getTaskDisplayStatusWithHistory(activeParent, [
+    julySixteenthBest,
+    { ...julySixteenthBest, entry_date: "2026-07-17", id: "july-seventeenth-best" },
+  ], context.currentDayKey), "did_my_best");
+
+  const activeStep = { ...activeParent, id: "daily-step", parent_task_id: activeParent.id };
+  const stepHistory = [{ ...julySixteenthBest, id: "step-july-sixteenth-best", task_id: activeStep.id }];
+  assert.equal(getTaskDisplayStatusWithHistory(activeStep, stepHistory, context.currentDayKey), "pending");
+
+  const oneOff = createTask({ due_on: "2026-07-16", id: "one-off", repeat_frequency: "none", status: "done" });
+  assert.equal(getTaskDisplayStatusWithHistory(oneOff, [{ ...julySixteenthBest, id: "one-off-done", status: "done", task_id: oneOff.id }], context.currentDayKey), "done");
+  assert.equal(getTaskDisplayStatusWithHistory({ ...oneOff, status: "complete" }, [], context.currentDayKey), "complete");
 });
 
 test("calendar uses the latest resolving selected date once and ignores non-resolving edits", () => {

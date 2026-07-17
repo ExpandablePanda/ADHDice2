@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Copy } from "lucide-react";
-import type { Task, TaskHistory } from "@/lib/database.types";
+import type { Milestone, MilestoneEvent, Task, TaskHistory } from "@/lib/database.types";
 import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { mapTaskHistoryRow } from "@/lib/task-history";
@@ -17,6 +17,7 @@ import {
   type TaskReportDetailLevel,
   type TaskReportRangeId,
 } from "@/lib/task-report";
+import { buildMilestoneEventOccurredAtRange } from "@/lib/milestones";
 import { TASK_TABLE_BODY_VALUE_CLASS, TASK_TABLE_INPUT_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
 
 type TaskReportWorkspaceProps = {
@@ -26,6 +27,7 @@ type TaskReportWorkspaceProps = {
   focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
+  milestones: Milestone[];
   taskHistory: TaskHistory[];
   tasks: Task[];
   todayDateKey: string;
@@ -42,6 +44,9 @@ type ReportHistoryState = {
   focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
   history: TaskHistory[];
+  milestoneEvents: MilestoneEvent[];
+  milestones: Milestone[];
+  milestoneWarning: string | null;
   sourceLabel: string;
   warning: string | null;
 };
@@ -205,6 +210,48 @@ async function fetchFocusDailyGoalAdjustmentsForRange({
   return fullAdjustments;
 }
 
+async function fetchMilestoneReportDataForRange({
+  rangeId,
+  todayDateKey,
+  userId,
+  customRange,
+}: {
+  rangeId: TaskReportRangeId;
+  todayDateKey: string;
+  userId: string;
+  customRange?: TaskReportCustomRange | null;
+}) {
+  const client = createBrowserSupabaseClient();
+  if (!client) throw new Error("Supabase client is unavailable.");
+  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
+  const occurredAtRange = buildMilestoneEventOccurredAtRange(fetchRange);
+  const milestoneEvents: MilestoneEvent[] = [];
+  let offset = 0;
+  while (true) {
+    let query = client.from("adhdice_milestone_events").select("*").eq("user_id", userId)
+      .order("occurred_at", { ascending: false }).order("id", { ascending: false })
+      .range(offset, offset + REPORT_HISTORY_PAGE_SIZE - 1);
+    // Report dates are local calendar dates. Convert local midnight to UTC only
+    // for transport, with an exclusive next-day end boundary.
+    if (occurredAtRange.startInclusive) query = query.gte("occurred_at", occurredAtRange.startInclusive);
+    if (occurredAtRange.endExclusive) query = query.lt("occurred_at", occurredAtRange.endExclusive);
+    const { data, error } = await query;
+    if (error) throw error;
+    const batch = data ?? [];
+    milestoneEvents.push(...batch);
+    if (batch.length < REPORT_HISTORY_PAGE_SIZE) break;
+    offset += REPORT_HISTORY_PAGE_SIZE;
+  }
+
+  let milestonesQuery = client.from("adhdice_milestones").select("*").eq("user_id", userId).eq("status", "completed")
+    .not("completion_date_key", "is", null).order("completion_date_key", { ascending: false });
+  if (fetchRange.startDateKey) milestonesQuery = milestonesQuery.gte("completion_date_key", fetchRange.startDateKey);
+  if (fetchRange.endDateKey) milestonesQuery = milestonesQuery.lte("completion_date_key", fetchRange.endDateKey);
+  const { data: milestones, error: milestonesError } = await milestonesQuery;
+  if (milestonesError) throw milestonesError;
+  return { milestoneEvents, milestones: milestones ?? [] };
+}
+
 export function TaskReportWorkspace({
   appVersion,
   availableTaskLists,
@@ -212,6 +259,7 @@ export function TaskReportWorkspace({
   focusDailyGoalAdjustments,
   focusHistory,
   listMembershipsByTaskId,
+  milestones,
   taskHistory,
   tasks,
   todayDateKey,
@@ -229,6 +277,9 @@ export function TaskReportWorkspace({
     focusDailyGoalAdjustments,
     focusHistory,
     history: taskHistory,
+    milestoneEvents: [],
+    milestones,
+    milestoneWarning: null,
     sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
     warning: null,
   });
@@ -246,6 +297,9 @@ export function TaskReportWorkspace({
             focusDailyGoalAdjustments,
             focusHistory,
             history: taskHistory,
+            milestoneEvents: [],
+            milestones,
+            milestoneWarning: "Milestone lifecycle activity is unavailable without an active signed-in user. Earned trophy counts use currently loaded Milestones.",
             sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
             warning: "Full selected date range fetch is unavailable without an active signed-in user, so this report is using the loaded workspace task and focus history.",
           });
@@ -255,7 +309,7 @@ export function TaskReportWorkspace({
       }
 
       try {
-        const [fullHistory, fullFocusHistory, fullAdjustments] = await Promise.all([
+        const [fullHistory, fullFocusHistory, fullAdjustments, milestoneReportData] = await Promise.all([
           fetchTaskReportHistoryForRange({
             customRange,
             rangeId,
@@ -274,6 +328,16 @@ export function TaskReportWorkspace({
             todayDateKey,
             userId,
           }),
+          fetchMilestoneReportDataForRange({ customRange, rangeId, todayDateKey, userId })
+            .then((data) => ({ ...data, warning: null as string | null }))
+            .catch((error: unknown) => {
+              const message = error instanceof Error && error.message ? error.message : "Unknown fetch error.";
+              return {
+                milestoneEvents: [],
+                milestones,
+                warning: `Range-scoped Milestone data failed to load (${message}). Earned trophy counts use currently loaded Milestones; lifecycle activity is unavailable.`,
+              };
+            }),
         ]);
         if (cancelled) {
           return;
@@ -282,6 +346,9 @@ export function TaskReportWorkspace({
           focusDailyGoalAdjustments: fullAdjustments,
           focusHistory: fullFocusHistory,
           history: fullHistory,
+          milestoneEvents: milestoneReportData.milestoneEvents,
+          milestones: milestoneReportData.milestones,
+          milestoneWarning: milestoneReportData.warning,
           sourceLabel: REPORT_FULL_HISTORY_SOURCE_LABEL,
           warning: null,
         });
@@ -296,6 +363,9 @@ export function TaskReportWorkspace({
           focusDailyGoalAdjustments,
           focusHistory,
           history: taskHistory,
+          milestoneEvents: [],
+          milestones,
+          milestoneWarning: `Range-scoped Milestone data failed to load (${message}). Earned trophy counts use currently loaded Milestones; lifecycle activity is unavailable.`,
           sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
           warning: `Full selected date range fetch failed (${message}). Using the loaded workspace task and focus history instead, so this report may still be limited to the currently loaded records.`,
         });
@@ -311,7 +381,7 @@ export function TaskReportWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [customRange, focusDailyGoalAdjustments, focusHistory, rangeId, taskHistory, todayDateKey, userId]);
+  }, [customRange, focusDailyGoalAdjustments, focusHistory, milestones, rangeId, taskHistory, todayDateKey, userId]);
 
   const reportMarkdown = useMemo(
     () => generateTaskReport({
@@ -325,6 +395,9 @@ export function TaskReportWorkspace({
       historySourceLabel: reportHistoryState.sourceLabel,
       historyWarning: reportHistoryState.warning,
       listMembershipsByTaskId,
+      milestoneEvents: reportHistoryState.milestoneEvents,
+      milestones: reportHistoryState.milestones,
+      milestoneWarning: reportHistoryState.milestoneWarning,
       customRange: rangeId === "custom" ? customRange : null,
       rangeId,
       taskHistory: reportHistoryState.history,

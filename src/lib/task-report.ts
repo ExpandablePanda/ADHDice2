@@ -1,4 +1,4 @@
-import type { Task, TaskHistory, TaskStatus } from "@/lib/database.types";
+import type { Milestone, MilestoneEvent, Task, TaskHistory, TaskStatus } from "@/lib/database.types";
 import { buildFocusGoalPlan } from "@/lib/focus-goals";
 import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
@@ -7,6 +7,7 @@ import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { hasTaskListMembership, type TaskListDefinition, type TaskListMembership } from "@/lib/task-lists";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, inferLegacyTaskPriorityLevel, type TaskPriorityLevel } from "@/lib/task-priority";
 import { formatRepeatSummary } from "@/lib/task-repeat";
+import { buildMilestoneReportSummary, formatMilestoneReportSection } from "@/lib/milestones/milestone-report";
 
 export const TASK_REPORT_RANGE_OPTIONS = [
   { id: "today", label: "Today", days: 1 },
@@ -41,6 +42,9 @@ type GenerateTaskReportInput = {
   focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
+  milestoneEvents?: MilestoneEvent[];
+  milestones?: Milestone[];
+  milestoneWarning?: string | null;
   customRange?: TaskReportCustomRange | null;
   rangeId: TaskReportRangeId;
   taskHistory: TaskHistory[];
@@ -1034,6 +1038,9 @@ function generateTaskReport({
   historySourceLabel,
   historyWarning,
   listMembershipsByTaskId = {},
+  milestoneEvents = [],
+  milestones = [],
+  milestoneWarning = null,
   customRange,
   rangeId,
   taskHistory,
@@ -1045,6 +1052,12 @@ function generateTaskReport({
   const snapshot = buildTaskSnapshotSections(tasks, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);
   const history = buildHistorySections(tasks, taskHistory, range, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);
   const focusSection = buildFocusSection(range, focusCategories, focusHistory, focusDailyGoalAdjustments, todayDateKey);
+  const milestoneRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
+  const milestoneSection = formatMilestoneReportSection(
+    buildMilestoneReportSummary(milestoneEvents, milestones, milestoneRange),
+    detailLevel === "detailed",
+    milestoneWarning,
+  );
 
   const lines = [
     "# ADHDice Report",
@@ -1109,6 +1122,8 @@ function generateTaskReport({
   }
 
   lines.push(
+    "",
+    ...milestoneSection,
     "",
     ...focusSection,
     "",
