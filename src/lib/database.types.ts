@@ -2158,6 +2158,14 @@ export type Database = {
         };
         Returns: AchievementProfile;
       };
+      adhdice_claim_achievement_notifications: {
+        Args: { p_limit?: number };
+        Returns: AchievementNotification[];
+      };
+      adhdice_mark_achievement_notification_seen: {
+        Args: { p_notification_id: string };
+        Returns: Record<string, unknown>;
+      };
       adhdice_recalculate_achievements: {
         Args: {
           p_operation_id: string;
