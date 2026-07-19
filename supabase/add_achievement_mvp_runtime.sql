@@ -613,8 +613,12 @@ declare
   v_operation_id uuid;
   v_occurrence_id uuid;
   v_root_id uuid;
+  v_deferred_user_id text;
+  v_is_deferred boolean;
 begin
   v_user_id := new.user_id;
+  v_deferred_user_id := current_setting('adhdice.achievement_deferred_user_id', true);
+  v_is_deferred := coalesce(v_deferred_user_id = v_user_id::text, false);
   v_operation_id := md5(tg_table_name || ':' || new.id::text || ':' || to_jsonb(new)::text)::uuid;
   begin
     if tg_table_name='adhdice_task_history' then
@@ -626,8 +630,13 @@ begin
     else
       perform public.adhdice_capture_focus_achievement_occurrence(new.id);
     end if;
-    perform public.adhdice_evaluate_achievements(v_user_id,v_operation_id,'immediate');
+    if not v_is_deferred then
+      perform public.adhdice_evaluate_achievements(v_user_id,v_operation_id,'immediate');
+    end if;
   exception when others then
+    if v_is_deferred then
+      raise;
+    end if;
     -- Source history remains authoritative; a later resumable recalculation repairs capture.
     perform public.adhdice_record_achievement_evaluation_failure(v_user_id,v_operation_id,'immediate',sqlstate,sqlerrm);
   end;

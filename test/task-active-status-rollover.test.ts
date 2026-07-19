@@ -120,6 +120,9 @@ test("rollover SQL anchors unresolved regular recurrences and preserves In Progr
   const regularBranch = sql.slice(sql.lastIndexOf("if v_task.status not in ('pending'"), sql.lastIndexOf("get diagnostics v_row_count = row_count;"));
   const inProgressBranch = regularBranch.slice(regularBranch.indexOf("if v_task.status = 'in_progress' then"), regularBranch.indexOf("else", regularBranch.indexOf("if v_task.status = 'in_progress' then")));
   const missedBranch = regularBranch.slice(regularBranch.indexOf("else", regularBranch.indexOf("if v_task.status = 'in_progress' then")));
+  assert.match(regularBranch, /on conflict \(user_id, task_id, entry_date\) do nothing/);
+  assert.match(regularBranch, /get diagnostics v_row_count = row_count;\s+v_inserted_history_count := v_inserted_history_count \+ v_row_count/);
+  assert.doesNotMatch(regularBranch, /on conflict \(user_id, task_id, entry_date\) do update/);
   assert.match(inProgressBranch, /v_next_status := public\.adhdice_resolve_recurring_due_status/);
   assert.match(inProgressBranch, /due_on = v_due_on/);
   assert.match(missedBranch, /status = 'missed'/);
@@ -176,11 +179,24 @@ test("repair excludes later resolutions and is idempotent after restoring the an
   }), false);
 });
 
-test("client refreshes after success and does not complete rollover after RPC failure", () => {
+test("client rollover uses the shared coordinator and refreshes only after owned success", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
-  const errorIndex = source.indexOf("if (error)", source.indexOf('rpc("adhdice_reconcile_task_rollover"'));
-  const refreshIndex = source.indexOf("await softRefreshWorkspace();", errorIndex);
-  const completeIndex = source.indexOf("lastResetDateRef.current = todayKey;", refreshIndex);
-  assert.ok(errorIndex >= 0 && refreshIndex > errorIndex && completeIndex > refreshIndex);
-  assert.match(source.slice(errorIndex, refreshIndex), /if \(error\)[\s\S]*return;/);
+  const coordinatorIndex = source.indexOf("taskRolloverCoordinator.run");
+  const rpcIndex = source.indexOf('rpc("adhdice_reconcile_task_rollover"', coordinatorIndex);
+  const ownedSettlementIndex = source.indexOf("onOwnedSettled", rpcIndex);
+  const refreshIndex = source.indexOf("await softRefreshWorkspace();", ownedSettlementIndex);
+  assert.ok(coordinatorIndex >= 0 && rpcIndex > coordinatorIndex && ownedSettlementIndex > rpcIndex && refreshIndex > ownedSettlementIndex);
+  assert.match(source.slice(ownedSettlementIndex, refreshIndex), /if \(error\)[\s\S]*return;/);
+  assert.doesNotMatch(source, /lastResetDateRef/);
+});
+
+test("rollover retains startup, cadence, visibility, and persisted-page resume triggers", () => {
+  const source = readFileSync("src/components/task-app.tsx", "utf8");
+  const start = source.indexOf("async function runDayReset");
+  const end = source.indexOf("const visibleTaskSubtasks", start);
+  const lifecycle = source.slice(start, end);
+  assert.match(lifecycle, /void runDayReset\(\);/);
+  assert.match(lifecycle, /setInterval\(\(\) => \{ void runDayReset\(\); \}, 60_000\)/);
+  assert.match(lifecycle, /document\.visibilityState === "visible"[\s\S]*void runDayReset\(\)/);
+  assert.match(lifecycle, /event\.persisted[\s\S]*void runDayReset\(\)/);
 });

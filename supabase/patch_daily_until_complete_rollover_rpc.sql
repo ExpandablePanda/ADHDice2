@@ -110,6 +110,8 @@ declare
   v_resolution public.adhdice_clean_task_status;
   v_processed_any boolean;
   v_row_count integer;
+  v_achievement_evaluation jsonb;
+  v_achievement_operation_id uuid;
 begin
   if auth.uid() is null then
     raise exception 'Authentication required.';
@@ -119,6 +121,7 @@ begin
     raise exception 'Not authorized to reconcile another user''s task rollover.';
   end if;
 
+  perform set_config('adhdice.achievement_deferred_user_id', p_user_id::text, true);
   perform pg_advisory_xact_lock(hashtext(p_user_id::text));
 
   select *
@@ -421,13 +424,10 @@ begin
         v_resolution,
         (v_resolution in ('done', 'did_my_best'))
       )
-      on conflict (user_id, task_id, entry_date) do update
-        set
-          status = excluded.status,
-          was_completed = excluded.was_completed,
-          updated_at = now();
+      on conflict (user_id, task_id, entry_date) do nothing;
 
-      v_inserted_history_count := v_inserted_history_count + 1;
+      get diagnostics v_row_count = row_count;
+      v_inserted_history_count := v_inserted_history_count + v_row_count;
       v_processed_any := true;
       v_due_on := public.adhdice_task_next_due_date(
         v_task.repeat_frequency,
@@ -484,6 +484,19 @@ begin
     get diagnostics v_row_count = row_count;
     v_changed_task_count := v_changed_task_count + v_row_count;
   end loop;
+
+  perform set_config('adhdice.achievement_deferred_user_id', '', true);
+  v_achievement_operation_id := md5('task-rollover:' || p_user_id::text || ':' || v_effective_date::text)::uuid;
+  v_achievement_evaluation := public.adhdice_evaluate_achievements(
+    p_user_id,
+    v_achievement_operation_id,
+    'immediate'
+  );
+  if coalesce(v_achievement_evaluation->>'status', '') not in ('completed', 'inactive') then
+    raise exception 'Final Achievement evaluation failed with status % and code %.',
+      coalesce(v_achievement_evaluation->>'status', 'missing'),
+      coalesce(v_achievement_evaluation->>'error_code', 'unknown');
+  end if;
 
   insert into public.adhdice_task_rollover_ledger (user_id, logical_date)
   values (p_user_id, v_effective_date)

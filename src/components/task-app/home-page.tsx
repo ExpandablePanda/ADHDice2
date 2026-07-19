@@ -5,17 +5,13 @@ import { useMemo } from "react";
 import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import type { AppPage } from "@/lib/task-ui-state";
 import type { Milestone, Task } from "@/lib/database.types";
+import type { AchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { buildHomeMilestoneDashboard, formatMilestoneDisplayDate, getMilestoneCompletionPresentation } from "@/lib/milestones";
 import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
 
 type HomePageProps = {
   activeCount: number;
-  achievementSummary: {
-    chargedSetCount: number;
-    latestUnlockTitle: string | null;
-    nextSetLabel: string | null;
-    unlockedFaces: number;
-  };
+  achievementSummary: AchievementSummaryPresentation;
   doneCount: number;
   lowEnergyTasks: Task[];
   momentumPercent: number;
@@ -103,9 +99,11 @@ export function HomePage({
         />
         <DashboardJumpCard
           cta="Open Achievements"
-          description={achievementSummary.latestUnlockTitle
-            ? `Latest face: ${achievementSummary.latestUnlockTitle}. ${achievementSummary.chargedSetCount} charged dice so far.`
-            : "Your dice-face codex, charged sets, and the next face within reach."}
+          description={!achievementSummary.isReady
+            ? "Achievement progress is loading."
+            : achievementSummary.latestUnlockLabel === "No Achievement unlocks yet"
+              ? "See progress across the installed Achievement collections and tiers."
+              : `Latest unlock: ${achievementSummary.latestUnlockLabel}.`}
           onClick={() => setActivePage("Achievements")}
           title="Achievements"
         />
@@ -335,16 +333,16 @@ function HomeAchievementPreview({
   onClick: () => void;
 }) {
   return (
-    <section className="w-full rounded-[2rem] border border-[#dfe8ff] bg-[linear-gradient(135deg,#f8fbff_0%,#fdf7ff_55%,#fff8ef_100%)] p-4 shadow-[0_18px_50px_rgba(81,61,168,0.08)] transition hover:-translate-y-0.5 sm:w-fit sm:min-w-[440px] dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(22,28,47,0.98),rgba(31,20,41,0.96))]">
+    <section className="w-full rounded-lg border border-[#e8e2f2] bg-white p-4 shadow-[0_12px_30px_rgba(81,61,168,0.06)] transition hover:-translate-y-0.5 sm:w-fit sm:min-w-[440px] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-center justify-between gap-6">
         <div>
-          <h2 className="text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white">
-            Dice Codex
+          <h2 className="text-xl font-semibold text-[#28304a] dark:text-white">
+            Achievement Progress
           </h2>
           <p className="mt-2 max-w-[24rem] text-sm leading-6 text-[#6c7590] dark:text-white/55">
-            {achievementSummary.latestUnlockTitle
-              ? `Latest unlock: ${achievementSummary.latestUnlockTitle}.`
-              : "Start building your cabinet of momentum, focus, courage, recovery, follow-through, and care."}
+            {achievementSummary.isReady
+              ? achievementSummary.latestUnlockDetail
+              : "Loading your authenticated Achievement progress…"}
           </p>
         </div>
         <button
@@ -357,16 +355,16 @@ function HomeAchievementPreview({
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <div className="rounded-[1.2rem] bg-white/75 px-4 py-3 dark:bg-white/[0.05]">
-          <p className="text-lg font-black text-[#21304f] dark:text-white">{achievementSummary.unlockedFaces}</p>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8390ad] dark:text-white/40">Faces lit</p>
+          <p className="text-lg font-black text-[#21304f] dark:text-white">{achievementSummary.earnedTiersLabel}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8390ad] dark:text-white/40">Earned tiers</p>
         </div>
         <div className="rounded-[1.2rem] bg-white/75 px-4 py-3 dark:bg-white/[0.05]">
-          <p className="text-lg font-black text-[#21304f] dark:text-white">{achievementSummary.chargedSetCount}</p>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8390ad] dark:text-white/40">Charged dice</p>
+          <p className="text-lg font-black text-[#21304f] dark:text-white">{achievementSummary.completedCollectionsLabel}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8390ad] dark:text-white/40">Mastered collections</p>
         </div>
         <div className="rounded-[1.2rem] bg-white/75 px-4 py-3 dark:bg-white/[0.05]">
-          <p className="text-lg font-black text-[#21304f] dark:text-white">{achievementSummary.nextSetLabel ?? "All sets charged"}</p>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8390ad] dark:text-white/40">Closest set</p>
+          <p className="text-lg font-black text-[#21304f] dark:text-white">{achievementSummary.completionLabel}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8390ad] dark:text-white/40">Completion</p>
         </div>
       </div>
     </section>

@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 
 import type { EconomyState } from "@/hooks/useEconomy";
-import type { AchievementUnlockRecord } from "@/lib/achievements";
+import type { AchievementSummaryPresentation } from "@/lib/achievement-progress";
 import type { Task, TaskEnergy, TaskHistory as DbTaskHistory } from "@/lib/database.types";
 import { getLevelProgress } from "@/lib/economy-levels";
 import type { HistoricalFocusSession } from "@/lib/types";
@@ -18,13 +18,7 @@ type TaskHistoryStats = {
 };
 
 type StatsPageProps = {
-  achievementSummary: {
-    chargedSetCount: number;
-    completionPercent: number;
-    latestUnlock: AchievementUnlockRecord | null;
-    nextSetTitle: string | null;
-    unlockedFaceCount: number;
-  };
+  achievementSummary: AchievementSummaryPresentation;
   economy: EconomyState;
   focusHistory: HistoricalFocusSession[];
   taskHistory: DbTaskHistory[];
@@ -169,18 +163,16 @@ export function StatsPage({
               Achievements
             </p>
             <h3 className="mt-1 text-2xl font-black text-[#182544] dark:text-white">
-              {achievementSummary.latestUnlock ? achievementSummary.latestUnlock.title : "Dice cabinet charging"}
+              {achievementSummary.latestUnlockLabel}
             </h3>
             <p className="mt-1 text-sm text-[#68748f] dark:text-white/58">
-              {achievementSummary.latestUnlock
-                ? achievementSummary.latestUnlock.encouragement
-                : "Your next unlock will show up here once the first face lights up."}
+              {achievementSummary.latestUnlockDetail}
             </p>
           </div>
           <div className="grid grid-cols-3 gap-3">
-            {statCard("Faces", String(achievementSummary.unlockedFaceCount), "lit")}
-            {statCard("Charged", String(achievementSummary.chargedSetCount), "dice")}
-            {statCard("Completion", `${achievementSummary.completionPercent}%`, achievementSummary.nextSetTitle ?? "all charged")}
+            {statCard("Tiers", achievementSummary.earnedTiersLabel, achievementSummary.isReady ? "earned" : "loading")}
+            {statCard("Mastered", achievementSummary.completedCollectionsLabel, achievementSummary.isReady ? "collections" : "loading")}
+            {statCard("Completion", achievementSummary.completionLabel, achievementSummary.isReady ? "all tiers" : "loading")}
           </div>
         </div>
       </div>

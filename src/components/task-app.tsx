@@ -119,7 +119,7 @@ import {
 } from "@/components/ui/task-table-primitives";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import { useEconomy } from "@/hooks/useEconomy";
-import { useAchievements } from "@/hooks/useAchievements";
+import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
 import { useScratchNotes } from "@/hooks/useScratchNotes";
@@ -139,6 +139,7 @@ import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
+import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import { clearMatchingOnTimeExecution, reconcileOnTimeManualDurationsFromTasks, type OnTimeLinkedItemOrigin } from "@/lib/on-time-plan-state";
 import { occurrenceIdentityMatches } from "@/lib/on-time-planner";
@@ -152,6 +153,7 @@ import {
   sanitizeOptionalFocusLabel,
 } from "@/lib/focus-utils";
 import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
+import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
 import { buildHealthReminderTemplate, type HealthReminderTemplateKey } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
@@ -293,7 +295,7 @@ function PageLoadingFallback() {
 
 const TaskHomePage = dynamic(() => import("./task-app/home-page").then((module) => module.HomePage), { loading: PageLoadingFallback });
 const AchievementsPage = dynamic(() => import("./task-app/achievements-page").then((module) => module.AchievementsPage), { loading: PageLoadingFallback });
-const AchievementCelebrationOverlay = dynamic(() => import("./task-app/achievements-page").then((module) => module.AchievementCelebrationOverlay));
+const AchievementCelebrationModal = dynamic(() => import("./task-app/achievement-celebration-modal").then((module) => module.AchievementCelebrationModal));
 const TasksWorkspace = dynamic(() => import("./task-app/tasks-page-orchestrator").then((module) => module.TasksWorkspace), { loading: PageLoadingFallback });
 const FocusPage = dynamic(() => import("./focus-page").then((module) => module.FocusPage), { loading: PageLoadingFallback });
 const TaskHealthPage = dynamic(() => import("./task-app/health-page").then((module) => module.HealthPage), { loading: PageLoadingFallback });
@@ -508,7 +510,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "6.29.50";
+const APP_VERSION = "7.1.0";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1382,6 +1384,18 @@ export function TaskApp() {
     discardTaskTimer: persistDiscardedTaskTimer,
   } = useTaskTimers(supabase, session?.user?.id ?? null, setMessage);
   const milestoneData = useMilestoneData(supabase, session?.user?.id ?? null, setMessage);
+  const achievementProgress = useAchievementProgress(supabase, session?.user?.id ?? null);
+  const achievementNotifications = useAchievementNotifications({
+    client: supabase,
+    readiness: achievementProgress.readiness,
+    snapshot: achievementProgress.snapshot,
+    snapshotOwnerUserId: achievementProgress.snapshotOwnerUserId,
+    userId: session?.user?.id ?? null,
+  });
+  const achievementSummaryPresentation = buildAchievementSummaryPresentation(
+    achievementProgress.model.summary,
+    achievementProgress.isReadyForUser,
+  );
   const gridColumns = useResponsiveTaskGridColumns({
     maxColumns: TASK_GRID_MAX_COLUMNS,
     phoneColumns: TASK_GRID_PHONE_COLUMNS,
@@ -1402,7 +1416,6 @@ export function TaskApp() {
     activePage === "Tasks" && taskUiState.tasksSurface === "brainstorm",
   );
   const [focusAlarmAudioBlocked, setFocusAlarmAudioBlocked] = useState(false);
-  const lastResetDateRef = useRef<string>("");
   const focusAlarmAudioRef = useRef<HTMLAudioElement | null>(null);
   const focusAlarmHydratedUserIdRef = useRef<string | null>(null);
   const focusAlarmPreviousSettingsRef = useRef<{ enabled: boolean; intervalMinutes: number } | null>(null);
@@ -1917,9 +1930,6 @@ export function TaskApp() {
   }, [accentColor, dayStartTime, focusAlarmEnabled, focusAlarmIntervalMinutes, lowStim, session?.user?.id, supabase, theme, userTimeZone]);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      lastResetDateRef.current = "";
-    }
     saveLogicalDaySettings({ dayStartTime, timezone: userTimeZone });
   }, [dayStartTime, userTimeZone]);
 
@@ -2103,27 +2113,33 @@ export function TaskApp() {
   );
 
   useEffect(() => {
+    taskRolloverCoordinator.setOwner(supabase, session?.user?.id ?? null);
+  }, [session?.user?.id, supabase]);
+
+  useEffect(() => {
     const client = supabase;
     if (!client || !session?.user) return;
     const userId = session.user.id;
 
     async function runDayReset() {
-      if (lastResetDateRef.current === todayKey) return;
-
-      const { error } = await ((client as unknown) as {
-        rpc: (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
-      }).rpc("adhdice_reconcile_task_rollover", {
-        p_now: new Date().toISOString(),
-        p_user_id: userId,
+      await taskRolloverCoordinator.run({
+        client,
+        logicalDayKey: todayKey,
+        userId,
+        execute: () => ((client as unknown) as {
+          rpc: (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+        }).rpc("adhdice_reconcile_task_rollover", {
+          p_now: new Date().toISOString(),
+          p_user_id: userId,
+        }),
+        onOwnedSettled: async ({ error }) => {
+          if (error) {
+            setMessage((previous) => previous ?? { tone: "warn", text: error.message });
+            return;
+          }
+          await softRefreshWorkspace();
+        },
       });
-
-      if (error) {
-        setMessage((previous) => previous ?? { tone: "warn", text: error.message });
-        return;
-      }
-
-      await softRefreshWorkspace();
-      lastResetDateRef.current = todayKey;
     }
 
     void runDayReset();
@@ -2164,28 +2180,6 @@ export function TaskApp() {
     [taskSubtasksByTaskId, tasks],
   );
   const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory, todayKey), [taskHistory, todayKey]);
-  const {
-    activeCelebration: activeAchievementCelebration,
-    chargedSetCodes,
-    completionPercent: achievementCompletionPercent,
-    dismissCelebration: dismissAchievementCelebration,
-    latestUnlock: latestAchievementUnlock,
-    nextSet: nextAchievementSet,
-    setSummaries: achievementSetSummaries,
-    storageMode: achievementStorageMode,
-    totalFaces: totalAchievementFaces,
-    unlockedFaceCount: unlockedAchievementFaces,
-  } = useAchievements({
-    appendEconomyEvent,
-    client: supabase,
-    currentUserId,
-    focusHistory,
-    healthAwards,
-    setMessage,
-    taskHistory,
-    taskHistoryStats,
-    tasks,
-  });
   const { saveFocusSelection } = useFocusSelectionPersistence({
     currentUserId,
     defaultValidTaskIds: tasks,
@@ -5546,12 +5540,7 @@ export function TaskApp() {
         ) : activePage === "Home" ? (
           <TaskHomePage
             activeCount={activeTasks.length}
-            achievementSummary={{
-              chargedSetCount: chargedSetCodes.length,
-              latestUnlockTitle: latestAchievementUnlock?.title ?? null,
-              nextSetLabel: nextAchievementSet?.title ?? null,
-              unlockedFaces: unlockedAchievementFaces,
-            }}
+            achievementSummary={achievementSummaryPresentation}
             doneCount={doneTasks.length}
             lowEnergyTasks={lowEnergyTasks}
             momentumPercent={momentumPercent}
@@ -5588,16 +5577,26 @@ export function TaskApp() {
           />
         ) : activePage === "Achievements" ? (
           <AchievementsPage
-            chargedSetCount={chargedSetCodes.length}
-            completionPercent={achievementCompletionPercent}
-            currentStreak={taskHistoryStats.currentStreak}
-            economy={economy}
-            latestUnlock={latestAchievementUnlock}
-            nextSet={nextAchievementSet}
-            setSummaries={achievementSetSummaries}
-            storageMode={achievementStorageMode}
-            totalFaces={totalAchievementFaces}
-            unlockedFaceCount={unlockedAchievementFaces}
+            achievementError={achievementProgress.error}
+            achievementLoading={achievementProgress.isLoading}
+            hasActivatedProfile={Boolean(achievementProgress.snapshot.profile)}
+            lowStimulation={lowStim}
+            milestones={milestoneData.milestones}
+            milestoneError={milestoneData.loadError}
+            milestoneLoading={milestoneData.isLoading}
+            model={achievementProgress.model}
+            notificationError={achievementNotifications.claimError ?? achievementNotifications.seenError}
+            onOpenMilestones={() => {
+              setActivePage("Tasks");
+              handleTaskWorkspaceSurfaceChange("tasks");
+              setTaskUiState((current) => getHomeMilestoneNavigationState("active", current));
+            }}
+            onOpenMilestoneTask={(taskId) => {
+              setActivePage("Tasks");
+              openTaskInSharedTasksEditorFromPaths(taskId);
+            }}
+            tasks={tasks}
+            userId={session?.user?.id ?? null}
           />
         ) : activePage === "Tasks" ? (
           <TasksWorkspace
@@ -6203,13 +6202,7 @@ export function TaskApp() {
           />
         ) : activePage === "Stats" ? (
           <TaskStatsPage
-            achievementSummary={{
-              chargedSetCount: chargedSetCodes.length,
-              completionPercent: achievementCompletionPercent,
-              latestUnlock: latestAchievementUnlock,
-              nextSetTitle: nextAchievementSet?.title ?? null,
-              unlockedFaceCount: unlockedAchievementFaces,
-            }}
+            achievementSummary={achievementSummaryPresentation}
             economy={economy}
             focusHistory={focusHistory}
             taskHistory={taskHistory}
@@ -6295,7 +6288,7 @@ export function TaskApp() {
       {activeCountdownAlertSessionKey ? (
         <CountdownFinishedAlertOverlay onDismiss={dismissCountdownFinishedAlert} />
       ) : null}
-      <AchievementCelebrationOverlay onDismiss={dismissAchievementCelebration} unlock={activeAchievementCelebration} />
+      <AchievementCelebrationModal celebration={achievementNotifications.activeCelebration} onAcknowledge={() => { void achievementNotifications.acknowledgeCurrent(); }} />
     </main>
   );
 }

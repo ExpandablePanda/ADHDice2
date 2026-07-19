@@ -1,347 +1,263 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
-import { Sparkles, Star, Zap } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-
-import type { EconomyState } from "@/hooks/useEconomy";
+import { Award, Check, LockKeyhole, Trophy } from "lucide-react";
+import { useRef, useState, type KeyboardEvent } from "react";
+import { AdhdCard } from "@/components/ui-system/adhd-card";
+import { AdhdPanel } from "@/components/ui-system/adhd-panel";
+import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
+import type { Milestone, Task } from "@/lib/database.types";
 import {
-  ACHIEVEMENT_SET_META,
-  type AchievementFaceLevel,
-  type AchievementSetSummary,
-  type AchievementUnlockRecord,
-} from "@/lib/achievements";
-
-import { DieFaceTile } from "./achievement-dice-ui";
+  formatAchievementDate,
+  formatAchievementValue,
+  formatTierLabel,
+  getMilestonesTabState,
+  getNextProgressTab,
+  type AchievementCollectionView,
+  type AchievementProgressModel,
+  type AchievementTrackView,
+  type ProgressTab,
+} from "@/lib/achievement-progress";
+import { CompletedMilestonesWorkspace } from "./completed-milestones-workspace";
 import { PageShellHeader } from "./page-shell-header";
 
 type AchievementsPageProps = {
-  chargedSetCount: number;
-  completionPercent: number;
-  currentStreak: number;
-  economy: EconomyState;
-  latestUnlock: AchievementUnlockRecord | null;
-  nextSet: AchievementSetSummary | null;
-  setSummaries: AchievementSetSummary[];
-  storageMode: "local" | "remote";
-  totalFaces: number;
-  unlockedFaceCount: number;
+  achievementError: string | null;
+  achievementLoading: boolean;
+  hasActivatedProfile: boolean;
+  lowStimulation: boolean;
+  milestones: Milestone[];
+  milestoneError: string | null;
+  milestoneLoading: boolean;
+  model: AchievementProgressModel;
+  notificationError: string | null;
+  onOpenMilestoneTask: (taskId: string) => void;
+  onOpenMilestones: () => void;
+  tasks: Task[];
+  userId: string | null;
 };
 
-type AchievementCelebrationOverlayProps = {
-  onDismiss: () => void;
-  unlock: AchievementUnlockRecord | null;
-};
-
-const pageReveal = {
-  animate: { opacity: 1, y: 0 },
-  initial: { opacity: 0, y: 20 },
-  transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] as const },
-};
+const TAB_ORDER: ProgressTab[] = ["achievements", "milestones"];
 
 export function AchievementsPage({
-  chargedSetCount,
-  completionPercent,
-  currentStreak,
-  economy,
-  latestUnlock,
-  nextSet,
-  setSummaries,
-  storageMode,
-  totalFaces,
-  unlockedFaceCount,
+  achievementError,
+  achievementLoading,
+  hasActivatedProfile,
+  lowStimulation,
+  milestones,
+  milestoneError,
+  milestoneLoading,
+  model,
+  notificationError,
+  onOpenMilestoneTask,
+  onOpenMilestones,
+  tasks,
+  userId,
 }: AchievementsPageProps) {
-  const [activeSetId, setActiveSetId] = useState(setSummaries[0]?.id ?? "momentum");
-  const activeSet = useMemo(
-    () => setSummaries.find((setSummary) => setSummary.id === activeSetId) ?? setSummaries[0] ?? null,
-    [activeSetId, setSummaries],
-  );
+  const [activeTab, setActiveTab] = useState<ProgressTab>("achievements");
+  const tabRefs = useRef<Record<ProgressTab, HTMLButtonElement | null>>({ achievements: null, milestones: null });
+
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    const next = getNextProgressTab(activeTab, event.key);
+    if (next === activeTab) return;
+    event.preventDefault();
+    setActiveTab(next);
+    tabRefs.current[next]?.focus();
+  }
 
   return (
     <section className="px-4 pb-32">
-      <PageShellHeader subtitle="Dice Codex" title="Achievements" />
+      <PageShellHeader subtitle="Achievements and Milestones" title="Progress" />
+      <div aria-label="Progress sections" className="mb-5 flex border-b border-[#e4deef] dark:border-white/10" role="tablist">
+        {TAB_ORDER.map((tab) => {
+          const selected = activeTab === tab;
+          const label = tab === "achievements" ? "Achievements" : "Milestones";
+          return (
+            <button
+              aria-controls={`progress-panel-${tab}`}
+              aria-selected={selected}
+              className={`relative min-h-11 px-4 py-2 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8c79f6] focus-visible:ring-offset-2 dark:focus-visible:ring-offset-[#140f26] ${selected ? "text-[#5b43dc] dark:text-[#cabfff]" : "text-[#77708f] hover:text-[#4f4767] dark:text-white/55 dark:hover:text-white/80"}`}
+              id={`progress-tab-${tab}`}
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              onKeyDown={handleTabKeyDown}
+              ref={(node) => { tabRefs.current[tab] = node; }}
+              role="tab"
+              tabIndex={selected ? 0 : -1}
+              type="button"
+            >
+              {label}
+              <span aria-hidden="true" className={`absolute inset-x-2 -bottom-px h-0.5 rounded-full ${selected ? "bg-[#6f57f6]" : "bg-transparent"}`} />
+            </button>
+          );
+        })}
+      </div>
 
-      <motion.div
-        {...pageReveal}
-        className="relative overflow-hidden rounded-[2rem] border border-[#e4e9fb] bg-[radial-gradient(circle_at_top_left,rgba(120,155,255,0.24),transparent_38%),radial-gradient(circle_at_top_right,rgba(255,128,105,0.18),transparent_35%),linear-gradient(135deg,#f7fbff_0%,#fcfbff_48%,#fff4eb_100%)] p-5 shadow-[0_28px_80px_rgba(59,91,187,0.16)] dark:border-white/10 dark:bg-[radial-gradient(circle_at_top_left,rgba(91,141,239,0.28),transparent_42%),radial-gradient(circle_at_top_right,rgba(255,122,89,0.18),transparent_34%),linear-gradient(135deg,rgba(18,22,40,0.96)_0%,rgba(18,18,38,0.98)_44%,rgba(35,24,30,0.98)_100%)]"
-      >
-        <div className="absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(255,255,255,0.38),transparent)] dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.08),transparent)]" />
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4b5d8c] shadow-[0_8px_22px_rgba(69,88,156,0.1)] backdrop-blur dark:border-white/10 dark:bg-white/[0.06] dark:text-white/70">
-              <Sparkles className="h-3.5 w-3.5" />
-              Dice-face collection
-            </div>
-            <h2 className="mt-4 text-[clamp(2rem,4vw,3.8rem)] font-black leading-[0.94] tracking-[-0.04em] text-[#16233f] dark:text-white">
-              Build a cabinet of faces that feels like your momentum, not somebody else’s trophy shelf.
-            </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-[#5c6988] dark:text-white/65">
-              Every set tracks a different kind of strength: momentum, courage, follow-through, focus, recovery, and care.
-              Finish all six faces in a set to charge the whole die.
-            </p>
-
-            <div className="mt-5 flex flex-wrap gap-3">
-              <HeroChip label="Latest unlock" value={latestUnlock ? latestUnlock.title : "Still charging"} />
-              <HeroChip label="Current streak" value={`${currentStreak} day${currentStreak === 1 ? "" : "s"}`} />
-              <HeroChip label="Charged dice" value={`${chargedSetCount} / 6`} />
-              <HeroChip label="Sync mode" value={storageMode === "remote" ? "Cloud" : "Local"} />
-            </div>
-          </div>
-
-          <div className="w-full max-w-[24rem] rounded-[1.8rem] border border-white/70 bg-white/76 p-4 shadow-[0_18px_48px_rgba(61,88,168,0.16)] backdrop-blur dark:border-white/10 dark:bg-white/[0.06]">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#6b7393] dark:text-white/45">
-                  Collection
-                </p>
-                <p className="mt-1 text-4xl font-black text-[#16233f] dark:text-white">{completionPercent}%</p>
-                <p className="mt-1 text-sm text-[#69748f] dark:text-white/55">
-                  {unlockedFaceCount} of {totalFaces} faces lit
-                </p>
-              </div>
-              <DieFaceTile accent="#5b8def" face={Math.min(6, Math.max(1, chargedSetCount || 1)) as AchievementFaceLevel} glow size="md" />
-            </div>
-
-            <div className="mt-4 h-3 overflow-hidden rounded-full bg-[#dde7ff] dark:bg-white/10">
-              <div
-                className="h-full rounded-full bg-[linear-gradient(90deg,#5b8def_0%,#7c65f6_48%,#ff855f_100%)] transition-[width] duration-500"
-                style={{ width: `${completionPercent}%` }}
-              />
-            </div>
-
-            <div className="mt-4 grid grid-cols-3 gap-3">
-              <HeroStat detail="current level" value={`Lvl ${economy.level}`} />
-              <HeroStat detail="xp" value={`${economy.xp}`} />
-              <HeroStat detail="next charge" value={nextSet ? `${nextSet.unlockedCount}/6` : "6/6"} />
-            </div>
-          </div>
+      {activeTab === "achievements" ? (
+        <div aria-labelledby="progress-tab-achievements" id="progress-panel-achievements" role="tabpanel">
+          <AchievementsTab error={achievementError} hasActivatedProfile={hasActivatedProfile} loading={achievementLoading} model={model} notificationError={notificationError} />
         </div>
-      </motion.div>
+      ) : (
+        <div aria-labelledby="progress-tab-milestones" id="progress-panel-milestones" role="tabpanel">
+          <MilestonesTab
+            error={milestoneError}
+            loading={milestoneLoading}
+            lowStimulation={lowStimulation}
+            milestones={milestones}
+            onOpenMilestones={onOpenMilestones}
+            onOpenTask={onOpenMilestoneTask}
+            tasks={tasks}
+            userId={userId}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,0.95fr)_minmax(22rem,0.85fr)]">
-        <motion.div {...pageReveal} transition={{ ...pageReveal.transition, delay: 0.05 }} className="rounded-[2rem] border border-[#e7ebfb] bg-white/90 p-4 shadow-[0_18px_55px_rgba(70,83,134,0.08)] dark:border-white/10 dark:bg-white/[0.05]">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8890ab] dark:text-white/40">Sets</p>
-              <h3 className="mt-1 text-2xl font-black text-[#1c2744] dark:text-white">Choose a die to inspect</h3>
-            </div>
-            {nextSet ? (
-              <div className="rounded-full bg-[#f2f6ff] px-3 py-1 text-xs font-semibold text-[#5676b6] dark:bg-white/8 dark:text-white/65">
-                Closest to charged: {nextSet.title}
-              </div>
-            ) : null}
+function AchievementsTab({ error, hasActivatedProfile, loading, model, notificationError }: {
+  error: string | null;
+  hasActivatedProfile: boolean;
+  loading: boolean;
+  model: AchievementProgressModel;
+  notificationError: string | null;
+}) {
+  if (loading) return <WorkspaceState tone="neutral" title="Loading Achievement progress…" />;
+  if (error) return <WorkspaceState detail={error} tone="error" title="Achievement progress could not load" />;
+  if (!hasActivatedProfile) {
+    return <WorkspaceState detail="The Achievement runtime has not been activated for this account yet. Existing Tasks, Focus sessions, and awards have not been changed." tone="neutral" title="No activated Achievement profile" />;
+  }
+  return (
+    <div className="space-y-5">
+      {notificationError ? (
+        <p className="rounded-lg border border-[#efdfbd] bg-[#fffaf0] px-4 py-3 text-sm text-[#8a6628] dark:border-[#604a23] dark:bg-[#2a2417] dark:text-[#e5c77f]">
+          Achievement celebrations could not sync right now. Progress remains available and no awards were changed.
+        </p>
+      ) : null}
+      {model.summary.earnedTiers === 0 ? (
+        <p className="rounded-lg border border-[#e8e2f2] bg-[#fbfaff] px-4 py-3 text-sm text-[#716a86] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60">
+          Your Achievement profile is active. Progress will appear here as the installed runtime records qualifying activity.
+        </p>
+      ) : null}
+      <AchievementSummaryPanel model={model} />
+      {model.collections.map((collection) => <CollectionSection collection={collection} key={collection.id} />)}
+    </div>
+  );
+}
+
+function AchievementSummaryPanel({ model }: { model: AchievementProgressModel }) {
+  const { summary } = model;
+  const items = [
+    { label: "Earned tiers", value: `${summary.earnedTiers} / ${summary.totalTiers}` },
+    { label: "Completed collections", value: `${summary.completedCollections} / ${model.collections.length}` },
+    { label: "Overall completion", value: `${summary.overallCompletionPercent}%` },
+    { label: "Most recent unlock", value: summary.mostRecentUnlock?.label ?? "None yet", detail: summary.mostRecentUnlock ? formatAchievementDate(summary.mostRecentUnlock.earnedAt) : undefined },
+  ];
+  return (
+    <AdhdPanel className="!rounded-lg !shadow-none" padding="md" title="Achievement summary">
+      <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {items.map((item) => (
+          <div className="rounded-lg border border-[#eee9f7] bg-[#fbfaff] px-3 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.label}>
+            <dt className="text-xs font-medium text-[#8981a2] dark:text-white/45">{item.label}</dt>
+            <dd className="mt-1 text-base font-semibold text-[#30294d] dark:text-white">{item.value}</dd>
+            {item.detail ? <dd className="mt-0.5 text-xs text-[#8981a2] dark:text-white/45">{item.detail}</dd> : null}
           </div>
-          <div className="grid gap-3 lg:grid-cols-2">
-            {setSummaries.map((setSummary, index) => (
-              <button
-                className={`group relative overflow-hidden rounded-[1.6rem] border px-4 py-4 text-left transition hover:-translate-y-0.5 ${
-                  activeSet?.id === setSummary.id
-                    ? "border-transparent shadow-[0_22px_55px_rgba(75,102,191,0.18)]"
-                    : "border-[#e7ebfb] bg-[#fcfdff] hover:border-[#ccd8ff] dark:border-white/10 dark:bg-white/[0.03]"
-                }`}
-                key={setSummary.id}
-                onClick={() => setActiveSetId(setSummary.id)}
-                style={activeSet?.id === setSummary.id ? {
-                  backgroundImage: `linear-gradient(135deg,${setSummary.isCharged ? `${ACHIEVEMENT_SET_META[setSummary.id].accent}22` : "#fcfdff"} 0%,rgba(255,255,255,0.98) 72%)`,
-                } : undefined}
-                type="button"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8992a8] dark:text-white/40">
-                      Set {String(index + 1).padStart(2, "0")}
-                    </p>
-                    <h4 className="mt-1 text-xl font-black text-[#213050] dark:text-white">{setSummary.title}</h4>
-                    <p className="mt-2 text-sm leading-6 text-[#6f7993] dark:text-white/58">{setSummary.description}</p>
-                  </div>
-                  <DieFaceTile accent={ACHIEVEMENT_SET_META[setSummary.id].accent} face={Math.max(1, setSummary.unlockedCount || 1) as AchievementFaceLevel} glow={setSummary.isCharged} size="sm" />
-                </div>
-                <div className="mt-4 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-[#55678f] dark:text-white/55">
-                    <Star className="h-3.5 w-3.5" />
-                    {setSummary.unlockedCount} / 6 faces
-                  </div>
-                  <div className={`rounded-full px-3 py-1 text-xs font-semibold ${setSummary.isCharged ? "bg-[#10264b] text-white dark:bg-white dark:text-[#10264b]" : "bg-[#eef4ff] text-[#4d6daa] dark:bg-white/8 dark:text-white/65"}`}>
-                    {setSummary.isCharged ? "Charged" : setSummary.nextFace ? `Next: ${setSummary.nextFace.definition.title}` : "Complete"}
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </motion.div>
+        ))}
+      </dl>
+    </AdhdPanel>
+  );
+}
 
-        <motion.div {...pageReveal} transition={{ ...pageReveal.transition, delay: 0.1 }} className="rounded-[2rem] border border-[#e7ebfb] bg-white/90 p-4 shadow-[0_18px_55px_rgba(70,83,134,0.08)] dark:border-white/10 dark:bg-white/[0.05]">
-          {activeSet ? (
-            <>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8992a8] dark:text-white/40">
-                    {activeSet.isCharged ? "Charged set" : "Set detail"}
-                  </p>
-                  <h3 className="mt-1 text-2xl font-black text-[#213050] dark:text-white">{activeSet.title}</h3>
-                  <p className="mt-2 max-w-xl text-sm leading-6 text-[#6f7993] dark:text-white/58">{activeSet.description}</p>
-                </div>
-                <ChargedDieBadge accent={ACHIEVEMENT_SET_META[activeSet.id].accent} isCharged={activeSet.isCharged} />
-              </div>
-
-              <div className="mt-5 space-y-3">
-                {activeSet.faces.map((face) => (
-                  <div
-                    className={`rounded-[1.5rem] border px-4 py-4 transition ${
-                      face.isUnlocked
-                        ? "border-[#dce7ff] bg-[linear-gradient(135deg,#fdfefe_0%,#f5f9ff_100%)] dark:border-white/10 dark:bg-white/[0.05]"
-                        : "border-dashed border-[#d8dff5] bg-[#fbfcff] dark:border-white/10 dark:bg-white/[0.025]"
-                    }`}
-                    key={face.definition.id}
-                  >
-                    <div className="flex items-start gap-4">
-                      <DieFaceTile
-                        accent={ACHIEVEMENT_SET_META[activeSet.id].accent}
-                        face={face.definition.face}
-                        glow={face.isUnlocked}
-                        size="sm"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#9097ad] dark:text-white/40">
-                              Face {face.definition.face}
-                            </p>
-                            <h4 className="mt-1 text-lg font-black text-[#213050] dark:text-white">
-                              {face.isSecret && !face.isUnlocked ? "Secret Face" : face.definition.title}
-                            </h4>
-                          </div>
-                          <div className={`rounded-full px-3 py-1 text-xs font-semibold ${face.isUnlocked ? "bg-[#eef6f2] text-[#248465] dark:bg-[#173424] dark:text-[#99dfbb]" : "bg-[#eef3ff] text-[#627199] dark:bg-white/8 dark:text-white/55"}`}>
-                            {face.isUnlocked ? `${face.definition.rewardXp} XP${face.definition.rewardXp === 0 ? " display" : ""}` : face.detail}
-                          </div>
-                        </div>
-                        <p className="mt-2 text-sm leading-6 text-[#6f7993] dark:text-white/58">
-                          {face.isSecret && !face.isUnlocked ? "This one stays blurred until you surprise yourself with it." : face.definition.description}
-                        </p>
-                        <p className="mt-2 text-sm font-medium text-[#46608e] dark:text-[#d5dbff]">
-                          {face.isUnlocked ? face.definition.encouragement : face.detail}
-                        </p>
-                        {!face.isUnlocked ? (
-                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-[#e7eefc] dark:bg-white/10">
-                            <div
-                              className="h-full rounded-full bg-[linear-gradient(90deg,#5b8def_0%,#7c65f6_52%,#ff855f_100%)]"
-                              style={{ width: `${Math.min(100, Math.round((face.current / face.target) * 100))}%` }}
-                            />
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : null}
-        </motion.div>
+function CollectionSection({ collection }: { collection: AchievementCollectionView }) {
+  return (
+    <section aria-labelledby={`collection-${collection.id}`} className="rounded-lg border border-[#e9e3f4] bg-[#faf9fc] p-4 dark:border-white/10 dark:bg-white/[0.025]">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-[#30294d] dark:text-white" id={`collection-${collection.id}`}>{collection.title}</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-[#766f8b] dark:text-white/55">{collection.description}</p>
+        </div>
+        <div className="text-right text-sm text-[#766f8b] dark:text-white/55">
+          <p>{collection.earnedTiers} of {collection.totalTiers} tiers</p>
+          <p className={`mt-1 inline-flex items-center gap-1.5 font-medium ${collection.isMastered ? "text-[#28795e] dark:text-[#9ee0be]" : "text-[#8b849d] dark:text-white/45"}`}>
+            {collection.isMastered ? <Trophy aria-hidden="true" className="h-4 w-4" /> : <LockKeyhole aria-hidden="true" className="h-3.5 w-3.5" />}
+            {collection.isMastered ? `Mastered ${collection.masteredAt ? formatAchievementDate(collection.masteredAt) : ""}` : "Mastery locked"}
+          </p>
+        </div>
+      </header>
+      <div className="mt-4 grid gap-3 xl:grid-cols-2">
+        {collection.tracks.map((track) => <TrackCard key={track.id} track={track} />)}
       </div>
     </section>
   );
 }
 
-export function AchievementCelebrationOverlay({
-  onDismiss,
-  unlock,
-}: AchievementCelebrationOverlayProps) {
-  useEffect(() => {
-    if (!unlock) {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      onDismiss();
-    }, 4200);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [onDismiss, unlock]);
-
+function TrackCard({ track }: { track: AchievementTrackView }) {
   return (
-    <AnimatePresence>
-      {unlock ? (
-        <motion.div
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          className="pointer-events-none fixed inset-x-4 bottom-24 z-[160] flex justify-center sm:bottom-28"
-          exit={{ opacity: 0, y: 24, scale: 0.98 }}
-          initial={{ opacity: 0, y: 24, scale: 0.96 }}
-        >
-          <div className="pointer-events-auto w-full max-w-xl overflow-hidden rounded-[1.9rem] border border-[#dbe6ff] bg-[linear-gradient(135deg,rgba(247,250,255,0.98),rgba(255,245,238,0.98))] shadow-[0_28px_85px_rgba(62,82,143,0.28)] dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(18,25,45,0.98),rgba(36,25,33,0.98))]">
-            <div className="flex items-center gap-4 p-4">
-              <div className="relative">
-                <DieFaceTile
-                  accent={ACHIEVEMENT_SET_META[unlock.setCode].accent}
-                  face={(unlock.face ?? 6) as AchievementFaceLevel}
-                  glow
-                  size="md"
-                />
-                <motion.div
-                  animate={{ opacity: [0.35, 0.95, 0.35], rotate: [0, 16, 0] }}
-                  className="absolute -right-1 -top-1 rounded-full bg-white p-1 text-[#ff7a59] shadow-[0_8px_18px_rgba(255,122,89,0.25)]"
-                  transition={{ duration: 1.6, repeat: Number.POSITIVE_INFINITY }}
-                >
-                  {unlock.kind === "charged_die" ? <Zap className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
-                </motion.div>
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6d7594] dark:text-white/45">
-                  {unlock.kind === "charged_die" ? "Charged die unlocked" : "Face unlocked"}
-                </p>
-                <h3 className="mt-1 text-2xl font-black text-[#182544] dark:text-white">{unlock.title}</h3>
-                <p className="mt-1 text-sm leading-6 text-[#69748f] dark:text-white/62">{unlock.encouragement}</p>
-              </div>
-              <button
-                className="ui-pill-button-light"
-                onClick={onDismiss}
-                type="button"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </motion.div>
-      ) : null}
-    </AnimatePresence>
-  );
-}
-
-function HeroChip({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-full border border-white/60 bg-white/72 px-3 py-1.5 text-sm text-[#5f6c89] shadow-[0_8px_20px_rgba(59,91,187,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70">
-      <span className="font-semibold text-[#1b2747] dark:text-white">{value}</span>
-      <span className="ml-2 text-xs uppercase tracking-[0.18em] text-[#8390ad] dark:text-white/40">{label}</span>
-    </div>
-  );
-}
-
-function HeroStat({ detail, value }: { detail: string; value: string }) {
-  return (
-    <div className="rounded-[1.25rem] bg-[#f2f6ff] px-3 py-3 text-center dark:bg-white/[0.04]">
-      <p className="text-xl font-black text-[#182544] dark:text-white">{value}</p>
-      <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8390ad] dark:text-white/40">{detail}</p>
-    </div>
-  );
-}
-
-function ChargedDieBadge({
-  accent,
-  isCharged,
-}: {
-  accent: string;
-  isCharged: boolean;
-}) {
-  return (
-    <div
-      className={`relative flex h-20 w-20 items-center justify-center rounded-[1.8rem] border ${
-        isCharged ? "border-transparent shadow-[0_18px_40px_rgba(74,102,179,0.2)]" : "border-[#dbe3fb] bg-[#f9fbff] dark:border-white/10 dark:bg-white/[0.04]"
-      }`}
-      style={isCharged ? { background: `linear-gradient(135deg,${accent} 0%,#ffffff 110%)` } : undefined}
-    >
-      <div className={`absolute inset-2 rounded-[1.3rem] ${isCharged ? "bg-white/88" : "bg-white dark:bg-white/[0.03]"}`} />
-      <div className="relative">
-        <DieFaceTile accent={accent} face={6} glow={isCharged} size="sm" />
+    <AdhdCard className="!rounded-lg !shadow-none" padding="md">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-[#30294d] dark:text-white">{track.title}</h3>
+          <p className="mt-1 text-sm leading-5 text-[#7d7592] dark:text-white/52">{track.description}</p>
+        </div>
+        {track.isComplete ? <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[#28795e] dark:text-[#9ee0be]"><Award aria-hidden="true" className="h-4 w-4" />Complete</span> : null}
       </div>
-    </div>
+      <div className="mt-4 flex items-end justify-between gap-3 text-sm">
+        <div>
+          <p className="text-xs text-[#8b849d] dark:text-white/42">Current progress</p>
+          <p className="mt-0.5 font-semibold tabular-nums text-[#41395c] dark:text-white/85">{formatAchievementValue(track.currentValue, track.unit)}</p>
+        </div>
+        <p className="text-right text-xs text-[#77708f] dark:text-white/50">
+          {track.nextTier && track.nextThreshold !== null ? `Next: ${formatTierLabel(track.nextTier)} at ${formatAchievementValue(track.nextThreshold, track.unit)}` : "Platinum complete"}
+        </p>
+      </div>
+      <div aria-label={`${track.progressPercent}% toward ${track.nextTier ? formatTierLabel(track.nextTier) : "completion"}`} className="mt-2 h-2 overflow-hidden rounded-full bg-[#e8e3f1] dark:bg-white/10" role="progressbar" aria-valuemax={100} aria-valuemin={0} aria-valuenow={track.progressPercent}>
+        <div className="h-full rounded-full bg-[#6f57f6] transition-[width]" style={{ width: `${track.progressPercent}%` }} />
+      </div>
+      <div aria-label={`${track.title} tier states`} className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {track.tiers.map((tier) => (
+          <div className={`rounded-lg border px-2 py-2 ${tier.isEarned ? "border-[#cfc4fa] bg-[#f2eeff] text-[#5340ba] dark:border-[#5c4b99] dark:bg-[#2a2148] dark:text-[#d4ccff]" : "border-[#e8e3ef] bg-[#faf9fc] text-[#8a8399] dark:border-white/8 dark:bg-white/[0.025] dark:text-white/42"}`} key={tier.id}>
+            <p className="flex items-center gap-1 text-xs font-semibold">{tier.isEarned ? <Check aria-hidden="true" className="h-3.5 w-3.5" /> : <LockKeyhole aria-hidden="true" className="h-3 w-3" />}{formatTierLabel(tier.id)}</p>
+            <p className="mt-1 text-[11px] tabular-nums">{formatAchievementValue(tier.threshold, track.unit)}</p>
+            <p className="mt-1 min-h-4 text-[10px]">{tier.earnedAt ? formatAchievementDate(tier.earnedAt) : "Locked"}</p>
+          </div>
+        ))}
+      </div>
+    </AdhdCard>
+  );
+}
+
+function MilestonesTab({ error, loading, lowStimulation, milestones, onOpenMilestones, onOpenTask, tasks, userId }: {
+  error: string | null;
+  loading: boolean;
+  lowStimulation: boolean;
+  milestones: Milestone[];
+  onOpenMilestones: () => void;
+  onOpenTask: (taskId: string) => void;
+  tasks: Task[];
+  userId: string | null;
+}) {
+  const state = getMilestonesTabState(milestones, loading, error);
+  if (state === "empty") {
+    return (
+      <AdhdPanel className="!rounded-lg !shadow-none" padding="lg" title="Milestones">
+        <div className="flex items-start gap-3">
+          <Trophy aria-hidden="true" className="mt-0.5 h-5 w-5 text-[#6f57f6]" />
+          <div>
+            <h2 className="font-semibold text-[#30294d] dark:text-white">Track larger goals over time</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-[#766f8b] dark:text-white/55">Create and manage Milestones from Tasks. Completed Milestone trophies will appear here without changing their existing records or lifecycle.</p>
+            <TaskTableChipButton className="mt-3" onClick={onOpenMilestones}>Open Milestones in Tasks</TaskTableChipButton>
+          </div>
+        </div>
+      </AdhdPanel>
+    );
+  }
+  return <CompletedMilestonesWorkspace error={error} loading={loading} lowStimulation={lowStimulation} milestones={milestones} onOpenTask={onOpenTask} tasks={tasks} userId={userId} />;
+}
+
+function WorkspaceState({ detail, title, tone }: { detail?: string; title: string; tone: "error" | "neutral" }) {
+  return (
+    <section className={`rounded-lg border p-5 text-sm ${tone === "error" ? "border-[#efccd5] bg-[#fff7f8] text-[#9e3d52] dark:border-[#5d2b39] dark:bg-[#2a1720]" : "border-[#e8e2f2] bg-[#fbfaff] text-[#716a86] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/60"}`}>
+      <h2 className="font-semibold">{title}</h2>
+      {detail ? <p className="mt-1 leading-6">{detail}</p> : null}
+    </section>
   );
 }
