@@ -4,7 +4,7 @@ import test from "node:test";
 
 const source = (path: string) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("shared task editor validates targets without changing the active Tasks surface or view", async () => {
+test("shared task editor validates targets and preserves default page navigation", async () => {
   const app = await source("../src/components/task-app.tsx");
   assert.match(app, /import \{ buildTaskOccurrenceIdentity \} from "@\/lib\/task-duration-evidence"/);
   assert.doesNotMatch(app, /import \{ buildTaskOccurrenceIdentity[^\n]*from "@\/lib\/on-time-planner"/);
@@ -13,7 +13,7 @@ test("shared task editor validates targets without changing the active Tasks sur
   assert.match(opener, /task\.status === "trashed" \|\| task\.status === "archived"/);
   assert.match(opener, /occurrenceIsClearlyStale/);
   assert.match(opener, /setSharedTaskEditorOverlayTaskId\(taskId\)/);
-  assert.match(opener, /setActivePage\("Tasks"\)/);
+  assert.match(opener, /if \(!options\?\.preserveActivePage\) \{\s*setActivePage\("Tasks"\);\s*\}/);
   assert.doesNotMatch(opener, /setTaskUiState|setActiveTaskWorkspaceTab|setRequestedListOverlayTaskId|tasksSurface|view:|highlight|scroll/);
   assert.doesNotMatch(opener, /updateTask|persist|pause|resume|stop|discard|evidence/i);
 });
@@ -25,7 +25,7 @@ test("normal and explicit field opens keep task identity separate from monotonic
   assert.match(app, /const taskEditorFocusTokenRef = useRef\(0\)/);
   assert.match(opener, /options\?\.initialField\s*\? \{ field: options\.initialField, taskId, token: \+\+taskEditorFocusTokenRef\.current \}\s*: null/);
   assert.match(app, /openSharedTaskEditor\(taskId, \{ initialField: "estimated_time" \}\)/);
-  assert.match(app, /openSharedTaskEditor\(taskId, \{ timer \}\)/);
+  assert.match(app, /openSharedTaskEditor\(taskId, \{ preserveActivePage: true, timer \}\)/);
 });
 
 test("full inspector routes parent, Step, and Substep metadata before one-time Estimated Time focus", async () => {

@@ -17,6 +17,11 @@ import {
   type AchievementSnapshotReadiness,
 } from "@/lib/achievement-progress";
 import {
+  buildDevelopmentAchievementTestCelebrations,
+  createDevelopmentAchievementTestFixtures,
+  type DevelopmentAchievementTestFixtureKind,
+} from "@/lib/achievement-test-fixtures";
+import {
   claimAchievementNotifications,
   loadAchievementRuntime,
   markAchievementNotificationSeen,
@@ -155,12 +160,14 @@ export function useAchievementNotifications({
   snapshotOwnerUserId: string | null;
   userId: string | null;
 }) {
+  const isDevelopment = process.env.NODE_ENV !== "production";
   const [claimController] = useState(() => new AchievementNotificationClaimController());
   const owner = useMemo(() => ({ client, userId }), [client, userId]);
   const [queueState, setQueueState] = useState<{ items: AchievementCelebration[]; owner: typeof owner | null }>({ items: [], owner: null });
   const [claimErrorState, setClaimErrorState] = useState<{ error: string | null; owner: typeof owner | null }>({ error: null, owner: null });
   const [seenErrorState, setSeenErrorState] = useState<{ error: string | null; owner: typeof owner | null }>({ error: null, owner: null });
   const acknowledgedIdsRef = useRef<{ ids: Set<string>; owner: typeof owner | null }>({ ids: new Set(), owner: null });
+  const developmentRunIdRef = useRef(0);
 
   useEffect(() => {
     const leaseId = claimController.acquireOwner(client, userId);
@@ -211,15 +218,29 @@ export function useAchievementNotifications({
       ...state,
       items: state.items.filter((item) => item.id !== current.id),
     }));
+    if (current.isDevelopmentTest) return;
     if (!client) return;
     const result = await markAchievementNotificationSeen(client, current.id);
     setSeenErrorState({ error: result.error, owner });
   }, [client, ownedQueue, owner]);
 
+  const enqueueDevelopmentTestAchievements = useCallback((kind?: DevelopmentAchievementTestFixtureKind) => {
+    if (process.env.NODE_ENV === "production") return;
+    const runId = `run-${++developmentRunIdRef.current}`;
+    const fixtures = createDevelopmentAchievementTestFixtures(runId);
+    const selected = kind ? fixtures.filter((fixture) => fixture.kind === kind) : fixtures;
+    const incoming = buildDevelopmentAchievementTestCelebrations(selected);
+    setQueueState((current) => ({
+      items: mergeCelebrationQueue(current.owner === owner ? current.items : [], incoming, new Set()),
+      owner,
+    }));
+  }, [owner]);
+
   return {
     acknowledgeCurrent,
     activeCelebration: ownedQueue[0] ?? null,
     claimError: claimErrorState.owner === owner ? claimErrorState.error : null,
+    enqueueDevelopmentTestAchievements: isDevelopment ? enqueueDevelopmentTestAchievements : undefined,
     queueLength: ownedQueue.length,
     seenError: seenErrorState.owner === owner ? seenErrorState.error : null,
   };

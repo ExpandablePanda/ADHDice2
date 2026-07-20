@@ -18,6 +18,7 @@ export function AchievementCelebrationModal({ celebration, onAcknowledge }: {
           <p className="text-xs font-semibold text-[#81799a] dark:text-white/45">Achievement unlocked</p>
           <h2 className="mt-1 text-lg font-semibold text-[#30294d] dark:text-white">{celebration.title}</h2>
           <p className="mt-1 text-sm text-[#716a86] dark:text-white/60">{celebration.detail}</p>
+          <p className="mt-1 text-sm leading-6 text-[#514a6c] dark:text-white/75">{celebration.description}</p>
         </div>
       </div>
       <div className="mt-5 flex justify-end"><TaskTableChipButton onClick={onAcknowledge}>Got it</TaskTableChipButton></div>

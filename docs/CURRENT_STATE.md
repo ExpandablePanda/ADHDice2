@@ -5,13 +5,43 @@ Last reviewed: 2026-07-19
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.1.0`.
-- Current release group: `7.1.x` shared Progress workspace.
+- Current working app version: `7.2.9`.
+- Current release group: `7.2.x` Active Timer shared-editor behavior.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.2.9 Development Achievement Celebration Harness Checkpoint
+- `7.2.9` adds development-only, client-memory controls in Progress for representative parent Task, Step, Focus, consecutive logical-day streak, Collection mastery, and legacy fallback Achievement celebrations. Synthetic claimed-notification fixtures pass through the existing description builder and sequential queue, but never claim, see, create, award, progress, activate, or write any Achievement data. The controls and trigger API are unavailable in production; dismissal skips the seen RPC only for synthetic fixtures.
+
+## 7.2.8 Achievement Notification Descriptions Checkpoint
+- `7.2.8` derives deterministic, award-threshold-specific accomplishment descriptions from the canonical Achievement catalog for the existing notification queue and celebration modal. Tier and Collection titles remain intact; runtime qualification, thresholds, activation, queue, seen state, replay, and Supabase contracts are unchanged.
+
+## 7.2.7 Brainstorm QA Session Controls Checkpoint
+- `7.2.7` aligns New Session icon-and-label chips with the shared gap treatment and adds a confirmed, QA-only session deletion action. Deleting a session selects the next saved session or leaves an empty QA workspace; Questionnaire state remains untouched.
+
+## 7.2.6 Brainstorm QA Chip Alignment Checkpoint
+- `7.2.6` aligns QA status radio labels and version metadata with the exact shared task-table chip geometry and quiet baseline. Native radio semantics, QA data, and existing behavior remain unchanged.
+
+## 7.2.5 Brainstorm Navigation and Clear Checkpoint
+- `7.2.5` restores the explicit Questionnaire / QA Checklist tab-panel contract and reconnects BrainstormWorkspace to the existing scoped reset hook. Clear Brainstorm now clears only Questionnaire source and answers while preserving saved QA sessions and their sync state; QA behavior and schema remain unchanged.
+
+## 7.2.4 Brainstorm QA Mixed-version Checkpoint
+- `7.2.4` normalizes Brainstorm QA state to V2 with item-level versions that inherit V1 session defaults, supports import-specific and manual item versions, displays shared version/status chips, and includes item versions in reports. No SQL or sync architecture change is required; passed-item collapse and Questionnaire behavior are unchanged.
+
+## 7.2.3 Brainstorm QA Inline Status Checkpoint
+- `7.2.3` replaces item Status selects and duplicate status chips with compact native inline radio controls for Not Tested, Pass, Fail, and Blocked. The existing Pass collapse and non-Pass expansion behavior remains intact, including on collapsed rows; persistence, sync, reports, and Questionnaire behavior are unchanged.
+
+## 7.2.2 Brainstorm QA Passed-item Checkpoint
+- `7.2.2` collapses Pass QA items by default with local-only manual expansion overrides, compact accessible status/reorder/delete controls, notes indicators, and session-local Collapse passed / Expand all actions. QA persistence, sync, parsing, reports, and Questionnaire behavior are unchanged.
+
+## 7.2.1 Brainstorm QA Checklist Checkpoint
+- `7.2.1` adds saved manual-QA sessions inside Brainstorm with defensive V1 JSON normalization, narrow sibling-safe Questionnaire/QA writes, checklist import and item management, retest/duplicate workflows, status progress, accessible pointer and keyboard reordering, observations, and clipboard-ready full or follow-up reports. Apply `supabase/add_brainstorm_qa_state.sql` manually before browser QA; no SQL was applied by this implementation.
+
+## 7.2 Active Timer Open Task Checkpoint
+- `7.2.0` renames the Active Timer action to `Open task` and routes it through the existing shared Edit Task overlay without changing the active page, list, task-row selection, or scroll position. The shared opener now has a narrow Active Timer-only `preserveActivePage` option; all other callers retain default Tasks-page navigation. Parent Tasks still use the shared overlay and Step/Substep requests remain on the existing child-editor route. The tray closes only after a successful open; unavailable, archived, trashed, or stale tasks retain the tray and show `Task unavailable.` Timer runtime, persistence, elapsed time, Focus history, list behavior, and schema are unchanged.
 
 ## 7.1 Progress Checkpoint
 - `7.1.0` replaces the obsolete dice-face Achievements prototype with the shared `Progress` workspace at the existing trophy-icon destination. Accessible `Achievements` and `Milestones` tabs use roving focus, Arrow/Home/End keyboard selection, and a compact application layout; Achievements is the default. The oversized motivational hero, fake face collection percentage, Level/XP, charged-dice, streak, sync-mode, and fake collection values are retired from the page, Home, and Stats summaries.

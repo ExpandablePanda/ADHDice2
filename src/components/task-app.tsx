@@ -510,7 +510,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.1.0";
+const APP_VERSION = "7.2.9";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3915,18 +3915,20 @@ export function TaskApp() {
     setIsActiveTimersTrayOpen(true);
   }
 
-  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; timer?: RunningTaskTimer | null }) {
+  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; preserveActivePage?: boolean; timer?: RunningTaskTimer | null }) {
     const task = tasks.find((entry) => entry.id === taskId) ?? null;
     const timer = options?.timer ?? null;
     const taskOccurrence = task ? buildTaskOccurrenceIdentity(task) : null;
     const occurrenceIsClearlyStale = Boolean(timer?.occurrenceKey && taskOccurrence?.occurrenceKey
       && !occurrenceIdentityMatches(timer, taskOccurrence));
     if (!task || task.status === "trashed" || task.status === "archived" || occurrenceIsClearlyStale) {
-      setMessage({ tone: "warn", text: occurrenceIsClearlyStale ? "That timer belongs to an older task occurrence." : "That task is no longer available to edit." });
+      setMessage({ tone: "warn", text: "Task unavailable." });
       return false;
     }
 
-    setActivePage("Tasks");
+    if (!options?.preserveActivePage) {
+      setActivePage("Tasks");
+    }
     setSuppressDetachedListNoticeTaskId(null);
     setSharedTaskEditorOverlayTaskId(taskId);
     setTaskEditorFocusRequest(options?.initialField
@@ -3937,8 +3939,9 @@ export function TaskApp() {
 
   function goToActiveTimerTask(taskId: string) {
     const timer = runningTaskTimers.find((entry) => entry.taskId === taskId) ?? null;
-    openSharedTaskEditor(taskId, { timer });
-    setIsActiveTimersTrayOpen(false);
+    if (openSharedTaskEditor(taskId, { preserveActivePage: true, timer })) {
+      setIsActiveTimersTrayOpen(false);
+    }
   }
 
   function cycleHudTaskTimer(direction: "next" | "previous") {
@@ -5586,6 +5589,7 @@ export function TaskApp() {
             milestoneLoading={milestoneData.isLoading}
             model={achievementProgress.model}
             notificationError={achievementNotifications.claimError ?? achievementNotifications.seenError}
+            onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
               setActivePage("Tasks");
               handleTaskWorkspaceSurfaceChange("tasks");
@@ -5692,6 +5696,7 @@ export function TaskApp() {
             })}
             brainstormWorkspacePanel={(
               <BrainstormWorkspace
+                appVersion={APP_VERSION}
                 error={brainstormState.error}
                 remoteUpdateNotice={brainstormState.remoteUpdateNotice}
                 resetState={brainstormState.resetState}

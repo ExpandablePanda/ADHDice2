@@ -95,6 +95,7 @@ export type BrainstormStateRow = {
   user_id: string;
   source_markdown: string;
   answers: Record<string, unknown>;
+  qa_state: Record<string, unknown>;
   client_updated_at: string;
   created_at: string;
   updated_at: string;
@@ -104,10 +105,11 @@ export type BrainstormStateInsert = {
   user_id: string;
   source_markdown?: string;
   answers?: Record<string, unknown>;
+  qa_state?: Record<string, unknown>;
   client_updated_at: string;
 };
 
-export type BrainstormStateUpdate = Partial<Pick<BrainstormStateRow, "source_markdown" | "answers" | "client_updated_at">>;
+export type BrainstormStateUpdate = Partial<Pick<BrainstormStateRow, "source_markdown" | "answers" | "qa_state" | "client_updated_at">>;
 
 export type TaskListKind = "system" | "smart" | "custom";
 export type TaskListMembershipMode = "manual" | "rules" | "hybrid";

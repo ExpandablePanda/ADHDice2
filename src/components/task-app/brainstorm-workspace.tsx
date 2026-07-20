@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, Cloud, CloudOff, Copy, Download, Sparkles } from "lucide-react";
 import { TaskTableChipButton, TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
+import { AdhdChip } from "@/components/ui-system";
+import { BrainstormQaWorkspace } from "@/components/task-app/brainstorm-qa-workspace";
 import { parseBrainstormMarkdown, type BrainstormDefinition, type BrainstormParseResult, type BrainstormQuestion } from "@/lib/brainstorm-markdown";
 import {
   createEmptyBrainstormAnswer,
@@ -12,16 +14,18 @@ import {
   type BrainstormAnswer,
   type BrainstormAnswers,
   type BrainstormPersistedState,
+  type BrainstormStateChanges,
 } from "@/lib/brainstorm-state";
-import type { BrainstormSyncState } from "@/hooks/useBrainstormState";
+import type { BrainstormResetScope, BrainstormSyncState } from "@/hooks/useBrainstormState";
 
 type BrainstormWorkspaceProps = {
+  appVersion: string;
   error: string | null;
   remoteUpdateNotice: boolean;
-  resetState: () => void;
+  resetState: (scope?: BrainstormResetScope) => void;
   state: BrainstormPersistedState;
   syncState: BrainstormSyncState;
-  updateState: (changes: Partial<Pick<BrainstormPersistedState, "answers" | "sourceMarkdown">>) => void;
+  updateState: (changes: BrainstormStateChanges) => void;
 };
 
 const panelClass = "rounded-[1.35rem] border border-[#e8e2f5] bg-white/92 p-4 shadow-[0_18px_45px_rgba(76,58,145,0.07)] dark:border-white/10 dark:bg-white/[0.045] sm:p-5";
@@ -121,7 +125,8 @@ function initialParse(source: string): BrainstormParseResult | null {
   return source.trim() ? parseBrainstormMarkdown(source) : null;
 }
 
-export function BrainstormWorkspace({ error, remoteUpdateNotice, resetState, state, syncState, updateState }: BrainstormWorkspaceProps) {
+export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, resetState, state, syncState, updateState }: BrainstormWorkspaceProps) {
+  const [activeView, setActiveView] = useState<"questionnaire" | "qa">("questionnaire");
   const [sourceDraft, setSourceDraft] = useState(state.sourceMarkdown);
   const [parseResult, setParseResult] = useState<BrainstormParseResult | null>(() => initialParse(state.sourceMarkdown));
   const [showSummary, setShowSummary] = useState(false);
@@ -215,20 +220,25 @@ export function BrainstormWorkspace({ error, remoteUpdateNotice, resetState, sta
       <div className="flex flex-wrap items-start justify-between gap-3 px-1">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#938ab8]">Brainstorm</p>
-          <h2 className="mt-1 text-2xl font-semibold text-[#30294d] dark:text-white">Questionnaire builder</h2>
-          <p className="mt-1 text-sm text-[#716b8c] dark:text-white/60">One active questionnaire, synced across your devices. {updatedLabel}</p>
+          <h2 className="mt-1 text-2xl font-semibold text-[#30294d] dark:text-white">{activeView === "questionnaire" ? "Questionnaire builder" : "QA Checklist"}</h2>
+          <p className="mt-1 text-sm text-[#716b8c] dark:text-white/60">{activeView === "questionnaire" ? "One active questionnaire" : "Saved manual QA sessions"}, synced across your devices. {updatedLabel}</p>
+          <div aria-label="Brainstorm workspace navigation" className="mt-3 flex flex-wrap gap-2" role="tablist">
+            <AdhdChip aria-controls="brainstorm-questionnaire-panel" aria-selected={activeView === "questionnaire"} onClick={() => setActiveView("questionnaire")} role="tab" selected={activeView === "questionnaire"}>Questionnaire</AdhdChip>
+            <AdhdChip aria-controls="brainstorm-qa-panel" aria-selected={activeView === "qa"} onClick={() => setActiveView("qa")} role="tab" selected={activeView === "qa"}>QA Checklist</AdhdChip>
+          </div>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[#e5def5] bg-[#faf8ff] px-3 py-1.5 text-xs font-semibold text-[#716b8c] dark:border-white/10 dark:bg-white/5 dark:text-white/65">
+          <div aria-live="polite" className="inline-flex items-center gap-2 rounded-full border border-[#e5def5] bg-[#faf8ff] px-3 py-1.5 text-xs font-semibold text-[#716b8c] dark:border-white/10 dark:bg-white/5 dark:text-white/65">
             {syncState === "unavailable" || syncState === "offline" ? <CloudOff size={14} /> : <Cloud size={14} />}{syncLabel}
           </div>
-          <TaskTableChipButton onClick={() => { if (window.confirm("Clear this Brainstorm? The empty state will sync to your devices.")) { resetState(); setSourceDraft(""); setParseResult(null); setShowSummary(false); setFeedback("Brainstorm cleared."); } }} toneClassName="border-rose-200 bg-rose-50 text-rose-700">Clear Brainstorm</TaskTableChipButton>
+          {activeView === "questionnaire" ? <TaskTableChipButton onClick={() => { if (window.confirm("Clear this Brainstorm? The empty questionnaire will sync to your devices.")) { resetState("questionnaire"); setSourceDraft(""); setParseResult(null); setShowSummary(false); setFeedback("Brainstorm cleared."); } }} toneClassName="border-rose-200 bg-rose-50 text-rose-700">Clear Brainstorm</TaskTableChipButton> : null}
         </div>
       </div>
 
       {error ? <div className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">{error} Local recovery remains available, but changes are not fully synced.</div> : null}
       {remoteUpdateNotice ? <div className="rounded-[1rem] border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100">A newer Brainstorm was loaded from another device.</div> : null}
 
+      {activeView === "qa" ? <div id="brainstorm-qa-panel" role="tabpanel"><BrainstormQaWorkspace appVersion={appVersion} qaState={state.qaState} updateQaState={(qaState) => updateState({ qaState })} /></div> : <div id="brainstorm-questionnaire-panel" role="tabpanel">
       <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
         <section className={panelClass}>
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -286,6 +296,7 @@ export function BrainstormWorkspace({ error, remoteUpdateNotice, resetState, sta
         {showSummary && definition ? <pre className="adhdice-scrollbar mt-4 max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-[1rem] border border-[#e6e0f1] bg-[#faf9fd] p-4 text-sm leading-6 text-[#514a6c] dark:border-white/10 dark:bg-black/15 dark:text-white/70">{summary}</pre> : null}
         <p aria-live="polite" className="mt-3 flex min-h-5 items-center gap-2 text-sm text-[#716b8c] dark:text-white/60">{feedback ? <><Check size={14} />{feedback}</> : null}</p>
       </section>
+      </div>}
     </section>
   );
 }

@@ -106,7 +106,7 @@ export function TaskActiveTimersTray({
                   <TaskTableChipButton className="gap-2" aria-label={`${timer.pausedAt ? "Resume" : "Pause"} timer for ${timer.title}`} onClick={() => timer.pausedAt ? onResume(timer.taskId) : onPause(timer.taskId)} toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}>{timer.pausedAt ? <CirclePlay className="h-3.5 w-3.5" /> : <CirclePause className="h-3.5 w-3.5" />}{timer.pausedAt ? "Resume" : "Pause"}</TaskTableChipButton>
                   <TaskTableChipButton className="gap-2" onClick={() => onStopAndSave(timer.taskId)} toneClassName="border-[#ffd8be] bg-[#fff1e7] text-[#dc6c1c] dark:border-[#65401d] dark:bg-[#432712] dark:text-[#ffb37e]"><TimerReset className="h-3.5 w-3.5" />Stop & Save</TaskTableChipButton>
                   <TaskTableChipButton className="gap-2" onClick={() => unsavedSeconds > 0 ? setConfirmDiscardTaskId(timer.taskId) : onDiscard(timer.taskId)} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}><TimerOff className="h-3.5 w-3.5" />Discard Timer</TaskTableChipButton>
-                  <TaskTableChipButton className="gap-2" onClick={() => onGoToTask(timer.taskId)} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}><MapPin className="h-3.5 w-3.5" />Go to Task</TaskTableChipButton>
+                  <TaskTableChipButton className="gap-2" onClick={() => onGoToTask(timer.taskId)} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}><MapPin className="h-3.5 w-3.5" />Open task</TaskTableChipButton>
                 </div>}
               </div>;
             })}

@@ -6,6 +6,7 @@ import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import type { Milestone, Task } from "@/lib/database.types";
+import type { DevelopmentAchievementTestFixtureKind } from "@/lib/achievement-test-fixtures";
 import {
   formatAchievementDate,
   formatAchievementValue,
@@ -30,6 +31,7 @@ type AchievementsPageProps = {
   milestoneLoading: boolean;
   model: AchievementProgressModel;
   notificationError: string | null;
+  onTriggerDevelopmentAchievementTest?: (kind?: DevelopmentAchievementTestFixtureKind) => void;
   onOpenMilestoneTask: (taskId: string) => void;
   onOpenMilestones: () => void;
   tasks: Task[];
@@ -48,6 +50,7 @@ export function AchievementsPage({
   milestoneLoading,
   model,
   notificationError,
+  onTriggerDevelopmentAchievementTest,
   onOpenMilestoneTask,
   onOpenMilestones,
   tasks,
@@ -94,7 +97,7 @@ export function AchievementsPage({
 
       {activeTab === "achievements" ? (
         <div aria-labelledby="progress-tab-achievements" id="progress-panel-achievements" role="tabpanel">
-          <AchievementsTab error={achievementError} hasActivatedProfile={hasActivatedProfile} loading={achievementLoading} model={model} notificationError={notificationError} />
+          <AchievementsTab error={achievementError} hasActivatedProfile={hasActivatedProfile} loading={achievementLoading} model={model} notificationError={notificationError} onTriggerDevelopmentAchievementTest={onTriggerDevelopmentAchievementTest} />
         </div>
       ) : (
         <div aria-labelledby="progress-tab-milestones" id="progress-panel-milestones" role="tabpanel">
@@ -114,12 +117,13 @@ export function AchievementsPage({
   );
 }
 
-function AchievementsTab({ error, hasActivatedProfile, loading, model, notificationError }: {
+function AchievementsTab({ error, hasActivatedProfile, loading, model, notificationError, onTriggerDevelopmentAchievementTest }: {
   error: string | null;
   hasActivatedProfile: boolean;
   loading: boolean;
   model: AchievementProgressModel;
   notificationError: string | null;
+  onTriggerDevelopmentAchievementTest?: (kind?: DevelopmentAchievementTestFixtureKind) => void;
 }) {
   if (loading) return <WorkspaceState tone="neutral" title="Loading Achievement progress…" />;
   if (error) return <WorkspaceState detail={error} tone="error" title="Achievement progress could not load" />;
@@ -139,8 +143,29 @@ function AchievementsTab({ error, hasActivatedProfile, loading, model, notificat
         </p>
       ) : null}
       <AchievementSummaryPanel model={model} />
+      {process.env.NODE_ENV !== "production" && onTriggerDevelopmentAchievementTest ? <AchievementTestControls onTrigger={onTriggerDevelopmentAchievementTest} /> : null}
       {model.collections.map((collection) => <CollectionSection collection={collection} key={collection.id} />)}
     </div>
+  );
+}
+
+function AchievementTestControls({ onTrigger }: { onTrigger: (kind?: DevelopmentAchievementTestFixtureKind) => void }) {
+  const controls: Array<{ kind: DevelopmentAchievementTestFixtureKind; label: string }> = [
+    { kind: "parent_task", label: "Trigger Parent Task" },
+    { kind: "steps", label: "Trigger Steps" },
+    { kind: "focus", label: "Trigger Focus" },
+    { kind: "streak", label: "Trigger Streak" },
+    { kind: "collection", label: "Trigger Collection" },
+    { kind: "legacy", label: "Trigger Legacy Fallback" },
+  ];
+  return (
+    <AdhdPanel className="!rounded-lg !shadow-none" padding="md" title="Achievement Test Controls">
+      <p className="mb-3 text-xs text-[#8b849d] dark:text-white/45">Development only · Synthetic celebrations stay in this client session.</p>
+      <div className="flex flex-wrap gap-2">
+        {controls.map(({ kind, label }) => <TaskTableChipButton key={kind} onClick={() => onTrigger(kind)}>{label}</TaskTableChipButton>)}
+        <TaskTableChipButton onClick={() => onTrigger()}>Trigger All Test Achievements</TaskTableChipButton>
+      </div>
+    </AdhdPanel>
   );
 }
 

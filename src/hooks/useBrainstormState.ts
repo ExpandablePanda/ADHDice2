@@ -7,22 +7,25 @@ import {
   brainstormStateSignature,
   createEmptyBrainstormState,
   normalizeBrainstormState,
-  serializeBrainstormState,
+  serializeBrainstormStateUpdate,
   updateBrainstormState,
   type BrainstormPersistedState,
+  type BrainstormStateChanges,
+  type BrainstormStateField,
 } from "@/lib/brainstorm-state";
 
 const CACHE_PREFIX = "adhdice-brainstorm-state";
 const WRITE_DELAY_MS = 650;
 
 function isMissingTableError(error: { code?: string; message?: string } | null) {
-  return error?.code === "42P01" || error?.code === "PGRST205" || /adhdice_brainstorm_state.*(not found|schema cache|does not exist)/i.test(error?.message ?? "");
+  return error?.code === "42P01" || error?.code === "42703" || error?.code === "PGRST204" || error?.code === "PGRST205" || /(adhdice_brainstorm_state|qa_state).*(not found|schema cache|does not exist)/i.test(error?.message ?? "");
 }
 
 function cacheKey(userId: string) { return `${CACHE_PREFIX}:${userId}`; }
 function timestamp(value: string) { const parsed = Date.parse(value); return Number.isFinite(parsed) ? parsed : 0; }
 
 export type BrainstormSyncState = "loading" | "saving" | "synced" | "offline" | "unavailable";
+export type BrainstormResetScope = "all" | "questionnaire";
 
 export function useBrainstormState(userId: string | null, active: boolean) {
   const [state, setState] = useState<BrainstormPersistedState>(() => createEmptyBrainstormState());
@@ -31,6 +34,7 @@ export function useBrainstormState(userId: string | null, active: boolean) {
   const [remoteUpdateNotice, setRemoteUpdateNotice] = useState(false);
   const stateRef = useRef(state);
   const dirtyRef = useRef(false);
+  const dirtyFieldsRef = useRef<Set<BrainstormStateField>>(new Set());
   const supportedRef = useRef(true);
   const hydratedUserRef = useRef<string | null>(null);
   const writeTimerRef = useRef<number | null>(null);
@@ -51,10 +55,13 @@ export function useBrainstormState(userId: string | null, active: boolean) {
       return;
     }
     const outgoing = stateRef.current;
+    const fields = [...dirtyFieldsRef.current];
+    if (fields.length === 0) return;
+    const outgoingSignature = brainstormStateSignature(outgoing, fields);
     setSyncState("saving");
     const { error: writeError } = await client.from("adhdice_brainstorm_state").upsert({
       user_id: userId,
-      ...serializeBrainstormState(outgoing),
+      ...serializeBrainstormStateUpdate(outgoing, fields),
     });
     if (writeError) {
       if (isMissingTableError(writeError)) {
@@ -67,7 +74,10 @@ export function useBrainstormState(userId: string | null, active: boolean) {
       }
       return;
     }
-    if (brainstormStateSignature(stateRef.current) === brainstormStateSignature(outgoing)) dirtyRef.current = false;
+    if (brainstormStateSignature(stateRef.current, fields) === outgoingSignature) {
+      fields.forEach((field) => dirtyFieldsRef.current.delete(field));
+      dirtyRef.current = dirtyFieldsRef.current.size > 0;
+    }
     setError(null);
     setSyncState(dirtyRef.current ? "saving" : "synced");
   }, [userId]);
@@ -85,17 +95,23 @@ export function useBrainstormState(userId: string | null, active: boolean) {
     const remote = normalizeBrainstormState(value);
     const local = stateRef.current;
     if (timestamp(remote.clientUpdatedAt) > timestamp(local.clientUpdatedAt)) {
-      const changed = brainstormStateSignature(remote) !== brainstormStateSignature(local);
-      dirtyRef.current = false;
-      stateRef.current = remote;
-      setState(remote);
-      persistCache(remote, userId);
+      const dirtyFields = [...dirtyFieldsRef.current];
+      const merged = dirtyFields.length
+        ? updateBrainstormState(remote, Object.fromEntries(dirtyFields.map((field) => [field, local[field]])) as BrainstormStateChanges, new Date(Math.max(Date.now(), timestamp(remote.clientUpdatedAt) + 1)).toISOString())
+        : remote;
+      const changed = brainstormStateSignature(merged) !== brainstormStateSignature(local);
+      dirtyRef.current = dirtyFields.length > 0;
+      stateRef.current = merged;
+      setState(merged);
+      persistCache(merged, userId);
+      if (dirtyRef.current) scheduleWrite();
       if (changed && hydratedUserRef.current === userId) {
         setRemoteUpdateNotice(true);
         if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
         noticeTimerRef.current = window.setTimeout(() => setRemoteUpdateNotice(false), 3500);
       }
     } else if (timestamp(local.clientUpdatedAt) > timestamp(remote.clientUpdatedAt)) {
+      if (dirtyFieldsRef.current.size === 0) dirtyFieldsRef.current = new Set(["answers", "qaState", "sourceMarkdown"]);
       dirtyRef.current = true;
       scheduleWrite();
     }
@@ -106,6 +122,7 @@ export function useBrainstormState(userId: string | null, active: boolean) {
     if (!userId) return;
     supportedRef.current = true;
     dirtyRef.current = false;
+    dirtyFieldsRef.current.clear();
     let cached = createEmptyBrainstormState();
     try { cached = normalizeBrainstormState(JSON.parse(window.localStorage.getItem(cacheKey(userId)) ?? "null")); } catch { /* normalized empty */ }
     stateRef.current = cached;
@@ -116,7 +133,7 @@ export function useBrainstormState(userId: string | null, active: boolean) {
     hydratedUserRef.current = userId;
     if (!client) return;
     let alive = true;
-    void client.from("adhdice_brainstorm_state").select("source_markdown,answers,client_updated_at").eq("user_id", userId).maybeSingle().then(({ data, error: loadError }) => {
+    void client.from("adhdice_brainstorm_state").select("source_markdown,answers,qa_state,client_updated_at").eq("user_id", userId).maybeSingle().then(({ data, error: loadError }) => {
       if (!alive) return;
       if (loadError) {
         if (isMissingTableError(loadError)) {
@@ -130,8 +147,9 @@ export function useBrainstormState(userId: string | null, active: boolean) {
         return;
       }
       if (data) applyRemote(data);
-      else if (cached.sourceMarkdown || Object.keys(cached.answers).length > 0) {
+      else if (cached.sourceMarkdown || Object.keys(cached.answers).length > 0 || cached.qaState.sessions.length > 0) {
         dirtyRef.current = true;
+        dirtyFieldsRef.current = new Set(["answers", "qaState", "sourceMarkdown"]);
         scheduleWrite();
       }
       setSyncState(dirtyRef.current ? "saving" : "synced");
@@ -156,9 +174,10 @@ export function useBrainstormState(userId: string | null, active: boolean) {
 
   useEffect(() => { if (!active && dirtyRef.current) void flush(); }, [active, flush]);
 
-  const updateState = useCallback((changes: Partial<Pick<BrainstormPersistedState, "answers" | "sourceMarkdown">>) => {
+  const updateState = useCallback((changes: BrainstormStateChanges) => {
     if (!userId) return;
     const next = updateBrainstormState(stateRef.current, changes);
+    (Object.keys(changes) as BrainstormStateField[]).forEach((field) => dirtyFieldsRef.current.add(field));
     dirtyRef.current = true;
     stateRef.current = next;
     setState(next);
@@ -166,10 +185,13 @@ export function useBrainstormState(userId: string | null, active: boolean) {
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
-  const resetState = useCallback(() => {
+  const resetState = useCallback((scope: BrainstormResetScope = "all") => {
     if (!userId) return;
-    const next = createEmptyBrainstormState(new Date().toISOString());
+    const next = scope === "questionnaire"
+      ? updateBrainstormState(stateRef.current, { answers: {}, sourceMarkdown: "" }, new Date().toISOString())
+      : createEmptyBrainstormState(new Date().toISOString());
     dirtyRef.current = true;
+    dirtyFieldsRef.current = new Set(scope === "questionnaire" ? ["answers", "sourceMarkdown"] : ["answers", "qaState", "sourceMarkdown"]);
     stateRef.current = next;
     setState(next);
     persistCache(next, userId);

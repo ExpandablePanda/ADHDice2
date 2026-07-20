@@ -2,10 +2,12 @@ create table if not exists public.adhdice_brainstorm_state (
   user_id uuid primary key references auth.users(id) on delete cascade,
   source_markdown text not null default '',
   answers jsonb not null default '{}'::jsonb,
+  qa_state jsonb not null default '{"schemaVersion":1,"activeSessionId":null,"sessions":[]}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   client_updated_at timestamptz not null,
-  constraint adhdice_brainstorm_state_answers_object check (jsonb_typeof(answers) = 'object')
+  constraint adhdice_brainstorm_state_answers_object check (jsonb_typeof(answers) = 'object'),
+  constraint adhdice_brainstorm_state_qa_state_object check (jsonb_typeof(qa_state) = 'object')
 );
 
 alter table public.adhdice_brainstorm_state enable row level security;

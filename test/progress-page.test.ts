@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
-import { getAchievementTrack } from "../src/lib/achievements-mvp/catalog.ts";
+import { ACHIEVEMENT_MVP_CATALOG, getAchievementTrack } from "../src/lib/achievements-mvp/catalog.ts";
+import {
+  buildDevelopmentAchievementTestCelebrations,
+  createDevelopmentAchievementTestFixtures,
+} from "../src/lib/achievement-test-fixtures.ts";
 import type { AchievementTierId } from "../src/lib/achievements-mvp/types.ts";
 import { AchievementNotificationClaimController } from "../src/hooks/useAchievementProgress.ts";
 import {
   buildAchievementCelebrations,
+  buildAchievementCollectionAwardDescription,
   buildAchievementProgressModel,
   buildAchievementSummaryPresentation,
+  buildAchievementTierAwardDescription,
   emptyAchievementRuntimeSnapshot,
   formatAchievementDate,
   formatAchievementValue,
@@ -158,6 +165,94 @@ test("count, date, duration, and streak units format compactly", () => {
   assert.equal(formatAchievementDate("2026-07-17T23:30:00-04:00"), "Jul 18, 2026");
 });
 
+test("award descriptions derive the correct threshold, scope, and units from canonical tracks", () => {
+  assert.equal(
+    buildAchievementTierAwardDescription(getAchievementTrack("count_on_me")!, "bronze"),
+    "Completed 1,000 parent Tasks since Achievements were activated.",
+  );
+  assert.equal(
+    buildAchievementTierAwardDescription(getAchievementTrack("first_step")!, "bronze"),
+    "Completed 30 Steps in one logical day.",
+  );
+  assert.equal(
+    buildAchievementTierAwardDescription(getAchievementTrack("broken_clock")!, "bronze"),
+    "Logged 4 hrs of qualifying Focus time in one logical day.",
+  );
+  assert.equal(
+    buildAchievementTierAwardDescription(getAchievementTrack("do_something")!, "silver"),
+    "Completed at least 1 parent Task on 7 consecutive logical days.",
+  );
+  assert.equal(
+    buildAchievementTierAwardDescription(getAchievementTrack("last_step")!, "bronze"),
+    "Completed the full Step set for 1 parent Task since Achievements were activated.",
+  );
+});
+
+test("every current catalog award has a specific deterministic description", () => {
+  for (const track of ACHIEVEMENT_MVP_CATALOG.tracks) {
+    for (const tier of ["bronze", "silver", "gold", "platinum"] as AchievementTierId[]) {
+      const description = buildAchievementTierAwardDescription(track, tier);
+      assert.ok(description.length > 20, `${track.id} ${tier} needs a specific description`);
+      const thresholdLabel = track.unit === "seconds"
+        ? formatAchievementValue(track.thresholds[tier], track.unit)
+        : track.thresholds[tier].toLocaleString("en-US");
+      assert.ok(description.includes(thresholdLabel), `${track.id} ${tier} needs its awarded threshold`);
+    }
+  }
+  for (const collection of ACHIEVEMENT_MVP_CATALOG.collections) {
+    const description = buildAchievementCollectionAwardDescription(collection.id);
+    assert.match(description, /required tracks in this Collection/);
+    assert.match(description, /Platinum tier/);
+  }
+});
+
+test("development Achievement fixtures use canonical thresholds and produce canonical accomplishment copy", () => {
+  const fixtures = createDevelopmentAchievementTestFixtures("fixture-proof");
+  const byKind = new Map(fixtures.map((fixture) => [fixture.kind, fixture]));
+  assert.equal(byKind.get("parent_task")?.snapshot.tierAwards[0]?.track_id, "count_on_me");
+  assert.equal(getAchievementTrack("count_on_me")?.thresholds.bronze, 1_000);
+  assert.equal(byKind.get("steps")?.snapshot.tierAwards[0]?.track_id, "first_step");
+  assert.equal(getAchievementTrack("first_step")?.thresholds.bronze, 30);
+  assert.equal(byKind.get("focus")?.snapshot.tierAwards[0]?.track_id, "broken_clock");
+  assert.equal(getAchievementTrack("broken_clock")?.thresholds.bronze, 4 * 60 * 60);
+  assert.equal(byKind.get("streak")?.snapshot.tierAwards[0]?.track_id, "do_something");
+  assert.equal(getAchievementTrack("do_something")?.thresholds.silver, 7);
+  assert.equal(byKind.get("collection")?.snapshot.collectionAwards[0]?.collection_id, "one_step_at_a_time");
+
+  const celebrations = buildDevelopmentAchievementTestCelebrations(fixtures);
+  assert.deepEqual(celebrations.map((celebration) => celebration.description), [
+    "Completed 1,000 parent Tasks since Achievements were activated.",
+    "Completed 30 Steps in one logical day.",
+    "Logged 4 hrs of qualifying Focus time in one logical day.",
+    "Completed at least 1 parent Task on 7 consecutive logical days.",
+    buildAchievementCollectionAwardDescription("one_step_at_a_time"),
+    "Open Progress for the latest details.",
+  ]);
+  assert.ok(celebrations.every((celebration) => celebration.isDevelopmentTest));
+});
+
+test("development Achievement trigger-all fixtures are deterministic, unique per run, and enter the existing queue API", () => {
+  const firstRun = createDevelopmentAchievementTestFixtures("run-one");
+  const secondRun = createDevelopmentAchievementTestFixtures("run-two");
+  assert.deepEqual(firstRun.map((fixture) => fixture.kind), ["parent_task", "steps", "focus", "streak", "collection", "legacy"]);
+  assert.equal(new Set(firstRun.map((fixture) => fixture.notification.id)).size, 6);
+  assert.equal(new Set([...firstRun, ...secondRun].map((fixture) => fixture.notification.id)).size, 12);
+  const queue = mergeCelebrationQueue([], buildDevelopmentAchievementTestCelebrations(firstRun), new Set());
+  assert.deepEqual(queue.map((celebration) => celebration.id), firstRun.map((fixture) => fixture.notification.id));
+  assert.equal(mergeCelebrationQueue(queue, buildDevelopmentAchievementTestCelebrations(firstRun), new Set()).length, 6);
+});
+
+test("development Achievement harness is gated from production and fixture construction has no persistence path", () => {
+  const fixturesSource = readFileSync(new URL("../src/lib/achievement-test-fixtures.ts", import.meta.url), "utf8");
+  const hookSource = readFileSync(new URL("../src/hooks/useAchievementProgress.ts", import.meta.url), "utf8");
+  const pageSource = readFileSync(new URL("../src/components/task-app/achievements-page.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(fixturesSource, /claimAchievementNotifications|markAchievementNotificationSeen|supabase|repository|localStorage/i);
+  assert.match(hookSource, /const isDevelopment = process\.env\.NODE_ENV !== "production";/);
+  assert.match(hookSource, /if \(process\.env\.NODE_ENV === "production"\) return;/);
+  assert.match(hookSource, /if \(current\.isDevelopmentTest\) return;/);
+  assert.match(pageSource, /process\.env\.NODE_ENV !== "production".*AchievementTestControls/s);
+});
+
 test("summary totals, partial runtime rows, empty data, and recent award selection are correct", () => {
   const empty = buildAchievementProgressModel(emptyAchievementRuntimeSnapshot());
   assert.deepEqual(empty.summary, { completedCollections: 0, earnedTiers: 0, mostRecentUnlock: null, overallCompletionPercent: 0, totalTiers: 72 });
@@ -249,9 +344,22 @@ test("actual claim RPC rows enter the queue once their matching snapshot is read
   const claimResult = await claimAchievementNotifications(claimClient);
   const celebrations = buildAchievementCelebrations(claimResult.data, { ...emptyAchievementRuntimeSnapshot(), tierAwards: [award] });
   const queue = mergeCelebrationQueue([], celebrations, new Set());
-  assert.deepEqual(queue.map((item) => ({ detail: item.detail, id: item.id, title: item.title })), [
-    { detail: "Bronze tier earned", id: claimedRow.id, title: "First Step" },
+  assert.deepEqual(queue.map((item) => ({ description: item.description, detail: item.detail, id: item.id, title: item.title })), [
+    { description: "Completed 30 Steps in one logical day.", detail: "Bronze tier earned", id: claimedRow.id, title: "First Step" },
   ]);
+});
+
+test("Collection notifications use the same canonical description field", () => {
+  const award = collectionAward("collection-award", "one_step_at_a_time", "2026-07-18T12:00:00Z");
+  const claimedRow = {
+    ...notification("collection-notification", "2026-07-18T12:01:00Z", "unused"),
+    award_kind: "collection" as const,
+    collection_award_id: award.id,
+    tier_award_id: null,
+  };
+  const celebration = buildAchievementCelebrations([claimedRow], { ...emptyAchievementRuntimeSnapshot(), collectionAwards: [award] })[0]!;
+  assert.equal(celebration.description, buildAchievementCollectionAwardDescription("one_step_at_a_time"));
+  assert.equal(celebration.detail, "Collection mastery earned");
 });
 
 test("Strict Mode replay preserves one in-flight claim and queues its result exactly once", async () => {
@@ -343,6 +451,12 @@ test("missing award metadata produces a safe fallback celebration instead of dro
   assert.equal(celebrations.length, 1);
   assert.equal(celebrations[0]?.id, claimedRow.id);
   assert.equal(celebrations[0]?.title, "Achievement unlocked");
+  assert.equal(celebrations[0]?.description, "Open Progress for the latest details.");
+});
+
+test("the celebration notification modal renders the shared factual description beneath title and tier", () => {
+  const modal = readFileSync(new URL("../src/components/task-app/achievement-celebration-modal.tsx", import.meta.url), "utf8");
+  assert.match(modal, /\{celebration\.title\}[\s\S]*\{celebration\.detail\}[\s\S]*\{celebration\.description\}/);
 });
 
 test("claim failure is non-throwing and seen acknowledgment uses only the RPC", async () => {

@@ -127,17 +127,18 @@ test("state normalization recovers from malformed answers", () => {
     sourceMarkdown: "",
     answers: {},
     clientUpdatedAt: "1970-01-01T00:00:00.000Z",
+    qaState: { activeSessionId: null, schemaVersion: 2, sessions: [] },
   });
 });
 
-test("serialization persists only source, answers, and client timestamp", () => {
+test("serialization persists source, answers, QA state, and client timestamp", () => {
   const serialized = serializeBrainstormState(normalizeBrainstormState({
     sourceMarkdown: "# Test",
     answers: { q: { type: "short-text", selected: [], text: "Answer", other: "" } },
     clientUpdatedAt: "2026-07-13T12:00:00Z",
     generatedSummary: "must not persist",
   }));
-  assert.deepEqual(Object.keys(serialized).sort(), ["answers", "client_updated_at", "source_markdown"]);
+  assert.deepEqual(Object.keys(serialized).sort(), ["answers", "client_updated_at", "qa_state", "source_markdown"]);
   assert.equal(serialized.source_markdown, "# Test");
   assert.equal(serialized.answers.q.text, "Answer");
 });
@@ -239,4 +240,29 @@ test("all question types continue through the corrected shared question shell", 
   assert.match(source, /question\.type === "short-text"/);
   assert.match(source, /<textarea/);
   assert.match(source, /definition\.questions\.map\(\(question\) => <QuestionField/);
+});
+
+test("Brainstorm renders Questionnaire and QA Checklist navigation with both workspace panels", async () => {
+  const source = await readFile(new URL("../src/components/task-app/brainstorm-workspace.tsx", import.meta.url), "utf8");
+  assert.match(source, /role="tablist"/);
+  assert.match(source, />Questionnaire<\/AdhdChip>/);
+  assert.match(source, />QA Checklist<\/AdhdChip>/);
+  assert.match(source, /setActiveView\("questionnaire"\)/);
+  assert.match(source, /setActiveView\("qa"\)/);
+  assert.match(source, /id="brainstorm-questionnaire-panel" role="tabpanel"/);
+  assert.match(source, /id="brainstorm-qa-panel" role="tabpanel"><BrainstormQaWorkspace/);
+});
+
+test("Brainstorm Clear uses the restored scoped reset callback without clearing QA state", async () => {
+  const [workspace, app, hook] = await Promise.all([
+    readFile(new URL("../src/components/task-app/brainstorm-workspace.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/hooks/useBrainstormState.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(workspace, /resetState: \(scope\?: BrainstormResetScope\) => void/);
+  assert.match(workspace, /resetState\("questionnaire"\)/);
+  assert.match(app, /resetState=\{brainstormState\.resetState\}/);
+  assert.match(hook, /const resetState = useCallback\(\(scope: BrainstormResetScope = "all"\)/);
+  assert.match(hook, /updateBrainstormState\(stateRef\.current, \{ answers: \{\}, sourceMarkdown: "" \}/);
+  assert.match(hook, /new Set\(scope === "questionnaire" \? \["answers", "sourceMarkdown"\] : \["answers", "qaState", "sourceMarkdown"\]\)/);
 });

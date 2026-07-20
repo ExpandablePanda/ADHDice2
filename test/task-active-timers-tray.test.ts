@@ -45,8 +45,15 @@ test("tray uses the shared actual-time handoff and the dedicated delete-only dis
   assert.match(listSource, /TaskTimerStateChip onClick=\{\(\) => openQuickPanel\(task\.id, "actual"\)\} timer=\{runningTimerByTaskId\.get\(task\.id\)!\}/);
   assert.match(traySource, /Discard \{formatElapsed\(unsavedSeconds\)\}/);
   const goToTaskSource = appSource.slice(appSource.indexOf("function goToActiveTimerTask"), appSource.indexOf("function cycleHudTaskTimer"));
-  assert.match(goToTaskSource, /openSharedTaskEditor\(taskId, \{ timer \}\)/);
-  assert.match(goToTaskSource, /setIsActiveTimersTrayOpen\(false\)/);
+  const sharedOpenerSource = appSource.slice(appSource.indexOf("function openSharedTaskEditor"), appSource.indexOf("function goToActiveTimerTask"));
+  assert.match(traySource, />Open task<\/TaskTableChipButton>/);
+  assert.doesNotMatch(traySource, /Go to Task/);
+  assert.match(goToTaskSource, /openSharedTaskEditor\(taskId, \{ preserveActivePage: true, timer \}\)/);
+  assert.match(goToTaskSource, /if \(openSharedTaskEditor[\s\S]*setIsActiveTimersTrayOpen\(false\)/);
+  assert.match(sharedOpenerSource, /text: "Task unavailable\."/);
+  assert.match(sharedOpenerSource, /if \(!task \|\| task\.status === "trashed" \|\| task\.status === "archived" \|\| occurrenceIsClearlyStale\) \{[\s\S]*return false;/);
+  assert.match(sharedOpenerSource, /if \(!options\?\.preserveActivePage\) \{\s*setActivePage\("Tasks"\);\s*\}/);
+  assert.match(sharedOpenerSource, /setSharedTaskEditorOverlayTaskId\(taskId\)/);
   assert.doesNotMatch(goToTaskSource, /tasksSurface|view:|setRequestedListOverlayTaskId|highlight|scroll|pause|resume|stop|discard|evidence/i);
   assert.match(traySource, /onClick=\{\(\) => onGoToTask\(timer\.taskId\)\}/);
   assert.doesNotMatch(tableSource, /setLocalTimerNow\(Date\.now\(\)\);\s*}, 1000\)/);

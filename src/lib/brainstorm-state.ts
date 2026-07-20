@@ -1,4 +1,5 @@
 import type { BrainstormDefinition, BrainstormQuestion, BrainstormQuestionType } from "@/lib/brainstorm-markdown";
+import { createEmptyBrainstormQaState, normalizeBrainstormQaState, type BrainstormQaState } from "@/lib/brainstorm-qa";
 
 export type BrainstormAnswer = {
   other: string;
@@ -12,13 +13,17 @@ export type BrainstormAnswers = Record<string, BrainstormAnswer>;
 export type BrainstormPersistedState = {
   answers: BrainstormAnswers;
   clientUpdatedAt: string;
+  qaState: BrainstormQaState;
   sourceMarkdown: string;
 };
+
+export type BrainstormStateField = "answers" | "qaState" | "sourceMarkdown";
+export type BrainstormStateChanges = Partial<Pick<BrainstormPersistedState, BrainstormStateField>>;
 
 export const EMPTY_BRAINSTORM_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 
 export function createEmptyBrainstormState(clientUpdatedAt = EMPTY_BRAINSTORM_TIMESTAMP): BrainstormPersistedState {
-  return { answers: {}, clientUpdatedAt, sourceMarkdown: "" };
+  return { answers: {}, clientUpdatedAt, qaState: createEmptyBrainstormQaState(), sourceMarkdown: "" };
 }
 
 function normalizeAnswer(value: unknown): BrainstormAnswer | null {
@@ -52,10 +57,11 @@ function normalizeTimestamp(value: unknown) {
 
 export function normalizeBrainstormState(value: unknown): BrainstormPersistedState {
   if (!value || typeof value !== "object") return createEmptyBrainstormState();
-  const candidate = value as Partial<BrainstormPersistedState> & { client_updated_at?: unknown; source_markdown?: unknown };
+  const candidate = value as Partial<BrainstormPersistedState> & { client_updated_at?: unknown; qa_state?: unknown; source_markdown?: unknown };
   return {
     answers: normalizeBrainstormAnswers(candidate.answers),
     clientUpdatedAt: normalizeTimestamp(candidate.clientUpdatedAt ?? candidate.client_updated_at),
+    qaState: normalizeBrainstormQaState(candidate.qaState ?? candidate.qa_state),
     sourceMarkdown: typeof (candidate.sourceMarkdown ?? candidate.source_markdown) === "string"
       ? String(candidate.sourceMarkdown ?? candidate.source_markdown)
       : "",
@@ -85,22 +91,33 @@ export function migrateBrainstormAnswers(definition: BrainstormDefinition, previ
 
 export function updateBrainstormState(
   state: BrainstormPersistedState,
-  changes: Partial<Pick<BrainstormPersistedState, "answers" | "sourceMarkdown">>,
+  changes: BrainstormStateChanges,
   now = new Date().toISOString(),
 ): BrainstormPersistedState {
   return normalizeBrainstormState({ ...state, ...changes, clientUpdatedAt: now });
 }
 
-export function brainstormStateSignature(state: BrainstormPersistedState) {
-  return JSON.stringify({ answers: state.answers, clientUpdatedAt: state.clientUpdatedAt, sourceMarkdown: state.sourceMarkdown });
+export function brainstormStateSignature(state: BrainstormPersistedState, fields: BrainstormStateField[] = ["answers", "qaState", "sourceMarkdown"]) {
+  return JSON.stringify(Object.fromEntries(fields.map((field) => [field, state[field]])));
 }
 
 export function serializeBrainstormState(state: BrainstormPersistedState) {
   return {
     answers: normalizeBrainstormAnswers(state.answers),
     client_updated_at: normalizeTimestamp(state.clientUpdatedAt),
+    qa_state: normalizeBrainstormQaState(state.qaState),
     source_markdown: state.sourceMarkdown,
   };
+}
+
+export function serializeBrainstormStateUpdate(state: BrainstormPersistedState, fields: BrainstormStateField[]) {
+  const serialized = serializeBrainstormState(state);
+  return Object.assign(
+    { client_updated_at: serialized.client_updated_at },
+    fields.includes("answers") ? { answers: serialized.answers } : {},
+    fields.includes("qaState") ? { qa_state: serialized.qa_state } : {},
+    fields.includes("sourceMarkdown") ? { source_markdown: serialized.source_markdown } : {},
+  );
 }
 
 export function isBrainstormQuestionAnswered(question: BrainstormQuestion, answer: BrainstormAnswer | undefined) {

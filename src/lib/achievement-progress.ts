@@ -1,4 +1,4 @@
-import { ACHIEVEMENT_MVP_CATALOG } from "@/lib/achievements-mvp/catalog";
+import { ACHIEVEMENT_MVP_CATALOG, getMasteryRequirementSnapshot } from "@/lib/achievements-mvp/catalog";
 import {
   ACHIEVEMENT_TIER_IDS,
   type AchievementCollectionId,
@@ -93,8 +93,10 @@ export type AchievementSummaryPresentation = {
 };
 
 export type AchievementCelebration = {
+  description: string;
   detail: string;
   id: string;
+  isDevelopmentTest?: boolean;
   notification: AchievementNotification;
   title: string;
 };
@@ -251,6 +253,71 @@ export function formatAchievementValue(value: number, unit: AchievementMetricUni
   return `${safeValue.toLocaleString("en-US")} ${label}`;
 }
 
+function pluralize(value: number, singular: string, plural = `${singular}s`) {
+  return value === 1 ? singular : plural;
+}
+
+function sourceLabels(track: AchievementTrackDefinition) {
+  if (track.sourceScope === "step") return { plural: "Steps", singular: "Step" };
+  if (track.sourceScope === "parent_or_step") return { plural: "parent Tasks or Steps", singular: "parent Task or Step" };
+  return { plural: "parent Tasks", singular: "parent Task" };
+}
+
+/**
+ * Builds the factual, replay-safe explanation for a permanent tier award from
+ * the canonical catalog definition. This prose is presentation-only and is
+ * deliberately never persisted with the award or notification.
+ */
+export function buildAchievementTierAwardDescription(track: AchievementTrackDefinition, tier: AchievementTierId): string {
+  const threshold = track.thresholds[tier];
+  const source = sourceLabels(track);
+  switch (track.metricKind) {
+    case "count_of_days_meeting_occurrence_minimum": {
+      const minimum = Number(track.parameters.qualifyingOccurrenceMinimum ?? 1);
+      return `Completed at least ${minimum} ${minimum === 1 ? source.singular : source.plural} on ${formatAchievementValue(threshold, "days")} since Achievements were activated.`;
+    }
+    case "cumulative_occurrence_count":
+      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} since Achievements were activated.`;
+    case "max_occurrences_in_day":
+      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} in one logical day.`;
+    case "max_occurrences_in_week":
+      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} in one logical week.`;
+    case "max_occurrences_in_month":
+      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} in one logical month.`;
+    case "completed_parent_step_set_count":
+      return `Completed the full Step set for ${threshold.toLocaleString("en-US")} ${pluralize(threshold, "parent Task")} since Achievements were activated.`;
+    case "cumulative_active_seconds":
+      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time since Achievements were activated.`;
+    case "max_active_seconds_in_day":
+      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time in one logical day.`;
+    case "max_active_seconds_in_week":
+      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time in one logical week.`;
+    case "max_active_seconds_in_month":
+      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time in one logical month.`;
+    case "max_active_seconds_in_session":
+      return `Logged ${formatAchievementValue(threshold, "seconds")} in one qualifying Focus session.`;
+    case "qualifying_focus_session_count": {
+      const minimum = Number(track.parameters.minimumActiveSeconds ?? 0);
+      return `Completed ${formatAchievementValue(threshold, "sessions")} with at least ${formatAchievementValue(minimum, "seconds")} of active Focus time since Achievements were activated.`;
+    }
+    case "consecutive_qualifying_day_streak": {
+      if (track.sourceScope === "focus_session") {
+        const minimum = Number(track.parameters.minimumActiveSecondsPerDay ?? 0);
+        return `Logged at least ${formatAchievementValue(minimum, "seconds")} of active Focus time on ${threshold.toLocaleString("en-US")} consecutive logical ${pluralize(threshold, "day")}.`;
+      }
+      const minimum = Number(track.parameters.minimumOccurrencesPerDay ?? 1);
+      return `Completed at least ${minimum} ${minimum === 1 ? source.singular : source.plural} on ${threshold.toLocaleString("en-US")} consecutive logical ${pluralize(threshold, "day")}.`;
+    }
+    case "closed_perfect_week_count":
+      return `Completed at least one parent Task on every logical day in ${formatAchievementValue(threshold, "weeks")} closed week${threshold === 1 ? "" : "s"}.`;
+  }
+}
+
+export function buildAchievementCollectionAwardDescription(collectionId: AchievementCollectionId): string {
+  const requiredTrackCount = getMasteryRequirementSnapshot(collectionId).requiredTrackIds.length;
+  return `Earned the Platinum tier in all ${requiredTrackCount.toLocaleString("en-US")} required tracks in this Collection.`;
+}
+
 export function getCurrentAndNextTier(
   track: AchievementTrackDefinition,
   currentValue: number,
@@ -359,16 +426,16 @@ export function buildAchievementCelebrations(
       if (notification.award_kind === "tier" && notification.tier_award_id) {
         const award = tierAwards.get(notification.tier_award_id);
         const track = award ? ACHIEVEMENT_MVP_CATALOG.tracks.find((candidate) => candidate.id === award.track_id) : null;
-        if (award && track) return [{ detail: `${TIER_LABELS[award.tier]} tier earned`, id: notification.id, notification, title: TRACK_TITLES[track.id] }];
-        return [{ detail: "A permanent Achievement tier was earned. Open Progress for the latest details.", id: notification.id, notification, title: "Achievement unlocked" }];
+        if (award && track) return [{ description: buildAchievementTierAwardDescription(track, award.tier), detail: `${TIER_LABELS[award.tier]} tier earned`, id: notification.id, notification, title: TRACK_TITLES[track.id] }];
+        return [{ description: "Open Progress for the latest details.", detail: "A permanent Achievement tier was earned.", id: notification.id, notification, title: "Achievement unlocked" }];
       }
       if (notification.award_kind === "collection" && notification.collection_award_id) {
         const award = collectionAwards.get(notification.collection_award_id);
         const collection = award ? ACHIEVEMENT_MVP_CATALOG.collections.find((candidate) => candidate.id === award.collection_id) : null;
-        if (award && collection) return [{ detail: "Collection mastery earned", id: notification.id, notification, title: COLLECTION_TITLES[collection.id] }];
-        return [{ detail: "A permanent Achievement Collection was mastered. Open Progress for the latest details.", id: notification.id, notification, title: "Collection mastered" }];
+        if (award && collection) return [{ description: buildAchievementCollectionAwardDescription(collection.id), detail: "Collection mastery earned", id: notification.id, notification, title: COLLECTION_TITLES[collection.id] }];
+        return [{ description: "Open Progress for the latest details.", detail: "A permanent Achievement Collection was mastered.", id: notification.id, notification, title: "Collection mastered" }];
       }
-      return [{ detail: "A permanent Achievement award was recorded. Open Progress for the latest details.", id: notification.id, notification, title: "Achievement unlocked" }];
+      return [{ description: "Open Progress for the latest details.", detail: "A permanent Achievement award was recorded.", id: notification.id, notification, title: "Achievement unlocked" }];
     });
 }
 
