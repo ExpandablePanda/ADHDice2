@@ -98,10 +98,11 @@ export type AchievementCelebration = {
   id: string;
   isDevelopmentTest?: boolean;
   notification: AchievementNotification;
+  tier: AchievementTierId | null;
   title: string;
 };
 
-export type ProgressTab = "achievements" | "milestones";
+export type ProgressTab = "achievements" | "milestones" | "records";
 export type MilestonesTabState = "loading" | "error" | "empty" | "gallery";
 
 const TIER_LABELS: Record<AchievementTierId, string> = {
@@ -274,42 +275,43 @@ export function buildAchievementTierAwardDescription(track: AchievementTrackDefi
   switch (track.metricKind) {
     case "count_of_days_meeting_occurrence_minimum": {
       const minimum = Number(track.parameters.qualifyingOccurrenceMinimum ?? 1);
-      return `Completed at least ${minimum} ${minimum === 1 ? source.singular : source.plural} on ${formatAchievementValue(threshold, "days")} since Achievements were activated.`;
+      return `Completed at least ${minimum} ${minimum === 1 ? source.singular : source.plural} on ${formatAchievementValue(threshold, "days")} since you started tracking Achievements.`;
     }
     case "cumulative_occurrence_count":
-      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} since Achievements were activated.`;
+      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} since you started tracking Achievements.`;
     case "max_occurrences_in_day":
-      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} in one logical day.`;
+      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} in a single day.`;
     case "max_occurrences_in_week":
-      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} in one logical week.`;
+      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} in a single week.`;
     case "max_occurrences_in_month":
-      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} in one logical month.`;
+      return `Completed ${threshold.toLocaleString("en-US")} ${threshold === 1 ? source.singular : source.plural} in a single month.`;
     case "completed_parent_step_set_count":
-      return `Completed the full Step set for ${threshold.toLocaleString("en-US")} ${pluralize(threshold, "parent Task")} since Achievements were activated.`;
+      return `Completed the full Step set for ${threshold.toLocaleString("en-US")} ${pluralize(threshold, "parent Task")} since you started tracking Achievements.`;
     case "cumulative_active_seconds":
-      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time since Achievements were activated.`;
+      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time since you started tracking Achievements.`;
     case "max_active_seconds_in_day":
-      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time in one logical day.`;
+      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time in a single day.`;
     case "max_active_seconds_in_week":
-      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time in one logical week.`;
+      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time in a single week.`;
     case "max_active_seconds_in_month":
-      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time in one logical month.`;
+      return `Logged ${formatAchievementValue(threshold, "seconds")} of qualifying Focus time in a single month.`;
     case "max_active_seconds_in_session":
-      return `Logged ${formatAchievementValue(threshold, "seconds")} in one qualifying Focus session.`;
+      return `Logged ${formatAchievementValue(threshold, "seconds")} in one Focus session.`;
     case "qualifying_focus_session_count": {
       const minimum = Number(track.parameters.minimumActiveSeconds ?? 0);
-      return `Completed ${formatAchievementValue(threshold, "sessions")} with at least ${formatAchievementValue(minimum, "seconds")} of active Focus time since Achievements were activated.`;
+      return `Completed ${formatAchievementValue(threshold, "sessions")} with at least ${formatAchievementValue(minimum, "seconds")} of active Focus time since you started tracking Achievements.`;
     }
     case "consecutive_qualifying_day_streak": {
       if (track.sourceScope === "focus_session") {
         const minimum = Number(track.parameters.minimumActiveSecondsPerDay ?? 0);
-        return `Logged at least ${formatAchievementValue(minimum, "seconds")} of active Focus time on ${threshold.toLocaleString("en-US")} consecutive logical ${pluralize(threshold, "day")}.`;
+        return `Logged at least ${formatAchievementValue(minimum, "seconds")} of active Focus time for ${threshold.toLocaleString("en-US")} days in a row.`;
       }
       const minimum = Number(track.parameters.minimumOccurrencesPerDay ?? 1);
-      return `Completed at least ${minimum} ${minimum === 1 ? source.singular : source.plural} on ${threshold.toLocaleString("en-US")} consecutive logical ${pluralize(threshold, "day")}.`;
+      const minimumLabel = minimum === 1 ? "one" : minimum.toLocaleString("en-US");
+      return `Completed at least ${minimumLabel} qualifying ${minimum === 1 ? source.singular : source.plural} for ${threshold.toLocaleString("en-US")} days in a row.`;
     }
     case "closed_perfect_week_count":
-      return `Completed at least one parent Task on every logical day in ${formatAchievementValue(threshold, "weeks")} closed week${threshold === 1 ? "" : "s"}.`;
+      return `Completed at least one qualifying parent Task every day for ${formatAchievementValue(threshold, "weeks")} full week${threshold === 1 ? "" : "s"}.`;
   }
 }
 
@@ -426,16 +428,16 @@ export function buildAchievementCelebrations(
       if (notification.award_kind === "tier" && notification.tier_award_id) {
         const award = tierAwards.get(notification.tier_award_id);
         const track = award ? ACHIEVEMENT_MVP_CATALOG.tracks.find((candidate) => candidate.id === award.track_id) : null;
-        if (award && track) return [{ description: buildAchievementTierAwardDescription(track, award.tier), detail: `${TIER_LABELS[award.tier]} tier earned`, id: notification.id, notification, title: TRACK_TITLES[track.id] }];
-        return [{ description: "Open Progress for the latest details.", detail: "A permanent Achievement tier was earned.", id: notification.id, notification, title: "Achievement unlocked" }];
+        if (award && track) return [{ description: buildAchievementTierAwardDescription(track, award.tier), detail: `${TIER_LABELS[award.tier]} tier earned`, id: notification.id, notification, tier: award.tier, title: TRACK_TITLES[track.id] }];
+        return [{ description: "Open Progress for the latest details.", detail: "A permanent Achievement tier was earned.", id: notification.id, notification, tier: null, title: "Achievement unlocked" }];
       }
       if (notification.award_kind === "collection" && notification.collection_award_id) {
         const award = collectionAwards.get(notification.collection_award_id);
         const collection = award ? ACHIEVEMENT_MVP_CATALOG.collections.find((candidate) => candidate.id === award.collection_id) : null;
-        if (award && collection) return [{ description: buildAchievementCollectionAwardDescription(collection.id), detail: "Collection mastery earned", id: notification.id, notification, title: COLLECTION_TITLES[collection.id] }];
-        return [{ description: "Open Progress for the latest details.", detail: "A permanent Achievement Collection was mastered.", id: notification.id, notification, title: "Collection mastered" }];
+        if (award && collection) return [{ description: buildAchievementCollectionAwardDescription(collection.id), detail: "Collection mastery earned", id: notification.id, notification, tier: "platinum", title: COLLECTION_TITLES[collection.id] }];
+        return [{ description: "Open Progress for the latest details.", detail: "A permanent Achievement Collection was mastered.", id: notification.id, notification, tier: null, title: "Collection mastered" }];
       }
-      return [{ description: "Open Progress for the latest details.", detail: "A permanent Achievement award was recorded.", id: notification.id, notification, title: "Achievement unlocked" }];
+      return [{ description: "Open Progress for the latest details.", detail: "A permanent Achievement award was recorded.", id: notification.id, notification, tier: null, title: "Achievement unlocked" }];
     });
 }
 
@@ -456,8 +458,9 @@ export function mergeCelebrationQueue(
 
 export function getNextProgressTab(current: ProgressTab, key: string): ProgressTab {
   if (key === "Home") return "achievements";
-  if (key === "End") return "milestones";
-  if (key === "ArrowLeft" || key === "ArrowRight") return current === "achievements" ? "milestones" : "achievements";
+  if (key === "End") return "records";
+  if (key === "ArrowRight") return current === "achievements" ? "milestones" : current === "milestones" ? "records" : "achievements";
+  if (key === "ArrowLeft") return current === "achievements" ? "records" : current === "records" ? "milestones" : "achievements";
   return current;
 }
 

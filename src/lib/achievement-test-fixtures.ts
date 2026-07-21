@@ -2,7 +2,7 @@ import { ACHIEVEMENT_MVP_CATALOG, getAchievementCollection, getAchievementTrack,
 import { buildAchievementCelebrations, emptyAchievementRuntimeSnapshot, type AchievementCelebration, type AchievementRuntimeSnapshot } from "@/lib/achievement-progress";
 import type { AchievementCollectionAward, AchievementNotification, AchievementTierAward } from "@/lib/database.types";
 
-export const DEVELOPMENT_ACHIEVEMENT_TEST_FIXTURE_KINDS = ["parent_task", "steps", "focus", "streak", "collection", "legacy"] as const;
+export const DEVELOPMENT_ACHIEVEMENT_TEST_FIXTURE_KINDS = ["parent_task", "steps", "focus", "streak", "collection", "legacy", "gold", "platinum"] as const;
 export type DevelopmentAchievementTestFixtureKind = (typeof DEVELOPMENT_ACHIEVEMENT_TEST_FIXTURE_KINDS)[number];
 
 export type DevelopmentAchievementTestFixture = {
@@ -16,8 +16,8 @@ const FIXTURE_CREATED_AT = "2026-07-19T12:00:00.000Z";
 function tierFixture(
   kind: Exclude<DevelopmentAchievementTestFixtureKind, "collection" | "legacy">,
   runId: string,
-  trackId: "count_on_me" | "first_step" | "broken_clock" | "do_something",
-  tier: "bronze" | "silver",
+  trackId: "count_on_me" | "first_step" | "broken_clock" | "do_something" | "third_step" | "last_step",
+  tier: "bronze" | "silver" | "gold" | "platinum",
 ): DevelopmentAchievementTestFixture {
   const track = getAchievementTrack(trackId)!;
   const awardId = `development-achievement-test:${runId}:${kind}:award`;
@@ -123,6 +123,8 @@ export function createDevelopmentAchievementTestFixtures(runId: string): readonl
       },
       snapshot: { ...emptyAchievementRuntimeSnapshot(), tierAwards: [legacyAward] },
     },
+    tierFixture("gold", runId, "third_step", "gold"),
+    tierFixture("platinum", runId, "last_step", "platinum"),
   ];
 }
 

@@ -530,7 +530,7 @@ export function FocusClockRow({
 
   return (
     // Mobile: horizontal 2-row scroll carousel. sm+: standard grid.
-    <div className="adhdice-scrollbar sm:hidden w-full overflow-x-auto pt-4 pb-4" style={{ WebkitOverflowScrolling: "touch" }}>
+    <div className="adhdice-scrollbar sm:hidden w-full overflow-x-auto pt-4 pb-4" data-focus-clock-scroll-region style={{ WebkitOverflowScrolling: "touch" }}>
       <div
         style={{
           display: "grid",

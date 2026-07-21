@@ -71,6 +71,33 @@ export function taskTableLayoutPreferencesEqual(
     && leftSortState.optionId === rightSortState.optionId;
 }
 
+export function resolveTaskTableLayoutPublishDecision({
+  isApplyingPersistedLayout,
+  nextPreferences,
+  persistedPreferences,
+}: {
+  isApplyingPersistedLayout: boolean;
+  nextPreferences: TaskTableLayoutPreferences;
+  persistedPreferences?: TaskTableLayoutPreferences;
+}) {
+  const matchesPersisted = Boolean(
+    persistedPreferences
+    && taskTableLayoutPreferencesEqual(persistedPreferences, nextPreferences),
+  );
+
+  if (isApplyingPersistedLayout) {
+    return {
+      isApplyingPersistedLayout: Boolean(persistedPreferences && !matchesPersisted),
+      shouldPublish: false,
+    };
+  }
+
+  return {
+    isApplyingPersistedLayout: false,
+    shouldPublish: !matchesPersisted,
+  };
+}
+
 export function splitTaskUiSettingsEnvelope(value: unknown) {
   if (
     value

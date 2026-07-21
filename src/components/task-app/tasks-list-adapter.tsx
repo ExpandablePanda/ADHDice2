@@ -52,7 +52,14 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { AdhdIconButton } from "@/components/ui-system";
+import { TaskHierarchyChevronButton } from "./task-hierarchy-chevron-button";
 import { TaskTimerStateChip } from "./task-timer-display";
+import {
+  DEFAULT_LIST_SORT_PREFERENCE,
+  sortListParentTasks,
+  type ListSortPreference,
+} from "@/lib/task-list-sort";
+import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -663,6 +670,7 @@ type TasksListAdapterProps = {
   allRows?: PrototypeTaskRow[];
   currentListLabel: string;
   filterRowsNode: ReactNode;
+  listSortPreference?: ListSortPreference;
   onToggleFocusToday?: (taskId: string) => void;
   panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode">;
   selectedBucket: string;
@@ -895,6 +903,7 @@ function StepsCardPreview({
   onToggleFocusToday,
   onToggleTaskList,
   onToggleExpanded,
+  onToggleAllExpanded,
   parentStepCreationError,
   parentStepDraftInputRef,
   parentStepDraftValue,
@@ -948,6 +957,7 @@ function StepsCardPreview({
   onToggleFocusToday?: (taskId: string) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
   onToggleExpanded?: () => void;
+  onToggleAllExpanded?: () => void;
   parentStepCreationError?: string | null;
   parentStepDraftInputRef?: RefObject<HTMLInputElement | null>;
   parentStepDraftValue: string;
@@ -1118,17 +1128,12 @@ function StepsCardPreview({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="inline-flex items-center gap-1.5">
           <span className={TASK_TABLE_TITLE_CELL_CLASS}>Steps</span>
-          <button
-            aria-expanded={isExpanded}
-            className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#9b92be] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:border-[#42306f] dark:hover:bg-[#22193f] dark:focus-visible:ring-[#3b2f68]/90"
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggleExpanded?.();
-            }}
-            type="button"
-          >
-            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-          </button>
+          <TaskHierarchyChevronButton
+            buttonClassName="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#9b92be] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:border-[#42306f] dark:hover:bg-[#22193f] dark:focus-visible:ring-[#3b2f68]/90"
+            expanded={isExpanded}
+            onToggle={() => onToggleExpanded?.()}
+            onToggleAll={() => onToggleAllExpanded?.()}
+          />
         </div>
       </div>
       {!isExpanded ? null : (
@@ -2372,6 +2377,7 @@ function TasksSimpleList({
   allRows,
   currentListLabel,
   filterRowsNode,
+  listSortPreference = DEFAULT_LIST_SORT_PREFERENCE,
   onToggleFocusToday,
   panelProps,
   selectedBucket,
@@ -2390,7 +2396,13 @@ function TasksSimpleList({
   const pendingMeasuredStatusScrollAnchorRef = useRef<MeasuredStatusScrollAnchor | null>(null);
   const parentStepDraftInputRef = useRef<HTMLInputElement | null>(null);
   const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
-  const tasks = tableProps.tasks;
+  const tasks = useMemo(
+    () => sortListParentTasks(tableProps.tasks, listSortPreference, {
+      taskHistoryByTaskId: tableProps.rowContext.taskHistoryByTaskId,
+      todayDateKey: tableProps.rowContext.todayDateKey,
+    }),
+    [listSortPreference, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.todayDateKey, tableProps.tasks],
+  );
   const rowContext = tableProps.rowContext;
   const runningTimerByTaskId = useMemo(
     () => new Map((tableProps.runningTaskTimers ?? []).map((timer) => [timer.taskId, timer] as const)),
@@ -2690,6 +2702,26 @@ function TasksSimpleList({
     setParentStepDraftTaskId((current) => (current === parentTaskId ? null : current));
   }
 
+  function toggleAllRenderedStepSections() {
+    setCollapsedStepSectionsByTaskId((current) => {
+      const eligibleGroups = tasks.flatMap((task) => {
+        const group = tableProps.childTaskPreviewByParentTaskId?.[task.id];
+        if (!group || group.items.length === 0) return [];
+        return [{
+          expanded: searchMatchedStepParentTaskIdSet.has(task.id)
+            || parentStepDraftTaskId === task.id
+            || current[task.id] === false,
+          taskId: task.id,
+        }];
+      });
+      const expandAll = shouldExpandAllTaskHierarchies(eligibleGroups);
+      return eligibleGroups.reduce<Record<string, boolean>>((next, group) => {
+        next[group.taskId] = !expandAll;
+        return next;
+      }, { ...current });
+    });
+  }
+
   if (tasks.length === 0) {
     return (
       <TasksListViewPanel
@@ -2869,8 +2901,16 @@ function TasksSimpleList({
             },
           }
           : null);
+        const isStepSectionExpanded = searchMatchedStepParentTaskIdSet.has(task.id)
+          || parentStepDraftTaskId === task.id
+          || collapsedStepSectionsByTaskId[task.id] === false;
+        const hasVisibleRenderedDescendants = Boolean(
+          isStepSectionExpanded
+          && effectiveStepPreviewGroup
+          && (effectiveStepPreviewGroup.items.length > 0 || parentStepDraftTaskId === task.id),
+        );
         return (
-          <div className="space-y-3" key={task.id}>
+          <div className="space-y-3" data-task-list-hierarchy-group={task.id} key={task.id}>
             <article
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${
                 selectedTaskIdSet.has(task.id)
@@ -2880,7 +2920,7 @@ function TasksSimpleList({
                 isQuickPanelOpen
                   ? "border-[#cfc2ff] dark:border-[#4f3d86]"
                   : "hover:border-[#ddd2fb] hover:bg-white dark:hover:border-white/15"
-              }`}
+              } ${hasVisibleRenderedDescendants ? "sticky top-[4.75rem] z-10 bg-white dark:bg-[#181226]" : ""}`}
               data-task-list-row={task.id}
               onClick={(event) => {
                 if (shouldIgnoreListOverlayOpen(event.target)) {
@@ -3277,6 +3317,7 @@ function TasksSimpleList({
                 onSave={(notes) => tableProps.onSetNotes?.(task.id, notes)}
               />
             ) : null}
+            </article>
             {effectiveStepPreviewGroup ? (
               <StepsCardPreview
                 activeQuickPanel={activeQuickPanel}
@@ -3285,7 +3326,7 @@ function TasksSimpleList({
                 closeQuickPanel={closeQuickPanel}
                 currentListLabel={currentListLabel}
                 group={effectiveStepPreviewGroup}
-                isExpanded={searchMatchedStepParentTaskIdSet.has(task.id) || parentStepDraftTaskId === task.id || collapsedStepSectionsByTaskId[task.id] === false}
+                isExpanded={isStepSectionExpanded}
                 listDefinitions={rowContext.listDefinitions}
                 listMembershipsByTaskId={rowContext.listMembershipsByTaskId}
                 onCreateChildTask={tableProps.onCreateChildTask}
@@ -3326,6 +3367,7 @@ function TasksSimpleList({
                     [task.id]: current[task.id] === false,
                   }));
                 }}
+                onToggleAllExpanded={toggleAllRenderedStepSections}
                 parentStepCreationError={parentStepCreationErrors[task.id] ?? null}
                 parentStepDraftInputRef={parentStepDraftTaskId === task.id ? parentStepDraftInputRef : undefined}
                 parentStepDraftValue={parentStepTitleDrafts[task.id] ?? ""}
@@ -3351,7 +3393,6 @@ function TasksSimpleList({
                 visibleMetadataTaskIds={visibleMetadataTaskIds}
               />
             ) : null}
-            </article>
           </div>
         );
       })}

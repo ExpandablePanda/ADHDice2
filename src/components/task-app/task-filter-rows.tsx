@@ -8,9 +8,13 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
-import type { ReactNode } from "react";
+import { ArrowDown, ArrowUp, ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { TASK_FILTER_STATUS_OPTIONS } from "@/lib/task-filter-state";
 import { formatOptionLabel } from "@/lib/task-label-format";
+import { AdhdDropdownPanel } from "@/components/ui-system";
+import type { ListSortField, ListSortPreference } from "@/lib/task-list-sort";
 
 const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
 const CHIP_BUTTON_CLASS = "shrink-0 appearance-none bg-transparent p-0 text-left";
@@ -99,7 +103,131 @@ type FilterRowsProps = {
   selectedEnergies: TaskEnergy[];
   selectedStatuses: TaskStatus[];
   statusCounts: Record<TaskStatus, number>;
+  listSortPreference?: ListSortPreference;
+  onListSortPreferenceChange?: (preference: ListSortPreference) => void;
 };
+
+const LIST_SORT_OPTIONS: Array<{ label: string; value: ListSortField }> = [
+  { label: "Manual", value: "manual" },
+  { label: "Due date", value: "due_date" },
+  { label: "Status", value: "status" },
+  { label: "Priority", value: "priority" },
+  { label: "Title", value: "title" },
+  { label: "Recently updated", value: "recently_updated" },
+  { label: "Streak", value: "streak" },
+  { label: "Estimated duration", value: "estimated_duration" },
+];
+
+function ListSortFilterControls({
+  onChange,
+  preference,
+}: {
+  onChange: (preference: ListSortPreference) => void;
+  preference: ListSortPreference;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [panelPosition, setPanelPosition] = useState({ left: 8, top: 8 });
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const selectedLabel = LIST_SORT_OPTIONS.find((option) => option.value === preference.field)?.label ?? "Manual";
+
+  const openPanel = () => {
+    const rect = triggerRef.current?.getBoundingClientRect();
+    if (rect) {
+      const estimatedPanelHeight = 280;
+      const belowTop = rect.bottom + 8;
+      setPanelPosition({
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - 232)),
+        top: belowTop + estimatedPanelHeight <= window.innerHeight - 8
+          ? belowTop
+          : Math.max(8, rect.top - estimatedPanelHeight - 8),
+      });
+    }
+    setIsOpen(true);
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const close = () => setIsOpen(false);
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!triggerRef.current?.contains(target) && !panelRef.current?.contains(target)) close();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [isOpen]);
+
+  return (
+    <>
+      <span className="relative shrink-0" ref={triggerRef}>
+        <TaskTableChipButton
+          aria-expanded={isOpen}
+          aria-haspopup="menu"
+          className="gap-1.5"
+          onClick={() => isOpen ? setIsOpen(false) : openPanel()}
+          toneClassName={FILTER_LABEL_CHIP_CLASS}
+        >
+          Sort: {selectedLabel}
+          <ChevronDown className={`h-3.5 w-3.5 transition ${isOpen ? "rotate-180" : ""}`} />
+        </TaskTableChipButton>
+      </span>
+      {preference.field !== "manual" ? (
+        <TaskTableChipButton
+          aria-label={preference.direction === "asc" ? "Sort descending" : "Sort ascending"}
+          className="gap-1.5"
+          onClick={() => onChange({ ...preference, direction: preference.direction === "asc" ? "desc" : "asc" })}
+          toneClassName={FILTER_LABEL_CHIP_CLASS}
+        >
+          {preference.direction === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+          {preference.direction === "asc" ? "Ascending" : "Descending"}
+        </TaskTableChipButton>
+      ) : null}
+      {isOpen && typeof document !== "undefined" ? createPortal(
+        <div ref={panelRef}>
+          <AdhdDropdownPanel
+            className="z-[80] max-h-[calc(100vh-1rem)] overflow-y-auto px-2 py-2"
+            role="menu"
+            style={{ left: panelPosition.left, position: "fixed", top: panelPosition.top }}
+            widthClassName="w-[min(14rem,calc(100vw-1rem))]"
+          >
+            <div className="flex flex-col items-start gap-1">
+              {LIST_SORT_OPTIONS.map((option) => (
+                <TaskTableChipButton
+                  aria-checked={preference.field === option.value}
+                  className="w-full justify-start text-left"
+                  key={option.value}
+                  onClick={() => {
+                    onChange({
+                      direction: option.value === "manual" ? "asc" : preference.direction,
+                      field: option.value,
+                    });
+                    setIsOpen(false);
+                  }}
+                  role="menuitemradio"
+                  toneClassName={preference.field === option.value ? FILTER_ACTIVE_CHIP_CLASS : FILTER_LABEL_CHIP_CLASS}
+                >
+                  {option.label}
+                </TaskTableChipButton>
+              ))}
+            </div>
+          </AdhdDropdownPanel>
+        </div>,
+        document.body,
+      ) : null}
+    </>
+  );
+}
 
 export function FilterRowsComponent({
   compact = false,
@@ -122,6 +250,8 @@ export function FilterRowsComponent({
   selectedEnergies,
   selectedStatuses,
   statusCounts,
+  listSortPreference,
+  onListSortPreferenceChange,
 }: FilterRowsProps) {
   const bucketFilterCount = (pinnedFilterActive ? 1 : 0) + (routineFilterActive ? 1 : 0);
   const activeFilterCount = selectedStatuses.length + selectedEnergies.length + bucketFilterCount + (duplicateTitleMode ? 1 : 0);
@@ -155,6 +285,9 @@ export function FilterRowsComponent({
             </FilterChip>
           ) : null}
           <FilterChip active={duplicateTitleMode} onClick={onToggleDuplicateTitleMode}>Duplicates</FilterChip>
+          {listSortPreference && onListSortPreferenceChange ? (
+            <ListSortFilterControls onChange={onListSortPreferenceChange} preference={listSortPreference} />
+          ) : null}
           {TASK_FILTER_STATUS_OPTIONS.map((status) => (
             <CompactStatusFilterChip
               count={statusCounts[status]}

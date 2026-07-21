@@ -168,23 +168,23 @@ test("count, date, duration, and streak units format compactly", () => {
 test("award descriptions derive the correct threshold, scope, and units from canonical tracks", () => {
   assert.equal(
     buildAchievementTierAwardDescription(getAchievementTrack("count_on_me")!, "bronze"),
-    "Completed 1,000 parent Tasks since Achievements were activated.",
+    "Completed 1,000 parent Tasks since you started tracking Achievements.",
   );
   assert.equal(
     buildAchievementTierAwardDescription(getAchievementTrack("first_step")!, "bronze"),
-    "Completed 30 Steps in one logical day.",
+    "Completed 30 Steps in a single day.",
   );
   assert.equal(
     buildAchievementTierAwardDescription(getAchievementTrack("broken_clock")!, "bronze"),
-    "Logged 4 hrs of qualifying Focus time in one logical day.",
+    "Logged 4 hrs of qualifying Focus time in a single day.",
   );
   assert.equal(
     buildAchievementTierAwardDescription(getAchievementTrack("do_something")!, "silver"),
-    "Completed at least 1 parent Task on 7 consecutive logical days.",
+    "Completed at least one qualifying parent Task for 7 days in a row.",
   );
   assert.equal(
     buildAchievementTierAwardDescription(getAchievementTrack("last_step")!, "bronze"),
-    "Completed the full Step set for 1 parent Task since Achievements were activated.",
+    "Completed the full Step set for 1 parent Task since you started tracking Achievements.",
   );
 });
 
@@ -204,6 +204,11 @@ test("every current catalog award has a specific deterministic description", () 
     assert.match(description, /required tracks in this Collection/);
     assert.match(description, /Platinum tier/);
   }
+  for (const track of ACHIEVEMENT_MVP_CATALOG.tracks) {
+    for (const tier of ["bronze", "silver", "gold", "platinum"] as AchievementTierId[]) {
+      assert.doesNotMatch(buildAchievementTierAwardDescription(track, tier), /logical (day|week|month)/i);
+    }
+  }
 });
 
 test("development Achievement fixtures use canonical thresholds and produce canonical accomplishment copy", () => {
@@ -218,28 +223,35 @@ test("development Achievement fixtures use canonical thresholds and produce cano
   assert.equal(byKind.get("streak")?.snapshot.tierAwards[0]?.track_id, "do_something");
   assert.equal(getAchievementTrack("do_something")?.thresholds.silver, 7);
   assert.equal(byKind.get("collection")?.snapshot.collectionAwards[0]?.collection_id, "one_step_at_a_time");
+  assert.equal(byKind.get("gold")?.snapshot.tierAwards[0]?.track_id, "third_step");
+  assert.equal(getAchievementTrack("third_step")?.thresholds.gold, 3_000);
+  assert.equal(byKind.get("platinum")?.snapshot.tierAwards[0]?.track_id, "last_step");
+  assert.equal(getAchievementTrack("last_step")?.thresholds.platinum, 150);
 
   const celebrations = buildDevelopmentAchievementTestCelebrations(fixtures);
   assert.deepEqual(celebrations.map((celebration) => celebration.description), [
-    "Completed 1,000 parent Tasks since Achievements were activated.",
-    "Completed 30 Steps in one logical day.",
-    "Logged 4 hrs of qualifying Focus time in one logical day.",
-    "Completed at least 1 parent Task on 7 consecutive logical days.",
+    "Completed 1,000 parent Tasks since you started tracking Achievements.",
+    "Completed 30 Steps in a single day.",
+    "Logged 4 hrs of qualifying Focus time in a single day.",
+    "Completed at least one qualifying parent Task for 7 days in a row.",
     buildAchievementCollectionAwardDescription("one_step_at_a_time"),
     "Open Progress for the latest details.",
+    "Completed 3,000 Steps since you started tracking Achievements.",
+    "Completed the full Step set for 150 parent Tasks since you started tracking Achievements.",
   ]);
+  assert.deepEqual(celebrations.map((celebration) => celebration.tier), ["bronze", "bronze", "bronze", "silver", "platinum", null, "gold", "platinum"]);
   assert.ok(celebrations.every((celebration) => celebration.isDevelopmentTest));
 });
 
 test("development Achievement trigger-all fixtures are deterministic, unique per run, and enter the existing queue API", () => {
   const firstRun = createDevelopmentAchievementTestFixtures("run-one");
   const secondRun = createDevelopmentAchievementTestFixtures("run-two");
-  assert.deepEqual(firstRun.map((fixture) => fixture.kind), ["parent_task", "steps", "focus", "streak", "collection", "legacy"]);
-  assert.equal(new Set(firstRun.map((fixture) => fixture.notification.id)).size, 6);
-  assert.equal(new Set([...firstRun, ...secondRun].map((fixture) => fixture.notification.id)).size, 12);
+  assert.deepEqual(firstRun.map((fixture) => fixture.kind), ["parent_task", "steps", "focus", "streak", "collection", "legacy", "gold", "platinum"]);
+  assert.equal(new Set(firstRun.map((fixture) => fixture.notification.id)).size, 8);
+  assert.equal(new Set([...firstRun, ...secondRun].map((fixture) => fixture.notification.id)).size, 16);
   const queue = mergeCelebrationQueue([], buildDevelopmentAchievementTestCelebrations(firstRun), new Set());
   assert.deepEqual(queue.map((celebration) => celebration.id), firstRun.map((fixture) => fixture.notification.id));
-  assert.equal(mergeCelebrationQueue(queue, buildDevelopmentAchievementTestCelebrations(firstRun), new Set()).length, 6);
+  assert.equal(mergeCelebrationQueue(queue, buildDevelopmentAchievementTestCelebrations(firstRun), new Set()).length, 8);
 });
 
 test("development Achievement harness is gated from production and fixture construction has no persistence path", () => {
@@ -251,6 +263,9 @@ test("development Achievement harness is gated from production and fixture const
   assert.match(hookSource, /if \(process\.env\.NODE_ENV === "production"\) return;/);
   assert.match(hookSource, /if \(current\.isDevelopmentTest\) return;/);
   assert.match(pageSource, /process\.env\.NODE_ENV !== "production".*AchievementTestControls/s);
+  assert.match(pageSource, /Trigger Platinum/);
+  assert.match(pageSource, /Trigger Unknown Legacy Award/);
+  assert.match(pageSource, /Tests the neutral fallback for an award missing from the current catalog\./);
 });
 
 test("summary totals, partial runtime rows, empty data, and recent award selection are correct", () => {
@@ -345,8 +360,9 @@ test("actual claim RPC rows enter the queue once their matching snapshot is read
   const celebrations = buildAchievementCelebrations(claimResult.data, { ...emptyAchievementRuntimeSnapshot(), tierAwards: [award] });
   const queue = mergeCelebrationQueue([], celebrations, new Set());
   assert.deepEqual(queue.map((item) => ({ description: item.description, detail: item.detail, id: item.id, title: item.title })), [
-    { description: "Completed 30 Steps in one logical day.", detail: "Bronze tier earned", id: claimedRow.id, title: "First Step" },
+    { description: "Completed 30 Steps in a single day.", detail: "Bronze tier earned", id: claimedRow.id, title: "First Step" },
   ]);
+  assert.equal(queue[0]?.tier, "bronze");
 });
 
 test("Collection notifications use the same canonical description field", () => {
@@ -360,6 +376,7 @@ test("Collection notifications use the same canonical description field", () => 
   const celebration = buildAchievementCelebrations([claimedRow], { ...emptyAchievementRuntimeSnapshot(), collectionAwards: [award] })[0]!;
   assert.equal(celebration.description, buildAchievementCollectionAwardDescription("one_step_at_a_time"));
   assert.equal(celebration.detail, "Collection mastery earned");
+  assert.equal(celebration.tier, "platinum");
 });
 
 test("Strict Mode replay preserves one in-flight claim and queues its result exactly once", async () => {
@@ -451,6 +468,7 @@ test("missing award metadata produces a safe fallback celebration instead of dro
   assert.equal(celebrations.length, 1);
   assert.equal(celebrations[0]?.id, claimedRow.id);
   assert.equal(celebrations[0]?.title, "Achievement unlocked");
+  assert.equal(celebrations[0]?.tier, null);
   assert.equal(celebrations[0]?.description, "Open Progress for the latest details.");
 });
 
@@ -509,8 +527,10 @@ test("Home and Stats presentation stays unknown while authenticated Achievement 
 test("Progress tab selection supports arrows, Home, and End", () => {
   assert.equal(getNextProgressTab("achievements", "ArrowRight"), "milestones");
   assert.equal(getNextProgressTab("milestones", "ArrowLeft"), "achievements");
+  assert.equal(getNextProgressTab("milestones", "ArrowRight"), "records");
+  assert.equal(getNextProgressTab("records", "ArrowLeft"), "milestones");
   assert.equal(getNextProgressTab("milestones", "Home"), "achievements");
-  assert.equal(getNextProgressTab("achievements", "End"), "milestones");
+  assert.equal(getNextProgressTab("achievements", "End"), "records");
   assert.equal(getNextProgressTab("achievements", "Enter"), "achievements");
 });
 

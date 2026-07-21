@@ -6,6 +6,7 @@ import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import type { Milestone, Task } from "@/lib/database.types";
+import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { DevelopmentAchievementTestFixtureKind } from "@/lib/achievement-test-fixtures";
 import {
   formatAchievementDate,
@@ -20,12 +21,14 @@ import {
 } from "@/lib/achievement-progress";
 import { CompletedMilestonesWorkspace } from "./completed-milestones-workspace";
 import { PageShellHeader } from "./page-shell-header";
+import { RecordsTab } from "./records-tab";
 
 type AchievementsPageProps = {
   achievementError: string | null;
   achievementLoading: boolean;
   hasActivatedProfile: boolean;
   lowStimulation: boolean;
+  logicalDayStart: string;
   milestones: Milestone[];
   milestoneError: string | null;
   milestoneLoading: boolean;
@@ -35,16 +38,19 @@ type AchievementsPageProps = {
   onOpenMilestoneTask: (taskId: string) => void;
   onOpenMilestones: () => void;
   tasks: Task[];
+  recordsClient: ReturnType<typeof createBrowserSupabaseClient>;
+  timezone: string;
   userId: string | null;
 };
 
-const TAB_ORDER: ProgressTab[] = ["achievements", "milestones"];
+const TAB_ORDER: ProgressTab[] = ["achievements", "milestones", "records"];
 
 export function AchievementsPage({
   achievementError,
   achievementLoading,
   hasActivatedProfile,
   lowStimulation,
+  logicalDayStart,
   milestones,
   milestoneError,
   milestoneLoading,
@@ -54,10 +60,12 @@ export function AchievementsPage({
   onOpenMilestoneTask,
   onOpenMilestones,
   tasks,
+  recordsClient,
+  timezone,
   userId,
 }: AchievementsPageProps) {
   const [activeTab, setActiveTab] = useState<ProgressTab>("achievements");
-  const tabRefs = useRef<Record<ProgressTab, HTMLButtonElement | null>>({ achievements: null, milestones: null });
+  const tabRefs = useRef<Record<ProgressTab, HTMLButtonElement | null>>({ achievements: null, milestones: null, records: null });
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     const next = getNextProgressTab(activeTab, event.key);
@@ -69,11 +77,11 @@ export function AchievementsPage({
 
   return (
     <section className="px-4 pb-32">
-      <PageShellHeader subtitle="Achievements and Milestones" title="Progress" />
+      <PageShellHeader subtitle="Achievements, Milestones, and Records" title="Progress" />
       <div aria-label="Progress sections" className="mb-5 flex border-b border-[#e4deef] dark:border-white/10" role="tablist">
         {TAB_ORDER.map((tab) => {
           const selected = activeTab === tab;
-          const label = tab === "achievements" ? "Achievements" : "Milestones";
+          const label = tab === "achievements" ? "Achievements" : tab === "milestones" ? "Milestones" : "Records";
           return (
             <button
               aria-controls={`progress-panel-${tab}`}
@@ -99,7 +107,7 @@ export function AchievementsPage({
         <div aria-labelledby="progress-tab-achievements" id="progress-panel-achievements" role="tabpanel">
           <AchievementsTab error={achievementError} hasActivatedProfile={hasActivatedProfile} loading={achievementLoading} model={model} notificationError={notificationError} onTriggerDevelopmentAchievementTest={onTriggerDevelopmentAchievementTest} />
         </div>
-      ) : (
+      ) : activeTab === "milestones" ? (
         <div aria-labelledby="progress-tab-milestones" id="progress-panel-milestones" role="tabpanel">
           <MilestonesTab
             error={milestoneError}
@@ -112,7 +120,10 @@ export function AchievementsPage({
             userId={userId}
           />
         </div>
-      )}
+      ) : null}
+      <div aria-labelledby="progress-tab-records" hidden={activeTab !== "records"} id="progress-panel-records" role="tabpanel">
+        <RecordsTab active={activeTab === "records"} client={recordsClient} logicalDayStart={logicalDayStart} timezone={timezone} userId={userId} />
+      </div>
     </section>
   );
 }
@@ -156,11 +167,14 @@ function AchievementTestControls({ onTrigger }: { onTrigger: (kind?: Development
     { kind: "focus", label: "Trigger Focus" },
     { kind: "streak", label: "Trigger Streak" },
     { kind: "collection", label: "Trigger Collection" },
-    { kind: "legacy", label: "Trigger Legacy Fallback" },
+    { kind: "legacy", label: "Trigger Unknown Legacy Award" },
+    { kind: "gold", label: "Trigger Gold" },
+    { kind: "platinum", label: "Trigger Platinum" },
   ];
   return (
     <AdhdPanel className="!rounded-lg !shadow-none" padding="md" title="Achievement Test Controls">
       <p className="mb-3 text-xs text-[#8b849d] dark:text-white/45">Development only · Synthetic celebrations stay in this client session.</p>
+      <p className="mb-3 text-xs text-[#8b849d] dark:text-white/45">Tests the neutral fallback for an award missing from the current catalog.</p>
       <div className="flex flex-wrap gap-2">
         {controls.map(({ kind, label }) => <TaskTableChipButton key={kind} onClick={() => onTrigger(kind)}>{label}</TaskTableChipButton>)}
         <TaskTableChipButton onClick={() => onTrigger()}>Trigger All Test Achievements</TaskTableChipButton>

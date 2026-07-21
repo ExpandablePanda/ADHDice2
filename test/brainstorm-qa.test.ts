@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   addQaItem,
+  clearPassedQaItems,
   createQaSession,
   deleteQaItem,
   deleteQaSession,
@@ -93,6 +94,16 @@ test("reset clears statuses while preserving notes, metadata, order, and observa
   assert.ok(reset.items.every((item) => item.status === "not_tested"));
   assert.deepEqual(reset.items.map((item) => [item.id, item.text, item.notes]), session().items.map((item) => [item.id, item.text, item.notes]));
   assert.equal(reset.observations, session().observations);
+});
+
+test("Clear Passed removes only passed items while preserving remaining data, order, and session metadata", () => {
+  const original = session();
+  const cleared = clearPassedQaItems(original);
+  assert.deepEqual(cleared.items, original.items.slice(1));
+  assert.deepEqual({ ...cleared, items: original.items }, original);
+  assert.equal(clearPassedQaItems({ ...original, items: original.items.filter((item) => item.status !== "pass") }).items.length, 3);
+  assert.deepEqual(clearPassedQaItems({ ...original, items: [] }).items, []);
+  assert.deepEqual(clearPassedQaItems({ ...original, items: original.items.filter((item) => item.status === "pass") }).items, []);
 });
 
 test("derives tested progress, completion, and follow-up without treating empty as complete", () => {
@@ -332,4 +343,13 @@ test("New Session uses the shared icon-label chip gap and QA session deletion co
   assert.match(source, /requestConfirmation\("delete-session"\)/);
   assert.match(source, /deleteQaSession\(qaState, activeSession\.id\)/);
   assert.match(source, /Questionnaire content and other QA sessions will remain/);
+});
+
+test("Clear Passed is disabled without passes and confirms the active-session removal count", async () => {
+  const source = await qaWorkspaceSource();
+  assert.match(source, /disabled=\{!progress\?\.pass\}/);
+  assert.match(source, /requestConfirmation\("clear-passed"\)/);
+  assert.match(source, /\$\{progress\?\.pass \?\? 0\} passed item/);
+  assert.match(source, /clearPassedQaItems\(activeSession\)/);
+  assert.match(source, /Fail, Blocked, and Not Tested items will remain/);
 });

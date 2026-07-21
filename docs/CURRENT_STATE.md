@@ -1,17 +1,74 @@
 # Current State
 
-Last reviewed: 2026-07-19
+Last reviewed: 2026-07-21
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.2.9`.
+- Current working app version: `7.2.27`.
 - Current release group: `7.2.x` Active Timer shared-editor behavior.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.2.27 Records SQL Validation Safety Checkpoint
+- `7.2.27` rewrites the still-unapplied Records validation compatibility migration in place: required containers are NULL-safe, all canonical payload casts remain bounded and guarded, logical day start accepts canonical minute or second precision, and finalization obtains the per-user advisory try-lock before locking or reading the run. Compact evidence, chunk/digest limits, staging, atomic publication, first-achieved preservation, and event invalidation are unchanged. No SQL was applied by this checkpoint.
+
+## 7.2.26 Records SQL Validation Compatibility Checkpoint
+- `7.2.26` removes PostgreSQL-16-only `pg_input_is_valid` validation from all chunked Records RPC definitions and replaces it with JSON-type checks, bounded canonical scalar formats, and guarded PostgreSQL-15 casts with concise Records errors. Apply only `supabase/patch_records_validation_compatibility.sql` manually before retrying Records; it preserves the three JSONB signatures, staged resume flow, atomic publication, evidence limits, lock behavior, first-achieved metadata, event invalidation, and RLS. No SQL was applied by this checkpoint.
+
+## 7.2.25 Records RPC Argument Contract Checkpoint
+- `7.2.25` confirms and centralizes the chunked begin/upload/finalize client contract so every Supabase RPC receives exactly one `p_payload` SQL argument. PostgREST wrong-argument signature failures now remain concise and stage-specific instead of being classified as missing Records storage, while genuine absent-function/table errors retain the setup fallback and failed refreshes keep the last successful Records snapshot. No SQL changed.
+
+## 7.2.24 Compact Chunked Records Reconciliation Checkpoint
+- `7.2.24` moves detailed evaluator evidence behind a schema-v2 compact serializer with deterministic sorted-identity SHA-256 digests, bounded UTF-8 chunk envelopes, sequential staged upload, same-manifest resume, and an authenticated begin/upload/finalize protocol. Live current Records and history remain unchanged until finalization verifies the complete generation and publishes atomically; stale runs are safely discarded and oversized legacy evidence is compacted without deleting events or first-achieved metadata. Apply `supabase/patch_records_chunked_reconciliation.sql` manually before browser QA; no SQL was applied by this checkpoint.
+
+## 7.2.23 Records Reconciliation Temp-Spill Checkpoint
+- `7.2.23` keeps full Record evidence while removing it from the two materializing `jsonb_to_recordset` row shapes: narrow scalar rows are staged once, evidence is attached by deterministic current/event identity, and unchanged large snapshots are retained by fingerprint during conflict updates. The RPC remains transactional, nonblocking, identity-based, first-achieved preserving, and compact; the repository continues to reload current Records and events after reconciliation. Apply `supabase/patch_records_reconciliation_temp_spill.sql` manually before QA; no SQL was applied by this checkpoint.
+
+## 7.2.22 Records Nonblocking Reconciliation Checkpoint
+- `7.2.22` makes the owner-scoped Records advisory lock transaction-scoped and nonblocking: cross-context overlap returns a structured `busy` result before staging or writes, while the client retains the last successful snapshot and allows a later manual Refresh. `supabase/patch_records_reconciliation_nonblocking.sql` drops every obsolete RPC overload, recreates only the canonical JSONB signature with phase-labeled set-based writes, preserves required indexes and first-achieved/event invalidation behavior, and reloads PostgREST metadata. Apply the patch manually before browser QA; no SQL was applied by this checkpoint.
+
+## 7.2.21 Records Reconciliation Timeout Checkpoint
+- `7.2.21` replaces row-by-row Records reconciliation with validated `jsonb_to_recordset` staging and set-based current/event upserts, authoritative current deletion, and indexed `NOT EXISTS` event invalidation while preserving transaction-scoped ownership locking and first-achieved metadata. A user-scoped module single-flight also reuses an active pipeline across hook remounts, preventing an overlapping RPC from waiting on the Records advisory lock. Apply `supabase/patch_records_reconciliation_timeout.sql` manually before browser QA; no database migration was applied by this checkpoint.
+
+## 7.2.20 Records Refresh Pipeline Checkpoint
+- `7.2.20` replaces the Records repository's concurrent source/persisted request fan-out with one ordered, stage-aware pipeline after bounded Local QA verification confirmed the installed Records tables/RPC and all seven live stages succeed against the same account data. Native fetch failures now identify the Task, Task History, Focus Session, evaluation, reconciliation, current-Records, or event stage without exposing payloads.
+- A failed refresh retains the last successful Records snapshot and calculated time. Initial failures no longer render misleading empty sections; successful empty recalculations still show genuine empty states. Lazy activation, overlap prevention, evaluator rules, deterministic identities, reconciliation idempotency/invalidation, RLS, and Achievement isolation are unchanged.
+
+## 7.2.19 Records MVP Checkpoint
+- `7.2.19` adds a lazy Records tab to Progress backed by a pure `records-v1` evaluator over independently paginated Task, Task History, and completed persisted Focus-session data. It covers the approved closed-period Task/Step/Focus aggregates, completion-day and Focus-day streaks, longest Focus session, per-task successful occurrence streaks, and Biggest Comeback; current open periods remain labeled provisional.
+- `supabase/add_records_foundation.sql` adds owner-scoped current/event storage plus one authenticated, advisory-locked reconciliation RPC that replaces current rows, idempotently upserts deterministic break/tie events, and invalidates corrected-away events without touching Achievement storage. The migration is not applied by this checkpoint. Canonical schema/types are synchronized, including the previously migrated Task History `event_type` and `counted_as_due_occurrence` columns that were missing from the fresh-install schema.
+- Records preserve credited logical dates and evidence snapshots with timezone/day-start settings. The UI discloses the limits of hard deletions, historical hierarchy/recurrence changes, and fallback occurrence identity. No record celebrations, notifications, trophies, Achievement reuse, deferred hierarchy-size metrics, Focus Bars redesign, or additional Table Step/Substep visual work is included.
+
+## 7.2.18 Focus Bars Sandbox Checkpoint
+- `7.2.18` preserves Clocks as the default Focus sandbox page and adds a read-only Focus Bars page with bounded pager/keyboard/swipe navigation, authoritative live elapsed time, targeted progress plus overtime continuation, open-ended live lanes, paused-state freezing, and Focus Bars-only failure isolation.
+
+## 7.2.17 Table Hierarchy Plane and Title Geometry Checkpoint
+- `7.2.17` paints expanded same-table descendants on the normal Table surface, removes the sticky parent's downward child-overlap shadow, and uses explicit title-only geometry: Steps begin 10px inside the parent title boundary and Substeps add a clear 14px increment without moving shared metadata columns.
+
+## 7.2.16 Table Child Mini-Row Surface and Indentation Checkpoint
+- `7.2.16` corrects the active Table Step/Substep mini-row itself: normal children use the surrounding Table background without a default shadow, while explicit hover, selection, editing, search/active highlight, drag/drop, separators, and hierarchy guides remain. Depth padding now belongs only to the child Task/title grid cell, placing Steps inside the parent title boundary and Substeps one increment deeper without shifting shared metadata columns.
+
+## 7.2.15 Sort and Table Hierarchy Visual Correction Checkpoint
+- `7.2.15` removes the Sort menu checkmark reserve so all eight option labels align to the compact chip edge and the existing purple selected chip remains the sole selection signal. Table Step/Substep continuation rows now use the surrounding background by default and add a parent-boundary content inset while retaining deeper Substep indentation, selection, hover, grid, and sticky contracts.
+
+## 7.2.14 Task Views QA Corrections and Clear Passed Checkpoint
+- `7.2.14` moves List sorting into the approved filter rail dropdown, corrects the List sticky release boundary, aligns default Table descendant surfaces, and adds shared click/hold Steps expansion behavior for the currently rendered List or Table view. Brainstorm QA adds confirmed active-session-only removal of passed items while preserving all remaining checklist and session data.
+
+## 7.2.13 List Sorting and Sticky Hierarchy Checkpoint
+- `7.2.13` adds compact, independently persisted List/smart-list sorting for Manual, due date, normalized display status, priority, title, recently updated, streak, and estimated duration. List and Table parent rows now use their real interactive row inside a rendered parent/descendant boundary so expanded parents stay visible only while their visible descendants scroll; Table header, shared columns, horizontal overflow, selection, menus, and inline actions remain on their existing paths. No database ordering, List drag-and-drop, hierarchy, or Table sorting semantics changed.
+
+## 7.2.12 Platinum Fixture and Presentation Checkpoint
+- `7.2.12` adds a dedicated memory-only Platinum Achievement fixture/control using the current `last_step` Platinum threshold, and appends it deterministically to Trigger All. Celebration-only Platinum now uses a brighter, cooler tone distinct from Silver without changing Trophy Gallery materials; Collection mastery continues through the same Platinum mapping. The neutral legacy fixture is labeled as an unknown award missing from the current catalog. Achievement qualification, descriptions, queueing, persistence, and production gating are unchanged.
+
+## 7.2.11 Achievement Celebration Tier Tones Checkpoint
+- `7.2.11` threads the existing awarded tier through celebration presentation and uses the existing Trophy Gallery bronze, silver, gold, and platinum material palette as one canonical D6/fallback color source. Collection mastery presents as Platinum; unknown or legacy metadata is neutral. The centered face-one pose, lazy/error-safe modal renderer, queue, claim/seen behavior, description builder, and memory-only development harness remain unchanged; a development-only Gold fixture completes all four tier-color checks.
+
+## 7.2.10 Achievement Celebration Dice Trophy Checkpoint
+- `7.2.10` replaces only the transient Achievement celebration modal’s generic Trophy icon with a lazy, bounded D6 trophy canvas using the existing model, materials, and face-one preset. A CSS one-pip die remains visible if WebGL or model loading fails, so modal copy and dismissal stay available. Canonical award descriptions now use plain-language day/week/month, streak, activation, and full-week phrasing; thresholds, logical-day calculations, Collections, queueing, claim/seen behavior, and the memory-only development harness are unchanged.
 
 ## 7.2.9 Development Achievement Celebration Harness Checkpoint
 - `7.2.9` adds development-only, client-memory controls in Progress for representative parent Task, Step, Focus, consecutive logical-day streak, Collection mastery, and legacy fallback Achievement celebrations. Synthetic claimed-notification fixtures pass through the existing description builder and sequential queue, but never claim, see, create, award, progress, activate, or write any Achievement data. The controls and trigger API are unavailable in production; dismissal skips the seen RPC only for synthetic fixtures.

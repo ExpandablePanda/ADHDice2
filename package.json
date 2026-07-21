@@ -1,6 +1,6 @@
 {
   "name": "adhdice-clean-prototype",
-  "version": "7.2.9",
+  "version": "7.2.27",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -12,6 +12,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "typecheck:taskapp-wave": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/*.test.ts",
+    "test:records-reconciliation-nonblocking": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-reconciliation-timeout.test.ts",
+    "test:records-reconciliation-temp-spill": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-reconciliation-timeout.test.ts",
+    "test:records-chunked-reconciliation": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-reconciliation-timeout.test.ts",
+    "test:records-rpc-contract": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-rpc-contract.test.ts",
+    "test:records-sql-compatibility": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-sql-compatibility.test.ts",
     "test:taskapp-wave": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/task-helper-modules.test.ts test/task-refactor-helpers.test.ts test/task-action-hooks-smoke.test.ts"
   },
   "dependencies": {

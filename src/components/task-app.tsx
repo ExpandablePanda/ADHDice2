@@ -256,6 +256,7 @@ import {
   type TaskListRuleRowOperator,
 } from "@/lib/task-list-rule-editor";
 import { mapTaskListManualMembershipRow, mapTaskListRow } from "@/lib/task-list-mappers";
+import { DEFAULT_LIST_SORT_PREFERENCE, getListSortSurfaceId } from "@/lib/task-list-sort";
 import {
   DEFAULT_TASK_UI_STATE,
   getUserScopedStorageKey,
@@ -510,7 +511,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.2.9";
+const APP_VERSION = "7.2.27";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2593,6 +2594,8 @@ export function TaskApp() {
     }
     return availableTaskLists.find((list) => list.id === taskUiState.selectedBucket)?.name ?? taskUiState.selectedBucket;
   }, [availableTaskLists, taskUiState.selectedBucket]);
+  const listSortSurfaceId = getListSortSurfaceId(taskUiState.tasksSurface, taskUiState.selectedBucket);
+  const activeListSortPreference = taskUiState.listSortBySurface[listSortSurfaceId] ?? DEFAULT_LIST_SORT_PREFERENCE;
   const selectedManualList = useMemo(
     () => availableTaskLists.find((list) =>
       list.id === taskUiState.selectedBucket
@@ -3727,6 +3730,48 @@ export function TaskApp() {
     return (
       <AuthSplash
         message={message}
+        onOpenLocalQa={process.env.NODE_ENV !== "production" ? async ({ resetFixtures = false } = {}) => {
+          try {
+            const response = await fetch("/api/local-qa-session", {
+              body: JSON.stringify({ resetFixtures }),
+              headers: { "Content-Type": "application/json" },
+              method: "POST",
+            });
+            const payload = await response.json() as {
+              accessToken?: string;
+              error?: string;
+              refreshToken?: string;
+              seeded?: boolean;
+            };
+            if (!response.ok || !payload.accessToken || !payload.refreshToken) {
+              throw new Error(payload.error ?? "Local QA profile could not be loaded.");
+            }
+
+            const sessionResult = await supabase.auth.setSession({
+              access_token: payload.accessToken,
+              refresh_token: payload.refreshToken,
+            });
+            if (sessionResult.error || !sessionResult.data.session) {
+              throw new Error(sessionResult.error?.message ?? "Local QA session could not be started.");
+            }
+
+            setSession(sessionResult.data.session);
+            setIsAuthResolved(true);
+            setMessage({
+              tone: "good",
+              text: resetFixtures
+                ? "Local QA fixture data was restored."
+                : payload.seeded
+                  ? "Local QA profile was created and loaded."
+                  : "Local QA profile loaded.",
+            });
+          } catch (error) {
+            setMessage({
+              tone: "warn",
+              text: error instanceof Error ? error.message : "Local QA profile could not be loaded.",
+            });
+          }
+        } : undefined}
         onAuthenticate={async ({ email, mode, password }) => {
           const response = mode === "sign-up"
             ? await supabase.auth.signUp({
@@ -5194,6 +5239,14 @@ export function TaskApp() {
         statusCounts={taskUiState.view === "table" ? tableStatusCounts : taskStatusCounts}
         selectedStatuses={taskUiState.statusFilters}
         selectedEnergies={taskUiState.energyFilters}
+        listSortPreference={taskUiState.view === "list" && !duplicateTitleModeActive ? activeListSortPreference : undefined}
+        onListSortPreferenceChange={taskUiState.view === "list" && !duplicateTitleModeActive ? (preference) => setTaskUiState((current) => ({
+          ...current,
+          listSortBySurface: {
+            ...current.listSortBySurface,
+            [listSortSurfaceId]: preference,
+          },
+        })) : undefined}
       />
       {selectedManualList ? (
         <div className="flex flex-wrap items-center gap-2 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
@@ -5584,6 +5637,7 @@ export function TaskApp() {
             achievementLoading={achievementProgress.isLoading}
             hasActivatedProfile={Boolean(achievementProgress.snapshot.profile)}
             lowStimulation={lowStim}
+            logicalDayStart={dayStartTime}
             milestones={milestoneData.milestones}
             milestoneError={milestoneData.loadError}
             milestoneLoading={milestoneData.isLoading}
@@ -5600,6 +5654,8 @@ export function TaskApp() {
               openTaskInSharedTasksEditorFromPaths(taskId);
             }}
             tasks={tasks}
+            recordsClient={supabase}
+            timezone={userTimeZone}
             userId={session?.user?.id ?? null}
           />
         ) : activePage === "Tasks" ? (
@@ -5961,6 +6017,7 @@ export function TaskApp() {
               <TasksListAdapter
                 currentListLabel={selectedBucketLabel}
                 filterRowsNode={taskFilterRowsNode}
+                listSortPreference={activeListSortPreference}
                 onToggleFocusToday={toggleFocusTodayForTask}
                 panelProps={listPanelProps}
                 selectedBucket={taskUiState.selectedBucket}
@@ -6402,6 +6459,7 @@ function HudLoadingShell() {
 function AuthSplash({
   message,
   onAuthenticate,
+  onOpenLocalQa,
 }: {
   message: Message | null;
   onAuthenticate: (credentials: {
@@ -6409,12 +6467,14 @@ function AuthSplash({
     password: string;
     mode: AuthMode;
   }) => Promise<void>;
+  onOpenLocalQa?: (options?: { resetFixtures?: boolean }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<AuthMode>("sign-up");
   const [hasHydratedMode, setHasHydratedMode] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [localQaAction, setLocalQaAction] = useState<"open" | "restore" | null>(null);
 
   useEffect(() => {
     const persistedMode = window.localStorage.getItem(AUTH_MODE_STORAGE_KEY);
@@ -6552,6 +6612,39 @@ function AuthSplash({
             >
               {mode === "sign-up" ? "Already have an account? Switch to Sign In" : "Need an account? Switch to Create Account"}
             </button>
+
+            {onOpenLocalQa ? (
+              <div className="border-t border-[#ece8f8] pt-4 dark:border-white/10">
+                <TaskTableChipButton
+                  className="w-full justify-center"
+                  disabled={localQaAction !== null || isSubmitting}
+                  onClick={async () => {
+                    setLocalQaAction("open");
+                    await onOpenLocalQa();
+                    setLocalQaAction(null);
+                  }}
+                  toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+                >
+                  {localQaAction === "open" ? "Loading Local QA…" : "Continue as Local QA"}
+                </TaskTableChipButton>
+                <div className="mt-2 flex justify-center">
+                  <TaskTableChipButton
+                    disabled={localQaAction !== null || isSubmitting}
+                    onClick={async () => {
+                      setLocalQaAction("restore");
+                      await onOpenLocalQa({ resetFixtures: true });
+                      setLocalQaAction(null);
+                    }}
+                    toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+                  >
+                    {localQaAction === "restore" ? "Restoring fixtures…" : "Restore QA fixtures"}
+                  </TaskTableChipButton>
+                </div>
+                <p className="mt-2 text-center text-xs text-[#8a91a7] dark:text-white/45">
+                  Development only. Uses the complete app with an isolated QA account.
+                </p>
+              </div>
+            ) : null}
           </form>
 
           {message ? <StatusBanner message={message} /> : null}

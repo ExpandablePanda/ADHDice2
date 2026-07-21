@@ -181,6 +181,11 @@ export function deleteQaItem(session: QaSession, itemId: string, now = new Date(
   return updateQaSession(session, { items: session.items.filter((item) => item.id !== itemId) }, now);
 }
 
+export function clearPassedQaItems(session: QaSession): QaSession {
+  if (!session.items.some((item) => item.status === "pass")) return session;
+  return { ...session, items: session.items.filter((item) => item.status !== "pass") };
+}
+
 export function reorderQaItems(session: QaSession, fromIndex: number, toIndex: number, now = new Date()): QaSession {
   if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= session.items.length || toIndex >= session.items.length) return session;
   const items = [...session.items];

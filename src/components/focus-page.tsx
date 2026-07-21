@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Clock3, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock3, Plus } from "lucide-react";
 import {
   type FocusCategory,
   type ActiveFocusSession,
@@ -33,7 +33,9 @@ import {
   WEEKDAY_KEYS,
 } from "@/lib/focus-goals";
 import { getDisplayFocusCategories, isSystemCountdownCategoryId, SYSTEM_COUNTDOWN_CATEGORY_ID } from "@/lib/focus-utils";
+import { classifyFocusSandboxSwipe, getBoundedFocusSandboxPage } from "@/lib/focus-bars";
 import { FocusGoalsPanel } from "./focus-goals-panel";
+import { FocusBars, FocusBarsErrorBoundary } from "./focus-bars";
 import { FocusClockRow, FocusClockRowDesktop } from "./focus-clocks";
 import { FocusCounterHistoryCard, FocusCounterRow } from "./focus-counters";
 import { CategoryManager } from "./category-manager";
@@ -298,6 +300,13 @@ export function FocusPage({
   onSaveDailyGoalAdjustment: (input: { adjustmentDate: string; sourceCategoryId: string; targetCategoryId: string; sourceSessionId?: string | null; reductionSeconds: number; reason?: string }) => Promise<boolean>;
 }) {
   const [countdownPickerOpenRequest, setCountdownPickerOpenRequest] = useState(0);
+  const [focusSandboxPage, setFocusSandboxPage] = useState(0);
+  const focusSandboxSwipeRef = useRef<{
+    cancelled: boolean;
+    pointerId: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [showCounterEditor, setShowCounterEditor] = useState(false);
@@ -352,6 +361,49 @@ export function FocusPage({
   const activeFinishingCategory = finishingCatId ? displayCategories.find((category) => category.id === finishingCatId) : null;
   const labelOptions = buildFocusLabelOptions(userCategories, history);
   const activeCategories = displayCategories.filter((category) => Boolean(activeSessions[category.id]));
+
+  const changeFocusSandboxPage = (nextPage: number) => {
+    setFocusSandboxPage(getBoundedFocusSandboxPage(nextPage));
+  };
+
+  const handleFocusSandboxPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== "touch" || !(event.target instanceof Element)) return;
+    if (event.target.closest("[data-focus-clock-scroll-region]")) return;
+    focusSandboxSwipeRef.current = {
+      cancelled: false,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleFocusSandboxPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const swipe = focusSandboxSwipeRef.current;
+    if (!swipe || swipe.pointerId !== event.pointerId || swipe.cancelled) return;
+    if (classifyFocusSandboxSwipe(event.clientX - swipe.startX, event.clientY - swipe.startY) === "cancelled") {
+      swipe.cancelled = true;
+    }
+  };
+
+  const clearFocusSandboxSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    focusSandboxSwipeRef.current = null;
+  };
+
+  const handleFocusSandboxPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const swipe = focusSandboxSwipeRef.current;
+    if (swipe && swipe.pointerId === event.pointerId && !swipe.cancelled) {
+      const deltaX = event.clientX - swipe.startX;
+      const intent = classifyFocusSandboxSwipe(deltaX, event.clientY - swipe.startY);
+      if (intent === "horizontal") {
+        changeFocusSandboxPage(focusSandboxPage + (deltaX < 0 ? 1 : -1));
+      }
+    }
+    clearFocusSandboxSwipe(event);
+  };
 
   const markOverWeeklyReallocationHandled = (pending: PendingFocusDailySurplus | null) => {
     if (pending?.reason !== OVER_WEEKLY_DAILY_TARGET_REALLOCATION_REASON) return;
@@ -489,9 +541,46 @@ export function FocusPage({
         </div>
       </section>
 
-      {activeCategories.length || counters.length ? (
-        <section className="mt-5">
-          <div className="mx-auto overflow-hidden rounded-[2rem] border border-[#ebe4fb] bg-white/82 shadow-[0_18px_48px_rgba(81,61,168,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.05] sm:max-w-[86rem]">
+      <section className="mt-5 min-w-0 overflow-x-clip">
+        <nav
+          aria-label="Focus sandbox pages"
+          className="mx-auto mb-3 flex w-fit max-w-full items-center gap-1.5 rounded-full border border-[#e5def8] bg-white/88 p-1 shadow-[0_8px_22px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/[0.05]"
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              event.preventDefault();
+              changeFocusSandboxPage(focusSandboxPage + (event.key === "ArrowRight" ? 1 : -1));
+            }
+          }}
+        >
+          <button aria-label="Previous Focus sandbox page" className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[#f1ecff] disabled:opacity-35 dark:hover:bg-white/10" disabled={focusSandboxPage === 0} onClick={() => changeFocusSandboxPage(focusSandboxPage - 1)} type="button">
+            <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+          </button>
+          {(["Clocks", "Focus Bars"] as const).map((label, index) => (
+            <button
+              aria-current={focusSandboxPage === index ? "page" : undefined}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${focusSandboxPage === index ? "bg-[#eee8ff] text-[#654ce4] dark:bg-[#372a62] dark:text-[#d4caff]" : "text-[var(--text-secondary)] hover:bg-[#f7f4ff] dark:hover:bg-white/[0.06]"}`}
+              key={label}
+              onClick={() => changeFocusSandboxPage(index)}
+              type="button"
+            >
+              {label}
+            </button>
+          ))}
+          <span className="sr-only">Page {focusSandboxPage + 1} of 2</span>
+          <button aria-label="Next Focus sandbox page" className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[#f1ecff] disabled:opacity-35 dark:hover:bg-white/10" disabled={focusSandboxPage === 1} onClick={() => changeFocusSandboxPage(focusSandboxPage + 1)} type="button">
+            <ChevronRight aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </nav>
+
+        <div
+          className="min-w-0"
+          onPointerCancel={clearFocusSandboxSwipe}
+          onPointerDown={handleFocusSandboxPointerDown}
+          onPointerMove={handleFocusSandboxPointerMove}
+          onPointerUp={handleFocusSandboxPointerUp}
+        >
+          {focusSandboxPage === 0 ? (activeCategories.length || counters.length ? (
+            <div className="mx-auto overflow-hidden rounded-[2rem] border border-[#ebe4fb] bg-white/82 shadow-[0_18px_48px_rgba(81,61,168,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.05] sm:max-w-[86rem]">
             {activeCategories.length ? (
               <>
                 <div className="sm:hidden">
@@ -551,9 +640,20 @@ export function FocusPage({
                 />
               </div>
             ) : null}
-          </div>
-        </section>
-      ) : null}
+            </div>
+          ) : null) : (
+            <div className="mx-auto max-w-4xl rounded-[2rem] border border-[#ebe4fb] bg-white/82 p-3 shadow-[0_18px_48px_rgba(81,61,168,0.08)] backdrop-blur dark:border-white/10 dark:bg-white/[0.05] sm:p-4">
+              <FocusBarsErrorBoundary fallback={(
+                <div className="rounded-[1.5rem] border border-dashed border-[#ddd4f4] bg-[#fbf9ff] px-5 py-7 text-center text-sm font-medium text-[var(--text-secondary)] dark:border-white/12 dark:bg-white/[0.03]">
+                  Focus Bars could not be displayed. Your timers are unchanged; use the pager to return to Clocks.
+                </div>
+              )}>
+                <FocusBars activeSessions={activeSessions} categories={activeCategories} />
+              </FocusBarsErrorBoundary>
+            </div>
+          )}
+        </div>
+      </section>
 
       <FocusGoalsPanel
         activeSessions={activeSessions}

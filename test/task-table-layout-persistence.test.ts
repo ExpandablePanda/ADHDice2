@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildTaskUiSettingsEnvelope,
   normalizeStoredTaskTableLayoutPreferences,
+  resolveTaskTableLayoutPublishDecision,
   splitTaskUiSettingsEnvelope,
   taskTableLayoutPreferencesEqual,
 } from "@/lib/task-table-layout-persistence";
@@ -84,5 +85,36 @@ test("taskTableLayoutPreferencesEqual compares explicit layout state only", () =
       { columnOrder: ["due", "title"] },
     ),
     false,
+  );
+});
+
+test("persisted layout application cannot echo stale local column order", () => {
+  const persistedPreferences = { columnOrder: ["title", "due"] };
+
+  assert.deepEqual(
+    resolveTaskTableLayoutPublishDecision({
+      isApplyingPersistedLayout: true,
+      nextPreferences: { columnOrder: ["due", "title"] },
+      persistedPreferences,
+    }),
+    { isApplyingPersistedLayout: true, shouldPublish: false },
+  );
+
+  assert.deepEqual(
+    resolveTaskTableLayoutPublishDecision({
+      isApplyingPersistedLayout: true,
+      nextPreferences: persistedPreferences,
+      persistedPreferences,
+    }),
+    { isApplyingPersistedLayout: false, shouldPublish: false },
+  );
+
+  assert.deepEqual(
+    resolveTaskTableLayoutPublishDecision({
+      isApplyingPersistedLayout: false,
+      nextPreferences: { columnOrder: ["due", "title"] },
+      persistedPreferences,
+    }),
+    { isApplyingPersistedLayout: false, shouldPublish: true },
   );
 });

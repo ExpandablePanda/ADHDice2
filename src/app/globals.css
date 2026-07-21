@@ -221,9 +221,14 @@
   user-select: none;
 }
 
-html,
-body {
+html {
   overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+body {
+  overflow-x: clip;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

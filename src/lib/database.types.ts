@@ -1,3 +1,49 @@
+import type { PersistedRecordCurrent, PersistedRecordEvent } from "@/lib/records/types";
+
+export type RecordReconcileRun = {
+  id: string;
+  user_id: string;
+  manifest_schema_version: 1;
+  evidence_schema_version: 2;
+  rules_version: string;
+  manifest_digest: string;
+  evaluation_digest: string;
+  expected_partitions: unknown[];
+  expected_chunk_count: number;
+  expected_current_row_count: number;
+  expected_event_row_count: number;
+  evaluated_at: string;
+  timezone: string;
+  logical_day_start: string;
+  status: "uploading" | "completed" | "invalid";
+  expires_at: string;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RecordReconcileChunk = {
+  run_id: string;
+  user_id: string;
+  row_kind: "current" | "event";
+  section_key: "global_tasks" | "streaks" | "focus" | "per_task" | "record_history";
+  chunk_index: number;
+  chunk_digest: string;
+  row_count: number;
+  envelope_bytes: number;
+  received_at: string;
+};
+
+export type RecordCurrentStage = Omit<PersistedRecordCurrent, "created_at" | "id" | "logical_day_start" | "recalculated_at" | "rules_version" | "timezone" | "updated_at"> & {
+  run_id: string;
+  record_identity: string;
+};
+
+export type RecordEventStage = Omit<PersistedRecordEvent, "created_at" | "id" | "invalidated_at" | "invalidation_reason" | "logical_day_start" | "rules_version" | "superseded_by_event_identity" | "timezone" | "updated_at" | "validity_state"> & {
+  run_id: string;
+  record_identity: string;
+};
+
 export type TaskStatus =
   | "pending"
   | "in_progress"
@@ -1810,6 +1856,42 @@ export type Database = {
         Update: TaskHistoryUpdate;
         Relationships: [];
       };
+      adhdice_record_current: {
+        Row: PersistedRecordCurrent;
+        Insert: Omit<PersistedRecordCurrent, "created_at" | "id" | "updated_at"> & Partial<Pick<PersistedRecordCurrent, "created_at" | "id" | "updated_at">>;
+        Update: Partial<PersistedRecordCurrent>;
+        Relationships: [];
+      };
+      adhdice_record_events: {
+        Row: PersistedRecordEvent;
+        Insert: Omit<PersistedRecordEvent, "created_at" | "id" | "updated_at"> & Partial<Pick<PersistedRecordEvent, "created_at" | "id" | "updated_at">>;
+        Update: Partial<PersistedRecordEvent>;
+        Relationships: [];
+      };
+      adhdice_record_reconcile_runs: {
+        Row: RecordReconcileRun;
+        Insert: Omit<RecordReconcileRun, "completed_at" | "created_at" | "expires_at" | "id" | "status" | "updated_at"> & Partial<Pick<RecordReconcileRun, "completed_at" | "created_at" | "expires_at" | "id" | "status" | "updated_at">>;
+        Update: Partial<RecordReconcileRun>;
+        Relationships: [];
+      };
+      adhdice_record_reconcile_chunks: {
+        Row: RecordReconcileChunk;
+        Insert: Omit<RecordReconcileChunk, "received_at"> & Partial<Pick<RecordReconcileChunk, "received_at">>;
+        Update: Partial<RecordReconcileChunk>;
+        Relationships: [];
+      };
+      adhdice_record_current_stage: {
+        Row: RecordCurrentStage;
+        Insert: RecordCurrentStage;
+        Update: Partial<RecordCurrentStage>;
+        Relationships: [];
+      };
+      adhdice_record_event_stage: {
+        Row: RecordEventStage;
+        Insert: RecordEventStage;
+        Update: Partial<RecordEventStage>;
+        Relationships: [];
+      };
       adhdice_milestones: {
         Row: Milestone;
         Insert: MilestoneInsert;
@@ -2149,6 +2231,18 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_begin_records_reconciliation: {
+        Args: { p_payload: unknown };
+        Returns: unknown;
+      };
+      adhdice_upload_records_reconciliation_chunk: {
+        Args: { p_payload: unknown };
+        Returns: unknown;
+      };
+      adhdice_finalize_records_reconciliation: {
+        Args: { p_payload: unknown };
+        Returns: unknown;
+      };
       adhdice_activate_achievement_profile: {
         Args: {
           p_operation_id: string;
