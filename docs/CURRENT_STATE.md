@@ -5,13 +5,16 @@ Last reviewed: 2026-07-21
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.2.28`.
+- Current working app version: `7.2.29`.
 - Current release group: `7.2.x` Active Timer shared-editor behavior.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.2.29 Records Reconciliation Timestamp Checkpoint
+- `7.2.29` preserves a current Record's `first_achieved_at` only when both its stable candidate identity and value survive reconciliation unchanged. Corrected values and replacement candidates now take the staged candidate timestamp, while exact replay, stable tie events, authoritative current deletion, absent-event invalidation, and PostgreSQL 15 compatibility remain intact. No SQL was applied by this checkpoint.
 
 ## 7.2.28 Static Export Local QA Server Checkpoint
 - `7.2.28` removes the request-time Local QA `POST` route from the App Router and serves the same development-only `/api/local-qa-session` contract through the `npm run dev` Node wrapper. QA credentials remain server-only, the existing fixture builder and authenticated Supabase seeding path are reused, and production remains a GitHub Pages static export with no runtime API route.

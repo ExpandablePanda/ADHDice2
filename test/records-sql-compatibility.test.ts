@@ -93,7 +93,7 @@ test("7.2.27 finalization try-lock precedes row locking and every write", () => 
   }
 });
 
-test("7.2.27 compact upload and atomic publication contracts remain intact", () => {
+test("7.2.29 compact upload and atomic publication contracts remain intact", () => {
   for (const source of [forward, schema]) {
     assert.match(source, /octet_length\(p_payload::text\)[\s\S]*1048576/);
     assert.match(source, /\^sha256:\[0-9a-f\]\{64\}\$/);
@@ -103,7 +103,8 @@ test("7.2.27 compact upload and atomic publication contracts remain intact", () 
     assert.match(source, /get diagnostics v_inserted = row_count;[\s\S]*v_inserted <> v_row_count/);
     assert.match(source, /Duplicate Records identity across chunks\./);
     assert.match(source, /Records reconciliation is incomplete\./);
-    assert.match(source, /first_achieved_at = least/);
+    assert.match(source, /first_achieved_at = case\s+when adhdice_record_current\.candidate_identity = excluded\.candidate_identity\s+and adhdice_record_current\.value = excluded\.value\s+then adhdice_record_current\.first_achieved_at\s+else excluded\.first_achieved_at\s+end,/);
+    assert.doesNotMatch(source, /first_achieved_at = least\(adhdice_record_current\.first_achieved_at, excluded\.first_achieved_at\)/);
     assert.match(source, /absent_from_complete_recalculation/);
     assert.doesNotMatch(source, /delete from public\.adhdice_record_events/);
     assert.match(source, /revoke all on function public\.adhdice_begin_records_reconciliation\(jsonb\) from public, anon/);

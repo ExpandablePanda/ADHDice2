@@ -2383,7 +2383,12 @@ begin
     credited_date = excluded.credited_date, period_key = excluded.period_key,
     period_start = excluded.period_start, period_end = excluded.period_end,
     candidate_identity = excluded.candidate_identity,
-    first_achieved_at = least(adhdice_record_current.first_achieved_at, excluded.first_achieved_at),
+    first_achieved_at = case
+      when adhdice_record_current.candidate_identity = excluded.candidate_identity
+        and adhdice_record_current.value = excluded.value
+      then adhdice_record_current.first_achieved_at
+      else excluded.first_achieved_at
+    end,
     evidence_snapshot = case when adhdice_record_current.evidence_fingerprint is distinct from excluded.evidence_fingerprint then excluded.evidence_snapshot else adhdice_record_current.evidence_snapshot end,
     evidence_fingerprint = excluded.evidence_fingerprint, timezone = excluded.timezone,
     logical_day_start = excluded.logical_day_start, recalculated_at = excluded.recalculated_at, updated_at = now();

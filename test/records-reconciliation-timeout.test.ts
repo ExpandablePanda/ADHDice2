@@ -16,6 +16,7 @@ import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import type { RecordsEvaluation } from "../src/lib/records/types.ts";
 
 const patch = readFileSync(new URL("../supabase/patch_records_chunked_reconciliation.sql", import.meta.url), "utf8");
+const compatibilityPatch = readFileSync(new URL("../supabase/patch_records_validation_compatibility.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const repository = readFileSync(new URL("../src/lib/record-repository.ts", import.meta.url), "utf8");
 
@@ -40,6 +41,42 @@ function buildFixture(): RecordsEvaluation {
 }
 
 type RpcResponse = { data: unknown; error: { code?: string; message: string } | null };
+
+type PublishedRow = Record<string, unknown> & {
+  candidate_identity: string;
+  first_achieved_at: string;
+  record_identity: string;
+  value: number;
+};
+
+type PublishedEvent = PublishedRow & { event_identity: string; validity_state: string };
+
+function publishRecordsGeneration(
+  priorCurrent: PublishedRow[],
+  priorEvents: PublishedEvent[],
+  current: PublishedRow[],
+  events: PublishedEvent[],
+) {
+  const existingCurrent = new Map(priorCurrent.map((row) => [row.record_identity, row]));
+  const existingEvents = new Map(priorEvents.map((row) => [row.event_identity, row]));
+  const nextCurrent = current.map((row) => {
+    const existing = existingCurrent.get(row.record_identity);
+    const preserveTimestamp = existing?.candidate_identity === row.candidate_identity && existing.value === row.value;
+    return { ...row, first_achieved_at: preserveTimestamp ? existing.first_achieved_at : row.first_achieved_at };
+  });
+  const nextEventIds = new Set(events.map((row) => row.event_identity));
+  const nextEvents = [
+    ...events.map((row) => ({
+      ...row,
+      first_achieved_at: existingEvents.get(row.event_identity)?.first_achieved_at ?? row.first_achieved_at,
+      validity_state: "valid",
+    })),
+    ...priorEvents
+      .filter((row) => !nextEventIds.has(row.event_identity))
+      .map((row) => ({ ...row, validity_state: "invalid" })),
+  ];
+  return { current: nextCurrent, events: nextEvents };
+}
 
 class FakeRecordsProtocol {
   active: { digest: string; manifest: Record<string, unknown>; runId: string } | null = null;
@@ -112,14 +149,14 @@ class FakeRecordsProtocol {
       if (this.received.size !== expectedChunks || current.length !== expectedCurrent || events.length !== expectedEvents) {
         return { data: null, error: { code: "22023", message: "incomplete" } };
       }
-      const priorCurrent = new Map(this.liveCurrent.map((row) => [row.record_identity, row]));
-      const priorEvents = new Map(this.liveEvents.map((row) => [row.event_identity, row]));
-      this.liveCurrent = current.map((row) => ({ ...row, first_achieved_at: priorCurrent.get(row.record_identity)?.first_achieved_at ?? row.first_achieved_at }));
-      const nextEventIds = new Set(events.map((row) => row.event_identity));
-      this.liveEvents = [
-        ...events.map((row) => ({ ...row, first_achieved_at: priorEvents.get(row.event_identity)?.first_achieved_at ?? row.first_achieved_at, validity_state: "valid" })),
-        ...this.liveEvents.filter((row) => !nextEventIds.has(row.event_identity)).map((row) => ({ ...row, validity_state: "invalid" })),
-      ];
+      const published = publishRecordsGeneration(
+        this.liveCurrent as PublishedRow[],
+        this.liveEvents as PublishedEvent[],
+        current as PublishedRow[],
+        events as PublishedEvent[],
+      );
+      this.liveCurrent = published.current;
+      this.liveEvents = published.events;
       this.active = null;
       this.received.clear();
       return { data: { status: "ok", current_count: current.length, event_count: events.length, evaluated_at: "2026-07-20T12:00:00Z" }, error: null };
@@ -230,7 +267,7 @@ test("7.2.24 protocol rejects conflicts, incompleteness, and busy publication wi
   assert.deepEqual(protocol.liveCurrent, liveBeforeCleanup);
 });
 
-test("7.2.24 SQL exposes only canonical staged RPCs and preserves publication invariants", () => {
+test("7.2.29 SQL exposes only canonical staged RPCs and preserves publication invariants", () => {
   for (const source of [patch, schema]) {
     assert.equal((source.match(/create function public\.adhdice_begin_records_reconciliation\(p_payload jsonb\)/g) ?? []).length, 1);
     assert.equal((source.match(/create function public\.adhdice_upload_records_reconciliation_chunk\(p_payload jsonb\)/g) ?? []).length, 1);
@@ -246,7 +283,6 @@ test("7.2.24 SQL exposes only canonical staged RPCs and preserves publication in
     assert.match(source, /already_received/);
     assert.match(source, /different digest/);
     assert.match(source, /Records reconciliation is incomplete/);
-    assert.match(source, /first_achieved_at = least/);
     assert.doesNotMatch(source, /first_qualified_at = excluded/);
     assert.doesNotMatch(source, /delete from public\.adhdice_record_events/);
     assert.match(source, /absent_from_complete_recalculation/);
@@ -255,11 +291,64 @@ test("7.2.24 SQL exposes only canonical staged RPCs and preserves publication in
     assert.match(source, /enable row level security/);
     assert.match(source, /revoke all on table public\.adhdice_record_reconcile_runs from public, anon, authenticated/);
   }
+  for (const source of [patch, compatibilityPatch, schema]) {
+    assert.match(source, /first_achieved_at = case\s+when adhdice_record_current\.candidate_identity = excluded\.candidate_identity\s+and adhdice_record_current\.value = excluded\.value\s+then adhdice_record_current\.first_achieved_at\s+else excluded\.first_achieved_at\s+end,/);
+    assert.doesNotMatch(source, /first_achieved_at = least\(adhdice_record_current\.first_achieved_at, excluded\.first_achieved_at\)/);
+  }
   assert.doesNotMatch(patch, /set\s+(?:local\s+)?statement_timeout/i);
   assert.match(repository, /for \(const chunk of serialized\.chunks\)/);
   assert.doesNotMatch(repository, /Promise\.all\([^)]*upload/);
   assert.match(repository, /adhdice_begin_records_reconciliation[\s\S]*adhdice_upload_records_reconciliation_chunk[\s\S]*adhdice_finalize_records_reconciliation/);
   assert.match(repository, /onProgress\("Reloading Records"\)/);
+});
+
+function currentRow(candidate: string, value: number, timestamp: string): PublishedRow {
+  return { candidate_identity: candidate, first_achieved_at: timestamp, record_identity: "metric:global:global", value };
+}
+
+function eventRow(identity: string, candidate: string, value: number, timestamp: string): PublishedEvent {
+  return { ...currentRow(candidate, value, timestamp), event_identity: identity, record_identity: identity, validity_state: "valid" };
+}
+
+test("7.2.29 exact current-candidate replay preserves first achievement", () => {
+  const original = currentRow("candidate-a", 5, "2026-07-01T12:00:00Z");
+  const replay = currentRow("candidate-a", 5, "2026-07-20T12:00:00Z");
+  assert.equal(publishRecordsGeneration([original], [], [replay], []).current[0]?.first_achieved_at, original.first_achieved_at);
+});
+
+test("7.2.29 corrected value in the same scope uses the replacement timestamp", () => {
+  const original = currentRow("candidate-a", 5, "2026-07-01T12:00:00Z");
+  const corrected = currentRow("candidate-a", 4, "2026-07-10T12:00:00Z");
+  assert.equal(publishRecordsGeneration([original], [], [corrected], []).current[0]?.first_achieved_at, corrected.first_achieved_at);
+});
+
+test("7.2.29 different current candidate in the same scope uses the replacement timestamp", () => {
+  const original = currentRow("candidate-a", 5, "2026-07-01T12:00:00Z");
+  const replacement = currentRow("candidate-b", 5, "2026-07-11T12:00:00Z");
+  assert.equal(publishRecordsGeneration([original], [], [replacement], []).current[0]?.first_achieved_at, replacement.first_achieved_at);
+});
+
+test("7.2.29 equal-value tie keeps the current timestamp and a distinct stable event", () => {
+  const timestamp = "2026-07-01T12:00:00Z";
+  const original = currentRow("candidate-a", 5, timestamp);
+  const replay = currentRow("candidate-a", 5, "2026-07-20T12:00:00Z");
+  const recordBreak = eventRow("event-break", "candidate-a", 5, timestamp);
+  const tie = eventRow("event-tie", "candidate-b", 5, timestamp);
+  const published = publishRecordsGeneration([original], [recordBreak], [replay], [recordBreak, tie]);
+  assert.equal(published.current[0]?.first_achieved_at, timestamp);
+  assert.equal(published.events.find((event) => event.event_identity === "event-tie")?.first_achieved_at, timestamp);
+  assert.equal(new Set(published.events.map((event) => event.event_identity)).size, 2);
+});
+
+test("7.2.29 an empty valid generation deletes current rows and invalidates absent events", () => {
+  const published = publishRecordsGeneration(
+    [currentRow("candidate-a", 5, "2026-07-01T12:00:00Z")],
+    [eventRow("event-break", "candidate-a", 5, "2026-07-01T12:00:00Z")],
+    [],
+    [],
+  );
+  assert.deepEqual(published.current, []);
+  assert.equal(published.events[0]?.validity_state, "invalid");
 });
 
 test("7.2.24 busy and refresh failure preserve the previous UI snapshot", async () => {
