@@ -5,13 +5,16 @@ Last reviewed: 2026-07-21
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.2.27`.
+- Current working app version: `7.2.28`.
 - Current release group: `7.2.x` Active Timer shared-editor behavior.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.2.28 Static Export Local QA Server Checkpoint
+- `7.2.28` removes the request-time Local QA `POST` route from the App Router and serves the same development-only `/api/local-qa-session` contract through the `npm run dev` Node wrapper. QA credentials remain server-only, the existing fixture builder and authenticated Supabase seeding path are reused, and production remains a GitHub Pages static export with no runtime API route.
 
 ## 7.2.27 Records SQL Validation Safety Checkpoint
 - `7.2.27` rewrites the still-unapplied Records validation compatibility migration in place: required containers are NULL-safe, all canonical payload casts remain bounded and guarded, logical day start accepts canonical minute or second precision, and finalization obtains the per-user advisory try-lock before locking or reading the run. Compact evidence, chunk/digest limits, staging, atomic publication, first-achieved preservation, and event invalidation are unchanged. No SQL was applied by this checkpoint.

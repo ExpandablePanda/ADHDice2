@@ -1,23 +1,19 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/database.types";
+import type { Database } from "../src/lib/database.types.ts";
 import {
   buildLocalQaProfileFixtures,
   LOCAL_QA_SEED_METADATA_KEY,
   LOCAL_QA_SEED_VERSION,
-} from "@/lib/local-qa-profile-fixtures";
-
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
+} from "../src/lib/local-qa-profile-fixtures.ts";
 
 function isLocalHostname(hostname: string) {
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return true;
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]") return true;
   if (hostname.startsWith("10.") || hostname.startsWith("192.168.")) return true;
   const match = hostname.match(/^172\.(\d{1,2})\./);
   return Boolean(match && Number(match[1]) >= 16 && Number(match[1]) <= 31);
 }
 
 function isAllowedLocalRequest(request: Request) {
-  if (process.env.NODE_ENV === "production") return false;
   const origin = request.headers.get("origin");
   if (!origin) return true;
   try {
@@ -58,9 +54,15 @@ async function seedLocalQaProfile(client: SupabaseClient<Database>, userId: stri
   return true;
 }
 
-export async function POST(request: Request) {
-  if (!isAllowedLocalRequest(request)) {
+export async function handleLocalQaSession(request: Request, { isDevelopment = false } = {}) {
+  if (!isDevelopment || process.env.NODE_ENV === "production" || !isAllowedLocalRequest(request)) {
     return Response.json({ error: "Not found." }, { status: 404 });
+  }
+  if (request.method !== "POST") {
+    return Response.json({ error: "Method not allowed." }, {
+      headers: { Allow: "POST" },
+      status: 405,
+    });
   }
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

@@ -14,6 +14,8 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in Safari or another browser.
 
+`npm run dev` also serves the development-only `POST /api/local-qa-session` helper. Configure `ADHDICE_LOCAL_QA_EMAIL` and `ADHDICE_LOCAL_QA_PASSWORD` in `.env.local`; they stay in the local Node process and are not part of the static production export.
+
 ## Supabase Setup
 
 1. Create a Supabase project.

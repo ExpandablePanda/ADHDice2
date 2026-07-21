@@ -1,9 +1,9 @@
 {
   "name": "adhdice-clean-prototype",
-  "version": "7.2.27",
+  "version": "7.2.28",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node --experimental-strip-types ./scripts/dev-server.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

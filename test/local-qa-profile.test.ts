@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import {
   buildLocalQaProfileFixtures,
@@ -9,7 +9,9 @@ import {
 
 const userId = "70000000-0000-4000-8000-000000000001";
 const now = new Date("2026-07-19T12:00:00.000Z");
-const routeSource = readFileSync(new URL("../src/app/api/local-qa-session/route.ts", import.meta.url), "utf8");
+const appRouteUrl = new URL("../src/app/api/local-qa-session/route.ts", import.meta.url);
+const handlerSource = readFileSync(new URL("../scripts/local-qa-session-handler.ts", import.meta.url), "utf8");
+const devServerSource = readFileSync(new URL("../scripts/dev-server.mjs", import.meta.url), "utf8");
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
 test("local QA fixtures form one coherent user-scoped profile", () => {
@@ -54,19 +56,27 @@ test("fixture dates remain useful relative to the login date", () => {
   assert.ok(fixtures.focusSessions.some((session) => session.session_date === "2026-07-19"));
 });
 
-test("local QA login stays server-side, development-only, and enters the normal app", () => {
-  assert.match(routeSource, /process\.env\.ADHDICE_LOCAL_QA_EMAIL/);
-  assert.match(routeSource, /process\.env\.ADHDICE_LOCAL_QA_PASSWORD/);
-  assert.doesNotMatch(routeSource, /NEXT_PUBLIC_ADHDICE_LOCAL_QA/);
-  assert.match(routeSource, /process\.env\.NODE_ENV === "production"/);
-  assert.match(routeSource, /signInWithPassword/);
+test("local QA login stays outside the App Router, server-side, and development-only", async () => {
+  assert.equal(existsSync(appRouteUrl), false);
+  assert.match(devServerSource, /LOCAL_QA_PATH = "\/api\/local-qa-session"/);
+  assert.match(devServerSource, /isDevelopment: true/);
+  assert.match(handlerSource, /process\.env\.ADHDICE_LOCAL_QA_EMAIL/);
+  assert.match(handlerSource, /process\.env\.ADHDICE_LOCAL_QA_PASSWORD/);
+  assert.doesNotMatch(handlerSource, /NEXT_PUBLIC_ADHDICE_LOCAL_QA/);
+  assert.match(handlerSource, /!isDevelopment/);
+  assert.match(handlerSource, /process\.env\.NODE_ENV === "production"/);
+  assert.match(handlerSource, /signInWithPassword/);
   assert.match(taskAppSource, /supabase\.auth\.setSession/);
   assert.doesNotMatch(taskAppSource, /TaskViewsGuestWorkspace/);
+
+  const { handleLocalQaSession } = await import("../scripts/local-qa-session-handler.ts");
+  const productionResponse = await handleLocalQaSession(new Request("http://localhost/api/local-qa-session", { method: "POST" }));
+  assert.equal(productionResponse.status, 404);
 });
 
 test("the idempotent seed marker and explicit restore action remain available", () => {
   assert.equal(LOCAL_QA_SEED_METADATA_KEY, "adhdice_local_qa_seed_version");
   assert.equal(LOCAL_QA_SEED_VERSION, 1);
-  assert.match(routeSource, /resetFixtures/);
+  assert.match(handlerSource, /resetFixtures/);
   assert.match(taskAppSource, /Restore QA fixtures/);
 });
