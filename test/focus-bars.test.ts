@@ -217,14 +217,14 @@ test("rows sort runtime first, then nonzero activity, zero-time goals, and displ
 });
 
 test("Focus Bars reserves independent state, completion, overtime, and control regions", () => {
-  assert.match(focusBarsSource, /min-h-10[\s\S]*?\{stateLabel\}[\s\S]*?Session/);
+  assert.match(focusBarsSource, /h-10[\s\S]*?\{stateLabel\}[\s\S]*?Session/);
   assert.match(focusBarsSource, /min-h-4[\s\S]*?\{isGoalComplete \? "Goal complete"/);
   assert.match(focusBarsSource, /min-h-4[\s\S]*?row\.overtimeSeconds > 0/);
-  assert.match(focusBarsSource, /mt-2 flex min-h-12/);
+  assert.match(focusBarsSource, /mt-2 flex min-h-16 w-full flex-wrap content-start/);
 });
 
 test("Focus Bars adds horizontal end-lane insets without shared scrolling changes", () => {
-  assert.match(focusBarsSource, /flex min-w-full items-end gap-4 px-2 sm:gap-5 sm:px-3/);
+  assert.match(focusBarsSource, /flex min-w-full items-start gap-4 px-2 sm:gap-5 sm:px-3/);
   assert.doesNotMatch(focusBarsSource, /-mx-|translate-x-|scrollLeft/);
 });
 
@@ -284,12 +284,156 @@ test("standalone Countdown is excluded", () => {
   assert.deepEqual(rows.map((row) => row.categoryId), ["work"]);
 });
 
-test("Focus Bars wires Start/Resume/Pause and Finish to category handlers", () => {
+test("Focus Bars wires icon controls and Finish to the existing category handlers", () => {
   assert.match(focusBarsSource, /onToggle\(row\.categoryId, row\.runtimeState === "inactive" \? \{ mode: "countup" \} : undefined\)/);
   assert.match(focusBarsSource, /onFinish\(row\.categoryId\)/);
-  assert.match(focusBarsSource, /"Resume" : row\.runtimeState === "running" \? "Pause" : "Start"/);
+  assert.match(focusBarsSource, /row\.runtimeState === "running" \? <FocusTimerPauseIcon[\s\S]*?<FocusTimerPlayIcon/);
   assert.match(focusPageSource, /onFinish=\{handleFinishClick\}/);
   assert.match(focusPageSource, /onToggle=\{onToggleTimer\}/);
+});
+
+test("Focus Bars exposes Clocks reset and compact adjustment controls only for active runtimes", () => {
+  assert.match(focusBarsSource, /row\.runtimeState !== "inactive"[\s\S]*?onReset\(row\.categoryId\)/);
+  assert.match(focusBarsSource, /row\.runtimeState !== "inactive"[\s\S]*?<FocusTimerQuickAdjustmentControls compact onAdjust=\{\(deltaSeconds\) => onAdjust\(row\.categoryId, deltaSeconds\)\}/);
+  assert.match(focusBarsSource, /onAdjust: \(categoryId: string, deltaSeconds: number\) => Promise<boolean>/);
+  assert.match(focusBarsSource, /onReset: \(categoryId: string\) => Promise<void>/);
+  assert.match(focusPageSource, /<FocusBars[\s\S]*?onAdjust=\{onAdjustTimer\}[\s\S]*?onReset=\{onResetTimer\}/);
+});
+
+test("Focus Bars adjustment trigger uses the approved compact chip height", () => {
+  assert.match(focusClocksSource, /!clockFace[\s\S]*?className="h-\[26px\] px-2 py-0"/);
+  assert.match(focusBarsSource, /<FocusTimerQuickAdjustmentControls compact/);
+});
+
+test("Clocks opens the complete larger adjustment group directly in the centered clock-face region", () => {
+  assert.match(focusClocksSource, /aria-label=\{isCountdown \? `Choose \$\{category\.title\} countdown duration` : `Adjust \$\{category\.title\} timer`\}[\s\S]*?setShowAdjustMenu\(\(prev\) => !prev\)/);
+  assert.match(focusClocksSource, /className="absolute inset-4[^"]*items-center justify-center[^"]*rounded-full/);
+  assert.match(focusClocksSource, /data-focus-clock-adjustment-region="centered-clock-face"[\s\S]*?<FocusTimerQuickAdjustmentControls clockFace onAdjust=/);
+  assert.match(focusClocksSource, /\{clockFace \|\| isOpen \? \([\s\S]*?aria-label="Adjust session time options"/);
+  assert.match(focusClocksSource, /compact \? "h-5 min-w-5 px-1 py-0 text-\[10px\]" : undefined/);
+  assert.match(focusClocksSource, /compact \? FOCUS_BAR_ADJUSTMENT_INPUT_CLASS : TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS/);
+  assert.match(focusClocksSource, /compact \? "gap-0\.5" : "gap-2"/);
+  assert.equal([...focusClocksSource.matchAll(/<FocusTimerQuickAdjustmentControls/g)].length, 1);
+});
+
+test("Clocks omits the intermediate launcher and gear Adjust time opens the same adjustment state", () => {
+  assert.match(focusClocksSource, /\{!clockFace \? \([\s\S]*?aria-label="Adjust session time"[\s\S]*?>\+ \/ −<\/TaskTableChipButton>/);
+  assert.match(focusClocksSource, /<FocusTimerQuickAdjustmentControls clockFace/);
+  assert.match(focusClocksSource, /aria-label="Adjust session time"[\s\S]*?setShowSettingsMenu\(false\);[\s\S]*?setShowAdjustMenu\(true\);[\s\S]*?\+ \/ − Adjust time/);
+  assert.doesNotMatch(focusClocksSource, /<FocusTimerQuickAdjustmentControls[^>]*>[\s\S]*?<FocusTimerQuickAdjustmentControls/);
+});
+
+test("Focus Bars uses approved semantic icon controls with explicit accessible labels", () => {
+  assert.match(focusBarsSource, /aria-label=\{row\.runtimeState === "paused" \? "Resume timer" : row\.runtimeState === "running" \? "Pause timer" : "Start timer"\}/);
+  assert.match(focusBarsSource, /title=\{row\.runtimeState === "paused" \? "Resume timer" : row\.runtimeState === "running" \? "Pause timer" : "Start timer"\}/);
+  assert.match(focusBarsSource, /toneClassName=\{row\.runtimeState === "running" \? FOCUS_TIMER_PAUSE_CHIP_TONE : FOCUS_TIMER_SUCCESS_CHIP_TONE\}/);
+  assert.match(focusBarsSource, /aria-label="Finish session"[\s\S]*?title="Finish session"[\s\S]*?<FocusTimerFinishIcon/);
+  assert.match(focusBarsSource, /aria-label="Reset session"[\s\S]*?title="Reset session"[\s\S]*?<FocusTimerResetIcon/);
+  assert.match(focusBarsSource, /FOCUS_TIMER_RESET_CHIP_TONE/);
+  assert.match(focusClocksSource, /aria-label="Adjust session time"[\s\S]*?>\+ \/ −</);
+  assert.match(focusClocksSource, /export function FocusTimerResetIcon/);
+  assert.match(focusBarsSource, /disabled=\{pendingRuntimeActionCategoryId === row\.categoryId\}/);
+  assert.match(focusBarsSource, /runRuntimeAction\(row\.categoryId/);
+});
+
+test("Clocks and Bars share direction-first adjustment controls without legacy signed groups", () => {
+  assert.match(focusClocksSource, /export const FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES = \[5, 10\] as const/);
+  assert.match(focusClocksSource, /<FocusTimerQuickAdjustmentControls clockFace onAdjust=\{\(deltaSeconds\) => onAdjust\(category\.id, deltaSeconds\)\}/);
+  assert.match(focusClocksSource, /setAdjustmentDirection\(1\)/);
+  assert.match(focusClocksSource, /aria-pressed=\{adjustmentDirection === direction\}/);
+  assert.match(focusBarsSource, /FocusTimerQuickAdjustmentControls/);
+  assert.match(focusBarsSource, /onAdjust\(row\.categoryId, deltaSeconds\)/);
+  assert.match(focusClocksSource, /getFocusTimerAdjustmentDeltaSeconds\(adjustmentDirection, minutes\)/);
+  assert.match(focusClocksSource, /return direction \* minutes \* 60/);
+  assert.match(focusClocksSource, />\s*\{minutes\}m\s*</);
+  assert.doesNotMatch(focusClocksSource, /Remove custom minutes|Add custom minutes|− Apply|\+ Apply/);
+});
+
+test("custom minute adjustments validate whole positive values and retain directional submission", () => {
+  const positiveWholeMinutes = /^[1-9]\d*$/;
+  for (const invalidValue of ["", "0", "-7", "7.5", "seven"]) assert.equal(positiveWholeMinutes.test(invalidValue), false);
+  assert.equal(positiveWholeMinutes.test("7"), true);
+  assert.match(focusClocksSource, /function parseFocusTimerCustomAdjustmentMinutes[\s\S]*?\^\[1-9\]\\d\*\$/);
+  assert.match(focusClocksSource, /getFocusTimerAdjustmentDeltaSeconds\(adjustmentDirection, customMinuteValue\), true/);
+  assert.match(focusClocksSource, /if \(succeeded && clearCustomMinutes\) setCustomMinutes\(""\)/);
+  assert.match(focusClocksSource, /disabled=\{customMinuteValue === null \|\| isAdjustmentPending\}/);
+  assert.match(focusClocksSource, /if \(adjustmentPendingRef\.current\) return/);
+  assert.match(focusClocksSource, /if \(event\.key === "Enter"\) event\.preventDefault\(\)/);
+});
+
+test("custom adjustment uses digit entry without native spinners and renders a separate minute suffix", () => {
+  assert.match(focusClocksSource, /inputMode="numeric"/);
+  assert.match(focusClocksSource, /pattern="\[0-9\]\*"/);
+  assert.match(focusClocksSource, /type="text"/);
+  assert.doesNotMatch(focusClocksSource, /type="number"/);
+  assert.doesNotMatch(focusClocksSource, /placeholder="min"/);
+  assert.match(focusClocksSource, /<span aria-hidden="true"[^>]*>min<\/span>/);
+});
+
+test("Focus Bars keep graph content fixed while adjustment controls expand below", () => {
+  assert.match(focusBarsSource, /flex min-w-full items-start/);
+  assert.match(focusBarsSource, /flex h-\[21rem\][\s\S]*?overflow-hidden[\s\S]*?<\/div>\s*<div className="mt-2 flex min-h-16/);
+  assert.match(focusClocksSource, /compact \? "basis-full gap-0\.5 pt-1" : "gap-2"/);
+});
+
+test("Focus tabs copy the approved centered task-tab grouped-chip formatting without arrows", () => {
+  assert.match(focusPageSource, /className="mb-3 flex justify-center" data-focus-pager-alignment="centered-sandbox">\s*<nav/);
+  assert.match(focusPageSource, /className=\{TASKS_SURFACE_GROUP_CLASS\}/);
+  assert.match(focusPageSource, /<AdhdChip[\s\S]*?TASKS_SURFACE_ACTIVE_CHIP_CLASS[\s\S]*?TASKS_SURFACE_INACTIVE_CHIP_CLASS/);
+  assert.match(focusPageSource, /aria-pressed=\{focusSandboxPage === page\}/);
+  assert.doesNotMatch(focusPageSource, /Previous Focus sandbox page|Next Focus sandbox page|ChevronLeft|ChevronRight/);
+  assert.match(focusPageSource, /event\.key === "ArrowLeft" \|\| event\.key === "ArrowRight"/);
+  assert.match(focusPageSource, /focusSandboxPage === 0[\s\S]*?<FocusClockRow[\s\S]*?: \([\s\S]*?<FocusBarsErrorBoundary/);
+});
+
+test("Focus tabs copy Tasks native drag reorder with persisted visual navigation order", () => {
+  assert.match(focusPageSource, /FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY = "adhdice\.focusSandboxTabOrder\.v1"/);
+  assert.match(focusPageSource, /focusSandboxTabOrder\.map\(\(page, visualIndex\)/);
+  assert.match(focusPageSource, /aria-description="Drag horizontally to reorder this Focus tab\."[\s\S]*?draggable[\s\S]*?onDragStart/);
+  assert.match(focusPageSource, /event\.dataTransfer\.setData\("text\/plain", String\(page\)\)/);
+  assert.match(focusPageSource, /reorderFocusSandboxTab\(sourcePage, visualIndex\)/);
+  assert.match(focusPageSource, /writeFocusSandboxTabOrder\(next\)/);
+  assert.match(focusPageSource, /changeFocusSandboxPageByOffset\(event\.key === "ArrowRight" \? 1 : -1\)/);
+  assert.match(focusPageSource, /changeFocusSandboxPageByOffset\(deltaX < 0 \? 1 : -1\)/);
+});
+
+test("Focus Bars expanded adjustment controls use the approved micro treatment", () => {
+  assert.match(focusClocksSource, /FOCUS_BAR_ADJUSTMENT_INPUT_CLASS = "[^"]*h-5 w-10[^"]*px-1 text-center text-\[10px\]/);
+  assert.match(focusClocksSource, /compact \? "h-5 px-1 py-0 text-\[10px\]" : undefined/);
+  assert.match(focusClocksSource, /compact \? "text-\[9px\]" : "text-\[13px\]"/);
+});
+
+test("Focus Bars action circles use the approved small icon-button size with proportional icons", () => {
+  assert.match(focusBarsSource, /FOCUS_BAR_ICON_CONTROL_CLASS = "h-7 w-7 p-0"/);
+  assert.match(focusBarsSource, /<FocusTimerPauseIcon className="h-4 w-4" \/>[\s\S]*?<FocusTimerPlayIcon className="h-4 w-4" \/>/);
+  assert.match(focusBarsSource, /<FocusTimerFinishIcon className="h-4 w-4" \/>/);
+  assert.match(focusBarsSource, /<FocusTimerResetIcon className="h-4 w-4" \/>/);
+});
+
+test("Add Focus Timer matches the Manual Entry chip shell and fixed chip typography", () => {
+  assert.match(focusPageSource, /w-\[min\(12rem,calc\(100vw-2rem\)\)\]/);
+  assert.match(focusPageSource, /ui-pill-button-strong-light flex items-center gap-1\.5 transition hover:-translate-y-0\.5/);
+  assert.match(focusPageSource, /className="min-w-0 flex-1 border-0 bg-transparent p-0 text-\[13px\] font-medium leading-none[^"]*focus:text-\[13px\]"/);
+  assert.doesNotMatch(focusPageSource, /TASK_TABLE_INPUT_CLASS/);
+  assert.match(focusPageSource, /placeholder="Add focus timer\.\.\."[\s\S]*?role="combobox"/);
+});
+
+test("Focus toolbar controls copy the inactive Focus Goals category-chip tone", () => {
+  assert.match(focusPageSource, /const FOCUS_TOOLBAR_CHIP_TONE_CLASS = "border-\[#e4deef\] bg-\[var\(--surface-elevated\)\] text-\[#68738c\] dark:border-white\/10 dark:bg-white\/\[0\.03\] dark:text-white\/60"/);
+  assert.equal((focusPageSource.match(/FOCUS_TOOLBAR_CHIP_TONE_CLASS/g) ?? []).length, 6);
+  assert.match(focusPageSource, /Edit Categories[\s\S]*?Edit Goals[\s\S]*?Manual Entry[\s\S]*?<FocusTimerPicker[\s\S]*?Add Counter/);
+});
+
+test("Focus Timer dropdown highlight matches the active Clocks chip with white text", () => {
+  assert.match(focusPageSource, /index === safeHighlightedIndex \? "bg-\[#6f57f6\] text-white"/);
+  assert.match(focusPageSource, /<Clock3[\s\S]*?index === safeHighlightedIndex \? "text-white" : "text-\[#7b68ee\]/);
+  assert.doesNotMatch(focusPageSource, /bg-\[#f1ecff\] text-\[#6249e8\]/);
+});
+
+test("Focus Bars renders directly in the outer sandbox without a nested card shell", () => {
+  assert.match(focusBarsSource, /return \(\s*<div className="min-w-0 py-1">[\s\S]*?>Focus Bars<\/h3>/);
+  assert.doesNotMatch(focusBarsSource, /rounded-\[var\(--radius-card\)\][\s\S]*?Live daily Focus category bar chart/);
+  assert.match(focusPageSource, /max-w-4xl rounded-\[2rem\][\s\S]*?<FocusBarsErrorBoundary[\s\S]*?<FocusBars/);
 });
 
 test("Focus Bars shows an empty state when no category is eligible", () => {

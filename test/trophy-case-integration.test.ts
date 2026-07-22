@@ -5,10 +5,14 @@ import { readFileSync } from "node:fs";
 const completed = readFileSync(new URL("../src/components/task-app/completed-milestones-workspace.tsx", import.meta.url), "utf8");
 const home = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
-const workspace = readFileSync(new URL("../src/components/task-app/trophy-case/trophy-case-workspace.tsx", import.meta.url), "utf8");
+const galleryWorkspace = readFileSync(new URL("../src/components/task-app/trophy-case/trophy-case-workspace.tsx", import.meta.url), "utf8");
+const showcase = readFileSync(new URL("../src/components/task-app/trophy-case/trophy-collection-showcase.tsx", import.meta.url), "utf8");
+const workspace = `${galleryWorkspace}\n${showcase}`;
+const achievements = readFileSync(new URL("../src/components/task-app/achievements-page.tsx", import.meta.url), "utf8");
 const loader = readFileSync(new URL("../src/components/task-app/trophy-case/trophy-case-renderer-loader.tsx", import.meta.url), "utf8");
 const canvas = readFileSync(new URL("../src/components/task-app/trophy-case/trophy-case-canvas.tsx", import.meta.url), "utf8");
 const thumbnails = readFileSync(new URL("../src/components/task-app/trophy-case/trophy-thumbnail-generator.ts", import.meta.url), "utf8");
+const dieVisual = readFileSync(new URL("../src/components/task-app/trophy-case/trophy-die-visual.ts", import.meta.url), "utf8");
 
 test("Completed Milestones is a single list-first Trophy Gallery without a room mode switch", () => {
   assert.match(completed, /Completed Milestones/);
@@ -36,6 +40,7 @@ test("ordinary rendering avoids Three and mounts one top-level dynamic shared Ca
 });
 
 test("one rectangular sandbox owns four fixed shared-canvas stages with counts underneath", () => {
+  assert.match(galleryWorkspace, /<TrophyCollectionShowcase/);
   assert.match(workspace, /TROPHY_GALLERY_TIERS\.map/);
   assert.match(workspace, /data-testid="trophy-collection-sandbox"/);
   assert.match(workspace, /data-tier-preview-region=\{tier\}/);
@@ -53,7 +58,7 @@ test("live preview framing is centered, close, and uses profile DPR without CSS 
   assert.match(canvas, /dpr=\{profile\.dpr\}/);
   assert.match(canvas, /PerspectiveCamera makeDefault fov=\{TROPHY_SHOWCASE_CAMERA_FOV\} position=\{\[0, 0, TROPHY_SHOWCASE_CAMERA_DISTANCE\]\}/);
   assert.match(canvas, /scale=\{0\.82\}/);
-  assert.match(canvas, /position=\{\[0, -1, 0\]\}/);
+  assert.match(canvas, /position=\{\[0, 0, 0\]\}/);
   assert.match(canvas, /style=\{\{ inset: 0, pointerEvents: "none", position: "absolute" \}\}/);
 });
 
@@ -65,25 +70,53 @@ test("four live trophies rotate safely and pause for hidden documents or reduced
   assert.match(canvas, /getTrophyRotationDelta\(rawDelta/);
   assert.match(canvas, /state\.invalidate\(\)/);
   assert.match(canvas, /<TrophyRotationDriver active=\{rotationActive\} controller=\{rotationController\} \/>/);
-  assert.match(workspace, /onClick=\{\(\) => selectTier\(tier\)\}/);
+  assert.match(galleryWorkspace, /onSelectTier=\{selectTier\}/);
+  assert.match(showcase, /onClick=\{\(\) => onSelectTier\(tier\)\}/);
   assert.match(workspace, /pointer-events-none absolute inset-0 z-20/);
 });
 
-test("all four fixed stages receive centered local rotation with distinct starting angles", () => {
+test("all four trophies start on the audience-facing one-pip pose and rotate in place", () => {
   assert.match(canvas, /TROPHY_GALLERY_TIERS\.map\(\(tier, index\)/);
-  assert.match(canvas, /initialAngle=\{index \* 0\.28\}/);
   assert.match(canvas, /rotationController\.register\(index, group\)/);
-  assert.match(canvas, /rotation=\{\[0, initialAngle, 0\]\}/);
+  assert.match(canvas, /rotation=\{TROPHY_DIE_PRESENTATION_ROTATION\}/);
+  assert.match(canvas, /rotation=\{\[0, 0, 0\]\}/);
   assert.match(canvas, /for \(const group of this\.groups\)/);
   assert.match(canvas, /group\.rotation\.y \+= delta/);
+  assert.match(dieVisual, /TROPHY_DIE_PRESENTATION_ROTATION[^=]*= \[0, Math\.PI, 0\]/);
+  assert.doesNotMatch(canvas, /initialAngle|0\.32, -0\.55, 0\.08/);
+});
+
+test("gold and platinum use white pips while platinum uses a fine-grain glitter surface", () => {
+  assert.match(dieVisual, /TROPHY_DIE_LIGHT_PIP_COLOR = "#ffffff"/);
+  assert.match(dieVisual, /tier === "gold" \|\| tier === "platinum" \? TROPHY_DIE_LIGHT_PIP_COLOR/);
+  assert.match(dieVisual, /TROPHY_DIE_PLATINUM_BODY_MATERIAL/);
+  assert.match(dieVisual, /createTrophyDieGlitterTexture/);
+  assert.match(dieVisual, /clearcoat: 1/);
+  assert.match(dieVisual, /iridescence: 0\.42/);
+  assert.match(canvas, /getTrophyDiePipColor\(tier\)/);
+  assert.match(canvas, /bumpMap=\{glitterTexture\}/);
+  assert.match(canvas, /roughnessMap=\{glitterTexture\}/);
+  assert.match(thumbnails, /model\.rotation\.set\(\.\.\.TROPHY_DIE_PRESENTATION_ROTATION\)/);
+  assert.match(thumbnails, /bumpMap: platinumGlitterTexture/);
+  assert.match(thumbnails, /roughnessMap: platinumGlitterTexture/);
+  assert.match(thumbnails, /getTrophyDiePipColor\(tier\)/);
+  assert.doesNotMatch(`${canvas}\n${thumbnails}\n${dieVisual}`, /PlatinumDieSparkles|PlatinumSparkles|PLATINUM_SPARKLES/);
 });
 
 test("tier and Aura buttons expose pressed state, counts, combined filtering, and All clears collection filters", () => {
   assert.match(workspace, /aria-pressed=\{selected\}/);
-  assert.match(workspace, /counts\.tiers\[tier\]/);
+  assert.match(showcase, /counts\[tier\]/);
   assert.match(workspace, /counts\.auras\[aura\]/);
   assert.match(workspace, /auraFilters: \[\], tierFilters: \[\]/);
   assert.match(workspace, /Showing \{filtered\.length\} of \{counts\.total\}/);
+});
+
+test("Achievements reuses the shared trophy showcase with Achievement-owned tier counts", () => {
+  assert.match(achievements, /countAchievementTrophiesByTier\(model\)/);
+  assert.match(achievements, /<ManagedTrophyCollectionShowcase/);
+  assert.match(achievements, /heading="Achievement Trophy Collection"/);
+  assert.match(achievements, /description=\{`\$\{model\.summary\.earnedTiers\} Achievement trophies earned`\}/);
+  assert.doesNotMatch(achievements, /TrophyCaseRendererLoader|trophy-collection-sandbox/);
 });
 
 test("cards use one cached image per tier with distinct Aura treatments and fallback icon", () => {

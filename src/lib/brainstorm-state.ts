@@ -10,20 +10,36 @@ export type BrainstormAnswer = {
 
 export type BrainstormAnswers = Record<string, BrainstormAnswer>;
 
+export type BrainstormQuestionnaireSession = {
+  answers: BrainstormAnswers;
+  createdAt: string;
+  id: string;
+  sourceMarkdown: string;
+  title: string;
+  updatedAt: string;
+};
+
+export type BrainstormQuestionnaireState = {
+  activeSessionId: string | null;
+  schemaVersion: 1;
+  sessions: BrainstormQuestionnaireSession[];
+};
+
 export type BrainstormPersistedState = {
   answers: BrainstormAnswers;
   clientUpdatedAt: string;
   qaState: BrainstormQaState;
+  questionnaireState: BrainstormQuestionnaireState;
   sourceMarkdown: string;
 };
 
-export type BrainstormStateField = "answers" | "qaState" | "sourceMarkdown";
+export type BrainstormStateField = "answers" | "qaState" | "questionnaireState" | "sourceMarkdown";
 export type BrainstormStateChanges = Partial<Pick<BrainstormPersistedState, BrainstormStateField>>;
 
 export const EMPTY_BRAINSTORM_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 
 export function createEmptyBrainstormState(clientUpdatedAt = EMPTY_BRAINSTORM_TIMESTAMP): BrainstormPersistedState {
-  return { answers: {}, clientUpdatedAt, qaState: createEmptyBrainstormQaState(), sourceMarkdown: "" };
+  return { answers: {}, clientUpdatedAt, qaState: createEmptyBrainstormQaState(), questionnaireState: createEmptyBrainstormQuestionnaireState(), sourceMarkdown: "" };
 }
 
 function normalizeAnswer(value: unknown): BrainstormAnswer | null {
@@ -55,16 +71,82 @@ function normalizeTimestamp(value: unknown) {
   return new Date(value).toISOString();
 }
 
+function defaultQuestionnaireId() {
+  return globalThis.crypto?.randomUUID?.() ?? `questionnaire-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function normalizeQuestionnaireSession(value: unknown): BrainstormQuestionnaireSession | null {
+  if (!value || typeof value !== "object") return null;
+  const session = value as Partial<BrainstormQuestionnaireSession>;
+  const id = typeof session.id === "string" ? session.id.trim() : "";
+  if (!id) return null;
+  const createdAt = normalizeTimestamp(session.createdAt);
+  return {
+    answers: normalizeBrainstormAnswers(session.answers),
+    createdAt,
+    id,
+    sourceMarkdown: typeof session.sourceMarkdown === "string" ? session.sourceMarkdown : "",
+    title: typeof session.title === "string" ? session.title : "",
+    updatedAt: normalizeTimestamp(session.updatedAt ?? createdAt),
+  };
+}
+
+export function createEmptyBrainstormQuestionnaireState(): BrainstormQuestionnaireState {
+  return { activeSessionId: null, schemaVersion: 1, sessions: [] };
+}
+
+export function createBrainstormQuestionnaireSession(options: Partial<Pick<BrainstormQuestionnaireSession, "answers" | "sourceMarkdown" | "title">> = {}, now = new Date(), id = defaultQuestionnaireId()): BrainstormQuestionnaireSession {
+  const timestamp = now.toISOString();
+  return { answers: normalizeBrainstormAnswers(options.answers), createdAt: timestamp, id, sourceMarkdown: options.sourceMarkdown ?? "", title: options.title ?? "New Questionnaire", updatedAt: timestamp };
+}
+
+export function normalizeBrainstormQuestionnaireState(value: unknown, legacy: Pick<BrainstormPersistedState, "answers" | "sourceMarkdown">): BrainstormQuestionnaireState {
+  const candidate = value && typeof value === "object" ? value as Partial<BrainstormQuestionnaireState> : null;
+  const sessions = Array.isArray(candidate?.sessions)
+    ? candidate.sessions.map(normalizeQuestionnaireSession).filter((session): session is BrainstormQuestionnaireSession => Boolean(session))
+    : [];
+  if (sessions.length === 0 && (legacy.sourceMarkdown || Object.keys(legacy.answers).length)) {
+    const legacySession = createBrainstormQuestionnaireSession({ answers: legacy.answers, sourceMarkdown: legacy.sourceMarkdown, title: "Questionnaire" }, new Date(EMPTY_BRAINSTORM_TIMESTAMP), "legacy-questionnaire");
+    sessions.push(legacySession);
+  }
+  const requestedId = typeof candidate?.activeSessionId === "string" ? candidate.activeSessionId : null;
+  return { activeSessionId: sessions.some((session) => session.id === requestedId) ? requestedId : sessions[0]?.id ?? null, schemaVersion: 1, sessions };
+}
+
+export function updateBrainstormQuestionnaireSession(session: BrainstormQuestionnaireSession, changes: Partial<Pick<BrainstormQuestionnaireSession, "answers" | "sourceMarkdown" | "title">>, now = new Date()): BrainstormQuestionnaireSession {
+  return { ...session, ...changes, answers: "answers" in changes ? normalizeBrainstormAnswers(changes.answers) : session.answers, updatedAt: now.toISOString() };
+}
+
+export function duplicateBrainstormQuestionnaireSession(session: BrainstormQuestionnaireSession, now = new Date(), id = defaultQuestionnaireId()): BrainstormQuestionnaireSession {
+  return createBrainstormQuestionnaireSession({ answers: session.answers, sourceMarkdown: session.sourceMarkdown, title: `${session.title || "Questionnaire"} Copy` }, now, id);
+}
+
+export function deleteBrainstormQuestionnaireSession(state: BrainstormQuestionnaireState, sessionId: string): BrainstormQuestionnaireState {
+  const index = state.sessions.findIndex((session) => session.id === sessionId);
+  if (index < 0) return state;
+  const sessions = state.sessions.filter((session) => session.id !== sessionId);
+  return { ...state, activeSessionId: state.activeSessionId === sessionId ? sessions[Math.min(index, sessions.length - 1)]?.id ?? null : state.activeSessionId, sessions };
+}
+
 export function normalizeBrainstormState(value: unknown): BrainstormPersistedState {
   if (!value || typeof value !== "object") return createEmptyBrainstormState();
   const candidate = value as Partial<BrainstormPersistedState> & { client_updated_at?: unknown; qa_state?: unknown; source_markdown?: unknown };
+  const answers = normalizeBrainstormAnswers(candidate.answers);
+  const sourceMarkdown = typeof (candidate.sourceMarkdown ?? candidate.source_markdown) === "string"
+    ? String(candidate.sourceMarkdown ?? candidate.source_markdown)
+    : "";
+  const rawQaState = candidate.qaState ?? candidate.qa_state;
+  const questionnaireState = normalizeBrainstormQuestionnaireState(
+    candidate.questionnaireState ?? (rawQaState && typeof rawQaState === "object" ? (rawQaState as { questionnaireState?: unknown }).questionnaireState : undefined),
+    { answers, sourceMarkdown },
+  );
+  const activeQuestionnaire = questionnaireState.sessions.find((session) => session.id === questionnaireState.activeSessionId);
   return {
-    answers: normalizeBrainstormAnswers(candidate.answers),
+    answers: activeQuestionnaire?.answers ?? answers,
     clientUpdatedAt: normalizeTimestamp(candidate.clientUpdatedAt ?? candidate.client_updated_at),
-    qaState: normalizeBrainstormQaState(candidate.qaState ?? candidate.qa_state),
-    sourceMarkdown: typeof (candidate.sourceMarkdown ?? candidate.source_markdown) === "string"
-      ? String(candidate.sourceMarkdown ?? candidate.source_markdown)
-      : "",
+    qaState: normalizeBrainstormQaState(rawQaState),
+    questionnaireState,
+    sourceMarkdown: activeQuestionnaire?.sourceMarkdown ?? sourceMarkdown,
   };
 }
 
@@ -97,7 +179,7 @@ export function updateBrainstormState(
   return normalizeBrainstormState({ ...state, ...changes, clientUpdatedAt: now });
 }
 
-export function brainstormStateSignature(state: BrainstormPersistedState, fields: BrainstormStateField[] = ["answers", "qaState", "sourceMarkdown"]) {
+export function brainstormStateSignature(state: BrainstormPersistedState, fields: BrainstormStateField[] = ["answers", "qaState", "questionnaireState", "sourceMarkdown"]) {
   return JSON.stringify(Object.fromEntries(fields.map((field) => [field, state[field]])));
 }
 
@@ -105,7 +187,7 @@ export function serializeBrainstormState(state: BrainstormPersistedState) {
   return {
     answers: normalizeBrainstormAnswers(state.answers),
     client_updated_at: normalizeTimestamp(state.clientUpdatedAt),
-    qa_state: normalizeBrainstormQaState(state.qaState),
+    qa_state: { ...normalizeBrainstormQaState(state.qaState), questionnaireState: normalizeBrainstormQuestionnaireState(state.questionnaireState, state) },
     source_markdown: state.sourceMarkdown,
   };
 }
@@ -115,7 +197,7 @@ export function serializeBrainstormStateUpdate(state: BrainstormPersistedState, 
   return Object.assign(
     { client_updated_at: serialized.client_updated_at },
     fields.includes("answers") ? { answers: serialized.answers } : {},
-    fields.includes("qaState") ? { qa_state: serialized.qa_state } : {},
+    fields.includes("qaState") || fields.includes("questionnaireState") ? { qa_state: serialized.qa_state } : {},
     fields.includes("sourceMarkdown") ? { source_markdown: serialized.source_markdown } : {},
   );
 }

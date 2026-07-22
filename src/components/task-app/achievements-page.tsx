@@ -12,6 +12,7 @@ import {
   formatAchievementDate,
   formatAchievementValue,
   formatTierLabel,
+  countAchievementTrophiesByTier,
   getMilestonesTabState,
   getNextProgressTab,
   type AchievementCollectionView,
@@ -22,6 +23,7 @@ import {
 import { CompletedMilestonesWorkspace } from "./completed-milestones-workspace";
 import { PageShellHeader } from "./page-shell-header";
 import { RecordsTab } from "./records-tab";
+import { ManagedTrophyCollectionShowcase } from "./trophy-case/trophy-collection-showcase";
 
 type AchievementsPageProps = {
   achievementError: string | null;
@@ -105,7 +107,7 @@ export function AchievementsPage({
 
       {activeTab === "achievements" ? (
         <div aria-labelledby="progress-tab-achievements" id="progress-panel-achievements" role="tabpanel">
-          <AchievementsTab error={achievementError} hasActivatedProfile={hasActivatedProfile} loading={achievementLoading} model={model} notificationError={notificationError} onTriggerDevelopmentAchievementTest={onTriggerDevelopmentAchievementTest} />
+          <AchievementsTab error={achievementError} hasActivatedProfile={hasActivatedProfile} loading={achievementLoading} lowStimulation={lowStimulation} model={model} notificationError={notificationError} onTriggerDevelopmentAchievementTest={onTriggerDevelopmentAchievementTest} userId={userId} />
         </div>
       ) : activeTab === "milestones" ? (
         <div aria-labelledby="progress-tab-milestones" id="progress-panel-milestones" role="tabpanel">
@@ -128,21 +130,32 @@ export function AchievementsPage({
   );
 }
 
-function AchievementsTab({ error, hasActivatedProfile, loading, model, notificationError, onTriggerDevelopmentAchievementTest }: {
+function AchievementsTab({ error, hasActivatedProfile, loading, lowStimulation, model, notificationError, onTriggerDevelopmentAchievementTest, userId }: {
   error: string | null;
   hasActivatedProfile: boolean;
   loading: boolean;
+  lowStimulation: boolean;
   model: AchievementProgressModel;
   notificationError: string | null;
   onTriggerDevelopmentAchievementTest?: (kind?: DevelopmentAchievementTestFixtureKind) => void;
+  userId: string | null;
 }) {
   if (loading) return <WorkspaceState tone="neutral" title="Loading Achievement progress…" />;
   if (error) return <WorkspaceState detail={error} tone="error" title="Achievement progress could not load" />;
   if (!hasActivatedProfile) {
     return <WorkspaceState detail="The Achievement runtime has not been activated for this account yet. Existing Tasks, Focus sessions, and awards have not been changed." tone="neutral" title="No activated Achievement profile" />;
   }
+  const trophyCounts = countAchievementTrophiesByTier(model);
   return (
     <div className="space-y-5">
+      <ManagedTrophyCollectionShowcase
+        counts={trophyCounts}
+        description={`${model.summary.earnedTiers} Achievement trophies earned`}
+        heading="Achievement Trophy Collection"
+        lowStimulation={lowStimulation}
+        titleId="achievement-trophy-collection-title"
+        userId={userId}
+      />
       {notificationError ? (
         <p className="rounded-lg border border-[#efdfbd] bg-[#fffaf0] px-4 py-3 text-sm text-[#8a6628] dark:border-[#604a23] dark:bg-[#2a2417] dark:text-[#e5c77f]">
           Achievement celebrations could not sync right now. Progress remains available and no awards were changed.

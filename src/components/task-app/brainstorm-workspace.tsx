@@ -1,34 +1,36 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Cloud, CloudOff, Copy, Download, Sparkles } from "lucide-react";
+import { Check, Cloud, CloudOff, Copy, Download, Plus, Sparkles, Trash2 } from "lucide-react";
 import { TaskTableChipButton, TASK_TABLE_INPUT_CLASS } from "@/components/ui/task-table-primitives";
-import { AdhdChip } from "@/components/ui-system";
+import { AdhdChip, AdhdPanel } from "@/components/ui-system";
 import { BrainstormQaWorkspace } from "@/components/task-app/brainstorm-qa-workspace";
 import { parseBrainstormMarkdown, type BrainstormDefinition, type BrainstormParseResult, type BrainstormQuestion } from "@/lib/brainstorm-markdown";
 import {
   createEmptyBrainstormAnswer,
+  createBrainstormQuestionnaireSession,
+  deleteBrainstormQuestionnaireSession,
+  duplicateBrainstormQuestionnaireSession,
   generateBrainstormSummary,
   isBrainstormQuestionAnswered,
   migrateBrainstormAnswers,
+  updateBrainstormQuestionnaireSession,
   type BrainstormAnswer,
   type BrainstormAnswers,
   type BrainstormPersistedState,
   type BrainstormStateChanges,
 } from "@/lib/brainstorm-state";
-import type { BrainstormResetScope, BrainstormSyncState } from "@/hooks/useBrainstormState";
+import type { BrainstormSyncState } from "@/hooks/useBrainstormState";
 
 type BrainstormWorkspaceProps = {
   appVersion: string;
   error: string | null;
   remoteUpdateNotice: boolean;
-  resetState: (scope?: BrainstormResetScope) => void;
   state: BrainstormPersistedState;
   syncState: BrainstormSyncState;
   updateState: (changes: BrainstormStateChanges) => void;
 };
 
-const panelClass = "rounded-[1.35rem] border border-[#e8e2f5] bg-white/92 p-4 shadow-[0_18px_45px_rgba(76,58,145,0.07)] dark:border-white/10 dark:bg-white/[0.045] sm:p-5";
 const labelClass = "text-sm font-semibold text-[#40385f] dark:text-white/85";
 
 function renderPlainParagraphs(paragraphs: string[]) {
@@ -125,7 +127,7 @@ function initialParse(source: string): BrainstormParseResult | null {
   return source.trim() ? parseBrainstormMarkdown(source) : null;
 }
 
-export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, resetState, state, syncState, updateState }: BrainstormWorkspaceProps) {
+export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, state, syncState, updateState }: BrainstormWorkspaceProps) {
   const [activeView, setActiveView] = useState<"questionnaire" | "qa">("questionnaire");
   const [sourceDraft, setSourceDraft] = useState(state.sourceMarkdown);
   const [parseResult, setParseResult] = useState<BrainstormParseResult | null>(() => initialParse(state.sourceMarkdown));
@@ -135,6 +137,20 @@ export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, res
   const hydratedRef = useRef(false);
   const handledRemoteNoticeRef = useRef(false);
   const definition: BrainstormDefinition | null = parseResult?.definition ?? null;
+  const activeQuestionnaire = state.questionnaireState.sessions.find((session) => session.id === state.questionnaireState.activeSessionId) ?? null;
+
+  const updateQuestionnaireState = (questionnaireState: typeof state.questionnaireState) => {
+    const active = questionnaireState.sessions.find((session) => session.id === questionnaireState.activeSessionId) ?? null;
+    updateState({ answers: active?.answers ?? {}, questionnaireState, sourceMarkdown: active?.sourceMarkdown ?? "" });
+  };
+
+  const setActiveQuestionnaire = (session: NonNullable<typeof activeQuestionnaire>) => {
+    const questionnaireState = {
+      ...state.questionnaireState,
+      sessions: state.questionnaireState.sessions.map((current) => current.id === session.id ? session : current),
+    };
+    updateQuestionnaireState(questionnaireState);
+  };
 
   useEffect(() => {
     if (syncState === "loading" || hydratedRef.current) return;
@@ -163,26 +179,28 @@ export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, res
   const progress = useMemo(() => {
     if (!definition) return { answered: 0, total: 0 };
     return {
-      answered: definition.questions.filter((question) => isBrainstormQuestionAnswered(question, state.answers[question.id])).length,
+      answered: definition.questions.filter((question) => isBrainstormQuestionAnswered(question, activeQuestionnaire?.answers[question.id])).length,
       total: definition.questions.length,
     };
-  }, [definition, state.answers]);
-  const summary = useMemo(() => definition ? generateBrainstormSummary(definition, state.answers) : "", [definition, state.answers]);
+  }, [activeQuestionnaire?.answers, definition]);
+  const summary = useMemo(() => definition ? generateBrainstormSummary(definition, activeQuestionnaire?.answers ?? {}) : "", [activeQuestionnaire?.answers, definition]);
 
   const parseSource = () => {
     const nextResult = parseBrainstormMarkdown(sourceDraft);
     setParseResult(nextResult);
     setFeedback(null);
     if (nextResult.definition) {
-      updateState({
-        answers: migrateBrainstormAnswers(nextResult.definition, state.answers),
-        sourceMarkdown: sourceDraft,
-      });
+      if (activeQuestionnaire) {
+        setActiveQuestionnaire(updateBrainstormQuestionnaireSession(activeQuestionnaire, {
+          answers: migrateBrainstormAnswers(nextResult.definition, activeQuestionnaire.answers),
+          sourceMarkdown: sourceDraft,
+        }));
+      }
     }
   };
 
   const updateAnswer = (question: BrainstormQuestion, answer: BrainstormAnswer) => {
-    updateState({ answers: { ...state.answers, [question.id]: answer } });
+    if (activeQuestionnaire) setActiveQuestionnaire(updateBrainstormQuestionnaireSession(activeQuestionnaire, { answers: { ...activeQuestionnaire.answers, [question.id]: answer } }));
   };
 
   const copySummary = async () => {
@@ -221,7 +239,7 @@ export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, res
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#938ab8]">Brainstorm</p>
           <h2 className="mt-1 text-2xl font-semibold text-[#30294d] dark:text-white">{activeView === "questionnaire" ? "Questionnaire builder" : "QA Checklist"}</h2>
-          <p className="mt-1 text-sm text-[#716b8c] dark:text-white/60">{activeView === "questionnaire" ? "One active questionnaire" : "Saved manual QA sessions"}, synced across your devices. {updatedLabel}</p>
+          <p className="mt-1 text-sm text-[#716b8c] dark:text-white/60">{activeView === "questionnaire" ? "Saved questionnaire sessions" : "Saved manual QA sessions"}, synced across your devices. {updatedLabel}</p>
           <div aria-label="Brainstorm workspace navigation" className="mt-3 flex flex-wrap gap-2" role="tablist">
             <AdhdChip aria-controls="brainstorm-questionnaire-panel" aria-selected={activeView === "questionnaire"} onClick={() => setActiveView("questionnaire")} role="tab" selected={activeView === "questionnaire"}>Questionnaire</AdhdChip>
             <AdhdChip aria-controls="brainstorm-qa-panel" aria-selected={activeView === "qa"} onClick={() => setActiveView("qa")} role="tab" selected={activeView === "qa"}>QA Checklist</AdhdChip>
@@ -231,27 +249,39 @@ export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, res
           <div aria-live="polite" className="inline-flex items-center gap-2 rounded-full border border-[#e5def5] bg-[#faf8ff] px-3 py-1.5 text-xs font-semibold text-[#716b8c] dark:border-white/10 dark:bg-white/5 dark:text-white/65">
             {syncState === "unavailable" || syncState === "offline" ? <CloudOff size={14} /> : <Cloud size={14} />}{syncLabel}
           </div>
-          {activeView === "questionnaire" ? <TaskTableChipButton onClick={() => { if (window.confirm("Clear this Brainstorm? The empty questionnaire will sync to your devices.")) { resetState("questionnaire"); setSourceDraft(""); setParseResult(null); setShowSummary(false); setFeedback("Brainstorm cleared."); } }} toneClassName="border-rose-200 bg-rose-50 text-rose-700">Clear Brainstorm</TaskTableChipButton> : null}
+          {activeView === "questionnaire" && activeQuestionnaire ? <TaskTableChipButton onClick={() => { if (window.confirm("Clear this questionnaire session? Other saved questionnaires will remain.")) { const session = updateBrainstormQuestionnaireSession(activeQuestionnaire, { answers: {}, sourceMarkdown: "" }); setActiveQuestionnaire(session); setSourceDraft(""); setParseResult(null); setShowSummary(false); setFeedback("Questionnaire cleared."); } }} toneClassName="border-rose-200 bg-rose-50 text-rose-700">Clear questionnaire</TaskTableChipButton> : null}
         </div>
       </div>
 
       {error ? <div className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">{error} Local recovery remains available, but changes are not fully synced.</div> : null}
       {remoteUpdateNotice ? <div className="rounded-[1rem] border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100">A newer Brainstorm was loaded from another device.</div> : null}
 
-      {activeView === "qa" ? <div id="brainstorm-qa-panel" role="tabpanel"><BrainstormQaWorkspace appVersion={appVersion} qaState={state.qaState} updateQaState={(qaState) => updateState({ qaState })} /></div> : <div id="brainstorm-questionnaire-panel" role="tabpanel">
+      {activeView === "qa" ? <div id="brainstorm-qa-panel" role="tabpanel"><BrainstormQaWorkspace appVersion={appVersion} qaState={state.qaState} updateQaState={(qaState) => updateState({ qaState })} /></div> : <div className="space-y-4 pb-[max(2rem,env(safe-area-inset-bottom))]" id="brainstorm-questionnaire-panel" role="tabpanel">
+      <AdhdPanel padding="lg">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <label className="min-w-0 flex-1 space-y-1.5 sm:min-w-72"><span className={labelClass}>Questionnaire session</span><select className={TASK_TABLE_INPUT_CLASS} onChange={(event) => { const next = state.questionnaireState.sessions.find((session) => session.id === event.target.value); if (next) { updateQuestionnaireState({ ...state.questionnaireState, activeSessionId: next.id }); setSourceDraft(next.sourceMarkdown); setParseResult(initialParse(next.sourceMarkdown)); setShowSummary(false); } }} value={activeQuestionnaire?.id ?? ""}>{state.questionnaireState.sessions.map((session) => <option key={session.id} value={session.id}>{session.title || "Untitled Questionnaire"}</option>)}</select></label>
+          <div className="flex flex-wrap gap-2">
+            <TaskTableChipButton className="inline-flex items-center gap-1.5" onClick={() => { const session = createBrainstormQuestionnaireSession(); updateQuestionnaireState({ ...state.questionnaireState, activeSessionId: session.id, sessions: [...state.questionnaireState.sessions, session] }); setSourceDraft(""); setParseResult(null); setShowSummary(false); setFeedback("New questionnaire session saved."); }}><Plus aria-hidden="true" size={13} />New Session</TaskTableChipButton>
+            {activeQuestionnaire ? <TaskTableChipButton onClick={() => { const session = duplicateBrainstormQuestionnaireSession(activeQuestionnaire); updateQuestionnaireState({ ...state.questionnaireState, activeSessionId: session.id, sessions: [...state.questionnaireState.sessions, session] }); setSourceDraft(session.sourceMarkdown); setParseResult(initialParse(session.sourceMarkdown)); setShowSummary(false); setFeedback("Questionnaire session duplicated."); }}>Duplicate</TaskTableChipButton> : null}
+            {activeQuestionnaire ? <TaskTableChipButton className="inline-flex items-center gap-1.5" onClick={() => { if (window.confirm("Delete this questionnaire session? Other saved questionnaires will remain.")) { const next = deleteBrainstormQuestionnaireSession(state.questionnaireState, activeQuestionnaire.id); updateQuestionnaireState(next); const replacement = next.sessions.find((session) => session.id === next.activeSessionId); setSourceDraft(replacement?.sourceMarkdown ?? ""); setParseResult(initialParse(replacement?.sourceMarkdown ?? "")); setShowSummary(false); setFeedback("Questionnaire session deleted."); } }} toneClassName="border-rose-200 bg-rose-50 text-rose-700"><Trash2 aria-hidden="true" size={13} />Delete session</TaskTableChipButton> : null}
+          </div>
+        </div>
+        {activeQuestionnaire ? <label className="mt-4 block space-y-1.5"><span className={labelClass}>Title or feature name</span><input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => setActiveQuestionnaire(updateBrainstormQuestionnaireSession(activeQuestionnaire, { title: event.target.value }))} value={activeQuestionnaire.title} /></label> : <p className="mt-4 text-sm text-[#716b8c] dark:text-white/60">Create a saved questionnaire session to begin.</p>}
+      </AdhdPanel>
       <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
-        <section className={panelClass}>
+        <AdhdPanel padding="lg">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#938ab8]">Source</p><h3 className="mt-1 text-lg font-semibold text-[#342d53] dark:text-white">Markdown</h3></div>
-            <TaskTableChipButton onClick={parseSource} toneClassName="border-[#6f57f6] bg-[#6f57f6] text-white"><span className="inline-flex min-w-0 items-center gap-1.5"><Sparkles className="shrink-0" size={13} /> Parse / Update Form</span></TaskTableChipButton>
+            <TaskTableChipButton disabled={!activeQuestionnaire} onClick={parseSource} toneClassName="border-[#6f57f6] bg-[#6f57f6] text-white"><span className="inline-flex min-w-0 items-center gap-1.5"><Sparkles className="shrink-0" size={13} /> Parse / Update Form</span></TaskTableChipButton>
           </div>
           <textarea
             aria-label="Brainstorm Markdown source"
             className={`${TASK_TABLE_INPUT_CLASS} mt-4 min-h-[28rem] resize-y font-mono text-[13px] leading-5 lg:min-h-[36rem]`}
+            disabled={!activeQuestionnaire}
             onChange={(event) => {
               locallyEditedRef.current = true;
               setSourceDraft(event.target.value);
-              updateState({ sourceMarkdown: event.target.value });
+              if (activeQuestionnaire) setActiveQuestionnaire(updateBrainstormQuestionnaireSession(activeQuestionnaire, { sourceMarkdown: event.target.value }));
             }}
             placeholder="# Form Title\n\nOptional introduction.\n\n## Question title\n@type single\n> What this decision means.\n- Option one\n- Option two"
             spellCheck={false}
@@ -265,9 +295,9 @@ export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, res
               </ul>
             </div>
           ) : null}
-        </section>
+        </AdhdPanel>
 
-        <section className={panelClass}>
+        <AdhdPanel padding="lg">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#938ab8]">Form</p><h3 className="mt-1 text-lg font-semibold text-[#342d53] dark:text-white">{definition?.title || "Questionnaire preview"}</h3></div>
             {definition ? <p className="text-sm font-semibold text-[#716b8c] dark:text-white/60">{progress.answered} of {progress.total} answered</p> : null}
@@ -277,13 +307,13 @@ export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, res
           {definition ? (
             <div className="mt-4 space-y-4">
               {definition.introduction.length ? <div className="space-y-2">{renderPlainParagraphs(definition.introduction)}</div> : null}
-              {definition.questions.map((question) => <QuestionField answer={answerFor(question, state.answers)} key={question.id} onChange={(answer) => updateAnswer(question, answer)} question={question} />)}
+              {definition.questions.map((question) => <QuestionField answer={answerFor(question, activeQuestionnaire?.answers ?? {})} key={question.id} onChange={(answer) => updateAnswer(question, answer)} question={question} />)}
             </div>
           ) : null}
-        </section>
+        </AdhdPanel>
       </div>
 
-      <section className={panelClass}>
+      <AdhdPanel padding="lg">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#938ab8]">Summary</p><h3 className="mt-1 text-lg font-semibold text-[#342d53] dark:text-white">Markdown output</h3></div>
           <div className="flex flex-wrap gap-2">
@@ -295,7 +325,7 @@ export function BrainstormWorkspace({ appVersion, error, remoteUpdateNotice, res
         {!definition ? <p className="mt-4 text-sm text-[#81799b] dark:text-white/45">Parse a valid questionnaire to generate its summary.</p> : null}
         {showSummary && definition ? <pre className="adhdice-scrollbar mt-4 max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-[1rem] border border-[#e6e0f1] bg-[#faf9fd] p-4 text-sm leading-6 text-[#514a6c] dark:border-white/10 dark:bg-black/15 dark:text-white/70">{summary}</pre> : null}
         <p aria-live="polite" className="mt-3 flex min-h-5 items-center gap-2 text-sm text-[#716b8c] dark:text-white/60">{feedback ? <><Check size={14} />{feedback}</> : null}</p>
-      </section>
+      </AdhdPanel>
       </div>}
     </section>
   );

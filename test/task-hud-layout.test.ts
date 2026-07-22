@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   addHudSnapshot,
   addEmptyHudSnapshot,
@@ -18,6 +19,16 @@ import {
   updateHudWorkspaceWidgetLayout,
   type HudWorkspaceWidget,
 } from "../src/lib/task-hud-layout.ts";
+
+const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+
+test("collapsed HUD timer chips omit redundant running and paused text", () => {
+  const collapsedHud = taskAppSource.match(/if \(isHudCollapsed\) \{([\s\S]*?)\n  \}\n\n  return \(/)?.[1] ?? "";
+  assert.doesNotMatch(collapsedHud, />Running</);
+  assert.doesNotMatch(collapsedHud, />Paused</);
+  assert.match(collapsedHud, /aria-label=\{`\$\{collapsedHudFocusTimer\.isPaused \? "Resume" : "Pause"\} timer for/);
+  assert.match(collapsedHud, /aria-label=\{`\$\{collapsedHudTaskTimer\.pausedAt \? "Resume" : "Pause"\} timer for/);
+});
 
 function widget(id: string, x: number, y: number, widthPx = 50, heightPx = 40): HudWorkspaceWidget {
   return {

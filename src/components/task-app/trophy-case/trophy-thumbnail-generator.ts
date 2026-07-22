@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { MilestoneTier } from "@/lib/milestones";
 import { TROPHY_GALLERY_TIERS, TROPHY_TIER_MATERIALS } from "@/lib/trophy-case";
 import { withBasePath } from "@/lib/utils";
+import { createTrophyDieGlitterTexture, getTrophyDiePipColor, TROPHY_DIE_PLATINUM_BODY_MATERIAL, TROPHY_DIE_PRESENTATION_ROTATION } from "./trophy-die-visual";
 
 let thumbnailPromise: Promise<Record<MilestoneTier, string>> | null = null;
 
@@ -32,6 +33,7 @@ async function generateTierTrophyThumbnails() {
   const fillLight = new THREE.PointLight("#9d8cff", 11);
   fillLight.position.set(-4, 2, 4);
   scene.add(fillLight);
+  const platinumGlitterTexture = createTrophyDieGlitterTexture();
 
   try {
     const { scene: source } = await new GLTFLoader().loadAsync(withBasePath("/d6.glb"));
@@ -39,7 +41,7 @@ async function generateTierTrophyThumbnails() {
     scene.add(normalized);
     const thumbnails = {} as Record<MilestoneTier, string>;
     for (const tier of TROPHY_GALLERY_TIERS) {
-      applyTierMaterials(normalized, tier);
+      applyTierMaterials(normalized, tier, platinumGlitterTexture);
       renderer.render(scene, camera);
       thumbnails[tier] = renderer.domElement.toDataURL("image/png");
     }
@@ -52,6 +54,7 @@ async function generateTierTrophyThumbnails() {
     });
     renderer.dispose();
     renderer.forceContextLoss();
+    platinumGlitterTexture.dispose();
   }
 }
 
@@ -63,11 +66,11 @@ function normalizeD6(source: THREE.Object3D) {
   const scale = 3.1 / Math.max(size.x, size.y, size.z, 1);
   model.position.copy(center.multiplyScalar(-scale));
   model.scale.setScalar(scale);
-  model.rotation.set(0.32, -0.55, 0.08);
+  model.rotation.set(...TROPHY_DIE_PRESENTATION_ROTATION);
   return model;
 }
 
-function applyTierMaterials(model: THREE.Object3D, tier: MilestoneTier) {
+function applyTierMaterials(model: THREE.Object3D, tier: MilestoneTier, platinumGlitterTexture: THREE.Texture) {
   const definition = TROPHY_TIER_MATERIALS[tier];
   model.traverse((object) => {
     if (!(object as THREE.Mesh).isMesh) return;
@@ -75,7 +78,9 @@ function applyTierMaterials(model: THREE.Object3D, tier: MilestoneTier) {
     const previous = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     previous.forEach((material) => material.dispose());
     mesh.material = mesh.name.includes("Material001")
-      ? new THREE.MeshStandardMaterial({ color: "#201b2b", metalness: 0.18, roughness: 0.32 })
-      : new THREE.MeshStandardMaterial({ color: definition.color, metalness: 0.88, roughness: definition.roughness });
+      ? new THREE.MeshStandardMaterial({ color: getTrophyDiePipColor(tier), metalness: 0.18, roughness: 0.32 })
+      : tier === "platinum"
+        ? new THREE.MeshPhysicalMaterial({ bumpMap: platinumGlitterTexture, color: definition.color, roughnessMap: platinumGlitterTexture, ...TROPHY_DIE_PLATINUM_BODY_MATERIAL })
+        : new THREE.MeshStandardMaterial({ color: definition.color, metalness: 0.88, roughness: definition.roughness });
   });
 }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { parseBrainstormMarkdown } from "../src/lib/brainstorm-markdown.ts";
-import { createEmptyBrainstormAnswer, generateBrainstormSummary, migrateBrainstormAnswers, normalizeBrainstormState, serializeBrainstormState, type BrainstormAnswers } from "../src/lib/brainstorm-state.ts";
+import { createBrainstormQuestionnaireSession, createEmptyBrainstormAnswer, createEmptyBrainstormState, deleteBrainstormQuestionnaireSession, duplicateBrainstormQuestionnaireSession, generateBrainstormSummary, migrateBrainstormAnswers, normalizeBrainstormState, serializeBrainstormState, updateBrainstormQuestionnaireSession, updateBrainstormState, type BrainstormAnswers } from "../src/lib/brainstorm-state.ts";
 
 const validSource = `# Trip architecture
 An optional introduction.\n\nA second paragraph.
@@ -128,6 +128,7 @@ test("state normalization recovers from malformed answers", () => {
     answers: {},
     clientUpdatedAt: "1970-01-01T00:00:00.000Z",
     qaState: { activeSessionId: null, schemaVersion: 2, sessions: [] },
+    questionnaireState: { activeSessionId: null, schemaVersion: 1, sessions: [] },
   });
 });
 
@@ -209,9 +210,9 @@ test("summary renders an override-only answer clearly", () => {
   assert.match(generateBrainstormSummary(parsed, { [parsed.questions[0].id]: { type: "single", selected: [], text: "", other: "Bike" } }), /## Transport\n\n- Other \/ override: Bike/);
 });
 
-test("workspace Show, Copy, and Download share the generated summary", async () => {
+test("workspace Show, Copy, and Download share the active questionnaire summary", async () => {
   const source = await readFile(new URL("../src/components/task-app/brainstorm-workspace.tsx", import.meta.url), "utf8");
-  assert.match(source, /const summary = useMemo\(\(\) => definition \? generateBrainstormSummary\(definition, state\.answers\) : "", \[definition, state\.answers\]\)/);
+  assert.match(source, /const summary = useMemo\(\(\) => definition \? generateBrainstormSummary\(definition, activeQuestionnaire\?\.answers \?\? \{\}\) : "", \[activeQuestionnaire\?\.answers, definition\]\)/);
   assert.match(source, /navigator\.clipboard\.writeText\(summary\)/);
   assert.match(source, /new Blob\(\[summary\]/);
   assert.match(source, /\{showSummary && definition \? <pre[\s\S]*>\{summary\}<\/pre>/);
@@ -253,16 +254,32 @@ test("Brainstorm renders Questionnaire and QA Checklist navigation with both wor
   assert.match(source, /id="brainstorm-qa-panel" role="tabpanel"><BrainstormQaWorkspace/);
 });
 
-test("Brainstorm Clear uses the restored scoped reset callback without clearing QA state", async () => {
-  const [workspace, app, hook] = await Promise.all([
-    readFile(new URL("../src/components/task-app/brainstorm-workspace.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../src/hooks/useBrainstormState.ts", import.meta.url), "utf8"),
-  ]);
-  assert.match(workspace, /resetState: \(scope\?: BrainstormResetScope\) => void/);
-  assert.match(workspace, /resetState\("questionnaire"\)/);
-  assert.match(app, /resetState=\{brainstormState\.resetState\}/);
-  assert.match(hook, /const resetState = useCallback\(\(scope: BrainstormResetScope = "all"\)/);
-  assert.match(hook, /updateBrainstormState\(stateRef\.current, \{ answers: \{\}, sourceMarkdown: "" \}/);
-  assert.match(hook, /new Set\(scope === "questionnaire" \? \["answers", "sourceMarkdown"\] : \["answers", "qaState", "sourceMarkdown"\]\)/);
+test("questionnaire sessions keep independent source and answers", () => {
+  const original = createBrainstormQuestionnaireSession({ answers: { q: { type: "short-text", selected: [], text: "First answer", other: "" } }, sourceMarkdown: "# First", title: "First" }, new Date("2026-07-22T12:00:00Z"), "first");
+  const copy = duplicateBrainstormQuestionnaireSession(original, new Date("2026-07-22T12:01:00Z"), "copy");
+  const changed = updateBrainstormQuestionnaireSession(copy, { sourceMarkdown: "# Second", title: "Second" }, new Date("2026-07-22T12:02:00Z"));
+  assert.equal(original.sourceMarkdown, "# First");
+  assert.equal(changed.sourceMarkdown, "# Second");
+  assert.equal(changed.answers.q.text, "First answer");
+  assert.deepEqual(deleteBrainstormQuestionnaireSession({ activeSessionId: changed.id, schemaVersion: 1, sessions: [original, changed] }, changed.id), { activeSessionId: original.id, schemaVersion: 1, sessions: [original] });
+});
+
+test("a newly created questionnaire session remains active through state updates", () => {
+  const session = createBrainstormQuestionnaireSession({ title: "New Q&A" }, new Date("2026-07-22T12:00:00Z"), "new-questionnaire");
+  const updated = updateBrainstormState(createEmptyBrainstormState(), { questionnaireState: { activeSessionId: session.id, schemaVersion: 1, sessions: [session] } }, "2026-07-22T12:01:00Z");
+  assert.equal(updated.questionnaireState.activeSessionId, session.id);
+  assert.equal(updated.questionnaireState.sessions[0].title, "New Q&A");
+});
+
+test("legacy questionnaire data migrates into a saved session without losing QA state", () => {
+  const normalized = normalizeBrainstormState({
+    answers: { q: { type: "short-text", selected: [], text: "Answer", other: "" } },
+    qa_state: { activeSessionId: "qa", sessions: [{ id: "qa", title: "QA", items: [] }] },
+    source_markdown: "# Legacy",
+  });
+  assert.equal(normalized.questionnaireState.sessions.length, 1);
+  assert.equal(normalized.questionnaireState.sessions[0].sourceMarkdown, "# Legacy");
+  assert.equal(normalized.questionnaireState.sessions[0].answers.q.text, "Answer");
+  assert.equal(normalized.qaState.sessions[0].id, "qa");
+  assert.equal(serializeBrainstormState(normalized).qa_state.questionnaireState.sessions[0].sourceMarkdown, "# Legacy");
 });

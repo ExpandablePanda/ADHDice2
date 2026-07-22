@@ -1,5 +1,6 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Clock3, Plus } from "lucide-react";
+import { Clock3, Plus } from "lucide-react";
+import { AdhdChip } from "@/components/ui-system";
 import {
   type FocusCategory,
   type ActiveFocusSession,
@@ -44,6 +45,11 @@ import { SessionFinishModal, ManualEntryModal } from "./focus-modals";
 import { ModalShell } from "./modal-shell";
 import { FocusPillSelect } from "./focus-form-controls";
 import { CategoryIcon } from "./task-app";
+import {
+  TASKS_SURFACE_ACTIVE_CHIP_CLASS,
+  TASKS_SURFACE_GROUP_CLASS,
+  TASKS_SURFACE_INACTIVE_CHIP_CLASS,
+} from "./task-app/tasks-surface-switch";
 
 const FOCUS_COUNTER_ICON_OPTIONS = [
   { name: "Hash", label: "Count" },
@@ -89,6 +95,25 @@ const FOCUS_COUNTER_ICON_OPTIONS = [
 ] as const;
 
 const OVER_WEEKLY_REALLOCATION_DISMISSED_KEY = "adhdice.focusGoals.overWeeklyReallocationDismissed.v1";
+const FOCUS_TOOLBAR_CHIP_TONE_CLASS = "border-[#e4deef] bg-[var(--surface-elevated)] text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60";
+const FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY = "adhdice.focusSandboxTabOrder.v1";
+const DEFAULT_FOCUS_SANDBOX_TAB_ORDER = [0, 1] as const;
+
+function readFocusSandboxTabOrder(): number[] {
+  if (typeof window === "undefined") return [...DEFAULT_FOCUS_SANDBOX_TAB_ORDER];
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY) ?? "null");
+    if (Array.isArray(stored) && stored.length === 2 && stored.includes(0) && stored.includes(1)) return stored;
+  } catch {
+    // Fall through to the approved default order.
+  }
+  return [...DEFAULT_FOCUS_SANDBOX_TAB_ORDER];
+}
+
+function writeFocusSandboxTabOrder(order: number[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY, JSON.stringify(order));
+}
 
 function readOverWeeklyReallocationDismissedKeys() {
   if (typeof window === "undefined") return {};
@@ -169,15 +194,15 @@ function FocusTimerPicker({
   };
 
   return (
-    <div className="relative w-[min(14rem,calc(100vw-2rem))] text-left" ref={rootRef}>
+    <div className="relative w-[min(12rem,calc(100vw-2rem))] text-left" ref={rootRef}>
       <label className="sr-only" htmlFor={`${listboxId}-input`}>Add a focus timer</label>
-      <div className="relative">
+      <div className={`ui-pill-button-strong-light flex items-center gap-1.5 transition hover:-translate-y-0.5 ${FOCUS_TOOLBAR_CHIP_TONE_CLASS}`}>
         <input
           aria-activedescendant={isOpen && options[safeHighlightedIndex] ? `${listboxId}-option-${options[safeHighlightedIndex].id}` : undefined}
           aria-autocomplete="list"
           aria-controls={listboxId}
           aria-expanded={isOpen}
-          className="h-9 w-full rounded-full border border-[#e5def8] bg-white px-4 pr-9 text-sm font-medium text-[#2f294a] shadow-[0_8px_22px_rgba(81,61,168,0.08)] outline-none transition placeholder:text-[#938ab8] focus:border-[#b9a9fb] focus:ring-2 focus:ring-[#dcd3ff] dark:border-white/10 dark:bg-white/[0.06] dark:text-white dark:placeholder:text-white/38 dark:focus:border-[#7f67ff] dark:focus:ring-[#7f67ff]/25"
+          className="min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px] font-medium leading-none text-inherit outline-none placeholder:text-current placeholder:opacity-55 focus:text-[13px]"
           id={`${listboxId}-input`}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -206,7 +231,7 @@ function FocusTimerPicker({
           type="text"
           value={query}
           />
-        <svg aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8d82b2]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <svg aria-hidden="true" className="pointer-events-none h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
           <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </div>
@@ -220,7 +245,7 @@ function FocusTimerPicker({
           {options.length ? options.map((option, index) => (
             <div
               aria-selected={index === safeHighlightedIndex}
-              className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${index === safeHighlightedIndex ? "bg-[#f1ecff] text-[#6249e8] dark:bg-[#2b214d] dark:text-[#cabfff]" : "text-[#5f5879] hover:bg-[#f8f6fd] dark:text-white/70 dark:hover:bg-white/[0.06]"}`}
+              className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${index === safeHighlightedIndex ? "bg-[#6f57f6] text-white" : "text-[#5f5879] hover:bg-[#f8f6fd] dark:text-white/70 dark:hover:bg-white/[0.06]"}`}
               id={`${listboxId}-option-${option.id}`}
               key={option.id}
               onClick={() => selectOption(option)}
@@ -229,7 +254,7 @@ function FocusTimerPicker({
               role="option"
             >
               {option.kind === "countdown" ? (
-                <Clock3 aria-hidden="true" className="h-4 w-4 shrink-0 text-[#7b68ee] dark:text-[#cabfff]" />
+                <Clock3 aria-hidden="true" className={`h-4 w-4 shrink-0 ${index === safeHighlightedIndex ? "text-white" : "text-[#7b68ee] dark:text-[#cabfff]"}`} />
               ) : (
                 <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: option.category.color }} />
               )}
@@ -279,11 +304,11 @@ export function FocusPage({
   counterHistory: FocusCounterHistoryEntry[];
   history: HistoricalFocusSession[];
   onAdjustCounter: (counterId: string, direction: 1 | -1) => void;
-  onToggleTimer: (catId: string, options?: { countdownTargetSeconds?: number | null; mode?: "countdown" | "countup" }) => void;
+  onToggleTimer: (catId: string, options?: { countdownTargetSeconds?: number | null; mode?: "countdown" | "countup" }) => Promise<void>;
   onSetCountdownTarget: (catId: string, targetSeconds: number, options?: { start?: boolean }) => void;
   onFinishTimer: (catId: string, data?: { title: string; focusType: FocusType; focusSubtype?: FocusSubtype | null; focusSubtype2?: FocusSubtype | null; notes: string; date: string }) => void;
-  onAdjustTimer: (catId: string, deltaSeconds: number) => void;
-  onResetTimer: (catId: string) => void;
+  onAdjustTimer: (catId: string, deltaSeconds: number) => Promise<boolean>;
+  onResetTimer: (catId: string) => Promise<void>;
   onDeleteTimer: (catId: string) => void;
   onCreateCounter: (input: { color: string; goal: number; icon: string; initialValue: number; step: number; title: string }) => void;
   onDeleteCounter: (counterId: string) => void;
@@ -301,6 +326,9 @@ export function FocusPage({
 }) {
   const [countdownPickerOpenRequest, setCountdownPickerOpenRequest] = useState(0);
   const [focusSandboxPage, setFocusSandboxPage] = useState(0);
+  const [focusSandboxTabOrder, setFocusSandboxTabOrder] = useState<number[]>(readFocusSandboxTabOrder);
+  const [draggingFocusSandboxPage, setDraggingFocusSandboxPage] = useState<number | null>(null);
+  const suppressFocusSandboxTabClickRef = useRef<number | null>(null);
   const focusSandboxSwipeRef = useRef<{
     cancelled: boolean;
     pointerId: number;
@@ -366,6 +394,24 @@ export function FocusPage({
     setFocusSandboxPage(getBoundedFocusSandboxPage(nextPage));
   };
 
+  const changeFocusSandboxPageByOffset = (offset: number) => {
+    const currentIndex = focusSandboxTabOrder.indexOf(focusSandboxPage);
+    const nextIndex = Math.max(0, Math.min(focusSandboxTabOrder.length - 1, currentIndex + offset));
+    changeFocusSandboxPage(focusSandboxTabOrder[nextIndex] ?? focusSandboxPage);
+  };
+
+  const reorderFocusSandboxTab = (sourcePage: number, targetIndex: number) => {
+    setFocusSandboxTabOrder((current) => {
+      const sourceIndex = current.indexOf(sourcePage);
+      if (sourceIndex < 0 || sourceIndex === targetIndex) return current;
+      const next = [...current];
+      next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, sourcePage);
+      writeFocusSandboxTabOrder(next);
+      return next;
+    });
+  };
+
   const handleFocusSandboxPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== "touch" || !(event.target instanceof Element)) return;
     if (event.target.closest("[data-focus-clock-scroll-region]")) return;
@@ -399,7 +445,7 @@ export function FocusPage({
       const deltaX = event.clientX - swipe.startX;
       const intent = classifyFocusSandboxSwipe(deltaX, event.clientY - swipe.startY);
       if (intent === "horizontal") {
-        changeFocusSandboxPage(focusSandboxPage + (deltaX < 0 ? 1 : -1));
+        changeFocusSandboxPageByOffset(deltaX < 0 ? 1 : -1);
       }
     }
     clearFocusSandboxSwipe(event);
@@ -501,21 +547,21 @@ export function FocusPage({
 
         <div className="mt-3 flex flex-wrap items-center justify-center gap-3 sm:mt-4">
           <button
-            className="ui-pill-button-light transition hover:-translate-y-0.5 dark:rounded-full dark:bg-white/5 dark:text-[#cabfff]"
+            className={`ui-pill-button-light transition hover:-translate-y-0.5 ${FOCUS_TOOLBAR_CHIP_TONE_CLASS}`}
             onClick={() => setShowCategoryManager(true)}
             type="button"
           >
             Edit Categories
           </button>
           <button
-            className="ui-pill-button-light transition hover:-translate-y-0.5 dark:rounded-full dark:bg-white/5 dark:text-[#cabfff]"
+            className={`ui-pill-button-light transition hover:-translate-y-0.5 ${FOCUS_TOOLBAR_CHIP_TONE_CLASS}`}
             onClick={() => setShowGoalsEditor(true)}
             type="button"
           >
             Edit Goals
           </button>
           <button
-            className="ui-pill-button-strong-light transition hover:-translate-y-0.5 dark:rounded-full dark:bg-[#cabfff] dark:text-[#1a1431]"
+            className={`ui-pill-button-strong-light transition hover:-translate-y-0.5 ${FOCUS_TOOLBAR_CHIP_TONE_CLASS}`}
             onClick={() => setShowManualEntry(true)}
             type="button"
           >
@@ -531,7 +577,7 @@ export function FocusPage({
             onSelect={onToggleTimer}
           />
           <button
-            className="ui-pill-button-strong-light inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap transition hover:-translate-y-0.5 dark:rounded-full dark:bg-[#cabfff] dark:text-[#1a1431]"
+            className={`ui-pill-button-strong-light inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap transition hover:-translate-y-0.5 ${FOCUS_TOOLBAR_CHIP_TONE_CLASS}`}
             onClick={openCreateCounter}
             type="button"
           >
@@ -542,35 +588,70 @@ export function FocusPage({
       </section>
 
       <section className="mt-5 min-w-0 overflow-x-clip">
-        <nav
-          aria-label="Focus sandbox pages"
-          className="mx-auto mb-3 flex w-fit max-w-full items-center gap-1.5 rounded-full border border-[#e5def8] bg-white/88 p-1 shadow-[0_8px_22px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/[0.05]"
-          onKeyDown={(event) => {
-            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-              event.preventDefault();
-              changeFocusSandboxPage(focusSandboxPage + (event.key === "ArrowRight" ? 1 : -1));
-            }
-          }}
-        >
-          <button aria-label="Previous Focus sandbox page" className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[#f1ecff] disabled:opacity-35 dark:hover:bg-white/10" disabled={focusSandboxPage === 0} onClick={() => changeFocusSandboxPage(focusSandboxPage - 1)} type="button">
-            <ChevronLeft aria-hidden="true" className="h-4 w-4" />
-          </button>
-          {(["Clocks", "Focus Bars"] as const).map((label, index) => (
-            <button
-              aria-current={focusSandboxPage === index ? "page" : undefined}
-              className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${focusSandboxPage === index ? "bg-[#eee8ff] text-[#654ce4] dark:bg-[#372a62] dark:text-[#d4caff]" : "text-[var(--text-secondary)] hover:bg-[#f7f4ff] dark:hover:bg-white/[0.06]"}`}
-              key={label}
-              onClick={() => changeFocusSandboxPage(index)}
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
-          <span className="sr-only">Page {focusSandboxPage + 1} of 2</span>
-          <button aria-label="Next Focus sandbox page" className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-[#f1ecff] disabled:opacity-35 dark:hover:bg-white/10" disabled={focusSandboxPage === 1} onClick={() => changeFocusSandboxPage(focusSandboxPage + 1)} type="button">
-            <ChevronRight aria-hidden="true" className="h-4 w-4" />
-          </button>
-        </nav>
+        <div className="mb-3 flex justify-center" data-focus-pager-alignment="centered-sandbox">
+          <nav
+            aria-label="Focus sandbox pages"
+            className={TASKS_SURFACE_GROUP_CLASS}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                event.preventDefault();
+                changeFocusSandboxPageByOffset(event.key === "ArrowRight" ? 1 : -1);
+              }
+            }}
+          >
+            {focusSandboxTabOrder.map((page, visualIndex) => {
+              const label = page === 0 ? "Clocks" : "Focus Bars";
+              return (
+                <span
+                  className={draggingFocusSandboxPage === page ? "opacity-60" : undefined}
+                  key={page}
+                  onDragOver={(event) => {
+                    if (draggingFocusSandboxPage === null || draggingFocusSandboxPage === page) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const sourcePage = Number(event.dataTransfer.getData("text/plain"));
+                    if ((sourcePage === 0 || sourcePage === 1) && sourcePage !== page) {
+                      reorderFocusSandboxTab(sourcePage, visualIndex);
+                    }
+                    setDraggingFocusSandboxPage(null);
+                  }}
+                >
+                  <AdhdChip
+                    aria-description="Drag horizontally to reorder this Focus tab."
+                    aria-pressed={focusSandboxPage === page}
+                    className="cursor-grab active:cursor-grabbing"
+                    draggable
+                    onClick={() => {
+                      if (suppressFocusSandboxTabClickRef.current === page) {
+                        suppressFocusSandboxTabClickRef.current = null;
+                        return;
+                      }
+                      changeFocusSandboxPage(page);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingFocusSandboxPage(null);
+                      window.setTimeout(() => {
+                        if (suppressFocusSandboxTabClickRef.current === page) suppressFocusSandboxTabClickRef.current = null;
+                      }, 120);
+                    }}
+                    onDragStart={(event) => {
+                      suppressFocusSandboxTabClickRef.current = page;
+                      setDraggingFocusSandboxPage(page);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", String(page));
+                    }}
+                    toneClassName={focusSandboxPage === page ? TASKS_SURFACE_ACTIVE_CHIP_CLASS : TASKS_SURFACE_INACTIVE_CHIP_CLASS}
+                  >
+                    {label}
+                  </AdhdChip>
+                </span>
+              );
+            })}
+          </nav>
+        </div>
 
         <div
           className="min-w-0"
@@ -653,7 +734,9 @@ export function FocusPage({
                   adjustments={adjustments}
                   categories={userCategories}
                   history={history}
+                  onAdjust={onAdjustTimer}
                   onFinish={handleFinishClick}
+                  onReset={onResetTimer}
                   onToggle={onToggleTimer}
                 />
               </FocusBarsErrorBoundary>

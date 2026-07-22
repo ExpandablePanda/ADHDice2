@@ -903,11 +903,12 @@ export function useFocus(
   }
 
   async function handleAdjustTimer(categoryId: string, deltaSeconds: number) {
-    if (!client || !userId) return;
+    if (!client || !userId) return false;
 
-    if (!activeSessionsRef.current[categoryId]) return;
+    if (!activeSessionsRef.current[categoryId]) return false;
     const result = await transitionFocusRuntime(categoryId, "adjust", { p_delta_seconds: deltaSeconds });
     if (result) setMessage({ tone: "good", text: "Timer adjusted." });
+    return Boolean(result);
   }
 
   async function handleResetTimer(categoryId: string) {

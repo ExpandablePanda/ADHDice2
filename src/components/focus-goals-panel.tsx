@@ -1,12 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import type { ActiveFocusSession, FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import {
+  buildFocusGoalMonthPlan,
   buildFocusGoalPlan,
   formatFocusGoalDuration,
   formatPriorityLabel,
   isSleepCategory,
+  resolveCountsTowardProductiveGoal,
   type FocusGoalCategorySummary,
 } from "@/lib/focus-goals";
+import {
+  TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
+  TASK_TABLE_CHIP_BASE_CLASS,
+  TaskTableChipButton,
+} from "./ui/task-table-primitives";
+
+type FocusGoalScope = "daily" | "weekly" | "monthly";
+
+const FOCUS_GOAL_OUTLINE_CHIP_CLASS = "border-[#e4deef] bg-[var(--surface-elevated)] text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60";
+const GOAL_COLUMN_TEXT_CLASS = "text-sm font-semibold";
+
+function getConnectedGoalChipClass(index: number, total: number) {
+  const overlapClass = index > 0 ? "-ml-px" : "";
+  const shapeClass = index === 0
+    ? "rounded-r-none"
+    : index === total - 1
+      ? "rounded-l-none"
+      : "rounded-none";
+  return `${overlapClass} ${shapeClass}`;
+}
 
 function formatCompactDateRange(startDate: string, endDate: string) {
   const start = new Date(`${startDate}T00:00:00`);
@@ -25,6 +48,12 @@ function progressPercent(actualSeconds: number, targetSeconds: number) {
 
 function remainingTodaySeconds(summary: FocusGoalCategorySummary) {
   return Math.max(0, summary.adjustedTodayTargetSeconds - summary.todayActualSeconds);
+}
+
+function goalProgressGroup(actualSeconds: number, targetSeconds: number) {
+  if (targetSeconds > 0 && actualSeconds >= targetSeconds) return 0;
+  if (actualSeconds > 0) return 1;
+  return 2;
 }
 
 function targetText(label: string, summary: FocusGoalCategorySummary) {
@@ -112,28 +141,17 @@ function GoalColumn({
   const actualFillPercent = hasGoal ? Math.min(100, (actualSeconds / targetSeconds) * 100) : actualSeconds > 0 ? 100 : 0;
   const actualFillHeight = actualSeconds > 0 ? `${Math.max(6, actualFillPercent)}%` : "0%";
   const isAtGoal = targetSeconds > 0 && actualSeconds >= targetSeconds;
-  const isOver = targetSeconds > 0 && actualSeconds > targetSeconds;
   const fillColor = isAtGoal || (!hasGoal && actualSeconds > 0) ? "#67b982" : color ?? "#7c68f1";
   return (
     <div className={`flex min-w-0 flex-col items-center justify-end gap-1 ${className}`}>
-      <span className="w-full whitespace-nowrap text-center text-[9px] font-bold leading-none text-[var(--text-primary)] sm:text-[10px]">
+      <span className={`${GOAL_COLUMN_TEXT_CLASS} w-full whitespace-nowrap text-center text-[var(--text-primary)]`}>
         {formatFocusGoalDuration(actualSeconds)}
       </span>
-      <span className="w-full whitespace-nowrap text-center text-[8px] font-semibold leading-none text-[var(--text-muted)] sm:text-[9px]">
+      <span className={`${GOAL_COLUMN_TEXT_CLASS} w-full whitespace-nowrap text-center text-[var(--text-muted)]`}>
         {hasGoal ? formatFocusGoalDuration(targetSeconds) : "No goal"}
       </span>
-      <div className="flex h-20 w-full min-w-0 items-end justify-center">
-        <div
-          className={`relative h-full w-full max-w-[1.8rem] overflow-hidden rounded-md border shadow-inner sm:max-w-[2rem] ${
-            hasGoal
-              ? isAtGoal
-                ? "border-[#cfe8db] bg-[#eef8f2] dark:border-[#2f6b48] dark:bg-[#173125]"
-                : "border-white/[0.8] bg-white/[0.85] dark:border-white/25 dark:bg-white/15"
-              : actualSeconds > 0
-                ? "border-[#cfe8db] bg-[#eef8f2] dark:border-[#2f6b48] dark:bg-[#173125]"
-                : "border-[var(--border-soft)] bg-[var(--surface-muted)] opacity-70 dark:border-white/10 dark:bg-white/[0.06]"
-          }`}
-        >
+      <div className="flex h-28 w-full min-w-0 items-end justify-center">
+        <div className="relative h-full w-full max-w-[2.5rem] overflow-hidden rounded-md bg-[var(--surface-muted)] shadow-inner sm:max-w-[3rem] dark:bg-white/[0.06]">
           <div
             className="absolute bottom-0 left-0 w-full rounded-md transition-all duration-500"
             style={{
@@ -143,7 +161,12 @@ function GoalColumn({
           />
         </div>
       </div>
-      <span className={`text-[11px] font-black leading-none ${isOver ? "text-[#32734c] dark:text-[#9bd7b4]" : "text-[var(--text-muted)]"}`}>{label}</span>
+      <span
+        className={`${GOAL_COLUMN_TEXT_CLASS} flex h-11 w-full items-start justify-center whitespace-normal break-words pt-2 text-center leading-tight text-black dark:text-white`}
+        title={label}
+      >
+        {label}
+      </span>
     </div>
   );
 }
@@ -160,11 +183,20 @@ export function FocusGoalsPanel({
   history: HistoricalFocusSession[];
 }) {
   const [now, setNow] = useState(() => Date.now());
+  const [scope, setScope] = useState<FocusGoalScope>("daily");
+  const [selectedCategoryId, setSelectedCategoryId] = useState("overview");
+  const [categorySearch, setCategorySearch] = useState("");
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(intervalId);
   }, []);
   const plan = useMemo(() => buildFocusGoalPlan({ adjustments, categories, history }), [adjustments, categories, history]);
+  const monthPlan = useMemo(() => buildFocusGoalMonthPlan({
+    adjustments,
+    categories,
+    history,
+    monthDate: plan.todayDate,
+  }), [adjustments, categories, history, plan.todayDate]);
   const recommended = plan.recommendedCategoryId
     ? plan.summaries.find((summary) => summary.category.id === plan.recommendedCategoryId)
     : null;
@@ -184,6 +216,15 @@ export function FocusGoalsPanel({
         .map(({ summary }) => summary),
     [plan.summaries],
   );
+  const categoryChipSummaries = useMemo(
+    () => [...plan.summaries].sort((left, right) => left.category.title.localeCompare(right.category.title, undefined, { sensitivity: "base" })),
+    [plan.summaries],
+  );
+  const filteredSummaries = useMemo(() => {
+    const normalizedSearch = categorySearch.trim().toLowerCase();
+    if (!normalizedSearch) return categoryChipSummaries;
+    return categoryChipSummaries.filter((summary) => summary.category.title.toLowerCase().includes(normalizedSearch));
+  }, [categoryChipSummaries, categorySearch]);
   const activeWarnings = Object.values(activeSessions)
     .map((session) => {
       const summary = plan.summaries.find((candidate) => candidate.category.id === session.categoryId);
@@ -205,164 +246,236 @@ export function FocusGoalsPanel({
 
   const productiveTodaySatisfied = plan.productiveTodayTargetSeconds > 0 && plan.productiveTodaySeconds >= plan.productiveTodayTargetSeconds;
   const productiveWeekSatisfied = plan.productiveWeekTargetSeconds > 0 && plan.productiveWeekSeconds >= plan.productiveWeekTargetSeconds;
+  const effectiveSelectedCategoryId = selectedCategoryId === "overview" || categories.some((category) => category.id === selectedCategoryId)
+    ? selectedCategoryId
+    : "overview";
+  const productiveMonthSummaries = monthPlan.summaries.filter((summary) => resolveCountsTowardProductiveGoal(summary.category) && !isSleepCategory(summary.category));
+  const productiveMonthActualSeconds = productiveMonthSummaries.reduce((total, summary) => total + summary.actualSeconds, 0);
+  const productiveMonthTargetSeconds = productiveMonthSummaries.reduce((total, summary) => total + summary.targetSeconds, 0);
+  const selectedSummary = sortedSummaries.find((summary) => summary.category.id === effectiveSelectedCategoryId) ?? null;
+  const selectedMonthSummary = monthPlan.summaries.find((summary) => summary.category.id === effectiveSelectedCategoryId) ?? null;
+  const rankedOverviewSummaries = sortedSummaries
+    .map((summary, index) => {
+      const monthSummary = monthPlan.summaries.find((candidate) => candidate.category.id === summary.category.id);
+      const actualSeconds = scope === "daily"
+        ? summary.todayActualSeconds
+        : scope === "weekly"
+          ? summary.weekActualSeconds
+          : monthSummary?.actualSeconds ?? 0;
+      const targetSeconds = scope === "daily"
+        ? summary.adjustedTodayTargetSeconds
+        : scope === "weekly"
+          ? summary.baseWeeklyTargetSeconds
+          : monthSummary?.targetSeconds ?? 0;
+      return { actualSeconds, index, summary, targetSeconds };
+    })
+    .sort((left, right) => {
+      const leftGroup = goalProgressGroup(left.actualSeconds, left.targetSeconds);
+      const rightGroup = goalProgressGroup(right.actualSeconds, right.targetSeconds);
+      if (leftGroup !== rightGroup) return leftGroup - rightGroup;
+      if (leftGroup === 2) return right.targetSeconds - left.targetSeconds || left.index - right.index;
+      return right.actualSeconds - left.actualSeconds || left.index - right.index;
+    });
+  const overviewActualSeconds = scope === "daily"
+    ? plan.productiveTodaySeconds
+    : scope === "weekly"
+      ? plan.productiveWeekSeconds
+      : productiveMonthActualSeconds;
+  const overviewTargetSeconds = scope === "daily"
+    ? plan.productiveTodayTargetSeconds
+    : scope === "weekly"
+      ? plan.productiveWeekTargetSeconds
+      : productiveMonthTargetSeconds;
+  const selectedActualSeconds = selectedSummary
+    ? scope === "daily"
+      ? selectedSummary.todayActualSeconds
+      : scope === "weekly"
+        ? selectedSummary.weekActualSeconds
+        : selectedMonthSummary?.actualSeconds ?? 0
+    : 0;
+  const selectedTargetSeconds = selectedSummary
+    ? scope === "daily"
+      ? selectedSummary.adjustedTodayTargetSeconds
+      : scope === "weekly"
+        ? selectedSummary.baseWeeklyTargetSeconds
+        : selectedMonthSummary?.targetSeconds ?? 0
+    : 0;
+  const selectedBars = selectedSummary
+    ? scope === "daily"
+      ? [{ actualSeconds: selectedSummary.todayActualSeconds, label: "Today", targetSeconds: selectedSummary.adjustedTodayTargetSeconds }]
+      : scope === "weekly"
+        ? [
+            ...selectedSummary.dailySummaries.map((day, index) => ({
+              actualSeconds: day.actualSeconds,
+              label: ["M", "T", "W", "T", "F", "S", "S"][index] ?? day.weekdayKey.slice(0, 1).toUpperCase(),
+              targetSeconds: day.adjustedTargetSeconds,
+            })),
+            { actualSeconds: selectedSummary.weekActualSeconds, label: "Week", targetSeconds: selectedSummary.baseWeeklyTargetSeconds },
+          ]
+        : [
+            ...(selectedMonthSummary?.buckets.map((bucket, index) => ({
+              actualSeconds: bucket.actualSeconds,
+              label: `W${index + 1}`,
+              targetSeconds: bucket.targetSeconds,
+            })) ?? []),
+            { actualSeconds: selectedMonthSummary?.actualSeconds ?? 0, label: "Month", targetSeconds: selectedMonthSummary?.targetSeconds ?? 0 },
+          ]
+    : [];
+  const rangeLabel = scope === "daily"
+    ? formatCompactDateRange(plan.todayDate, plan.todayDate)
+    : scope === "weekly"
+      ? formatCompactDateRange(plan.weekStartDate, plan.weekEndDate)
+      : formatCompactDateRange(monthPlan.startDate, monthPlan.endDate);
 
   return (
-    <section className="mx-auto mt-5 w-full max-w-[86rem] px-3 sm:px-0">
-      <div className="rounded-[1.35rem] border border-[#ebe4fb] bg-white/82 p-4 text-center shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-white/10 dark:bg-white/[0.05]">
-        <div className="flex flex-col items-center gap-1">
-          <h2 className="text-lg font-black text-[var(--text-primary)]">Focus Goals</h2>
-          <p className="text-sm text-[var(--text-secondary)]">
-            {formatCompactDateRange(plan.weekStartDate, plan.weekEndDate)}
-          </p>
-        </div>
-
-        <div className="mt-4 grid gap-3 lg:grid-cols-[0.9fr_1.4fr]">
-          <div className="rounded-[1rem] border border-[#e9e2f6] bg-white/82 p-3 dark:border-white/10 dark:bg-white/[0.05]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Recommended Now</p>
-            <p className="mt-2 text-base font-black text-[var(--text-primary)]">{recommended?.category.title ?? "No category behind"}</p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">{plan.recommendationReason}</p>
-            {plan.todayOverCapacitySeconds > 0 ? (
-              <span className="mt-3 inline-flex rounded-full border border-[#f4d4bb] bg-[#fff7ed] px-2 py-1 text-[13px] font-medium leading-none text-[#9a5a22] dark:border-[#70451f] dark:bg-[#2a1c12] dark:text-[#f4bd82]">
-                Today over capacity by {formatFocusGoalDuration(plan.todayOverCapacitySeconds)}
-              </span>
-            ) : null}
-            {activeWarnings.map((warning) => (
-              <p className="mt-2 text-sm font-semibold text-[#8a5b17] dark:text-[#f0c476]" key={warning}>{warning}</p>
-            ))}
-          </div>
-
-          <div className="rounded-[1rem] border border-[#e9e2f6] bg-white/82 p-3 dark:border-white/10 dark:bg-white/[0.05]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Productive Totals</p>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">Sleep excluded</p>
-            <div className="mt-3 space-y-3">
+    <section className="mx-auto mt-5 w-full max-w-6xl px-3 sm:px-0">
+      <div className="w-full overflow-hidden rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]">
+        <div className="px-5 pb-5 pt-5 sm:px-6 sm:pb-6">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <div className="mb-1 flex justify-between gap-2 text-xs font-medium text-[var(--text-secondary)]">
-                  <span>Productive Today</span>
-                  <span>{formatFocusGoalDuration(plan.productiveTodaySeconds)} / {formatFocusGoalDuration(plan.productiveTodayBaseTargetSeconds)}</span>
-                </div>
-                <ProgressBar
-                  actualSeconds={plan.productiveTodaySeconds}
-                  satisfied={productiveTodaySatisfied}
-                  targetSeconds={plan.productiveTodayBaseTargetSeconds}
-                />
-                {plan.productiveTodayReallocatedSeconds > 0 ? (
-                  <p className="mt-1 text-xs font-medium text-[var(--text-muted)]">{formatFocusGoalDuration(plan.productiveTodayReallocatedSeconds)} reallocated across categories today</p>
-                ) : null}
-                <p className="mt-1 text-[11px] font-medium text-[var(--text-muted)]">
-                  Sleep excluded: {formatFocusGoalDuration(plan.productiveTodayExcludedSleepSeconds)} · Unproductive excluded: {formatFocusGoalDuration(plan.productiveTodayExcludedUnproductiveSeconds)} · Productive categories counted: {plan.productiveTodayCategoryCount}
-                </p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Focus Goals</p>
+                <h2 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]">Goal Progress</h2>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">{rangeLabel} • {scope} targets</p>
               </div>
-              <div>
-                <div className="mb-1 flex justify-between gap-2 text-xs font-medium text-[var(--text-secondary)]">
-                  <span>Productive Weekly</span>
-                  <span>{formatFocusGoalDuration(plan.productiveWeekSeconds)} / {formatFocusGoalDuration(plan.productiveWeekBaseTargetSeconds)}</span>
-                </div>
-                <ProgressBar
-                  actualSeconds={plan.productiveWeekSeconds}
-                  satisfied={productiveWeekSatisfied}
-                  targetSeconds={plan.productiveWeekBaseTargetSeconds}
-                />
-                {plan.productiveNextWeekCreditPreviewSeconds > 0 ? (
-                  <p className="mt-1 text-xs font-medium text-[var(--text-muted)]">Next week credit preview {formatFocusGoalDuration(plan.productiveNextWeekCreditPreviewSeconds)}</p>
-                ) : null}
+              <div aria-label="Focus goal range" className="inline-flex items-center self-start" role="group">
+                {(["daily", "weekly", "monthly"] as const).map((value, index, items) => (
+                  <TaskTableChipButton
+                    aria-pressed={scope === value}
+                    className={getConnectedGoalChipClass(index, items.length)}
+                    key={value}
+                    onClick={() => setScope(value)}
+                    toneClassName={scope === value ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : FOCUS_GOAL_OUTLINE_CHIP_CLASS}
+                  >
+                    {value[0].toUpperCase() + value.slice(1)}
+                  </TaskTableChipButton>
+                ))}
               </div>
             </div>
-          </div>
-        </div>
-
-        <div className="mt-5">
-          <div className="flex flex-col items-center gap-2 text-center">
-            <h3 className="text-sm font-black text-[var(--text-primary)]">Category Goals</h3>
-            <div className="flex items-center gap-3 text-[11px] font-bold text-[var(--text-muted)]">
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#7c68f1]" /> Logged</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#d7ccef]" /> Target</span>
-            </div>
-          </div>
-          <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
-            {sortedSummaries.map((summary) => {
-              const isSatisfiedToday =
-                summary.adjustedTodayTargetSeconds > 0 &&
-                summary.todayActualSeconds >= summary.adjustedTodayTargetSeconds;
-              const labels = statusLabels(summary);
-              return (
-                <div
-                  className={`rounded-[var(--radius-card)] border px-3 py-2.5 dark:border-white/10 ${
-                    isSatisfiedToday
-                      ? "border-[#cfe8db] bg-[#f1faf5] dark:bg-[#123024]/45"
-                      : "border-[var(--border-soft)] bg-white/82 dark:bg-white/[0.05]"
-                  }`}
+            <div aria-label="Focus goal category" className="adhdice-scrollbar flex max-w-full items-center gap-2 overflow-x-auto pb-1" role="group">
+              <label className={`${TASK_TABLE_CHIP_BASE_CLASS} gap-1.5 ${FOCUS_GOAL_OUTLINE_CHIP_CLASS} focus-within:border-[#c9bcff] focus-within:ring-2 focus-within:ring-[#8d79f6]/25`}>
+                <Search aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+                <input
+                  aria-label="Search focus goal categories"
+                  className="w-36 bg-transparent text-[13px] font-medium leading-none text-[#68738c] outline-none placeholder:text-[#9b92be] dark:text-white/60 dark:placeholder:text-white/35"
+                  onChange={(event) => setCategorySearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setCategorySearch("");
+                  }}
+                  placeholder="Search categories"
+                  type="search"
+                  value={categorySearch}
+                />
+              </label>
+              <TaskTableChipButton
+                aria-pressed={effectiveSelectedCategoryId === "overview"}
+                onClick={() => setSelectedCategoryId("overview")}
+                toneClassName={effectiveSelectedCategoryId === "overview" ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : FOCUS_GOAL_OUTLINE_CHIP_CLASS}
+              >
+                Overview
+              </TaskTableChipButton>
+              {filteredSummaries.map((summary) => (
+                <TaskTableChipButton
+                  aria-pressed={effectiveSelectedCategoryId === summary.category.id}
                   key={summary.category.id}
+                  onClick={() => setSelectedCategoryId(summary.category.id)}
+                  toneClassName={effectiveSelectedCategoryId === summary.category.id ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : FOCUS_GOAL_OUTLINE_CHIP_CLASS}
                 >
-                  <div className="grid gap-3 lg:grid-cols-[minmax(11rem,0.72fr)_minmax(0,1.28fr)] lg:items-center">
-                    <div className="flex min-w-0 flex-col justify-center">
-                      <p className="text-sm font-bold leading-snug text-[var(--text-primary)]">{summary.category.title}</p>
-                      <p className="mt-1 text-xs font-semibold text-[var(--text-secondary)]">
-                        {formatPriorityLabel(summary.priorityLevel)}
-                      </p>
-                      <p className="mt-1 text-xs leading-snug text-[var(--text-secondary)]">
-                        {typeLine(summary)}
-                        {isSleepCategory(summary.category) ? " · Excluded from productive totals" : ""}
-                      </p>
-                      <p className="mt-2 text-xs font-medium text-[var(--text-secondary)]">
-                        {targetText("Today", summary)}
-                      </p>
-                      <p className="mt-1 text-xs font-medium text-[var(--text-secondary)]">
-                        {weeklyTargetText(summary)}
-                      </p>
-                      {summary.incomingCarryoverCreditSeconds > 0 ? (
-                        <p className="mt-1 text-xs font-semibold text-[#6b5ab8] dark:text-[#b9a9ff]">
-                          Incoming credit: {formatFocusGoalDuration(summary.incomingCarryoverCreditSeconds)}
-                        </p>
-                      ) : null}
-                      {summary.outgoingCarryoverCreditSeconds > 0 ? (
-                        <p className="mt-1 text-xs font-semibold text-[#32734c] dark:text-[#9bd7b4]">
-                          Next week credit preview: {formatFocusGoalDuration(summary.outgoingCarryoverCreditSeconds)}
-                        </p>
-                      ) : null}
-                      {labels.length ? (
-                        <p className="mt-1 text-xs font-medium text-[var(--text-secondary)]">
-                          <span className="text-[var(--text-muted)]">Status: </span>
-                          {labels.map((item, index) => (
-                            <span className={statusTextClass(item.tone)} key={item.label}>
-                              {index > 0 ? " · " : ""}
-                              {item.label}
-                            </span>
-                          ))}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="overflow-hidden rounded-[0.9rem] border border-[#eee8f7] bg-white/82 px-1.5 py-2 dark:border-white/10 dark:bg-white/[0.05]">
-                        <div className="grid w-full min-w-0 grid-cols-[repeat(7,minmax(0,1fr))_minmax(2.4rem,1.08fr)] justify-start gap-1">
-                          {summary.dailySummaries.map((day, index) => (
-                            <GoalColumn
-                              actualSeconds={day.actualSeconds}
-                              color={summary.category.color}
-                              key={day.date}
-                              label={["M", "T", "W", "T", "F", "S", "S"][index] ?? day.weekdayKey.slice(0, 1).toUpperCase()}
-                              targetSeconds={day.adjustedTargetSeconds}
-                            />
-                          ))}
-                          <GoalColumn
-                            actualSeconds={summary.weekActualSeconds}
-                            className="border-l border-[#eee8f7] pl-1 dark:border-white/10"
-                            color={summary.category.color}
-                            label="Wk"
-                            targetSeconds={summary.baseWeeklyTargetSeconds}
-                          />
-                        </div>
-                      </div>
-                      {summary.weeklyPaceBehindSeconds > 0 ? (
-                        <p className="mt-2 text-xs font-semibold text-[#9a5a22] dark:text-[#f4bd82]">
-                          Behind weekly pace by {formatFocusGoalDuration(summary.weeklyPaceBehindSeconds)}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                  {summary.category.title}
+                </TaskTableChipButton>
+              ))}
+              {categorySearch.trim() && filteredSummaries.length === 0 ? (
+                <span className="shrink-0 text-[13px] font-medium text-[var(--text-muted)]">No categories found</span>
+              ) : null}
+            </div>
           </div>
+        </div>
+
+        <div className="px-5 pb-5 sm:px-6 sm:pb-6">
+          {selectedSummary ? (
+            <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--text-secondary)]">{formatPriorityLabel(selectedSummary.priorityLevel)} • {typeLine(selectedSummary)}</p>
+                  <h3 className="mt-1 text-3xl font-black tracking-tight text-[var(--text-primary)]">{selectedSummary.category.title}</h3>
+                  <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                    {isSleepCategory(selectedSummary.category) ? "Excluded from productive totals" : selectedSummary.countsTowardProductiveGoal ? "Included in productive totals" : "Excluded from productive totals"}
+                  </p>
+                </div>
+                <div className="text-left lg:text-right">
+                  <p className="text-4xl font-bold tracking-tighter text-[var(--text-primary)]">{formatFocusGoalDuration(selectedActualSeconds)}</p>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">of {formatFocusGoalDuration(selectedTargetSeconds)} {scope} goal</p>
+                </div>
+              </div>
+              <ProgressBar actualSeconds={selectedActualSeconds} satisfied={selectedTargetSeconds > 0 && selectedActualSeconds >= selectedTargetSeconds} targetSeconds={selectedTargetSeconds} />
+              <div className="adhdice-scrollbar min-w-0 overflow-x-auto pb-2">
+                <div className="flex min-w-max items-end justify-center gap-4 px-2 sm:gap-6">
+                  {selectedBars.map((bar, index) => (
+                    <GoalColumn
+                      actualSeconds={bar.actualSeconds}
+                      className="w-14"
+                      color={selectedSummary.category.color}
+                      key={`${scope}-${index}`}
+                      label={bar.label}
+                      targetSeconds={bar.targetSeconds}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="adhdice-scrollbar flex flex-nowrap items-center gap-4 overflow-x-auto pb-1 text-sm text-[var(--text-secondary)]">
+                <p className="shrink-0">{targetText("Today", selectedSummary)}</p>
+                <p className="shrink-0">{weeklyTargetText(selectedSummary)}</p>
+                {selectedSummary.weeklyPaceBehindSeconds > 0 ? <p className="shrink-0 font-semibold text-[#9a5a22] dark:text-[#f4bd82]">Behind weekly pace by {formatFocusGoalDuration(selectedSummary.weeklyPaceBehindSeconds)}</p> : null}
+                {selectedSummary.incomingCarryoverCreditSeconds > 0 ? <p className="shrink-0 font-semibold text-[#6b5ab8] dark:text-[#b9a9ff]">Incoming credit: {formatFocusGoalDuration(selectedSummary.incomingCarryoverCreditSeconds)}</p> : null}
+                {selectedSummary.outgoingCarryoverCreditSeconds > 0 ? <p className="shrink-0 font-semibold text-[#32734c] dark:text-[#9bd7b4]">Next week credit preview: {formatFocusGoalDuration(selectedSummary.outgoingCarryoverCreditSeconds)}</p> : null}
+                {statusLabels(selectedSummary).length ? (
+                  <p className="shrink-0"><span className="text-[var(--text-muted)]">Status: </span>{statusLabels(selectedSummary).map((item, index) => <span className={statusTextClass(item.tone)} key={item.label}>{index > 0 ? " · " : ""}{item.label}</span>)}</p>
+                ) : null}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Productive Totals</p>
+                  <p className="mt-2 text-5xl font-bold tracking-tighter text-[var(--text-primary)]">{formatFocusGoalDuration(overviewActualSeconds)}</p>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">of {formatFocusGoalDuration(overviewTargetSeconds)} • Sleep excluded</p>
+                </div>
+                <div className="max-w-xl lg:text-right">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Recommended Now</p>
+                  <p className="mt-2 text-xl font-black text-[var(--text-primary)]">{recommended?.category.title ?? "No category behind"}</p>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)]">{plan.recommendationReason}</p>
+                </div>
+              </div>
+              <ProgressBar
+                actualSeconds={overviewActualSeconds}
+                satisfied={scope === "daily" ? productiveTodaySatisfied : scope === "weekly" ? productiveWeekSatisfied : productiveMonthTargetSeconds > 0 && productiveMonthActualSeconds >= productiveMonthTargetSeconds}
+                targetSeconds={overviewTargetSeconds}
+              />
+              <div aria-label="Category progress ranked by total time" className="adhdice-scrollbar min-w-0 overflow-x-auto pb-2">
+                <div className="flex min-w-max items-start gap-6 px-2 sm:gap-8">
+                  {rankedOverviewSummaries.map(({ actualSeconds, summary, targetSeconds }) => (
+                    <GoalColumn
+                      actualSeconds={actualSeconds}
+                      className="w-28"
+                      color={summary.category.color}
+                      key={summary.category.id}
+                      label={summary.category.title}
+                      targetSeconds={targetSeconds}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1 text-sm text-[var(--text-secondary)]">
+                {scope === "daily" ? <p>Sleep excluded: {formatFocusGoalDuration(plan.productiveTodayExcludedSleepSeconds)} • Unproductive excluded: {formatFocusGoalDuration(plan.productiveTodayExcludedUnproductiveSeconds)} • Productive categories counted: {plan.productiveTodayCategoryCount}</p> : null}
+                {scope === "daily" && plan.productiveTodayReallocatedSeconds > 0 ? <p>{formatFocusGoalDuration(plan.productiveTodayReallocatedSeconds)} reallocated across categories today</p> : null}
+                {scope === "weekly" && plan.productiveNextWeekCreditPreviewSeconds > 0 ? <p>Next week credit preview {formatFocusGoalDuration(plan.productiveNextWeekCreditPreviewSeconds)}</p> : null}
+                {scope === "monthly" ? <p>{productiveMonthSummaries.length} productive categories counted across the calendar month.</p> : null}
+                {plan.todayOverCapacitySeconds > 0 ? <p className="font-semibold text-[#9a5a22] dark:text-[#f4bd82]">Today over capacity by {formatFocusGoalDuration(plan.todayOverCapacitySeconds)}</p> : null}
+                {activeWarnings.map((warning) => <p className="font-semibold text-[#8a5b17] dark:text-[#f0c476]" key={warning}>{warning}</p>)}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </section>

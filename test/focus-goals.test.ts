@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import {
+  buildFocusGoalMonthPlan,
   buildFocusGoalPlan,
   detectDailySurplus,
   formatFocusGoalDuration,
@@ -19,6 +21,7 @@ import {
 } from "@/lib/focus-goals";
 
 const HOUR = 3600;
+const focusGoalsPanelSource = readFileSync(new URL("../src/components/focus-goals-panel.tsx", import.meta.url), "utf8");
 
 function category(overrides: Partial<FocusCategory>): FocusCategory {
   return {
@@ -85,6 +88,93 @@ test("Priority 5 outranks lower priorities", () => {
 test("focus goal duration formatting carries residual minutes without rendering 60m", () => {
   assert.equal(formatFocusGoalDuration(7199), "1h 59m");
   assert.equal(formatFocusGoalDuration(7200), "2h");
+});
+
+test("monthly goal plan sums effective daily targets, adjustments, logged activity, and seven-day buckets", () => {
+  const coding = category({ id: "coding", weeklyGoalSeconds: 7 * HOUR });
+  const plan = buildFocusGoalMonthPlan({
+    adjustments: [adjustment({ adjustmentDate: "2026-07-08", reductionSeconds: 30 * 60, targetCategoryId: "coding" })],
+    categories: [coding],
+    history: [
+      session({ categoryId: "coding", date: "2026-07-01", durationSeconds: HOUR }),
+      session({ categoryId: "coding", date: "2026-07-08", durationSeconds: 2 * HOUR, id: "session-2" }),
+    ],
+    monthDate: "2026-07-22",
+  });
+  const [summary] = plan.summaries;
+  assert.equal(plan.startDate, "2026-07-01");
+  assert.equal(plan.endDate, "2026-07-31");
+  assert.equal(summary.actualSeconds, 3 * HOUR);
+  assert.equal(summary.targetSeconds, (31 * HOUR) - (30 * 60));
+  assert.equal(summary.buckets.length, 5);
+  assert.equal(summary.buckets[0].actualSeconds, HOUR);
+  assert.equal(summary.buckets[1].actualSeconds, 2 * HOUR);
+  assert.equal(summary.buckets[4].endDate, "2026-07-31");
+});
+
+test("Focus Goals copies the Activity Summary shell with scoped and category chip controls", () => {
+  assert.match(focusGoalsPanelSource, /max-w-6xl[\s\S]*?rounded-\[var\(--radius-modal\)\][\s\S]*?bg-\[var\(--surface-elevated\)\][\s\S]*?shadow-\[var\(--shadow-card\)\]/);
+  assert.match(focusGoalsPanelSource, /\["daily", "weekly", "monthly"\] as const/);
+  assert.match(focusGoalsPanelSource, /getConnectedGoalChipClass\(index, items\.length\)/);
+  assert.match(focusGoalsPanelSource, /aria-label="Focus goal category"[\s\S]*?>\s*Overview[\s\S]*?filteredSummaries\.map/);
+  assert.match(focusGoalsPanelSource, /effectiveSelectedCategoryId === summary\.category\.id/);
+  assert.doesNotMatch(focusGoalsPanelSource, /xl:grid-cols-2/);
+});
+
+test("Focus Goals places an approved category search chip before Overview and filters category choices", () => {
+  assert.match(focusGoalsPanelSource, /TASK_TABLE_CHIP_BASE_CLASS[\s\S]*?aria-label="Search focus goal categories"[\s\S]*?placeholder="Search categories"[\s\S]*?>\s*Overview/);
+  assert.match(focusGoalsPanelSource, /text-\[13px\] font-medium leading-none/);
+  assert.match(focusGoalsPanelSource, /summary\.category\.title\.toLowerCase\(\)\.includes\(normalizedSearch\)/);
+  assert.match(focusGoalsPanelSource, /filteredSummaries\.map/);
+});
+
+test("Focus Goals category chips sort alphabetically without changing progress ranking", () => {
+  assert.match(focusGoalsPanelSource, /categoryChipSummaries = useMemo[\s\S]*?category\.title\.localeCompare\(right\.category\.title/);
+  assert.match(focusGoalsPanelSource, /if \(!normalizedSearch\) return categoryChipSummaries/);
+  assert.match(focusGoalsPanelSource, /const rankedOverviewSummaries = sortedSummaries/);
+});
+
+test("Focus Goals renders one selected category with scope-specific daily weekly and monthly bars", () => {
+  assert.match(focusGoalsPanelSource, /selectedSummary \? \([\s\S]*?selectedSummary\.category\.title/);
+  assert.match(focusGoalsPanelSource, /scope === "daily"[\s\S]*?scope === "weekly"[\s\S]*?selectedMonthSummary\?\.buckets/);
+  assert.match(focusGoalsPanelSource, /label: `W\$\{index \+ 1\}`/);
+  assert.match(focusGoalsPanelSource, /label: "Month"/);
+  assert.match(focusGoalsPanelSource, /adhdice-scrollbar min-w-0 overflow-x-auto/);
+});
+
+test("Focus Goals keeps selected-category metadata in one horizontally scrollable row", () => {
+  assert.match(focusGoalsPanelSource, /adhdice-scrollbar flex flex-nowrap items-center gap-4 overflow-x-auto[\s\S]*?targetText\("Today"[\s\S]*?weeklyTargetText[\s\S]*?Status:/);
+  assert.match(focusGoalsPanelSource, /<p className="shrink-0">\{targetText/);
+});
+
+test("Focus Goals Overview groups completed, in-progress, and not-started vertical bars", () => {
+  assert.match(focusGoalsPanelSource, /rankedOverviewSummaries = sortedSummaries[\s\S]*?scope === "daily"[\s\S]*?scope === "weekly"[\s\S]*?monthSummary\?\.actualSeconds/);
+  assert.match(focusGoalsPanelSource, /goalProgressGroup\(left\.actualSeconds, left\.targetSeconds\)[\s\S]*?leftGroup - rightGroup/);
+  assert.match(focusGoalsPanelSource, /leftGroup === 2[\s\S]*?right\.targetSeconds - left\.targetSeconds[\s\S]*?right\.actualSeconds - left\.actualSeconds/);
+  assert.match(focusGoalsPanelSource, /aria-label="Category progress ranked by total time"[\s\S]*?overflow-x-auto[\s\S]*?rankedOverviewSummaries\.map[\s\S]*?<GoalColumn/);
+  assert.match(focusGoalsPanelSource, /Math\.min\(100, \(actualSeconds \/ targetSeconds\) \* 100\)/);
+  assert.match(focusGoalsPanelSource, /color=\{summary\.category\.color\}[\s\S]*?label=\{summary\.category\.title\}/);
+});
+
+test("Focus Goals vertical bars keep fixed aligned label slots and even overview spacing", () => {
+  assert.match(focusGoalsPanelSource, /GOAL_COLUMN_TEXT_CLASS[\s\S]*?flex h-11 w-full items-start justify-center whitespace-normal break-words pt-2 text-center leading-tight[\s\S]*?title=\{label\}/);
+  assert.match(focusGoalsPanelSource, /flex min-w-max items-start gap-6 px-2 sm:gap-8/);
+  assert.match(focusGoalsPanelSource, /className="w-28"/);
+});
+
+test("Focus Goals category labels stay black even when their bars are complete", () => {
+  assert.match(focusGoalsPanelSource, /break-words pt-2 text-center leading-tight text-black dark:text-white/);
+  assert.doesNotMatch(focusGoalsPanelSource, /isOver \? "text-\[#32734c\]/);
+});
+
+test("Focus Goals vertical-bar text shares the approved status typography", () => {
+  assert.match(focusGoalsPanelSource, /const GOAL_COLUMN_TEXT_CLASS = "text-sm font-semibold"/);
+  assert.equal((focusGoalsPanelSource.match(/GOAL_COLUMN_TEXT_CLASS/g) ?? []).length, 4);
+});
+
+test("Focus Goals vertical bars use the borderless muted progress-track treatment", () => {
+  assert.match(focusGoalsPanelSource, /rounded-md bg-\[var\(--surface-muted\)\] shadow-inner sm:max-w-\[3rem\] dark:bg-white\/\[0\.06\]/);
+  assert.doesNotMatch(focusGoalsPanelSource, /border-black\/20|dark:border-white\/20|shadow-\[inset_0_0_4px/);
 });
 
 test("Sleep is excluded from productive totals", () => {

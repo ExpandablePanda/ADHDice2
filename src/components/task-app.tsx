@@ -511,7 +511,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.3.3";
+const APP_VERSION = "7.3.36";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -5755,7 +5755,6 @@ export function TaskApp() {
                 appVersion={APP_VERSION}
                 error={brainstormState.error}
                 remoteUpdateNotice={brainstormState.remoteUpdateNotice}
-                resetState={brainstormState.resetState}
                 state={brainstormState.state}
                 syncState={brainstormState.syncState}
                 updateState={brainstormState.updateState}
@@ -6198,9 +6197,7 @@ export function TaskApp() {
             counterHistory={focusCounterHistory}
             history={focusHistory}
             onAdjustCounter={handleAdjustFocusCounter}
-            onAdjustTimer={(categoryId, deltaSeconds) => {
-              void handleAdjustTimer(categoryId, deltaSeconds);
-            }}
+            onAdjustTimer={handleAdjustTimer}
             onCreateCounter={handleCreateFocusCounter}
             onDeleteCounter={handleDeleteFocusCounter}
             onDeleteTimer={(categoryId) => {
@@ -6213,7 +6210,7 @@ export function TaskApp() {
               if (isSystemCountdownCategoryId(categoryId) && activeCountdownAlertSessionKey) {
                 dismissCountdownFinishedAlert();
               }
-              void handleResetTimer(categoryId);
+              return handleResetTimer(categoryId);
             }}
             onFinishTimer={handleFinishTimer}
             onLogManual={handleManualFocusEntry}
@@ -6221,7 +6218,7 @@ export function TaskApp() {
               void handleSetCountdownTarget(categoryId, targetSeconds, options);
             }}
             onToggleTimer={(categoryId, options) => {
-              void handleToggleTimer(categoryId, options);
+              return handleToggleTimer(categoryId, options);
             }}
             onUpdateCounter={handleUpdateFocusCounter}
             onUpdateHistoryEntry={handleUpdateFocusHistoryEntry}
@@ -7383,7 +7380,7 @@ function CommandCenterHeader({
     return (
       <header className="px-3">
         <div className="adhdice-scrollbar w-full overflow-x-auto overflow-y-hidden touch-pan-x">
-          <div className="flex min-w-max items-center gap-2 rounded-[1.15rem] border border-[#ece8f8] bg-[var(--hud-surface)] px-2 py-1 dark:border-white/10">
+          <div className="mx-auto flex w-max items-center gap-2 rounded-[1.15rem] bg-[var(--hud-surface)] px-2 py-1">
             <button
               aria-label="Expand HUD"
               className="shrink-0 flex min-h-11 items-center gap-2 rounded-full bg-[var(--hud-surface)] px-2.5 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
@@ -7409,9 +7406,6 @@ function CommandCenterHeader({
                   {formatCollapsedHudTimerLabel(collapsedHudFocusTimer.seconds)}
                 </span>
                 <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudFocusTimer.title}</span>
-                <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8174b8] dark:text-[#b4abdc]">
-                  {collapsedHudFocusTimer.isPaused ? "Paused" : "Running"}
-                </span>
               </TaskTableChipButton>
             ) : collapsedHudTaskTimer ? (
               <TaskTableChipButton
@@ -7425,9 +7419,6 @@ function CommandCenterHeader({
                   {formatCollapsedHudTimerLabel(getTaskTimerDisplaySeconds(collapsedHudTaskTimer, taskTimerNow))}
                 </span>
                 <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudTaskTimer.title}</span>
-                <span className="shrink-0 text-[10px] font-medium uppercase tracking-[0.08em] text-[#8174b8] dark:text-[#b4abdc]">
-                  {collapsedHudTaskTimer.pausedAt ? "Paused" : "Running"}
-                </span>
               </TaskTableChipButton>
             ) : null}
             {currentHudPageId !== "overview" ? (
@@ -7556,16 +7547,13 @@ function BrandMark({
   return (
     <Image
       alt="ADHDice logo"
-      className={compact
-        ? "h-9 max-w-none object-contain object-left pl-[3px]"
-        : "h-[50px] max-w-none object-contain object-left pl-[3px]"}
-      height={compact ? 36 : 56}
+      className="max-w-none object-contain object-left pl-[3px]"
+      height={compact ? 36 : 50}
       onError={() => setErrored(true)}
       priority
       src={withBasePath(logoSrc)}
-      style={{ width: "auto" }}
       unoptimized={logoSrc.startsWith("data:")}
-      width={compact ? 122 : 190}
+      width={compact ? 122 : 170}
     />
   );
 }

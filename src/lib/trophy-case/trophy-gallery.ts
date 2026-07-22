@@ -6,7 +6,7 @@ export const TROPHY_GALLERY_AURAS: readonly MilestoneAuraKind[] = ["standard", "
 export const TROPHY_TIER_MATERIALS = {
   bronze: { color: "#a8663f", roughness: 0.42 },
   silver: { color: "#c4c9cf", roughness: 0.36 },
-  gold: { color: "#e2aa2d", roughness: 0.28 },
+  gold: { color: "#f2c94c", roughness: 0.28 },
   platinum: { color: "#d7e5e8", roughness: 0.24 },
 } as const;
 

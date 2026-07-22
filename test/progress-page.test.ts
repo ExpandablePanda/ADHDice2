@@ -15,6 +15,7 @@ import {
   buildAchievementProgressModel,
   buildAchievementSummaryPresentation,
   buildAchievementTierAwardDescription,
+  countAchievementTrophiesByTier,
   emptyAchievementRuntimeSnapshot,
   formatAchievementDate,
   formatAchievementValue,
@@ -285,6 +286,7 @@ test("summary totals, partial runtime rows, empty data, and recent award selecti
   assert.equal(partial.summary.overallCompletionPercent, 3);
   assert.equal(partial.summary.completedCollections, 1);
   assert.equal(partial.summary.mostRecentUnlock?.label, "You Can Count On Me · Collection mastered");
+  assert.deepEqual(countAchievementTrophiesByTier(partial), { bronze: 2, gold: 0, platinum: 0, silver: 0 });
 });
 
 test("no-user to authenticated transition waits for that user's loaded snapshot before claiming", async () => {

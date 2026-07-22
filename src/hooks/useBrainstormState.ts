@@ -188,10 +188,10 @@ export function useBrainstormState(userId: string | null, active: boolean) {
   const resetState = useCallback((scope: BrainstormResetScope = "all") => {
     if (!userId) return;
     const next = scope === "questionnaire"
-      ? updateBrainstormState(stateRef.current, { answers: {}, sourceMarkdown: "" }, new Date().toISOString())
+      ? updateBrainstormState(stateRef.current, { answers: {}, questionnaireState: createEmptyBrainstormState().questionnaireState, sourceMarkdown: "" }, new Date().toISOString())
       : createEmptyBrainstormState(new Date().toISOString());
     dirtyRef.current = true;
-    dirtyFieldsRef.current = new Set(scope === "questionnaire" ? ["answers", "sourceMarkdown"] : ["answers", "qaState", "sourceMarkdown"]);
+    dirtyFieldsRef.current = new Set(scope === "questionnaire" ? ["answers", "questionnaireState", "sourceMarkdown"] : ["answers", "qaState", "questionnaireState", "sourceMarkdown"]);
     stateRef.current = next;
     setState(next);
     persistCache(next, userId);

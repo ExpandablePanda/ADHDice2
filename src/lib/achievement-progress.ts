@@ -74,6 +74,18 @@ export type AchievementProgressModel = {
   summary: AchievementSummary;
 };
 
+export function countAchievementTrophiesByTier(model: AchievementProgressModel): Record<AchievementTierId, number> {
+  const counts: Record<AchievementTierId, number> = { bronze: 0, gold: 0, platinum: 0, silver: 0 };
+  for (const collection of model.collections) {
+    for (const track of collection.tracks) {
+      for (const tier of track.tiers) {
+        if (tier.isEarned) counts[tier.id] += 1;
+      }
+    }
+  }
+  return counts;
+}
+
 export type AchievementSnapshotReadiness = "no_user" | "loading" | "loaded" | "error";
 
 export type AchievementSnapshotLoadState = {

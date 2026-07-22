@@ -69,6 +69,26 @@ export type FocusGoalPlan = {
   todayOverCapacitySeconds: number;
 };
 
+export type FocusGoalMonthBucket = {
+  actualSeconds: number;
+  endDate: string;
+  startDate: string;
+  targetSeconds: number;
+};
+
+export type FocusGoalMonthCategorySummary = {
+  actualSeconds: number;
+  buckets: FocusGoalMonthBucket[];
+  category: FocusCategory;
+  targetSeconds: number;
+};
+
+export type FocusGoalMonthPlan = {
+  endDate: string;
+  startDate: string;
+  summaries: FocusGoalMonthCategorySummary[];
+};
+
 export type FocusGoalSurplusOverrideTarget = {
   summary: FocusGoalCategorySummary;
   warningLabel: string | null;
@@ -526,4 +546,54 @@ export function buildFocusGoalPlan(input: {
       : "No productive category is behind today's plan.",
     todayOverCapacitySeconds,
   } satisfies FocusGoalPlan;
+}
+
+export function buildFocusGoalMonthPlan(input: {
+  adjustments?: FocusDailyGoalAdjustment[];
+  categories: FocusCategory[];
+  history: HistoricalFocusSession[];
+  monthDate?: string;
+}): FocusGoalMonthPlan {
+  const selectedDate = parseLocalDateKey(input.monthDate ?? getLogicalDayKey());
+  const monthStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+  const monthEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+  const startDate = getLocalDateKey(monthStart);
+  const endDate = getLocalDateKey(monthEnd);
+  const bucketCount = Math.ceil(monthEnd.getDate() / 7);
+  const summariesByCategory = new Map(input.categories.map((category) => [category.id, {
+    actualSeconds: 0,
+    buckets: Array.from({ length: bucketCount }, (_, index) => ({
+      actualSeconds: 0,
+      endDate: getLocalDateKey(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), Math.min((index + 1) * 7, monthEnd.getDate()))),
+      startDate: getLocalDateKey(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), (index * 7) + 1)),
+      targetSeconds: 0,
+    })),
+    category,
+    targetSeconds: 0,
+  }]));
+
+  for (let day = 1; day <= monthEnd.getDate(); day += 1) {
+    const date = getLocalDateKey(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), day));
+    const dayPlan = buildFocusGoalPlan({
+      adjustments: input.adjustments,
+      categories: input.categories,
+      history: input.history,
+      todayDate: date,
+    });
+    const bucketIndex = Math.floor((day - 1) / 7);
+    for (const summary of dayPlan.summaries) {
+      const monthSummary = summariesByCategory.get(summary.category.id);
+      if (!monthSummary) continue;
+      monthSummary.actualSeconds += summary.todayActualSeconds;
+      monthSummary.targetSeconds += summary.adjustedTodayTargetSeconds;
+      monthSummary.buckets[bucketIndex].actualSeconds += summary.todayActualSeconds;
+      monthSummary.buckets[bucketIndex].targetSeconds += summary.adjustedTodayTargetSeconds;
+    }
+  }
+
+  return {
+    endDate,
+    startDate,
+    summaries: input.categories.map((category) => summariesByCategory.get(category.id)!),
+  };
 }

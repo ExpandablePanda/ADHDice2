@@ -1,17 +1,160 @@
 # Current State
 
-Last reviewed: 2026-07-21
+Last reviewed: 2026-07-22
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.3.3`.
+- Current working app version: `7.3.36`.
 - Current release group: `7.3.x` Focus Bars live daily-goal graph.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.3.28 Collapsed HUD Centering
+- `7.3.28` centers the collapsed HUD's intrinsic-width control row inside its full-width horizontal scroller whenever it fits. Narrow viewports retain native horizontal scrolling and the existing rounded borderless surface, spacing, controls, and behavior.
+
+## 7.3.29 Trophy Dice Presentation
+- `7.3.29` gives all four Trophy Gallery collection dice one shared flat, audience-facing one-pip presentation and rotates them in place around the vertical axis instead of starting from different tilted angles.
+- Platinum now uses white pips plus a polished physical material with restrained shifting shimmer rather than literal sparkle decals. The live shared canvas and generated tier thumbnails reuse the same pose, pip-color rule, and platinum material treatment.
+- Focused trophy integration/unit tests, targeted ESLint, and `git diff --check` are the intended checks. Browser, mobile, reduced-motion visual QA, and cross-GPU WebGL rendering remain manual QA.
+
+## 7.3.30 Trophy Dice Centering and Materials
+- `7.3.30` vertically centers the shared live trophy dice in their preview regions. Gold uses a brighter yellow-gold body and joins Platinum in using white pips.
+- Platinum keeps its decal-free body but now uses a deterministic fine-grain bump and roughness texture beneath the polished physical material, producing a visible glitter-like surface in both the live canvas and generated thumbnails.
+- Focused trophy tests, targeted ESLint, and `git diff --check` are the intended checks. Browser, mobile, reduced-motion visual QA, and cross-GPU WebGL rendering remain manual QA.
+
+## 7.3.31 Achievement Trophy Showcase
+- `7.3.31` places the existing Trophy Gallery showcase at the top of the active Achievements tab. The four counts come from earned Achievement tier awards across the current progress model, so each earned Bronze, Silver, Gold, or Platinum tier contributes to its matching die count.
+- Achievements and Completed Milestones now reuse one showcase component, including the shared Canvas, static thumbnails, quality controls, reduced-motion behavior, and renderer fallback handling. Milestone tier chips retain their filter behavior; Achievement counts remain informative rather than presenting a non-existent filter.
+- Focused Progress and Trophy Gallery tests, targeted ESLint, and `git diff --check` are the intended checks. Browser, mobile, reduced-motion visual QA, and cross-GPU WebGL rendering remain manual QA.
+
+## 7.3.32 Collapsed HUD Timer Status
+- `7.3.32` removes the redundant visible `Running` suffix from active Focus and task timer chips in the collapsed HUD. Live seconds continue communicating the running state, while stopped timers retain the visible `Paused` suffix and both states keep their existing Pause/Resume accessible labels and handlers.
+- Focused HUD layout tests, targeted source checks, and `git diff --check` are the intended checks. Browser and mobile visual QA remain manual QA.
+
+## 7.3.33 Collapsed HUD Timer Copy
+- `7.3.33` also removes the visible `Paused` suffix from collapsed HUD Focus and task timer chips. Timer state remains clear through the play/pause icon and moving or frozen time, while the existing accessible Pause/Resume labels and handlers remain unchanged.
+- Focused HUD layout tests, targeted source checks, and `git diff --check` are the intended checks. Browser and mobile visual QA remain manual QA.
+- Targeted ESLint for `task-app.tsx` was attempted against its existing unrelated lint backlog; `git diff --check` was run. Browser and narrow-mobile QA remain.
+
+## 7.3.34 Saved Brainstorm Questionnaires
+- Brainstorm Questionnaire now supports multiple saved sessions, each with its own title, Markdown source, parsed form, answers, and Markdown summary. New, duplicate, switch, clear-current, and delete-current controls preserve other questionnaire sessions and all QA Checklist sessions.
+- Existing single-questionnaire data automatically becomes a saved Questionnaire session. The session collection is stored in the existing Brainstorm JSONB state, with the selected session mirrored to the legacy fields for backwards compatibility.
+- Focused Brainstorm/QA tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.35 Brainstorm Questionnaire Panel Alignment
+- Questionnaire session, source, form, and summary sections now use the shared QA `AdhdPanel` geometry: its 16px section rhythm, padding, border, and stronger raised shadow. The session panel is structurally separated from the Source/Form pair, matching the QA workspace’s spacing and elevation without altering controls or persistence.
+
+## 7.3.36 New Questionnaire Session Editing Repair
+- New Questionnaire sessions now survive the local state-normalization handoff, keeping the selected session active and its source editor writable after creation. Existing sessions, QA Checklist state, and sync serialization are unchanged.
+
+## 7.3.27 Alphabetical Goal Chips and Draggable Focus Tabs
+- `7.3.27` sorts the Focus Goals category chip rail alphabetically while keeping Overview first and leaving recommendation and progress-bar ranking unchanged. Clocks and Focus Bars now copy the Tasks workspace native tab-drag interaction, including drag preview, post-drag click suppression, persisted visual order, and reordered click/keyboard/swipe navigation; their underlying page identities and timer behavior remain unchanged.
+- Focused Focus Goals/Bars tests, targeted ESLint for the directly changed Focus files/tests, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.26 Focus Timer Dropdown Highlight
+- `7.3.26` gives the keyboard/hover-highlighted Focus Timer dropdown option the exact active Clocks chip purple (`#6f57f6`) with white text. The Countdown icon also becomes white while highlighted; inactive rows, category dots, option selection, keyboard navigation, and dropdown behavior remain unchanged.
+- Focused Focus tests, targeted ESLint for `focus-page.tsx` and its focused test, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.25 Focus Goals Borderless Vertical Tracks
+- `7.3.25` removes the border and aura from every Focus Goals vertical bar track. The unfilled region now reuses the overall progress treatment's muted surface with a subtle inset shadow, including the matching dark surface, while fill colors, percentages, dimensions, alignment, ordering, and scrolling remain unchanged.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.24 Focus Toolbar Chip Tone Match
+- `7.3.24` gives Edit Categories, Edit Goals, Manual Entry, Add focus timer, and Add Counter the exact inactive Focus Goals category-chip tone: elevated white fill, light gray border, and muted text, with the matching dark treatment. Existing compact sizing, icon/text alignment, dropdown behavior, and handlers remain unchanged.
+- Focused Focus tests, targeted ESLint for `focus-page.tsx` and its focused test, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.23 Collapsed HUD Border Removal
+- `7.3.23` removes the visible outer border from the collapsed HUD shell while preserving its rounded surface, padding, horizontal scrolling, expand controls, account access, and all inner chip borders and behavior.
+- Targeted ESLint for `task-app.tsx` was attempted and remains blocked by its existing unrelated lint backlog (20 errors and 43 warnings); none point to the collapsed HUD shell change. `git diff --check` was run. Browser and narrow-mobile QA remain.
+
+## 7.3.22 Focus Goals Category Label and Progress Ordering
+- `7.3.22` keeps every vertical-bar category label black in light mode regardless of completed or over-goal status, with white retained for dark-mode contrast. Overview now groups bars as completed, in progress, then not started; completed and in-progress groups sort by actual time descending, while not-started goals sort by target size descending, with stable category order resolving ties.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.21 Focus Goals Label Wrap and Track Glow
+- `7.3.21` gives every vertical-bar label a fixed centered two-line slot with added separation below the track, replacing truncation while keeping all bars aligned. Track edges now use a faint neutral border plus the approved low-opacity lavender aura family already present in Trophy/HUD surfaces, retaining contrast without a visibly black stroke; dark mode receives the corresponding light treatment.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.20 Focus Goals Vertical-bar Outlines
+- `7.3.20` gives every shared Focus Goals vertical bar track a consistent thin dark outline in light mode and a light outline in dark mode, keeping unfilled space visible against the card background. The outline applies across Overview and individual Daily, Weekly, and Monthly graphs without changing fill colors, percentages, dimensions, ordering, or scrolling.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.19 Focus Goals Vertical-bar Typography
+- `7.3.19` gives every Focus Goals vertical-bar value, goal, and label the same `text-sm` medium-semibold typography used by the nearby capacity status text. One shared column text class applies the match across Overview and individual Daily, Weekly, and Monthly graphs while preserving semantic colors, fixed label alignment, truncation, spacing, and percentage geometry.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.18 Focus Goals Vertical-bar Alignment
+- `7.3.18` aligns every Focus Goals vertical column from the same top edge and gives category labels a fixed centered single-line slot with truncation and a full-text title. Overview columns use a consistent wider footprint and larger approved spacing, preventing long names from wrapping or shifting individual bars while preserving horizontal scrolling and percentage fills.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.17 Focus Goals Overview Vertical Category Bars
+- `7.3.17` replaces Overview's horizontal category progress rows with one horizontally scrollable row of the existing vertical Focus Goals columns. Categories remain ranked by scoped actual time from highest to lowest, while each column fill is independently calculated as actual divided by its own goal and capped at 100%; category colors, values, goals, and active Daily/Weekly/Monthly scope remain visible.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.16 Focus Goals Overview Category Progress
+- `7.3.16` adds every category's progress bar to Focus Goals Overview, ranked by actual time from highest to lowest for the active Daily, Weekly, or Monthly scope. Each compact full-width row shows the category, scoped actual/goal values, and existing progress treatment; individual category views and goal derivation remain unchanged.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.15 Focus Goals Keys and Wordmark Dimensions
+- `7.3.15` gives the weekly Focus Goals bars stable positional keys rather than the repeated single-letter weekday labels, preventing React's Tuesday/Thursday and Saturday/Sunday duplicate-key warnings. The header wordmark now renders at explicit proportional dimensions, preventing Next's one-sided image-resize warning without changing its visible size.
+- Verification: focused ESLint and `git diff --check`. Browser QA remains: weekly Focus Goals graph rendering and header wordmark sizing.
+
+## 7.3.14 Focus Goals Metadata Row
+- `7.3.14` places the selected category's Today, Week, weekly pace, carryover, and Status details in one compact non-wrapping row. The row retains native horizontal scrolling on narrow screens so the information stays readable without restoring the previous vertical stack.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.13 Focus Goals Category Search
+- `7.3.13` adds an approved compact task-table search chip before Overview in the Focus Goals category rail. Its 13px chip typography and quiet outline match the adjacent category chips; typing filters category choices without changing the selected category, goal calculations, or persistence, and Escape clears the query.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+## 7.3.12 Focus Goals Activity-shell Redesign
+- `7.3.12` replaces the dense two-column Focus Goals category grid with the approved Focus Activity Summary shell: the same modal-radius surface, border, elevated background, shadow, spacing, heading hierarchy, and connected chip treatment. A compact Overview/category chip rail renders one full-width selection at a time while retaining Recommended Now, productive totals, warnings, carryover, priority, target, and status information.
+- Daily and Weekly reuse the existing authoritative Focus Goal plan. Monthly aggregates the calendar month’s logged activity against the sum of each day’s existing effective adjusted target, using the same `buildFocusGoalPlan` rules day-by-day and presenting seven-day buckets. No persistence, adjustment, runtime, SQL, or category-order semantics changed.
+- Verification: focused Focus Goals tests, targeted ESLint for the Focus Goals component/helper/test, and `git diff --check`. Remaining browser/mobile QA: Activity-shell match, category rail overflow, Daily/Weekly/Monthly switching, selected-category chart fit, Overview readability, dark mode, and month totals against saved history.
+
+## 7.3.11 Add Focus Timer Chip Match
+- `7.3.11` gives the editable Add Focus Timer combobox the exact live Manual Entry `ui-pill-button-strong-light` shell: approved compact padding, 13px medium text, line-height-1, border, fill, radius, and dark treatment. The transparent inner input explicitly retains the same 13px chip typography during focus, while its dropdown indicator, filtering, keyboard selection, and options remain unchanged.
+- Verification: focused Focus tests, targeted ESLint for `focus-page.tsx` and its focused test, and `git diff --check`. Remaining browser/mobile QA: exact height/text alignment beside Manual Entry, focused typography, dropdown placement, keyboard entry, and light/dark appearance.
+
+## 7.3.10 Focus Tab Formatting Correction
+- `7.3.10` replaces the visible Focus pager arrows with the exact approved task-surface grouped-chip presentation: one centered `TASKS_SURFACE_GROUP_CLASS` outer chip containing `AdhdChip` controls for Clocks and Focus Bars with the shared active/inactive tones. Click selection, `aria-pressed`, left/right keyboard switching, and swipe navigation remain intact.
+- Verification: focused Focus tests, targeted ESLint for `focus-page.tsx` and its focused test, and `git diff --check`. Remaining browser/mobile QA: centered two-chip fit, active contrast, keyboard focus, click switching, and swipe switching in light/dark modes.
+
+## 7.3.9 Focus Pager Alignment and Timer-control Sizing Correction
+- `7.3.9` centers the existing compact Clocks/Focus Bars segmented pager through one full-width Focus sandbox wrapper, preserving its arrows, active styling, keyboard/click navigation, and shared swipe surface on both pages.
+- Active count-up clock faces now open the complete shared direction-first adjustment interface in one click. The clock gear menu adds an `Adjust time` entry with the same `showAdjustMenu` state and centered component, while outside-click and Escape closing, the clock ring, Play/Pause, Settings, Countdown behavior, validation, pending protection, and persistence remain unchanged.
+- Clocks use regular approved task-table chip/input sizing with comfortable centered row spacing. Focus Bars retain the compact 26px launcher but use the established micro 20px/10px expanded treatment inside narrow lanes; their Play/Pause/Finish/Reset controls now use the approved small 28px icon-button size with 16px icons. Lane width, fixed graph content, downward expansion, horizontal insets, and semantic colors remain unchanged.
+- Verification: focused Focus tests, targeted ESLint for directly changed Focus files/tests, and `git diff --check`. Remaining browser/mobile QA: pager centering on both pages, one-click face and gear entry, outside-click/Escape behavior, clock-face fit, narrow-lane control readability/touch targets, dark mode, and unchanged timer persistence/actions.
+
+## 7.3.8 Focus Sandbox Control Sizing and Shell Cleanup
+- `7.3.8` reuses the approved `TaskTableChipButton`, compact cadence input, `AdhdChip`, Tasks/Paths segmented shell, and task-table input classes. Focus Bars now uses the compact 26px adjustment trigger aligned with its icon controls, while Clocks uses the established larger chip padding inside the circular clock face.
+- The complete Clocks adjustment group is centered over the normal clock-center content without changing the ring or card dimensions, and the duplicate adjustment control was removed from the external settings panel. Direction-first selection, semantic green/red states, immediate presets, custom validation/Apply, pending protection, and persistence remain unchanged.
+- The Clocks/Focus Bars pager now uses the approved compact segmented chips, and Add Focus Timer uses the compact task-table input-chip treatment with reduced height, padding, and width. Focus Bars renders directly in the existing Focus sandbox without its nested card shell; lane scrolling, end insets, and downward control expansion remain intact.
+- Verification: focused Focus tests, targeted ESLint for directly changed files, and `git diff --check`. Remaining browser/mobile QA: centered clock controls and touch targets, pager/input density and dropdown alignment, Focus Bars end-lane visibility and downward expansion, dark mode, and unchanged timer actions/navigation.
+
+## 7.3.7 Clocks Adjustment Parity and Focus Bars Icon Controls
+- `7.3.7` makes Clocks and Focus Bars use the same direction-first shared adjustment controls: `+` defaults on open, selected add/remove directions use green/red semantic treatments, `5m` and `10m` apply immediately in that direction, and custom whole minutes use one matching Apply action. Existing adjustment mutation routing, pending protection, success-only clearing, failure retention, clamping, persistence, and running/paused behavior remain unchanged.
+- Focus Bars now use compact, labeled icon controls: green Play for Start/Resume, yellow Pause, green Plus for Finish session, and the shared red reverse-arrow Reset. The fixed graph content remains above controls so expanded adjustments grow down without moving lanes; Focus Bars semantics, goals, ordering, Today/Session derivation, and Finish modal path are unchanged.
+- Verification: focused Focus Bars/Clocks adjustment tests, targeted ESLint, and `git diff --check`. Remaining browser/mobile QA: icon touch targets/tooltips and focus rings, expanded-control lane spacing, pending behavior, failed adjustment retention, and timer state/persistence continuity.
+
+## 7.3.6 Focus Bars Adjustment Layout and Interaction Correction
+- `7.3.6` replaces the expanded Focus Bars adjustment menu's separate signed actions with a `+` / `−` direction toggle (defaulting to `+` on each open), immediate `5m` and `10m` presets, and one custom-minute Apply action that uses the selected direction. The existing adjustment mutation, pending guard, success-only input clearing, failure retention, clamping, persistence, and running/paused behavior remain authoritative and unchanged; Clocks retain their existing preset presentation.
+- Custom minutes now use spinner-free numeric digit entry with a separate visible `min` suffix and the existing positive-whole-minute validation. Focus Bars lanes top-align a fixed graph/content region, while expanded controls grow only beneath the normal control row so the panel expands downward without moving lane content or changing horizontal scrolling.
+- Verification: focused Focus Bars/adjustment-control tests, targeted ESLint, and `git diff --check`. Browser/mobile QA, full tests, full lint, build, and typecheck were intentionally not run.
+
+## 7.3.5 Focus Bars Final Control Polish
+- `7.3.5` gives the active Focus Bars Finish chip the shared Focus timer success treatment, renames the compact Time trigger to `+ / −` while retaining its descriptive accessible label, and keeps Reset in the existing neutral control tone. The compact menu and Clocks’ intentionally shared adjustment controls retain the existing `onAdjustTimer` route to `useFocus` `transitionFocusRuntime("adjust")`; the handler now returns its existing RPC success result solely so the control can keep a custom value after failure and clear it after success.
+- The adjustment controls retain the four preset actions (`−10m`, `−5m`, `+5m`, `+10m`) and add a compact positive-whole-minute input with explicit `− Apply` and `+ Apply` chips. Invalid blank, zero, negative, decimal, and nonnumeric values remain disabled; Enter has no default direction; pending controls are disabled; the existing RPC preserves running/paused state and authoritative count-up/countdown minimum clamping.
+- Verification: focused Focus Bars/adjustment-control tests, targeted ESLint, and `git diff --check`. Remaining browser/mobile QA: narrow-lane menu wrapping and offscreen behavior, touch targets, failed-adjustment input retention, persisted refresh/minimum clamping, timer-state continuity, and unchanged Clocks controls.
+
+## 7.3.4 Focus Bars Timer-control Parity
+- `7.3.4` adds compact Reset and Time controls to active Focus Bars lanes while preserving the approved geometry, labels, ordering, overtime, scroll insets, and Clocks presentation. Bars reuse the same `onResetTimer` and `onAdjustTimer` props through `focus-page.tsx`; those invoke the existing `useFocus` `transitionFocusRuntime` RPC actions (`reset` and `adjust`) with its session/revision idempotency and authoritative state update.
+- Running and paused lanes show Pause/Resume, Finish, Reset, and a compact Time menu with Clocks’ existing add/remove 5- and 10-minute increments. Inactive lanes still show Start only. Reset affects the active runtime only, so saved historical activity remains in Today; count-up reset follows Clocks by returning the runtime to paused zero, and adjustments retain running/paused state while the RPC clamps count-up time at zero (or Countdown target at 60 seconds).
+- Verification: focused Focus Bars/timer-control tests, targeted ESLint, and `git diff --check` were run. Remaining browser/mobile QA: compact Time expansion on narrow lanes, persisted refresh after add/remove/reset, live Today/Session updates, state transitions after adjustments/reset, control spacing with Goal complete/overtime, and unchanged Clocks.
 
 ## 7.3.3 Focus Bars Per-category Goal Normalization Checkpoint
 - `7.3.3` normalizes each goal-bearing lane against its own adjusted daily goal: before completion, fill is `combined / goal` and the marker remains at 100%; in overtime, fill stays at 100% while the marker becomes `goal / combined`, continuing to update with the existing one-second running tick. Zero progress renders a 0% fill with a top marker, and exact-goal renders both at the top. No-goal lanes retain their stable fallback fill and no goal marker.

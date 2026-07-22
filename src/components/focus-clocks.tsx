@@ -1,15 +1,152 @@
-import React, { useCallback, useState, useEffect, useRef } from "react";
+import React, { useCallback, useState, useEffect, useId, useRef } from "react";
 import { type FocusCategory, type ActiveFocusSession } from "@/lib/types";
 import { isSystemCountdownCategoryId } from "@/lib/focus-utils";
 import { CategoryIcon } from "./task-app";
 import { formatDuration } from "@/lib/utils";
+import { TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS, TaskTableChipButton } from "./ui/task-table-primitives";
 export { formatDuration } from "@/lib/utils";
 
 const COUNTDOWN_DURATION_PRESETS = [5, 10, 20, 30, 60] as const;
+export const FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES = [5, 10] as const;
+export const FOCUS_TIMER_SUCCESS_CHIP_TONE = "border-[#bcebd8] bg-[#eef9f4] text-[#13845f] hover:bg-[#e4f6ed] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8] dark:hover:bg-[#234438]";
+const FOCUS_BAR_ADJUSTMENT_INPUT_CLASS = "[font-family:inherit] h-5 w-10 shrink-0 rounded-full border border-[#e4deef] bg-[#f4f5f8] px-1 text-center text-[10px] font-medium leading-none text-[#68738c] outline-none transition placeholder:text-[#9b92be] focus:border-[#c9bcff] focus:bg-white focus:text-[#595378] dark:border-white/10 dark:bg-white/8 dark:text-white/60 dark:placeholder:text-white/35 dark:focus:border-[#6d56d6] dark:focus:bg-[#22193f]";
 export const FOCUS_CLOCK_BASE_WIDTH_PX = 272;
 export const FOCUS_CLOCK_BASE_HEIGHT_PX = 344;
 export const FOCUS_CLOCK_MOBILE_SCALE = 0.58;
 export const FOCUS_CLOCK_DESKTOP_SCALE_CLASSNAME = "[--clock-scale:0.54] md:[--clock-scale:0.58] lg:[--clock-scale:0.62] xl:[--clock-scale:0.68] 2xl:[--clock-scale:0.72]";
+
+export function FocusTimerPlayIcon({ className = "" }: { className?: string }) {
+  return <svg aria-hidden="true" className={className} fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>;
+}
+
+export function FocusTimerPauseIcon({ className = "" }: { className?: string }) {
+  return <svg aria-hidden="true" className={className} fill="currentColor" viewBox="0 0 24 24"><rect height="16" rx="1.5" width="4" x="6" y="4" /><rect height="16" rx="1.5" width="4" x="14" y="4" /></svg>;
+}
+
+export function FocusTimerFinishIcon({ className = "" }: { className?: string }) {
+  return <svg aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
+export function FocusTimerResetIcon({ className = "" }: { className?: string }) {
+  return <svg aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 4v6h6M21 20v-6h-6" strokeLinecap="round" strokeLinejoin="round" /><path d="M20 9a8 8 0 00-13.66-3.66L3 10M4 15a8 8 0 0013.66 3.66L21 14" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+}
+
+export function FocusTimerQuickAdjustmentControls({
+  clockFace = false,
+  compact = false,
+  onAdjust,
+}: {
+  clockFace?: boolean;
+  compact?: boolean;
+  onAdjust: (deltaSeconds: number) => Promise<boolean>;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [adjustmentDirection, setAdjustmentDirection] = useState<1 | -1>(1);
+  const [customMinutes, setCustomMinutes] = useState("");
+  const [isAdjustmentPending, setIsAdjustmentPending] = useState(false);
+  const adjustmentPendingRef = useRef(false);
+  const customInputId = useId();
+  const customHelpId = `${customInputId}-help`;
+  const customMinuteValue = parseFocusTimerCustomAdjustmentMinutes(customMinutes);
+
+  const submitAdjustment = async (deltaSeconds: number, clearCustomMinutes = false) => {
+    if (adjustmentPendingRef.current) return;
+    adjustmentPendingRef.current = true;
+    setIsAdjustmentPending(true);
+    try {
+      const succeeded = await onAdjust(deltaSeconds);
+      if (succeeded && clearCustomMinutes) setCustomMinutes("");
+      return succeeded;
+    } finally {
+      adjustmentPendingRef.current = false;
+      setIsAdjustmentPending(false);
+    }
+  };
+
+  const customInput = (
+    <>
+      <label className="sr-only" htmlFor={customInputId}>Custom adjustment minutes</label>
+      <span className="flex items-center gap-1">
+        <input
+          aria-describedby={customHelpId}
+          className={compact ? FOCUS_BAR_ADJUSTMENT_INPUT_CLASS : TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS}
+          disabled={isAdjustmentPending}
+          id={customInputId}
+          inputMode="numeric"
+          onChange={(event) => setCustomMinutes(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.preventDefault();
+          }}
+          pattern="[0-9]*"
+          type="text"
+          value={customMinutes}
+        />
+        <span aria-hidden="true" className={`${compact ? "text-[9px]" : "text-[13px]"} font-semibold text-[var(--text-muted)]`}>min</span>
+      </span>
+      <span className="sr-only" id={customHelpId}>Enter a positive whole number of minutes, then apply the selected direction.</span>
+    </>
+  );
+
+  return (
+    <>
+      {!clockFace ? (
+        <TaskTableChipButton aria-expanded={isOpen} aria-label="Adjust session time" className="h-[26px] px-2 py-0" onClick={() => {
+          if (!isOpen) setAdjustmentDirection(1);
+          setIsOpen((current) => !current);
+        }} toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] hover:bg-[#e9e1ff] dark:border-white/15 dark:bg-white/8 dark:text-[#cabfff] dark:hover:bg-white/12">+ / −</TaskTableChipButton>
+      ) : null}
+      {clockFace || isOpen ? (
+          <div className={`flex flex-col items-center ${compact ? "basis-full gap-0.5 pt-1" : "gap-2"}`} role="group" aria-label="Adjust session time options">
+            <div className={`flex items-center ${compact ? "gap-0.5" : "gap-2"}`} role="group" aria-label="Adjustment direction">
+              {([1, -1] as const).map((direction) => (
+                <TaskTableChipButton
+                  aria-label={direction === 1 ? "Add time" : "Remove time"}
+                  aria-pressed={adjustmentDirection === direction}
+                  className={compact ? "h-5 min-w-5 px-1 py-0 text-[10px]" : undefined}
+                  disabled={isAdjustmentPending}
+                  key={direction}
+                  onClick={() => setAdjustmentDirection(direction)}
+                  toneClassName={adjustmentDirection === direction ? (direction === 1 ? FOCUS_TIMER_SUCCESS_CHIP_TONE : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]") : "border-[var(--border-soft)] bg-[var(--surface-muted)] text-[var(--text-muted)]"}
+                >
+                  {direction === 1 ? "+" : "−"}
+                </TaskTableChipButton>
+              ))}
+            </div>
+            <div className={`flex flex-wrap items-center justify-center ${compact ? "gap-0.5" : "gap-2"}`}>
+              {FOCUS_TIMER_QUICK_ADJUSTMENT_MINUTES.map((minutes) => (
+                <TaskTableChipButton
+                  aria-label={`${adjustmentDirection === 1 ? "Add" : "Remove"} ${minutes} minutes`}
+                  className={compact ? "h-5 px-1 py-0 text-[10px]" : undefined}
+                  disabled={isAdjustmentPending}
+                  key={minutes}
+                  onClick={() => void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, minutes))}
+                  toneClassName={adjustmentDirection === 1 ? FOCUS_TIMER_SUCCESS_CHIP_TONE : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]"}
+                >
+                  {minutes}m
+                </TaskTableChipButton>
+              ))}
+            </div>
+            <div className={`flex flex-wrap items-center justify-center ${compact ? "gap-0.5" : "gap-2"}`}>
+              {customInput}
+              <TaskTableChipButton aria-label="Apply custom minutes" className={compact ? "h-5 px-1 py-0 text-[10px]" : undefined} disabled={customMinuteValue === null || isAdjustmentPending} onClick={() => {
+                if (customMinuteValue !== null) void submitAdjustment(getFocusTimerAdjustmentDeltaSeconds(adjustmentDirection, customMinuteValue), true);
+              }} toneClassName={adjustmentDirection === 1 ? FOCUS_TIMER_SUCCESS_CHIP_TONE : "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]"}>Apply</TaskTableChipButton>
+            </div>
+          </div>
+      ) : null}
+    </>
+  );
+}
+
+export function getFocusTimerAdjustmentDeltaSeconds(direction: 1 | -1, minutes: number): number {
+  return direction * minutes * 60;
+}
+
+export function parseFocusTimerCustomAdjustmentMinutes(value: string): number | null {
+  if (!/^[1-9]\d*$/.test(value)) return null;
+  const minutes = Number(value);
+  return Number.isSafeInteger(minutes) ? minutes : null;
+}
 
 export function FocusClock({
   category,
@@ -28,16 +165,13 @@ export function FocusClock({
   onToggle: (catId: string) => void;
   onSetCountdownTarget: (catId: string, targetSeconds: number, options?: { start?: boolean }) => void;
   onFinish: (catId: string) => void;
-  onAdjust: (catId: string, deltaSeconds: number) => void;
+  onAdjust: (catId: string, deltaSeconds: number) => Promise<boolean>;
   onDelete: (catId: string) => void;
   onReset: (catId: string) => void;
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [showAdjustMenu, setShowAdjustMenu] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [quickAdjustSign, setQuickAdjustSign] = useState<1 | -1 | null>(null);
-  const [adjustSign, setAdjustSign] = useState<1 | -1>(1);
-  const [adjustMinutes, setAdjustMinutes] = useState("5");
   const [countdownMinutes, setCountdownMinutes] = useState(() =>
     String(Math.max(1, Math.round((activeSession?.countdownTargetSeconds ?? 10 * 60) / 60))),
   );
@@ -77,14 +211,8 @@ export function FocusClock({
   const radius = 128;
   const circumference = 2 * Math.PI * radius;
 
-  const handleAdjustClick = (deltaSeconds: number) => {
-    setShowAdjustMenu(false);
-    onAdjust(category.id, deltaSeconds);
-  };
-
   const openCountdownDurationPicker = useCallback(() => {
     setShowSettingsMenu(false);
-    setQuickAdjustSign(null);
     setCountdownMinutes(String(Math.max(1, Math.round((activeSession?.countdownTargetSeconds ?? 10 * 60) / 60))));
     setShowAdjustMenu((prev) => !prev);
   }, [activeSession?.countdownTargetSeconds]);
@@ -118,14 +246,12 @@ export function FocusClock({
       }
       if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target as Node)) {
         setShowSettingsMenu(false);
-        setQuickAdjustSign(null);
       }
     };
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setShowAdjustMenu(false);
         setShowSettingsMenu(false);
-        setQuickAdjustSign(null);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -205,7 +331,6 @@ export function FocusClock({
                 return;
               }
               setShowSettingsMenu(false);
-              setQuickAdjustSign(null);
               setShowAdjustMenu((prev) => !prev);
             }}
             type="button"
@@ -275,70 +400,9 @@ export function FocusClock({
                 </form>
               </>
             ) : (
-              <>
-                <div className="flex items-center gap-2">
-                  <label className="sr-only" htmlFor={`focus-adjust-${category.id}`}>Adjustment minutes</label>
-                  <input
-                    className="w-28 rounded-2xl border-2 px-3 py-4 text-center font-black tabular-nums tracking-tight outline-none border-[#ece8f8] bg-white text-[#1f2746] dark:border-white/10 dark:bg-white/10 dark:text-white"
-                    id={`focus-adjust-${category.id}`}
-                    inputMode="numeric"
-                    onChange={(event) => setAdjustMinutes(event.target.value.replace(/[^0-9]/g, ""))}
-                    style={{ fontSize: "2.6rem", fontWeight: 900, letterSpacing: "-0.025em" }}
-                    type="text"
-                    value={adjustMinutes}
-                  />
-                  <div className="flex flex-col gap-1">
-                    <button
-                      aria-label="Increase adjustment by 5 minutes"
-                      className="flex h-8 w-9 items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f5f1ff] text-[#6f57f6] transition hover:scale-105 dark:border-white/10 dark:bg-white/10 dark:text-[#cabfff]"
-                      onClick={() => setAdjustMinutes((value) => String((parseInt(value) || 0) + 5))}
-                      type="button"
-                    >
-                      <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    </button>
-                    <button
-                      aria-label="Decrease adjustment by 5 minutes"
-                      className="flex h-8 w-9 items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f5f1ff] text-[#6f57f6] transition hover:scale-105 dark:border-white/10 dark:bg-white/10 dark:text-[#cabfff]"
-                      onClick={() => setAdjustMinutes((value) => String(Math.max(5, (parseInt(value) || 5) - 5)))}
-                      type="button"
-                    >
-                      <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    </button>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4 pt-2">
-                  <button
-                    aria-label={adjustSign === 1 ? "Switch to subtract time" : "Switch to add time"}
-                    className={`flex h-14 w-14 items-center justify-center rounded-full transition ${
-                      adjustSign === -1
-                        ? "bg-[#fff3f5] text-[#d64b5f] dark:bg-[#311b23] dark:text-[#ff9fbc]"
-                        : "bg-[#eef9f4] text-[#12a876] dark:bg-[#19352e] dark:text-[#7de4b8]"
-                    }`}
-                    onClick={() => setAdjustSign((s) => s === 1 ? -1 : 1)}
-                    type="button"
-                  >
-                    {adjustSign === 1 ? (
-                      <svg className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
-                        <path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    ) : (
-                      <svg className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
-                        <path d="M5 12h14" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                  </button>
-                  <button
-                    aria-label={`Apply ${adjustMinutes || 1} minute adjustment`}
-                    className="flex h-14 w-14 items-center justify-center rounded-full transition bg-[#6f57f6] text-white dark:bg-[#cabfff] dark:text-[#1a1431]"
-                    onClick={() => handleAdjustClick(adjustSign * (parseInt(adjustMinutes) || 1) * 60)}
-                    type="button"
-                  >
-                    <svg className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
-                      <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </div>
-              </>
+              <div className="flex flex-col items-center justify-center" data-focus-clock-adjustment-region="centered-clock-face">
+                <FocusTimerQuickAdjustmentControls clockFace onAdjust={(deltaSeconds) => onAdjust(category.id, deltaSeconds)} />
+              </div>
             )}
           </div>
         ) : null}
@@ -368,19 +432,14 @@ export function FocusClock({
           type="button"
         >
           {isRunning ? (
-            <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
-              <rect height="16" rx="1.5" width="4" x="6" y="4" />
-              <rect height="16" rx="1.5" width="4" x="14" y="4" />
-            </svg>
+            <FocusTimerPauseIcon className="h-6 w-6" />
           ) : isCountdown ? (
             <svg aria-hidden="true" className="h-7 w-7 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" strokeWidth="2.1" viewBox="0 0 24 24">
               <circle cx="12" cy="13" r="7" />
               <path d="M12 9v4l2.5 1.5M9 3h6M8 5l-2 2M16 5l2 2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           ) : (
-            <svg className="ml-1 h-7 w-7 transition-transform group-hover:scale-110" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M8 5v14l11-7z" />
-            </svg>
+            <FocusTimerPlayIcon className="ml-1 h-7 w-7 transition-transform group-hover:scale-110" />
           )}
         </button>
         <div className="relative" ref={settingsMenuRef}>
@@ -391,7 +450,6 @@ export function FocusClock({
             onClick={() => {
               setShowAdjustMenu(false);
               setShowSettingsMenu((current) => !current);
-              setQuickAdjustSign(null);
             }}
             type="button"
           >
@@ -403,6 +461,18 @@ export function FocusClock({
 
           {showSettingsMenu ? (
             <div className="absolute bottom-16 left-1/2 z-40 flex w-[17rem] -translate-x-[64%] flex-wrap items-center justify-center gap-2 rounded-[1.5rem] border border-[#e8e1f7] bg-white/95 p-3 shadow-[0_18px_42px_rgba(70,50,145,0.18)] backdrop-blur dark:border-white/10 dark:bg-[#1b1630]/95 dark:shadow-[0_18px_42px_rgba(0,0,0,0.38)]">
+              {!isCountdown ? (
+                <TaskTableChipButton
+                  aria-label="Adjust session time"
+                  onClick={() => {
+                    setShowSettingsMenu(false);
+                    setShowAdjustMenu(true);
+                  }}
+                  toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] hover:bg-[#e9e1ff] dark:border-white/15 dark:bg-white/8 dark:text-[#cabfff] dark:hover:bg-white/12"
+                >
+                  + / − Adjust time
+                </TaskTableChipButton>
+              ) : null}
               {isSystemCountdown ? (
                 <button
                   aria-label={`Trash ${category.title} timer`}
@@ -438,30 +508,8 @@ export function FocusClock({
                 }}
                 type="button"
               >
-                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path d="M3 4v6h6M21 20v-6h-6" strokeLinecap="round" strokeLinejoin="round" /><path d="M20 9a8 8 0 00-13.66-3.66L3 10M4 15a8 8 0 0013.66 3.66L21 14" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                <FocusTimerResetIcon className="h-5 w-5" />
               </button>
-              {([1, -1] as const).map((sign) => (
-                <button
-                  aria-label={`${sign === 1 ? "Add" : "Subtract"} time`}
-                  className={`flex h-12 w-12 items-center justify-center rounded-full border transition hover:scale-110 ${quickAdjustSign === sign ? (sign === 1 ? "border-[#bcebd8] bg-[#e9f8f2] text-[#12a876] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8]" : "border-[#f8d9dc] bg-[#fff1f2] text-[#d64b5f] dark:border-[#5a2432] dark:bg-[#2e1820] dark:text-[#ff9fbc]") : "border-[#ece8f8] bg-white text-[#6a738d] dark:border-white/10 dark:bg-white/5 dark:text-white"}`}
-                  key={sign}
-                  onClick={() => setQuickAdjustSign((current) => current === sign ? null : sign)}
-                  type="button"
-                >
-                  <svg aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2.7" viewBox="0 0 24 24"><path d={sign === 1 ? "M12 5v14M5 12h14" : "M5 12h14"} strokeLinecap="round" /></svg>
-                </button>
-              ))}
-              {quickAdjustSign ? [5, 10].map((minutes) => (
-                <button
-                  aria-label={`${quickAdjustSign === 1 ? "Add" : "Subtract"} ${minutes} minutes`}
-                  className={`flex h-12 w-12 items-center justify-center rounded-full border text-xl font-black tabular-nums transition hover:scale-110 ${quickAdjustSign === 1 ? "border-[#bcebd8] bg-[#eef9f4] text-[#12a876] dark:border-[#315f51] dark:bg-[#19352e] dark:text-[#7de4b8]" : "border-[#f8d9dc] bg-[#fff1f2] text-[#d64b5f] dark:border-[#5a2432] dark:bg-[#2e1820] dark:text-[#ff9fbc]"}`}
-                  key={minutes}
-                  onClick={() => onAdjust(category.id, quickAdjustSign * minutes * 60)}
-                  type="button"
-                >
-                  {minutes}
-                </button>
-              )) : null}
             </div>
           ) : null}
         </div>
@@ -522,7 +570,7 @@ export function FocusClockRow({
   onToggle: (catId: string) => void;
   onSetCountdownTarget: (catId: string, targetSeconds: number, options?: { start?: boolean }) => void;
   onFinish: (catId: string) => void;
-  onAdjust: (catId: string, deltaSeconds: number) => void;
+  onAdjust: (catId: string, deltaSeconds: number) => Promise<boolean>;
   onDelete: (catId: string) => void;
   onReset: (catId: string) => void;
 }) {
@@ -593,7 +641,7 @@ export function FocusClockRowDesktop({
   onToggle: (catId: string) => void;
   onSetCountdownTarget: (catId: string, targetSeconds: number, options?: { start?: boolean }) => void;
   onFinish: (catId: string) => void;
-  onAdjust: (catId: string, deltaSeconds: number) => void;
+  onAdjust: (catId: string, deltaSeconds: number) => Promise<boolean>;
   onDelete: (catId: string) => void;
   onReset: (catId: string) => void;
 }) {

@@ -7,6 +7,7 @@ import * as THREE from "three";
 import type { MilestoneTier } from "@/lib/milestones";
 import { getTrophyRotationDelta, getTrophyShowcaseStageLayout, isTrophyRotationActive, TROPHY_CONTEXT_RESTORE_GRACE_MS, TROPHY_GALLERY_TIERS, TROPHY_SHOWCASE_CAMERA_DISTANCE, TROPHY_SHOWCASE_CAMERA_FOV, TROPHY_TIER_MATERIALS, type TrophyQualityProfile } from "@/lib/trophy-case";
 import { withBasePath } from "@/lib/utils";
+import { createTrophyDieGlitterTexture, getTrophyDiePipColor, TROPHY_DIE_PLATINUM_BODY_MATERIAL, TROPHY_DIE_PRESENTATION_ROTATION } from "./trophy-die-visual";
 
 class TrophyRotationController {
   private readonly groups: Array<THREE.Group | null> = [null, null, null, null];
@@ -117,7 +118,7 @@ function TrophyStages({ columns, performanceMode, registerGroup, shadowMapSize }
     <ambientLight intensity={performanceMode ? 2.2 : 1.7} />
     <directionalLight castShadow={!performanceMode} intensity={2.7} position={[4, 6, 7]} shadow-mapSize-height={shadowMapSize} shadow-mapSize-width={shadowMapSize} />
     <pointLight color="#9d8cff" intensity={performanceMode ? 5 : 10} position={[0, 4, 7]} />
-    {TROPHY_GALLERY_TIERS.map((tier, index) => <RotatingTrophy initialAngle={index * 0.28} key={tier} position={stages[index].position} registerGroup={(group) => registerGroup(index, group)} scale={stages[index].scale} tier={tier} />)}
+    {TROPHY_GALLERY_TIERS.map((tier, index) => <RotatingTrophy key={tier} position={stages[index].position} registerGroup={(group) => registerGroup(index, group)} scale={stages[index].scale} tier={tier} />)}
   </>;
 }
 
@@ -138,12 +139,27 @@ function useNormalizedD6Geometry() {
 export function TrophyDie({ tier }: { tier: MilestoneTier }) {
   const geometry = useNormalizedD6Geometry();
   const material = TROPHY_TIER_MATERIALS[tier];
-  return <group rotation={[0.32, -0.55, 0.08]} scale={0.82}>
-    <group position={[0, -1, 0]}>
-      {geometry.body.map((item, index) => <mesh castShadow geometry={item} key={`body-${index}`}><meshStandardMaterial color={material.color} metalness={0.88} roughness={material.roughness} /></mesh>)}
-      {geometry.pips.map((item, index) => <mesh geometry={item} key={`pips-${index}`}><meshStandardMaterial color="#201b2b" metalness={0.18} roughness={0.32} /></mesh>)}
+  return <group rotation={TROPHY_DIE_PRESENTATION_ROTATION} scale={0.82}>
+    <group position={[0, 0, 0]}>
+      {geometry.body.map((item, index) => <mesh castShadow geometry={item} key={`body-${index}`}>
+        {tier === "platinum"
+          ? <PlatinumBodyMaterial color={material.color} />
+          : <meshStandardMaterial color={material.color} metalness={0.88} roughness={material.roughness} />}
+      </mesh>)}
+      {geometry.pips.map((item, index) => <mesh geometry={item} key={`pips-${index}`}><meshStandardMaterial color={getTrophyDiePipColor(tier)} metalness={0.18} roughness={0.32} /></mesh>)}
     </group>
   </group>;
+}
+
+function PlatinumBodyMaterial({ color }: { color: string }) {
+  const glitterTexture = useMemo(() => createTrophyDieGlitterTexture(), []);
+  useEffect(() => () => glitterTexture.dispose(), [glitterTexture]);
+  return <meshPhysicalMaterial
+    bumpMap={glitterTexture}
+    color={color}
+    roughnessMap={glitterTexture}
+    {...TROPHY_DIE_PLATINUM_BODY_MATERIAL}
+  />;
 }
 
 function TrophyRotationDriver({ active, controller }: { active: boolean; controller: TrophyRotationController }) {
@@ -155,14 +171,13 @@ function TrophyRotationDriver({ active, controller }: { active: boolean; control
   return null;
 }
 
-function RotatingTrophy({ initialAngle, position, registerGroup, scale, tier }: {
-  initialAngle: number;
+function RotatingTrophy({ position, registerGroup, scale, tier }: {
   position: [number, number, number];
   registerGroup: (group: THREE.Group | null) => void;
   scale: number;
   tier: MilestoneTier;
 }) {
-  return <group position={position} ref={registerGroup} rotation={[0, initialAngle, 0]} scale={scale}>
+  return <group position={position} ref={registerGroup} rotation={[0, 0, 0]} scale={scale}>
     <TrophyDie tier={tier} />
   </group>;
 }
