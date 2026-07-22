@@ -648,7 +648,14 @@ export function FocusPage({
                   Focus Bars could not be displayed. Your timers are unchanged; use the pager to return to Clocks.
                 </div>
               )}>
-                <FocusBars activeSessions={activeSessions} categories={activeCategories} />
+                <FocusBars
+                  activeSessions={activeSessions}
+                  adjustments={adjustments}
+                  categories={userCategories}
+                  history={history}
+                  onFinish={handleFinishClick}
+                  onToggle={onToggleTimer}
+                />
               </FocusBarsErrorBoundary>
             </div>
           )}

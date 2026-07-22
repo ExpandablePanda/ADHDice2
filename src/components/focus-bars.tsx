@@ -1,96 +1,158 @@
 "use client";
 
 import React, { Component, type ReactNode, useEffect, useMemo, useState } from "react";
-import { deriveFocusBarState } from "@/lib/focus-bars";
-import { type ActiveFocusSession, type FocusCategory } from "@/lib/types";
-import { formatDuration } from "@/lib/utils";
+import { formatFocusGoalDuration } from "@/lib/focus-goals";
+import { deriveFocusBarRows, getFocusBarGeometry, hasRunningFocusBarRuntime } from "@/lib/focus-bars";
+import {
+  type ActiveFocusSession,
+  type FocusCategory,
+  type FocusDailyGoalAdjustment,
+  type HistoricalFocusSession,
+} from "@/lib/types";
+import { TaskTableChipButton } from "./ui/task-table-primitives";
+
+const FOCUS_BAR_CONTROL_TONE = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] hover:bg-[#e9e1ff] dark:border-white/15 dark:bg-white/8 dark:text-[#cabfff] dark:hover:bg-white/12";
+const FOCUS_BAR_FINISH_TONE = "border-[#f0dbe1] bg-[#fff4f6] text-[#c84d68] hover:bg-[#ffecef] dark:border-[#6c3042] dark:bg-[#351b27] dark:text-[#ff9fbc]";
+
+function formatFocusBarRuntimeDuration(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+  return hours ? `${hours}h ${minutes}m ${remainingSeconds}s` : `${minutes}m ${remainingSeconds}s`;
+}
 
 export function FocusBars({
   activeSessions,
+  adjustments,
   categories,
+  history,
+  onFinish,
+  onToggle,
 }: {
   activeSessions: Record<string, ActiveFocusSession>;
+  adjustments: FocusDailyGoalAdjustment[];
   categories: FocusCategory[];
+  history: HistoricalFocusSession[];
+  onFinish: (categoryId: string) => void;
+  onToggle: (categoryId: string, options?: { countdownTargetSeconds?: number | null; mode?: "countdown" | "countup" }) => void;
 }) {
-  const hasRunningTimer = Object.values(activeSessions).some((session) => session.isRunning);
+  const hasRunningTimer = hasRunningFocusBarRuntime(categories, activeSessions);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     if (!hasRunningTimer) return;
+    const frameId = window.requestAnimationFrame(() => setNowMs(Date.now()));
     const timerId = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(timerId);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearInterval(timerId);
+    };
   }, [hasRunningTimer]);
 
-  const rows = useMemo(() => categories.flatMap((category) => {
-    const session = activeSessions[category.id];
-    return session ? [{ category, session }] : [];
-  }), [activeSessions, categories]);
-
+  const rows = useMemo(() => deriveFocusBarRows({
+    activeSessions,
+    adjustments,
+    categories,
+    history,
+    nowMs,
+  }).filter((row) => row.eligible), [activeSessions, adjustments, categories, history, nowMs]);
   if (!rows.length) {
     return (
       <div className="rounded-[1.5rem] border border-dashed border-[#ddd4f4] bg-[#fbf9ff] px-5 py-8 text-center dark:border-white/12 dark:bg-white/[0.03]">
-        <p className="text-sm font-semibold text-[var(--text-primary)]">No active Focus timers</p>
-        <p className="mt-1 text-xs text-[var(--text-secondary)]">Running and paused Focus timers will appear here.</p>
+        <p className="text-sm font-semibold text-[var(--text-primary)]">No Focus Bars for today</p>
+        <p className="mt-1 text-xs text-[var(--text-secondary)]">Add a daily goal, log Focus activity, or start a category timer.</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-3">
-      {rows.map(({ category, session }) => {
-        const state = deriveFocusBarState(session, nowMs);
-        const targetFillPercent = state.progressRatio === null ? 0 : Math.min(100, state.progressRatio * 100);
-        const overtimeFillPercent = state.targetSeconds
-          ? Math.min(100, (state.overtimeSeconds / state.targetSeconds) * 100)
-          : 0;
+    <div className="min-w-0 rounded-[var(--radius-card)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] px-3 py-4 dark:border-white/10 dark:bg-white/[0.03] sm:px-4">
+      <div className="mb-4 text-left">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Today</p>
+        <h3 className="mt-1 text-xl font-black tracking-tight text-[var(--text-primary)]">Focus Bars</h3>
+      </div>
+      <div aria-label="Live daily Focus category bar chart" className="adhdice-scrollbar w-full overflow-x-auto overscroll-x-contain pb-3" role="region" tabIndex={0}>
+        <div className="flex min-w-full items-end gap-4 px-2 sm:gap-5 sm:px-3">
+          {rows.map((row) => {
+            const { fillPercent, goalMarkerPercent } = getFocusBarGeometry(row);
+            const isGoalComplete = row.goalState === "complete" || row.goalState === "overtime";
+            const stateLabel = row.runtimeState === "running"
+              ? "Running"
+              : row.runtimeState === "paused"
+                ? "Paused"
+                : "Inactive";
 
-        return (
-          <article className="min-w-0 rounded-[1.35rem] border border-[#ebe4fb] bg-white px-4 py-3 shadow-[0_10px_28px_rgba(81,61,168,0.06)] dark:border-white/10 dark:bg-white/[0.045]" key={category.id}>
-            <div className="flex min-w-0 items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: category.color }} />
-                  <h3 className="truncate text-sm font-bold text-[var(--text-primary)]">{category.title}</h3>
-                </div>
-                <p className="mt-1 text-xs font-semibold text-[var(--text-secondary)]">{state.isPaused ? "Paused" : "Running"}</p>
-              </div>
-              <div className="shrink-0 text-right tabular-nums">
-                <p className="text-sm font-black text-[var(--text-primary)]">{formatDuration(state.elapsedSeconds)}</p>
-                <p className="mt-1 text-[11px] text-[var(--text-secondary)]">
-                  {state.targetSeconds === null ? "Open-ended" : `of ${formatDuration(state.targetSeconds)}`}
+            return (
+              <article className="flex w-[6.5rem] min-w-[6.5rem] shrink-0 flex-col items-center" key={row.categoryId}>
+                <p className="h-4 w-full whitespace-nowrap text-center text-[11px] font-bold tabular-nums text-[var(--text-primary)]">
+                  Today {formatFocusBarRuntimeDuration(row.combinedSeconds)}
                 </p>
-              </div>
-            </div>
-
-            {state.isOpenEnded ? (
-              <div aria-label={`${state.isPaused ? "Paused" : "Live"} open-ended timer`} className="mt-3 overflow-hidden rounded-full bg-[#eee9f8] dark:bg-white/10">
-                <svg aria-hidden="true" className="block h-3 w-full" preserveAspectRatio="none" viewBox="0 0 100 12">
-                  <rect fill={category.color} height="12" opacity={state.isPaused ? 0.42 : 0.68} rx="6" width="24" x={state.isPaused ? 12 : -24}>
-                    {!state.isPaused ? <animate attributeName="x" dur="2.2s" from="-24" repeatCount="indefinite" to="100" /> : null}
-                  </rect>
-                </svg>
-              </div>
-            ) : (
-              <div className="mt-3">
-                <div className="flex h-3 overflow-hidden rounded-full bg-[#eee9f8] dark:bg-white/10">
-                  <div className="relative min-w-0 flex-1 overflow-hidden" aria-label={`${Math.round(targetFillPercent)}% of planned duration`}>
-                    <div className="h-full rounded-l-full transition-[width] duration-500" style={{ backgroundColor: category.color, opacity: state.isPaused ? 0.58 : 0.82, width: `${targetFillPercent}%` }} />
-                    <span aria-hidden="true" className="absolute bottom-0 right-0 top-0 w-0.5 bg-[var(--text-primary)] opacity-70" />
+                <p className="mt-2 h-4 w-full whitespace-nowrap text-center text-[10px] font-semibold text-[var(--text-muted)]">
+                  {row.adjustedGoalSeconds === null ? "No goal" : `Goal ${formatFocusGoalDuration(row.adjustedGoalSeconds)}`}
+                </p>
+                <div className="mt-1 flex h-44 w-16 items-end justify-center">
+                  <div
+                    aria-label={`${row.categoryLabel}: ${formatFocusBarRuntimeDuration(row.combinedSeconds)}${row.adjustedGoalSeconds === null ? ", no goal" : ` of ${formatFocusGoalDuration(row.adjustedGoalSeconds)}`}`}
+                    className="relative h-full w-full overflow-hidden rounded-md border border-[var(--border-soft)] bg-[var(--surface-muted)] shadow-inner dark:border-white/10 dark:bg-white/[0.06]"
+                  >
+                    <div
+                      className="absolute bottom-0 left-0 w-full rounded-t-md transition-[height] duration-500"
+                      style={{
+                        backgroundColor: row.categoryColor,
+                        height: row.combinedSeconds > 0 ? `${Math.min(100, Math.max(3, fillPercent))}%` : "0%",
+                        opacity: row.runtimeState === "paused" ? 0.68 : 0.88,
+                      }}
+                    />
+                    {goalMarkerPercent !== null ? (
+                      <span
+                        aria-label={`Goal marker ${formatFocusGoalDuration(row.adjustedGoalSeconds ?? 0)}`}
+                        className="absolute left-0 z-10 w-full border-t-2 border-dashed border-[var(--text-primary)] opacity-80"
+                        style={{ bottom: `${goalMarkerPercent}%` }}
+                      />
+                    ) : null}
                   </div>
-                  {state.overtimeSeconds > 0 ? (
-                    <div aria-label={`Overtime ${formatDuration(state.overtimeSeconds)}`} className="w-[28%] border-l-2 border-white/90 bg-[#eee9f8] dark:border-[#211a38] dark:bg-white/10">
-                      <div className="h-full transition-[width] duration-500" style={{ backgroundColor: category.color, opacity: state.isPaused ? 0.34 : 0.52, width: `${Math.max(12, overtimeFillPercent)}%` }} />
-                    </div>
+                </div>
+                <p className="mt-2 min-h-8 w-full overflow-hidden break-words text-center text-[10px] font-semibold leading-tight text-[var(--text-secondary)]" title={row.categoryLabel}>
+                  {row.categoryLabel}
+                </p>
+                <div className="flex min-h-10 w-full flex-col items-center justify-start text-center text-[10px] leading-tight">
+                  <p className="min-h-4 font-semibold text-[var(--text-muted)]">{stateLabel}</p>
+                  {row.runtimeState !== "inactive" ? (
+                    <p className="min-h-4 font-semibold tabular-nums text-[var(--text-secondary)]">Session {formatFocusBarRuntimeDuration(row.runtimeSeconds)}</p>
                   ) : null}
                 </div>
-                {state.overtimeSeconds > 0 ? (
-                  <p className="mt-1.5 text-right text-xs font-bold tabular-nums text-[var(--text-primary)]">+{formatDuration(state.overtimeSeconds)} overtime</p>
-                ) : null}
-              </div>
-            )}
-          </article>
-        );
-      })}
+                <div className="min-h-4 w-full text-center text-[10px] font-semibold leading-tight text-[var(--text-secondary)]">
+                  {isGoalComplete ? "Goal complete" : ""}
+                </div>
+                <div className="min-h-4 w-full text-center text-[10px] font-bold tabular-nums leading-tight text-[#c84d68]">
+                  {row.overtimeSeconds > 0 ? `+ ${formatFocusGoalDuration(row.overtimeSeconds)} overtime` : ""}
+                </div>
+                <div className="mt-2 flex min-h-12 flex-wrap items-start justify-center gap-1" role="group" aria-label={`${row.categoryLabel} timer controls`}>
+                  <TaskTableChipButton
+                    aria-label={`${row.runtimeState === "paused" ? "Resume" : row.runtimeState === "running" ? "Pause" : "Start"} ${row.categoryLabel}`}
+                    className="h-[22px] px-2 py-0"
+                    onClick={() => onToggle(row.categoryId, row.runtimeState === "inactive" ? { mode: "countup" } : undefined)}
+                    toneClassName={FOCUS_BAR_CONTROL_TONE}
+                  >
+                    {row.runtimeState === "paused" ? "Resume" : row.runtimeState === "running" ? "Pause" : "Start"}
+                  </TaskTableChipButton>
+                  {row.runtimeState !== "inactive" ? (
+                    <TaskTableChipButton
+                      aria-label={`Finish ${row.categoryLabel}`}
+                      className="h-[22px] px-2 py-0"
+                      onClick={() => onFinish(row.categoryId)}
+                      toneClassName={FOCUS_BAR_FINISH_TONE}
+                    >
+                      Finish
+                    </TaskTableChipButton>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

@@ -5,13 +5,33 @@ Last reviewed: 2026-07-21
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.2.29`.
-- Current release group: `7.2.x` Active Timer shared-editor behavior.
+- Current working app version: `7.3.3`.
+- Current release group: `7.3.x` Focus Bars live daily-goal graph.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.3.3 Focus Bars Per-category Goal Normalization Checkpoint
+- `7.3.3` normalizes each goal-bearing lane against its own adjusted daily goal: before completion, fill is `combined / goal` and the marker remains at 100%; in overtime, fill stays at 100% while the marker becomes `goal / combined`, continuing to update with the existing one-second running tick. Zero progress renders a 0% fill with a top marker, and exact-goal renders both at the top. No-goal lanes retain their stable fallback fill and no goal marker.
+- Today and Goal are now distinct nonwrapping label rows with a slightly smaller Today label, extra separation, and modestly wider/spaced lanes; the Focus Bars-only horizontal insets preserve end-lane visibility. Saved/runtime derivation, text, states, ordering, controls, persistence, Clocks, Countdown exclusion, Focus Goals, and Activity Summary are unchanged.
+- Verification: focused `test/focus-bars.test.ts` passed 31/31, targeted ESLint passed for `src/lib/focus-bars.ts`, `src/components/focus-bars.tsx`, and `test/focus-bars.test.ts`, and `git diff --check` passed. Remaining browser QA: per-lane fill/marker geometry across goals and overtime, narrow-width label readability/end lanes, dark mode, live ticking/pause/resume, Finish handoff, and unchanged Clocks.
+
+## 7.3.2 Focus Bars Scale, Labels, Ordering, and Layout Checkpoint
+- `7.3.2` corrects the active dirty `7.3.1` Focus Bars baseline without changing runtime persistence, Finish behavior, Clocks, Countdown exclusion, goal calculations, or Activity Summary. Goal-bearing rows now share a scale of twice the largest adjusted goal, fills cap at lane height while exact Today/overtime text remains intact, and no-goal-only views use a stable fallback scale. Rows sort active/paused first, then activity, goals, and display order.
+- Today displays the saved-plus-runtime total; active and paused rows additionally show their authoritative Session duration. State, goal-completed state, overtime, and controls reserve separate vertical regions. The horizontal strip has Focus Bars-only side insets so its end lanes and controls are not clipped.
+- Verification: focused `test/focus-bars.test.ts` passed 30/30, targeted ESLint passed for the directly changed Focus Bars files, and `git diff --check` passed. Remaining browser QA: lane scale/marker position, capped overtime fill, labels and controls at narrow widths, horizontal end-lane visibility, dark mode, timer ticking/pause/resume, Finish handoff, and unchanged Clocks.
+
+## 7.3.1 Focus Bars Live-runtime QA Checkpoint
+- `7.3.1` corrects only the Focus Bars live-display path. Its existing one-second tick remains active only while a category runtime is running and still passes `nowMs` into the pure authoritative row derivation. Running labels now expose seconds, and goal-based chart scaling reserves visible overtime headroom instead of allowing an advancing leading bar to define its own 100% ceiling. Paused runtimes, timer actions, Finish/history handoff, persistence, goals, category inclusion/order, Countdown, and styling remain unchanged.
+- Verification: focused `test/focus-bars.test.ts`, targeted ESLint for `src/components/focus-bars.tsx` and `src/lib/focus-bars.ts`, and `git diff --check` are required for this checkpoint. Manual QA remains: running label/bar/overtime motion, pause/resume freeze and continuation, Finish handoff, horizontal scrolling, category colors/order, empty state, and dark mode.
+
+## 7.3.0 Focus Bars Live Daily-goal Graph Checkpoint
+- `7.3.0` replaces the read-only horizontal Focus Bars timer cards with an ordered, horizontally scrollable vertical category graph matching the Focus Activity visual language. Eligible non-system categories remain visible for an adjusted effective daily goal, saved logical-day activity, or a running/paused runtime; standalone Countdown remains excluded.
+- Each bar combines positive saved activity for the current logical day with `getAuthoritativeFocusElapsedSeconds(...)` only while its active runtime record exists. Goals come from `buildFocusGoalPlan(...).summaries[].adjustedTodayTargetSeconds`; uncapped actual progress continues beyond the goal marker and reports explicit overtime, while no-goal categories receive no percentage or completion state.
+- Compact Start/Resume, Pause, and Finish controls reuse the existing Focus timer toggle and finish-modal paths. The one-second graph tick exists only while a category runtime is running; paused bars remain fixed. Clocks, runtime persistence, RPCs, Focus Goals behavior, Activity Summary, and standalone Countdown are unchanged.
+- Verification: focused `test/focus-bars.test.ts` passed 19/19, targeted ESLint passed for the directly changed Focus Bars files, and `git diff --check` passed. Remaining manual QA: confirm live bar motion, pause freezing, Finish history handoff without a transient double count, adjusted-goal/overtime marker scaling, horizontal scrolling across many categories, category colors/order, empty state, dark mode, and unchanged Clocks behavior.
 
 ## 7.2.29 Records Reconciliation Timestamp Checkpoint
 - `7.2.29` preserves a current Record's `first_achieved_at` only when both its stable candidate identity and value survive reconciliation unchanged. Corrected values and replacement candidates now take the staged candidate timestamp, while exact replay, stable tie events, authoritative current deletion, absent-event invalidation, and PostgreSQL 15 compatibility remain intact. No SQL was applied by this checkpoint.
