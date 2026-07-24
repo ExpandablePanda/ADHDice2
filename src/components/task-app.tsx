@@ -189,7 +189,7 @@ import {
 import { formatLocalDate, todayISO, withBasePath } from "@/lib/utils";
 import { formatDateKeyInTimeZone, getBrowserTimeZone, getLogicalDayKey, saveLogicalDaySettings } from "@/lib/logical-day";
 import { runStorageMigrations } from "@/lib/storage-migrations";
-import { buildProfileSnapshot, DEFAULT_PROFILE, saveProfile, type UserProfile, useProfileStore } from "@/lib/profile-store";
+import { buildProfileSnapshot, DEFAULT_PROFILE, markProfileMediaCachedForSession, saveProfile, setActiveProfileUserId, type UserProfile, useProfileStore } from "@/lib/profile-store";
 import {
   isMissingParentSubtaskColumnError,
   isMissingTaskActualSecondsColumnError,
@@ -511,7 +511,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.3.36";
+const APP_VERSION = "7.3.44";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1568,6 +1568,7 @@ export function TaskApp() {
     isTaskResumeSyncPending,
     isWorkspaceLoading,
     prepareTaskMutation,
+    reconcileRolloverWorkspace,
     softRefreshWorkspace,
   } = useWorkspaceData({
     activePage,
@@ -1595,7 +1596,7 @@ export function TaskApp() {
           ?? DEFAULT_FOCUS_ALARM_INTERVAL_MINUTES,
       );
 
-      saveProfile(buildProfileSnapshot(profileRow, user));
+      saveProfile(buildProfileSnapshot(profileRow, user), user.id);
       if (profileRow) {
         const nextDayStartTime = profileRow.day_start_time ?? "06:00";
         const nextTimeZone = profileRow.timezone ?? getBrowserTimeZone();
@@ -1744,6 +1745,7 @@ export function TaskApp() {
 
     const unsubscribe = subscribeToBrowserAuth((event: AuthChangeEvent, nextSession) => {
       if (event === "SIGNED_OUT") {
+        setActiveProfileUserId(null);
         setSession(null);
         setIsAuthResolved(true);
         setTasks([]);
@@ -1763,6 +1765,7 @@ export function TaskApp() {
         saveProfile(DEFAULT_PROFILE);
       }
       if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED" || event === "PASSWORD_RECOVERY") {
+        setActiveProfileUserId(nextSession?.user.id ?? null);
         setIsAuthResolved(true);
         setSession((currentSession) => {
           if (
@@ -2138,7 +2141,10 @@ export function TaskApp() {
             setMessage((previous) => previous ?? { tone: "warn", text: error.message });
             return;
           }
-          await softRefreshWorkspace();
+          if (process.env.NODE_ENV !== "production") {
+            console.info("[rollover] Rollover completed; requesting targeted workspace reconciliation.");
+          }
+          await reconcileRolloverWorkspace();
         },
       });
     }
@@ -2162,7 +2168,7 @@ export function TaskApp() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pageshow", handlePageShow);
     };
-  }, [session?.user?.id, softRefreshWorkspace, supabase, todayKey]);
+  }, [reconcileRolloverWorkspace, session?.user?.id, supabase, todayKey]);
   const visibleTaskSubtasks = useMemo(
     () => filterPromotedLegacySubtasks(taskSubtasks, taskLegacySubtaskPromotions),
     [taskLegacySubtaskPromotions, taskSubtasks],
@@ -3829,7 +3835,8 @@ export function TaskApp() {
       return;
     }
 
-    saveProfile(nextProfile);
+    saveProfile(nextProfile, currentUser.id);
+    markProfileMediaCachedForSession(currentUser.id);
     setIsAccountOpen(false);
     setMessage({ tone: "good", text: "Account profile saved." });
   }
@@ -6771,15 +6778,7 @@ function TopHeader({
       onClick={onOpenAccount}
       type="button"
     >
-      <Image
-        alt="Profile avatar"
-        className="h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
-        height={44}
-        priority
-        src={profile.avatarSrc}
-        unoptimized={profile.avatarSrc.startsWith("data:")}
-        width={44}
-      />
+      <ProfileAvatarImage avatarSrc={profile.avatarSrc} />
     </button>
   );
 
@@ -7143,15 +7142,7 @@ function CommandCenterHeader({
   const isWorkspaceRefreshing = refreshStatus !== "idle";
   const accountButton = (
     <button className="relative mr-[3px] rounded-full bg-[var(--hud-surface)] transition-transform hover:scale-[1.02]" onClick={onOpenAccount} type="button">
-      <Image
-        alt="Profile avatar"
-        className="h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
-        height={44}
-        priority
-        src={profile.avatarSrc}
-        unoptimized={profile.avatarSrc.startsWith("data:")}
-        width={44}
-      />
+      <ProfileAvatarImage avatarSrc={profile.avatarSrc} />
     </button>
   );
 
@@ -7531,6 +7522,21 @@ function CommandCenterHeader({
         <div className="hidden lg:block">{accountButton}</div>
       </div>
     </header>
+  );
+}
+
+function ProfileAvatarImage({ avatarSrc }: { avatarSrc: string }) {
+  return (
+    <Image
+      alt="Profile avatar"
+      className="h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
+      height={44}
+      key={avatarSrc}
+      priority
+      src={avatarSrc}
+      unoptimized={avatarSrc.startsWith("data:")}
+      width={44}
+    />
   );
 }
 

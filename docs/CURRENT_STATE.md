@@ -5,13 +5,47 @@ Last reviewed: 2026-07-22
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.3.36`.
+- Current working app version: `7.3.44`.
 - Current release group: `7.3.x` Focus Bars live daily-goal graph.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.3.44 Quota-Safe Profile Cache
+- The user-scoped localStorage profile cache now persists only non-media fields. Avatar and logo data URLs remain in the authenticated user's in-memory session snapshot, so cache quota failures cannot interrupt an otherwise successful Supabase profile save.
+- Legacy user-scoped profile entries have their media fields removed on read while preserving legitimate small fields; unavailable, full, or malformed localStorage is handled without affecting the authoritative profile state.
+
+## 7.3.43 Profile Avatar Render Synchronization
+- The expanded HUD and far-right account control now share one avatar renderer keyed by the authoritative profile-store source, so a current-user media update remounts both image placements instead of retaining a stale image instance.
+- The 7.3.42 user-scoped cache, retryable failure behavior, in-flight deduplication, and late-result ownership checks remain unchanged.
+
+## 7.3.42 Profile Media Retry and Account Ownership
+- Profile media is marked session-loaded only after a successful matching-user request. Failed requests remain retryable, while matching-user successes remain session-deduplicated.
+- Local profile media snapshots and late-response application are scoped to the active authenticated user, preventing a prior account from overwriting the current account's avatar or logo cache.
+
+## 7.3.41 Targeted Startup Rollover Reconciliation
+- Successful task rollover now reloads only canonical task rows and, once its initial load has completed, the existing paginated task-history dataset. Pending startup history is left to its already-scheduled secondary load, so rollover no longer queues a second broad core workspace batch.
+- Manual Refresh, lifecycle recovery, Realtime subscriptions, recurrence/status/history semantics, and the rollover RPC contract remain unchanged. No SQL or schema change is required.
+
+## 7.3.40 Startup Request Consolidation
+- A per-user startup request registry keeps the initial core request single-flight across development Strict Mode effect replay. Only the live same-user effect owner can apply its result; failed, logged-out, and switched-user ownership is evicted or invalidated.
+- Focus-session history remains a core-only startup fetch. Secondary loading now covers complete task history, actual-time entries, and linked notes without overwriting Focus history. No SQL or schema changes.
+
+## 7.3.39 Resume Refresh Eligibility Repair
+- Workspace lifecycle events now record hidden time and refresh only after a five-minute hidden interval, a genuine offline-to-online recovery, or a persisted back-forward-cache restoration. Focus and ordinary `pageshow` remain non-refresh signals, while clustered qualifying signals share one coordinated refresh.
+- Startup marks its initial core request active, preventing lifecycle noise from queueing a redundant core pass. Manual Refresh, mutation recovery, rollover callers, and existing Realtime synchronization retain their coordinator paths.
+
+## 7.3.38 Workspace Refresh Coordination
+- The authenticated workspace lifecycle no longer depends on the active page, so navigation preserves the existing core loader, browser-resume listeners, and task/workspace Realtime subscriptions.
+- A per-mounted-user coordinator joins duplicate core refresh callers and allows at most one trailing refresh for a distinct event during an active load. Resume signals retain debounce/cooldown behavior and skip immediately after a fresh core load.
+- Broad Realtime reloads, manual Refresh, mutation recovery, and startup all use that coordinator; Focus data semantics, task-history scope, schema, and Realtime payload handling are unchanged.
+
+## 7.3.37 Profile Media Egress Emergency Fix
+- Routine workspace profile hydration now requests an explicit non-media column set, keeping `avatar_src` and `logo_src` out of core loads and soft refreshes.
+- Profile media still bootstraps immediately from the existing profile-store cache, then synchronizes at most once per authenticated user per browser session through a shared in-flight request. Account saves update that cache and session marker immediately without a follow-up profile fetch.
+- This release intentionally does not change workspace lifecycle, Realtime, task-history loading, uploads, Supabase Storage, or schema.
 
 ## 7.3.28 Collapsed HUD Centering
 - `7.3.28` centers the collapsed HUD's intrinsic-width control row inside its full-width horizontal scroller whenever it fits. Narrow viewports retain native horizontal scrolling and the existing rounded borderless surface, spacing, controls, and behavior.

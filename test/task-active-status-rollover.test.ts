@@ -179,14 +179,15 @@ test("repair excludes later resolutions and is idempotent after restoring the an
   }), false);
 });
 
-test("client rollover uses the shared coordinator and refreshes only after owned success", () => {
+test("client rollover uses targeted reconciliation only after owned success", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
   const coordinatorIndex = source.indexOf("taskRolloverCoordinator.run");
   const rpcIndex = source.indexOf('rpc("adhdice_reconcile_task_rollover"', coordinatorIndex);
   const ownedSettlementIndex = source.indexOf("onOwnedSettled", rpcIndex);
-  const refreshIndex = source.indexOf("await softRefreshWorkspace();", ownedSettlementIndex);
-  assert.ok(coordinatorIndex >= 0 && rpcIndex > coordinatorIndex && ownedSettlementIndex > rpcIndex && refreshIndex > ownedSettlementIndex);
-  assert.match(source.slice(ownedSettlementIndex, refreshIndex), /if \(error\)[\s\S]*return;/);
+  const reconciliationIndex = source.indexOf("await reconcileRolloverWorkspace();", ownedSettlementIndex);
+  assert.ok(coordinatorIndex >= 0 && rpcIndex > coordinatorIndex && ownedSettlementIndex > rpcIndex && reconciliationIndex > ownedSettlementIndex);
+  assert.match(source.slice(ownedSettlementIndex, reconciliationIndex), /if \(error\)[\s\S]*return;/);
+  assert.doesNotMatch(source.slice(ownedSettlementIndex, reconciliationIndex + 40), /softRefreshWorkspace/);
   assert.doesNotMatch(source, /lastResetDateRef/);
 });
 
