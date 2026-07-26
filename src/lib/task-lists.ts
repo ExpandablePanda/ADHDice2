@@ -57,6 +57,7 @@ type TaskListRuleStreakValue = Extract<TaskListRule, { field: "streak" }>["value
 
 export type TaskListDefinition = {
   description: string;
+  folderId?: string | null;
   id: TaskListId;
   isDeletable: boolean;
   isEditable: boolean;
@@ -64,6 +65,7 @@ export type TaskListDefinition = {
   membershipMode: TaskListMembershipMode;
   name: string;
   rules: TaskListRuleGroup | null;
+  revision?: number;
   sortOrder: number;
   type: TaskListType;
 };
@@ -103,10 +105,6 @@ export function isManualTaskListDestination(list: Pick<TaskListDefinition, "id" 
 
 export function isTaskListSettingsEligible(list: Pick<TaskListDefinition, "id">) {
   return list.id !== "routine" && list.id !== "milestones";
-}
-
-export function isPrimaryRailTaskListEligible(list: Pick<TaskListDefinition, "id" | "isVisible">) {
-  return list.id !== "routine" && list.isVisible;
 }
 
 export type TaskListMembership = {
@@ -262,7 +260,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "system",
       name: "Milestones",
       rules: null,
-      sortOrder: 3.5,
+      sortOrder: 3,
       type: "smart",
     },
     {
@@ -276,7 +274,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "focus", op: "is", value: true } }],
       },
-      sortOrder: 3,
+      sortOrder: 4,
       type: "smart",
     },
     {
@@ -290,7 +288,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "priority_level", op: "is", value: ["1", "2"] } }],
       },
-      sortOrder: 4,
+      sortOrder: 5,
       type: "smart",
     },
     {
@@ -304,7 +302,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "priority_level", op: "is", value: ["3", "4"] } }],
       },
-      sortOrder: 5,
+      sortOrder: 6,
       type: "smart",
     },
     {
@@ -318,7 +316,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "priority_level", op: "is", value: "5" } }],
       },
-      sortOrder: 6,
+      sortOrder: 7,
       type: "smart",
     },
     {
@@ -330,7 +328,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "system",
       name: "Routine",
       rules: null,
-      sortOrder: 7,
+      sortOrder: 8,
       type: "system",
     },
     {
@@ -342,7 +340,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "manual",
       name: "Quick Wins",
       rules: null,
-      sortOrder: 8,
+      sortOrder: 9,
       type: "system",
     },
     {
@@ -356,7 +354,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "repeat", op: "is", value: true } }],
       },
-      sortOrder: 9,
+      sortOrder: 10,
       type: "system",
     },
     {
@@ -370,7 +368,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "status", op: "is", value: "upcoming" } }],
       },
-      sortOrder: 10,
+      sortOrder: 11,
       type: "system",
     },
     {
@@ -382,7 +380,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "manual",
       name: "Later",
       rules: null,
-      sortOrder: 11,
+      sortOrder: 12,
       type: "system",
     },
     {
@@ -399,7 +397,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
           { connector: "or", rule: { field: "status", op: "is", value: "did_my_best" } },
         ],
       },
-      sortOrder: 12,
+      sortOrder: 13,
       type: "system",
     },
     {
@@ -413,7 +411,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       rules: {
         rules: [{ rule: { field: "status", op: "is", value: "missed" } }],
       },
-      sortOrder: 13,
+      sortOrder: 14,
       type: "system",
     },
   ];

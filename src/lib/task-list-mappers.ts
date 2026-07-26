@@ -69,6 +69,7 @@ export function mapTaskListRow(row: DbTaskList): TaskListDefinition | null {
 
   return {
     description: legacyMetadata?.description ?? (normalizedBuiltInKey ? TASK_BUCKET_DESCRIPTIONS[normalizedBuiltInKey] ?? row.name : row.name),
+    folderId: row.folder_id,
     id,
     isDeletable: row.is_deletable,
     isEditable: row.is_editable,
@@ -76,6 +77,7 @@ export function mapTaskListRow(row: DbTaskList): TaskListDefinition | null {
     membershipMode: resolveAppTaskListMembershipMode(id, normalizedBuiltInKey, row.membership_mode),
     name: legacyMetadata?.name ?? row.name,
     rules: legacyMetadata?.rules ?? rules,
+    revision: row.revision,
     sortOrder: row.sort_order,
     type: row.list_type,
   };

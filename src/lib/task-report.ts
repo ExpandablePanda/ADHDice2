@@ -8,6 +8,19 @@ import { hasTaskListMembership, type TaskListDefinition, type TaskListMembership
 import { formatTaskPriorityLevel, getTaskPriorityLevel, inferLegacyTaskPriorityLevel, type TaskPriorityLevel } from "@/lib/task-priority";
 import { formatRepeatSummary } from "@/lib/task-repeat";
 import { buildMilestoneReportSummary, formatMilestoneReportSection } from "@/lib/milestones/milestone-report";
+import {
+  formatAchievementValue,
+  formatTierLabel,
+  type AchievementProgressModel,
+} from "@/lib/achievement-progress";
+import { getTaskOccurrenceIdentity } from "@/lib/records/identity";
+import {
+  formatRecordsReportSection,
+  formatReportDate,
+  isReportDateInRange,
+  type ReportDateRange,
+  type RecordsReportData,
+} from "@/lib/report-presentation";
 
 export const TASK_REPORT_RANGE_OPTIONS = [
   { id: "today", label: "Today", days: 1 },
@@ -33,6 +46,8 @@ export type TaskReportCustomRange = {
 
 type GenerateTaskReportInput = {
   appVersion: string;
+  achievementModel?: AchievementProgressModel | null;
+  achievementWarning?: string | null;
   availableTaskLists: TaskListDefinition[];
   detailLevel: TaskReportDetailLevel;
   generatedAt: Date;
@@ -47,6 +62,7 @@ type GenerateTaskReportInput = {
   milestoneWarning?: string | null;
   customRange?: TaskReportCustomRange | null;
   rangeId: TaskReportRangeId;
+  records?: RecordsReportData;
   taskHistory: TaskHistory[];
   tasks: Task[];
   todayDateKey: string;
@@ -104,6 +120,18 @@ type OutcomeSplitCounts = {
   stepCount: number;
 };
 
+type RoutineOutcomeCounts = {
+  didMyBest: number;
+  done: number;
+  handled: number;
+  missed: number;
+};
+
+type RoutinePerformanceSummary = {
+  parents: RoutineOutcomeCounts;
+  steps: RoutineOutcomeCounts;
+};
+
 type DayBreakdown = {
   handledParents: number;
   handledSteps: number;
@@ -151,45 +179,15 @@ const OUTCOME_ORDER: OutcomeLabel[] = ["Done", "Did My Best", "Complete", "Misse
 const MISSED_DAILY_CAP = 25;
 
 function formatDateLabel(dateKey: string | null) {
-  if (!dateKey) {
-    return "Unknown";
-  }
-  const [year, month, day] = dateKey.split("-").map((part) => Number.parseInt(part, 10));
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
-    return dateKey;
-  }
-  const date = new Date(year, month - 1, day);
-  return new Intl.DateTimeFormat("en-US", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(date);
+  return dateKey ? formatReportDate(dateKey) : "Unknown";
 }
 
 function formatShortDate(dateKey: string) {
-  const [year, month, day] = dateKey.split("-").map((part) => Number.parseInt(part, 10));
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
-    return dateKey;
-  }
-  const date = new Date(year, month - 1, day);
-  return new Intl.DateTimeFormat("en-US", {
-    day: "numeric",
-    month: "short",
-  }).format(date);
+  return formatReportDate(dateKey, { short: true });
 }
 
 function formatDateHeading(dateKey: string) {
-  const [year, month, day] = dateKey.split("-").map((part) => Number.parseInt(part, 10));
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
-    return dateKey;
-  }
-  const date = new Date(year, month - 1, day);
-  return new Intl.DateTimeFormat("en-US", {
-    day: "numeric",
-    month: "short",
-    weekday: "short",
-    year: "numeric",
-  }).format(date);
+  return formatReportDate(dateKey, { includeWeekday: true });
 }
 
 function formatTimestamp(date: Date) {
@@ -507,7 +505,7 @@ function buildFocusSection(
     lines.push("- No focus reallocations in the selected range.");
   } else {
     for (const dateKey of [...adjustmentLinesByDate.keys()].sort((left, right) => left.localeCompare(right))) {
-      lines.push("", `#### ${dateKey}`, ...adjustmentLinesByDate.get(dateKey)!);
+      lines.push("", `#### ${formatReportDate(dateKey)}`, ...adjustmentLinesByDate.get(dateKey)!);
     }
   }
 
@@ -523,7 +521,7 @@ function buildFocusSection(
     const totalSeconds = sessions.reduce((sum, session) => sum + Math.max(0, session.durationSeconds), 0);
     lines.push(
       "",
-      `#### ${dateKey}`,
+      `#### ${formatReportDate(dateKey)}`,
       `- Total: ${formatDurationCompact(totalSeconds)} across ${sessions.length} session${sessions.length === 1 ? "" : "s"}`,
     );
     for (const session of sessions) {
@@ -552,11 +550,15 @@ function buildTaskMetadata(
   const metadataByTaskId = new Map<string, TaskReportTaskMetadata>();
 
   for (const task of tasks) {
+    const parentChain = taskHierarchy.getParentChain(task.id);
     const title = task.title.trim() || "Untitled task";
-    const ancestry = taskHierarchy.getParentChain(task.id)
+    const ancestry = parentChain
       .map((ancestor) => ancestor.title?.trim() || "Untitled task")
       .reverse();
     const pathLabel = [...ancestry, title].join(" > ");
+    const rootParentId = parentChain.at(-1)?.id ?? task.id;
+    const hasInheritedManualRoutineMembership = rootParentId !== task.id
+      && (listMembershipsByTaskId[rootParentId] ?? []).some((membership) => membership.id === "routine" && membership.isManual);
 
     const priorityLevel = getTaskPriorityLevel(task);
     metadataByTaskId.set(task.id, {
@@ -568,9 +570,9 @@ function buildTaskMetadata(
       )] ?? task.status,
       isImportant: priorityLevel === 4,
       isPinned: Boolean(task.pinned_at),
-      isRoutine: hasTaskListMembership(listMembershipsByTaskId[task.id] ?? [], "routine"),
+      isRoutine: hasTaskListMembership(listMembershipsByTaskId[task.id] ?? [], "routine") || hasInheritedManualRoutineMembership,
       isTestLike: isTestLikeTaskTitle(title),
-      isTrashed: task.status === "trashed",
+      isTrashed: task.status === "trashed" || parentChain.some((ancestor) => ancestor.status === "trashed"),
       isUrgent: priorityLevel === 5,
       pathLabel,
       priorityLevel: resolveReportPriorityLevel(task),
@@ -590,7 +592,7 @@ function buildTaskSnapshotSections(
   taskHistoryByTaskId: Record<string, TaskHistory[]>,
 ) {
   const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId, todayDateKey);
-  const workloadTasks = tasks.filter((task) => task.status !== "trashed");
+  const workloadTasks = tasks.filter((task) => !metadataByTaskId.get(task.id)?.isTrashed);
   const currentStatusSnapshotCounts = workloadTasks.reduce<Record<string, number>>((accumulator, task) => {
     const metadata = metadataByTaskId.get(task.id);
     if (!metadata) {
@@ -601,13 +603,13 @@ function buildTaskSnapshotSections(
   }, {});
 
   return {
-    activeLoadedTaskCount: tasks.filter((task) => task.status !== "trashed").length,
+    activeLoadedTaskCount: workloadTasks.length,
     currentStatusSnapshotCounts,
+    metadataByTaskId,
     pinnedSummary: buildCompactTaskSummary(workloadTasks, metadataByTaskId, (metadata) => metadata.isPinned),
     prioritySummaries: buildPriorityStatusSummaries(workloadTasks, metadataByTaskId),
-    routineSummary: buildCompactTaskSummary(workloadTasks, metadataByTaskId, (metadata) => metadata.isRoutine),
     snapshotTaskCount: workloadTasks.length,
-    trashedLoadedTaskCount: tasks.filter((task) => task.status === "trashed").length,
+    trashedLoadedTaskCount: tasks.length - workloadTasks.length,
   };
 }
 
@@ -808,6 +810,102 @@ function buildHistorySections(
     taskPatterns,
     topHandledDay: rankedHandledDays.find((entry) => entry.count > 0) ?? null,
   };
+}
+
+function createEmptyRoutineOutcomeCounts(): RoutineOutcomeCounts {
+  return { didMyBest: 0, done: 0, handled: 0, missed: 0 };
+}
+
+function getRoutineOccurrenceIdentity(entry: TaskHistory, task: Task) {
+  const occurrenceKey = entry.occurrence_key?.trim();
+  if (occurrenceKey) return `occurrence-key:${occurrenceKey}`;
+  if (entry.occurrence_due_on) return `occurrence-due-on:${entry.occurrence_due_on}`;
+  return `history-fallback:${getTaskOccurrenceIdentity(entry, task)}`;
+}
+
+function buildRoutinePerformanceSummary(
+  tasks: Task[],
+  taskHistory: TaskHistory[],
+  range: ReportRange,
+  metadataByTaskId: Map<string, TaskReportTaskMetadata>,
+): RoutinePerformanceSummary {
+  const tasksById = new Map(tasks.map((task) => [task.id, task] as const));
+  const latestByOccurrence = new Map<string, TaskHistory>();
+  for (const entry of taskHistory) {
+    const task = tasksById.get(entry.task_id);
+    const metadata = metadataByTaskId.get(entry.task_id);
+    if (!task || !metadata?.isRoutine || metadata.isTrashed || metadata.isTestLike || !isEntryInRange(entry, range)) continue;
+    const identity = `${entry.task_id}:${getRoutineOccurrenceIdentity(entry, task)}`;
+    const existing = latestByOccurrence.get(identity);
+    if (!existing || compareHistoryEntries(existing, entry) < 0) latestByOccurrence.set(identity, entry);
+  }
+
+  const summary = {
+    parents: createEmptyRoutineOutcomeCounts(),
+    steps: createEmptyRoutineOutcomeCounts(),
+  };
+  for (const entry of latestByOccurrence.values()) {
+    const metadata = metadataByTaskId.get(entry.task_id);
+    if (!metadata) continue;
+    const counts = metadata.typeLabel === "Parent" ? summary.parents : summary.steps;
+    if (entry.status === "done" || entry.status === "complete") counts.done += 1;
+    else if (entry.status === "did_my_best") counts.didMyBest += 1;
+    else if (entry.status === "missed") counts.missed += 1;
+    else continue;
+    counts.handled = counts.done + counts.didMyBest;
+  }
+  return summary;
+}
+
+function formatRoutineOutcomeLine(label: string, counts: RoutineOutcomeCounts) {
+  return `- ${label}: Done ${counts.done}; Did My Best ${counts.didMyBest}; Missed ${counts.missed}; Handled ${counts.handled}`;
+}
+
+function formatAchievementSection(
+  model: AchievementProgressModel | null | undefined,
+  range: ReportDateRange,
+  warning: string | null | undefined,
+) {
+  const lines = ["## Achievements", "", "### Earned during the selected range"];
+  if (warning) lines.push(`- Warning: ${warning}`);
+  if (!model) {
+    lines.push("- Achievement progress is unavailable.");
+    lines.push("", "### Current progress snapshot", "- Achievement progress is unavailable.");
+    return lines;
+  }
+
+  const earnedLines: string[] = [];
+  for (const collection of model.collections) {
+    for (const track of collection.tracks) {
+      for (const tier of track.tiers) {
+        if (!tier.earnedAt || !isReportDateInRange(tier.earnedAt, range)) continue;
+        earnedLines.push(`- ${track.title} — Collection: ${collection.title} — Tier: ${formatTierLabel(tier.id)} — Permanently earned: ${formatReportDate(tier.earnedAt)}`);
+      }
+    }
+    if (collection.masteredAt && isReportDateInRange(collection.masteredAt, range)) {
+      earnedLines.push(`- ${collection.title} — Collection mastery aura earned: ${formatReportDate(collection.masteredAt)}`);
+    }
+  }
+  lines.push(...(earnedLines.length > 0 ? earnedLines : ["- No permanent Achievement tiers or mastery auras earned in the selected range."]));
+
+  lines.push("", "### Current progress snapshot");
+  for (const collection of model.collections) {
+    const masteryLabel = collection.isMastered
+      ? `Mastered${collection.masteredAt ? ` ${formatReportDate(collection.masteredAt)}` : ""}`
+      : "Mastery locked";
+    lines.push(`- ${collection.title}: ${collection.earnedTiers} of ${collection.totalTiers} tiers — ${masteryLabel}`);
+    for (const track of collection.tracks) {
+      const earnedTiers = track.tiers.filter((tier) => tier.isEarned).map((tier) => formatTierLabel(tier.id));
+      lines.push(
+        `  - ${track.title} — Current progress: ${formatAchievementValue(track.currentValue, track.unit)}`
+        + ` — Earned tiers: ${earnedTiers.length > 0 ? earnedTiers.join(", ") : "None"}`
+        + ` — ${track.nextTier && track.nextThreshold !== null
+          ? `Next: ${formatTierLabel(track.nextTier)} at ${formatAchievementValue(track.nextThreshold, track.unit)}`
+          : "Platinum complete"}`,
+      );
+    }
+  }
+  return lines;
 }
 
 function formatStatusSnapshotCounts(counts: Record<string, number>) {
@@ -1029,6 +1127,8 @@ function formatOutcomeTotalLine(label: OutcomeLabel, counts: OutcomeSplitCounts)
 
 function generateTaskReport({
   appVersion,
+  achievementModel = null,
+  achievementWarning = null,
   availableTaskLists,
   detailLevel,
   focusCategories,
@@ -1043,6 +1143,7 @@ function generateTaskReport({
   milestoneWarning = null,
   customRange,
   rangeId,
+  records = { currentRecords: [], events: [] },
   taskHistory,
   tasks,
   todayDateKey,
@@ -1051,22 +1152,33 @@ function generateTaskReport({
   const taskHistoryByTaskId = buildTaskHistoryByTaskId(taskHistory);
   const snapshot = buildTaskSnapshotSections(tasks, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);
   const history = buildHistorySections(tasks, taskHistory, range, todayDateKey, availableTaskLists, listMembershipsByTaskId, taskHistoryByTaskId);
+  const routinePerformance = buildRoutinePerformanceSummary(tasks, taskHistory, range, snapshot.metadataByTaskId);
   const focusSection = buildFocusSection(range, focusCategories, focusHistory, focusDailyGoalAdjustments, todayDateKey);
   const milestoneRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
+  const achievementSection = formatAchievementSection(achievementModel, milestoneRange, achievementWarning);
   const milestoneSection = formatMilestoneReportSection(
     buildMilestoneReportSummary(milestoneEvents, milestones, milestoneRange),
     detailLevel === "detailed",
     milestoneWarning,
   );
+  const recordsSection = formatRecordsReportSection(
+    records,
+    milestoneRange,
+    Object.fromEntries([...snapshot.metadataByTaskId].map(([taskId, metadata]) => [taskId, metadata.pathLabel])),
+  );
+  const reportEligibleHistoryCount = taskHistory.filter((entry) => {
+    const metadata = snapshot.metadataByTaskId.get(entry.task_id);
+    return metadata && !metadata.isTrashed;
+  }).length;
 
   const lines = [
     "# ADHDice Report",
     "",
-    "## Overall Stats",
+    "## Overview",
     `- Generated: ${formatTimestamp(generatedAt)}`,
     `- App Version: ${appVersion}`,
     `- Selected Date Range: ${formatRangeSummary(range)}`,
-    `- History Records Analyzed: ${taskHistory.length}`,
+    `- History Records Analyzed: ${reportEligibleHistoryCount}`,
     `- History Source: ${historySourceLabel}`,
     `- Active vs Trashed Loaded: ${snapshot.activeLoadedTaskCount} active, ${snapshot.trashedLoadedTaskCount} trashed excluded`,
     ...(historyWarning ? [`- Warning: ${historyWarning}`] : []),
@@ -1076,23 +1188,38 @@ function generateTaskReport({
     formatOutcomeTotalLine("Missed", history.outcomeTotals.Missed),
     `- Current Status Snapshot: ${formatStatusSnapshotCounts(snapshot.currentStatusSnapshotCounts)}`,
     ...(snapshot.pinnedSummary.total > 0 ? [formatCompactTaskSummaryLine("Pinned Tasks", snapshot.pinnedSummary)] : []),
-    ...(snapshot.routineSummary.total > 0 ? [formatCompactTaskSummaryLine("Routine Tasks", snapshot.routineSummary)] : []),
     ...snapshot.prioritySummaries.map((summary) => `- Priority ${summary.priorityLevel}: ${formatStatusSnapshotCounts(summary.byStatus)}`),
     `- Best Completion Day: ${history.topHandledDay ? `${formatDateLabel(history.topHandledDay.dateKey)} (${history.topHandledDay.count} handled)` : "None in selected range"}`,
     `- Highest Missed Day: ${history.highestMissedDay ? `${formatDateLabel(history.highestMissedDay.dateKey)} (${history.highestMissedDay.count} missed)` : "None in selected range"}`,
     `- Repeated Missed Count: ${history.repeatedMissCount}`,
     `- Daily Tasks With 0 Wins Count: ${history.dailyZeroWinCount}`,
+    "",
+    "## Routine Performance",
+    "- Range outcomes for Tasks currently in Routine",
+    formatRoutineOutcomeLine("Parent Tasks", routinePerformance.parents),
+    formatRoutineOutcomeLine("Steps/Substeps", routinePerformance.steps),
+    "- Note: Routine membership reflects the current Routine list, including inherited manual membership, because historical membership is unavailable.",
+    "",
+    ...achievementSection,
+    "",
+    ...milestoneSection,
+    "",
+    ...recordsSection,
+    "",
+    ...focusSection,
   ];
 
   if (detailLevel === "detailed") {
     lines.push(
       "",
-      "## All Current Task History",
+      "## Task History / details",
+      "",
+      "### All Current Task History",
       ...(history.taskPatterns.length > 0
         ? history.taskPatterns.map((entry) => formatTaskHistoryLine(entry))
         : ["- No active, non-trashed task history in the selected range."]),
       "",
-      "## Day-by-Day Breakdown",
+      "### Day-by-Day Breakdown",
     );
 
     const chronologicalDates = [...history.dayBreakdownsByDate.keys()].sort((left, right) => left.localeCompare(right));
@@ -1106,7 +1233,7 @@ function generateTaskReport({
         }
         lines.push(
           "",
-          `### ${formatDateHeading(dateKey)}`,
+          `#### ${formatDateHeading(dateKey)}`,
           `- Summary: Parents handled ${dayBreakdown.handledParents}; Steps/Substeps handled ${dayBreakdown.handledSteps}; Combined handled ${dayBreakdown.handledTotal}; Missed ${dayBreakdown.missed}`,
           "",
           formatDayOutcomeGroup("Done", dayBreakdown.outcomes.Done),
@@ -1122,10 +1249,6 @@ function generateTaskReport({
   }
 
   lines.push(
-    "",
-    ...milestoneSection,
-    "",
-    ...focusSection,
     "",
     "## Analysis Request",
     "Please analyze this ADHDice report and help me with the following:",

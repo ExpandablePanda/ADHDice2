@@ -164,12 +164,14 @@ export type TaskList = {
   id: string;
   user_id: string;
   built_in_key: string | null;
+  folder_id: string | null;
   name: string;
   list_type: TaskListKind;
   membership_mode: TaskListMembershipMode;
   is_deletable: boolean;
   is_editable: boolean;
   is_visible: boolean;
+  revision: number;
   sort_order: number;
   rules_json: string | null;
   created_at: string;
@@ -180,12 +182,14 @@ export type TaskListInsert = {
   id: string;
   user_id: string;
   built_in_key?: string | null;
+  folder_id?: string | null;
   name: string;
   list_type?: TaskListKind;
   membership_mode?: TaskListMembershipMode;
   is_deletable?: boolean;
   is_editable?: boolean;
   is_visible?: boolean;
+  revision?: number;
   sort_order?: number;
   rules_json?: string | null;
 };
@@ -194,16 +198,73 @@ export type TaskListUpdate = Partial<
   Pick<
     TaskList,
     | "built_in_key"
+    | "folder_id"
     | "name"
     | "list_type"
     | "membership_mode"
     | "is_deletable"
     | "is_editable"
     | "is_visible"
+    | "revision"
     | "sort_order"
     | "rules_json"
   >
 >;
+
+export type TaskListFolder = {
+  created_at: string;
+  id: string;
+  name: string;
+  parent_folder_id: string | null;
+  revision: number;
+  sort_order: number;
+  updated_at: string;
+  user_id: string;
+};
+
+export type TaskListFolderInsert = {
+  id?: string;
+  name: string;
+  parent_folder_id?: string | null;
+  revision?: number;
+  sort_order?: number;
+  user_id: string;
+};
+
+export type TaskListFolderUpdate = Partial<
+  Pick<TaskListFolder, "name" | "parent_folder_id" | "revision" | "sort_order">
+>;
+
+export type TaskListContainer = {
+  created_at: string;
+  folder_id: string | null;
+  id: string;
+  revision: number;
+  updated_at: string;
+  user_id: string;
+};
+
+export type TaskListRailItemType = "folder" | "list";
+
+export type TaskListRailItem = {
+  container_folder_id: string | null;
+  created_at: string;
+  entity_id: string | null;
+  item_key: string;
+  item_type: TaskListRailItemType;
+  sort_order: number;
+  updated_at: string;
+  user_id: string;
+};
+
+export type TaskListRailItemInsert = {
+  container_folder_id?: string | null;
+  entity_id?: string | null;
+  item_key: string;
+  item_type: TaskListRailItemType;
+  sort_order?: number;
+  user_id: string;
+};
 
 export type TaskListManualMembership = {
   id: string;
@@ -1928,6 +1989,18 @@ export type Database = {
         Update: TaskListUpdate;
         Relationships: [];
       };
+      adhdice_task_list_folders: {
+        Row: TaskListFolder;
+        Insert: TaskListFolderInsert;
+        Update: TaskListFolderUpdate;
+        Relationships: [];
+      };
+      adhdice_task_list_containers: {
+        Row: TaskListContainer;
+        Insert: Omit<TaskListContainer, "created_at" | "id" | "revision" | "updated_at"> & Partial<Pick<TaskListContainer, "created_at" | "id" | "revision" | "updated_at">>;
+        Update: Partial<Pick<TaskListContainer, "revision" | "updated_at">>;
+        Relationships: [];
+      };
       adhdice_task_list_manual_memberships: {
         Row: TaskListManualMembership;
         Insert: TaskListManualMembershipInsert;
@@ -2458,6 +2531,10 @@ export type Database = {
       reorder_task_lists: {
         Args: { ordered_list_ids: string[] };
         Returns: TaskList[];
+      };
+      adhdice_mutate_task_list_structure: {
+        Args: { p_action: string; p_payload: Record<string, unknown> };
+        Returns: Record<string, unknown>;
       };
     };
     Enums: {

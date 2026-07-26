@@ -19,7 +19,7 @@ import type {
   TaskListEvaluationContext,
   TaskListMembership,
 } from "@/lib/task-lists";
-import { buildTaskListLookup, evaluateTaskListMemberships, isManualTaskListDestination, isPrimaryRailTaskListEligible } from "@/lib/task-lists";
+import { buildTaskListLookup, evaluateTaskListMemberships, isManualTaskListDestination } from "@/lib/task-lists";
 import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
 import { isDueToday, isOverdue } from "@/lib/task-cockpit";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
@@ -124,9 +124,16 @@ export type ChildTaskPreviewLookup = Record<string, ChildTaskPreviewGroup>;
 export type TaskRailListOption = {
   count: number;
   description: string;
+  folderCounts?: {
+    containedListCount: number;
+    dueTodayCount: number;
+    overdueCount: number;
+    visibleTaskCount: number;
+  };
   id: string;
   isCustom: boolean;
   label: string;
+  structureKind?: "folder" | "list";
 };
 
 export type CanonicalTaskEntityFact = {
@@ -150,6 +157,7 @@ export type CanonicalTaskEntityProjection = {
   matchingDescendantIdsByRootParentId: Map<string, Set<string>>;
   postStatusMatchedEntityIds: Set<string>;
   preStatusMatchedEntityIds: Set<string>;
+  primaryFacetVisibleEntityIds: Set<string>;
   searchExpandedDescendantIds: Set<string>;
   statusFacetCounts: Record<TaskStatus, number>;
   taskListMembershipsByTaskId: Record<string, TaskListMembership[]>;
@@ -671,15 +679,19 @@ export function buildCanonicalTaskEntityProjection({
     statusFacetCounts[fact.displayStatus] += 1;
     if (matchesSelectedStatus(fact)) postStatusMatchedEntityIds.add(fact.id);
   }
-  const countPrimaryFacet = (facetId: string, candidateIds: Set<string>) => {
+  const buildPrimaryFacetVisibleIds = (candidateIds: Set<string>) => {
     const directIds = new Set(Array.from(primaryDirectMatchIds).filter((id) => candidateIds.has(id)));
     const resultIds = buildSearchResultUniverse(candidateIds, directIds);
-    listFacetCounts[facetId] = Array.from(resultIds).filter((id) => {
+    return new Set(Array.from(resultIds).filter((id) => {
       const fact = entityFactsById.get(id);
       return fact ? matchesSelectedStatus(fact) : false;
-    }).length;
+    }));
   };
-  countPrimaryFacet("all", primaryFacetCandidateIds);
+  const primaryFacetVisibleEntityIds = buildPrimaryFacetVisibleIds(primaryFacetCandidateIds);
+  const countPrimaryFacet = (facetId: string, candidateIds: Set<string>) => {
+    listFacetCounts[facetId] = buildPrimaryFacetVisibleIds(candidateIds).size;
+  };
+  listFacetCounts.all = primaryFacetVisibleEntityIds.size;
   countPrimaryFacet("pinned", new Set(Array.from(primaryFacetCandidateIds).filter((id) => (
     Boolean(entityFactsById.get(id)?.task.pinned_at)
   ))));
@@ -735,6 +747,7 @@ export function buildCanonicalTaskEntityProjection({
     matchingDescendantIdsByRootParentId,
     postStatusMatchedEntityIds,
     preStatusMatchedEntityIds,
+    primaryFacetVisibleEntityIds,
     searchExpandedDescendantIds,
     statusFacetCounts,
     taskListMembershipsByTaskId,
@@ -1199,21 +1212,6 @@ export function computeTaskAppDerivedData({
     ...listVisibleColumns,
     ...listColumnPickerOrder.filter((columnId) => !listVisibleColumns.includes(columnId)),
   ].filter((columnId, index, columns) => columns.indexOf(columnId) === index);
-  const visibleTaskLists = activePage !== "Tasks"
-    ? []
-    : availableTaskLists.filter((list) =>
-      isPrimaryRailTaskListEligible(list)
-      && (list.id !== "missed" || (canonicalEntityProjection.listFacetCounts[list.id] ?? 0) > 0)
-    );
-  const listRailOptions: TaskRailListOption[] = activePage !== "Tasks"
-    ? []
-    : visibleTaskLists.map((list) => ({
-        count: canonicalEntityProjection.listFacetCounts[list.id] ?? 0,
-        description: list.description,
-        id: list.id,
-        isCustom: list.type === "custom",
-        label: list.name,
-      }));
   const manualListOptions = activePage !== "Tasks"
     ? []
     : availableTaskLists
@@ -1225,11 +1223,9 @@ export function computeTaskAppDerivedData({
       }));
   const missingGridWidgetTypes = getMissingTaskGridWidgetTypes(taskGridLayout, taskGridWidgetTypes);
   logTaskDeriveStep("custom/manual list handling and final assembly", listAssemblyStartedAt, {
-    listRailOptions: listRailOptions.length,
     manualListOptions: manualListOptions.length,
     missingGridWidgetTypes: missingGridWidgetTypes.length,
     tasks: tasks.length,
-    visibleLists: visibleTaskLists.length,
   });
   logTaskDeriveStep("total compute", totalStartedAt, {
     lists: availableTaskLists.length,
@@ -1290,7 +1286,6 @@ export function computeTaskAppDerivedData({
     doneTasks,
     focusPlannerTasks,
     listColumnPickerColumns,
-    listRailOptions,
     lowEnergyTasks,
     manualListOptions,
     milestoneFilteredTasksSorted,

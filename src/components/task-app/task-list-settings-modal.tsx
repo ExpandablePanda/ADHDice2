@@ -1,10 +1,10 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, ChevronsUp, GripVertical, Plus, X } from "lucide-react";
-import { useState, type DragEvent } from "react";
+import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
+import { useState } from "react";
 import { ModalShell } from "@/components/modal-shell";
 import { TaskTableChipButton, TASK_TABLE_INACTIVE_CHIP_CLASS, TASK_TABLE_TAG_CHIP_CLASS } from "@/components/ui/task-table-primitives";
-import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
+import type { TaskEnergy, TaskListFolder, TaskStatus } from "@/lib/database.types";
 import {
   appendTaskListRuleRow,
   normalizeTaskListRuleGroup,
@@ -17,6 +17,7 @@ import {
 } from "@/lib/task-list-rule-editor";
 import { isTaskListSettingsEligible, type TaskListDefinition, type TaskListId, type TaskListRuleGroup, type parseTaskListRules } from "@/lib/task-lists";
 import { TaskListRuleRowEditor } from "./task-list-rule-row-editor";
+import { TaskListFolderManager } from "./task-list-folder-manager";
 
 type TaskListSettingsDraft = {
   isCollapsed: boolean;
@@ -29,7 +30,6 @@ export type TaskListSaveInput = {
   id: TaskListId;
   isVisible: boolean;
   name: string;
-  orderedListIds: TaskListId[];
   rules: ReturnType<typeof parseTaskListRules>;
 };
 
@@ -40,13 +40,18 @@ export type CustomTaskListInput = {
 };
 
 type TaskListSettingsModalProps = {
+  currentFolderId: string | null;
   energyOptions: TaskEnergy[];
   fieldOptions: Array<{ label: string; value: TaskListRuleField }>;
   listCounts: Record<string, number>;
   lists: TaskListDefinition[];
+  folders: TaskListFolder[];
   onClose: () => void;
   onCreateCustomList: (input: CustomTaskListInput) => Promise<boolean | { id: TaskListId; persisted: boolean }>;
+  onCreateFolder: (name: string, parentFolderId: string | null) => Promise<boolean>;
   onDeleteList: (listId: TaskListId) => Promise<boolean>;
+  onDeleteFolder: (folderId: string) => Promise<boolean>;
+  onRenameFolder: (folderId: string, name: string) => Promise<boolean>;
   onSaveList: (input: TaskListSaveInput) => Promise<boolean>;
   operatorOptionsByField: Record<TaskListRuleField, Array<{ label: string; value: TaskListRuleRowOperator }>>;
   taskStatusOptions: TaskStatus[];
@@ -66,75 +71,19 @@ function buildInitialDrafts(lists: TaskListDefinition[]) {
   ) as Record<string, TaskListSettingsDraft>;
 }
 
-function reorderListIdsWithinGroup(
-  listIds: TaskListId[],
-  listId: TaskListId,
-  targetListId: TaskListId,
-  reorderableListIds: TaskListId[],
-) {
-  if (listId === targetListId) {
-    return listIds;
-  }
-
-  const reorderableListIdSet = new Set(reorderableListIds);
-  const orderedReorderableListIds = listIds.filter((currentListId) => reorderableListIdSet.has(currentListId));
-  const currentIndex = orderedReorderableListIds.indexOf(listId);
-  const targetIndex = orderedReorderableListIds.indexOf(targetListId);
-  if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) {
-    return listIds;
-  }
-
-  const nextOrderedReorderableListIds = [...orderedReorderableListIds];
-  const [movedListId] = nextOrderedReorderableListIds.splice(currentIndex, 1);
-  if (!movedListId) {
-    return listIds;
-  }
-  nextOrderedReorderableListIds.splice(targetIndex, 0, movedListId);
-
-  let reorderableIndex = 0;
-  const nextListIds = listIds.map((currentListId) => (
-    reorderableListIdSet.has(currentListId)
-      ? nextOrderedReorderableListIds[reorderableIndex++] ?? currentListId
-      : currentListId
-  ));
-
-  return nextListIds.every((currentListId, index) => currentListId === listIds[index]) ? listIds : nextListIds;
-}
-
-function moveListIdToTopOfGroup(listIds: TaskListId[], listId: TaskListId, reorderableListIds: TaskListId[]) {
-  const firstReorderableListId = listIds.find((currentListId) => reorderableListIds.includes(currentListId));
-  if (!firstReorderableListId) {
-    return listIds;
-  }
-  return reorderListIdsWithinGroup(listIds, listId, firstReorderableListId, reorderableListIds);
-}
-
-function moveListIdWithinGroup(
-  listIds: TaskListId[],
-  listId: TaskListId,
-  direction: "up" | "down",
-  reorderableListIds: TaskListId[],
-) {
-  const orderedReorderableListIds = listIds.filter((currentListId) => reorderableListIds.includes(currentListId));
-  const currentIndex = orderedReorderableListIds.indexOf(listId);
-  if (currentIndex < 0) {
-    return listIds;
-  }
-  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-  if (targetIndex < 0 || targetIndex >= orderedReorderableListIds.length) {
-    return listIds;
-  }
-  return reorderListIdsWithinGroup(listIds, listId, orderedReorderableListIds[targetIndex]!, reorderableListIds);
-}
-
 export function TaskListSettingsModal({
+  currentFolderId,
   energyOptions,
   fieldOptions,
   listCounts,
   lists,
+  folders,
   onClose,
   onCreateCustomList,
+  onCreateFolder,
   onDeleteList,
+  onDeleteFolder,
+  onRenameFolder,
   onSaveList,
   operatorOptionsByField,
   taskStatusOptions,
@@ -146,15 +95,11 @@ export function TaskListSettingsModal({
   }));
   const listLabelById = Object.fromEntries(listOptions.map((list) => [list.value, list.label])) as Partial<Record<TaskListId, string>>;
   const [drafts, setDrafts] = useState<Record<string, TaskListSettingsDraft>>(() => buildInitialDrafts(eligibleLists));
-  const [orderedListIds, setOrderedListIds] = useState<TaskListId[]>(() => eligibleLists.map((list) => list.id));
-  const reorderableListIds = eligibleLists.map((list) => list.id);
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [newListName, setNewListName] = useState("");
   const [newListMode, setNewListMode] = useState<"manual" | "rules">("manual");
   const [newListRules, setNewListRules] = useState<TaskListRuleGroup>({ rules: [] });
   const [createError, setCreateError] = useState<string | null>(null);
-  const [draggedListId, setDraggedListId] = useState<TaskListId | null>(null);
-  const [dragOverListId, setDragOverListId] = useState<TaskListId | null>(null);
 
   function updateDraft(listId: string, patch: Partial<TaskListSettingsDraft>) {
     setDrafts((current) => {
@@ -197,7 +142,6 @@ export function TaskListSettingsModal({
       id: list.id,
       isVisible: draft.isVisible,
       name: draft.name.trim() || list.name,
-      orderedListIds,
       rules: parsedRules,
     });
 
@@ -239,27 +183,6 @@ export function TaskListSettingsModal({
     }
   }
 
-  function handleReorderDragStart(event: DragEvent<HTMLButtonElement>, listId: TaskListId) {
-    event.dataTransfer.effectAllowed = "move";
-    setDraggedListId(listId);
-    setDragOverListId(listId);
-  }
-
-  function handleReorderDragOver(event: DragEvent<HTMLElement>, targetListId: TaskListId) {
-    if (!draggedListId || draggedListId === targetListId) {
-      return;
-    }
-
-    event.preventDefault();
-    setDragOverListId(targetListId);
-    setOrderedListIds((current) => reorderListIdsWithinGroup(current, draggedListId, targetListId, reorderableListIds));
-  }
-
-  function handleReorderDragEnd() {
-    setDraggedListId(null);
-    setDragOverListId(null);
-  }
-
   return (
     <ModalShell className="adhdice-scrollbar w-full max-w-[56rem] max-h-[92vh] overflow-y-auto rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="List settings" onClose={onClose}>
       <div className="space-y-6">
@@ -275,6 +198,15 @@ export function TaskListSettingsModal({
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        <TaskListFolderManager
+          currentFolderId={currentFolderId}
+          folders={folders}
+          lists={lists}
+          onCreateFolder={onCreateFolder}
+          onDeleteFolder={onDeleteFolder}
+          onRenameFolder={onRenameFolder}
+        />
 
         <section className="rounded-[1.5rem] border border-[#ece8f8] bg-[#faf8ff] p-4 dark:border-white/10 dark:bg-white/[0.03]">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -344,29 +276,13 @@ export function TaskListSettingsModal({
         </section>
 
         <div className="space-y-4">
-          {orderedListIds.map((listId, listIndex) => {
-            const list = eligibleLists.find((entry) => entry.id === listId);
-            if (!list) return null;
+          {eligibleLists.map((list) => {
             const draft = drafts[list.id];
             if (!draft) return null;
-            const isReorderable = true;
-            const reorderableListIndex = orderedListIds.filter((currentListId) => reorderableListIds.includes(currentListId)).indexOf(list.id);
-            const reorderableListCount = reorderableListIds.length;
             return (
               <section
-                className={`rounded-[1.5rem] border bg-white p-4 shadow-[0_12px_30px_rgba(81,61,168,0.05)] dark:bg-white/[0.03] ${
-                  draggedListId === list.id
-                    ? "border-[#c9bcff] opacity-80 dark:border-[#6e5ab2]"
-                    : dragOverListId === list.id
-                      ? "border-[#b9a8ff] ring-2 ring-[#ede7ff] dark:border-[#7f6cd1] dark:ring-[#2d214f]"
-                      : "border-[#ece8f8] dark:border-white/10"
-                }`}
+                className="rounded-[1.5rem] border border-[#ece8f8] bg-white p-4 shadow-[0_12px_30px_rgba(81,61,168,0.05)] dark:border-white/10 dark:bg-white/[0.03]"
                 key={list.id}
-                onDragOver={isReorderable ? (event) => handleReorderDragOver(event, list.id) : undefined}
-                onDrop={isReorderable ? (event) => {
-                  event.preventDefault();
-                  handleReorderDragEnd();
-                } : undefined}
               >
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
                   <div className="min-w-0">
@@ -377,59 +293,9 @@ export function TaskListSettingsModal({
                     </div>
                     <p className="mt-2 text-sm text-[#68738f] dark:text-white/55">{list.description}</p>
                     <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/35">{listCounts[list.id] ?? 0} task{(listCounts[list.id] ?? 0) === 1 ? "" : "s"} currently visible</p>
-                    <p className="mt-1 text-xs text-[#8d87a7] dark:text-white/35">Rail order: {listIndex + 1}</p>
                     {draft.isCollapsed ? <p className="mt-2 text-xs text-[#7a7397] dark:text-white/45">{list.membershipMode === "manual" ? "Manual list membership." : list.membershipMode === "system" ? "Membership is controlled from the task toolbar." : summarizeTaskListRules(draft.rules, (listId) => listLabelById[listId] ?? "")}</p> : null}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2 md:self-start">
-                    {isReorderable ? (
-                      <>
-                        <TaskTableChipButton
-                          className="gap-2 transition"
-                          disabled={reorderableListIndex <= 0}
-                          onClick={() => setOrderedListIds((current) => moveListIdToTopOfGroup(current, list.id, reorderableListIds))}
-                          toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
-                        >
-                          <ChevronsUp className="h-4 w-4" />
-                          Move to top
-                        </TaskTableChipButton>
-                        <button
-                          aria-label={`Drag to reorder ${list.name}`}
-                          className="inline-flex h-10 w-10 cursor-grab items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] active:cursor-grabbing dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
-                          draggable
-                          onDragEnd={handleReorderDragEnd}
-                          onDragStart={(event) => handleReorderDragStart(event, list.id)}
-                          type="button"
-                        >
-                          <GripVertical className="h-4 w-4" />
-                        </button>
-                      </>
-                    ) : null}
-                    <button
-                      aria-label={`Move ${list.name} earlier in the rail`}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
-                      disabled={isReorderable ? reorderableListIndex <= 0 : listIndex === 0}
-                      onClick={() => setOrderedListIds((current) => (
-                        isReorderable
-                          ? moveListIdWithinGroup(current, list.id, "up", reorderableListIds)
-                          : current
-                      ))}
-                      type="button"
-                    >
-                      <ArrowUp className="h-4 w-4" />
-                    </button>
-                    <button
-                      aria-label={`Move ${list.name} later in the rail`}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]"
-                      disabled={isReorderable ? reorderableListIndex === reorderableListCount - 1 : listIndex === orderedListIds.length - 1}
-                      onClick={() => setOrderedListIds((current) => (
-                        isReorderable
-                          ? moveListIdWithinGroup(current, list.id, "down", reorderableListIds)
-                          : current
-                      ))}
-                      type="button"
-                    >
-                      <ArrowDown className="h-4 w-4" />
-                    </button>
                     <button aria-label={draft.isCollapsed ? `Expand ${list.name}` : `Collapse ${list.name}`} className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#ddd6fb] bg-white text-[#5c6684] transition hover:border-[#c9bcff] hover:text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/70 dark:hover:text-[#cabfff]" onClick={() => updateDraft(list.id, { isCollapsed: !draft.isCollapsed })} type="button">
                       {draft.isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
                     </button>

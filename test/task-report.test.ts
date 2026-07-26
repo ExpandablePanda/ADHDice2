@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createTask } from "../src/lib/task-buckets.ts";
 import { getBuiltInTaskLists, type TaskListMembership } from "../src/lib/task-lists.ts";
 import { generateTaskReport } from "../src/lib/task-report.ts";
-import type { Task, TaskHistory } from "../src/lib/database.types.ts";
+import type { Milestone, MilestoneEvent, Task, TaskHistory } from "../src/lib/database.types.ts";
 import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "../src/lib/types.ts";
+import type { AchievementProgressModel } from "../src/lib/achievement-progress.ts";
+import type { PersistedRecordCurrent, PersistedRecordEvent } from "../src/lib/records/types.ts";
+import { copyReportMarkdown, formatReportDate, formatReportRecordValue } from "../src/lib/report-presentation.ts";
 
 function createHistoryEntry(params: Partial<TaskHistory> & Pick<TaskHistory, "entry_date" | "id" | "status" | "task_id">): TaskHistory {
   return {
@@ -118,13 +122,13 @@ test("summary report uses the current overall-stats structure and skips detailed
     todayDateKey: "2026-06-29",
   });
 
-  assert.match(report, /## Overall Stats/);
+  assert.match(report, /## Overview/);
   assert.match(report, /History Records Analyzed: 1/);
   assert.match(report, /History Source: Loaded workspace history fallback/);
   assert.match(report, /Active vs Trashed Loaded: 1 active, 1 trashed excluded/);
   assert.match(report, /Current Status Snapshot: Done 1/);
-  assert.doesNotMatch(report, /## All Current Task History/);
-  assert.doesNotMatch(report, /## Day-by-Day Breakdown/);
+  assert.doesNotMatch(report, /### All Current Task History/);
+  assert.doesNotMatch(report, /### Day-by-Day Breakdown/);
 });
 
 test("report exports derived legacy urgent priority when priority_level is null", () => {
@@ -239,12 +243,12 @@ test("report includes compact pinned, routine, and priority summaries", () => {
   });
 
   assert.match(report, /Pinned Tasks: 1 total \(Done 1\)/);
-  assert.match(report, /Routine Tasks: 2 total \(Did My Best 1, Missed 1\)/);
+  assert.match(report, /Parent Tasks: Done 0; Did My Best 1; Missed 1; Handled 1/);
   assert.match(report, /Priority 5: Done 1, Missed 1/);
   assert.match(report, /Priority 4: Did My Best 1/);
   assert.match(report, /Priority 0: Pending 1/);
   assert.doesNotMatch(report, /Pinned Tasks: 0 total/);
-  assert.doesNotMatch(report, /Routine Tasks: 0 total/);
+  assert.doesNotMatch(report, /Range outcomes for Tasks currently in Routine.*Current Status/s);
 });
 
 test("detailed report uses the shipped detailed sections and current status lines", () => {
@@ -366,9 +370,9 @@ test("detailed report uses the shipped detailed sections and current status line
   });
 
   assert.match(report, /Warning: this report is based on 1000 loaded history records and may be incomplete\./);
-  assert.match(report, /## Overall Stats/);
-  assert.match(report, /## All Current Task History/);
-  assert.match(report, /## Day-by-Day Breakdown/);
+  assert.match(report, /## Overview/);
+  assert.match(report, /### All Current Task History/);
+  assert.match(report, /### Day-by-Day Breakdown/);
   assert.match(report, /History Records Analyzed: 1000/);
   assert.match(report, /Path: Morning routine > Brush teeth > Floss/);
   assert.match(report, /Current Status Snapshot: Pending 2, Done 1, Missed 28/);
@@ -544,8 +548,8 @@ test("report includes focus goals and selected-range focus sessions", () => {
   assert.match(report, /## Focus Report/);
   assert.match(report, /### Focus Goals/);
   assert.match(report, /- Coding: Today 25m\/17m; Week 40m\/2h; Pace On pace/);
-  assert.match(report, /#### 2026-06-29/);
-  assert.match(report, /#### 2026-06-30/);
+  assert.match(report, /#### Jun 29, 2026/);
+  assert.match(report, /#### Jun 30, 2026/);
   assert.match(report, /Morning sprint — Coding — 25m — Work \/ Deep Work — Notes: Heads-down sprint/);
   assert.doesNotMatch(report, /Old session/);
 });
@@ -608,7 +612,7 @@ test("all range uses the union of task history, focus session, and adjustment da
   assert.match(report, /Selected Date Range: All available \(Jun 5, 2026 to Jun 30, 2026\)/);
   assert.match(report, /Earlier focus session/);
   assert.match(report, /Later focus session/);
-  assert.match(report, /#### 2026-06-05/);
+  assert.match(report, /#### Jun 5, 2026/);
 });
 
 test("custom range filters task and focus report data through the selected dates", () => {
@@ -691,4 +695,446 @@ test("focus duration labels stay carry-safe near hour boundaries", () => {
   assert.match(report, /Boundary under two hours — Coding — 1h 59m/);
   assert.doesNotMatch(report, /60m/);
   assert.doesNotMatch(report, /1h 60m/);
+});
+
+test("Routine Performance counts canonical selected-range occurrences by parent and Step outcomes", () => {
+  const parent = createTask({
+    id: "routine-parent",
+    repeat_frequency: "daily",
+    status: "pending",
+    title: "Appanda",
+  });
+  const step = createTask({
+    id: "routine-step",
+    parent_task_id: parent.id,
+    repeat_frequency: "daily",
+    status: "pending",
+    title: "ADHDice",
+  });
+  const substep = createTask({
+    id: "routine-substep",
+    parent_task_id: step.id,
+    repeat_frequency: "daily",
+    status: "pending",
+    title: "Nested Routine check",
+  });
+  const history = [
+    ...Array.from({ length: 6 }, (_, index) => createHistoryEntry({
+      counted_as_due_occurrence: false,
+      entry_date: "2026-07-24",
+      id: `parent-best-${index + 1}`,
+      occurrence_key: `parent-best-${index + 1}`,
+      status: "did_my_best",
+      task_id: parent.id,
+    })),
+    ...Array.from({ length: 6 }, (_, index) => createHistoryEntry({
+      counted_as_due_occurrence: false,
+      entry_date: "2026-07-24",
+      id: `step-best-${index + 1}`,
+      occurrence_key: `step-best-${index + 1}`,
+      status: "did_my_best",
+      task_id: step.id,
+    })),
+    createHistoryEntry({ counted_as_due_occurrence: false, entry_date: "2026-07-24", id: "parent-done-original", occurrence_key: "parent-1", status: "done", task_id: parent.id }),
+    createHistoryEntry({ created_at: "2026-07-24T13:00:00.000Z", entry_date: "2026-07-24", id: "parent-done-duplicate", occurrence_key: "parent-1", status: "done", task_id: parent.id }),
+    createHistoryEntry({ counted_as_due_occurrence: false, entry_date: "2026-07-24", id: "parent-missed-due", occurrence_due_on: "2026-07-23", status: "missed", task_id: parent.id }),
+    createHistoryEntry({ created_at: "2026-07-24T14:00:00.000Z", entry_date: "2026-07-24", id: "parent-missed-due-duplicate", occurrence_due_on: "2026-07-23", status: "missed", task_id: parent.id }),
+    createHistoryEntry({ entry_date: "2026-07-24", id: "parent-open", occurrence_key: "parent-open", status: "pending", task_id: parent.id }),
+    createHistoryEntry({ counted_as_due_occurrence: false, entry_date: "2026-07-24", id: "step-done", occurrence_key: "step-1", status: "done", task_id: step.id }),
+    createHistoryEntry({ entry_date: "2026-07-24", id: "step-done-same-day", occurrence_key: "step-2", status: "done", task_id: step.id }),
+    createHistoryEntry({ counted_as_due_occurrence: false, entry_date: "2026-07-24", id: "step-missed", occurrence_key: "step-3", status: "missed", task_id: step.id }),
+    createHistoryEntry({ counted_as_due_occurrence: false, entry_date: "2026-07-24", id: "substep-missed", occurrence_key: "substep-1", status: "missed", task_id: substep.id }),
+  ];
+
+  const report = generateTaskReport({
+    appVersion: "7.4.8",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "summary",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-25T12:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    listMembershipsByTaskId: {
+      [parent.id]: [createManualListMembership("routine")],
+      [step.id]: [createManualListMembership("routine")],
+    },
+    rangeId: "last7",
+    taskHistory: history,
+    tasks: [parent, step, substep],
+    todayDateKey: "2026-07-25",
+  });
+
+  assert.match(report, /Range outcomes for Tasks currently in Routine/);
+  assert.match(report, /Parent Tasks: Done 1; Did My Best 6; Missed 1; Handled 7/);
+  assert.match(report, /Steps\/Substeps: Done 2; Did My Best 6; Missed 2; Handled 8/);
+  assert.match(report, /historical membership is unavailable/);
+});
+
+test("reports exclude descendants of trashed parents before snapshots, Routine, and details", () => {
+  const trashedParent = createTask({ id: "trashed-parent", status: "trashed", title: "Trashed parent" });
+  const descendant = createTask({ id: "trashed-descendant", parent_task_id: trashedParent.id, status: "done", title: "Hidden descendant" });
+  const report = generateTaskReport({
+    appVersion: "7.4.9",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "detailed",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-25T12:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    listMembershipsByTaskId: {
+      [trashedParent.id]: [createManualListMembership("routine")],
+      [descendant.id]: [createManualListMembership("routine")],
+    },
+    rangeId: "last7",
+    taskHistory: [
+      createHistoryEntry({
+        counted_as_due_occurrence: false,
+        entry_date: "2026-07-24",
+        id: "trashed-descendant-done",
+        occurrence_key: "trashed-descendant-1",
+        status: "done",
+        task_id: descendant.id,
+      }),
+    ],
+    tasks: [trashedParent, descendant],
+    todayDateKey: "2026-07-25",
+  });
+
+  assert.match(report, /Active vs Trashed Loaded: 0 active, 2 trashed excluded/);
+  assert.match(report, /History Records Analyzed: 0/);
+  assert.match(report, /Steps\/Substeps: Done 0; Did My Best 0; Missed 0; Handled 0/);
+  assert.doesNotMatch(report, /Hidden descendant/);
+});
+
+test("Achievements include permanent range awards and the loaded current progress snapshot", () => {
+  const achievementModel = {
+    collections: [{
+      description: "Collection description",
+      earnedTiers: 1,
+      id: "clocked_in",
+      isMastered: true,
+      masteredAt: "2026-07-24T18:00:00.000Z",
+      title: "Clocked In",
+      totalTiers: 4,
+      tracks: [{
+        currentValue: 7200,
+        description: "Track description",
+        id: "locked_in",
+        isComplete: false,
+        nextThreshold: 10800,
+        nextTier: "silver",
+        progressPercent: 66,
+        tiers: [
+          { earnedAt: "2026-07-24T16:00:00.000Z", id: "bronze", isEarned: true, threshold: 3600 },
+          { earnedAt: null, id: "silver", isEarned: false, threshold: 10800 },
+        ],
+        title: "Locked In",
+        unit: "seconds",
+      }],
+    }],
+    summary: {
+      completedCollections: 1,
+      earnedTiers: 1,
+      mostRecentUnlock: { earnedAt: "2026-07-24T18:00:00.000Z", label: "Clocked In · Collection mastered" },
+      overallCompletionPercent: 25,
+      totalTiers: 4,
+    },
+  } as AchievementProgressModel;
+
+  const report = generateTaskReport({
+    achievementModel,
+    appVersion: "7.4.8",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "summary",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-25T12:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "last7",
+    taskHistory: [],
+    tasks: [],
+    todayDateKey: "2026-07-25",
+  });
+
+  assert.match(report, /Locked In — Collection: Clocked In — Tier: Bronze — Permanently earned: Jul 24, 2026/);
+  assert.match(report, /Clocked In — Collection mastery aura earned: Jul 24, 2026/);
+  assert.match(report, /Clocked In: 1 of 4 tiers — Mastered Jul 24, 2026/);
+  assert.match(report, /Locked In — Current progress: 2 hrs — Earned tiers: Bronze — Next: Silver at 3 hrs/);
+});
+
+test("Milestone lifecycle, trophy, and aura output remains range-based", () => {
+  const milestoneEvent = {
+    event_type: "completed_on_time",
+    id: "milestone-event-1",
+    occurred_at: "2026-07-24T15:00:00.000Z",
+  } as MilestoneEvent;
+  const milestone = {
+    aura_kind: "diamond",
+    aura_revoked_at: null,
+    completion_date_key: "2026-07-24",
+    completion_timing: "on_time",
+    current_tier: "gold",
+    status: "completed",
+    task_title_snapshot: "Ship report clarity",
+    trophy_awarded_at: "2026-07-24T15:00:00.000Z",
+    trophy_revoked_at: null,
+    updated_at: "2026-07-24T15:00:00.000Z",
+  } as Milestone;
+  const report = generateTaskReport({
+    appVersion: "7.4.8",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "detailed",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-25T12:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    milestoneEvents: [milestoneEvent],
+    milestones: [milestone],
+    rangeId: "last7",
+    taskHistory: [],
+    tasks: [],
+    todayDateKey: "2026-07-25",
+  });
+  assert.match(report, /Completed lifecycle events: 1 total; 1 on time; 0 grace period; 0 late/);
+  assert.match(report, /Trophies earned in range: Bronze 0; Silver 0; Gold 1; Platinum 0/);
+  assert.match(report, /Trophy auras in range: Standard 0; Diamond 1; Completed without Aura 0/);
+  assert.match(report, /Ship report clarity — gold — Jul 24, 2026 — On time — Diamond Aura/);
+});
+
+test("Records report uses persisted current rows and selected-range events", () => {
+  const priorEvent = {
+    credited_date: "2026-07-01",
+    event_kind: "break",
+    first_achieved_at: "2026-07-01T12:00:00.000Z",
+    id: "record-prior",
+    metric_key: "parent_tasks_day",
+    scope_id: null,
+    scope_kind: "global",
+    title_snapshot: null,
+    unit: "tasks",
+    validity_state: "valid",
+    value: 5,
+  } as PersistedRecordEvent;
+  const breakEvent = {
+    ...priorEvent,
+    credited_date: "2026-07-24",
+    first_achieved_at: "2026-07-24T12:00:00.000Z",
+    id: "record-break",
+    value: 10,
+  } as PersistedRecordEvent;
+  const tieEvent = {
+    ...breakEvent,
+    credited_date: "2026-07-25",
+    event_kind: "tie",
+    first_achieved_at: "2026-07-25T12:00:00.000Z",
+    id: "record-tie",
+  } as PersistedRecordEvent;
+  const currentRecord = {
+    ...breakEvent,
+    first_achieved_at: "2026-07-24T12:00:00.000Z",
+  } as unknown as PersistedRecordCurrent;
+  const report = generateTaskReport({
+    appVersion: "7.4.8",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "summary",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-25T12:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "last7",
+    records: { currentRecords: [currentRecord], events: [priorEvent, breakEvent, tieEvent] },
+    taskHistory: [],
+    tasks: [],
+    todayDateKey: "2026-07-25",
+  });
+  assert.match(report, /Most parent Tasks completed in one day — Current: 10 tasks — Achieved: Jul 24, 2026 — Previous: 5 tasks — Category: Global Tasks — Scope: Global/);
+  assert.match(report, /Broken: Most parent Tasks completed in one day — Jul 24, 2026 — Current: 10 tasks — Previous: 5 tasks/);
+  assert.match(report, /Tied: Most parent Tasks completed in one day — Jul 25, 2026 — Current: 10 tasks — Previous: 10 tasks/);
+  assert.doesNotMatch(report, /Jul 1, 2026 — Current: 5 tasks/);
+});
+
+test("Records report summarizes per-task rows, caps deterministic highlights, and preserves complete range events", () => {
+  const hierarchyRoot = createTask({ id: "answer-messages", title: "Answer Messages" });
+  const hierarchyStep = createTask({ id: "email", parent_task_id: hierarchyRoot.id, title: "Email" });
+  const hierarchySubstep = createTask({ id: "burners-task-scope", parent_task_id: hierarchyStep.id, title: "Burners" });
+  const globalRecord = {
+    first_achieved_at: "2026-07-20T12:00:00.000Z",
+    id: "global-current",
+    metric_key: "parent_tasks_day",
+    scope_id: null,
+    scope_kind: "global",
+    title_snapshot: null,
+    unit: "tasks",
+    value: 1,
+  } as PersistedRecordCurrent;
+  const perTaskRecords = Array.from({ length: 15 }, (_, index) => {
+    const number = index + 1;
+    return {
+      first_achieved_at: `2026-07-${String(number).padStart(2, "0")}T12:00:00.000Z`,
+      id: `per-task-current-${number}`,
+      metric_key: "task_occurrence_streak",
+      scope_id: number === 15 ? hierarchySubstep.id : `duplicate-task-scope-${number}`,
+      scope_kind: "task",
+      title_snapshot: number === 15 ? "Burners" : "Duplicate title",
+      unit: "occurrences",
+      value: number,
+    } as PersistedRecordCurrent;
+  });
+  const rangedEvents = [
+    {
+      credited_date: "2026-07-20",
+      event_kind: "break",
+      first_achieved_at: "2026-07-20T09:00:00.000Z",
+      id: "range-set",
+      metric_key: "task_occurrence_streak",
+      scope_id: hierarchySubstep.id,
+      scope_kind: "task",
+      title_snapshot: "Burners",
+      unit: "occurrences",
+      validity_state: "valid",
+      value: 1,
+    },
+    {
+      credited_date: "2026-07-21",
+      event_kind: "break",
+      first_achieved_at: "2026-07-21T09:00:00.000Z",
+      id: "range-broken",
+      metric_key: "task_occurrence_streak",
+      scope_id: hierarchySubstep.id,
+      scope_kind: "task",
+      title_snapshot: "Burners",
+      unit: "occurrences",
+      validity_state: "valid",
+      value: 2,
+    },
+    {
+      credited_date: "2026-07-22",
+      event_kind: "tie",
+      first_achieved_at: "2026-07-22T09:00:00.000Z",
+      id: "range-tied",
+      metric_key: "task_occurrence_streak",
+      scope_id: hierarchySubstep.id,
+      scope_kind: "task",
+      title_snapshot: "Burners",
+      unit: "occurrences",
+      validity_state: "valid",
+      value: 2,
+    },
+  ] as PersistedRecordEvent[];
+  const report = generateTaskReport({
+    appVersion: "7.4.9",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "summary",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-25T12:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "last7",
+    records: { currentRecords: [globalRecord, ...perTaskRecords], events: rangedEvents },
+    taskHistory: [],
+    tasks: [hierarchyRoot, hierarchyStep, hierarchySubstep],
+    todayDateKey: "2026-07-25",
+  });
+
+  assert.match(report, /### Current global Records[\s\S]*Current: 1 task/);
+  assert.match(report, /Total persisted per-task Record rows: 15/);
+  assert.match(report, /Distinct Tasks represented: 15/);
+  assert.match(report, /Longest successful occurrence streak: 15/);
+  assert.equal((report.match(/Longest successful occurrence streak — Current:/g) ?? []).length, 12);
+  assert.match(report, /3 additional current per-task Records were omitted/);
+  assert.match(report, /Answer Messages > Email > Burners/);
+  assert.match(report, /Duplicate title \[duplicat\]/);
+  assert.match(report, /Set: Longest successful occurrence streak — Jul 20, 2026/);
+  assert.match(report, /Broken: Longest successful occurrence streak — Jul 21, 2026/);
+  assert.match(report, /Tied: Longest successful occurrence streak — Jul 22, 2026/);
+  assert.ok(report.indexOf("Jul 20, 2026") < report.indexOf("Jul 21, 2026"));
+  assert.ok(report.indexOf("Jul 21, 2026") < report.indexOf("Jul 22, 2026"));
+  assert.doesNotMatch(report, /per-task-current-1/);
+});
+
+test("Record value formatting centralizes singular and plural units", () => {
+  assert.equal(formatReportRecordValue(1, "occurrences"), "1 occurrence");
+  assert.equal(formatReportRecordValue(2, "occurrences"), "2 occurrences");
+  assert.equal(formatReportRecordValue(1, "tasks"), "1 task");
+  assert.equal(formatReportRecordValue(2, "tasks"), "2 tasks");
+  assert.equal(formatReportRecordValue(1, "steps"), "1 step");
+  assert.equal(formatReportRecordValue(2, "steps"), "2 steps");
+  assert.equal(formatReportRecordValue(1, "sessions"), "1 session");
+  assert.equal(formatReportRecordValue(2, "sessions"), "2 sessions");
+  assert.equal(formatReportRecordValue(1, "days"), "1 day");
+  assert.equal(formatReportRecordValue(2, "days"), "2 days");
+});
+
+test("Milestone empty output separates lifecycle activity from the current trophy snapshot", () => {
+  const report = generateTaskReport({
+    appVersion: "7.4.9",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "summary",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-25T12:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "last7",
+    taskHistory: [],
+    tasks: [],
+    todayDateKey: "2026-07-25",
+  });
+  assert.match(report, /No Milestone lifecycle events occurred during the selected range\./);
+  assert.match(report, /Current trophy\/aura snapshot for Milestones completed in this range: none\./);
+  assert.doesNotMatch(report, /No Milestone activity or currently earned trophies/);
+});
+
+test("report wiring neither reconciles Records nor diverges preview and clipboard Markdown", async () => {
+  const workspaceSource = readFileSync(new URL("../src/components/task-app/task-report-workspace.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(workspaceSource, /runRecordsPipeline|runRecordsPipelineSingleFlight|records RPC/i);
+  assert.match(workspaceSource, /isMembershipProjectionReady \? generateTaskReport/);
+  assert.match(workspaceSource, /isReportLoading = isLoadingHistory \|\| !isMembershipProjectionReady/);
+  assert.match(workspaceSource, /copyReportMarkdown\(reportMarkdown, navigator\.clipboard\)/);
+  assert.match(workspaceSource, /: reportMarkdown\}/);
+
+  let copied = "";
+  const markdown = "# Exact generated Markdown\n\nSame preview and clipboard.";
+  await copyReportMarkdown(markdown, { writeText: async (value) => { copied = value; } });
+  assert.equal(copied, markdown);
+});
+
+test("report date-only formatting preserves the logical calendar day", () => {
+  assert.equal(formatReportDate("2026-07-25"), "Jul 25, 2026");
+});
+
+test("detailed report keeps the required reporting-clarity section order", () => {
+  const report = generateTaskReport({
+    appVersion: "7.4.8",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "detailed",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-07-25T12:00:00.000Z"),
+    historySourceLabel: "Full selected date range fetch",
+    historyWarning: null,
+    rangeId: "last7",
+    taskHistory: [],
+    tasks: [],
+    todayDateKey: "2026-07-25",
+  });
+  const headings = [
+    "## Overview",
+    "## Routine Performance",
+    "## Achievements",
+    "## Milestones",
+    "## Records",
+    "## Focus Report",
+    "## Task History / details",
+    "## Analysis Request",
+  ];
+  const indexes = headings.map((heading) => report.indexOf(heading));
+  assert.ok(indexes.every((index) => index >= 0));
+  assert.deepEqual(indexes, [...indexes].sort((left, right) => left - right));
 });

@@ -152,21 +152,86 @@ create table public.adhdice_task_focus_days (
   primary key (user_id, focus_date)
 );
 
+create table public.adhdice_task_list_folders (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  id uuid not null default gen_random_uuid(),
+  name text not null,
+  parent_folder_id uuid,
+  sort_order bigint not null default 0,
+  revision bigint not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, id),
+  constraint adhdice_task_list_folders_name_check
+    check (name = trim(name) and char_length(name) between 1 and 120),
+  constraint adhdice_task_list_folders_not_self_check
+    check (parent_folder_id is null or parent_folder_id <> id),
+  constraint adhdice_task_list_folders_parent_fkey
+    foreign key (user_id, parent_folder_id)
+    references public.adhdice_task_list_folders(user_id, id)
+    on delete restrict
+);
+
+create table public.adhdice_task_list_containers (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  id uuid not null default gen_random_uuid(),
+  folder_id uuid,
+  revision bigint not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, id),
+  constraint adhdice_task_list_containers_folder_fkey
+    foreign key (user_id, folder_id)
+    references public.adhdice_task_list_folders(user_id, id)
+    on delete restrict,
+  unique (user_id, folder_id)
+);
+
 create table public.adhdice_task_lists (
   id text not null,
   user_id uuid not null references auth.users(id) on delete cascade,
   built_in_key text,
+  folder_id uuid,
   name text not null check (char_length(trim(name)) > 0),
   list_type text not null default 'custom' check (list_type in ('system', 'smart', 'custom')),
   membership_mode text not null default 'manual' check (membership_mode in ('manual', 'rules', 'hybrid')),
   is_deletable boolean not null default true,
   is_editable boolean not null default true,
   is_visible boolean not null default true,
+  revision bigint not null default 0,
   sort_order bigint not null default 0,
   rules_json text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  primary key (user_id, id)
+  primary key (user_id, id),
+  constraint adhdice_task_lists_folder_fkey
+    foreign key (user_id, folder_id)
+    references public.adhdice_task_list_folders(user_id, id)
+    on delete restrict
+);
+
+create table public.adhdice_task_list_rail_items (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  item_key text not null,
+  item_type text not null check (item_type in ('list', 'folder')),
+  entity_id uuid,
+  container_folder_id uuid,
+  sort_order integer not null default 0 check (sort_order between 0 and 1000000),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, item_key),
+  constraint adhdice_task_list_rail_items_container_fk
+    foreign key (user_id, container_folder_id)
+    references public.adhdice_task_list_folders(user_id, id)
+    on delete restrict,
+  constraint adhdice_task_list_rail_items_identity_check check (
+    (item_type = 'folder' and entity_id is not null and item_key = 'folder:' || entity_id::text)
+    or
+    (item_type = 'list' and (
+      (entity_id is null and item_key like 'system:%')
+      or (entity_id is not null and item_key = 'list:' || entity_id::text)
+    ))
+  )
 );
 
 create table public.adhdice_task_list_manual_memberships (
@@ -463,8 +528,15 @@ create index adhdice_task_active_timers_user_created_idx
   on public.adhdice_task_active_timers (user_id, created_at asc, updated_at desc);
 create index adhdice_task_focus_days_user_date_idx
   on public.adhdice_task_focus_days (user_id, focus_date desc);
-create index adhdice_task_lists_user_sort_idx
-  on public.adhdice_task_lists (user_id, sort_order, created_at);
+create index adhdice_task_list_folders_container_order_idx
+  on public.adhdice_task_list_folders (user_id, parent_folder_id, sort_order, id);
+create unique index adhdice_task_list_containers_root_uidx
+  on public.adhdice_task_list_containers (user_id)
+  where folder_id is null;
+create index adhdice_task_lists_container_order_idx
+  on public.adhdice_task_lists (user_id, folder_id, sort_order, id);
+create index adhdice_task_list_rail_items_container_order_idx
+  on public.adhdice_task_list_rail_items (user_id, container_folder_id, sort_order, item_key);
 create index adhdice_task_list_manual_memberships_user_task_idx
   on public.adhdice_task_list_manual_memberships (user_id, task_id, list_id);
 create index adhdice_task_history_user_date_idx
@@ -515,6 +587,10 @@ alter table public.adhdice_focus_daily_goal_adjustments enable row level securit
 alter table public.adhdice_task_active_timers enable row level security;
 alter table public.adhdice_task_focus_days enable row level security;
 alter table public.adhdice_task_lists enable row level security;
+alter table public.adhdice_task_list_folders enable row level security;
+alter table public.adhdice_task_list_rail_items enable row level security;
+alter table public.adhdice_task_list_rail_items force row level security;
+alter table public.adhdice_task_list_containers enable row level security;
 alter table public.adhdice_task_list_manual_memberships enable row level security;
 alter table public.adhdice_task_history enable row level security;
 alter table public.adhdice_record_current enable row level security;
@@ -699,6 +775,37 @@ create policy "Users can delete their own task focus days"
 
 create policy "Users can read their own task lists"
   on public.adhdice_task_lists
+  for select
+  using (auth.uid() = user_id);
+
+create policy "Users can read their own task list folders"
+  on public.adhdice_task_list_folders
+  for select
+  using (auth.uid() = user_id);
+
+create policy "task list rail items owner select"
+  on public.adhdice_task_list_rail_items
+  for select to authenticated
+  using (auth.uid() = user_id);
+
+create policy "task list rail items owner insert"
+  on public.adhdice_task_list_rail_items
+  for insert to authenticated
+  with check (auth.uid() = user_id);
+
+create policy "task list rail items owner update"
+  on public.adhdice_task_list_rail_items
+  for update to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy "task list rail items owner delete"
+  on public.adhdice_task_list_rail_items
+  for delete to authenticated
+  using (auth.uid() = user_id);
+
+create policy "Users can read their own task list containers"
+  on public.adhdice_task_list_containers
   for select
   using (auth.uid() = user_id);
 
@@ -1102,6 +1209,16 @@ create trigger adhdice_task_lists_set_updated_at
   for each row
   execute function public.adhdice_clean_set_updated_at();
 
+create trigger adhdice_task_list_folders_set_updated_at
+  before update on public.adhdice_task_list_folders
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
+create trigger adhdice_task_list_containers_set_updated_at
+  before update on public.adhdice_task_list_containers
+  for each row
+  execute function public.adhdice_clean_set_updated_at();
+
 create trigger adhdice_task_history_set_updated_at
   before update on public.adhdice_task_history
   for each row
@@ -1183,6 +1300,9 @@ alter publication supabase_realtime add table public.adhdice_focus_daily_goal_ad
 alter publication supabase_realtime add table public.adhdice_task_active_timers;
 alter publication supabase_realtime add table public.adhdice_task_focus_days;
 alter publication supabase_realtime add table public.adhdice_task_lists;
+alter publication supabase_realtime add table public.adhdice_task_list_folders;
+alter publication supabase_realtime add table public.adhdice_task_list_containers;
+alter publication supabase_realtime add table public.adhdice_task_list_rail_items;
 alter publication supabase_realtime add table public.adhdice_task_list_manual_memberships;
 alter publication supabase_realtime add table public.adhdice_task_history;
 alter publication supabase_realtime add table public.adhdice_task_actual_time_entries;
@@ -2932,6 +3052,661 @@ begin
   end if;
 end;
 $publication$;
+
+create or replace function public.adhdice_guard_task_list_folder_cycle()
+returns trigger
+language plpgsql
+set search_path = ''
+as $function$
+begin
+  if new.parent_folder_id is null then return new; end if;
+  if new.parent_folder_id = new.id then
+    raise exception 'A folder cannot parent itself';
+  end if;
+  if exists (
+    with recursive ancestors as (
+      select folder.id, folder.parent_folder_id
+      from public.adhdice_task_list_folders folder
+      where folder.user_id = new.user_id and folder.id = new.parent_folder_id
+      union
+      select parent.id, parent.parent_folder_id
+      from public.adhdice_task_list_folders parent
+      join ancestors child on child.parent_folder_id = parent.id
+      where parent.user_id = new.user_id
+    )
+    select 1 from ancestors where id = new.id
+  ) then
+    raise exception 'A folder cannot move into its descendant';
+  end if;
+  return new;
+end;
+$function$;
+
+create trigger adhdice_task_list_folders_guard_cycle
+  before insert or update of user_id, id, parent_folder_id
+  on public.adhdice_task_list_folders
+  for each row execute function public.adhdice_guard_task_list_folder_cycle();
+
+create or replace function public.adhdice_guard_task_list_folder_eligibility()
+returns trigger
+language plpgsql
+set search_path = ''
+as $function$
+begin
+  if new.folder_id is not null
+    and not (
+      new.list_type = 'custom'
+      and new.membership_mode = 'manual'
+      and new.built_in_key is null
+      and new.id like 'list:%'
+    )
+  then
+    raise exception 'Only user-created normal lists can be placed in folders';
+  end if;
+  return new;
+end;
+$function$;
+
+create trigger adhdice_task_lists_guard_folder_eligibility
+  before insert or update of folder_id, list_type, membership_mode, built_in_key, id
+  on public.adhdice_task_lists
+  for each row execute function public.adhdice_guard_task_list_folder_eligibility();
+
+create or replace function public.adhdice_normalize_task_list_container(
+  p_user_id uuid,
+  p_folder_id uuid
+)
+returns void
+language plpgsql
+set search_path = ''
+as $function$
+begin
+  with mixed as (
+    select 'folder'::text as entity_type, folder.id::text as entity_id,
+      folder.sort_order, folder.created_at
+    from public.adhdice_task_list_folders folder
+    where folder.user_id = p_user_id
+      and folder.parent_folder_id is not distinct from p_folder_id
+    union all
+    select 'list', list_row.id, list_row.sort_order, list_row.created_at
+    from public.adhdice_task_lists list_row
+    where list_row.user_id = p_user_id
+      and list_row.folder_id is not distinct from p_folder_id
+  ),
+  ranked as (
+    select entity_type, entity_id,
+      row_number() over (order by sort_order, entity_type, entity_id) - 1 as next_sort_order
+    from mixed
+  )
+  update public.adhdice_task_list_folders target
+  set sort_order = ranked.next_sort_order
+  from ranked
+  where ranked.entity_type = 'folder'
+    and target.user_id = p_user_id
+    and target.id::text = ranked.entity_id;
+
+  with mixed as (
+    select 'folder'::text as entity_type, folder.id::text as entity_id,
+      folder.sort_order, folder.created_at
+    from public.adhdice_task_list_folders folder
+    where folder.user_id = p_user_id
+      and folder.parent_folder_id is not distinct from p_folder_id
+    union all
+    select 'list', list_row.id, list_row.sort_order, list_row.created_at
+    from public.adhdice_task_lists list_row
+    where list_row.user_id = p_user_id
+      and list_row.folder_id is not distinct from p_folder_id
+  ),
+  ranked as (
+    select entity_type, entity_id,
+      row_number() over (order by sort_order, entity_type, entity_id) - 1 as next_sort_order
+    from mixed
+  )
+  update public.adhdice_task_lists target
+  set sort_order = ranked.next_sort_order
+  from ranked
+  where ranked.entity_type = 'list'
+    and target.user_id = p_user_id
+    and target.id = ranked.entity_id;
+end;
+$function$;
+
+create or replace function public.adhdice_assert_task_list_container_revision(
+  p_user_id uuid,
+  p_folder_id uuid,
+  p_expected_revision bigint
+)
+returns bigint
+language plpgsql
+set search_path = ''
+as $function$
+declare
+  v_revision bigint;
+begin
+  insert into public.adhdice_task_list_containers (user_id, folder_id)
+  values (p_user_id, p_folder_id)
+  on conflict do nothing;
+  select container.revision into v_revision
+  from public.adhdice_task_list_containers container
+  where container.user_id = p_user_id
+    and container.folder_id is not distinct from p_folder_id
+  for update;
+  if v_revision is null or p_expected_revision is null or v_revision <> p_expected_revision then
+    raise exception using errcode = '40001',
+      message = 'ADHDICE_LIST_FOLDER_REVISION_CONFLICT';
+  end if;
+  return v_revision;
+end;
+$function$;
+
+create or replace function public.adhdice_mutate_task_list_structure(
+  p_action text,
+  p_payload jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_folder_id uuid;
+  v_list_id text;
+  v_source_folder_id uuid;
+  v_destination_folder_id uuid;
+  v_parent_folder_id uuid;
+  v_expected_source_revision bigint;
+  v_expected_destination_revision bigint;
+  v_target_index bigint;
+  v_item_count bigint;
+  v_child_count bigint;
+  v_deleted_position bigint;
+  v_next_revision bigint;
+begin
+  if v_user_id is null then raise exception 'Authentication is required'; end if;
+
+  if p_action = 'create_folder' then
+    v_destination_folder_id := nullif(p_payload->>'parent_folder_id', '')::uuid;
+    if v_destination_folder_id is not null and not exists (
+      select 1 from public.adhdice_task_list_folders
+      where user_id = v_user_id and id = v_destination_folder_id
+    ) then raise exception 'Folder destination was not found'; end if;
+    perform public.adhdice_assert_task_list_container_revision(
+      v_user_id, v_destination_folder_id,
+      (p_payload->>'expected_container_revision')::bigint
+    );
+    select count(*) into v_target_index from (
+      select id::text from public.adhdice_task_list_folders
+      where user_id = v_user_id
+        and parent_folder_id is not distinct from v_destination_folder_id
+      union all
+      select id from public.adhdice_task_lists
+      where user_id = v_user_id
+        and folder_id is not distinct from v_destination_folder_id
+    ) siblings;
+    insert into public.adhdice_task_list_folders (
+      user_id, name, parent_folder_id, sort_order
+    ) values (
+      v_user_id, trim(p_payload->>'name'), v_destination_folder_id, v_target_index
+    ) returning id into v_folder_id;
+    insert into public.adhdice_task_list_containers (user_id, folder_id)
+    values (v_user_id, v_folder_id);
+    perform public.adhdice_normalize_task_list_container(v_user_id, v_destination_folder_id);
+    update public.adhdice_task_list_containers
+    set revision = revision + 1, updated_at = now()
+    where user_id = v_user_id
+      and folder_id is not distinct from v_destination_folder_id
+    returning revision into v_next_revision;
+    return jsonb_build_object(
+      'status', 'ok', 'folder_id', v_folder_id,
+      'destination_revision', v_next_revision
+    );
+  elsif p_action = 'rename_folder' then
+    v_folder_id := (p_payload->>'folder_id')::uuid;
+    update public.adhdice_task_list_folders
+    set name = trim(p_payload->>'name'), revision = revision + 1, updated_at = now()
+    where user_id = v_user_id and id = v_folder_id
+      and revision = (p_payload->>'expected_folder_revision')::bigint
+    returning revision into v_next_revision;
+    if v_next_revision is null then
+      raise exception using errcode = '40001',
+        message = 'ADHDICE_LIST_FOLDER_REVISION_CONFLICT';
+    end if;
+    return jsonb_build_object(
+      'status', 'ok', 'folder_id', v_folder_id,
+      'folder_revision', v_next_revision
+    );
+  elsif p_action in ('move_folder', 'move_list') then
+    v_destination_folder_id := nullif(p_payload->>'destination_folder_id', '')::uuid;
+    v_target_index := greatest(0, (p_payload->>'target_index')::bigint);
+    v_expected_source_revision := (p_payload->>'expected_source_revision')::bigint;
+    v_expected_destination_revision := (p_payload->>'expected_destination_revision')::bigint;
+    if v_destination_folder_id is not null and not exists (
+      select 1 from public.adhdice_task_list_folders
+      where user_id = v_user_id and id = v_destination_folder_id
+    ) then raise exception 'Folder destination was not found'; end if;
+
+    if p_action = 'move_folder' then
+      v_folder_id := (p_payload->>'folder_id')::uuid;
+      select parent_folder_id into v_source_folder_id
+      from public.adhdice_task_list_folders
+      where user_id = v_user_id and id = v_folder_id
+      for update;
+      if not found then raise exception 'Folder was not found'; end if;
+      if v_destination_folder_id = v_folder_id then
+        raise exception 'A folder cannot parent itself';
+      end if;
+      if v_destination_folder_id is not null and exists (
+        with recursive descendants as (
+          select child.id
+          from public.adhdice_task_list_folders child
+          where child.user_id = v_user_id and child.parent_folder_id = v_folder_id
+          union
+          select child.id
+          from public.adhdice_task_list_folders child
+          join descendants parent on child.parent_folder_id = parent.id
+          where child.user_id = v_user_id
+        )
+        select 1 from descendants where id = v_destination_folder_id
+      ) then raise exception 'A folder cannot move into its descendant'; end if;
+    else
+      v_list_id := p_payload->>'list_id';
+      select folder_id into v_source_folder_id
+      from public.adhdice_task_lists
+      where user_id = v_user_id and id = v_list_id
+        and list_type = 'custom' and membership_mode = 'manual'
+        and built_in_key is null and id like 'list:%'
+      for update;
+      if not found then
+        raise exception 'Only user-created normal lists can be moved into folders';
+      end if;
+    end if;
+
+    if v_source_folder_id is not distinct from v_destination_folder_id then
+      if v_expected_source_revision <> v_expected_destination_revision then
+        raise exception using errcode = '40001',
+          message = 'ADHDICE_LIST_FOLDER_REVISION_CONFLICT';
+      end if;
+      perform public.adhdice_assert_task_list_container_revision(
+        v_user_id, v_source_folder_id, v_expected_source_revision
+      );
+    else
+      perform public.adhdice_assert_task_list_container_revision(
+        v_user_id, v_source_folder_id, v_expected_source_revision
+      );
+      perform public.adhdice_assert_task_list_container_revision(
+        v_user_id, v_destination_folder_id, v_expected_destination_revision
+      );
+    end if;
+
+    if p_action = 'move_folder' then
+      update public.adhdice_task_list_folders
+      set parent_folder_id = v_destination_folder_id,
+        sort_order = 9223372036854775807, revision = revision + 1, updated_at = now()
+      where user_id = v_user_id and id = v_folder_id;
+    else
+      update public.adhdice_task_lists
+      set folder_id = v_destination_folder_id,
+        sort_order = 9223372036854775807, revision = revision + 1, updated_at = now()
+      where user_id = v_user_id and id = v_list_id;
+    end if;
+    if v_source_folder_id is distinct from v_destination_folder_id then
+      perform public.adhdice_normalize_task_list_container(v_user_id, v_source_folder_id);
+    end if;
+    perform public.adhdice_normalize_task_list_container(v_user_id, v_destination_folder_id);
+    select count(*) - 1 into v_item_count from (
+      select id::text from public.adhdice_task_list_folders
+      where user_id = v_user_id
+        and parent_folder_id is not distinct from v_destination_folder_id
+      union all
+      select id from public.adhdice_task_lists
+      where user_id = v_user_id
+        and folder_id is not distinct from v_destination_folder_id
+    ) siblings;
+    v_target_index := least(v_target_index, greatest(v_item_count, 0));
+    update public.adhdice_task_list_folders
+    set sort_order = sort_order + 1
+    where user_id = v_user_id
+      and parent_folder_id is not distinct from v_destination_folder_id
+      and sort_order >= v_target_index
+      and (p_action <> 'move_folder' or id <> v_folder_id);
+    update public.adhdice_task_lists
+    set sort_order = sort_order + 1
+    where user_id = v_user_id
+      and folder_id is not distinct from v_destination_folder_id
+      and sort_order >= v_target_index
+      and (p_action <> 'move_list' or id <> v_list_id);
+    if p_action = 'move_folder' then
+      update public.adhdice_task_list_folders set sort_order = v_target_index
+      where user_id = v_user_id and id = v_folder_id;
+    else
+      update public.adhdice_task_lists set sort_order = v_target_index
+      where user_id = v_user_id and id = v_list_id;
+    end if;
+    perform public.adhdice_normalize_task_list_container(v_user_id, v_destination_folder_id);
+    update public.adhdice_task_list_containers
+    set revision = revision + 1, updated_at = now()
+    where user_id = v_user_id
+      and (
+        folder_id is not distinct from v_source_folder_id
+        or folder_id is not distinct from v_destination_folder_id
+      );
+    return jsonb_build_object('status', 'ok');
+  elsif p_action = 'delete_folder' then
+    v_folder_id := (p_payload->>'folder_id')::uuid;
+    select parent_folder_id, sort_order into v_parent_folder_id, v_deleted_position
+    from public.adhdice_task_list_folders
+    where user_id = v_user_id and id = v_folder_id
+    for update;
+    if not found then raise exception 'Folder was not found'; end if;
+    perform public.adhdice_assert_task_list_container_revision(
+      v_user_id, v_parent_folder_id,
+      (p_payload->>'expected_parent_revision')::bigint
+    );
+    perform public.adhdice_assert_task_list_container_revision(
+      v_user_id, v_folder_id,
+      (p_payload->>'expected_contents_revision')::bigint
+    );
+    perform public.adhdice_normalize_task_list_container(v_user_id, v_parent_folder_id);
+    perform public.adhdice_normalize_task_list_container(v_user_id, v_folder_id);
+    select sort_order into v_deleted_position
+    from public.adhdice_task_list_folders
+    where user_id = v_user_id and id = v_folder_id;
+    select count(*) into v_child_count from (
+      select id::text from public.adhdice_task_list_folders
+      where user_id = v_user_id and parent_folder_id = v_folder_id
+      union all
+      select id from public.adhdice_task_lists
+      where user_id = v_user_id and folder_id = v_folder_id
+    ) children;
+    update public.adhdice_task_list_folders
+    set sort_order = sort_order + v_child_count - 1
+    where user_id = v_user_id
+      and parent_folder_id is not distinct from v_parent_folder_id
+      and id <> v_folder_id and sort_order > v_deleted_position;
+    update public.adhdice_task_lists
+    set sort_order = sort_order + v_child_count - 1
+    where user_id = v_user_id
+      and folder_id is not distinct from v_parent_folder_id
+      and sort_order > v_deleted_position;
+    update public.adhdice_task_list_folders
+    set parent_folder_id = v_parent_folder_id,
+      sort_order = v_deleted_position + sort_order,
+      revision = revision + 1, updated_at = now()
+    where user_id = v_user_id and parent_folder_id = v_folder_id;
+    update public.adhdice_task_lists
+    set folder_id = v_parent_folder_id,
+      sort_order = v_deleted_position + sort_order,
+      revision = revision + 1, updated_at = now()
+    where user_id = v_user_id and folder_id = v_folder_id;
+    delete from public.adhdice_task_list_containers
+    where user_id = v_user_id and folder_id = v_folder_id;
+    delete from public.adhdice_task_list_folders
+    where user_id = v_user_id and id = v_folder_id;
+    perform public.adhdice_normalize_task_list_container(v_user_id, v_parent_folder_id);
+    update public.adhdice_task_list_containers
+    set revision = revision + 1, updated_at = now()
+    where user_id = v_user_id
+      and folder_id is not distinct from v_parent_folder_id
+    returning revision into v_next_revision;
+    return jsonb_build_object('status', 'ok', 'destination_revision', v_next_revision);
+  end if;
+  raise exception 'Unknown task-list structure action';
+exception
+  when invalid_text_representation or numeric_value_out_of_range then
+    raise exception 'Invalid task-list structure payload';
+end;
+$function$;
+
+revoke all on public.adhdice_task_list_folders from anon, authenticated;
+revoke all on public.adhdice_task_list_containers from anon, authenticated;
+grant select on public.adhdice_task_list_folders to authenticated;
+grant select on public.adhdice_task_list_containers to authenticated;
+grant select, insert, update, delete on public.adhdice_task_list_rail_items to authenticated;
+revoke all on function public.adhdice_normalize_task_list_container(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.adhdice_assert_task_list_container_revision(uuid, uuid, bigint) from public, anon, authenticated;
+revoke all on function public.adhdice_mutate_task_list_structure(text, jsonb) from public, anon;
+grant execute on function public.adhdice_mutate_task_list_structure(text, jsonb) to authenticated;
+
+-- Canonical List Rail placement source for fresh databases. Persisted positions and
+-- compatibility mirrors are always contiguous integers.
+create or replace function public.adhdice_reconcile_task_list_rail_items(p_manifest jsonb)
+returns setof public.adhdice_task_list_rail_items
+language plpgsql security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_item jsonb;
+  v_item_key text;
+  v_item_type text;
+  v_entity_id uuid;
+  v_container_folder_id uuid;
+  v_default_sort_order integer;
+  v_next_order integer;
+begin
+  if v_user_id is null then raise exception 'Authentication required.' using errcode = '42501'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_user_id::text, 7422));
+  if jsonb_typeof(p_manifest) <> 'array' or jsonb_array_length(p_manifest) > 512 then
+    raise exception 'Invalid rail manifest.' using errcode = '22023';
+  end if;
+  insert into public.adhdice_task_list_containers (user_id, folder_id)
+  values (v_user_id, null) on conflict do nothing;
+  for v_item in
+    select definition
+    from jsonb_array_elements(p_manifest) with ordinality manifest(definition, ordinal)
+    order by ordinal
+  loop
+    if jsonb_typeof(v_item->'default_sort_order') <> 'number' then
+      raise exception 'Rail manifest sort order must be a bounded integer.' using errcode = '22023';
+    end if;
+    if (v_item->'default_sort_order')::numeric <> trunc((v_item->'default_sort_order')::numeric)
+      or (v_item->'default_sort_order')::numeric not between 0 and 1000000 then
+      raise exception 'Rail manifest sort order must be a bounded integer.' using errcode = '22023';
+    end if;
+    v_default_sort_order := (v_item->'default_sort_order')::numeric::integer;
+    v_item_key := v_item->>'item_key';
+    v_item_type := v_item->>'item_type';
+    v_entity_id := nullif(v_item->>'entity_id', '')::uuid;
+    v_container_folder_id := nullif(v_item->>'default_container_folder_id', '')::uuid;
+    if v_item_type not in ('list', 'folder')
+      or v_item_key is null
+      or (v_item_type = 'folder' and (v_entity_id is null or v_item_key <> 'folder:' || v_entity_id::text))
+      or (v_item_type = 'list' and v_entity_id is null and v_item_key not like 'system:%')
+      or (v_item_type = 'list' and v_entity_id is not null and v_item_key <> 'list:' || v_entity_id::text)
+    then
+      raise exception 'Invalid rail manifest identity.' using errcode = '22023';
+    end if;
+    if v_container_folder_id is not null and not exists (
+      select 1 from public.adhdice_task_list_folders
+      where user_id = v_user_id and id = v_container_folder_id
+    ) then
+      v_container_folder_id := null;
+    end if;
+    insert into public.adhdice_task_list_containers (user_id, folder_id)
+    values (v_user_id, v_container_folder_id) on conflict do nothing;
+    perform 1 from public.adhdice_task_list_containers
+    where user_id = v_user_id and folder_id is not distinct from v_container_folder_id
+    for update;
+    select least(1000000, coalesce(max(sort_order) + 1, 0)) into v_next_order
+    from public.adhdice_task_list_rail_items
+    where user_id = v_user_id and container_folder_id is not distinct from v_container_folder_id;
+    insert into public.adhdice_task_list_rail_items (
+      user_id, item_key, item_type, entity_id, container_folder_id, sort_order
+    ) values (
+      v_user_id, v_item_key, v_item_type, v_entity_id, v_container_folder_id, v_next_order
+    ) on conflict (user_id, item_key) do nothing;
+  end loop;
+  return query
+  select saved.* from public.adhdice_task_list_rail_items saved
+  where saved.user_id = v_user_id
+    and exists (
+      select 1 from jsonb_array_elements(p_manifest) definition
+      where definition->>'item_key' = saved.item_key
+    )
+  order by saved.container_folder_id nulls first, saved.sort_order, saved.item_key;
+end;
+$function$;
+
+create or replace function public.adhdice_mutate_task_list_rail_placement(p_payload jsonb)
+returns jsonb
+language plpgsql security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_item_key text := p_payload->>'item_key';
+  v_item_type text;
+  v_entity_id uuid;
+  v_source_folder_id uuid;
+  v_destination_folder_id uuid := nullif(p_payload->>'destination_container_folder_id', '')::uuid;
+  v_expected_source_revision bigint := (p_payload->>'expected_source_revision')::bigint;
+  v_expected_destination_revision bigint := (p_payload->>'expected_destination_revision')::bigint;
+  v_source_revision bigint;
+  v_destination_revision bigint;
+  v_target_index integer := (p_payload->>'target_index')::integer;
+  v_destination_count integer;
+begin
+  if v_user_id is null then raise exception 'Authentication required.' using errcode = '42501'; end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_user_id::text, 7422));
+  if v_expected_source_revision is null or v_expected_destination_revision is null then
+    raise exception 'Expected source and destination revisions are required.' using errcode = '22023';
+  end if;
+  if v_target_index is null or v_target_index < 0 or v_target_index > 1000000 then
+    raise exception 'Destination index must be a bounded integer.' using errcode = '22023';
+  end if;
+  select item_type, entity_id, container_folder_id
+  into v_item_type, v_entity_id, v_source_folder_id
+  from public.adhdice_task_list_rail_items
+  where user_id = v_user_id and item_key = v_item_key
+  for update;
+  if not found then raise exception 'Unknown rail item.' using errcode = 'P0002'; end if;
+  if v_destination_folder_id is not null and not exists (
+    select 1 from public.adhdice_task_list_folders
+    where user_id = v_user_id and id = v_destination_folder_id
+  ) then
+    raise exception 'Unknown destination folder.' using errcode = '23503';
+  end if;
+  if v_item_type = 'folder' then
+    if v_destination_folder_id = v_entity_id then
+      raise exception 'A folder cannot contain itself.' using errcode = '23514';
+    end if;
+    if v_destination_folder_id is not null and exists (
+      with recursive descendants(id) as (
+        select id from public.adhdice_task_list_folders
+        where user_id = v_user_id and parent_folder_id = v_entity_id
+        union all
+        select child.id from public.adhdice_task_list_folders child
+        join descendants parent on child.parent_folder_id = parent.id
+        where child.user_id = v_user_id
+      )
+      select 1 from descendants where id = v_destination_folder_id
+    ) then
+      raise exception 'A folder cycle is not allowed.' using errcode = '23514';
+    end if;
+  end if;
+  insert into public.adhdice_task_list_containers (user_id, folder_id)
+  values (v_user_id, v_source_folder_id), (v_user_id, v_destination_folder_id)
+  on conflict do nothing;
+  perform 1 from public.adhdice_task_list_containers
+  where user_id = v_user_id and (
+    folder_id is not distinct from v_source_folder_id
+    or folder_id is not distinct from v_destination_folder_id
+  )
+  order by coalesce(folder_id::text, '') for update;
+  select revision into v_source_revision from public.adhdice_task_list_containers
+  where user_id = v_user_id and folder_id is not distinct from v_source_folder_id;
+  select revision into v_destination_revision from public.adhdice_task_list_containers
+  where user_id = v_user_id and folder_id is not distinct from v_destination_folder_id;
+  if v_source_revision <> v_expected_source_revision
+    or v_destination_revision <> v_expected_destination_revision
+  then
+    return jsonb_build_object(
+      'status', 'conflict', 'code', 'ADHDICE_LIST_FOLDER_REVISION_CONFLICT',
+      'source_revision', v_source_revision, 'destination_revision', v_destination_revision
+    );
+  end if;
+  select count(*)::integer into v_destination_count
+  from public.adhdice_task_list_rail_items
+  where user_id = v_user_id
+    and container_folder_id is not distinct from v_destination_folder_id
+    and item_key <> v_item_key;
+  if v_target_index > v_destination_count then
+    raise exception 'Destination index is outside sibling bounds.' using errcode = '22023';
+  end if;
+  update public.adhdice_task_list_rail_items
+  set container_folder_id = v_destination_folder_id, updated_at = now()
+  where user_id = v_user_id and item_key = v_item_key;
+  with ranked as (
+    select item_key, row_number() over (order by sort_order, item_key) - 1 as next_order
+    from public.adhdice_task_list_rail_items
+    where user_id = v_user_id
+      and container_folder_id is not distinct from v_source_folder_id
+      and item_key <> v_item_key
+  )
+  update public.adhdice_task_list_rail_items saved
+  set sort_order = ranked.next_order::integer, updated_at = now()
+  from ranked where saved.user_id = v_user_id and saved.item_key = ranked.item_key;
+  with ranked as (
+    select item_key, row_number() over (order by sort_order, item_key) - 1 as next_order
+    from public.adhdice_task_list_rail_items
+    where user_id = v_user_id
+      and container_folder_id is not distinct from v_destination_folder_id
+      and item_key <> v_item_key
+  )
+  update public.adhdice_task_list_rail_items saved
+  set sort_order = (
+    ranked.next_order + case when ranked.next_order >= v_target_index then 1 else 0 end
+  )::integer, updated_at = now()
+  from ranked where saved.user_id = v_user_id and saved.item_key = ranked.item_key;
+  update public.adhdice_task_list_rail_items
+  set sort_order = v_target_index, updated_at = now()
+  where user_id = v_user_id and item_key = v_item_key;
+  update public.adhdice_task_list_folders folder
+  set parent_folder_id = placement.container_folder_id,
+      sort_order = placement.sort_order,
+      revision = folder.revision + case when placement.item_key = v_item_key then 1 else 0 end,
+      updated_at = now()
+  from public.adhdice_task_list_rail_items placement
+  where placement.user_id = v_user_id and placement.item_type = 'folder'
+    and placement.entity_id = folder.id and folder.user_id = v_user_id
+    and (
+      placement.container_folder_id is not distinct from v_source_folder_id
+      or placement.container_folder_id is not distinct from v_destination_folder_id
+    );
+  update public.adhdice_task_lists list_row
+  set folder_id = placement.container_folder_id,
+      sort_order = placement.sort_order,
+      revision = list_row.revision + case when placement.item_key = v_item_key then 1 else 0 end,
+      updated_at = now()
+  from public.adhdice_task_list_rail_items placement
+  where placement.user_id = v_user_id and placement.item_type = 'list'
+    and placement.entity_id is not null
+    and regexp_replace(list_row.id, '^list:', '') = placement.entity_id::text
+    and list_row.user_id = v_user_id
+    and (
+      placement.container_folder_id is not distinct from v_source_folder_id
+      or placement.container_folder_id is not distinct from v_destination_folder_id
+    );
+  update public.adhdice_task_list_containers
+  set revision = revision + 1, updated_at = now()
+  where user_id = v_user_id and (
+    folder_id is not distinct from v_source_folder_id
+    or folder_id is not distinct from v_destination_folder_id
+  );
+  return jsonb_build_object(
+    'status', 'ok', 'item_key', v_item_key,
+    'source_container_folder_id', v_source_folder_id,
+    'destination_container_folder_id', v_destination_folder_id,
+    'target_index', v_target_index
+  );
+end;
+$function$;
+
+revoke all on function public.adhdice_reconcile_task_list_rail_items(jsonb) from public, anon;
+grant execute on function public.adhdice_reconcile_task_list_rail_items(jsonb) to authenticated;
+revoke all on function public.adhdice_mutate_task_list_rail_placement(jsonb) from public, anon;
+grant execute on function public.adhdice_mutate_task_list_rail_placement(jsonb) to authenticated;
 
 notify pgrst, 'reload schema';
 commit;

@@ -1,19 +1,31 @@
 "use client";
 
-import { BookOpen, Check, ChevronDown, Eye, EyeOff, Search, Trash2, X } from "lucide-react";
-import { memo, startTransition, useEffect, useRef, useState } from "react";
+import { BookOpen, Check, ChevronDown, Eye, EyeOff, Folder, Search, Trash2, X } from "lucide-react";
+import { memo, startTransition, useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import {
   TASK_TABLE_CHIP_BASE_CLASS,
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
+  TASK_TABLE_CONTROL_FONT_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
 import { AdhdChip, AdhdDropdownPanel } from "@/components/ui-system";
 
 import type { Task } from "@/lib/database.types";
 import type { TaskRailListOption } from "@/lib/task-app-derived";
+import { getTaskListContainerKey } from "@/lib/task-list-folders";
+import type { AllTaskListDirectoryEntry } from "@/lib/task-list-folders";
+import {
+  getTaskListRailIndicatorLeft,
+  reorderTaskListRailItemsByStructuralKeys,
+  resolveTaskListRailCrossContainerMove,
+  resolveTaskListRailSiblingMove,
+  type TaskListRailSiblingMove,
+  type TaskListRailMutationGeneration,
+  type TaskListRailSiblingDropIntent,
+} from "@/lib/task-list-rail-order";
 import type { TaskViewMode } from "@/lib/task-ui-state";
 
 const SHARED_CHIP_MUTED_CLASS = TASK_TABLE_LIST_CHIP_CLASS;
@@ -139,61 +151,218 @@ const TaskSearchBox = memo(function TaskSearchBox({
   );
 });
 
-const FIXED_RAIL_LIST_IDS = new Set(["pinned", "routine"]);
 const DESKTOP_DRAG_THRESHOLD_PX = 5;
 const MOBILE_DRAG_HOLD_MS = 350;
 const MOBILE_DRAG_CANCEL_DISTANCE_PX = 8;
+export const TASK_RAIL_RELEASE_TOLERANCE_PX = 14;
+const TASK_RAIL_CHIP_BUTTON_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} inline-flex shrink-0 items-center appearance-none border-0 bg-transparent p-0 shadow-none`;
 
-function isRailListReorderable(list: TaskRailListOption) {
-  return !FIXED_RAIL_LIST_IDS.has(list.id);
+type StructuredRailListOption = TaskRailListOption & {
+  containerId?: string | null;
+  containerKey?: string;
+  containerIndex?: number;
+  draggableEligible?: boolean;
+  entityId?: string;
+  entityType?: "folder" | "list";
+  expectedContainerRevision?: number | null;
+  destinationAppendIndex?: number;
+  listSubtype?: string | null;
+  persistedParentValue?: string | null;
+  sortOrder?: number;
+  structuralKey?: string;
+};
+
+type OpenFolderRail = {
+  folderId: string;
+  lists: StructuredRailListOption[];
+};
+
+export function getStructuralMetadataBlockedReason(
+  metadata: Pick<StructuredRailListOption, "entityId" | "entityType" | "structuralKey"> | null | undefined,
+) {
+  if (!metadata?.structuralKey) return "missing-structural-key";
+  if (!metadata.entityType) return "missing-entity-type";
+  return null;
 }
 
-function reorderRailListToIndex(lists: TaskRailListOption[], sourceListId: string, insertionIndex: number) {
-  const reorderableLists = lists.filter(isRailListReorderable);
-  const sourceIndex = reorderableLists.findIndex((list) => list.id === sourceListId);
-  if (sourceIndex < 0) {
-    return null;
-  }
-
-  const nextReorderableLists = [...reorderableLists];
-  const [movedList] = nextReorderableLists.splice(sourceIndex, 1);
-  if (!movedList) {
-    return null;
-  }
-  const adjustedInsertionIndex = sourceIndex < insertionIndex ? insertionIndex - 1 : insertionIndex;
-  const targetIndex = Math.max(0, Math.min(nextReorderableLists.length, adjustedInsertionIndex));
-  if (targetIndex === sourceIndex) {
-    return null;
-  }
-  nextReorderableLists.splice(targetIndex, 0, movedList);
-  const reorderedById = new Map(nextReorderableLists.map((list) => [list.id, list]));
-  let reorderableIndex = 0;
-  return lists.map((list) => (
-    isRailListReorderable(list)
-      ? reorderedById.get(nextReorderableLists[reorderableIndex++]?.id ?? "") ?? list
-      : list
-  ));
+function isRailListReorderable(list: StructuredRailListOption) {
+  return Boolean(list.structureKind)
+    && getStructuralMetadataBlockedReason(list) === null
+    && list.entityType === list.structureKind
+    && list.draggableEligible !== false;
 }
 
-function ReorderableTaskChipRail({
+export type TaskRailDropIntent = "after" | "before" | "inside-folder";
+
+type TaskRailBounds = {
+  bottom: number;
+  height: number;
+  left: number;
+  right: number;
+  top: number;
+  width: number;
+};
+
+type TaskRailLatchedDestination = {
+  crossRailMove: boolean;
+  destinationContainer: string | null;
+  destinationContainerKey: string;
+  destinationIndex: number;
+  destinationRailKey: string;
+  destinationStructuralKeys: string[];
+  dropIntent: TaskRailDropIntent;
+  generationId: number;
+  rootEndAppendUsed: boolean;
+  siblingMove: TaskListRailSiblingMove | null;
+  targetBounds: TaskRailBounds;
+  targetEntityType: "folder" | "list";
+  targetStructuralKey: string | null;
+};
+
+type TaskRailRegistration = {
+  containerId: string | null;
+  getLists: () => StructuredRailListOption[];
+  getRail: () => HTMLElement | null;
+  setLists: (lists: StructuredRailListOption[]) => void;
+};
+
+export type TaskRailDragSession = {
+  activeCleanup: (() => void) | null;
+  activeGenerationId: number | null;
+  generationSequence: number;
+  rails: Map<string, TaskRailRegistration>;
+};
+
+export function createTaskRailDragSession(): TaskRailDragSession {
+  return {
+    activeCleanup: null,
+    activeGenerationId: null,
+    generationSequence: 0,
+    rails: new Map(),
+  };
+}
+
+export function resolveTaskRailDropIntent(
+  entityType: "folder" | "list",
+  pointerX: number,
+  targetLeft: number,
+  targetWidth: number,
+): TaskRailDropIntent {
+  const relativeX = pointerX - targetLeft;
+  if (entityType === "list") return relativeX < targetWidth / 2 ? "before" : "after";
+  if (relativeX < targetWidth * 0.25) return "before";
+  if (relativeX >= targetWidth * 0.75) return "after";
+  return "inside-folder";
+}
+
+function reorderRailListsToStructuralKeys(lists: StructuredRailListOption[], finalStructuralKeys: readonly string[]) {
+  return reorderTaskListRailItemsByStructuralKeys(
+    lists,
+    finalStructuralKeys,
+    (list) => isRailListReorderable(list) ? list.structuralKey ?? null : null,
+  );
+}
+
+function removeRailListByStructuralKey(
+  lists: StructuredRailListOption[],
+  structuralKey: string,
+) {
+  return lists.filter((list) => list.structuralKey !== structuralKey);
+}
+
+function insertRailListAtStructuralIndex(
+  lists: StructuredRailListOption[],
+  sourceList: StructuredRailListOption,
+  destinationIndex: number,
+) {
+  const withoutSource = removeRailListByStructuralKey(lists, sourceList.structuralKey!);
+  const structuralCount = withoutSource.filter(isRailListReorderable).length;
+  const boundedIndex = Math.max(0, Math.min(structuralCount, destinationIndex));
+  const next: StructuredRailListOption[] = [];
+  let structuralIndex = 0;
+  let inserted = false;
+  for (const list of withoutSource) {
+    if (!inserted && isRailListReorderable(list) && structuralIndex === boundedIndex) {
+      next.push(sourceList);
+      inserted = true;
+    }
+    next.push(list);
+    if (isRailListReorderable(list)) structuralIndex += 1;
+  }
+  if (!inserted) next.push(sourceList);
+  return next;
+}
+
+function toTaskRailBounds(rect: DOMRect): TaskRailBounds {
+  return {
+    bottom: rect.bottom,
+    height: rect.height,
+    left: rect.left,
+    right: rect.right,
+    top: rect.top,
+    width: rect.width,
+  };
+}
+
+function isPointWithinBounds(clientX: number, clientY: number, rect: TaskRailBounds) {
+  return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+}
+
+function getTaskRailInteractionCorridor(
+  railRect: DOMRect,
+  targetElements: readonly HTMLElement[],
+): TaskRailBounds {
+  const targetRects = targetElements.map((element) => element.getBoundingClientRect());
+  const top = Math.min(railRect.top, ...targetRects.map((rect) => rect.top)) - TASK_RAIL_RELEASE_TOLERANCE_PX;
+  const bottom = Math.max(railRect.bottom, ...targetRects.map((rect) => rect.bottom)) + TASK_RAIL_RELEASE_TOLERANCE_PX;
+  return {
+    bottom,
+    height: bottom - top,
+    left: railRect.left,
+    right: railRect.right,
+    top,
+    width: railRect.width,
+  };
+}
+
+export function ReorderableTaskChipRail({
+  activeFolderId,
+  canMoveStructureInto,
+  currentFolderId,
   lists,
-  onReorderLists,
+  onMoveStructure,
+  onOpenFolder,
   onSelectBucket,
+  dragSession,
   selectedBucket,
 }: {
-  lists: TaskRailListOption[];
-  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
+  activeFolderId?: string | null;
+  canMoveStructureInto?: (sourceEntityId: string, sourceEntityType: "folder" | "list", destinationFolderId: string) => boolean;
+  currentFolderId?: string | null;
+  lists: StructuredRailListOption[];
+  onMoveStructure?: (
+    sourceEntityId: string,
+    sourceEntityType: "folder" | "list",
+    destinationFolderId: string | null,
+    targetIndex: number,
+    generation: TaskListRailMutationGeneration,
+  ) => Promise<boolean>;
+  onOpenFolder?: (folderId: string) => void;
   onSelectBucket: (bucket: string) => void;
+  dragSession?: TaskRailDragSession;
   selectedBucket: string;
 }) {
   const [renderedLists, setRenderedLists] = useState(lists);
   const renderedListsRef = useRef(lists);
   const [draggedListId, setDraggedListId] = useState<string | null>(null);
   const [mobileInsertionMarker, setMobileInsertionMarker] = useState<{
+    fixed: boolean;
     height: number;
     left: number;
     top: number;
   } | null>(null);
+  const [outlinedFolderStructuralKey, setOutlinedFolderStructuralKey] = useState<string | null>(null);
+  const [crossRailFolderOutline, setCrossRailFolderOutline] = useState<TaskRailBounds | null>(null);
   const [mobileDragPreview, setMobileDragPreview] = useState<{
     clientX: number;
     clientY: number;
@@ -209,33 +378,60 @@ function ReorderableTaskChipRail({
     mode: "pending" | "reordering";
     currentX: number;
     currentY: number;
+    containerKey: string | null;
+    frozenRailStructuralKeys: Map<string, string[]>;
+    generationId: number;
     holdTimer: number | null;
     initialOrderIds: string[];
-    initialLists: TaskRailListOption[];
-    pendingInsertionIndex: number | null;
+    initialLists: StructuredRailListOption[];
+    latchedDestination: TaskRailLatchedDestination | null;
+    pendingBlockedReason: string | null;
+    pendingSiblingMove: TaskListRailSiblingMove | null;
     pointerId: number;
     pointerType: string;
     previewHeight: number;
     previewOffsetX: number;
     previewOffsetY: number;
     previewWidth: number;
-    sourceListId: string;
+    sourceStructuralKey: string;
     startX: number;
     startY: number;
     target: HTMLButtonElement;
     touchIdentifier: number | null;
     removeActivationListeners: (() => void) | null;
   } | null>(null);
+  const railElementRef = useRef<HTMLDivElement | null>(null);
+  const localDragSessionRef = useRef<TaskRailDragSession>(createTaskRailDragSession());
+  const sharedDragSession = dragSession ?? localDragSessionRef.current;
   const pendingTouchIdentifierRef = useRef<number | null>(null);
   const pendingPersistedOrderRef = useRef<string[] | null>(null);
   const suppressClickRef = useRef(false);
   const latestListsRef = useRef(lists);
-  latestListsRef.current = lists;
+  const railContainerKey = getTaskListContainerKey(currentFolderId);
 
   useEffect(() => {
+    const registration: TaskRailRegistration = {
+      containerId: currentFolderId ?? null,
+      getLists: () => renderedListsRef.current,
+      getRail: () => railElementRef.current,
+      setLists: (nextLists) => {
+        renderedListsRef.current = nextLists;
+        setRenderedLists(nextLists);
+      },
+    };
+    sharedDragSession.rails.set(railContainerKey, registration);
+    return () => {
+      if (sharedDragSession.rails.get(railContainerKey) === registration) {
+        sharedDragSession.rails.delete(railContainerKey);
+      }
+    };
+  }, [currentFolderId, railContainerKey, sharedDragSession]);
+
+  useEffect(() => {
+    latestListsRef.current = lists;
     if (dragRef.current?.mode !== "reordering") {
       const pendingOrder = pendingPersistedOrderRef.current;
-      const incomingOrder = lists.filter(isRailListReorderable).map((list) => list.id);
+      const incomingOrder = lists.filter(isRailListReorderable).map((list) => list.structuralKey!);
       if (pendingOrder && pendingOrder.some((listId, index) => listId !== incomingOrder[index])) {
         return;
       }
@@ -245,10 +441,14 @@ function ReorderableTaskChipRail({
     }
   }, [lists]);
 
-  const clearDrag = (persist: boolean, pointerId?: number) => {
+  const clearDrag = (persist: boolean, pointerId?: number, resetReason = persist ? "pointerup-inside-rail" : "drag-cleared") => {
     const drag = dragRef.current;
-    if (!drag || (pointerId !== undefined && drag.pointerId !== pointerId)) return;
+    if (!drag) return;
+    if (pointerId !== undefined && drag.pointerId !== pointerId) return;
     dragRef.current = null;
+    if (sharedDragSession.activeGenerationId === drag.generationId) {
+      sharedDragSession.activeCleanup = null;
+    }
     if (drag.holdTimer !== null) window.clearTimeout(drag.holdTimer);
     drag.removeActivationListeners?.();
     if (drag.target.hasPointerCapture(drag.pointerId)) {
@@ -257,19 +457,42 @@ function ReorderableTaskChipRail({
     setDraggedListId(null);
     setMobileDragPreview(null);
     setMobileInsertionMarker(null);
+    setOutlinedFolderStructuralKey(null);
+    setCrossRailFolderOutline(null);
 
     if (persist && drag.mode === "reordering") {
-      const finalLists = drag.pendingInsertionIndex === null
+      const siblingMove = drag.latchedDestination?.siblingMove ?? drag.pendingSiblingMove;
+      const finalLists = siblingMove === null
         ? drag.initialLists
-        : reorderRailListToIndex(drag.initialLists, drag.sourceListId, drag.pendingInsertionIndex) ?? drag.initialLists;
-      const finalOrderIds = finalLists.filter(isRailListReorderable).map((list) => list.id);
-      const didReorder = finalOrderIds.some((listId, index) => listId !== drag.initialOrderIds[index]);
+        : reorderRailListsToStructuralKeys(drag.initialLists, siblingMove.finalStructuralKeys);
+      const finalOrderIds = finalLists.filter(isRailListReorderable).map((list) => list.structuralKey!);
+      const didReorder = Boolean(siblingMove && !siblingMove.invalidReason && !siblingMove.samePosition);
       renderedListsRef.current = finalLists;
       setRenderedLists(finalLists);
-      if (didReorder && onReorderLists) {
+      if (didReorder && onMoveStructure) {
         pendingPersistedOrderRef.current = finalOrderIds;
-        void onReorderLists(finalOrderIds).then((saved) => {
-          if (pendingPersistedOrderRef.current !== finalOrderIds) return;
+        const targetIndex = siblingMove?.destinationIndex ?? null;
+        const sourceList = drag.initialLists.find((list) => list.structuralKey === drag.sourceStructuralKey);
+        const sourceBlockedReason = getStructuralMetadataBlockedReason(sourceList);
+        if (sourceBlockedReason || targetIndex === null) {
+          pendingPersistedOrderRef.current = null;
+          renderedListsRef.current = latestListsRef.current;
+          setRenderedLists(latestListsRef.current);
+          return;
+        }
+        void onMoveStructure(
+          sourceList!.structuralKey!,
+          sourceList!.entityType!,
+          currentFolderId ?? null,
+          targetIndex,
+          {
+            generationId: drag.generationId,
+            isCurrent: () => sharedDragSession.activeGenerationId === drag.generationId,
+          },
+        ).then((saved) => {
+          if (sharedDragSession.activeGenerationId !== drag.generationId) {
+            return;
+          }
           if (!saved) {
             pendingPersistedOrderRef.current = null;
             renderedListsRef.current = latestListsRef.current;
@@ -280,43 +503,371 @@ function ReorderableTaskChipRail({
       return;
     }
 
+    if (resetReason.startsWith("cross-rail")) return;
     renderedListsRef.current = drag.initialLists;
     setRenderedLists(drag.initialLists);
   };
 
-  const updateRailInsertion = (drag: NonNullable<typeof dragRef.current>, clientX: number) => {
-    const rail = drag.target.closest<HTMLElement>("[data-list-reorder-rail]");
-    if (!rail) return;
-    const railRect = rail.getBoundingClientRect();
-    const targetElements = Array.from(rail.querySelectorAll<HTMLElement>("[data-reorderable-list-id]"))
-      .filter((element) => element.dataset.reorderableListId !== drag.sourceListId);
-    if (targetElements.length === 0) return;
+  const clearLatchedDestination = (
+    drag: NonNullable<typeof dragRef.current>,
+    reason: string,
+    blockedReason: string | null = reason,
+  ) => {
+    drag.latchedDestination = null;
+    drag.pendingSiblingMove = null;
+    drag.pendingBlockedReason = blockedReason;
+    setMobileInsertionMarker(null);
+    setOutlinedFolderStructuralKey(null);
+    setCrossRailFolderOutline(null);
+  };
 
-    let pendingInsertionIndex = drag.initialOrderIds.length;
-    let markerClientX = targetElements[targetElements.length - 1]!.getBoundingClientRect().right;
-    for (const target of targetElements) {
-      const targetId = target.dataset.reorderableListId;
-      if (!targetId) continue;
-      const targetIndex = drag.initialOrderIds.indexOf(targetId);
-      const targetRect = target.getBoundingClientRect();
-      if (clientX < targetRect.left + targetRect.width / 2) {
-        pendingInsertionIndex = targetIndex;
-        markerClientX = targetRect.left;
-        break;
-      }
+  const showLatchedDestination = (
+    destination: TaskRailLatchedDestination,
+    railRect: DOMRect,
+    rail: HTMLElement,
+  ) => {
+    const sourceRail = dragRef.current?.target.closest<HTMLElement>("[data-list-reorder-rail]") ?? null;
+    const crossRailMove = sourceRail !== rail;
+    setOutlinedFolderStructuralKey(
+      !crossRailMove && destination.dropIntent === "inside-folder" ? destination.targetStructuralKey : null,
+    );
+    setCrossRailFolderOutline(
+      crossRailMove && destination.dropIntent === "inside-folder" ? destination.targetBounds : null,
+    );
+    if (destination.dropIntent === "inside-folder") {
+      setMobileInsertionMarker(null);
+      return;
     }
-
-    drag.pendingInsertionIndex = pendingInsertionIndex;
     setMobileInsertionMarker({
-      height: railRect.height,
-      left: markerClientX - railRect.left + rail.scrollLeft,
-      top: 0,
+      fixed: crossRailMove,
+      height: destination.targetBounds.height,
+      left: crossRailMove
+        ? destination.dropIntent === "after" ? destination.targetBounds.right : destination.targetBounds.left
+        : getTaskListRailIndicatorLeft(
+            destination.dropIntent === "after" ? destination.targetBounds.right : destination.targetBounds.left,
+            railRect.left,
+            rail.scrollLeft,
+          ),
+      top: crossRailMove
+        ? destination.targetBounds.top
+        : destination.targetBounds.top - railRect.top + rail.scrollTop,
     });
   };
 
-  const handleActivatedPointerMove = (event: Pick<PointerEvent, "clientX" | "clientY" | "pointerId" | "preventDefault">) => {
+  const updateRailInsertion = (
+    drag: NonNullable<typeof dragRef.current>,
+    clientX: number,
+    clientY = drag.currentY,
+    isRelease = false,
+  ): { destination: TaskRailLatchedDestination | null; releaseWithinTolerance: boolean; usedLatch: boolean } => {
+    const sourceRail = drag.target.closest<HTMLElement>("[data-list-reorder-rail]");
+    if (!sourceRail) {
+      clearLatchedDestination(drag, "missing-rail");
+      return { destination: null, releaseWithinTolerance: false, usedLatch: false };
+    }
+    const sourceList = drag.initialLists.find((list) => list.structuralKey === drag.sourceStructuralKey);
+    const sourceBlockedReason = getStructuralMetadataBlockedReason(sourceList);
+    const elementAtPointer = document.elementFromPoint(clientX, clientY);
+    const pointerRail = elementAtPointer?.closest<HTMLElement>("[data-list-reorder-rail]") ?? null;
+    const rootContainerKey = getTaskListContainerKey(null);
+    const pointerRailContainerKey = pointerRail?.dataset?.railContainerKey ?? null;
+    const requestedCrossRail = Boolean(pointerRail && pointerRail !== sourceRail);
+    if (
+      requestedCrossRail
+      && (
+        sourceList?.entityType !== "list"
+        || pointerRailContainerKey !== rootContainerKey
+      )
+    ) {
+      clearLatchedDestination(drag, "invalid-cross-rail-destination");
+      return { destination: null, releaseWithinTolerance: false, usedLatch: false };
+    }
+    const latchedRail = drag.latchedDestination
+      ? sharedDragSession.rails.get(drag.latchedDestination.destinationRailKey)?.getRail() ?? null
+      : null;
+    const rail = pointerRail ?? latchedRail ?? sourceRail;
+    const railContainerKey = rail.dataset?.railContainerKey ?? drag.containerKey ?? rootContainerKey;
+    const crossRailMove = rail !== sourceRail;
+    const railRect = rail.getBoundingClientRect();
+    const structuralRegistry = Array.from(rail.querySelectorAll<HTMLElement>("[data-rail-drag-id]"));
+    const structuralRegistryStructuralKeys = structuralRegistry.flatMap((element) => (
+      element.dataset.railDragId ? [element.dataset.railDragId] : []
+    ));
+    const elementByStructuralKey = new Map(structuralRegistry.flatMap((element) => (
+      element.dataset.railDragId ? [[element.dataset.railDragId, element] as const] : []
+    )));
+    const destinationStructuralKeys = crossRailMove
+      ? (drag.frozenRailStructuralKeys.get(railContainerKey) ?? structuralRegistryStructuralKeys)
+          .filter((key) => key !== drag.sourceStructuralKey)
+      : drag.initialOrderIds;
+    const targetElements = destinationStructuralKeys
+      .filter((key) => key !== drag.sourceStructuralKey)
+      .flatMap((key) => {
+        const element = elementByStructuralKey.get(key);
+        return element && element.dataset.railContainerKey === railContainerKey ? [element] : [];
+      });
+    const railCorridorBounds = getTaskRailInteractionCorridor(railRect, targetElements);
+    const releaseWithinTolerance = isPointWithinBounds(clientX, clientY, railCorridorBounds);
+    if (!releaseWithinTolerance) {
+      clearLatchedDestination(drag, "left-rail-corridor", "no-drop-zone");
+      return { destination: null, releaseWithinTolerance: false, usedLatch: false };
+    }
+    if (
+      drag.latchedDestination
+      && (
+        drag.latchedDestination.generationId !== drag.generationId
+        || drag.latchedDestination.destinationRailKey !== railContainerKey
+        || (
+          drag.latchedDestination.targetStructuralKey !== null
+          && !elementByStructuralKey.has(drag.latchedDestination.targetStructuralKey)
+        )
+      )
+    ) {
+      clearLatchedDestination(
+        drag,
+        drag.latchedDestination.generationId !== drag.generationId ? "drag-generation-mismatch" : "target-disappeared",
+      );
+    }
+    const withinRailBounds = clientY >= railRect.top && clientY <= railRect.bottom;
+    const rootEndAppendUsed = (
+      railContainerKey === rootContainerKey
+      && withinRailBounds
+      && (crossRailMove || targetElements.length > 0)
+      && (
+        targetElements.length === 0
+        || clientX > targetElements.at(-1)!.getBoundingClientRect().right
+      )
+    );
+    if (targetElements.length === 0 && !rootEndAppendUsed) {
+      const reason = structuralRegistry.length > 1 ? "container-key-mismatch" : "zero-candidate-targets";
+      clearLatchedDestination(drag, reason);
+      return { destination: null, releaseWithinTolerance, usedLatch: false };
+    }
+
+    if (!withinRailBounds) {
+      const destination = drag.latchedDestination?.generationId === drag.generationId
+        && drag.latchedDestination.destinationRailKey === railContainerKey
+        && (
+          drag.latchedDestination.targetStructuralKey === null
+          || elementByStructuralKey.has(drag.latchedDestination.targetStructuralKey)
+        )
+        ? drag.latchedDestination
+        : null;
+      if (destination) showLatchedDestination(destination, railRect, rail);
+      return { destination, releaseWithinTolerance, usedLatch: Boolean(destination) };
+    }
+
+    const directTarget = rootEndAppendUsed ? null : targetElements.find((target) => {
+      const rect = target.getBoundingClientRect();
+      return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+    });
+    const hoveredTarget = rootEndAppendUsed
+      ? targetElements.at(-1) ?? null
+      : directTarget
+        ?? targetElements.find((target) => clientX < target.getBoundingClientRect().left + target.getBoundingClientRect().width / 2)
+        ?? targetElements.at(-1)
+        ?? null;
+    const rawTargetRect = hoveredTarget?.getBoundingClientRect() ?? railRect;
+    const targetBounds = rootEndAppendUsed && !hoveredTarget
+      ? {
+          bottom: railRect.bottom,
+          height: railRect.height,
+          left: railRect.left,
+          right: railRect.left,
+          top: railRect.top,
+          width: 0,
+        }
+      : toTaskRailBounds(rawTargetRect);
+    const hoveredTargetStructuralKey = hoveredTarget?.dataset.railDragId ?? null;
+    const hoveredTargetEntityId = hoveredTarget?.dataset.railEntityId ?? null;
+    const hoveredTargetEntityType = hoveredTarget?.dataset.railEntityType === "folder"
+      ? "folder"
+      : hoveredTarget?.dataset.railEntityType === "list"
+        ? "list"
+        : rootEndAppendUsed
+          ? "list"
+          : null;
+    const dropIntent = rootEndAppendUsed
+      ? "after"
+      : directTarget && hoveredTargetEntityType
+      ? resolveTaskRailDropIntent(hoveredTargetEntityType, clientX, targetBounds.left, targetBounds.width)
+      : hoveredTarget === targetElements.at(-1) && clientX >= targetBounds.left + targetBounds.width / 2
+        ? "after"
+        : "before";
+    const siblingMove = dropIntent !== "inside-folder" && (hoveredTargetStructuralKey || rootEndAppendUsed)
+      ? crossRailMove
+        ? resolveTaskListRailCrossContainerMove(
+            destinationStructuralKeys,
+            drag.sourceStructuralKey,
+            rootEndAppendUsed ? null : hoveredTargetStructuralKey,
+            dropIntent as TaskListRailSiblingDropIntent,
+          )
+        : resolveTaskListRailSiblingMove(
+            drag.initialOrderIds,
+            drag.sourceStructuralKey,
+            hoveredTargetStructuralKey!,
+            dropIntent as TaskListRailSiblingDropIntent,
+          )
+      : null;
+    const validSiblingMove = siblingMove?.invalidReason === null ? siblingMove : null;
+    const rawFolderDestinationIndex = Number(hoveredTarget?.dataset.railAppendIndex ?? 0);
+    const folderDestinationIndex = Number.isSafeInteger(rawFolderDestinationIndex) && rawFolderDestinationIndex >= 0
+      ? rawFolderDestinationIndex
+      : 0;
+    const validFolderDestination = (
+      dropIntent === "inside-folder"
+      && hoveredTargetEntityType === "folder"
+      && hoveredTargetEntityId
+      && hoveredTargetStructuralKey !== drag.sourceStructuralKey
+      && sourceList
+      && sourceBlockedReason === null
+      && onMoveStructure
+      && (!canMoveStructureInto || canMoveStructureInto(
+        sourceList.structuralKey!,
+        sourceList.entityType!,
+        hoveredTargetEntityId,
+      ))
+    );
+    const destination = (hoveredTargetStructuralKey || rootEndAppendUsed) && hoveredTargetEntityType && (
+      validFolderDestination || (
+        dropIntent !== "inside-folder"
+        && validSiblingMove
+        && !validSiblingMove.samePosition
+        && validSiblingMove.destinationIndex !== null
+      )
+    )
+      ? {
+          crossRailMove,
+          destinationContainer: validFolderDestination
+            ? hoveredTargetEntityId
+            : railContainerKey === rootContainerKey ? null : rail.dataset?.railContainerId || null,
+          destinationContainerKey: validFolderDestination
+            ? getTaskListContainerKey(hoveredTargetEntityId)
+            : railContainerKey,
+          destinationIndex: validFolderDestination ? folderDestinationIndex : validSiblingMove!.destinationIndex!,
+          destinationRailKey: railContainerKey,
+          destinationStructuralKeys,
+          dropIntent,
+          generationId: drag.generationId,
+          rootEndAppendUsed,
+          siblingMove: validFolderDestination ? null : validSiblingMove,
+          targetBounds,
+          targetEntityType: hoveredTargetEntityType,
+          targetStructuralKey: hoveredTargetStructuralKey,
+        } satisfies TaskRailLatchedDestination
+      : null;
+    if (destination) {
+      drag.latchedDestination = destination;
+      drag.pendingSiblingMove = destination.siblingMove;
+      drag.pendingBlockedReason = null;
+      showLatchedDestination(destination, railRect, rail);
+    } else {
+      const invalidReason = sourceBlockedReason
+        ?? siblingMove?.invalidReason
+        ?? (siblingMove?.samePosition ? "same-position" : "invalid-destination");
+      clearLatchedDestination(drag, invalidReason, invalidReason);
+    }
+    return { destination, releaseWithinTolerance, usedLatch: false };
+  };
+
+  const finishDrop = (drag: NonNullable<typeof dragRef.current>, clientX: number, clientY: number, pointerId: number) => {
+    const release = updateRailInsertion(drag, clientX, clientY, true);
+    const destination = release.destination;
+    if (!destination) {
+      clearDrag(false, pointerId, drag.pendingBlockedReason ?? "no-drop-zone");
+      return;
+    }
+    const sourceList = drag.initialLists.find((list) => list.structuralKey === drag.sourceStructuralKey);
+    const sourceBlockedReason = getStructuralMetadataBlockedReason(sourceList);
+    if (!sourceList || sourceBlockedReason || destination.generationId !== drag.generationId) {
+      const blockedReason = sourceBlockedReason ?? "drag-generation-mismatch";
+      clearDrag(false, pointerId, blockedReason);
+      return;
+    }
+    const crossRailMove = destination.crossRailMove;
+    if (crossRailMove) {
+      if (sourceList.entityType !== "list" || !onMoveStructure) {
+        const blockedReason = sourceList.entityType !== "list" ? "cross-rail-source-not-list" : "missing-mutation-handler";
+        clearDrag(false, pointerId, blockedReason);
+        return;
+      }
+      const sourceRegistration = sharedDragSession.rails.get(drag.containerKey ?? "");
+      const destinationRegistration = sharedDragSession.rails.get(destination.destinationContainerKey);
+      const sourceInitialLists = sourceRegistration?.getLists() ?? drag.initialLists;
+      const destinationInitialLists = destinationRegistration?.getLists() ?? [];
+      const rootRail = sharedDragSession.rails.get(getTaskListContainerKey(null))?.getRail() ?? null;
+      const rootScrollLeft = rootRail?.scrollLeft ?? null;
+      const optimisticSourceLists = removeRailListByStructuralKey(sourceInitialLists, drag.sourceStructuralKey);
+      const optimisticDestinationLists = insertRailListAtStructuralIndex(
+        destinationInitialLists,
+        {
+          ...sourceList,
+          containerId: destination.destinationContainer,
+          containerKey: destination.destinationContainerKey,
+          persistedParentValue: destination.destinationContainer,
+        },
+        destination.destinationIndex,
+      );
+      if (sourceRegistration) sourceRegistration.setLists(optimisticSourceLists);
+      else {
+        renderedListsRef.current = optimisticSourceLists;
+        setRenderedLists(optimisticSourceLists);
+      }
+      destinationRegistration?.setLists(optimisticDestinationLists);
+      if (rootRail && rootScrollLeft !== null) rootRail.scrollLeft = rootScrollLeft;
+      clearDrag(false, pointerId, release.usedLatch ? "cross-rail-latched-drop" : "cross-rail-live-drop");
+      let mutationResult: "ordinary-error" | "stale-conflict" | "success" = "ordinary-error";
+      void onMoveStructure(
+        sourceList.structuralKey!,
+        "list",
+        destination.destinationContainer,
+        destination.destinationIndex,
+        {
+          generationId: drag.generationId,
+          isCurrent: () => sharedDragSession.activeGenerationId === drag.generationId,
+          onResult: (result) => {
+            mutationResult = result;
+          },
+        },
+      ).then((saved) => {
+        if (sharedDragSession.activeGenerationId !== drag.generationId) {
+          return;
+        }
+        if (!saved && mutationResult !== "stale-conflict") {
+          sourceRegistration?.setLists(sourceInitialLists);
+          destinationRegistration?.setLists(destinationInitialLists);
+        }
+        if (rootRail && rootScrollLeft !== null) rootRail.scrollLeft = rootScrollLeft;
+      });
+      return;
+    }
+    if (destination.dropIntent !== "inside-folder") {
+      drag.pendingSiblingMove = destination.siblingMove;
+      clearDrag(true, pointerId, release.usedLatch ? "pointerup-latched-destination" : "pointerup-live-destination");
+      return;
+    }
+    if (!onMoveStructure) {
+      clearDrag(false, pointerId, "missing-mutation-handler");
+      return;
+    }
+    clearDrag(false, pointerId, release.usedLatch ? "folder-center-latched-drop" : "folder-center-drop");
+    void onMoveStructure(
+      sourceList.structuralKey!,
+      sourceList.entityType!,
+      destination.destinationContainer,
+      destination.destinationIndex,
+      {
+        generationId: drag.generationId,
+        isCurrent: () => sharedDragSession.activeGenerationId === drag.generationId,
+      },
+    );
+  };
+
+  const handleActivatedPointerMove = (
+    event: Pick<PointerEvent, "clientX" | "clientY" | "pointerId" | "preventDefault">,
+  ) => {
     const drag = dragRef.current;
-    if (!drag || drag.mode !== "reordering" || drag.pointerId !== event.pointerId) return;
+    if (!drag || drag.pointerId !== event.pointerId || drag.mode !== "reordering") return;
     event.preventDefault();
     drag.currentX = event.clientX;
     drag.currentY = event.clientY;
@@ -326,22 +877,22 @@ function ReorderableTaskChipRail({
       clientY: event.clientY,
     } : current);
 
-    updateRailInsertion(drag, event.clientX);
+    updateRailInsertion(drag, event.clientX, event.clientY);
   };
 
-  const activateDrag = (pointerId: number, sourceListId: string) => {
+  const activateDrag = (pointerId: number, sourceStructuralKey: string) => {
     const drag = dragRef.current;
-    if (!drag || drag.mode !== "pending" || drag.pointerId !== pointerId || drag.sourceListId !== sourceListId) return;
+    if (!drag || drag.mode !== "pending" || drag.pointerId !== pointerId || drag.sourceStructuralKey !== sourceStructuralKey) return;
     drag.mode = "reordering";
     drag.holdTimer = null;
     suppressClickRef.current = true;
-    setDraggedListId(sourceListId);
-    const sourceList = renderedListsRef.current.find((list) => list.id === sourceListId);
+    setDraggedListId(sourceStructuralKey);
+    const sourceList = renderedListsRef.current.find((list) => list.structuralKey === sourceStructuralKey);
     if (sourceList) {
       setMobileDragPreview({
         clientX: drag.currentX,
         clientY: drag.currentY,
-        count: sourceList.count,
+        count: sourceList.structureKind === "folder" ? undefined : sourceList.count,
         height: drag.previewHeight,
         label: sourceList.label,
         offsetX: drag.previewOffsetX,
@@ -350,15 +901,14 @@ function ReorderableTaskChipRail({
         width: drag.previewWidth,
       });
     }
-    updateRailInsertion(drag, drag.currentX);
+    updateRailInsertion(drag, drag.currentX, drag.currentY);
     if (drag.pointerType === "touch" || drag.pointerType === "pen") {
       drag.target.setPointerCapture(drag.pointerId);
       const removePreActivationListeners = drag.removeActivationListeners;
       const handleMove = (event: PointerEvent) => handleActivatedPointerMove(event);
       const handleUp = (event: PointerEvent) => {
         if (event.pointerId !== drag.pointerId) return;
-        const droppedInsideRail = Boolean(document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-list-reorder-rail]"));
-        clearDrag(droppedInsideRail, event.pointerId);
+        finishDrop(drag, event.clientX, event.clientY, event.pointerId);
       };
       const handleCancel = (event: PointerEvent) => clearDrag(false, event.pointerId);
       window.addEventListener("pointermove", handleMove, { passive: false });
@@ -382,12 +932,12 @@ function ReorderableTaskChipRail({
     if (drag.mode === "pending") {
       if (drag.pointerType === "touch" || drag.pointerType === "pen") {
         if (distance > MOBILE_DRAG_CANCEL_DISTANCE_PX) {
-          clearDrag(false, event.pointerId);
+          clearDrag(false, event.pointerId, "touch-movement-cancelled");
         }
         return;
       }
       if (distance < DESKTOP_DRAG_THRESHOLD_PX) return;
-      activateDrag(event.pointerId, drag.sourceListId);
+      activateDrag(event.pointerId, drag.sourceStructuralKey);
     }
     if (drag.pointerType === "touch" || drag.pointerType === "pen") return;
     handleActivatedPointerMove(event.nativeEvent);
@@ -403,16 +953,36 @@ function ReorderableTaskChipRail({
 
   return (
     <>
-    <div className="adhdice-scrollbar relative flex gap-2 overflow-x-auto pb-0.5" data-list-reorder-rail="true">
+    <div
+      className="adhdice-scrollbar relative flex gap-2 overflow-x-auto pb-0.5"
+      data-list-reorder-rail="true"
+      data-rail-container-id={currentFolderId ?? ""}
+      data-rail-container-key={railContainerKey}
+      ref={railElementRef}
+    >
       {renderedLists.map((list) => {
-        const reorderable = isRailListReorderable(list) && Boolean(onReorderLists);
+        const reorderable = isRailListReorderable(list) && Boolean(onMoveStructure);
+        const listRailContainerKey = list.containerKey ?? railContainerKey;
+        const folderSelected = list.structureKind === "folder" && list.id === activeFolderId;
+        const selected = folderSelected || (list.structureKind !== "folder" && list.id === selectedBucket);
+        const folderCountLabel = list.folderCounts
+          ? String(list.folderCounts.containedListCount)
+          : null;
+        const accessibleFolderSummary = list.folderCounts
+          ? `${list.folderCounts.containedListCount} contained lists. ${list.folderCounts.visibleTaskCount} Tasks, ${list.folderCounts.dueTodayCount} due today, ${list.folderCounts.overdueCount} overdue.`
+          : undefined;
         return (
-        <AdhdChip
-          aria-description={reorderable ? "Press and drag horizontally to reorder this list." : undefined}
-          aria-pressed={list.id === selectedBucket}
-          className={`${reorderable ? "adhdice-native-interaction-suppressed cursor-grab active:cursor-grabbing" : ""} ${draggedListId === list.id ? mobileDragPreview ? "relative z-10 opacity-[0.55] ring-2 ring-[#c9bcff] dark:ring-[#6e5ab2]" : "relative z-10 scale-[1.04] shadow-lg ring-2 ring-[#c9bcff] dark:ring-[#6e5ab2]" : ""}`}
-          count={list.count}
-          data-reorderable-list-id={reorderable ? list.id : undefined}
+        <button
+          aria-label={accessibleFolderSummary ? `${list.label}. ${accessibleFolderSummary}` : undefined}
+          aria-pressed={selected}
+          className={`${TASK_RAIL_CHIP_BUTTON_CLASS} ${reorderable ? "cursor-grab" : ""} ${draggedListId === list.structuralKey ? "adhdice-native-interaction-suppressed cursor-grabbing relative z-10 opacity-[0.55]" : ""}`}
+          data-folder-drop-id={list.structureKind === "folder" ? list.entityId : undefined}
+          data-rail-chip-surface
+          data-rail-container-key={reorderable ? listRailContainerKey : undefined}
+          data-rail-drag-id={reorderable ? list.structuralKey : undefined}
+          data-rail-entity-id={reorderable ? list.entityId : undefined}
+          data-rail-entity-type={reorderable ? list.entityType : undefined}
+          data-rail-append-index={list.destinationAppendIndex}
           draggable={false}
           key={list.id}
           onClick={(event) => {
@@ -422,33 +992,57 @@ function ReorderableTaskChipRail({
               return;
             }
             startTransition(() => {
-              onSelectBucket(list.id);
+              if (list.structureKind === "folder") {
+                onOpenFolder?.(list.id);
+              } else {
+                onSelectBucket(list.id);
+              }
             });
           }}
           onContextMenu={reorderable ? (event) => event.preventDefault() : undefined}
           onDragStart={reorderable ? (event) => event.preventDefault() : undefined}
-          onLostPointerCapture={(event) => clearDrag(false, event.pointerId)}
-          onPointerCancel={(event) => clearDrag(false, event.pointerId)}
+          onLostPointerCapture={(event) => clearDrag(false, event.pointerId, "lost-pointer-capture")}
+          onPointerCancel={(event) => clearDrag(false, event.pointerId, "pointercancel")}
           onPointerDown={(event) => {
-            if (!reorderable || event.button !== 0) return;
-            clearDrag(false);
+            const generationId = reorderable && event.button === 0
+              ? sharedDragSession.generationSequence + 1
+              : null;
+            if (generationId !== null) {
+              sharedDragSession.generationSequence = generationId;
+              sharedDragSession.activeGenerationId = generationId;
+            }
+            const renderedSiblingStructuralKeys = renderedLists
+              .filter(isRailListReorderable)
+              .map((currentList) => currentList.structuralKey!);
+            if (!reorderable) return;
+            if (event.button !== 0) return;
+            sharedDragSession.activeCleanup?.();
+            clearDrag(false, undefined, "replaced-by-pointerdown");
             suppressClickRef.current = false;
             const sourceRect = event.currentTarget.getBoundingClientRect();
             const drag = {
               mode: "pending" as const,
               currentX: event.clientX,
               currentY: event.clientY,
+              containerKey: listRailContainerKey,
+              frozenRailStructuralKeys: new Map(Array.from(sharedDragSession.rails, ([containerKey, registration]) => [
+                containerKey,
+                registration.getLists().filter(isRailListReorderable).map((item) => item.structuralKey!),
+              ])),
+              generationId: generationId!,
               holdTimer: null as number | null,
-              initialOrderIds: renderedListsRef.current.filter(isRailListReorderable).map((currentList) => currentList.id),
-              initialLists: renderedListsRef.current,
-              pendingInsertionIndex: null,
+              initialOrderIds: renderedSiblingStructuralKeys,
+              initialLists: renderedLists,
+              latchedDestination: null,
+              pendingBlockedReason: null,
+              pendingSiblingMove: null,
               pointerId: event.pointerId,
               pointerType: event.pointerType,
               previewHeight: sourceRect.height,
               previewOffsetX: event.clientX - sourceRect.left,
               previewOffsetY: event.clientY - sourceRect.top,
               previewWidth: sourceRect.width,
-              sourceListId: list.id,
+              sourceStructuralKey: list.structuralKey!,
               startX: event.clientX,
               startY: event.clientY,
               target: event.currentTarget,
@@ -457,6 +1051,8 @@ function ReorderableTaskChipRail({
             };
             pendingTouchIdentifierRef.current = null;
             dragRef.current = drag;
+            sharedDragSession.activeCleanup = () => clearDrag(false, undefined, "new-drag-generation");
+            event.currentTarget.setPointerCapture(event.pointerId);
             if (event.pointerType === "touch" || event.pointerType === "pen") {
               if (event.pointerType === "touch") {
                 const handleTouchMove = (touchEvent: TouchEvent) => {
@@ -475,19 +1071,20 @@ function ReorderableTaskChipRail({
                 window.addEventListener("touchmove", handleTouchMove, { capture: true, passive: false });
                 drag.removeActivationListeners = () => window.removeEventListener("touchmove", handleTouchMove, true);
               }
-              drag.holdTimer = window.setTimeout(() => activateDrag(event.pointerId, list.id), MOBILE_DRAG_HOLD_MS);
-            } else {
-              event.currentTarget.setPointerCapture(event.pointerId);
+              drag.holdTimer = window.setTimeout(() => activateDrag(event.pointerId, list.structuralKey!), MOBILE_DRAG_HOLD_MS);
             }
           }}
           onPointerMove={handlePointerMove}
           onPointerUp={(event) => {
             if (event.pointerType === "touch" || event.pointerType === "pen") {
-              if (dragRef.current?.mode === "pending") clearDrag(false, event.pointerId);
+              if (dragRef.current?.mode === "pending") {
+                clearDrag(false, event.pointerId, "pointerup-before-activation");
+              }
               return;
             }
-            const droppedInsideRail = Boolean(document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-list-reorder-rail]"));
-            clearDrag(droppedInsideRail, event.pointerId);
+            const activeDrag = dragRef.current;
+            if (!activeDrag) return;
+            finishDrop(activeDrag, event.clientX, event.clientY, event.pointerId);
           }}
           onTouchStart={reorderable ? (event) => {
             const touchIdentifier = event.changedTouches[0]?.identifier ?? null;
@@ -500,22 +1097,46 @@ function ReorderableTaskChipRail({
           onTouchEnd={reorderable ? () => {
             pendingTouchIdentifierRef.current = null;
           } : undefined}
-          style={reorderable ? { touchAction: "pan-x pan-y", WebkitTouchCallout: "none", WebkitUserSelect: "none" } : undefined}
-          selected={list.id === selectedBucket}
-          toneClassName={list.id === selectedBucket ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS}
+          style={reorderable ? {
+            touchAction: "pan-x pan-y",
+            WebkitTouchCallout: "none",
+            WebkitUserSelect: draggedListId === list.structuralKey ? "none" : undefined,
+            userSelect: draggedListId === list.structuralKey ? "none" : undefined,
+          } : undefined}
+          title={accessibleFolderSummary}
+          type="button"
         >
-          {list.label}
-        </AdhdChip>
+          <span className={`pointer-events-none cursor-inherit ${TASK_TABLE_CHIP_BASE_CLASS} ${selected ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS} ${draggedListId === list.structuralKey ? "shadow-lg ring-2 ring-[#c9bcff] dark:ring-[#6e5ab2]" : ""} ${outlinedFolderStructuralKey === list.structuralKey ? "ring-2 ring-inset ring-[#6f57f6] dark:ring-[#cabfff]" : ""}`}>
+            <span className="inline-flex items-center">
+              {list.structureKind === "folder" ? <Folder className="mr-1.5 h-3.5 w-3.5 shrink-0" /> : null}
+              {list.label}
+              {folderCountLabel ? <span className="ml-1 opacity-70">{folderCountLabel}</span> : null}
+              {list.structureKind === "folder" ? null : <span className="ml-1 opacity-70">{list.count}</span>}
+            </span>
+          </span>
+        </button>
         );
       })}
       {mobileInsertionMarker ? (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute z-20 w-1 -translate-x-1/2 rounded-full bg-[#6f57f6] shadow-[0_0_0_2px_rgba(201,188,255,0.45)] dark:bg-[#cabfff]"
+          className={`pointer-events-none z-20 w-1 -translate-x-1/2 rounded-full bg-[#6f57f6] shadow-[0_0_0_2px_rgba(201,188,255,0.45)] dark:bg-[#cabfff] ${mobileInsertionMarker.fixed ? "fixed" : "absolute"}`}
           style={{ height: mobileInsertionMarker.height, left: mobileInsertionMarker.left, top: mobileInsertionMarker.top }}
         />
       ) : null}
     </div>
+    {crossRailFolderOutline ? (
+      <span
+        aria-hidden="true"
+        className="pointer-events-none fixed z-20 rounded-full ring-2 ring-inset ring-[#6f57f6] dark:ring-[#cabfff]"
+        style={{
+          height: crossRailFolderOutline.height,
+          left: crossRailFolderOutline.left,
+          top: crossRailFolderOutline.top,
+          width: crossRailFolderOutline.width,
+        }}
+      />
+    ) : null}
     {mobileDragPreview ? (
       <div
         aria-hidden="true"
@@ -540,11 +1161,13 @@ function ReorderableTaskChipRail({
 
 function TaskChipButton({
   active,
+  autoFocus,
   children,
   onClick,
   tone = "muted",
 }: {
   active?: boolean;
+  autoFocus?: boolean;
   children: ReactNode;
   onClick: () => void;
   tone?: "muted" | "primary" | "purple";
@@ -558,7 +1181,7 @@ function TaskChipButton({
         : SHARED_CHIP_MUTED_CLASS;
 
   return (
-    <AdhdChip aria-pressed={active} onClick={onClick} selected={active} toneClassName={toneClassName}>
+    <AdhdChip aria-pressed={active} autoFocus={autoFocus} onClick={onClick} selected={active} toneClassName={toneClassName}>
       {children}
     </AdhdChip>
   );
@@ -651,10 +1274,82 @@ function TaskViewsMenu({
   );
 }
 
+export function TaskListRailHierarchy({
+  canMoveStructureInto,
+  currentFolderBreadcrumbs,
+  currentFolderId,
+  lists,
+  onMoveStructure,
+  onNavigateFolder,
+  onSelectBucket,
+  openFolderRails,
+  selectedBucket,
+}: {
+  canMoveStructureInto?: (sourceEntityId: string, sourceEntityType: "folder" | "list", destinationFolderId: string) => boolean;
+  currentFolderBreadcrumbs: Array<{ id: string; name: string }>;
+  currentFolderId: string | null;
+  lists: StructuredRailListOption[];
+  onMoveStructure?: (
+    sourceEntityId: string,
+    sourceEntityType: "folder" | "list",
+    destinationFolderId: string | null,
+    targetIndex: number,
+    generation: TaskListRailMutationGeneration,
+  ) => Promise<boolean>;
+  onNavigateFolder?: (folderId: string | null) => void;
+  onSelectBucket: (bucket: string) => void;
+  openFolderRails: OpenFolderRail[];
+  selectedBucket: string;
+}) {
+  const dragSessionRef = useRef<TaskRailDragSession>(createTaskRailDragSession());
+
+  const toggleFolder = (folderId: string, collapseToFolderId: string | null) => {
+    onNavigateFolder?.(currentFolderId === folderId ? collapseToFolderId : folderId);
+  };
+
+  return (
+    <div className="flex flex-col gap-1" data-list-rail-hierarchy data-rail-spacing="compact">
+      <div data-primary-list-rail>
+        <ReorderableTaskChipRail
+          activeFolderId={currentFolderBreadcrumbs[0]?.id ?? null}
+          canMoveStructureInto={canMoveStructureInto}
+          currentFolderId={null}
+          lists={lists}
+          onMoveStructure={onMoveStructure}
+          onOpenFolder={(folderId) => toggleFolder(folderId, null)}
+          onSelectBucket={onSelectBucket}
+          dragSession={dragSessionRef.current}
+          selectedBucket={selectedBucket}
+        />
+      </div>
+      {openFolderRails.map((rail, index) => (
+        <div data-folder-content-rail={rail.folderId} key={rail.folderId}>
+          <ReorderableTaskChipRail
+            activeFolderId={currentFolderBreadcrumbs[index + 1]?.id ?? null}
+            canMoveStructureInto={canMoveStructureInto}
+            currentFolderId={rail.folderId}
+            lists={rail.lists}
+            onMoveStructure={onMoveStructure}
+            onOpenFolder={(folderId) => toggleFolder(folderId, rail.folderId)}
+            onSelectBucket={onSelectBucket}
+            dragSession={dragSessionRef.current}
+            selectedBucket={selectedBucket}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function TaskOperationsHeader({
   actionLabel,
   activeCount,
+  allListDirectoryEntries = [],
+  appVersion,
   archiveCount,
+  canMoveStructureInto,
+  currentFolderBreadcrumbs = [],
+  currentFolderId = null,
   filterRowsNode,
   hideSearch,
   isKeyboardShortcutsMenuOpen,
@@ -676,8 +1371,11 @@ export function TaskOperationsHeader({
   onOpenCompletedMilestones,
   onOpenMomentumDetails,
   onOpenTrash,
-  onReorderLists,
+  onMoveStructure,
+  onNavigateFolder,
+  openFolderRails = [],
   onSelectBucket,
+  onSelectDirectoryEntry,
   onToggleRail,
   onExpandAllColumns,
   onShrinkAllColumns,
@@ -696,7 +1394,12 @@ export function TaskOperationsHeader({
 }: {
   actionLabel: string;
   activeCount: number;
+  allListDirectoryEntries?: AllTaskListDirectoryEntry[];
+  appVersion: string;
   archiveCount: number;
+  canMoveStructureInto?: (sourceEntityId: string, sourceEntityType: "folder" | "list", destinationFolderId: string) => boolean;
+  currentFolderBreadcrumbs?: Array<{ id: string; name: string }>;
+  currentFolderId?: string | null;
   filterRowsNode: ReactNode;
   hideSearch?: boolean;
   isKeyboardShortcutsMenuOpen: boolean;
@@ -725,8 +1428,17 @@ export function TaskOperationsHeader({
   onOpenCompletedMilestones?: () => void;
   onOpenMomentumDetails: () => void;
   onOpenTrash: () => void;
-  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
+  onMoveStructure?: (
+    sourceEntityId: string,
+    sourceEntityType: "folder" | "list",
+    destinationFolderId: string | null,
+    targetIndex: number,
+    generation: TaskListRailMutationGeneration,
+  ) => Promise<boolean>;
+  onNavigateFolder?: (folderId: string | null) => void;
+  openFolderRails?: OpenFolderRail[];
   onSelectBucket: (bucket: string) => void;
+  onSelectDirectoryEntry?: (entry: AllTaskListDirectoryEntry) => void;
   onToggleRail: () => void;
   onExpandAllColumns: () => void;
   onShrinkAllColumns: () => void;
@@ -743,6 +1455,12 @@ export function TaskOperationsHeader({
   todayCount: number;
   view: TaskViewMode;
 }) {
+  const [isAllListsOpen, setIsAllListsOpen] = useState(false);
+  const [allListsSearch, setAllListsSearch] = useState("");
+  const matchingDirectoryEntries = allListDirectoryEntries.filter((entry) => {
+    const query = allListsSearch.trim().toLocaleLowerCase();
+    return !query || `${entry.label} ${entry.path}`.toLocaleLowerCase().includes(query);
+  });
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const clearLongPress = () => {
@@ -924,17 +1642,65 @@ export function TaskOperationsHeader({
               <TaskChipButton onClick={onOpenListSettings}>
                 List settings
               </TaskChipButton>
+              <div className="relative">
+                <TaskChipButton onClick={() => setIsAllListsOpen((current) => !current)}>
+                  All Lists
+                </TaskChipButton>
+                {isAllListsOpen ? (
+                  <AdhdDropdownPanel className="p-3" widthClassName="w-[22rem]">
+                    <label className="flex items-center gap-2 rounded-xl border border-[#e8e1fb] bg-white px-3 py-2 dark:border-white/10 dark:bg-white/5">
+                      <Search className="h-3.5 w-3.5 text-[#6f57f6]" />
+                      <input
+                        autoFocus
+                        className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                        onChange={(event) => setAllListsSearch(event.target.value)}
+                        placeholder="Search lists and paths"
+                        value={allListsSearch}
+                      />
+                    </label>
+                    <div className="adhdice-scrollbar mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto">
+                      {matchingDirectoryEntries.map((entry) => (
+                        <AdhdChip
+                          className="w-full justify-start text-left"
+                          key={`${entry.kind}:${entry.id}`}
+                          onClick={() => {
+                            onSelectDirectoryEntry?.(entry);
+                            setIsAllListsOpen(false);
+                            setAllListsSearch("");
+                          }}
+                          toneClassName={SHARED_CHIP_MUTED_CLASS}
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            {entry.kind === "folder" ? <Folder className="h-3.5 w-3.5 shrink-0" /> : null}
+                            <span className="min-w-0">
+                              <span className="block truncate">{entry.label}</span>
+                              <span className="block truncate text-[10px] font-medium opacity-60">{entry.kind} · {entry.path}</span>
+                            </span>
+                          </span>
+                        </AdhdChip>
+                      ))}
+                    </div>
+                  </AdhdDropdownPanel>
+                ) : null}
+              </div>
             </div>
           </div>
-          {view === "table" && isRailHidden ? null : (
-            <ReorderableTaskChipRail
-              lists={lists}
-              onReorderLists={onReorderLists}
-              onSelectBucket={onSelectBucket}
-              selectedBucket={selectedBucket}
-            />
-          )}
-          {filterRowsNode}
+          <div className="flex flex-col gap-1" data-task-rail-filter-stack>
+            {view === "table" && isRailHidden ? null : (
+              <TaskListRailHierarchy
+                canMoveStructureInto={canMoveStructureInto}
+                currentFolderBreadcrumbs={currentFolderBreadcrumbs}
+                currentFolderId={currentFolderId}
+                lists={lists}
+                onMoveStructure={onMoveStructure}
+                onNavigateFolder={onNavigateFolder}
+                onSelectBucket={onSelectBucket}
+                openFolderRails={openFolderRails}
+                selectedBucket={selectedBucket}
+              />
+            )}
+            {filterRowsNode}
+          </div>
         </div>
 
       </div>
@@ -959,7 +1725,6 @@ export function TasksListViewPanel(props: {
   onOpenArchive: () => void;
   onOpenComposer: () => void;
   onOpenImport: () => void;
-  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
   onSelectBucket: (bucket: string) => void;
   onReorderListColumns: (columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) => void;
   onSetDraggedListColumnId: (columnId: AgentPlanColumnId | null) => void;
@@ -990,91 +1755,17 @@ export function TasksNonListViewPanel({
   contentNode,
   dailyPlanningNode,
   filterRowsNode,
-  lists,
-  onReorderLists,
-  onSelectBucket,
-  selectedBucket,
 }: {
   contentNode: ReactNode;
   dailyPlanningNode: ReactNode;
   filterRowsNode: ReactNode;
-  lists: TaskRailListOption[];
-  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
-  onSelectBucket: (bucket: string) => void;
-  selectedBucket: string;
 }) {
   return (
-    <section className="mt-4 grid gap-4 xl:grid-cols-[15.5rem_minmax(0,1fr)]">
-      <TaskBucketRail
-        lists={lists}
-        onReorderLists={onReorderLists}
-        onSelectBucket={onSelectBucket}
-        selectedBucket={selectedBucket}
-      />
-      <div className="min-w-0">
-        {filterRowsNode}
-        {dailyPlanningNode}
-        {contentNode}
-      </div>
+    <section className="mt-4 min-w-0">
+      {filterRowsNode}
+      {dailyPlanningNode}
+      {contentNode}
     </section>
-  );
-}
-
-function TaskBucketRail({
-  lists,
-  onReorderLists,
-  onSelectBucket,
-  selectedBucket,
-}: {
-  lists: TaskRailListOption[];
-  onReorderLists?: (orderedListIds: string[]) => Promise<boolean>;
-  onSelectBucket: (bucket: string) => void;
-  selectedBucket: string;
-}) {
-  return (
-    <>
-      <aside className="hidden h-fit rounded-[1.5rem] border border-[#ece8f8] bg-white/90 p-3 shadow-[0_16px_40px_rgba(81,61,168,0.06)] xl:block dark:border-white/10 dark:bg-white/6">
-        <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8e88a9] dark:text-white/35">Lists</p>
-        <div className="space-y-1.5">
-          {lists.map((list) => {
-            const active = list.id === selectedBucket;
-            return (
-              <button
-                aria-pressed={active}
-                className={`flex w-full items-center justify-between rounded-[1rem] px-3 py-3 text-left transition ${
-                  active
-                    ? "bg-[#f3efff] text-[#6f57f6] shadow-[0_10px_24px_rgba(81,61,168,0.08)] dark:bg-[#261e49] dark:text-[#cabfff]"
-                    : "text-[#58637f] hover:bg-[#faf8ff] dark:text-white/65 dark:hover:bg-white/[0.04]"
-                }`}
-                key={list.id}
-                onClick={() => {
-                  startTransition(() => {
-                    onSelectBucket(list.id);
-                  });
-                }}
-                type="button"
-              >
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold">{list.label}</span>
-                  <span className="mt-0.5 block text-xs opacity-70">{list.description}</span>
-                </span>
-                <span className="ml-3 shrink-0 rounded-full bg-white px-2 py-1 text-xs font-bold text-[#6f57f6] dark:bg-white/10 dark:text-[#cabfff]">
-                  {list.count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </aside>
-      <div className="xl:hidden">
-        <ReorderableTaskChipRail
-          lists={lists}
-          onReorderLists={onReorderLists}
-          onSelectBucket={onSelectBucket}
-          selectedBucket={selectedBucket}
-        />
-      </div>
-    </>
   );
 }
 

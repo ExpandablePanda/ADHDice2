@@ -109,8 +109,8 @@ test("shared Markdown report includes the same Milestone aggregate while preserv
   const summary = buildMilestoneReportSummary(milestoneEvents, [earned], { startDateKey: "2026-07-10", endDateKey: "2026-07-16" });
   const section = formatMilestoneReportSection(summary, false).join("\n");
   const report = generateTaskReport({ appVersion: "6.29.29", availableTaskLists: getBuiltInTaskLists(), detailLevel: "summary", focusCategories: [], focusHistory: [], generatedAt: new Date("2026-07-16T12:00:00Z"), historySourceLabel: "test", historyWarning: null, milestoneEvents, milestones: [earned], rangeId: "last7", taskHistory: [], tasks: [], todayDateKey: "2026-07-16" });
-  assert.match(report, /## Overall Stats/);
+  assert.match(report, /## Overview/);
   assert.match(report, /## Focus Report/);
   assert.ok(report.includes(section));
-  assert.match(report, /Completed: 1 total; 1 on time; 0 grace period; 0 late/);
+  assert.match(report, /Completed lifecycle events: 1 total; 1 on time; 0 grace period; 0 late/);
 });

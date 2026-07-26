@@ -127,6 +127,7 @@ import { useTaskActions } from "@/hooks/useTaskActions";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
+import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
 import { useResponsiveTaskGridColumns } from "@/hooks/useResponsiveTaskGridColumns";
 import { useTaskListSelection } from "@/hooks/useTaskListSelection";
 import { useTaskListViewStateController } from "@/hooks/useTaskListViewStateController";
@@ -256,6 +257,22 @@ import {
   type TaskListRuleRowOperator,
 } from "@/lib/task-list-rule-editor";
 import { mapTaskListManualMembershipRow, mapTaskListRow } from "@/lib/task-list-mappers";
+import {
+  buildTaskListFolderBreadcrumbs,
+  buildTaskListFolderCounts,
+  buildTaskListFolderTree,
+  canMoveFolderInto,
+  getTaskListContainerKey,
+  getTaskListContainerRevision,
+  resolveCurrentTaskListFolder,
+} from "@/lib/task-list-folders";
+import {
+  buildCanonicalTaskListRailTree,
+  buildCanonicalTaskListRailDirectory,
+  buildTaskListRailManifest,
+  reconcileTaskListRailPlacements,
+} from "@/lib/task-list-rail-placement";
+import type { TaskListRailMutationGeneration } from "@/lib/task-list-rail-order";
 import { DEFAULT_LIST_SORT_PREFERENCE, getListSortSurfaceId } from "@/lib/task-list-sort";
 import {
   DEFAULT_TASK_UI_STATE,
@@ -284,6 +301,9 @@ import type {
   TaskSubtaskStatus,
   TaskUpdate,
   TaskHistory as DbTaskHistory,
+  TaskListContainer as DbTaskListContainer,
+  TaskListFolder as DbTaskListFolder,
+  TaskListRailItem as DbTaskListRailItem,
 } from "@/lib/database.types";
 
 function PageLoadingFallback() {
@@ -511,7 +531,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.4.7";
+const APP_VERSION = "7.4.28";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1185,6 +1205,11 @@ export function TaskApp() {
   } = useTaskListViewStateController({ setTaskUiState });
   const lastNonPinnedBucketRef = useRef(taskUiState.selectedBucket === "pinned" ? DEFAULT_TASK_UI_STATE.selectedBucket : taskUiState.selectedBucket);
   const [taskLists, setTaskLists] = useState<TaskListDefinition[]>([]);
+  const [taskListFolders, setTaskListFolders] = useState<DbTaskListFolder[]>([]);
+  const [taskListContainers, setTaskListContainers] = useState<DbTaskListContainer[]>([]);
+  const [taskListRailItems, setTaskListRailItems] = useState<DbTaskListRailItem[]>([]);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const previousTaskListFoldersRef = useRef<DbTaskListFolder[]>([]);
   const [taskListManualMemberships, setTaskListManualMemberships] = useState<TaskListManualMembership[]>([]);
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
   const [taskActualTimeEntries, setTaskActualTimeEntries] = useState<TaskActualTimeEntry[]>([]);
@@ -1565,6 +1590,7 @@ export function TaskApp() {
 
   const {
     isSoftWorkspaceRefreshing,
+    isTaskListMembershipDataReady,
     isTaskResumeSyncPending,
     isWorkspaceLoading,
     prepareTaskMutation,
@@ -1636,6 +1662,9 @@ export function TaskApp() {
     setTaskGridLayout,
     setTaskHistory,
     setTaskListManualMemberships,
+    setTaskListContainers,
+    setTaskListFolders,
+    setTaskListRailItems,
     setTaskLists,
     setTaskLegacySubtaskPromotions,
     setTaskSubtasks,
@@ -2228,6 +2257,64 @@ export function TaskApp() {
     }
     return Array.from(byId.values()).sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name));
   }, [builtInTaskLists, taskLists]);
+  const taskListRailManifest = useMemo(
+    () => buildTaskListRailManifest(availableTaskLists, taskListFolders),
+    [availableTaskLists, taskListFolders],
+  );
+  const taskListRailManifestFingerprint = useMemo(
+    () => JSON.stringify(taskListRailManifest),
+    [taskListRailManifest],
+  );
+  const reconciledTaskListRailManifestRef = useRef<string | null>(null);
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!supabase || !userId || reconciledTaskListRailManifestRef.current === taskListRailManifestFingerprint) return;
+    reconciledTaskListRailManifestRef.current = taskListRailManifestFingerprint;
+    void reconcileTaskListRailPlacements(supabase, taskListRailManifest).then(
+      (items) => setTaskListRailItems(items),
+      (error) => {
+        reconciledTaskListRailManifestRef.current = null;
+        setMessage({ tone: "warn", text: error instanceof Error ? error.message : "List organization could not be loaded." });
+      },
+    );
+  }, [session?.user?.id, supabase, taskListRailManifest, taskListRailManifestFingerprint]);
+  const canonicalTaskListRailTree = useMemo(
+    () => buildCanonicalTaskListRailTree(
+      availableTaskLists,
+      taskListFolders,
+      taskListRailItems,
+      session?.user?.id ?? "",
+    ),
+    [availableTaskLists, session?.user?.id, taskListFolders, taskListRailItems],
+  );
+  const taskListFolderTree = useMemo(
+    () => buildTaskListFolderTree(taskListFolders, availableTaskLists),
+    [availableTaskLists, taskListFolders],
+  );
+  const taskListFolderBreadcrumbs = useMemo(
+    () => buildTaskListFolderBreadcrumbs(taskListFolderTree, currentFolderId),
+    [currentFolderId, taskListFolderTree],
+  );
+  useEffect(() => {
+    const resolvedFolderId = resolveCurrentTaskListFolder(
+      currentFolderId,
+      previousTaskListFoldersRef.current,
+      taskListFolderTree,
+    );
+    previousTaskListFoldersRef.current = taskListFolders;
+    if (resolvedFolderId === currentFolderId) return;
+    const timeoutId = window.setTimeout(() => setCurrentFolderId(resolvedFolderId), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [currentFolderId, taskListFolderTree, taskListFolders]);
+  const taskListFolderActions = useTaskListFolderActions({
+    client: supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>> | null,
+    containers: taskListContainers,
+    folders: taskListFolders,
+    lists: availableTaskLists,
+    placements: taskListRailItems,
+    refresh: softRefreshWorkspace,
+    setMessage,
+  });
   const compatibilityRoutingMemberships = useMemo(
     () =>
       Object.fromEntries(
@@ -2458,7 +2545,6 @@ export function TaskApp() {
     archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     listColumnPickerColumns,
-    listRailOptions,
     lowEnergyTasks,
     manualListOptions,
     milestoneFilteredTasksSorted,
@@ -2480,6 +2566,107 @@ export function TaskApp() {
     urgentTasks,
     visibleListCounts,
   } = derivedData;
+  const taskListFolderCounts = useMemo(
+    () => buildTaskListFolderCounts(
+      canonicalTaskListRailTree,
+      Array.from(canonicalEntityProjection.entityFactsById.values())
+        .filter((fact) => isTaskOpen(fact.task))
+        .map((fact) => ({
+          id: fact.id,
+          listMemberships: fact.listMemberships,
+          task: fact.task,
+        })),
+      canonicalEntityProjection.primaryFacetVisibleEntityIds,
+    ),
+    [canonicalEntityProjection, canonicalTaskListRailTree],
+  );
+  const taskListRailStructureOptions = useMemo(() => {
+    const rootContainerRevision = getTaskListContainerRevision(taskListContainers, null);
+    const buildStructureOptions = (
+      folderId: string | null,
+      items = canonicalTaskListRailTree.mixedChildrenByFolderId.get(folderId) ?? [],
+    ) => (
+      items
+        .map((item, containerIndex) => ({ containerIndex, item }))
+        .filter(({ item }) => (
+          item.kind === "folder"
+          || item.entity.isVisible
+          || item.id === taskUiState.selectedBucket
+        ))
+        .map(({ containerIndex, item }) => {
+          if (item.kind === "folder") {
+            const counts = taskListFolderCounts.get(item.id) ?? {
+              containedListCount: 0,
+              dueTodayCount: 0,
+              overdueCount: 0,
+              visibleTaskCount: 0,
+            };
+            return {
+              containerId: folderId,
+              containerKey: getTaskListContainerKey(folderId),
+              containerIndex,
+              count: counts.visibleTaskCount,
+              description: taskListFolderTree.folderPathById.get(item.id) ?? item.entity.name,
+              draggableEligible: true,
+              expectedContainerRevision: folderId === null
+                ? rootContainerRevision
+                : getTaskListContainerRevision(taskListContainers, folderId),
+              folderCounts: counts,
+              id: item.id,
+              entityId: item.id,
+              entityType: "folder" as const,
+              isCustom: true,
+              label: item.entity.name,
+              destinationAppendIndex: canonicalTaskListRailTree.mixedChildrenByFolderId.get(item.id)?.length ?? 0,
+              persistedParentValue: item.placement.container_folder_id,
+              sortOrder: item.sortOrder,
+              structuralKey: item.itemKey,
+              structureKind: "folder" as const,
+            };
+          }
+          return {
+            containerId: folderId,
+            containerKey: getTaskListContainerKey(folderId),
+            containerIndex,
+            count: canonicalEntityProjection.listFacetCounts[item.id] ?? 0,
+            description: taskListFolderTree.listPathById.get(item.id) ?? item.entity.name,
+            draggableEligible: true,
+            entityId: item.entityId ?? undefined,
+            entityType: "list" as const,
+            expectedContainerRevision: folderId === null
+              ? rootContainerRevision
+              : getTaskListContainerRevision(taskListContainers, folderId),
+            id: item.id,
+            isCustom: item.entity.type === "custom",
+            label: item.entity.name,
+            listSubtype: item.listSubtype,
+            persistedParentValue: item.placement.container_folder_id,
+            sortOrder: item.sortOrder,
+            structuralKey: item.itemKey,
+            structureKind: "list" as const,
+          };
+        })
+    );
+    return {
+      primaryRail: buildStructureOptions(null),
+      openFolderRails: taskListFolderBreadcrumbs.map((folder) => ({
+        folderId: folder.id,
+        lists: buildStructureOptions(folder.id),
+      })),
+    };
+  }, [
+    canonicalEntityProjection.listFacetCounts,
+    canonicalTaskListRailTree,
+    currentFolderId,
+    taskListFolderBreadcrumbs,
+    taskListFolderCounts,
+    taskListContainers,
+    taskUiState.selectedBucket,
+  ]);
+  const allTaskListDirectoryEntries = useMemo(
+    () => buildCanonicalTaskListRailDirectory(canonicalTaskListRailTree),
+    [canonicalTaskListRailTree],
+  );
   const taskFocusLabelOptions = useMemo(
     () => buildFocusLabelOptions(focusCategories, focusHistory),
     [focusCategories, focusHistory],
@@ -2801,7 +2988,6 @@ export function TaskApp() {
     deleteTaskSubtask,
     deleteTasks,
     importTasks,
-    reorderTaskLists,
     renameTaskSubtask,
     routeTask,
     saveTaskEditor,
@@ -5262,7 +5448,6 @@ export function TaskApp() {
     listColumnLabels: LIST_COLUMN_LABELS,
     listColumnMenuRef,
     listColumnPickerColumns: listColumnPickerColumns as AgentPlanColumnId[],
-    lists: listRailOptions,
     listVisibleColumns,
     onOpenComposer: openInlineNewListTaskComposer,
     onOpenImport: () => { void openTaskImportPanel(); },
@@ -5270,7 +5455,6 @@ export function TaskApp() {
     onOpenCompletedMilestones: () => {
       setTaskUiState((prev) => ({ ...prev, tasksSurface: "completed_milestones" }));
     },
-    onReorderLists: (orderedListIds: string[]) => reorderTaskLists(orderedListIds as TaskListId[]),
     onSelectBucket: setSelectedBucket,
     onReorderListColumns: reorderListColumns,
     onSetDraggedListColumnId: setDraggedListColumnId,
@@ -5337,6 +5521,8 @@ export function TaskApp() {
   const taskOperationsHeaderProps = {
     actionLabel: hasFocusedToday ? "Refocus" : "Focus",
     activeCount: filteredActiveTasks.length,
+    allListDirectoryEntries: allTaskListDirectoryEntries,
+    appVersion: APP_VERSION,
     filterRowsNode: taskFilterRowsNode,
     hideSearch: duplicateTitleModeActive,
     isKeyboardShortcutsMenuOpen,
@@ -5347,7 +5533,8 @@ export function TaskApp() {
     listColumnMenuRef,
     listColumnPickerColumns: listColumnPickerColumns as AgentPlanColumnId[],
     listVisibleColumns,
-    lists: listRailOptions,
+    lists: taskListRailStructureOptions.primaryRail,
+    openFolderRails: taskListRailStructureOptions.openFolderRails,
     metric: momentumMetric,
     onCycleMomentum: () => setMomentumView(getNextMomentumView(momentumView)),
     onOpenComposer: openInlineNewListTaskComposer,
@@ -5355,10 +5542,26 @@ export function TaskApp() {
     onOpenImport: () => { void openTaskImportPanel(); },
     onOpenListSettings: () => setIsTaskListSettingsOpen(true),
     onOpenMomentumDetails: openMomentumDetails,
-    onReorderLists: (orderedListIds: string[]) => reorderTaskLists(orderedListIds as TaskListId[]),
+    canMoveStructureInto: (sourceItemKey: string, sourceEntityType: "folder" | "list", destinationFolderId: string) => (
+      sourceEntityType === "list"
+      || canMoveFolderInto(taskListFolderTree, sourceItemKey.replace(/^folder:/, ""), destinationFolderId)
+    ),
+    currentFolderBreadcrumbs: taskListFolderBreadcrumbs,
+    currentFolderId,
+    onMoveStructure: (sourceItemKey: string, sourceEntityType: "folder" | "list", destinationFolderId: string | null, targetIndex: number, generation: TaskListRailMutationGeneration) =>
+      taskListFolderActions.moveItem(sourceItemKey, sourceEntityType, destinationFolderId, targetIndex, generation),
+    onNavigateFolder: setCurrentFolderId,
     onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onSelectBucket: setSelectedBucket,
+    onSelectDirectoryEntry: (entry: typeof allTaskListDirectoryEntries[number]) => {
+      if (entry.kind === "folder") {
+        setCurrentFolderId(entry.id);
+        return;
+      }
+      setCurrentFolderId(entry.kind === "list" ? entry.folderId : null);
+      setSelectedBucket(entry.id);
+    },
     onToggleRail: () => setTaskWorkspaceRailHidden(!activeTaskWorkspaceTab.isRailHidden),
     onSearchSubmit: handleTaskOperationsSearchSubmit,
     onExpandAllColumns: () => setExpandAllColumnsToken((current) => current + 1),
@@ -5403,13 +5606,18 @@ export function TaskApp() {
       ) : null}
       {isTaskListSettingsOpen ? (
         <TaskListSettingsModal
+          currentFolderId={currentFolderId}
           energyOptions={energyOptions}
           fieldOptions={TASK_LIST_RULE_FIELD_OPTIONS}
+          folders={taskListFolders}
           listCounts={visibleListCounts}
           lists={availableTaskLists.filter(isTaskListSettingsEligible)}
           onClose={() => setIsTaskListSettingsOpen(false)}
           onCreateCustomList={createCustomTaskList}
+          onCreateFolder={taskListFolderActions.createFolder}
+          onDeleteFolder={taskListFolderActions.deleteFolder}
           onDeleteList={deleteTaskList}
+          onRenameFolder={taskListFolderActions.renameFolder}
           onSaveList={saveTaskListDefinition}
           operatorOptionsByField={TASK_LIST_RULE_OPERATOR_OPTIONS}
           taskStatusOptions={taskStatusOptions}
@@ -5795,11 +6003,14 @@ export function TaskApp() {
             )}
             reportWorkspacePanel={(
               <TaskReportWorkspace
+                achievementModel={achievementProgress.model}
+                achievementWarning={achievementProgress.isReadyForUser ? null : achievementProgress.error ?? "Current Achievement progress is not ready for this account."}
                 appVersion={APP_VERSION}
                 availableTaskLists={availableTaskLists}
                 focusCategories={focusCategories}
                 focusDailyGoalAdjustments={focusDailyGoalAdjustments}
                 focusHistory={focusHistory}
+                isMembershipProjectionReady={isTaskListMembershipDataReady}
                 listMembershipsByTaskId={taskListMembershipsByTaskId}
                 milestones={milestoneData.milestones}
                 taskHistory={taskHistory}
@@ -6177,11 +6388,7 @@ export function TaskApp() {
                 filterRowsNode={nonListFilterRowsNode}
                 gridNode={gridContentNode}
                 listNode={null}
-                lists={listRailOptions}
                 matrixNode={matrixContentNode}
-                onReorderLists={(orderedListIds) => reorderTaskLists(orderedListIds as TaskListId[])}
-                onSelectBucket={setSelectedBucket}
-                selectedBucket={taskUiState.selectedBucket}
                 view={taskUiState.view}
               />
             )}

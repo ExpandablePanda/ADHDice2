@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy } from "lucide-react";
 import type { Milestone, MilestoneEvent, Task, TaskHistory } from "@/lib/database.types";
 import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
@@ -19,13 +19,19 @@ import {
 } from "@/lib/task-report";
 import { buildMilestoneEventOccurredAtRange } from "@/lib/milestones";
 import { TASK_TABLE_BODY_VALUE_CLASS, TASK_TABLE_INPUT_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
+import type { AchievementProgressModel } from "@/lib/achievement-progress";
+import type { PersistedRecordCurrent, PersistedRecordEvent } from "@/lib/records/types";
+import { copyReportMarkdown, type RecordsReportData } from "@/lib/report-presentation";
 
 type TaskReportWorkspaceProps = {
+  achievementModel: AchievementProgressModel;
+  achievementWarning: string | null;
   appVersion: string;
   availableTaskLists: TaskListDefinition[];
   focusCategories: FocusCategory[];
   focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
   focusHistory: HistoricalFocusSession[];
+  isMembershipProjectionReady: boolean;
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
   milestones: Milestone[];
   taskHistory: TaskHistory[];
@@ -47,6 +53,7 @@ type ReportHistoryState = {
   milestoneEvents: MilestoneEvent[];
   milestones: Milestone[];
   milestoneWarning: string | null;
+  records: RecordsReportData;
   sourceLabel: string;
   warning: string | null;
 };
@@ -252,12 +259,47 @@ async function fetchMilestoneReportDataForRange({
   return { milestoneEvents, milestones: milestones ?? [] };
 }
 
+async function fetchPersistedRecordsReportData(userId: string): Promise<RecordsReportData> {
+  const client = createBrowserSupabaseClient();
+  if (!client) throw new Error("Supabase client is unavailable.");
+
+  async function fetchRows<T>(
+    table: "adhdice_record_current" | "adhdice_record_events",
+    validOnly = false,
+  ) {
+    const rows: T[] = [];
+    let offset = 0;
+    while (true) {
+      let query = client.from(table).select("*").eq("user_id", userId)
+        .order("credited_date", { ascending: false }).order("id", { ascending: false })
+        .range(offset, offset + REPORT_HISTORY_PAGE_SIZE - 1);
+      if (validOnly) query = query.eq("validity_state", "valid");
+      const { data, error } = await query;
+      if (error) throw error;
+      const batch = (data ?? []) as unknown as T[];
+      rows.push(...batch);
+      if (batch.length < REPORT_HISTORY_PAGE_SIZE) break;
+      offset += REPORT_HISTORY_PAGE_SIZE;
+    }
+    return rows;
+  }
+
+  const [currentRecords, events] = await Promise.all([
+    fetchRows<PersistedRecordCurrent>("adhdice_record_current"),
+    fetchRows<PersistedRecordEvent>("adhdice_record_events", true),
+  ]);
+  return { currentRecords, events };
+}
+
 export function TaskReportWorkspace({
+  achievementModel,
+  achievementWarning,
   appVersion,
   availableTaskLists,
   focusCategories,
   focusDailyGoalAdjustments,
   focusHistory,
+  isMembershipProjectionReady,
   listMembershipsByTaskId,
   milestones,
   taskHistory,
@@ -273,6 +315,7 @@ export function TaskReportWorkspace({
   const [detailLevel, setDetailLevel] = useState<TaskReportDetailLevel>("summary");
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const recordsReportRequestRef = useRef<{ promise: Promise<RecordsReportData>; userId: string } | null>(null);
   const [reportHistoryState, setReportHistoryState] = useState<ReportHistoryState>({
     focusDailyGoalAdjustments,
     focusHistory,
@@ -280,6 +323,7 @@ export function TaskReportWorkspace({
     milestoneEvents: [],
     milestones,
     milestoneWarning: null,
+    records: { currentRecords: [], events: [] },
     sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
     warning: null,
   });
@@ -300,6 +344,7 @@ export function TaskReportWorkspace({
             milestoneEvents: [],
             milestones,
             milestoneWarning: "Milestone lifecycle activity is unavailable without an active signed-in user. Earned trophy counts use currently loaded Milestones.",
+            records: { currentRecords: [], events: [], warning: "Persisted Records are unavailable without an active signed-in user." },
             sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
             warning: "Full selected date range fetch is unavailable without an active signed-in user, so this report is using the loaded workspace task and focus history.",
           });
@@ -309,7 +354,17 @@ export function TaskReportWorkspace({
       }
 
       try {
-        const [fullHistory, fullFocusHistory, fullAdjustments, milestoneReportData] = await Promise.all([
+        if (recordsReportRequestRef.current?.userId !== userId) {
+          recordsReportRequestRef.current = {
+            promise: fetchPersistedRecordsReportData(userId)
+              .catch((error: unknown) => {
+                const message = error instanceof Error && error.message ? error.message : "Unknown fetch error.";
+                return { currentRecords: [], events: [], warning: `Persisted Records failed to load (${message}).` };
+              }),
+            userId,
+          };
+        }
+        const [fullHistory, fullFocusHistory, fullAdjustments, milestoneReportData, recordsReportData] = await Promise.all([
           fetchTaskReportHistoryForRange({
             customRange,
             rangeId,
@@ -338,6 +393,7 @@ export function TaskReportWorkspace({
                 warning: `Range-scoped Milestone data failed to load (${message}). Earned trophy counts use currently loaded Milestones; lifecycle activity is unavailable.`,
               };
             }),
+          recordsReportRequestRef.current.promise,
         ]);
         if (cancelled) {
           return;
@@ -349,6 +405,7 @@ export function TaskReportWorkspace({
           milestoneEvents: milestoneReportData.milestoneEvents,
           milestones: milestoneReportData.milestones,
           milestoneWarning: milestoneReportData.warning,
+          records: recordsReportData,
           sourceLabel: REPORT_FULL_HISTORY_SOURCE_LABEL,
           warning: null,
         });
@@ -366,6 +423,7 @@ export function TaskReportWorkspace({
           milestoneEvents: [],
           milestones,
           milestoneWarning: `Range-scoped Milestone data failed to load (${message}). Earned trophy counts use currently loaded Milestones; lifecycle activity is unavailable.`,
+          records: { currentRecords: [], events: [], warning: `Persisted Records failed to load (${message}).` },
           sourceLabel: REPORT_FALLBACK_HISTORY_SOURCE_LABEL,
           warning: `Full selected date range fetch failed (${message}). Using the loaded workspace task and focus history instead, so this report may still be limited to the currently loaded records.`,
         });
@@ -383,8 +441,11 @@ export function TaskReportWorkspace({
     };
   }, [customRange, focusDailyGoalAdjustments, focusHistory, milestones, rangeId, taskHistory, todayDateKey, userId]);
 
+  const isReportLoading = isLoadingHistory || !isMembershipProjectionReady;
   const reportMarkdown = useMemo(
-    () => generateTaskReport({
+    () => isMembershipProjectionReady ? generateTaskReport({
+      achievementModel,
+      achievementWarning,
       appVersion,
       availableTaskLists,
       detailLevel,
@@ -398,21 +459,22 @@ export function TaskReportWorkspace({
       milestoneEvents: reportHistoryState.milestoneEvents,
       milestones: reportHistoryState.milestones,
       milestoneWarning: reportHistoryState.milestoneWarning,
+      records: reportHistoryState.records,
       customRange: rangeId === "custom" ? customRange : null,
       rangeId,
       taskHistory: reportHistoryState.history,
       tasks,
       todayDateKey,
-    }),
-    [appVersion, availableTaskLists, customRange, detailLevel, focusCategories, listMembershipsByTaskId, rangeId, reportHistoryState, tasks, todayDateKey],
+    }) : "",
+    [achievementModel, achievementWarning, appVersion, availableTaskLists, customRange, detailLevel, focusCategories, isMembershipProjectionReady, listMembershipsByTaskId, rangeId, reportHistoryState, tasks, todayDateKey],
   );
 
   async function handleCopyReport() {
-    if (isLoadingHistory) {
+    if (isReportLoading) {
       return;
     }
     try {
-      await navigator.clipboard.writeText(reportMarkdown);
+      await copyReportMarkdown(reportMarkdown, navigator.clipboard);
       setCopyFeedback("Report copied.");
     } catch {
       setCopyFeedback("Copy failed. The preview below is still fully selectable.");
@@ -474,9 +536,9 @@ export function TaskReportWorkspace({
           ) : null}
         </div>
         <div className="flex flex-col items-stretch gap-2 sm:items-end">
-          <TaskTableChipButton className="gap-1.5" disabled={isLoadingHistory} onClick={() => { void handleCopyReport(); }} toneClassName={REPORT_ACTIVE_CHIP_CLASS}>
+          <TaskTableChipButton className="gap-1.5" disabled={isReportLoading} onClick={() => { void handleCopyReport(); }} toneClassName={REPORT_ACTIVE_CHIP_CLASS}>
             <Copy className="h-3.5 w-3.5" />
-            {isLoadingHistory ? "Loading Report..." : "Copy Report"}
+            {isReportLoading ? "Loading Report..." : "Copy Report"}
           </TaskTableChipButton>
           {copyFeedback ? <p className="text-xs text-[#7b86a0] dark:text-white/52">{copyFeedback}</p> : null}
         </div>
@@ -485,10 +547,10 @@ export function TaskReportWorkspace({
       <div className="mt-4 rounded-[1.25rem] border border-[#ece8f8] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-[#120f20]">
         <div className="mb-2 flex items-center justify-between gap-3">
           <p className="text-sm font-semibold text-[#24304a] dark:text-white">Report Preview</p>
-          <span className="text-xs text-[#8a93aa] dark:text-white/45">{isLoadingHistory ? "Fetching full history..." : "Selectable Markdown"}</span>
+          <span className="text-xs text-[#8a93aa] dark:text-white/45">{isReportLoading ? "Preparing report inputs..." : "Selectable Markdown"}</span>
         </div>
         <pre className={`${TASK_TABLE_BODY_VALUE_CLASS} adhdice-scrollbar max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-[1rem] border border-[#ece8f8] bg-white px-4 py-3 text-[12.5px] leading-6 select-text dark:border-white/10 dark:bg-white/[0.03]`}>
-          {isLoadingHistory ? "Loading full report history for the selected date range..." : reportMarkdown}
+          {isReportLoading ? "Loading full report history and canonical Task/list memberships..." : reportMarkdown}
         </pre>
       </div>
     </section>

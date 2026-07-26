@@ -1,5 +1,6 @@
 import type { Milestone, MilestoneEvent } from "@/lib/database.types";
-import { addMilestoneCalendarDays, formatMilestoneDisplayDate } from "@/lib/milestones/milestone-dates";
+import { addMilestoneCalendarDays } from "@/lib/milestones/milestone-dates";
+import { formatReportDate } from "@/lib/report-presentation";
 
 export type MilestoneReportRange = { endDateKey: string | null; startDateKey: string | null };
 
@@ -86,26 +87,33 @@ function auraLabel(milestone: Milestone) {
 }
 
 export function formatMilestoneReportSection(summary: MilestoneReportSummary, detailed: boolean, warning: string | null = null) {
-  const hasData = summary.promoted + summary.completedTotal + summary.abandoned + summary.completionReversals
-    + Object.values(summary.tiers).reduce((sum, value) => sum + value, 0) > 0;
-  const lines = ["## Milestones"];
+  const lifecycleEventCount = summary.promoted + summary.completedTotal + summary.abandoned + summary.completionReversals;
+  const currentTrophyCount = Object.values(summary.tiers).reduce((sum, value) => sum + value, 0);
+  const lines = ["## Milestones", "", "### Selected-range lifecycle summary"];
   if (warning) lines.push(`- Warning: ${warning}`);
-  if (!hasData) {
-    lines.push("- No Milestone activity or currently earned trophies in the selected range.");
-    return lines;
+  if (lifecycleEventCount === 0) {
+    lines.push("- No Milestone lifecycle events occurred during the selected range.");
+  } else {
+    lines.push(
+      `- Promoted: ${summary.promoted}`,
+      `- Completed lifecycle events: ${summary.completedTotal} total; ${summary.completedOnTime} on time; ${summary.completedGracePeriod} grace period; ${summary.completedLate} late`,
+      `- Abandoned: ${summary.abandoned}`,
+      `- Completion reversed: ${summary.completionReversals}`,
+    );
   }
-  lines.push(
-    `- Promoted: ${summary.promoted}`,
-    `- Completed: ${summary.completedTotal} total; ${summary.completedOnTime} on time; ${summary.completedGracePeriod} grace period; ${summary.completedLate} late`,
-    `- Abandoned: ${summary.abandoned}`,
-    `- Completion reversed: ${summary.completionReversals}`,
-    `- Earned trophies: Bronze ${summary.tiers.bronze}; Silver ${summary.tiers.silver}; Gold ${summary.tiers.gold}; Platinum ${summary.tiers.platinum}`,
-    `- Auras: Standard ${summary.standardAuras}; Diamond ${summary.diamondAuras}; Completed without Aura ${summary.completedWithoutAura}`,
-  );
+  lines.push("", "### Current trophy/aura snapshot");
+  if (currentTrophyCount === 0) {
+    lines.push("- Current trophy/aura snapshot for Milestones completed in this range: none.");
+  } else {
+    lines.push(
+      `- Trophies earned in range: Bronze ${summary.tiers.bronze}; Silver ${summary.tiers.silver}; Gold ${summary.tiers.gold}; Platinum ${summary.tiers.platinum}`,
+      `- Trophy auras in range: Standard ${summary.standardAuras}; Diamond ${summary.diamondAuras}; Completed without Aura ${summary.completedWithoutAura}`,
+    );
+  }
   if (detailed && summary.details.length > 0) {
     lines.push("", "### Completed Milestones");
     for (const milestone of summary.details) {
-      lines.push(`- ${milestone.task_title_snapshot} — ${milestone.current_tier} — ${formatMilestoneDisplayDate(milestone.completion_date_key!)} — ${timingLabel(milestone)} — ${auraLabel(milestone)}`);
+      lines.push(`- ${milestone.task_title_snapshot} — ${milestone.current_tier} — ${formatReportDate(milestone.completion_date_key!)} — ${timingLabel(milestone)} — ${auraLabel(milestone)}`);
     }
   }
   return lines;

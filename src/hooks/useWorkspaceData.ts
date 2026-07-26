@@ -14,12 +14,16 @@ import type {
   TaskGridLayout as DbTaskGridLayout,
   TaskHistory as DbTaskHistory,
   TaskList as DbTaskList,
+  TaskListContainer,
+  TaskListFolder,
+  TaskListRailItem,
   TaskListManualMembership as DbTaskListManualMembership,
   TaskSubtask as DbTaskSubtask,
 } from "@/lib/database.types";
 import { loadProfileMedia, setActiveProfileUserId, WORKSPACE_PROFILE_COLUMNS, type WorkspaceProfileRow } from "@/lib/profile-store";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { reconcileTaskListRows } from "@/lib/task-list-mappers";
+import { loadTaskListFolders } from "@/lib/task-list-folders";
 import type { TaskListDefinition, TaskListManualMembership } from "@/lib/task-lists";
 import type { AppPage } from "@/lib/task-ui-state";
 import {
@@ -71,6 +75,9 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   setTaskGridLayout: Dispatch<SetStateAction<TTaskGridItem[]>>;
   setTaskHistory: Dispatch<SetStateAction<DbTaskHistory[]>>;
   setTaskListManualMemberships: Dispatch<SetStateAction<TaskListManualMembership[]>>;
+  setTaskListContainers: Dispatch<SetStateAction<TaskListContainer[]>>;
+  setTaskListFolders: Dispatch<SetStateAction<TaskListFolder[]>>;
+  setTaskListRailItems: Dispatch<SetStateAction<TaskListRailItem[]>>;
   setTaskLists: Dispatch<SetStateAction<TaskListDefinition[]>>;
   setTaskLegacySubtaskPromotions: Dispatch<SetStateAction<DbLegacySubtaskPromotion[]>>;
   setTaskSubtasks: Dispatch<SetStateAction<DbTaskSubtask[]>>;
@@ -163,6 +170,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   setTaskGridLayout,
   setTaskHistory,
   setTaskListManualMemberships,
+  setTaskListContainers,
+  setTaskListFolders,
+  setTaskListRailItems,
   setTaskLists,
   setTaskLegacySubtaskPromotions,
   setTaskSubtasks,
@@ -175,6 +185,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [isSoftWorkspaceRefreshing, setIsSoftWorkspaceRefreshing] = useState(false);
   const [isTaskResumeSyncPending, setIsTaskResumeSyncPending] = useState(false);
+  const [taskListMembershipDataReadyUserId, setTaskListMembershipDataReadyUserId] = useState<string | null>(null);
   const hasLoadedSecondaryDataRef = useRef(false);
   const hasLoadedTaskHistoryRef = useRef(false);
   const secondaryLoadInFlightRef = useRef(false);
@@ -602,6 +613,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .select("*")
           .eq("user_id", userId)
           .maybeSingle(),
+        loadTaskListFolders(client, userId)
+          .then((data) => ({ data, error: null }))
+          .catch((error: { message?: string }) => ({ data: null, error })),
       ]);
       const [taskResult, taskSubtasksResult, taskLegacySubtaskPromotionsResult, profileResult] = await criticalCoreRequest;
 
@@ -660,7 +674,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
 
       const secondaryCoreStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-      const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult] = await secondaryCoreRequest;
+      const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult, folderStructureResult] = await secondaryCoreRequest;
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isDevelopment) {
@@ -676,6 +690,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         taskListsResult.error && !isMissingTaskListsTableError(taskListsResult.error.message) ? taskListsResult.error : null,
         manualMembershipResult.error && !isMissingTaskListManualMembershipsTableError(manualMembershipResult.error.message) ? manualMembershipResult.error : null,
         gridLayoutResult.error,
+        folderStructureResult.error,
       ].filter(Boolean);
 
       if (secondaryErrors.length > 0) {
@@ -693,6 +708,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         ? []
         : (manualMembershipResult.data ?? []).map(mapTaskListManualMembershipRow);
       const nextTaskGridLayout = resolveTaskGridLayout(gridLayoutResult.data);
+      const nextTaskListFolders = folderStructureResult.data?.folders ?? [];
+      const nextTaskListContainers = folderStructureResult.data?.containers ?? [];
+      const nextTaskListRailItems = folderStructureResult.data?.railItems ?? [];
 
       if (
         nextCategories.length === 0 &&
@@ -754,8 +772,12 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       setFocusedTaskIdsByDate((current) => keepCurrentIfStructurallyEqual(current, nextFocusedTaskIdsByDate));
       if (taskListLoadGeneration === taskListDataGeneration.current) {
         setTaskLists((current) => keepCurrentIfStructurallyEqual(current, nextTaskLists));
+        setTaskListFolders((current) => keepCurrentIfStructurallyEqual(current, nextTaskListFolders));
+        setTaskListContainers((current) => keepCurrentIfStructurallyEqual(current, nextTaskListContainers));
+        setTaskListRailItems((current) => keepCurrentIfStructurallyEqual(current, nextTaskListRailItems));
       }
       setTaskListManualMemberships((current) => keepCurrentIfStructurallyEqual(current, nextTaskListManualMemberships));
+      setTaskListMembershipDataReadyUserId(userId);
       setTaskGridLayout((current) => keepCurrentIfStructurallyEqual(current, nextTaskGridLayout));
       saveFocusCategories(nextCategories);
       saveFocusHistory(nextFocusHistory);
@@ -764,6 +786,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         focusDays: Object.keys(nextFocusedTaskIdsByDate).length,
         focusHistory: nextFocusHistory.length,
         manualMemberships: nextTaskListManualMemberships.length,
+        listFolders: nextTaskListFolders.length,
         silent,
         taskLists: nextTaskLists.length,
       });
@@ -985,6 +1008,42 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         {
           event: "*",
           schema: "public",
+          table: "adhdice_task_list_folders",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "adhdice_task_list_containers",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "adhdice_task_list_rail_items",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
           table: "adhdice_legacy_subtask_promotions",
           filter: `user_id=eq.${userId}`,
         },
@@ -1144,6 +1203,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     if (!currentUser) {
       setTaskActualTimeEntries([]);
       setTaskHistory([]);
+      setTaskListContainers([]);
+      setTaskListFolders([]);
+      setTaskListRailItems([]);
       setAvailableTaskNotes([]);
       setTaskGridLayout(taskGridStarterLayout);
       setIsGridEditMode(false);
@@ -1157,6 +1219,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     setTaskActualTimeEntries,
     setTaskGridLayout,
     setTaskHistory,
+    setTaskListContainers,
+    setTaskListFolders,
+    setTaskListRailItems,
     setTaskLegacySubtaskPromotions,
     taskGridStarterLayout,
   ]);
@@ -1175,6 +1240,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
   return {
     isSoftWorkspaceRefreshing,
+    isTaskListMembershipDataReady: !currentUser || taskListMembershipDataReadyUserId === currentUser.id,
     isTaskResumeSyncPending,
     isWorkspaceLoading,
     prepareTaskMutation,

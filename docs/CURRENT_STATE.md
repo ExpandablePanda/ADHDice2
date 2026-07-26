@@ -1,17 +1,120 @@
 # Current State
 
-Last reviewed: 2026-07-25
+Last reviewed: 2026-07-26
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.4.7`.
+- Current working app version: `7.4.28`.
 - Current release group: `7.4.x` weekly occurrence-resolution reliability.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.4.28 List Rail diagnostics cleanup
+
+- Removed the temporary development-only List Rail snapshot panel, Copy/Reset controls, pointer/mutation logging, diagnostic DOM snapshots, and callback threading after manual List Rail QA passed. The canonical placement resolver, pointer capture, release tolerance, latching, generation gating, optimistic rollback/conflict refresh, and realtime reconciliation remain unchanged.
+
+## 7.4.27 List Rail folder-to-root movement
+
+- A hierarchy-owned drag session now lets a list leave an expanded folder rail and resolve root List halves, root Folder edge/center zones, or the valid root end area without changing its drag generation. All list subtypes use the same production pointer engine and canonical bounded-integer resolver.
+- Root sibling drops persist `null`, Folder-center drops persist the target Folder UUID, and the existing placement mutation supplies the source and destination CAS revisions. Cross-rail optimism removes the source exactly once, preserves expansion and root scroll, restores exact placement on ordinary failure, and defers to authoritative refresh on stale conflict.
+- The commit-ready destination alone controls the root-edge/end insertion line or Folder outline. Cross-rail latches and indicators clear on cancellation, invalid corridor exit, cleanup, mutation completion/failure, and new generations.
+
+## 7.4.26 List Rail pointer-release tolerance
+
+- Active List Rail drags now latch the latest actionable sibling or folder-center destination with its generation, target identity/type/bounds, intent, container, and bounded integer destination index.
+- Pointer-up uses the live destination first, then the same-rail latch within a 14px vertical corridor. The insertion line or folder outline is rendered only from that commit-ready destination, while corridor exit, cross-rail entry, cancellation, invalidation, generation replacement, and cleanup clear the active latch.
+
+## 7.4.25 Integer-only List Rail reorder correction
+
+- Built-in List defaults and reconciliation manifests now use bounded integers only. The forward `supabase/patch_task_list_rail_integer_order_7_4_25.sql` patch normalizes each saved container to contiguous `0..n-1` positions, mirrors those integers to legacy folder/List columns, preserves locations, and replaces the already-applied 7.4.22 reconciliation and CAS mutation functions. SQL application remains manual.
+- Each drag freezes the rendered structural-key sequence from the active render. One pure resolver result supplies source, target, reduced-target, destination, reconstructed order, invalid reason, and exact-sequence no-op state to optimistic order, same-position blocking, and mutation dispatch.
+
+## 7.4.24 Rendered List Rail order correction
+
+- Each rail now snapshots the exact rendered structural-key sequence and uses it for target registration order, candidate discovery, reduced-array destination indexing, same-position comparison, optimistic rendering, and mutation dispatch. The insertion marker anchors to the hovered chip's own DOM edge or folder outline, independent of legacy order metadata, mixed chip widths, or horizontal scroll.
+- Drag and mutation generations isolate async completion so a superseded mutation cannot trigger rollback, refresh, or surface an older database error.
+
+## 7.4.23 Integer List Rail destination correction
+
+- Sibling drag placement now removes the source from the ordered structural item-key array, resolves before/after against that reduced array, and sends the resulting bounded integer index directly to the canonical RPC. The same-position guard compares the complete resulting item-key sequence instead of inferring position from stale container metadata.
+- Folder-center moves continue to append at the direct-child count.
+
+## 7.4.22 Canonical List Rail placement architecture
+
+- Every visible built-in, smart, hybrid, rule-based, manual List, and folder now derives one stable rail identity and one saved mixed placement. Root and expanded-folder rails read only canonical placement order; list subtype remains membership metadata and never controls drag eligibility.
+- `supabase/add_task_list_rail_placement_7_4_22.sql` extends the 7.4.10 folder schema with owner-scoped placement rows, idempotent manifest reconciliation/backfill, realtime support, bounded-index CAS movement, cycle protection, and transactional legacy location/order mirrors. SQL must be applied manually before browser QA.
+- The shared pointer engine retains click thresholds, pointer capture, native-drag suppression, exclusive list-edge/folder-containment feedback, and rollback/conflict refresh. Folder-center append uses a real direct-child count rather than an integer sentinel.
+
+## 7.4.21 Root drag mutation metadata hotfix
+
+- Root structural mutation dispatch now validates `structuralKey`, raw `entityId`, and `entityType` independently, with no obsolete `structuralId` gate. Persisted custom List lookup is keyed by raw UUID across the same root structural item set rendered by the rail.
+- Root sibling moves retain `null` persistence containers and shared root CAS revisions; folder-center moves retain raw folder UUID destinations and their destination-container revisions. Existing RPC, rollback, conflict refresh, and drag feedback behavior is unchanged. Manual UI QA remains pending.
+
+## 7.4.20 Root drag mutation and drop feedback correction
+
+- Movable root Lists and folders now carry separate namespaced structural keys and raw persistence entity IDs. Mixed sibling edge reorders dispatch raw IDs through the existing revisioned structural action, while folder-center drops use the raw destination folder ID and destination revision.
+- List targets resolve only to before/after halves. Folder targets use stable 25/50/25 before/inside/after zones with mutually exclusive insertion-line or folder-outline feedback. Manual UI QA remains pending.
+
+## 7.4.19 Root structural-item derivation fix
+
+- The primary rail now derives one canonical movable-root collection from root custom Lists and root folders in persisted mixed order. Fixed system/smart chips remain visible but non-structural, while rendering, sibling targeting, and structural mutation use the same root IDs and preserve the `__root__` UI / `null` persistence boundary.
+
+## 7.4.17 Root-container drag hotfix
+
+- Root is now normalized to the in-memory `__root__` container key for primary-rail metadata, structural target discovery, and revision lookup, while root RPC payloads remain `null` as required by the existing persistence contract. Fixed chips are excluded without obscuring root lists or folders.
+
+## 7.4.16 List Folder rail consolidation and pointer repair
+
+- Fixed/smart/system chips plus mixed-order root folders and root custom Lists now share one compact primary rail. Each open folder depth adds only its direct-child mixed rail, with compact spacing through the filter rail and no separate folder rail, heading, Back control, or breadcrumbs.
+- The visible chip button is the sole pointer hit surface and owns grab/grabbing state, pointer capture, threshold activation, drag-click suppression, cancellation cleanup, sibling-edge reorder, and centered folder drops. Folder overflow chips were removed; all folder management remains in List Settings.
+
+## 7.4.15 List Folder rail density hotfix
+
+- Folder, nested List, standalone List, and fixed/smart/system rail chips again use the approved compact chip composition and tighter stacked-row spacing without changing hierarchy, selection, filtering, or structural drag behavior.
+- Folder chips show only the folder icon, name, and numeric contained-List count. Recursive Task, due-today, and overdue totals remain available through accessible labeling.
+
+## 7.4.14 List Folder rail hierarchy and browser drag hotfix
+
+- Root folders now occupy the first rail, each open folder depth adds a direct-child content rail, and the fixed/smart plus root standalone List rail stays last. Folder branch toggles remain independent of the selected bucket and Task dataset, with no Back or breadcrumb row.
+- Folder chips show readable recursive List counts while retaining Task, due-today, and overdue totals in accessible text. The rendered chip button now owns pointer handlers and grab/grabbing affordances directly, with click-safe movement thresholds and structural-RPC persistence.
+
+## 7.4.13 List Folder rail behavior and reorder regression hotfix
+
+- Folder navigation now preserves the primary List rail and renders direct folder children in a contextual secondary rail without changing Task selection or filtering.
+- Root and folder mixed-order rails share the structural RPC path, with click-safe drag thresholds and a centered folder drop intent that leaves sibling reorder targets available.
+
+## 7.4.12 Folder settings runtime hotfix
+
+- Restored the canonical workspace-hydrated folder collection as the `TaskListSettingsModal` `folders` prop. This removes the orphaned module-scope reference that blocked TaskApp from loading while preserving folder refresh, realtime, navigation, counts, All Lists, and structural actions.
+
+## 7.4.11 List Folders UI and workspace integration
+
+- Workspace load, refresh, and realtime now hydrate folder rows and container revisions beside list rows. A cycle-safe canonical tree derives mixed folder/list siblings, hierarchy paths, descendants, and recursive unique filtered Task counts without per-folder queries.
+- The task-list rail preserves fixed smart/system chips while showing the current folder container, compact recursive counts, Back/breadcrumb navigation, pointer/touch structural drops, and keyboard-accessible move controls. Folder navigation remains independent from the selected list.
+- All Lists searches names and full paths across folders, normal lists (including hidden nested lists), and smart/system lists. List settings manages folder creation, rename, promotion-only deletion, eligible destinations, and mixed sibling ordering through the authoritative structural RPC and revision-conflict refresh contract.
+
+## 7.4.10 List Folders persistence foundation
+
+- `adhdice_task_list_folders` stores owner-scoped nested folders, while `folder_id` places eligible user-created normal lists in root or a folder. Folders and lists share directly comparable, normalized `sort_order` positions inside each container; deterministic entity-type and ID fallback is reserved for tied or corrupt data.
+- Root and nested containers use `adhdice_task_list_containers` revision rows. The authoritative structure RPC locks and compare-and-swaps every affected source/destination container before rewriting mixed sibling order, while folder rename uses the folder row revision.
+- Folder deletion promotes direct lists and child folders into the deleted folder's parent at its former mixed-order position, deleting only the folder and its container-revision row. The forward migration is `supabase/add_task_list_folders_7_4_10.sql`; it was manually applied before the 7.4.11 UI ticket.
+- This release intentionally adds no folder UI, breadcrumbs, counts, drag-and-drop surface, local fallback persistence, or changes to Tasks, memberships, list semantics, reporting, or lifecycle behavior.
+
+## 7.4.9 Reporting correctness and density hotfix
+
+- Routine Performance counts canonical selected-range Done, Did My Best, and Missed outcomes even when recurrence/reward metadata marks `counted_as_due_occurrence` false, while preserving occurrence deduplication and inherited root-parent Routine membership.
+- Ordinary report calculations exclude entire branches below trashed ancestors. Records Markdown lists all current global Records, summarizes the persisted per-task catalog, caps deterministic per-task highlights at 12, preserves all selected-range events, and disambiguates task scopes with hierarchy paths.
+- Report presentation now centralizes Record-unit inflection, separates Milestone lifecycle and trophy/aura empty states, and waits for canonical Task/list membership inputs before enabling preview or clipboard output.
+
+## 7.4.8 Reporting clarity
+
+- Report Markdown now follows the fixed Overview, Routine Performance, Achievements, Milestones, Records, Focus, Task History/details, and Analysis Request order, with preview and clipboard sharing the same generated string.
+- Routine reporting uses current canonical Routine membership and selected-range occurrence outcomes with canonical deduplication; persisted Achievement, Milestone, and Record sources are presented without report-triggered recalculation or reconciliation.
+- One report date formatter preserves logical date-only values across report sections.
 
 ## 7.4.7 Compact Collapsible Records Layout
 
