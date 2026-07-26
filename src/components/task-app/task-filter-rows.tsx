@@ -8,13 +8,14 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
-import { ArrowDown, ArrowUp, ChevronDown } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { TASK_FILTER_STATUS_OPTIONS } from "@/lib/task-filter-state";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { AdhdDropdownPanel } from "@/components/ui-system";
 import type { ListSortField, ListSortPreference } from "@/lib/task-list-sort";
+import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 
 const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
 const CHIP_BUTTON_CLASS = "shrink-0 appearance-none bg-transparent p-0 text-left";
@@ -85,6 +86,7 @@ function CompactStatusFilterChip({
 type FilterRowsProps = {
   compact?: boolean;
   duplicateTitleMode: boolean;
+  includeSteps: boolean;
   hasActiveFilters: boolean;
   isOpen: boolean;
   matchAny: boolean;
@@ -96,6 +98,7 @@ type FilterRowsProps = {
   onTogglePinnedFilter?: () => void;
   onToggleRoutineFilter?: () => void;
   onToggleDuplicateTitleMode: () => void;
+  onToggleIncludeSteps: () => void;
   onToggleEnergy: (energy: TaskEnergy) => void;
   onToggleMatchMode: () => void;
   onToggleOpen: () => void;
@@ -103,6 +106,8 @@ type FilterRowsProps = {
   selectedEnergies: TaskEnergy[];
   selectedStatuses: TaskStatus[];
   statusCounts: Record<TaskStatus, number>;
+  tableColumnFilters?: TaskTableColumnFilters;
+  onClearTableColumnFilter?: (dimension: "priority" | "repeat" | keyof TaskTableColumnFilters["text"]) => void;
   listSortPreference?: ListSortPreference;
   onListSortPreferenceChange?: (preference: ListSortPreference) => void;
 };
@@ -232,6 +237,7 @@ function ListSortFilterControls({
 export function FilterRowsComponent({
   compact = false,
   duplicateTitleMode,
+  includeSteps,
   hasActiveFilters,
   isOpen,
   matchAny,
@@ -243,6 +249,7 @@ export function FilterRowsComponent({
   onTogglePinnedFilter,
   onToggleRoutineFilter,
   onToggleDuplicateTitleMode,
+  onToggleIncludeSteps,
   onToggleEnergy,
   onToggleMatchMode,
   onToggleOpen,
@@ -250,12 +257,24 @@ export function FilterRowsComponent({
   selectedEnergies,
   selectedStatuses,
   statusCounts,
+  tableColumnFilters,
+  onClearTableColumnFilter,
   listSortPreference,
   onListSortPreferenceChange,
 }: FilterRowsProps) {
   const bucketFilterCount = (pinnedFilterActive ? 1 : 0) + (routineFilterActive ? 1 : 0);
-  const activeFilterCount = selectedStatuses.length + selectedEnergies.length + bucketFilterCount + (duplicateTitleMode ? 1 : 0);
+  const tableFilterCount = (tableColumnFilters?.priority.length ? 1 : 0)
+    + (tableColumnFilters?.repeat.length ? 1 : 0)
+    + Object.values(tableColumnFilters?.text ?? {}).filter((value) => value?.trim()).length;
+  const activeFilterCount = selectedStatuses.length + selectedEnergies.length + bucketFilterCount + (duplicateTitleMode ? 1 : 0) + tableFilterCount;
   const searchModeActiveCount = bucketFilterCount + (duplicateTitleMode ? 1 : 0);
+  const activeTableColumnFilterChips = [
+    ...(tableColumnFilters?.priority.length ? [{ dimension: "priority" as const, label: `Table Priority: ${tableColumnFilters.priority.join(", ")}` }] : []),
+    ...(tableColumnFilters?.repeat.length ? [{ dimension: "repeat" as const, label: `Table Repeat: ${tableColumnFilters.repeat.map(formatOptionLabel).join(", ")}` }] : []),
+    ...Object.entries(tableColumnFilters?.text ?? {})
+      .filter((entry): entry is [keyof TaskTableColumnFilters["text"], string] => Boolean(entry[1]?.trim()))
+      .map(([dimension, value]) => ({ dimension, label: `Table ${formatOptionLabel(dimension)}: ${value}` })),
+  ];
 
   return (
     <div className={`${compact ? "space-y-2" : "mt-5"}`}>
@@ -285,6 +304,7 @@ export function FilterRowsComponent({
             </FilterChip>
           ) : null}
           <FilterChip active={duplicateTitleMode} onClick={onToggleDuplicateTitleMode}>Duplicates</FilterChip>
+          <FilterChip active={includeSteps} onClick={onToggleIncludeSteps}>Include Steps</FilterChip>
           {listSortPreference && onListSortPreferenceChange ? (
             <ListSortFilterControls onChange={onListSortPreferenceChange} preference={listSortPreference} />
           ) : null}
@@ -306,6 +326,17 @@ export function FilterRowsComponent({
             >
               {formatOptionLabel(energy)}
             </FilterChip>
+          ))}
+          {activeTableColumnFilterChips.map((filter) => (
+            <TaskTableChipButton
+              className="gap-1.5"
+              key={filter.dimension}
+              onClick={() => onClearTableColumnFilter?.(filter.dimension)}
+              toneClassName={FILTER_ACTIVE_CHIP_CLASS}
+            >
+              {filter.label}
+              <X className="h-3 w-3" />
+            </TaskTableChipButton>
           ))}
         </div>
       ) : (
@@ -344,6 +375,7 @@ export function FilterRowsComponent({
                   </FilterChip>
                 ) : null}
                 <FilterChip active={duplicateTitleMode} onClick={onToggleDuplicateTitleMode}>Duplicates</FilterChip>
+                <FilterChip active={includeSteps} onClick={onToggleIncludeSteps}>Include Steps</FilterChip>
               </div>
             </div>
             <div>

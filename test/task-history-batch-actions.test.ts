@@ -238,6 +238,43 @@ test("task history batch action rolls current recurring occurrence to the next l
   assert.equal(localTasks[0]?.status, "upcoming");
 });
 
+for (const status of ["done", "did_my_best"] as const) {
+  test(`History Calendar backdated ${status} reuses the resolved occurrence and preserves the live cursor`, async () => {
+    const task = createTask({
+      created_at: "2026-07-01T09:00:00.000Z",
+      due_on: "2026-08-02",
+      id: `calendar-canonical-${status}`,
+      repeat_days_of_week: [0],
+      repeat_frequency: "weekly",
+      repeat_interval: 1,
+      sort_order: 1,
+      status: "not_due",
+      title: "Sunday task",
+    });
+    let capturedPayload: TaskHistoryInsert | null = null;
+    let liveUpdates = 0;
+    const originalSuccess: TaskHistory = {
+      counted_as_due_occurrence: false, created_at: "2026-07-24T09:00:00.000Z", entry_date: "2026-07-24", event_type: "status", id: "original-success", occurrence_due_on: "2026-07-26", occurrence_key: "occurrence:2026-07-26", status: "done", task_id: task.id, updated_at: "2026-07-24T09:00:00.000Z", user_id: "user-1", was_completed: true,
+    };
+    const client = { from: () => ({ upsert: (payloads: TaskHistoryInsert[]) => {
+      capturedPayload = payloads[0] ?? null;
+      return { select: async () => ({ data: payloads.map((payload) => ({ ...originalSuccess, ...payload, id: "backdated-success", updated_at: "2026-07-24T12:00:00.000Z" })), error: null }) };
+    } }) };
+    const actions = useTaskHistoryActions({
+      client: client as never, currentDayKey: "2026-07-24", currentUserId: "user-1", dayStartTime: "06:00",
+      isTaskCompletedForHistory: (candidate) => candidate === "done" || candidate === "did_my_best" || candidate === "complete",
+      isTaskHistoryStatus: (candidate) => candidate === "done" || candidate === "did_my_best" || candidate === "missed" || candidate === "complete",
+      mapTaskHistoryRow: (row) => row, now: new Date("2026-07-24T12:00:00.000Z"), setMessage: () => {}, setTaskHistory: () => {}, setTasks: () => {}, sortTasksForUi: (tasks) => tasks,
+      taskHistory: [originalSuccess], tasks: [task], timezone: "America/New_York",
+      updateTaskRowWithLegacyEnergyFallback: async () => { liveUpdates += 1; return { conflict: null, data: null, error: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false }; },
+    });
+
+    assert.equal(await actions.syncTaskHistoryEntries(task.id, status, ["2026-07-23"], { syncLiveTask: true }), true);
+    assert.deepEqual(capturedPayload && { occurrence_due_on: capturedPayload.occurrence_due_on, occurrence_key: capturedPayload.occurrence_key }, { occurrence_due_on: "2026-07-26", occurrence_key: "occurrence:2026-07-26" });
+    assert.equal(liveUpdates, 0);
+  });
+}
+
 test("task history batch action rebases a prior-day calendar completion without reward or completion effects", async () => {
   const task = createTask({
     created_at: "2026-07-01T09:00:00.000Z",

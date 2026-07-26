@@ -13,11 +13,11 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
   TaskBucketContext,
 } from "@/lib/task-buckets";
-import type { TaskUiState } from "@/lib/task-ui-state";
+import type { TaskTableColumnFilters, TaskUiState } from "@/lib/task-ui-state";
 import type {
   TaskListDefinition,
   TaskListEvaluationContext,
-  TaskListEvaluationPerf,
+  TaskListMembership,
 } from "@/lib/task-lists";
 import { buildTaskListLookup, evaluateTaskListMemberships, isManualTaskListDestination, isPrimaryRailTaskListEligible } from "@/lib/task-lists";
 import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
@@ -27,7 +27,7 @@ import { isTaskInRecentTrash } from "@/lib/task-trash";
 import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
-type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "matchAny" | "quickFilters" | "statusFilters" | "view">;
+type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "includeStepsByView" | "matchAny" | "quickFilters" | "selectedBucket" | "statusFilters" | "tableColumnFilters" | "view">;
 
 type VisibleTaskBaseFacts = {
   isDoneTask: boolean;
@@ -129,6 +129,33 @@ export type TaskRailListOption = {
   label: string;
 };
 
+export type CanonicalTaskEntityFact = {
+  ancestorIds: string[];
+  displayStatus: TaskStatus;
+  id: string;
+  listMemberships: TaskListMembership[];
+  rootParentId: string;
+  searchMatch: boolean;
+  task: Task;
+};
+
+export type CanonicalTaskEntityProjection = {
+  contextAncestorIds: Set<string>;
+  contextRootParentIds: Set<string>;
+  directSearchMatchedEntityIds: Set<string>;
+  entityFactsById: Map<string, CanonicalTaskEntityFact>;
+  hierarchyScopedEntityIds: Set<string>;
+  hierarchyScopeKey: string;
+  listFacetCounts: Record<string, number>;
+  matchingDescendantIdsByRootParentId: Map<string, Set<string>>;
+  postStatusMatchedEntityIds: Set<string>;
+  preStatusMatchedEntityIds: Set<string>;
+  searchExpandedDescendantIds: Set<string>;
+  statusFacetCounts: Record<TaskStatus, number>;
+  taskListMembershipsByTaskId: Record<string, TaskListMembership[]>;
+  visibleRootParentIds: Set<string>;
+};
+
 function createEmptyTaskStatusCounts(): Record<TaskStatus, number> {
   return {
     pending: 0,
@@ -151,11 +178,16 @@ export function buildCanonicalActiveStatusCounts(
   childTaskPreviewByParentTaskId: ChildTaskPreviewLookup,
   taskHistoryByTaskId: Record<string, TaskHistory[]>,
   todayDateKey: string,
+  options: { childTaskIds?: ReadonlySet<string>; includeSteps?: boolean; parentTaskIds?: ReadonlySet<string> } = {},
 ) {
   const counts = createEmptyTaskStatusCounts();
   for (const task of parentTasks) {
-    counts[getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey)] += 1;
+    if (!options.parentTaskIds || options.parentTaskIds.has(task.id)) {
+      counts[getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey)] += 1;
+    }
+    if (options.includeSteps === false) continue;
     for (const item of childTaskPreviewByParentTaskId[task.id]?.items ?? []) {
+      if (options.childTaskIds && !options.childTaskIds.has(item.id)) continue;
       counts[item.status] += 1;
     }
   }
@@ -415,6 +447,301 @@ export function buildChildTaskPreviewLookup(
   return previewByParentTaskId;
 }
 
+function matchesCanonicalTableColumnFilters(
+  task: Task,
+  memberships: readonly TaskListMembership[],
+  filters: TaskTableColumnFilters,
+  listNameById: ReadonlyMap<string, string>,
+) {
+  if (filters.priority.length > 0 && !filters.priority.includes(String(getTaskPriorityLevel(task)) as TaskPriorityLevelOption)) return false;
+  if (filters.repeat.length > 0 && !filters.repeat.includes(task.repeat_frequency)) return false;
+
+  return Object.entries(filters.text).every(([columnId, rawQuery]) => {
+    const query = rawQuery?.trim().toLowerCase();
+    if (!query) return true;
+    let value = "";
+    if (columnId === "title") value = task.title;
+    if (columnId === "lists") value = memberships.map((membership) => listNameById.get(membership.id) ?? membership.id).join(" ");
+    if (columnId === "tags") value = (task.tags ?? []).join(" ");
+    if (columnId === "link") value = [task.external_link_label, task.external_link_url].filter(Boolean).join(" ");
+    if (columnId === "notes") value = task.notes ?? "";
+    return value.toLowerCase().includes(query);
+  });
+}
+
+export function buildCanonicalTaskEntityProjection({
+  availableTaskLists,
+  focusedTaskIds,
+  milestoneSearchTokensByTaskId,
+  normalizedSearchQuery,
+  taskHistoryByTaskId,
+  taskListEvaluationContext,
+  taskSubtasksByTaskId,
+  taskUiState,
+  tasks,
+  todayDateKey,
+}: {
+  availableTaskLists: TaskListDefinition[];
+  focusedTaskIds: string[];
+  milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
+  normalizedSearchQuery: string;
+  taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  taskListEvaluationContext: TaskListEvaluationContext;
+  taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  taskUiState: TaskDerivedFilterState;
+  tasks: Task[];
+  todayDateKey: string;
+}): CanonicalTaskEntityProjection {
+  const hierarchy = buildTaskHierarchyAdapter(tasks);
+  const searchIsActive = normalizedSearchQuery.length > 0;
+  const includeDescendants = taskUiState.includeStepsByView[taskUiState.view] === true;
+  const validChildTaskIdSet = new Set(hierarchy.validChildTaskIds);
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const inheritedManualMembershipsByTaskId: TaskListEvaluationContext["manualMembershipsByTaskId"] = {};
+  const rootParentIdByTaskId = new Map<string, string>();
+  const ancestorIdsByTaskId = new Map<string, string[]>();
+
+  for (const task of tasks) {
+    const ancestors = hierarchy.getParentChain(task.id);
+    const rootParentId = ancestors.at(-1)?.id ?? task.id;
+    rootParentIdByTaskId.set(task.id, rootParentId);
+    ancestorIdsByTaskId.set(task.id, ancestors.map((ancestor) => ancestor.id));
+    inheritedManualMembershipsByTaskId[task.id] = [
+      ...(taskListEvaluationContext.manualMembershipsByTaskId[rootParentId] ?? []),
+    ];
+  }
+  const hasTrashedAncestor = (taskId: string) => (
+    (ancestorIdsByTaskId.get(taskId) ?? []).some((ancestorId) => taskById.get(ancestorId)?.status === "trashed")
+  );
+  const isInSelectedBaseScope = (task: Task) => (
+    taskUiState.selectedBucket === "trash"
+      ? isTaskInRecentTrash(task)
+      : task.status !== "trashed" && !hasTrashedAncestor(task.id)
+  );
+  const isInPrimaryFacetBaseScope = (task: Task) => (
+    task.status !== "trashed"
+    && !hasTrashedAncestor(task.id)
+    && isTaskVisibleInPrimaryViews(task)
+  );
+
+  const taskDisplayStatusByTaskId: Record<string, TaskStatus> = {};
+  const focusFilterFactsByTaskId: Record<string, ReturnType<typeof getTaskFocusFilterFacts>> = {};
+  for (const task of tasks) {
+    taskDisplayStatusByTaskId[task.id] = getTaskDisplayStatusWithHistory(
+      task,
+      taskHistoryByTaskId[task.id] ?? [],
+      todayDateKey,
+    );
+    focusFilterFactsByTaskId[task.id] = getTaskFocusFilterFacts(
+      task,
+      taskHistoryByTaskId[task.id] ?? [],
+      todayDateKey,
+    );
+  }
+
+  const evaluationContext: TaskListEvaluationContext = {
+    ...taskListEvaluationContext,
+    focusFilterFactsByTaskId,
+    manualMembershipsByTaskId: inheritedManualMembershipsByTaskId,
+    taskDisplayStatusByTaskId,
+  };
+  const taskListLookup = buildTaskListLookup(availableTaskLists);
+  const listNameById = new Map(availableTaskLists.map((list) => [list.id, list.name]));
+  const entityFactsById = new Map<string, CanonicalTaskEntityFact>();
+  const taskListMembershipsByTaskId: Record<string, TaskListMembership[]> = {};
+
+  for (const task of tasks) {
+    const listMemberships = evaluateTaskListMemberships(
+      task,
+      availableTaskLists,
+      evaluationContext,
+      undefined,
+      taskListLookup,
+    );
+    taskListMembershipsByTaskId[task.id] = listMemberships;
+    const searchMatch = !searchIsActive
+      || matchesNormalizedSearchValue(task.title, normalizedSearchQuery)
+      || matchesNormalizedSearchValues(task.tags, normalizedSearchQuery)
+      || matchesNormalizedSearchValues(milestoneSearchTokensByTaskId?.get(task.id), normalizedSearchQuery)
+      || (taskSubtasksByTaskId[task.id] ?? []).some((subtask) => (
+        matchesNormalizedSearchValue(subtask.title, normalizedSearchQuery)
+      ));
+    entityFactsById.set(task.id, {
+      ancestorIds: ancestorIdsByTaskId.get(task.id) ?? [],
+      displayStatus: taskDisplayStatusByTaskId[task.id],
+      id: task.id,
+      listMemberships,
+      rootParentId: rootParentIdByTaskId.get(task.id) ?? task.id,
+      searchMatch,
+      task,
+    });
+  }
+
+  const matchesSharedNonSearchFilters = (fact: CanonicalTaskEntityFact) => {
+    const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(fact.task, filter, focusedTaskIds));
+    const matchesQuick = quickChecks.length === 0
+      || (taskUiState.matchAny ? quickChecks.some(Boolean) : quickChecks.every(Boolean));
+    const matchesEnergy = taskUiState.energyFilters.length === 0
+      || taskUiState.energyFilters.includes(fact.task.energy);
+    return matchesQuick
+      && matchesEnergy
+      && matchesCanonicalTableColumnFilters(
+        fact.task,
+        fact.listMemberships,
+        taskUiState.tableColumnFilters,
+        listNameById,
+      );
+  };
+  const matchesSelectedList = (fact: CanonicalTaskEntityFact) => {
+    if (taskUiState.selectedBucket === "all") return isTaskVisibleInPrimaryViews(fact.task);
+    if (taskUiState.selectedBucket === "archive") return isArchiveLikeTask(fact.task);
+    if (taskUiState.selectedBucket === "trash") return isTaskInRecentTrash(fact.task);
+    if (taskUiState.selectedBucket === "pinned") return isTaskVisibleInPrimaryViews(fact.task) && Boolean(fact.task.pinned_at);
+    return isTaskVisibleInPrimaryViews(fact.task)
+      && fact.listMemberships.some((membership) => membership.id === taskUiState.selectedBucket);
+  };
+  const matchesSelectedStatus = (fact: CanonicalTaskEntityFact) => (
+    taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(fact.displayStatus)
+  );
+
+  const directSearchMatchedEntityIds = new Set<string>();
+  const searchExpandedDescendantIds = new Set<string>();
+  const hierarchyScopedEntityIds = new Set<string>();
+  const selectedScopeCandidateIds = new Set<string>();
+  const primaryFacetCandidateIds = new Set<string>();
+  for (const fact of entityFactsById.values()) {
+    if (isInSelectedBaseScope(fact.task)) {
+      hierarchyScopedEntityIds.add(fact.id);
+      if (taskUiState.selectedBucket === "trash") {
+        for (const ancestorId of fact.ancestorIds) hierarchyScopedEntityIds.add(ancestorId);
+      }
+    }
+    if (isInSelectedBaseScope(fact.task) && matchesSelectedList(fact) && matchesSharedNonSearchFilters(fact)) {
+      selectedScopeCandidateIds.add(fact.id);
+      if (searchIsActive && fact.searchMatch) directSearchMatchedEntityIds.add(fact.id);
+    }
+    if (isInPrimaryFacetBaseScope(fact.task) && matchesSharedNonSearchFilters(fact)) {
+      primaryFacetCandidateIds.add(fact.id);
+    }
+  }
+
+  const buildSearchResultUniverse = (
+    candidateIds: ReadonlySet<string>,
+    directMatchIds: ReadonlySet<string>,
+    collectExpandedDescendants = false,
+  ) => {
+    if (!searchIsActive) {
+      return new Set(Array.from(candidateIds).filter((id) => includeDescendants || !validChildTaskIdSet.has(id)));
+    }
+    const resultIds = new Set(Array.from(directMatchIds).filter((id) => candidateIds.has(id)));
+    if (!includeDescendants) return resultIds;
+
+    const directlyMatchingRootIds = new Set(Array.from(directMatchIds).filter((id) => (
+      candidateIds.has(id) && !validChildTaskIdSet.has(id)
+    )));
+    for (const candidateId of candidateIds) {
+      const fact = entityFactsById.get(candidateId);
+      if (!fact || fact.id === fact.rootParentId || !directlyMatchingRootIds.has(fact.rootParentId)) continue;
+      resultIds.add(candidateId);
+      if (collectExpandedDescendants) searchExpandedDescendantIds.add(candidateId);
+    }
+    return resultIds;
+  };
+
+  const selectedDirectMatchIds = new Set(Array.from(directSearchMatchedEntityIds).filter((id) => (
+    selectedScopeCandidateIds.has(id)
+  )));
+  const primaryDirectMatchIds = new Set(Array.from(entityFactsById.values())
+    .filter((fact) => fact.searchMatch && primaryFacetCandidateIds.has(fact.id))
+    .map((fact) => fact.id));
+  const selectedPreStatusResultIds = buildSearchResultUniverse(
+    selectedScopeCandidateIds,
+    selectedDirectMatchIds,
+    true,
+  );
+  const preStatusMatchedEntityIds = new Set<string>();
+  const postStatusMatchedEntityIds = new Set<string>();
+  const listFacetCounts: Record<string, number> = {};
+  const statusFacetCounts = createEmptyTaskStatusCounts();
+
+  for (const entityId of selectedPreStatusResultIds) {
+    const fact = entityFactsById.get(entityId);
+    if (!fact) continue;
+    preStatusMatchedEntityIds.add(fact.id);
+    statusFacetCounts[fact.displayStatus] += 1;
+    if (matchesSelectedStatus(fact)) postStatusMatchedEntityIds.add(fact.id);
+  }
+  const countPrimaryFacet = (facetId: string, candidateIds: Set<string>) => {
+    const directIds = new Set(Array.from(primaryDirectMatchIds).filter((id) => candidateIds.has(id)));
+    const resultIds = buildSearchResultUniverse(candidateIds, directIds);
+    listFacetCounts[facetId] = Array.from(resultIds).filter((id) => {
+      const fact = entityFactsById.get(id);
+      return fact ? matchesSelectedStatus(fact) : false;
+    }).length;
+  };
+  countPrimaryFacet("all", primaryFacetCandidateIds);
+  countPrimaryFacet("pinned", new Set(Array.from(primaryFacetCandidateIds).filter((id) => (
+    Boolean(entityFactsById.get(id)?.task.pinned_at)
+  ))));
+  for (const list of availableTaskLists) {
+    if (listFacetCounts[list.id] !== undefined) continue;
+    countPrimaryFacet(list.id, new Set(Array.from(primaryFacetCandidateIds).filter((id) => (
+      entityFactsById.get(id)?.listMemberships.some((membership) => membership.id === list.id) === true
+    ))));
+  }
+
+  const contextAncestorIds = new Set<string>();
+  const visibleRootParentIds = new Set<string>();
+  const matchingDescendantIdsByRootParentId = new Map<string, Set<string>>();
+  for (const entityId of postStatusMatchedEntityIds) {
+    const fact = entityFactsById.get(entityId);
+    if (!fact) continue;
+    visibleRootParentIds.add(fact.rootParentId);
+    if (fact.id !== fact.rootParentId) {
+      const descendantIds = matchingDescendantIdsByRootParentId.get(fact.rootParentId) ?? new Set<string>();
+      descendantIds.add(fact.id);
+      matchingDescendantIdsByRootParentId.set(fact.rootParentId, descendantIds);
+    }
+    for (const ancestorId of fact.ancestorIds) {
+      if (!postStatusMatchedEntityIds.has(ancestorId)) contextAncestorIds.add(ancestorId);
+    }
+  }
+  const contextRootParentIds = new Set(
+    Array.from(visibleRootParentIds).filter((rootId) => (
+      !postStatusMatchedEntityIds.has(rootId)
+      && (matchingDescendantIdsByRootParentId.get(rootId)?.size ?? 0) > 0
+    )),
+  );
+  const hierarchyScopeKey = JSON.stringify({
+    columnFilters: taskUiState.tableColumnFilters,
+    energyFilters: taskUiState.energyFilters,
+    includeDescendants,
+    matchAny: taskUiState.matchAny,
+    quickFilters: taskUiState.quickFilters,
+    search: normalizedSearchQuery,
+    selectedBucket: taskUiState.selectedBucket,
+    statusFilters: taskUiState.statusFilters,
+    view: taskUiState.view,
+  });
+
+  return {
+    contextAncestorIds,
+    contextRootParentIds,
+    directSearchMatchedEntityIds,
+    entityFactsById,
+    hierarchyScopedEntityIds,
+    hierarchyScopeKey,
+    listFacetCounts,
+    matchingDescendantIdsByRootParentId,
+    postStatusMatchedEntityIds,
+    preStatusMatchedEntityIds,
+    searchExpandedDescendantIds,
+    statusFacetCounts,
+    taskListMembershipsByTaskId,
+    visibleRootParentIds,
+  };
+}
+
 type ComputeTaskAppDerivedDataInput = {
   activePage: string;
   availableTaskLists: TaskListDefinition[];
@@ -469,9 +796,18 @@ export function computeTaskAppDerivedData({
   const taskPrimaryVisibility = buildTaskPrimaryVisibility(tasks);
   const primaryHiddenChildTaskIds = new Set(taskPrimaryVisibility.primaryHiddenChildTaskIds);
   const normalizedSearchQuery = deferredSearchQuery.toLowerCase();
-  const searchMatchedStepParentTaskIds = new Set<string>();
-  const statusMatchedStepParentTaskIds = new Set<string>();
-  const statusMatchedChildTaskIds = new Set<string>();
+  const canonicalEntityProjection = buildCanonicalTaskEntityProjection({
+    availableTaskLists,
+    focusedTaskIds,
+    milestoneSearchTokensByTaskId,
+    normalizedSearchQuery,
+    taskHistoryByTaskId,
+    taskListEvaluationContext,
+    taskSubtasksByTaskId,
+    taskUiState,
+    tasks,
+    todayDateKey,
+  });
   logTaskDeriveStep("hierarchy diagnostics", hierarchyDiagnosticsStartedAt, {
     childTasks: taskHierarchyDiagnostics.childTaskIds.length,
     childTaskPreviewParents: Object.keys(childTaskPreviewByParentTaskId).length,
@@ -553,9 +889,9 @@ export function computeTaskAppDerivedData({
     tasks: primaryTasks.length,
   });
 
-  const matchesTaskFilters = (task: Task, options: { ignoreStatus?: boolean; trackMatches?: boolean } = {}) => {
+  const matchesTaskFilters = (task: Task, options: { ignoreStatus?: boolean } = {}) => {
     const ignoreStatus = options.ignoreStatus ?? false;
-    const trackMatches = options.trackMatches ?? true;
+    const includeStepsInStatus = taskUiState.includeStepsByView?.[taskUiState.view] === true;
     const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(task, filter, focusedTaskIds));
     const matchesQuickFilters = quickChecks.length === 0
       ? true
@@ -567,46 +903,35 @@ export function computeTaskAppDerivedData({
       return false;
     }
 
-    const ownDisplayStatus = getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey);
-    const matchesOwnStatus = ignoreStatus || taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(ownDisplayStatus);
-    const matchingChildStatusItems = ignoreStatus || taskUiState.statusFilters.length === 0 || taskUiState.view !== "table"
-      ? []
-      : (childTaskPreviewByParentTaskId[task.id]?.items.filter((item) => taskUiState.statusFilters.includes(item.status)) ?? []);
-    if (!matchesOwnStatus && matchingChildStatusItems.length === 0) {
-      return false;
-    }
-    if (trackMatches && matchingChildStatusItems.length > 0) {
-      statusMatchedStepParentTaskIds.add(task.id);
-      for (const item of matchingChildStatusItems) statusMatchedChildTaskIds.add(item.id);
-    }
-
-    if (normalizedSearchQuery.length === 0) {
-      return true;
-    }
-
-    if (matchesNormalizedSearchValue(task.title, normalizedSearchQuery)
+    const searchIsActive = normalizedSearchQuery.length > 0;
+    const ownSearchMatch = !searchIsActive || matchesNormalizedSearchValue(task.title, normalizedSearchQuery)
       || matchesNormalizedSearchValues(task.tags, normalizedSearchQuery)
-      || matchesNormalizedSearchValues(milestoneSearchTokensByTaskId?.get(task.id), normalizedSearchQuery)) {
-      return true;
-    }
-
+      || matchesNormalizedSearchValues(milestoneSearchTokensByTaskId?.get(task.id), normalizedSearchQuery);
     const sourceSubtaskTitleMatch = (taskSubtasksByTaskId[task.id] ?? []).some((subtask) => (
       matchesNormalizedSearchValue(subtask.title, normalizedSearchQuery)
     ));
-    if (sourceSubtaskTitleMatch) {
-      if (trackMatches) searchMatchedStepParentTaskIds.add(task.id);
-      return true;
+    const childItems = childTaskPreviewByParentTaskId[task.id]?.items ?? [];
+    const matchingChildSearchItems = searchIsActive
+      ? childItems.filter((item) => (
+        matchesNormalizedSearchValue(item.title, normalizedSearchQuery)
+        || matchesNormalizedSearchValues(item.tags, normalizedSearchQuery)
+      ))
+      : childItems;
+
+    const searchMatchesTaskGroup = ownSearchMatch || sourceSubtaskTitleMatch || matchingChildSearchItems.length > 0;
+    if (ignoreStatus || taskUiState.statusFilters.length === 0) {
+      return searchMatchesTaskGroup;
     }
 
-    const matchingChildSearch = childTaskPreviewByParentTaskId[task.id]?.items.some((item) => (
-      matchesNormalizedSearchValue(item.title, normalizedSearchQuery)
-      || matchesNormalizedSearchValues(item.tags, normalizedSearchQuery)
-    )) ?? false;
-    if (matchingChildSearch) {
-      if (trackMatches) searchMatchedStepParentTaskIds.add(task.id);
+    const ownDisplayStatus = getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey);
+    const matchesOwnStatus = taskUiState.statusFilters.includes(ownDisplayStatus);
+    const matchingChildStatusItems = includeStepsInStatus
+      ? matchingChildSearchItems.filter((item) => taskUiState.statusFilters.includes(item.status))
+      : [];
+    const ownEntityMatches = matchesOwnStatus && (ownSearchMatch || sourceSubtaskTitleMatch);
+    if (ownEntityMatches || matchingChildStatusItems.length > 0) {
       return true;
     }
-
     return false;
   };
 
@@ -629,7 +954,7 @@ export function computeTaskAppDerivedData({
     ? visibleTasks.filter(matchesTaskFilters)
     : EMPTY_TASKS;
   const statusCountScopeTasksSorted = activePage === "Tasks"
-    ? sortTasksForCockpit(visibleTasks.filter((task) => matchesTaskFilters(task, { ignoreStatus: true, trackMatches: false })), bucketContext)
+    ? sortTasksForCockpit(visibleTasks.filter((task) => matchesTaskFilters(task, { ignoreStatus: true })), bucketContext)
     : EMPTY_TASKS;
   logTaskDeriveStep("visible task filtering", visibleFilteringStartedAt, {
     matchingTasks: filteredVisibleTasks.length,
@@ -659,7 +984,7 @@ export function computeTaskAppDerivedData({
     ? archiveTasks.filter(matchesTaskFilters)
     : EMPTY_TASKS;
   const statusCountScopeArchiveTasksSorted = activePage === "Tasks"
-    ? sortTasksForCockpit(archiveTasks.filter((task) => matchesTaskFilters(task, { ignoreStatus: true, trackMatches: false })), bucketContext)
+    ? sortTasksForCockpit(archiveTasks.filter((task) => matchesTaskFilters(task, { ignoreStatus: true })), bucketContext)
     : EMPTY_TASKS;
   logTaskDeriveStep("archive task filtering", archiveFilteringStartedAt, {
     matchingTasks: filteredArchiveTasks.length,
@@ -680,7 +1005,7 @@ export function computeTaskAppDerivedData({
     ? recentlyDeletedTasks.filter(matchesTaskFilters)
     : EMPTY_TASKS;
   const statusCountScopeTrashTasksSorted = activePage === "Tasks"
-    ? sortTasksForCockpit(recentlyDeletedTasks.filter((task) => matchesTaskFilters(task, { ignoreStatus: true, trackMatches: false })), bucketContext)
+    ? sortTasksForCockpit(recentlyDeletedTasks.filter((task) => matchesTaskFilters(task, { ignoreStatus: true })), bucketContext)
     : EMPTY_TASKS;
   logTaskDeriveStep("trash task filtering", trashFilteringStartedAt, {
     matchingTasks: filteredTrashTasks.length,
@@ -706,49 +1031,8 @@ export function computeTaskAppDerivedData({
     tasks: duplicateTitleGroups.reduce((count, group) => count + group.tasks.length, 0),
   });
 
-  const duplicateGroupTaskIds = new Set<string>(duplicateTitleGroups.flatMap((group) => group.tasks.map((task) => task.id)));
-  const duplicateGroupTasks = visibleTasks
-    .filter((task) => duplicateGroupTaskIds.has(task.id))
-    .sort(compareTasksByNewest);
-
-  const taskListMembershipPerf: TaskListEvaluationPerf | undefined = isDevelopment
-    ? {
-      inboxCheckMs: 0,
-      manualMembershipCount: 0,
-      manualMembershipSeedMs: 0,
-      matchedRuleMemberships: 0,
-      ruleEvaluationMs: 0,
-      ruleListChecks: 0,
-      taskCount: 0,
-    }
-    : undefined;
   const membershipStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const membershipSourceTasks = taskUiState.duplicateTitleMode
-    ? duplicateGroupTasks
-    : [...new Map([...filteredTasksSorted, ...milestoneFilteredTasksSorted, ...statusCountScopeTasksSorted].map((task) => [task.id, task])).values()];
-  const taskListLookup = buildTaskListLookup(availableTaskLists);
-  const taskDisplayStatusByTaskId = membershipSourceTasks.reduce<Record<string, TaskStatus>>((accumulator, task) => {
-    accumulator[task.id] = getTaskDisplayStatusWithHistory(
-      task,
-      taskHistoryByTaskId[task.id] ?? [],
-      todayDateKey,
-    );
-    return accumulator;
-  }, {});
-  const focusFilterFactsByTaskId = membershipSourceTasks.reduce<Record<string, ReturnType<typeof getTaskFocusFilterFacts>>>((accumulator, task) => {
-    accumulator[task.id] = getTaskFocusFilterFacts(
-      task,
-      taskHistoryByTaskId[task.id] ?? [],
-      todayDateKey,
-    );
-    return accumulator;
-  }, {});
-  const cachedTaskListEvaluationContext: TaskListEvaluationContext = {
-    ...taskListEvaluationContext,
-    focusFilterFactsByTaskId,
-    taskDisplayStatusByTaskId,
-  };
-  const canReuseMembershipScanForVisibleCounts = membershipSourceTasks === filteredTasksSorted;
+  const canReuseMembershipScanForVisibleCounts = false;
   const focusedTaskIdSet = new Set(focusedTaskIds);
   const visibleListCounts: Record<string, number> = {};
   const filteredActiveTasks: Task[] = [];
@@ -766,66 +1050,12 @@ export function computeTaskAppDerivedData({
   const waitingTasks: Task[] = [];
   const taskListMembershipsByTaskId = activePage !== "Tasks"
     ? {}
-    : membershipSourceTasks.reduce<Record<string, ReturnType<typeof evaluateTaskListMemberships>>>((accumulator, task) => {
-      const memberships = evaluateTaskListMemberships(
-        task,
-        availableTaskLists,
-        cachedTaskListEvaluationContext,
-        taskListMembershipPerf,
-        taskListLookup,
-      );
-      accumulator[task.id] = memberships;
-      if (!canReuseMembershipScanForVisibleCounts) {
-        return accumulator;
-      }
-      const baseFacts = visibleTaskBaseFactsByTaskId[task.id] ?? buildVisibleTaskBaseFacts(task);
-      if (baseFacts.isOpenTask) {
-        filteredActiveTasks.push(task);
-        if (baseFacts.isOverdueTask) {
-          filteredOverdueTasks.push(task);
-        }
-        if (baseFacts.isUrgentTask) {
-          filteredUrgentTasks.push(task);
-        }
-        if (baseFacts.isLowEnergyTask && filteredLowEnergyTasks.length < 4) {
-          filteredLowEnergyTasks.push(task);
-        }
-        if (baseFacts.isTodayTask) {
-          filteredTodayTasks.push(task);
-        }
-      }
-      if (baseFacts.isDoneTask) {
-        filteredDoneTasks.push(task);
-      }
-      if (baseFacts.isOpenTask && focusedTaskIdSet.has(task.id)) {
-        filteredFocusTasks.push(task);
-      }
-      for (const membership of memberships) {
-        visibleListCounts[membership.id] = (visibleListCounts[membership.id] ?? 0) + 1;
-        if (membership.id === "inbox") {
-          inboxTasks.push(task);
-        } else if (membership.id === "later") {
-          laterTasks.push(task);
-        } else if (membership.id === "missed") {
-          missedTasks.push(task);
-        } else if (membership.id === "quick_wins") {
-          quickWinTasks.push(task);
-        } else if (membership.id === "recurring") {
-          recurringTasks.push(task);
-        } else if (membership.id === "waiting") {
-          waitingTasks.push(task);
-        }
-      }
-      return accumulator;
-    }, {});
+    : canonicalEntityProjection.taskListMembershipsByTaskId;
   logTaskDeriveStep("smart-list membership evaluation", membershipStartedAt, {
-    helperInboxMs: Math.round(taskListMembershipPerf?.inboxCheckMs ?? 0),
-    helperManualMs: Math.round(taskListMembershipPerf?.manualMembershipSeedMs ?? 0),
-    helperRuleMs: Math.round(taskListMembershipPerf?.ruleEvaluationMs ?? 0),
     lists: availableTaskLists.length,
-    matchedMemberships: taskListMembershipPerf?.matchedRuleMemberships ?? 0,
+    matchedMemberships: Object.values(taskListMembershipsByTaskId).reduce((count, memberships) => count + memberships.length, 0),
     rules: availableRuleCount,
-    tasks: membershipSourceTasks.length,
+    tasks: Object.keys(taskListMembershipsByTaskId).length,
   });
 
   const visibleCountStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
@@ -973,12 +1203,12 @@ export function computeTaskAppDerivedData({
     ? []
     : availableTaskLists.filter((list) =>
       isPrimaryRailTaskListEligible(list)
-      && (list.id !== "missed" || (visibleListCounts[list.id] ?? 0) > 0)
+      && (list.id !== "missed" || (canonicalEntityProjection.listFacetCounts[list.id] ?? 0) > 0)
     );
   const listRailOptions: TaskRailListOption[] = activePage !== "Tasks"
     ? []
     : visibleTaskLists.map((list) => ({
-        count: list.id === "all" ? filteredTasksSorted.length : visibleListCounts[list.id] ?? 0,
+        count: canonicalEntityProjection.listFacetCounts[list.id] ?? 0,
         description: list.description,
         id: list.id,
         isCustom: list.type === "custom",
@@ -989,7 +1219,7 @@ export function computeTaskAppDerivedData({
     : availableTaskLists
       .filter(isManualTaskListDestination)
       .map((list) => ({
-        count: visibleListCounts[list.id] ?? 0,
+        count: canonicalEntityProjection.listFacetCounts[list.id] ?? 0,
         label: list.name,
         value: list.id,
       }));
@@ -1006,11 +1236,55 @@ export function computeTaskAppDerivedData({
     rules: availableRuleCount,
     tasks: tasks.length,
   });
+  const canonicalVisibleRootTasksSorted = activePage === "Tasks"
+    ? sortTasksForCockpit(
+      tasks.filter((task) => canonicalEntityProjection.visibleRootParentIds.has(task.id)),
+      bucketContext,
+    )
+    : EMPTY_TASKS;
+  const hasCanonicalMatchingBranch = normalizedSearchQuery.length > 0
+    || taskUiState.statusFilters.length > 0
+    || taskUiState.energyFilters.length > 0
+    || taskUiState.quickFilters.length > 0
+    || canonicalEntityProjection.contextRootParentIds.size > 0
+    || taskUiState.tableColumnFilters.priority.length > 0
+    || taskUiState.tableColumnFilters.repeat.length > 0
+    || Object.values(taskUiState.tableColumnFilters.text).some((value) => Boolean(value?.trim()));
+  const canonicalMatchingChildTaskIds = hasCanonicalMatchingBranch
+    ? Array.from(
+      canonicalEntityProjection.matchingDescendantIdsByRootParentId.values(),
+    ).flatMap((descendantIds) => Array.from(descendantIds))
+    : [];
+  const canonicalMatchingBranchRootParentIds = hasCanonicalMatchingBranch
+    ? Array.from(canonicalEntityProjection.visibleRootParentIds)
+    : [];
+  const canonicalSearchMatchedChildTaskIds = canonicalMatchingChildTaskIds;
+  const canonicalSearchMatchedParentTaskIds = Array.from(
+    canonicalEntityProjection.directSearchMatchedEntityIds,
+  ).filter((id) => !primaryHiddenChildTaskIds.has(id));
+  const canonicalSearchMatchedStepParentTaskIds = canonicalMatchingBranchRootParentIds;
+  const canonicalChildTaskPreviewByParentTaskId = activePage !== "Tasks"
+    ? childTaskPreviewByParentTaskId
+    : Object.fromEntries(Object.entries(childTaskPreviewByParentTaskId).map(([rootId, group]) => {
+      const items = group.items.filter((item) => canonicalEntityProjection.hierarchyScopedEntityIds.has(item.id));
+      return [rootId, {
+        items,
+        summary: {
+          descendantCount: items.length,
+          directChildCount: items.filter((item) => item.depth === 1).length,
+          hasInvalidDescendants: items.some((item) => item.issueTypes.length > 0),
+          invalidChildLinkCount: items.filter((item) => item.depth === 1 && item.issueTypes.length > 0).length,
+        },
+      }];
+    }));
 
   return {
     activeTasks,
     allTaskTags,
-    childTaskPreviewByParentTaskId,
+    childTaskPreviewByParentTaskId: canonicalChildTaskPreviewByParentTaskId,
+    canonicalEntityProjection,
+    canonicalMatchingChildTaskIds,
+    canonicalVisibleRootTasksSorted,
     collections,
     duplicateTitleGroups,
     doneTasks,
@@ -1028,9 +1302,11 @@ export function computeTaskAppDerivedData({
     statusCountScopeTasksSorted,
     statusCountScopeArchiveTasksSorted,
     statusCountScopeTrashTasksSorted,
-    searchMatchedStepParentTaskIds: Array.from(searchMatchedStepParentTaskIds),
-    statusMatchedChildTaskIds: Array.from(statusMatchedChildTaskIds),
-    statusMatchedStepParentTaskIds: Array.from(statusMatchedStepParentTaskIds),
+    searchMatchedStepParentTaskIds: canonicalSearchMatchedStepParentTaskIds,
+    searchMatchedChildTaskIds: canonicalSearchMatchedChildTaskIds,
+    searchMatchedParentTaskIds: canonicalSearchMatchedParentTaskIds,
+    statusMatchedChildTaskIds: canonicalMatchingChildTaskIds,
+    statusMatchedStepParentTaskIds: canonicalMatchingBranchRootParentIds,
     archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     selectedTaskForEditor,
@@ -1038,11 +1314,12 @@ export function computeTaskAppDerivedData({
     taskHierarchyDiagnostics,
     taskPrimaryVisibility,
     taskLinkedNotesByTaskId,
-    taskListMembershipsByTaskId,
+    taskListMembershipsByTaskId: canonicalEntityProjection.taskListMembershipsByTaskId,
     taskStatusCounts,
     todayTasks,
     todayQueueTaskCount,
     urgentTasks,
-    visibleListCounts,
+    tableStatusCounts: canonicalEntityProjection.statusFacetCounts,
+    visibleListCounts: canonicalEntityProjection.listFacetCounts,
   };
 }

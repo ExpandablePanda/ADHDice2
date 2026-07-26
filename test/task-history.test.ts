@@ -22,6 +22,8 @@ function createHistoryEntry({
   entryDate,
   eventType = "status",
   id,
+  occurrenceDueOn = null,
+  occurrenceKey = null,
   status,
   taskId = "task-1",
   wasCompleted,
@@ -29,6 +31,8 @@ function createHistoryEntry({
   entryDate: string;
   eventType?: "completed_permanently" | "status";
   id: string;
+  occurrenceDueOn?: string | null;
+  occurrenceKey?: string | null;
   status: "complete" | "did_my_best" | "done" | "missed";
   taskId?: string;
   wasCompleted: boolean;
@@ -39,6 +43,8 @@ function createHistoryEntry({
     entry_date: entryDate,
     event_type: eventType,
     id,
+    occurrence_due_on: occurrenceDueOn,
+    occurrence_key: occurrenceKey,
     status,
     task_id: taskId,
     updated_at: `${entryDate}T09:00:00.000Z`,
@@ -614,7 +620,7 @@ test("calendar rebases a missed daily recurrence from yesterday's edited complet
   const repeatedSave = resolveLiveTaskStatusFromHistory({ ...task, due_on: result.dueOn, status: result.status }, history, context, {
     editedHistoryDateKeys: ["2026-07-12"],
   });
-  assert.equal(repeatedSave.dueOn, "2026-07-16");
+  assert.equal(repeatedSave.dueOn, undefined);
   assert.equal(repeatedSave.status, "upcoming");
 });
 
@@ -639,6 +645,61 @@ test("calendar rebases Did My Best from its edited completion date", () => {
   }, { editedHistoryDateKeys: ["2026-07-12"] });
 
   assert.deepEqual(result, { completedAt: null, dueOn: "2026-07-16", status: "upcoming" });
+});
+
+for (const status of ["done", "did_my_best"] as const) {
+  test(`backdated ${status} for a resolved canonical occurrence does not rewind the live cursor`, () => {
+    const task = createTask({
+      created_at: "2026-07-01T08:00:00.000Z",
+      due_on: "2026-08-02",
+      id: `calendar-no-rewind-${status}`,
+      repeat_days_of_week: [0],
+      repeat_frequency: "weekly",
+      repeat_interval: 1,
+      sort_order: 1,
+      status: "upcoming",
+      title: "Sunday task",
+    });
+    const history = [
+      createHistoryEntry({ entryDate: "2026-07-24", id: "original-success", occurrenceDueOn: "2026-07-26", occurrenceKey: "occurrence:2026-07-26", status: "done", taskId: task.id, wasCompleted: true }),
+      createHistoryEntry({ entryDate: "2026-07-23", id: "backdated-success", occurrenceDueOn: "2026-07-26", occurrenceKey: "occurrence:2026-07-26", status, taskId: task.id, wasCompleted: true }),
+    ];
+
+    const result = resolveLiveTaskStatusFromHistory(task, history, {
+      currentDayKey: "2026-07-24",
+      dayStartTime: "06:00",
+      now: new Date("2026-07-24T12:00:00.000Z"),
+      timezone: "America/New_York",
+    }, { editedHistoryDateKeys: ["2026-07-23"] });
+
+    assert.deepEqual(result, { completedAt: null, status: "not_due" });
+  });
+}
+
+test("backdated weekly history keeps separate canonical weekdays independent", () => {
+  const task = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-24",
+    id: "calendar-independent-weekdays",
+    repeat_days_of_week: [1, 3, 5],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "upcoming",
+    title: "Weekday task",
+  });
+  const history = [
+    createHistoryEntry({ entryDate: "2026-07-21", id: "monday", occurrenceDueOn: "2026-07-20", occurrenceKey: "occurrence:2026-07-20", status: "done", taskId: task.id, wasCompleted: true }),
+    createHistoryEntry({ entryDate: "2026-07-22", id: "wednesday", occurrenceDueOn: "2026-07-22", occurrenceKey: "occurrence:2026-07-22", status: "done", taskId: task.id, wasCompleted: true }),
+  ];
+  const result = resolveLiveTaskStatusFromHistory(task, history, {
+    currentDayKey: "2026-07-22",
+    dayStartTime: "06:00",
+    now: new Date("2026-07-22T12:00:00.000Z"),
+    timezone: "America/New_York",
+  }, { editedHistoryDateKeys: ["2026-07-22"] });
+
+  assert.deepEqual(result, { completedAt: null, status: "upcoming" });
 });
 
 test("daily recurring outcomes stay historical while the new occurrence is Pending", () => {

@@ -22,6 +22,7 @@ import type { Task, TaskActualTimeEntry, TaskHistory, TaskRepeatMonthlyMode, Tas
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
+import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { buildTaskTableRow, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
@@ -37,7 +38,7 @@ import {
   REPEAT_MONTHLY_ORDINAL_OPTIONS,
   REPEAT_WEEKDAY_FULL_LABELS,
 } from "@/lib/task-repeat";
-import { buildChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
+import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { formatLocalDate, todayISO } from "@/lib/utils";
 import { formatTaskPriorityLevel, getSelectedTaskPriorityToneClass, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
@@ -49,6 +50,7 @@ import {
   TASK_TABLE_TITLE_CELL_CLASS,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
+  TaskHierarchySearchChip,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { AdhdIconButton } from "@/components/ui-system";
@@ -263,8 +265,17 @@ type TasksTableSourceProps = {
   highlightedTaskIds?: string[];
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
+  searchMatchedChildTaskIds?: string[];
   statusMatchedChildTaskIds?: string[];
   statusMatchedStepParentTaskIds?: string[];
+  statusFilterActive?: boolean;
+  hierarchyScopeKey?: string;
+  columnFilters?: TaskTableColumnFilters;
+  energyColumnFilters?: Task["energy"][];
+  statusColumnFilters?: TaskStatus[];
+  onColumnFiltersChange?: (filters: TaskTableColumnFilters) => void;
+  onEnergyColumnFiltersChange?: (filters: Task["energy"][]) => void;
+  onStatusColumnFiltersChange?: (filters: TaskStatus[]) => void;
   currentListLabel?: string | null;
   getFollowTaskDestination?: (taskId: string) => { id: string; label: string } | null;
   overlayNode?: ReactNode;
@@ -559,8 +570,17 @@ export function TasksTableAdapter({
           highlightedTaskIds={tableProps.highlightedTaskIds}
           onVisibleSearchMatchIdsChange={tableProps.onVisibleSearchMatchIdsChange}
           searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
+          searchMatchedChildTaskIds={tableProps.searchMatchedChildTaskIds}
           statusMatchedChildTaskIds={tableProps.statusMatchedChildTaskIds}
           statusMatchedStepParentTaskIds={tableProps.statusMatchedStepParentTaskIds}
+          statusFilterActive={tableProps.statusFilterActive}
+          hierarchyScopeKey={tableProps.hierarchyScopeKey}
+          columnFilters={tableProps.columnFilters}
+          energyColumnFilters={tableProps.energyColumnFilters}
+          statusColumnFilters={tableProps.statusColumnFilters}
+          onColumnFiltersChange={tableProps.onColumnFiltersChange}
+          onEnergyColumnFiltersChange={tableProps.onEnergyColumnFiltersChange}
+          onStatusColumnFiltersChange={tableProps.onStatusColumnFiltersChange}
           className="max-w-none p-0"
           currentListLabel={tableProps.currentListLabel}
           enableInspector
@@ -879,6 +899,7 @@ function StepsCardPreview({
   currentListLabel,
   group,
   isExpanded = true,
+  matchingChildTaskIds,
   listDefinitions,
   listMembershipsByTaskId,
   onCreateChildTask,
@@ -918,6 +939,8 @@ function StepsCardPreview({
   highlightedTaskIds,
   onToggleAllMetadata,
   onToggleMetadata,
+  onToggleShowAllSearchSteps,
+  showAllSearchSteps = false,
   visibleMetadataTaskIds,
 }: {
   activeQuickPanel: { mode: ListQuickPanelMode; taskId: string } | null;
@@ -927,6 +950,7 @@ function StepsCardPreview({
   currentListLabel?: string | null;
   group: ChildTaskPreviewGroup;
   isExpanded?: boolean;
+  matchingChildTaskIds?: ReadonlySet<string>;
   listDefinitions: TaskListDefinition[];
   listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
   onCreateChildTask?: (parentTaskId: string, title: string) => Promise<{ error: string | null; taskId: string | null }>;
@@ -972,6 +996,8 @@ function StepsCardPreview({
   highlightedTaskIds?: string[];
   onToggleAllMetadata: () => void;
   onToggleMetadata: (taskId: string) => void;
+  onToggleShowAllSearchSteps?: () => void;
+  showAllSearchSteps?: boolean;
   visibleMetadataTaskIds: Set<string>;
 }) {
   const [editingStepTitleId, setEditingStepTitleId] = useState<string | null>(null);
@@ -991,8 +1017,13 @@ function StepsCardPreview({
     [collapsedStepIds],
   );
   const { collapsibleTaskIds, visibleItems: expandedItems } = useMemo(
-    () => buildChildTaskPreviewVisibility(group.items, collapsedStepIdSet),
-    [collapsedStepIdSet, group.items],
+    () => buildChildTaskPreviewVisibility(
+      matchingChildTaskIds
+        ? filterChildTaskPreviewItemsToMatchingHierarchy(group.items, matchingChildTaskIds)
+        : group.items,
+      matchingChildTaskIds ? new Set<string>() : collapsedStepIdSet,
+    ),
+    [collapsedStepIdSet, group.items, matchingChildTaskIds],
   );
 
   useEffect(() => {
@@ -1134,6 +1165,11 @@ function StepsCardPreview({
             onToggle={() => onToggleExpanded?.()}
             onToggleAll={() => onToggleAllExpanded?.()}
           />
+          {onToggleShowAllSearchSteps ? (
+            <TaskHierarchySearchChip onClick={onToggleShowAllSearchSteps}>
+              {showAllSearchSteps ? "Matching Steps" : "Show all Steps"}
+            </TaskHierarchySearchChip>
+          ) : null}
         </div>
       </div>
       {!isExpanded ? null : (
@@ -2388,6 +2424,7 @@ function TasksSimpleList({
   const [visibleMetadataTaskIds, setVisibleMetadataTaskIds] = useState<Set<string>>(() => new Set());
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
   const [collapsedStepSectionsByTaskId, setCollapsedStepSectionsByTaskId] = useState<Record<string, boolean>>({});
+  const [showAllSearchStepsByTaskId, setShowAllSearchStepsByTaskId] = useState<Record<string, boolean>>({});
   const [parentStepDraftTaskId, setParentStepDraftTaskId] = useState<string | null>(null);
   const [parentStepTitleDrafts, setParentStepTitleDrafts] = useState<Record<string, string>>({});
   const [parentStepCreationErrors, setParentStepCreationErrors] = useState<Record<string, string | null>>({});
@@ -2396,6 +2433,7 @@ function TasksSimpleList({
   const pendingMeasuredStatusScrollAnchorRef = useRef<MeasuredStatusScrollAnchor | null>(null);
   const parentStepDraftInputRef = useRef<HTMLInputElement | null>(null);
   const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
+  const getShowAllSearchStepsKey = (taskId: string) => `${tableProps.hierarchyScopeKey ?? ""}:${taskId}`;
   const tasks = useMemo(
     () => sortListParentTasks(tableProps.tasks, listSortPreference, {
       taskHistoryByTaskId: tableProps.rowContext.taskHistoryByTaskId,
@@ -2476,6 +2514,18 @@ function TasksSimpleList({
   const searchMatchedStepParentTaskIdSet = useMemo(
     () => new Set(tableProps.searchMatchedStepParentTaskIds ?? []),
     [tableProps.searchMatchedStepParentTaskIds],
+  );
+  const searchMatchedChildTaskIdSet = useMemo(
+    () => new Set(tableProps.searchMatchedChildTaskIds ?? []),
+    [tableProps.searchMatchedChildTaskIds],
+  );
+  const statusMatchedChildTaskIdSet = useMemo(
+    () => new Set(tableProps.statusMatchedChildTaskIds ?? []),
+    [tableProps.statusMatchedChildTaskIds],
+  );
+  const statusMatchedStepParentTaskIdSet = useMemo(
+    () => new Set(tableProps.statusMatchedStepParentTaskIds ?? []),
+    [tableProps.statusMatchedStepParentTaskIds],
   );
   const taskById = useMemo(
     () => new Map([...(tableProps.allTasks ?? tasks), ...tasks].map((task) => [task.id, task])),
@@ -2901,7 +2951,13 @@ function TasksSimpleList({
             },
           }
           : null);
-        const isStepSectionExpanded = searchMatchedStepParentTaskIdSet.has(task.id)
+        const activeHierarchyParentMatch = tableProps.statusFilterActive
+          ? statusMatchedStepParentTaskIdSet.has(task.id)
+          : searchMatchedStepParentTaskIdSet.has(task.id);
+        const activeHierarchyChildTaskIds = tableProps.statusFilterActive
+          ? statusMatchedChildTaskIdSet
+          : searchMatchedChildTaskIdSet;
+        const isStepSectionExpanded = activeHierarchyParentMatch
           || parentStepDraftTaskId === task.id
           || collapsedStepSectionsByTaskId[task.id] === false;
         const hasVisibleRenderedDescendants = Boolean(
@@ -3327,6 +3383,16 @@ function TasksSimpleList({
                 currentListLabel={currentListLabel}
                 group={effectiveStepPreviewGroup}
                 isExpanded={isStepSectionExpanded}
+                matchingChildTaskIds={!showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] && activeHierarchyParentMatch
+                  ? activeHierarchyChildTaskIds
+                  : undefined}
+                onToggleShowAllSearchSteps={activeHierarchyParentMatch
+                  ? () => {
+                    const key = getShowAllSearchStepsKey(task.id);
+                    setShowAllSearchStepsByTaskId((current) => ({ ...current, [key]: !current[key] }));
+                  }
+                  : undefined}
+                showAllSearchSteps={showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] === true}
                 listDefinitions={rowContext.listDefinitions}
                 listMembershipsByTaskId={rowContext.listMembershipsByTaskId}
                 onCreateChildTask={tableProps.onCreateChildTask}

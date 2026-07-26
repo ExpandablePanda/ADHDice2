@@ -52,6 +52,30 @@ export function useTaskHistoryActions({
   timezone,
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskHistoryActionsOptions) {
+  function getCalendarOccurrenceTask(task: Task | undefined, status: TaskStatus, entryDate: string, history: DbTaskHistory[]) {
+    if (!task || (status !== "done" && status !== "did_my_best") || task.repeat_frequency === "none") {
+      return task;
+    }
+
+    const currentCursor = task.active_occurrence_due_on ?? task.due_on;
+    const resolvedOccurrenceDueOn = history
+      .filter((entry) => (
+        isTaskCompletedForHistory(entry.status)
+        && entry.occurrence_due_on
+        && entry.occurrence_due_on >= entryDate
+        && (!currentCursor || entry.occurrence_due_on < currentCursor)
+      ))
+      .map((entry) => entry.occurrence_due_on!)
+      .sort()
+      .at(0);
+    const occurrenceDueOn = resolvedOccurrenceDueOn
+      ?? (task.due_on && task.due_on >= entryDate ? task.due_on : null);
+
+    return occurrenceDueOn
+      ? { ...task, active_occurrence_due_on: occurrenceDueOn }
+      : task;
+  }
+
   async function syncLiveTaskStatus(taskId: string, nextHistory: DbTaskHistory[], editedHistoryDateKeys?: string[]) {
     const task = tasks.find((candidate) => candidate.id === taskId);
     if (!task) {
@@ -252,6 +276,10 @@ export function useTaskHistoryActions({
     const entryDatesToUpsert = Array.from(new Set([...uniqueEntryDates, ...missingMissedDates])).sort();
     const payloads: TaskHistoryInsert[] = entryDatesToUpsert.map((entryDate) => ({
       entry_date: entryDate,
+      ...buildTaskHistoryOccurrenceMetadata(
+        getCalendarOccurrenceTask(task, status, entryDate, existingTaskHistory),
+        status,
+      ),
       status,
       task_id: taskId,
       user_id: currentUserId,

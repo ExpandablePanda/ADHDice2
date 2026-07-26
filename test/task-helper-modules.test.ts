@@ -1572,7 +1572,7 @@ test("hierarchy diagnostics expose child and grandchild depth while primary arra
   assert.deepEqual(derived.archiveFilteredTasksSorted.map((task) => task.id), []);
   assert.deepEqual(derived.trashFilteredTasksSorted.map((task) => task.id), []);
   assert.equal(derived.taskStatusCounts.pending, 1);
-  assert.equal(derived.visibleListCounts.all, undefined);
+  assert.equal(derived.visibleListCounts.all, 1);
   assert.deepEqual(derived.childTaskPreviewByParentTaskId.root.items.map((item) => item.id), ["child", "grandchild"]);
 });
 

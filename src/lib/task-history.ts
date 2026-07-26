@@ -289,7 +289,7 @@ function isResolvingRecurringHistoryStatus(status: TaskStatus | undefined) {
   return status === "done" || status === "did_my_best";
 }
 
-/** Reconciles a History Calendar completion from its edited occurrence date. */
+/** Reconciles a History Calendar completion from its edited canonical occurrence. */
 function resolveCalendarRecurringActiveOccurrence(
   task: Task,
   history: DbTaskHistory[],
@@ -302,17 +302,32 @@ function resolveCalendarRecurringActiveOccurrence(
 
   const editedHistoryDateKeys = options.editedHistoryDateKeys ?? [context.currentDayKey];
   const historyByDate = new Map(history.map((entry) => [entry.entry_date, entry]));
-  const completionDateKey = editedHistoryDateKeys
+  const completionEntry = editedHistoryDateKeys
     .filter((dateKey) => dateKey <= context.currentDayKey && isResolvingRecurringHistoryStatus(historyByDate.get(dateKey)?.status))
     .sort()
+    .map((dateKey) => historyByDate.get(dateKey)!)
     .at(-1);
-  if (!completionDateKey) {
+  if (!completionEntry) {
+    return null;
+  }
+
+  const canonicalOccurrenceDueOn = completionEntry.occurrence_due_on ?? completionEntry.entry_date;
+  const currentCursor = task.active_occurrence_due_on ?? task.due_on;
+  const occurrenceAlreadyResolved = Boolean(completionEntry.occurrence_key) && history.some((entry) => (
+    entry.id !== completionEntry.id
+    && entry.occurrence_key === completionEntry.occurrence_key
+    && isResolvingRecurringHistoryStatus(entry.status)
+  ));
+  // Calendar edits may be backdated. A successful edit may amend historical
+  // facts, but it must never re-finalize a canonical occurrence that the live
+  // recurrence cursor has already passed.
+  if (occurrenceAlreadyResolved || (currentCursor && canonicalOccurrenceDueOn < currentCursor)) {
     return null;
   }
 
   const calculateNextDueDate = options.calcNextDueDateFromDate ?? calcNextDueDateFromDate;
-  const nextDueDate = calculateNextDueDate(task, completionDateKey);
-  if (!nextDueDate) {
+  const nextDueDate = calculateNextDueDate(task, canonicalOccurrenceDueOn);
+  if (!nextDueDate || (currentCursor && nextDueDate <= currentCursor)) {
     return null;
   }
 

@@ -1,11 +1,18 @@
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
-import type { TaskEnergy, TaskStatus } from "@/lib/database.types";
+import type { TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 import { normalizeListSortBySurface, type ListSortBySurface } from "@/lib/task-list-sort";
 
 export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "grid";
 export type TasksSurface = "tasks" | "paths" | "report" | "on_time" | "brainstorm" | "completed_milestones";
 export type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
+export type TaskTableTextFilterColumnId = "title" | "lists" | "tags" | "link" | "notes";
+export type TaskTableColumnFilters = {
+  priority: TaskPriorityLevelOption[];
+  repeat: TaskRepeatFrequency[];
+  text: Partial<Record<TaskTableTextFilterColumnId, string>>;
+};
 export type AppPage =
   | "Home"
   | "Tasks"
@@ -25,12 +32,14 @@ export type PersistedTaskEditorUiState = {
 };
 export type TaskUiState = {
   duplicateTitleMode: boolean;
+  includeStepsByView: Record<TaskViewMode, boolean>;
   matchAny: boolean;
   listSortBySurface: ListSortBySurface;
   quickFilters: TaskQuickFilter[];
   search: string;
   selectedBucket: string;
   statusFilters: TaskStatus[];
+  tableColumnFilters: TaskTableColumnFilters;
   tasksSurface: TasksSurface;
   uiStateVersion: number;
   view: TaskViewMode;
@@ -62,7 +71,7 @@ export const TASK_EDITOR_UI_STORAGE_KEY = "adhdice-task-editor-ui";
 export const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
 export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
-export const TASK_UI_SCHEMA_VERSION = 9;
+export const TASK_UI_SCHEMA_VERSION = 10;
 export const DEFAULT_TASK_WORKSPACE_TAB_ID = "workspace-1";
 export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
@@ -94,12 +103,14 @@ export const DEFAULT_VISIBLE_COLUMNS_BY_VIEW: Record<TaskViewMode, AgentPlanColu
 };
 export const DEFAULT_TASK_UI_STATE: TaskUiState = {
   duplicateTitleMode: false,
+  includeStepsByView: { table: false, list: false, cards: false, matrix: false, grid: false },
   matchAny: true,
   listSortBySurface: {},
   quickFilters: [],
   search: "",
   selectedBucket: "today",
   statusFilters: [],
+  tableColumnFilters: { priority: [], repeat: [], text: {} },
   tasksSurface: "tasks",
   uiStateVersion: TASK_UI_SCHEMA_VERSION,
   view: "table",
@@ -223,9 +234,20 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     ...DEFAULT_TASK_UI_STATE,
     ...state,
     duplicateTitleMode: state.duplicateTitleMode === true,
+    includeStepsByView: VALID_TASK_VIEWS.reduce<Record<TaskViewMode, boolean>>((result, view) => {
+      result[view] = state.includeStepsByView?.[view] === true;
+      return result;
+    }, { table: false, list: false, cards: false, matrix: false, grid: false }),
     listSortBySurface: normalizeListSortBySurface(state.listSortBySurface),
     selectedBucket: nextBucket,
     statusFilters: Array.isArray(state.statusFilters) ? state.statusFilters : [],
+    tableColumnFilters: {
+      priority: Array.isArray(state.tableColumnFilters?.priority) ? state.tableColumnFilters.priority : [],
+      repeat: Array.isArray(state.tableColumnFilters?.repeat) ? state.tableColumnFilters.repeat : [],
+      text: state.tableColumnFilters?.text && typeof state.tableColumnFilters.text === "object"
+        ? state.tableColumnFilters.text
+        : {},
+    },
     tasksSurface: state.tasksSurface === "paths" || state.tasksSurface === "report" || state.tasksSurface === "on_time" || state.tasksSurface === "brainstorm" || state.tasksSurface === "completed_milestones"
       ? state.tasksSurface
       : "tasks",

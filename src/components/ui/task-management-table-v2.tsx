@@ -32,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import type { TaskActualTimeEntry, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import { isTaskEditorChildRouteSettled, resolveTaskEditorFocusPhase } from "@/lib/task-editor-focus-request";
@@ -74,6 +75,7 @@ import {
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS as VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
   ScrollUpButton,
+  TaskHierarchySearchChip,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { mergeMeasuredColumnWidths, normalizeMeasuredColumnWidth } from "@/lib/task-table-measurements";
@@ -1036,8 +1038,17 @@ type TaskManagementTableV2Props = {
   highlightedTaskIds?: string[];
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
+  searchMatchedChildTaskIds?: string[];
   statusMatchedChildTaskIds?: string[];
   statusMatchedStepParentTaskIds?: string[];
+  statusFilterActive?: boolean;
+  hierarchyScopeKey?: string;
+  columnFilters?: TaskTableColumnFilters;
+  energyColumnFilters?: TaskEnergy[];
+  statusColumnFilters?: TaskStatus[];
+  onColumnFiltersChange?: (filters: TaskTableColumnFilters) => void;
+  onEnergyColumnFiltersChange?: (filters: TaskEnergy[]) => void;
+  onStatusColumnFiltersChange?: (filters: TaskStatus[]) => void;
   className?: string;
   currentListLabel?: string | null;
   enableInspector?: boolean;
@@ -2245,8 +2256,17 @@ export function TaskManagementTableV2({
   highlightedTaskIds = [],
   onVisibleSearchMatchIdsChange,
   searchMatchedStepParentTaskIds = [],
+  searchMatchedChildTaskIds = [],
   statusMatchedChildTaskIds = [],
   statusMatchedStepParentTaskIds = [],
+  statusFilterActive = false,
+  hierarchyScopeKey = "",
+  columnFilters,
+  energyColumnFilters,
+  statusColumnFilters,
+  onColumnFiltersChange,
+  onEnergyColumnFiltersChange,
+  onStatusColumnFiltersChange,
   className = "",
   currentListLabel = null,
   enableInspector = true,
@@ -2375,6 +2395,7 @@ export function TaskManagementTableV2({
   const [expandedSubtasksByTaskId, setExpandedSubtasksByTaskId] = useState<Record<string, boolean>>({});
   const [expandedStepsByTaskId, setExpandedStepsByTaskId] = useState<Record<string, boolean>>({});
   const [collapsedChildTaskIds, setCollapsedChildTaskIds] = useState<Record<string, boolean>>({});
+  const [showAllSearchStepsByTaskId, setShowAllSearchStepsByTaskId] = useState<Record<string, boolean>>({});
   const [childTaskDragState, setChildTaskDragState] = useState<ChildTaskDragState | null>(null);
   const [childTaskDropTarget, setChildTaskDropTarget] = useState<ChildTaskDropTarget | null>(null);
   const childTaskDragStateRef = useRef<ChildTaskDragState | null>(null);
@@ -2391,8 +2412,8 @@ export function TaskManagementTableV2({
   const [pendingCustomCadenceTaskId, setPendingCustomCadenceTaskId] = useState<string | null>(null);
   const [tableViewportMetrics, setTableViewportMetrics] = useState({ clientWidth: 0, scrollLeft: 0 });
   const [sortState, setSortState] = useState<{ columnId: SortColumnId; optionId: SortOptionId } | null>(() => getInitialSortState(persistedLayoutPreferences));
-  const [textFilters, setTextFilters] = useState<Partial<Record<TextFilterColumnId, string>>>({});
-  const [structuredFilters, setStructuredFilters] = useState<StructuredFilters>(DEFAULT_STRUCTURED_FILTERS);
+  const [localTextFilters, setTextFilters] = useState<Partial<Record<TextFilterColumnId, string>>>({});
+  const [localStructuredFilters, setStructuredFilters] = useState<StructuredFilters>(DEFAULT_STRUCTURED_FILTERS);
   const [columnWidths, setColumnWidths] = useState<Record<TaskManagementTableColumnId, number>>(() => getInitialColumnWidths());
   const [requiredColumnWidths, setRequiredColumnWidths] = useState<Record<TaskManagementTableColumnId, number>>(DEFAULT_COLUMN_WIDTHS);
   const [columnOrder, setColumnOrder] = useState<TaskManagementTableColumnId[]>(() => getInitialColumnOrder(persistedLayoutPreferences));
@@ -2400,6 +2421,15 @@ export function TaskManagementTableV2({
   const [statusDisplayMode, setStatusDisplayMode] = useState<"chip" | "circle">(() => getInitialStatusDisplayMode());
   const [isStatusRailColumnExpanded, setIsStatusRailColumnExpanded] = useState(false);
   const isApplyingPersistedLayoutRef = useRef(false);
+
+  const textFilters = columnFilters?.text ?? localTextFilters;
+  const structuredFilters = useMemo<StructuredFilters>(() => ({
+    energy: energyColumnFilters ?? localStructuredFilters.energy,
+    priority: columnFilters?.priority ?? localStructuredFilters.priority,
+    repeat: (columnFilters?.repeat as TaskRepeat[] | undefined) ?? localStructuredFilters.repeat,
+    status: statusColumnFilters ?? localStructuredFilters.status,
+  }), [columnFilters, energyColumnFilters, localStructuredFilters, statusColumnFilters]);
+  const getShowAllSearchStepsKey = (taskId: string) => `${hierarchyScopeKey}:${taskId}`;
 
   useEffect(() => {
     if (tableStepDraftParentId) {
@@ -2594,7 +2624,10 @@ export function TaskManagementTableV2({
   );
   const displayedTasks = useMemo(() => {
     const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
-    const filtered = tasks.filter((task) =>
+    const canonicalFiltersControlled = Boolean(
+      onColumnFiltersChange || onEnergyColumnFiltersChange || onStatusColumnFiltersChange,
+    );
+    const filtered = canonicalFiltersControlled ? tasks : tasks.filter((task) =>
       Object.entries(textFilters).every(([columnId, query]) => {
         const normalizedQuery = query?.trim().toLowerCase();
         if (!normalizedQuery) {
@@ -2625,7 +2658,7 @@ export function TaskManagementTableV2({
     }
 
     return nextDisplayedTasks;
-  }, [activeTaskTimerIds, liveActualSecondsByTaskId, sortState, structuredFilters, tasks, textFilters]);
+  }, [activeTaskTimerIds, liveActualSecondsByTaskId, onColumnFiltersChange, onEnergyColumnFiltersChange, onStatusColumnFiltersChange, sortState, structuredFilters, tasks, textFilters]);
   const cancelTableScrollTopHold = useCallback(() => {
     if (tableScrollTopHoldFrameRef.current !== null) {
       window.cancelAnimationFrame(tableScrollTopHoldFrameRef.current);
@@ -2697,6 +2730,10 @@ export function TaskManagementTableV2({
     () => new Set(searchMatchedStepParentTaskIds),
     [searchMatchedStepParentTaskIds],
   );
+  const searchMatchedChildTaskIdSet = useMemo(
+    () => new Set(searchMatchedChildTaskIds),
+    [searchMatchedChildTaskIds],
+  );
   const statusMatchedChildTaskIdSet = useMemo(
     () => new Set(statusMatchedChildTaskIds),
     [statusMatchedChildTaskIds],
@@ -2705,6 +2742,12 @@ export function TaskManagementTableV2({
     () => new Set(statusMatchedStepParentTaskIds),
     [statusMatchedStepParentTaskIds],
   );
+  const activeHierarchyParentTaskIdSet = statusFilterActive
+    ? statusMatchedStepParentTaskIdSet
+    : searchMatchedStepParentTaskIdSet;
+  const activeHierarchyChildTaskIdSet = statusFilterActive
+    ? statusMatchedChildTaskIdSet
+    : searchMatchedChildTaskIdSet;
   const highlightedTaskIdSet = useMemo(
     () => new Set(highlightedTaskIds),
     [highlightedTaskIds],
@@ -2726,14 +2769,14 @@ export function TaskManagementTableV2({
 
       const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
       const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || searchMatchedStepParentTaskIdSet.has(task.id) || statusMatchedStepParentTaskIdSet.has(task.id);
+      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || activeHierarchyParentTaskIdSet.has(task.id);
       if (hasStepPreview && stepsExpanded) {
-        const statusFilteredItems = statusMatchedStepParentTaskIdSet.has(task.id)
-          ? filterChildTaskPreviewItemsToMatchingHierarchy(stepPreviewGroup?.items ?? [], statusMatchedChildTaskIdSet)
+        const statusFilteredItems = activeHierarchyParentTaskIdSet.has(task.id)
+          ? filterChildTaskPreviewItemsToMatchingHierarchy(stepPreviewGroup?.items ?? [], activeHierarchyChildTaskIdSet)
           : stepPreviewGroup?.items ?? [];
         const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(
           statusFilteredItems,
-          statusMatchedStepParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
+          activeHierarchyParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
         );
         for (const item of childTaskPreviewVisibility.visibleItems) {
           if (highlightedTaskIdSet.has(item.id)) {
@@ -2757,6 +2800,8 @@ export function TaskManagementTableV2({
 
     return orderedMatches;
   }, [
+    activeHierarchyChildTaskIdSet,
+    activeHierarchyParentTaskIdSet,
     childTaskPreviewByParentTaskId,
     collapsedChildTaskIdSet,
     effectiveDisplayedTasks,
@@ -2764,9 +2809,6 @@ export function TaskManagementTableV2({
     expandedSubtasksByTaskId,
     hiddenSubtaskIds,
     highlightedTaskIdSet,
-    searchMatchedStepParentTaskIdSet,
-    statusMatchedChildTaskIdSet,
-    statusMatchedStepParentTaskIdSet,
   ]);
   const lastReportedVisibleSearchMatchIdsRef = useRef<string[]>([]);
   useLayoutEffect(() => {
@@ -2787,21 +2829,21 @@ export function TaskManagementTableV2({
   const visibleTaskIds = useMemo(
     () => effectiveDisplayedTasks.flatMap((task) => {
       const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
-      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || searchMatchedStepParentTaskIdSet.has(task.id) || statusMatchedStepParentTaskIdSet.has(task.id);
+      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || activeHierarchyParentTaskIdSet.has(task.id);
       if (!stepPreviewGroup || !stepsExpanded) {
         return [task.id];
       }
 
-      const statusFilteredItems = statusMatchedStepParentTaskIdSet.has(task.id)
-        ? filterChildTaskPreviewItemsToMatchingHierarchy(stepPreviewGroup.items, statusMatchedChildTaskIdSet)
+      const statusFilteredItems = activeHierarchyParentTaskIdSet.has(task.id)
+        ? filterChildTaskPreviewItemsToMatchingHierarchy(stepPreviewGroup.items, activeHierarchyChildTaskIdSet)
         : stepPreviewGroup.items;
       const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(
         statusFilteredItems,
-        statusMatchedStepParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
+        activeHierarchyParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
       );
       return [task.id, ...childTaskPreviewVisibility.visibleItems.map((item) => item.id)];
     }),
-    [childTaskPreviewByParentTaskId, collapsedChildTaskIdSet, effectiveDisplayedTasks, expandedStepsByTaskId, searchMatchedStepParentTaskIdSet, statusMatchedChildTaskIdSet, statusMatchedStepParentTaskIdSet],
+    [activeHierarchyChildTaskIdSet, activeHierarchyParentTaskIdSet, childTaskPreviewByParentTaskId, collapsedChildTaskIdSet, effectiveDisplayedTasks, expandedStepsByTaskId],
   );
   const visibleTaskIdSet = useMemo(
     () => new Set(visibleTaskIds),
@@ -4713,22 +4755,29 @@ export function TaskManagementTableV2({
   }
 
   function toggleStructuredFilter<TValue extends string>(columnId: StructuredFilterColumnId, value: TValue) {
-    setStructuredFilters((current) => {
-      const existing = current[columnId] as TValue[];
-      const nextValues = existing.includes(value)
-        ? existing.filter((entry) => entry !== value)
-        : [...existing, value];
-
-      return {
-        ...current,
-        [columnId]: nextValues,
-      };
-    });
+    const existing = structuredFilters[columnId] as TValue[];
+    const nextValues = existing.includes(value)
+      ? existing.filter((entry) => entry !== value)
+      : [...existing, value];
+    const next = { ...structuredFilters, [columnId]: nextValues } as StructuredFilters;
+    setStructuredFilters(next);
+    if (columnId === "status") onStatusColumnFiltersChange?.(next.status);
+    if (columnId === "energy") onEnergyColumnFiltersChange?.(next.energy);
+    if (columnId === "priority" || columnId === "repeat") {
+      onColumnFiltersChange?.({
+        priority: next.priority,
+        repeat: next.repeat,
+        text: textFilters,
+      });
+    }
   }
 
   function clearAllFilters() {
     setTextFilters({});
     setStructuredFilters(DEFAULT_STRUCTURED_FILTERS);
+    onColumnFiltersChange?.({ priority: [], repeat: [], text: {} });
+    onEnergyColumnFiltersChange?.([]);
+    onStatusColumnFiltersChange?.([]);
   }
 
   function openInspector(taskId: string, mode: OverlayMode = "full", sourceElement?: HTMLElement | null, nextQuickEditTargetTaskIds: string[] | null = null) {
@@ -5893,7 +5942,16 @@ export function TaskManagementTableV2({
           <div className="mb-2 space-y-2 px-1">
             <input
               className={`${CONTROL_FONT_CLASS} ${UNIFIED_TABLE_TEXT_CLASS} w-full rounded-[0.9rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:border-white/10 dark:bg-white/[0.05] dark:text-white dark:placeholder:text-white/35`}
-              onChange={(event) => setTextFilters((current) => ({ ...current, [column.id]: event.target.value }))}
+              onChange={(event) => {
+                const value = event.target.value;
+                const next = { ...textFilters, [column.id]: value };
+                setTextFilters(next);
+                onColumnFiltersChange?.({
+                  priority: structuredFilters.priority,
+                  repeat: structuredFilters.repeat,
+                  text: next,
+                });
+              }}
               placeholder={column.filterPlaceholder}
               type="text"
               value={textFilters[column.id] ?? ""}
@@ -6194,8 +6252,7 @@ export function TaskManagementTableV2({
       const hasSourceSteps = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds).length > 0;
       if (!hasStepPreview && !hasSourceSteps) return [];
       const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false)
-        || searchMatchedStepParentTaskIdSet.has(task.id)
-        || statusMatchedStepParentTaskIdSet.has(task.id);
+        || activeHierarchyParentTaskIdSet.has(task.id);
       return [{
         expanded: hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false),
         taskId: task.id,
@@ -6442,10 +6499,13 @@ export function TaskManagementTableV2({
       const hasSubtasks = visibleSubtasks.length > 0;
       const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
       const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || searchMatchedStepParentTaskIdSet.has(task.id) || statusMatchedStepParentTaskIdSet.has(task.id);
+      const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || activeHierarchyParentTaskIdSet.has(task.id);
       const subtasksExpanded = expandedSubtasksByTaskId[task.id] ?? false;
       const hasUnifiedSteps = hasStepPreview || hasSubtasks;
       const unifiedStepsExpanded = hasStepPreview ? stepsExpanded : subtasksExpanded;
+      const activeHierarchyParentMatch = statusFilterActive
+        ? statusMatchedStepParentTaskIdSet.has(task.id)
+        : searchMatchedStepParentTaskIdSet.has(task.id);
       const hasSecondaryContent = hasDescription || hasStepPreview || hasSubtasks;
       const isRenamingTitle = editingTaskTitleId === task.id;
       const titleDraft = titleDraftsRef.current[task.id] ?? task.title;
@@ -6665,6 +6725,16 @@ export function TaskManagementTableV2({
                     }}
                     onToggleAll={toggleAllRenderedTaskHierarchies}
                   />
+                  {activeHierarchyParentMatch ? (
+                    <TaskHierarchySearchChip
+                      onClick={() => {
+                        const key = getShowAllSearchStepsKey(task.id);
+                        setShowAllSearchStepsByTaskId((current) => ({ ...current, [key]: !current[key] }));
+                      }}
+                    >
+                      {showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] ? "Matching Steps" : "Show all Steps"}
+                    </TaskHierarchySearchChip>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -7770,12 +7840,17 @@ export function TaskManagementTableV2({
   };
 
   const renderChildTaskMiniRows = (task: PrototypeTaskRow, group: ChildTaskPreviewGroup | undefined) => {
-    const statusFilteredItems = statusMatchedStepParentTaskIdSet.has(task.id)
-      ? filterChildTaskPreviewItemsToMatchingHierarchy(group?.items ?? [], statusMatchedChildTaskIdSet)
+    const activeHierarchyParentMatch = statusFilterActive
+      ? statusMatchedStepParentTaskIdSet.has(task.id)
+      : searchMatchedStepParentTaskIdSet.has(task.id);
+    const childFilterIsActive = activeHierarchyParentMatch && !showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)];
+    const matchedChildTaskIds = statusFilterActive ? statusMatchedChildTaskIdSet : searchMatchedChildTaskIdSet;
+    const statusFilteredItems = childFilterIsActive
+      ? filterChildTaskPreviewItemsToMatchingHierarchy(group?.items ?? [], matchedChildTaskIds)
       : group?.items ?? [];
     const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(
       statusFilteredItems,
-      statusMatchedStepParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
+      childFilterIsActive ? new Set<string>() : collapsedChildTaskIdSet,
     );
     const visibleItems = childTaskPreviewVisibility.visibleItems;
     const canOpenStepActions = allowInlineInspector || Boolean(onOpenChildTask);
@@ -8261,15 +8336,20 @@ export function TaskManagementTableV2({
               const hasSourceStepRows = visibleSubtasks.length > 0;
               const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
               const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
-              const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || searchMatchedStepParentTaskIdSet.has(task.id) || statusMatchedStepParentTaskIdSet.has(task.id);
+              const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || activeHierarchyParentTaskIdSet.has(task.id);
               const hasTableStepDraft = tableStepDraftParentId === task.id;
               const sourceStepsExpanded = hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false);
-              const statusFilteredStepPreviewItems = statusMatchedStepParentTaskIdSet.has(task.id)
-                ? filterChildTaskPreviewItemsToMatchingHierarchy(stepPreviewGroup?.items ?? [], statusMatchedChildTaskIdSet)
+              const activeHierarchyParentMatch = statusFilterActive
+                ? statusMatchedStepParentTaskIdSet.has(task.id)
+                : searchMatchedStepParentTaskIdSet.has(task.id);
+              const childFilterIsActive = activeHierarchyParentMatch && !showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)];
+              const matchedChildTaskIds = statusFilterActive ? statusMatchedChildTaskIdSet : searchMatchedChildTaskIdSet;
+              const statusFilteredStepPreviewItems = childFilterIsActive
+                ? filterChildTaskPreviewItemsToMatchingHierarchy(stepPreviewGroup?.items ?? [], matchedChildTaskIds)
                 : stepPreviewGroup?.items ?? [];
               const visibleStepPreviewItems = buildChildTaskPreviewVisibility(
                 statusFilteredStepPreviewItems,
-                statusMatchedStepParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
+                childFilterIsActive ? new Set<string>() : collapsedChildTaskIdSet,
               ).visibleItems;
               const hasRenderedStepPreviewRows = Boolean(
                 hasTableStepDraft

@@ -140,10 +140,35 @@ test("rollover SQL anchors unresolved regular recurrences and preserves In Progr
 test("explicit successful handling still advances recurrence through finalization", () => {
   const source = readFileSync("src/hooks/useTaskRewardController.ts", "utf8");
   const finalization = source.slice(source.indexOf("async function finalizeRecurringTasks"), source.indexOf("const updatedTasks", source.indexOf("async function finalizeRecurringTasks")));
-  assert.match(finalization, /const nextDue = calcNextDueDateFromDate\(task, currentDayKey\)/);
+  assert.match(finalization, /task\.active_occurrence_due_on \?\? task\.due_on \?\? currentDayKey/);
   assert.match(finalization, /\{ completed_at: null, due_on: nextDue, status: nextStatus \}/);
   assert.equal(calcNextDueDateFromDate(task({ status: "done" }), "2026-07-12"), "2026-07-13");
   assert.equal(calcNextDueDateFromDate(task({ status: "did_my_best" }), "2026-07-12"), "2026-07-13");
+});
+
+test("weekly early completion advances from the scheduled occurrence, not the action date", () => {
+  const sundayOnly = task({ due_on: "2026-07-26", repeat_days_of_week: [0], repeat_frequency: "weekly", status: "done" });
+  const mondayWednesdayFriday = task({ due_on: "2026-07-20", repeat_days_of_week: [1, 3, 5], repeat_frequency: "weekly", status: "done" });
+
+  assert.equal(calcNextDueDateFromDate(sundayOnly, sundayOnly.due_on!), "2026-08-02");
+  assert.equal(calcNextDueDateFromDate(mondayWednesdayFriday, mondayWednesdayFriday.due_on!), "2026-07-22");
+  assert.equal(calcNextDueDateFromDate(mondayWednesdayFriday, "2026-07-22"), "2026-07-24");
+});
+
+test("rollover resolves successful canonical occurrences without action-date or duplicate-Missed logic", () => {
+  const sql = readFileSync("supabase/patch_daily_until_complete_rollover_rpc.sql", "utf8");
+  const canonicalResolution = sql.slice(
+    sql.indexOf("-- A success may be recorded before its scheduled weekly occurrence."),
+    sql.indexOf("if v_task.status not in ('pending'", sql.indexOf("-- A success may be recorded before its scheduled weekly occurrence.")),
+  );
+
+  assert.match(canonicalResolution, /history\.status in \('done', 'did_my_best'\)/);
+  assert.match(canonicalResolution, /history\.occurrence_key = 'occurrence:' \|\| v_task\.due_on::text/);
+  assert.match(canonicalResolution, /history\.occurrence_due_on = v_task\.due_on/);
+  assert.doesNotMatch(canonicalResolution, /history\.entry_date/);
+  assert.match(canonicalResolution, /v_task\.due_on\s+\);/);
+  assert.match(canonicalResolution, /due_on = v_due_on/);
+  assert.doesNotMatch(canonicalResolution, /insert into public\.adhdice_task_history/);
 });
 
 test("history saves build the merged occurrence snapshot before syncing the live task", () => {

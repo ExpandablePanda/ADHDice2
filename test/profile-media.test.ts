@@ -89,6 +89,10 @@ function createMediaClient(
   } as unknown as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
 }
 
+function resetProfileMediaRequestState() {
+  delete (globalThis as typeof globalThis & { __adhdiceProfileMediaRequestState?: unknown }).__adhdiceProfileMediaRequestState;
+}
+
 test("workspace profile columns exclude large media while retaining required settings and economy fields", () => {
   assert.equal(WORKSPACE_PROFILE_COLUMNS.includes("avatar_src"), false);
   assert.equal(WORKSPACE_PROFILE_COLUMNS.includes("logo_src"), false);
@@ -121,6 +125,68 @@ test("profile media requests deduplicate concurrently and cache the completed se
   await loadProfileMedia(client, userId);
   assert.equal(requestCount, 1);
   assert.equal(browser.sessionStorage.getItem(`${PROFILE_MEDIA_SESSION_KEY_PREFIX}:${userId}`), "loaded");
+  browser.restore();
+});
+
+test("profile media reload restores the matching user's session cache without another query", async () => {
+  const browser = installProfileMediaWindow();
+  const userId = "reload-media-user";
+  setActiveProfileUserId(userId);
+  let requestCount = 0;
+  const client = createMediaClient(async () => {
+    requestCount += 1;
+    return { avatar_src: "data:image/png;base64,reloaded", logo_src: "https://example.test/reloaded-logo.png" };
+  }, []);
+
+  await loadProfileMedia(client, userId);
+  setActiveProfileUserId(null);
+  resetProfileMediaRequestState();
+  setActiveProfileUserId(userId);
+
+  const profile = await loadProfileMedia(client, userId);
+  assert.equal(requestCount, 1);
+  assert.equal(profile.avatarSrc, "data:image/png;base64,reloaded");
+  assert.equal(profile.logoSrc, "https://example.test/reloaded-logo.png");
+  browser.restore();
+});
+
+test("a legacy session marker without cached media remains reloadable", async () => {
+  const browser = installProfileMediaWindow();
+  const userId = "legacy-session-marker-user";
+  setActiveProfileUserId(userId);
+  browser.sessionStorage.setItem(`${PROFILE_MEDIA_SESSION_KEY_PREFIX}:${userId}`, "loaded");
+  let requestCount = 0;
+  const client = createMediaClient(async () => {
+    requestCount += 1;
+    return { avatar_src: "data:image/png;base64,fresh", logo_src: null };
+  }, []);
+
+  const profile = await loadProfileMedia(client, userId);
+  assert.equal(requestCount, 1);
+  assert.equal(profile.avatarSrc, "data:image/png;base64,fresh");
+  browser.restore();
+});
+
+test("one user's session media cache cannot suppress another user's media load", async () => {
+  const browser = installProfileMediaWindow();
+  const accountA = "session-cache-account-a";
+  const accountB = "session-cache-account-b";
+  setActiveProfileUserId(accountA);
+  const clientA = createMediaClient(async () => ({ avatar_src: "data:image/png;base64,a", logo_src: null }), []);
+  await loadProfileMedia(clientA, accountA);
+
+  setActiveProfileUserId(null);
+  resetProfileMediaRequestState();
+  setActiveProfileUserId(accountB);
+  let accountBRequestCount = 0;
+  const clientB = createMediaClient(async () => {
+    accountBRequestCount += 1;
+    return { avatar_src: "data:image/png;base64,b", logo_src: null };
+  }, []);
+
+  const profile = await loadProfileMedia(clientB, accountB);
+  assert.equal(accountBRequestCount, 1);
+  assert.equal(profile.avatarSrc, "data:image/png;base64,b");
   browser.restore();
 });
 

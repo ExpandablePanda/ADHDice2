@@ -397,6 +397,61 @@ begin
       continue;
     end if;
 
+    -- A success may be recorded before its scheduled weekly occurrence. Its
+    -- canonical identity, rather than the action entry_date, resolves that
+    -- occurrence and lets rollover safely finish an interrupted finalization.
+    if v_task.repeat_frequency not in ('none', 'daily_until_complete')
+      and v_task.due_on is not null
+      and v_task.status not in ('archived', 'trashed', 'complete')
+      and exists (
+        select 1
+          from public.adhdice_task_history as history
+          where history.user_id = p_user_id
+            and history.task_id = v_task.id
+            and history.status in ('done', 'did_my_best')
+            and history.was_completed
+            and (
+              history.occurrence_key = 'occurrence:' || v_task.due_on::text
+              or history.occurrence_due_on = v_task.due_on
+            )
+      )
+    then
+      v_due_on := public.adhdice_task_next_due_date(
+        v_task.repeat_frequency,
+        v_task.repeat_interval,
+        v_task.repeat_days_of_week,
+        v_task.repeat_day_of_month,
+        v_task.due_on
+      );
+      v_next_status := public.adhdice_resolve_recurring_due_status(
+        v_due_on,
+        v_task.due_time,
+        v_effective_date,
+        v_local_now_time
+      );
+
+      update public.adhdice_clean_tasks
+        set
+          due_on = v_due_on,
+          status = v_next_status,
+          completed_at = null,
+          active_status_logical_date = null,
+          active_occurrence_due_on = null
+        where id = v_task.id
+          and user_id = p_user_id
+          and (
+            due_on is distinct from v_due_on
+            or status is distinct from v_next_status
+            or completed_at is not null
+            or active_status_logical_date is not null
+            or active_occurrence_due_on is not null
+          );
+
+      get diagnostics v_row_count = row_count;
+      v_changed_task_count := v_changed_task_count + v_row_count;
+      continue;
+    end if;
+
     if v_task.status not in ('pending', 'in_progress', 'delayed', 'missed', 'upcoming', 'not_due') then
       continue;
     end if;

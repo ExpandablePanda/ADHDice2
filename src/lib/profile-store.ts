@@ -186,6 +186,10 @@ function getProfileMediaSessionKey(userId: string) {
   return `${PROFILE_MEDIA_SESSION_KEY_PREFIX}:${userId}`;
 }
 
+function getProfileMediaSessionCacheKey(userId: string) {
+  return `${getProfileMediaSessionKey(userId)}:cache`;
+}
+
 function logProfileMedia(message: string, userId: string) {
   if (process.env.NODE_ENV !== "production") {
     console.info(`[profile-media] ${message} userId=${userId}.`);
@@ -204,9 +208,41 @@ export function markProfileMediaCachedForSession(userId: string) {
   if (typeof window === "undefined" || activeProfileUserId !== userId) return;
   getProfileMediaRequestState().loadedUserIds.add(userId);
   try {
+    const profile = readStoredProfile();
+    window.sessionStorage.setItem(getProfileMediaSessionCacheKey(userId), JSON.stringify({
+      avatarSrc: profile.avatarSrc,
+      logoSrc: profile.logoSrc,
+    }));
     window.sessionStorage.setItem(getProfileMediaSessionKey(userId), "loaded");
   } catch {
     // Keep the in-memory request de-duplication if session storage is unavailable.
+  }
+}
+
+function restoreProfileMediaFromSessionCache(userId: string): UserProfile | null {
+  if (activeProfileUserId !== userId) return null;
+  try {
+    if (window.sessionStorage.getItem(getProfileMediaSessionKey(userId)) !== "loaded") return null;
+    const saved = window.sessionStorage.getItem(getProfileMediaSessionCacheKey(userId));
+    if (!saved) return null;
+    const media = JSON.parse(saved) as { avatarSrc?: unknown; logoSrc?: unknown };
+    if (
+      typeof media.avatarSrc !== "string"
+      || !isCompatibleProfileMediaSource(media.avatarSrc)
+      || (typeof media.logoSrc !== "string" && media.logoSrc !== null)
+      || !isCompatibleProfileMediaSource(media.logoSrc as string | null)
+    ) {
+      return null;
+    }
+    const profile = {
+      ...readStoredProfile(),
+      avatarSrc: media.avatarSrc,
+      logoSrc: normalizeLogoSrc(media.logoSrc) || DEFAULT_PROFILE.logoSrc,
+    };
+    saveProfile(profile, userId);
+    return profile;
+  } catch {
+    return null;
   }
 }
 
@@ -232,6 +268,12 @@ export async function loadProfileMedia(client: ProfileMediaClient, userId: strin
   if (requestState.loadedUserIds.has(userId)) {
     logProfileMedia("completed request reused from in-memory session cache", userId);
     return readStoredProfile();
+  }
+  const sessionCachedProfile = restoreProfileMediaFromSessionCache(userId);
+  if (sessionCachedProfile) {
+    requestState.loadedUserIds.add(userId);
+    logProfileMedia("completed request restored from browser session cache", userId);
+    return sessionCachedProfile;
   }
   const existingRequest = requestState.inFlightByUserId.get(userId);
   if (existingRequest) {

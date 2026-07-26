@@ -71,6 +71,28 @@ test("task ui state migration maps legacy list columns onto table view", () => {
   assert.equal(migrated.visibleColumnsByView.table.includes("streak"), false);
 });
 
+test("task ui state migration preserves shared Table filters and defaults legacy tabs empty", () => {
+  assert.deepEqual(migrateLegacyTaskUiState({}).tableColumnFilters, {
+    priority: [],
+    repeat: [],
+    text: {},
+  });
+
+  const migrated = migrateLegacyTaskUiState({
+    ...DEFAULT_TASK_UI_STATE,
+    tableColumnFilters: {
+      priority: ["5"],
+      repeat: ["weekly"],
+      text: { title: "Family" },
+    },
+  });
+  assert.deepEqual(migrated.tableColumnFilters, {
+    priority: ["5"],
+    repeat: ["weekly"],
+    text: { title: "Family" },
+  });
+});
+
 test("default task ui state includes streak only for new table layouts", () => {
   assert.equal(DEFAULT_TASK_UI_STATE.visibleColumnsByView.table.includes("streak"), true);
   assert.equal(DEFAULT_TASK_UI_STATE.visibleColumnsByView.list.includes("streak"), false);

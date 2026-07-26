@@ -1,17 +1,62 @@
 # Current State
 
-Last reviewed: 2026-07-22
+Last reviewed: 2026-07-25
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.3.44`.
-- Current release group: `7.3.x` Focus Bars live daily-goal graph.
+- Current working app version: `7.4.7`.
+- Current release group: `7.4.x` weekly occurrence-resolution reliability.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.4.7 Compact Collapsible Records Layout
+
+- Progress → Records now presents Global Task, Streak, Focus, and per-task Records in compact responsive cards: two columns on readable mobile widths, one on narrower screens, and up to six columns on desktop. Each card keeps its title, current value, achieved date, change from the previous valid Record, icon, and category visible; longer scope, period, and evidence details open in the Records detail overlay.
+- All five Records sections collapse independently. Their disclosure state persists in a dedicated user-scoped local preference (`adhdice-records-sections:<user-id>`) because the existing synced workspace UI state is Tasks-specific. Collapsing changes presentation only and leaves Records loading, calculation, ordering, history, and stored data untouched.
+
+## 7.4.6 Canonical Trash and search result correction
+
+- Trash membership is enforced before canonical search, filters, facets, counts, and hierarchy projection. Ordinary views exclude trashed entities and branches below trashed ancestors; Trash keeps only trashed entities plus uncounted structural ancestors.
+- Search distinguishes direct matches from descendants expanded by a directly matching parent Task. Include Steps controls only that expansion, status filtering uses each entity's own status, and structural ancestors never inflate facets.
+- Table and List reuse one white 15px hierarchy search chip, keeping Show all Steps display-only without increasing row or hierarchy-header height.
+
+## 7.4.5 Canonical task entity result projection
+
+- One entity-level projection now evaluates parent Tasks, Steps, and Substeps once, then derives list facets, status facets, selected-list/status results, visible root groups, matching descendant branches, and uncounted ancestor context from the same IDs.
+- Search overrides descendant exclusion without mutating the saved per-view Include Steps preference. Manual list membership inherits from the root; smart-list and filter facts remain entity-owned.
+- Table column filters are shared canonical filters that remain visible/removable outside Table View. Table and List share the same hierarchy branch projection and scope-keyed Show all Steps override, and Table renders the compact chip inline beside Steps and its chevron.
+
+## 7.4.4 Scoped search and status hierarchy correction
+
+- Search, non-status filters, list scope, and selected status now intersect on the same parent/child entity set.
+- Include Steps now controls both child status-facet participation and child status matching, while child search remains unconditional.
+- Table and List use the same compact shared Show all Steps chip treatment without adding Table row height.
+
+## 7.4.3 Include Steps counter facets and child search correction
+
+- Include Steps now affects scoped status counters only; child search stays enabled in Table and List.
+- Restored ordinary child hierarchy rows and compact per-parent search reveal controls.
+
+## 7.4.2 Include Steps and completed hierarchy discoverability
+
+- Added the per-view, per-workspace-tab Include Steps filter and child-match hierarchy context for Table and List.
+- Completed child rows remain parent-owned and discoverable through the canonical preview/editor path.
+
+## 7.4.1 History Calendar Canonical Occurrence Cursor Guard
+
+History Calendar success edits now retain an already-resolved canonical occurrence identity when one exists, and cannot move a recurring live cursor backward. Done and Did My Best history corrections for a resolved occurrence remain historical only; duplicate logical occurrences continue to collapse for Records, Achievements, rewards, and duration evidence. No SQL migration is required or applied.
+
+## 7.4.0 Weekly Early-Completion Occurrence Resolution
+
+Weekly completion now advances from the canonical scheduled occurrence rather than the action date. A Sunday occurrence completed earlier in its Monday-Sunday week keeps its `occurrence_key` / `occurrence_due_on`, advances past that Sunday, and cannot later receive a rollover Missed row. Rollover uses the same canonical identity for Done and Did My Best; separate scheduled weekdays remain separate occurrences. Apply the updated full `supabase/patch_daily_until_complete_rollover_rpc.sql` manually before relying on database rollover behavior. No migration was applied by this release.
+
+## 7.3.45 Profile Media Session Reload Cache
+- Successful profile-media hydration now keeps a best-effort, user-scoped avatar/logo snapshot in sessionStorage alongside the existing loaded marker. A normal reload restores that snapshot without a second media query; old or incomplete markers still reload from Supabase rather than treating missing media as hydrated.
+- The persistent localStorage profile cache remains media-free and quota-safe. Session cache storage failures leave the existing in-memory de-duplication and normal retry behavior intact.
 
 ## 7.3.44 Quota-Safe Profile Cache
 - The user-scoped localStorage profile cache now persists only non-media fields. Avatar and logo data URLs remain in the authenticated user's in-memory session snapshot, so cache quota failures cannot interrupt an otherwise successful Supabase profile save.

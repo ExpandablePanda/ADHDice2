@@ -325,7 +325,13 @@ export function useTaskRewardController({
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
 
-      const nextDue = calcNextDueDateFromDate(task, currentDayKey);
+      // Completion may happen before its scheduled occurrence (for example, a
+      // Sunday weekly task completed on Wednesday). Advance from the canonical
+      // occurrence, not the action day, so the same occurrence cannot remain due.
+      const nextDue = calcNextDueDateFromDate(
+        task,
+        task.active_occurrence_due_on ?? task.due_on ?? currentDayKey,
+      );
       if (!nextDue) {
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }

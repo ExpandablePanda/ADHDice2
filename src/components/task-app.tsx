@@ -217,7 +217,7 @@ import {
   calcNextDueDateFromDate,
   shouldReconcileOverdueTaskMisses,
 } from "@/lib/task-repeat";
-import { buildCanonicalActiveStatusCounts, computeTaskAppDerivedData, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
+import { computeTaskAppDerivedData, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
 import {
   buildCompleteHistoryPayload,
   canTaskBeMarkedComplete,
@@ -511,7 +511,7 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.3.44";
+const APP_VERSION = "7.4.7";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2361,16 +2361,23 @@ export function TaskApp() {
   const taskUiStateForDerivedData = useMemo(() => ({
     duplicateTitleMode: duplicateTitleModeActive,
     energyFilters: taskUiState.energyFilters,
+    includeStepsByView: taskUiState.includeStepsByView,
     matchAny: taskUiState.matchAny,
     quickFilters: taskUiState.quickFilters,
+    selectedBucket: taskUiState.selectedBucket,
     statusFilters: taskUiState.statusFilters,
+    tableColumnFilters: taskUiState.tableColumnFilters,
     view: taskUiState.view,
   }), [
     duplicateTitleModeActive,
     taskUiState.energyFilters,
+    taskUiState.includeStepsByView,
     taskUiState.matchAny,
     taskUiState.quickFilters,
+    taskUiState.selectedBucket,
     taskUiState.statusFilters,
+    taskUiState.tableColumnFilters,
+    taskUiState.view,
   ]);
   const bucketContext = useMemo(() => ({
     focusedTaskIds: focusedTaskIdSet,
@@ -2430,6 +2437,8 @@ export function TaskApp() {
     activeTasks,
     allTaskTags,
     childTaskPreviewByParentTaskId,
+    canonicalEntityProjection,
+    canonicalVisibleRootTasksSorted,
     collections: {
       filteredActiveTasks,
       filteredDoneTasks,
@@ -2446,9 +2455,6 @@ export function TaskApp() {
     duplicateTitleGroups,
     focusPlannerTasks,
     filteredTasksSorted,
-    statusCountScopeTasksSorted,
-    statusCountScopeArchiveTasksSorted,
-    statusCountScopeTrashTasksSorted,
     archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     listColumnPickerColumns,
@@ -2460,6 +2466,7 @@ export function TaskApp() {
     overdueTasks,
     planningCandidates,
     searchMatchedStepParentTaskIds,
+    searchMatchedChildTaskIds,
     statusMatchedChildTaskIds,
     statusMatchedStepParentTaskIds,
     selectedTaskForEditor,
@@ -2467,7 +2474,7 @@ export function TaskApp() {
     taskHierarchyDiagnostics,
     taskLinkedNotesByTaskId,
     taskListMembershipsByTaskId,
-    taskStatusCounts,
+    tableStatusCounts,
     todayTasks,
     todayQueueTaskCount,
     urgentTasks,
@@ -2499,74 +2506,14 @@ export function TaskApp() {
     todayTasks,
     urgentTasks,
   }, momentumView);
-  const selectedBucketTasks = useMemo(() => {
-    const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
-    let nextTasks: typeof filteredTasksSorted;
-    if (activePage !== "Tasks") {
-      nextTasks = [];
-    } else if (taskUiState.selectedBucket === "archive") {
-      nextTasks = archiveFilteredTasksSorted;
-    } else if (taskUiState.selectedBucket === "trash") {
-      nextTasks = trashFilteredTasksSorted;
-    } else if (taskUiState.selectedBucket === "all") {
-      nextTasks = filteredTasksSorted;
-    } else if (taskUiState.selectedBucket === "milestones") {
-      nextTasks = milestoneFilteredTasksSorted;
-    } else if (taskUiState.selectedBucket === "pinned") {
-      nextTasks = filteredTasksSorted.filter(isTaskPinned);
-    } else {
-      nextTasks = filteredTasksSorted.filter((task) =>
-        (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === taskUiState.selectedBucket),
-      );
-    }
-
-    if (process.env.NODE_ENV !== "production") {
-      logTaskListSwitchTiming(
-        `[tasks:list-switch] selectedBucketTasks filtered in ${Math.round(performance.now() - startedAt)}ms for ${nextTasks.length} tasks`,
-      );
-    }
-
-    return nextTasks;
-  }, [activePage, archiveFilteredTasksSorted, filteredTasksSorted, milestoneFilteredTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket, trashFilteredTasksSorted]);
-  const selectedTableStatusCountScopeTasks = useMemo(() => {
-    if (activePage !== "Tasks") return [];
-    if (taskUiState.selectedBucket === "all") return statusCountScopeTasksSorted;
-    if (taskUiState.selectedBucket === "pinned") return statusCountScopeTasksSorted.filter(isTaskPinned);
-    if (taskUiState.selectedBucket === "milestones") {
-      return statusCountScopeTasksSorted.filter((task) => (
-        milestoneData.milestoneTaskIds.has(task.id)
-      ));
-    }
-    if (taskUiState.selectedBucket === "archive") return statusCountScopeArchiveTasksSorted;
-    if (taskUiState.selectedBucket === "trash") return statusCountScopeTrashTasksSorted;
-    return statusCountScopeTasksSorted.filter((task) => (
-      (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === taskUiState.selectedBucket)
-    ));
-  }, [activePage, milestoneData.milestoneTaskIds, statusCountScopeArchiveTasksSorted, statusCountScopeTasksSorted, statusCountScopeTrashTasksSorted, taskListMembershipsByTaskId, taskUiState.selectedBucket]);
-  const tableStatusCounts = useMemo(
-    () => buildCanonicalActiveStatusCounts(
-      selectedTableStatusCountScopeTasks,
-      childTaskPreviewByParentTaskId,
-      taskHistoryByTaskId,
-      todayKey,
-    ),
-    [childTaskPreviewByParentTaskId, selectedTableStatusCountScopeTasks, taskHistoryByTaskId, todayKey],
-  );
+  const selectedBucketTasks = canonicalVisibleRootTasksSorted;
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
-  const visiblePinnedTaskCount = useMemo(
-    () => filteredTasksSorted.filter(isTaskPinned).length,
-    [filteredTasksSorted],
-  );
+  const visiblePinnedTaskCount = visibleListCounts.pinned ?? 0;
   const allOpenPinnedTaskCount = useMemo(
     () => tasks.filter((task) => isTaskPinned(task) && task.status !== "archived" && task.status !== "trashed").length,
     [tasks],
   );
-  const visibleRoutineTaskCount = useMemo(
-    () => filteredTasksSorted.filter((task) =>
-      (taskListMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"),
-    ).length,
-    [filteredTasksSorted, taskListMembershipsByTaskId],
-  );
+  const visibleRoutineTaskCount = visibleListCounts.routine ?? 0;
   const listVisibleColumns = taskUiState.visibleColumnsByView.table;
   const listSelectionResetKey = JSON.stringify({
     duplicateTitleMode: duplicateTitleModeActive,
@@ -4129,10 +4076,27 @@ export function TaskApp() {
       waitingCount={waitingTasks.length}
     />
   );
+  const clearTableColumnFilter = (dimension: "priority" | "repeat" | "title" | "lists" | "tags" | "link" | "notes") => {
+    setTaskUiState((prev) => {
+      if (dimension === "priority" || dimension === "repeat") {
+        return {
+          ...prev,
+          tableColumnFilters: { ...prev.tableColumnFilters, [dimension]: [] },
+        };
+      }
+      const nextTextFilters = { ...prev.tableColumnFilters.text };
+      delete nextTextFilters[dimension];
+      return {
+        ...prev,
+        tableColumnFilters: { ...prev.tableColumnFilters, text: nextTextFilters },
+      };
+    });
+  };
 
   const nonListFilterRowsNode = (
     <FilterRows
       duplicateTitleMode={duplicateTitleModeActive}
+      includeSteps={taskUiState.includeStepsByView[taskUiState.view]}
       hasActiveFilters={hasActiveTaskFilters(effectiveTaskUiState)}
       isOpen={isTaskFiltersOpen}
       matchAny={taskUiState.matchAny}
@@ -4144,6 +4108,7 @@ export function TaskApp() {
       onTogglePinnedFilter={togglePinnedFilter}
       onToggleRoutineFilter={toggleRoutineFilter}
       onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
+      onToggleIncludeSteps={() => setTaskUiState((prev) => ({ ...prev, includeStepsByView: { ...prev.includeStepsByView, [prev.view]: !prev.includeStepsByView[prev.view] } }))}
       onToggleEnergy={(energy) =>
         setTaskUiState((prev) => ({
           ...prev,
@@ -4162,9 +4127,11 @@ export function TaskApp() {
             : [...prev.statusFilters, status],
         }))
       }
-      statusCounts={taskUiState.view === "table" ? tableStatusCounts : taskStatusCounts}
+      statusCounts={tableStatusCounts}
       selectedStatuses={taskUiState.statusFilters}
       selectedEnergies={taskUiState.energyFilters}
+      tableColumnFilters={taskUiState.tableColumnFilters}
+      onClearTableColumnFilter={clearTableColumnFilter}
     />
   );
 
@@ -5214,6 +5181,7 @@ export function TaskApp() {
       <FilterRows
         compact
         duplicateTitleMode={duplicateTitleModeActive}
+        includeSteps={taskUiState.includeStepsByView[taskUiState.view]}
         hasActiveFilters={hasActiveTaskFilters(effectiveTaskUiState)}
         isOpen={isTaskFiltersOpen}
         matchAny={taskUiState.matchAny}
@@ -5225,6 +5193,7 @@ export function TaskApp() {
         onTogglePinnedFilter={togglePinnedFilter}
         onToggleRoutineFilter={toggleRoutineFilter}
         onToggleDuplicateTitleMode={toggleDuplicateTitleMode}
+        onToggleIncludeSteps={() => setTaskUiState((prev) => ({ ...prev, includeStepsByView: { ...prev.includeStepsByView, [prev.view]: !prev.includeStepsByView[prev.view] } }))}
         onToggleEnergy={(energy) =>
           setTaskUiState((prev) => ({
             ...prev,
@@ -5243,9 +5212,11 @@ export function TaskApp() {
               : [...prev.statusFilters, status],
           }))
         }
-        statusCounts={taskUiState.view === "table" ? tableStatusCounts : taskStatusCounts}
+        statusCounts={tableStatusCounts}
         selectedStatuses={taskUiState.statusFilters}
         selectedEnergies={taskUiState.energyFilters}
+        tableColumnFilters={taskUiState.tableColumnFilters}
+        onClearTableColumnFilter={clearTableColumnFilter}
         listSortPreference={taskUiState.view === "list" && !duplicateTitleModeActive ? activeListSortPreference : undefined}
         onListSortPreferenceChange={taskUiState.view === "list" && !duplicateTitleModeActive ? (preference) => setTaskUiState((current) => ({
           ...current,
@@ -5865,14 +5836,23 @@ export function TaskApp() {
                   allTagOptions: allTaskTags,
                   allTasks: tasks,
                   childTaskPreviewByParentTaskId,
+                  hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
+                  columnFilters: taskUiState.tableColumnFilters,
+                  energyColumnFilters: taskUiState.energyFilters,
+                  statusColumnFilters: taskUiState.statusFilters,
+                  onColumnFiltersChange: (tableColumnFilters) => setTaskUiState((prev) => ({ ...prev, tableColumnFilters })),
+                  onEnergyColumnFiltersChange: (energyFilters) => setTaskUiState((prev) => ({ ...prev, energyFilters })),
+                  onStatusColumnFiltersChange: (statusFilters) => setTaskUiState((prev) => ({ ...prev, statusFilters })),
                   childTaskCreationBlockedTaskIds,
                   highlightedActiveTaskId: activeHighlightedTaskId,
                   highlightedScrollToken: taskHighlightScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
                   onVisibleSearchMatchIdsChange: handleTableVisibleSearchMatchIdsChange,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
+                  searchMatchedChildTaskIds,
                   statusMatchedChildTaskIds,
                   statusMatchedStepParentTaskIds,
+                  statusFilterActive: true,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
@@ -6033,11 +6013,22 @@ export function TaskApp() {
                   allTagOptions: allTaskTags,
                   allTasks: tasks,
                   childTaskPreviewByParentTaskId,
+                  hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
+                  columnFilters: taskUiState.tableColumnFilters,
+                  energyColumnFilters: taskUiState.energyFilters,
+                  statusColumnFilters: taskUiState.statusFilters,
+                  onColumnFiltersChange: (tableColumnFilters) => setTaskUiState((prev) => ({ ...prev, tableColumnFilters })),
+                  onEnergyColumnFiltersChange: (energyFilters) => setTaskUiState((prev) => ({ ...prev, energyFilters })),
+                  onStatusColumnFiltersChange: (statusFilters) => setTaskUiState((prev) => ({ ...prev, statusFilters })),
                   childTaskCreationBlockedTaskIds,
                   highlightedActiveTaskId: activeHighlightedTaskId,
                   highlightedScrollToken: taskHighlightScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
+                  searchMatchedChildTaskIds,
+                  statusMatchedChildTaskIds,
+                  statusMatchedStepParentTaskIds,
+                  statusFilterActive: true,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
