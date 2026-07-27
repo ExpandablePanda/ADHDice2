@@ -724,30 +724,42 @@ export function useHealth(
       return false;
     }
 
-    const incomingIdentityKey = getHealthFoodIdentityKey(input);
+    let normalizedInput = input;
+    const incomingIdentityKey = getHealthFoodIdentityKey(normalizedInput);
     const duplicateFavorite = incomingIdentityKey
-      ? favorites.find((item) => item.id !== input.id && getHealthFoodIdentityKey(item) === incomingIdentityKey)
+      ? favorites.find((item) => item.id !== normalizedInput.id && getHealthFoodIdentityKey(item) === incomingIdentityKey)
       : null;
     if (duplicateFavorite) {
-      setMessage({ tone: "neutral", text: "That food is already in your library." });
-      return true;
+      if (!normalizedInput.is_favorite || duplicateFavorite.is_favorite) {
+        setMessage({ tone: "neutral", text: "That food is already in your library." });
+        return true;
+      }
+      normalizedInput = { ...normalizedInput, id: duplicateFavorite.id };
     }
+    const existingFood = normalizedInput.id
+      ? favorites.find((item) => item.id === normalizedInput.id)
+      : null;
+    normalizedInput = {
+      ...normalizedInput,
+      is_favorite: normalizedInput.is_favorite ?? existingFood?.is_favorite ?? false,
+    };
 
     const now = new Date().toISOString();
     const localRow: HealthFoodLibraryItem = {
-      attribution: input.attribution ?? null,
-      barcode: input.barcode ?? null,
-      brand_name: input.brand_name ?? null,
-      calories: input.calories,
-      carbs_g: input.carbs_g ?? null,
+      attribution: normalizedInput.attribution ?? null,
+      barcode: normalizedInput.barcode ?? null,
+      brand_name: normalizedInput.brand_name ?? null,
+      calories: normalizedInput.calories,
+      carbs_g: normalizedInput.carbs_g ?? null,
       created_at: now,
-      fat_g: input.fat_g ?? null,
-      food_name: input.food_name,
-      id: input.id ?? createLocalId("health-favorite"),
-      protein_g: input.protein_g ?? null,
-      provider: input.provider ?? "manual",
-      provider_item_id: input.provider_item_id ?? null,
-      serving_label: input.serving_label ?? null,
+      fat_g: normalizedInput.fat_g ?? null,
+      food_name: normalizedInput.food_name,
+      id: normalizedInput.id ?? createLocalId("health-food"),
+      is_favorite: normalizedInput.is_favorite,
+      protein_g: normalizedInput.protein_g ?? null,
+      provider: normalizedInput.provider ?? "manual",
+      provider_item_id: normalizedInput.provider_item_id ?? null,
+      serving_label: normalizedInput.serving_label ?? null,
       updated_at: now,
       user_id: userId,
     };
@@ -757,7 +769,7 @@ export function useHealth(
       const { data, error } = await client
         .from("adhdice_health_food_library")
         .upsert({
-          ...input,
+          ...normalizedInput,
           user_id: userId,
         })
         .select("*")
@@ -786,7 +798,10 @@ export function useHealth(
       waterEntries,
       weightEntries,
     }));
-    setMessage({ tone: "good", text: "Saved to favorites." });
+    setMessage({
+      tone: "good",
+      text: nextRow.is_favorite ? "Saved to favorites." : "Custom food saved.",
+    });
     return true;
   }
 

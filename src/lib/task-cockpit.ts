@@ -188,6 +188,13 @@ export function getTaskDisplayStatusWithHistory(
     return getTaskDisplayStatusForDate(task, todayDateKey);
   }
 
+  const todayHistoryStatus = (!task.due_on || task.due_on <= todayDateKey)
+    ? getLatestTaskHistoryEntryOnDate(history, todayDateKey)?.status
+    : null;
+  if (todayHistoryStatus && isTaskHistoryStatus(todayHistoryStatus)) {
+    return todayHistoryStatus;
+  }
+
   const currentOccurrenceDateKey = getTaskVisibleStatusOccurrenceDateKey(task, todayDateKey);
   if (!currentOccurrenceDateKey) {
     return getTaskDisplayStatusForDate(task, todayDateKey);

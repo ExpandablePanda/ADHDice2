@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, PendingFocusDailySurplus } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusDailyGoalAdjustment as DbFocusDailyGoalAdjustment, FocusSession as DbFocusSession } from "@/lib/database.types";
@@ -9,6 +10,7 @@ import {
   resolveFocusCategory,
   isUuid,
   normalizeCategoryTitle,
+  normalizeFocusCategoriesForPersistence,
   preferStoredOptionalValue,
   preferStoredValue,
   sanitizeFocusLabel,
@@ -69,13 +71,6 @@ function normalizeWeekdayTargetSeconds(value: unknown) {
     targets[key] = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
     return targets;
   }, {});
-}
-
-function createClientSideId(prefix: string) {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `${prefix}-${crypto.randomUUID()}`;
-  }
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
@@ -318,6 +313,10 @@ export function useFocus(
   const runtimeCreateSessionIdsRef = useRef(new Map<string, string>());
   const completingRuntimeIdsRef = useRef(new Set<string>());
   const migratedRuntimeUserRef = useRef<string | null>(null);
+  const runtimeChannelRef = useRef<RealtimeChannel | null>(null);
+  const runtimeChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
+  const counterChannelRef = useRef<RealtimeChannel | null>(null);
+  const counterChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
   const focusCounters = focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
   const focusCounterHistory = focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
 
@@ -377,6 +376,14 @@ export function useFocus(
       return next;
     });
   }, []);
+
+  const removeRealtimeChannel = useCallback(async (channel: RealtimeChannel) => {
+    try {
+      await client?.removeChannel(channel);
+    } catch {
+      // Ignore cleanup races when auth, Fast Refresh, or Strict Mode recreates channels quickly.
+    }
+  }, [client]);
 
   const hydrateFocusRuntimes = useCallback(async () => {
     if (!client || !userId) return;
@@ -466,35 +473,55 @@ export function useFocus(
       migratedRuntimeUserRef.current = null;
       return;
     }
-    void hydrateFocusRuntimes();
-    const channel = client
-      .channel(`focus-runtime:${userId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "adhdice_focus_active_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
-        if (payload.eventType === "DELETE") {
-          const deleted = payload.old as Partial<FocusRuntimeRow>;
-          runtimeRequestGenerationRef.current += 1;
-          setActiveSessions((current) => {
-            const next = removeFocusRuntimeFromSessions(current, deleted);
-            activeSessionsRef.current = next;
+    const currentClient = client;
+    let active = true;
+    async function subscribeToRuntimeChannel() {
+      const previousChannel = runtimeChannelRef.current;
+      runtimeChannelRef.current = null;
+      const removalPromise = previousChannel
+        ? removeRealtimeChannel(previousChannel)
+        : (runtimeChannelRemovalPromiseRef.current ?? Promise.resolve());
+      runtimeChannelRemovalPromiseRef.current = removalPromise;
+
+      await removalPromise;
+
+      if (!active) return;
+
+      void hydrateFocusRuntimes();
+
+      const channel = currentClient
+        .channel(`focus-runtime:${userId}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "adhdice_focus_active_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
+          if (payload.eventType === "DELETE") {
+            const deleted = payload.old as Partial<FocusRuntimeRow>;
+            runtimeRequestGenerationRef.current += 1;
+            setActiveSessions((current) => {
+              const next = removeFocusRuntimeFromSessions(current, deleted);
+              activeSessionsRef.current = next;
+              return next;
+            });
+            return;
+          }
+          if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+            applyRuntimeRow(payload.new as FocusRuntimeRow);
+          }
+        })
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
+          const entry = mapFocusSessionRow(payload.new as DbFocusSession);
+          setFocusHistory((current) => {
+            const next = [entry, ...current.filter((candidate) => candidate.id !== entry.id)];
+            saveFocusHistory(next);
             return next;
           });
-          return;
-        }
-        if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
-          applyRuntimeRow(payload.new as FocusRuntimeRow);
-        }
-      })
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
-        const entry = mapFocusSessionRow(payload.new as DbFocusSession);
-        setFocusHistory((current) => {
-          const next = [entry, ...current.filter((candidate) => candidate.id !== entry.id)];
-          saveFocusHistory(next);
-          return next;
+        })
+        .subscribe((status) => {
+          if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status)) void hydrateFocusRuntimes();
         });
-      })
-      .subscribe((status) => {
-        if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status)) void hydrateFocusRuntimes();
-      });
+      runtimeChannelRef.current = channel;
+      runtimeChannelRemovalPromiseRef.current = null;
+    }
+
+    void subscribeToRuntimeChannel();
     const refetchWhenVisible = () => { if (document.visibilityState === "visible") void hydrateFocusRuntimes(); };
     const refetch = () => { void hydrateFocusRuntimes(); };
     document.addEventListener("visibilitychange", refetchWhenVisible);
@@ -503,13 +530,18 @@ export function useFocus(
     const broadcast = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("adhdice_focus_sync") : null;
     if (broadcast) broadcast.onmessage = refetch;
     return () => {
+      active = false;
       document.removeEventListener("visibilitychange", refetchWhenVisible);
       window.removeEventListener("pageshow", refetch);
       window.removeEventListener("online", refetch);
       broadcast?.close();
-      void client.removeChannel(channel);
+      const channel = runtimeChannelRef.current;
+      runtimeChannelRef.current = null;
+      if (channel) {
+        runtimeChannelRemovalPromiseRef.current = removeRealtimeChannel(channel);
+      }
     };
-  }, [applyRuntimeRow, client, hydrateFocusRuntimes, userId]);
+  }, [applyRuntimeRow, client, hydrateFocusRuntimes, removeRealtimeChannel, userId]);
 
   const replaceFocusCounterState = useCallback((ownerUserId: string, counters: FocusCounter[], history: FocusCounterHistoryEntry[]) => {
     const nextState = { counters, history, ownerUserId };
@@ -569,6 +601,7 @@ export function useFocus(
 
   useEffect(() => {
     if (!client || !userId) return;
+    const currentClient = client;
     let cancelled = false;
     const legacyCounters = readFocusCounters(userId);
     const legacyHistory = readFocusCounterHistory(userId);
@@ -613,40 +646,57 @@ export function useFocus(
       );
       await hydrateFocusCounters();
     };
-    void migrateThenHydrate();
+    async function subscribeToCounterChannel() {
+      const previousChannel = counterChannelRef.current;
+      counterChannelRef.current = null;
+      const removalPromise = previousChannel
+        ? removeRealtimeChannel(previousChannel)
+        : (counterChannelRemovalPromiseRef.current ?? Promise.resolve());
+      counterChannelRemovalPromiseRef.current = removalPromise;
 
-    const channel = client
-      .channel(`focus-counters:${userId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "adhdice_focus_counters", filter: `user_id=eq.${userId}` }, (payload) => {
-        if (payload.eventType !== "INSERT" && payload.eventType !== "UPDATE") return;
-        if (focusCounterStateRef.current.ownerUserId !== userId) return;
-        counterRequestGenerationRef.current += 1;
-        const row = payload.new as FocusCounterRow;
-        setFocusCounterState((current) => {
-          if (current.ownerUserId !== userId) return current;
-          const counters = applyAuthoritativeFocusCounterRow(current.counters, row);
-          const next = { ...current, counters };
-          focusCounterStateRef.current = next;
-          saveFocusCounters(userId, counters);
-          return next;
+      await removalPromise;
+
+      if (cancelled) return;
+
+      void migrateThenHydrate();
+
+      const channel = currentClient
+        .channel(`focus-counters:${userId}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "adhdice_focus_counters", filter: `user_id=eq.${userId}` }, (payload) => {
+          if (payload.eventType !== "INSERT" && payload.eventType !== "UPDATE") return;
+          if (focusCounterStateRef.current.ownerUserId !== userId) return;
+          counterRequestGenerationRef.current += 1;
+          const row = payload.new as FocusCounterRow;
+          setFocusCounterState((current) => {
+            if (current.ownerUserId !== userId) return current;
+            const counters = applyAuthoritativeFocusCounterRow(current.counters, row);
+            const next = { ...current, counters };
+            focusCounterStateRef.current = next;
+            saveFocusCounters(userId, counters);
+            return next;
+          });
+        })
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_counter_events", filter: `user_id=eq.${userId}` }, (payload) => {
+          if (focusCounterStateRef.current.ownerUserId !== userId) return;
+          counterRequestGenerationRef.current += 1;
+          const row = payload.new as FocusCounterEventRow;
+          setFocusCounterState((current) => {
+            if (current.ownerUserId !== userId) return current;
+            const history = applyAuthoritativeFocusCounterEvent(current.history, row);
+            const next = { ...current, history };
+            focusCounterStateRef.current = next;
+            saveFocusCounterHistory(userId, history);
+            return next;
+          });
+        })
+        .subscribe((status) => {
+          if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status)) void hydrateFocusCounters();
         });
-      })
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_counter_events", filter: `user_id=eq.${userId}` }, (payload) => {
-        if (focusCounterStateRef.current.ownerUserId !== userId) return;
-        counterRequestGenerationRef.current += 1;
-        const row = payload.new as FocusCounterEventRow;
-        setFocusCounterState((current) => {
-          if (current.ownerUserId !== userId) return current;
-          const history = applyAuthoritativeFocusCounterEvent(current.history, row);
-          const next = { ...current, history };
-          focusCounterStateRef.current = next;
-          saveFocusCounterHistory(userId, history);
-          return next;
-        });
-      })
-      .subscribe((status) => {
-        if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status)) void hydrateFocusCounters();
-      });
+      counterChannelRef.current = channel;
+      counterChannelRemovalPromiseRef.current = null;
+    }
+
+    void subscribeToCounterChannel();
     const refetchWhenVisible = () => { if (document.visibilityState === "visible") void hydrateFocusCounters(); };
     const refetch = () => { void hydrateFocusCounters(); };
     document.addEventListener("visibilitychange", refetchWhenVisible);
@@ -660,9 +710,13 @@ export function useFocus(
       window.removeEventListener("pageshow", refetch);
       window.removeEventListener("online", refetch);
       broadcast?.close();
-      void client.removeChannel(channel);
+      const channel = counterChannelRef.current;
+      counterChannelRef.current = null;
+      if (channel) {
+        counterChannelRemovalPromiseRef.current = removeRealtimeChannel(channel);
+      }
     };
-  }, [client, hydrateFocusCounters, replaceFocusCounterState, setMessage, userId]);
+  }, [client, hydrateFocusCounters, removeRealtimeChannel, replaceFocusCounterState, setMessage, userId]);
 
   async function transitionFocusRuntime(categoryId: string, action: string, args: Record<string, unknown> = {}) {
     if (!client || !userId) return null;
@@ -987,10 +1041,10 @@ export function useFocus(
   async function handleSaveCategories(categories: FocusCategory[]) {
     if (!client || !userId) return false;
 
-    const uniqueCategories = dedupeCategoriesByName(categories).map((category) => ({
-      ...category,
-      id: isUuid(category.id) ? category.id : createClientSideId("focus-category"),
-    }));
+    const uniqueCategories = normalizeFocusCategoriesForPersistence(
+      dedupeCategoriesByName(categories),
+      createBrowserUuidV4,
+    );
 
     if (uniqueCategories.length === 0) {
       setFocusCategories([]);

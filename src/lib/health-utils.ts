@@ -9,14 +9,16 @@ import type {
   Task,
   HealthWeightEntry,
 } from "@/lib/database.types";
+import { isSleepCategory } from "@/lib/focus-goals";
+import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 
-export type HealthTab = "Today" | "Food" | "Water" | "Journal" | "Weight" | "Insights" | "Awards";
+export type HealthTab = "Today" | "Food" | "Water" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards";
 export type HealthMealSlot = HealthMealEntry["meal_slot"];
 export type WeightUnit = HealthProfile["preferred_weight_unit"];
 export type HealthAchievementCode = HealthAchievementAward["achievement_code"];
 export type HealthReminderTemplateKey = "daily_check_in" | "meal_log" | "weigh_in" | "movement_intention";
 
-export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Journal", "Weight", "Insights", "Awards"];
+export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Journal", "Weight", "Sleep", "Insights", "Awards"];
 export const HEALTH_MEAL_SLOTS: HealthMealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
 export const HEALTH_MOOD_OPTIONS = [1, 2, 3, 4, 5] as const;
 export const HEALTH_SYMPTOM_TAGS = [
@@ -205,6 +207,8 @@ export const DEFAULT_HEALTH_PROFILE: Omit<HealthProfile, "created_at" | "updated
   calorie_goal: 2200,
   carbs_goal_grams: 250,
   movement_goal: 8000,
+  movement_goal_calories: 500,
+  movement_goal_minutes: 30,
   preferred_weight_unit: "lb",
   protein_goal_grams: 140,
   sleep_goal_minutes: 480,
@@ -317,6 +321,49 @@ export function sumMetricValueForDate(
     }
     return total + entry.metric_value;
   }, 0);
+}
+
+export type HealthSleepDayTotal = {
+  date: string;
+  focusMinutes: number;
+  importedMinutes: number;
+  totalMinutes: number;
+};
+
+export function getSleepFocusSessions(
+  focusHistory: HistoricalFocusSession[],
+  focusCategories: FocusCategory[],
+) {
+  const categoryById = new Map(focusCategories.map((category) => [category.id, category]));
+
+  return focusHistory.filter((session) => {
+    const category = session.categoryId ? categoryById.get(session.categoryId) : null;
+    return isSleepCategory(category ?? session);
+  });
+}
+
+export function getHealthSleepDayTotal({
+  date,
+  focusCategories,
+  focusHistory,
+  metricEntries,
+}: {
+  date: string;
+  focusCategories: FocusCategory[];
+  focusHistory: HistoricalFocusSession[];
+  metricEntries: HealthMetricEntry[];
+}): HealthSleepDayTotal {
+  const importedMinutes = sumMetricValueForDate(metricEntries, date, ["sleep_minutes"]);
+  const focusMinutes = getSleepFocusSessions(focusHistory, focusCategories)
+    .filter((session) => session.date === date)
+    .reduce((total, session) => total + session.durationSeconds / 60, 0);
+
+  return {
+    date,
+    focusMinutes,
+    importedMinutes,
+    totalMinutes: importedMinutes + focusMinutes,
+  };
 }
 
 export function getLatestWeight(weights: HealthWeightEntry[]) {

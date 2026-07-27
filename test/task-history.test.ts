@@ -751,6 +751,26 @@ test("daily recurring outcomes stay historical while the new occurrence is Pendi
   assert.equal(getTaskDisplayStatusWithHistory({ ...oneOff, status: "complete" }, [], context.currentDayKey), "complete");
 });
 
+test("recurring display status prefers a same-day history save over an overdue missed anchor", () => {
+  const task = createTask({
+    created_at: "2026-07-01T08:00:00.000Z",
+    due_on: "2026-07-26",
+    id: "same-day-history-preferred",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "missed",
+    title: "Drink Water",
+  });
+
+  const history = [
+    createHistoryEntry({ entryDate: "2026-07-26", id: "yesterday-missed", status: "missed", taskId: task.id, wasCompleted: false }),
+    createHistoryEntry({ entryDate: "2026-07-27", id: "today-done", status: "done", taskId: task.id, wasCompleted: true }),
+  ];
+
+  assert.equal(getTaskDisplayStatusWithHistory(task, history, "2026-07-27"), "done");
+});
+
 test("calendar uses the latest resolving selected date once and ignores non-resolving edits", () => {
   const task = createTask({
     created_at: "2026-07-01T08:00:00.000Z",

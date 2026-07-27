@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Apple, Camera, Check, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
+import { Activity, Apple, Camera, Check, ChevronDown, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
@@ -28,22 +28,17 @@ import {
 } from "@/lib/health-apple-import";
 import type { HealthImportSaveProgress } from "@/hooks/useHealth";
 import {
-  ACHIEVEMENT_SET_META,
-  type AchievementFaceLevel,
-  buildHealthFaceSummaries,
-} from "@/lib/achievements";
-import {
   clampPercent,
   displayWeightToKilograms,
   formatHealthDateLabel,
   formatWeight,
-  getEligibleHealthAchievements,
+  getHealthSleepDayTotal,
+  getSleepFocusSessions,
   getLatestWeight,
   getMealSlotLabel,
   getWeightTrend,
   HEALTH_MEAL_SLOTS,
   HEALTH_MOOD_OPTIONS,
-  HEALTH_REMINDER_TEMPLATES,
   type HealthReminderTemplateKey,
   HEALTH_SYMPTOM_TAGS,
   HEALTH_TABS,
@@ -53,17 +48,15 @@ import {
   todayHealthDate,
   type HealthTab,
 } from "@/lib/health-utils";
+import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import {
   lookupOpenFoodFactsByBarcode,
   searchHealthFoods,
   type HealthFoodLookupResult,
 } from "@/lib/health-nutrition";
 import {
-  getRecipeNutritionPerServing,
-  getSavedMealNutrition,
   getHealthFoodIdentityKey,
 } from "@/lib/health-library";
-import { DieFaceTile } from "./achievement-dice-ui";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthWaterPanel } from "./health-water-panel";
 import { PageShellHeader } from "./page-shell-header";
@@ -84,6 +77,8 @@ type HealthPageProps = {
     options?: { onProgress?: (progress: HealthImportSaveProgress) => void },
   ) => Promise<boolean>;
   isLoading: boolean;
+  focusCategories: FocusCategory[];
+  focusHistory: HistoricalFocusSession[];
   mealEntries: HealthMealEntry[];
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile | null;
@@ -108,6 +103,7 @@ type HealthPageProps = {
     provider?: string;
     provider_item_id?: string | null;
     serving_label?: string | null;
+    is_favorite?: boolean;
   }) => Promise<boolean>;
   saveRecipe: (input: {
     id?: string;
@@ -164,6 +160,7 @@ type HealthPageProps = {
   updateMealEntry: (entryId: string, input: HealthMealEntryUpdate) => Promise<boolean>;
   storageMode: "local" | "remote";
   onOpenReminderTemplate: (templateKey: HealthReminderTemplateKey) => void;
+  onStartSleepClock: () => void;
   weightEntries: HealthWeightEntry[];
   waterEntries: HealthWaterEntry[];
 };
@@ -226,7 +223,6 @@ type BarcodeDetectorInstance = {
 type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
 
 export function HealthPage({
-  awards,
   checkIns,
   deleteFavoriteFood,
   deleteMealEntry,
@@ -238,6 +234,8 @@ export function HealthPage({
   importAudits,
   importAppleHealthData,
   isLoading,
+  focusCategories,
+  focusHistory,
   mealEntries,
   metricEntries,
   profile,
@@ -253,8 +251,7 @@ export function HealthPage({
   addWaterEntry,
   updateWaterEntry,
   updateMealEntry,
-  storageMode,
-  onOpenReminderTemplate,
+  onStartSleepClock,
   weightEntries,
   waterEntries,
 }: HealthPageProps) {
@@ -262,6 +259,8 @@ export function HealthPage({
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(DEFAULT_MEAL_DRAFT);
   const [foodSearchQuery, setFoodSearchQuery] = useState("");
+  const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
+  const [targetWeightDraft, setTargetWeightDraft] = useState("");
   const [barcodeLookup, setBarcodeLookup] = useState("");
   const [foodLookupResults, setFoodLookupResults] = useState<HealthFoodLookupResult[]>(EMPTY_FOOD_LOOKUP_RESULTS);
   const [foodLookupError, setFoodLookupError] = useState("");
@@ -306,11 +305,18 @@ export function HealthPage({
       carbs_goal_grams: profile.carbs_goal_grams,
       fat_goal_grams: profile.fat_goal_grams,
       movement_goal: profile.movement_goal,
+      movement_goal_calories: profile.movement_goal_calories,
+      movement_goal_minutes: profile.movement_goal_minutes,
       preferred_weight_unit: profile.preferred_weight_unit,
       protein_goal_grams: profile.protein_goal_grams,
       sleep_goal_minutes: profile.sleep_goal_minutes,
       target_weight_kg: profile.target_weight_kg,
     });
+    setTargetWeightDraft(
+      profile.target_weight_kg === null
+        ? ""
+        : String(kilogramsToDisplayValue(profile.target_weight_kg, profile.preferred_weight_unit)),
+    );
   }, [profile]);
 
   useEffect(() => {
@@ -350,9 +356,14 @@ export function HealthPage({
     () => sumMetricValueForDate(metricEntries, today, ["steps", "active_energy_kcal", "exercise_minutes"]),
     [metricEntries, today],
   );
-  const todaySleep = useMemo(
-    () => sumMetricValueForDate(metricEntries, today, ["sleep_minutes"]),
-    [metricEntries, today],
+  const todaySleepTotal = useMemo(
+    () => getHealthSleepDayTotal({ date: today, focusCategories, focusHistory, metricEntries }),
+    [focusCategories, focusHistory, metricEntries, today],
+  );
+  const todaySleep = todaySleepTotal.totalMinutes;
+  const sleepFocusSessions = useMemo(
+    () => getSleepFocusSessions(focusHistory, focusCategories),
+    [focusCategories, focusHistory],
   );
   const latestWeight = useMemo(() => getLatestWeight(weightEntries), [weightEntries]);
   const weightTrend30 = useMemo(() => getWeightTrend(weightEntries, 30), [weightEntries]);
@@ -369,16 +380,31 @@ export function HealthPage({
       })
       .slice(0, 8);
   }, [mealEntries]);
+  const favoriteFoods = useMemo(
+    () => favorites.filter((item) => item.is_favorite),
+    [favorites],
+  );
   const favoriteFoodKeys = useMemo(() => {
     const keys = new Set<string>();
-    favorites.forEach((item) => {
+    favoriteFoods.forEach((item) => {
       const key = getHealthFoodIdentityKey(item);
       if (key) {
         keys.add(key);
       }
     });
     return keys;
-  }, [favorites]);
+  }, [favoriteFoods]);
+  const matchingCustomFoods = useMemo(() => {
+    const query = customFoodSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return favorites.slice(0, 8);
+    }
+    return favorites.filter((item) => [
+      item.brand_name,
+      item.food_name,
+      item.serving_label,
+    ].some((value) => value?.toLowerCase().includes(query))).slice(0, 8);
+  }, [customFoodSearchQuery, favorites]);
   const recentWeekDates = useMemo(
     () => Array.from({ length: 7 }, (_, index) => {
       const offset = 6 - index;
@@ -388,25 +414,13 @@ export function HealthPage({
     }),
     [today],
   );
-  const lockedAchievements = useMemo(
-    () =>
-      getEligibleHealthAchievements({
-        awards: [],
-        checkIns,
-        mealEntries,
-        metricEntries,
-        weightEntries,
-      }).map((achievement) => achievement.code),
-    [checkIns, mealEntries, metricEntries, weightEntries],
+  const recentSleepTotals = useMemo(
+    () => recentWeekDates.map((date) => getHealthSleepDayTotal({ date, focusCategories, focusHistory, metricEntries })),
+    [focusCategories, focusHistory, metricEntries, recentWeekDates],
   );
-  const healthFaceSummaries = useMemo(
-    () => buildHealthFaceSummaries({
-      earnedCodes: awards.map((award) => award.achievement_code),
-      readyCodes: lockedAchievements,
-    }),
-    [awards, lockedAchievements],
-  );
-  const earnedHealthFaces = healthFaceSummaries.filter((face) => face.status === "earned").length;
+  const recentSleepTotalMinutes = recentSleepTotals.reduce((total, entry) => total + entry.totalMinutes, 0);
+  const recentSleepFocusMinutes = recentSleepTotals.reduce((total, entry) => total + entry.focusMinutes, 0);
+  const recentSleepImportedMinutes = recentSleepTotals.reduce((total, entry) => total + entry.importedMinutes, 0);
   const existingImportFingerprints = useMemo(
     () => new Set(metricEntries.map((entry) => entry.source_fingerprint)),
     [metricEntries],
@@ -434,6 +448,7 @@ export function HealthPage({
       return;
     }
 
+    const videoElement = video;
     const detector = new detectorCtor({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"] });
     let stream: MediaStream | null = null;
     let cancelled = false;
@@ -452,15 +467,15 @@ export function HealthPage({
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
-        video.srcObject = stream;
-        await video.play();
+        videoElement.srcObject = stream;
+        await videoElement.play();
 
         const scanFrame = async () => {
           if (cancelled) {
             return;
           }
           try {
-            const barcodes = await detector.detect(video);
+            const barcodes = await detector.detect(videoElement);
             const firstCode = barcodes.find((entry) => typeof entry.rawValue === "string" && entry.rawValue.trim().length > 0)?.rawValue?.trim();
             if (firstCode) {
               setBarcodeLookup(firstCode);
@@ -503,7 +518,7 @@ export function HealthPage({
   if (!profile) {
     return (
       <section className="px-4 pb-32">
-        <PageShellHeader subtitle="Wellness Ledger" title="Health" />
+        <PageShellHeader subtitle="Health, Diet, Fitness" title="Health" />
         <div className="rounded-[2rem] border border-[#ece8f8] bg-white/90 p-6 text-sm text-[#6e7892] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/65">
           {isLoading ? "Loading Health..." : "Health becomes available after sign-in."}
         </div>
@@ -511,21 +526,51 @@ export function HealthPage({
     );
   }
 
-  const nutritionPercent = clampPercent(profile.calorie_goal ? (todayNutrition.calories / profile.calorie_goal) * 100 : 0);
-  const movementPercent = clampPercent(profile.movement_goal ? (todayMovement / profile.movement_goal) * 100 : 0);
-  const sleepPercent = clampPercent(profile.sleep_goal_minutes ? (todaySleep / profile.sleep_goal_minutes) * 100 : 0);
-  const checkInPercent = todayCheckIn ? 100 : 0;
+  const activeProfile = profile;
+  const effectiveSleepGoalMinutes = parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes);
+  const sleepGoalHours = effectiveSleepGoalMinutes === null ? "" : String(Math.floor(effectiveSleepGoalMinutes / 60));
+  const sleepGoalRemainingMinutes = effectiveSleepGoalMinutes === null ? "" : String(effectiveSleepGoalMinutes % 60);
+  const sleepPercent = clampPercent(activeProfile.sleep_goal_minutes ? (todaySleep / activeProfile.sleep_goal_minutes) * 100 : 0);
+
+  function handleWeightUnitChange(nextUnit: HealthProfile["preferred_weight_unit"]) {
+    const currentUnit = profileDraft.preferred_weight_unit ?? activeProfile.preferred_weight_unit;
+    const parsedTargetWeight = parseNullableNumber(targetWeightDraft);
+    setProfileDraft((current) => ({ ...current, preferred_weight_unit: nextUnit }));
+    if (parsedTargetWeight !== null && currentUnit !== nextUnit) {
+      const weightKg = displayWeightToKilograms(parsedTargetWeight, currentUnit);
+      setTargetWeightDraft(String(Number(kilogramsToDisplayValue(weightKg, nextUnit).toFixed(1))));
+    }
+  }
+
+  function handleSleepGoalHoursChange(nextHoursValue: string) {
+    const parsedHours = parseNullableInteger(nextHoursValue);
+    const currentMinutes = parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes) ?? 0;
+    const nextMinutes = parsedHours === null ? currentMinutes % 60 : Math.max(0, parsedHours) * 60 + (currentMinutes % 60);
+    setProfileDraft((current) => ({ ...current, sleep_goal_minutes: nextHoursValue.trim().length === 0 && currentMinutes % 60 === 0 ? null : nextMinutes }));
+  }
+
+  function handleSleepGoalMinutesChange(nextMinutesValue: string) {
+    const parsedMinutes = parseNullableInteger(nextMinutesValue);
+    const currentHours = Math.floor((parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes) ?? 0) / 60);
+    const normalizedMinutes = parsedMinutes === null ? 0 : Math.min(Math.max(parsedMinutes, 0), 59);
+    const nextTotalMinutes = currentHours * 60 + normalizedMinutes;
+    setProfileDraft((current) => ({ ...current, sleep_goal_minutes: nextMinutesValue.trim().length === 0 && currentHours === 0 ? null : nextTotalMinutes }));
+  }
 
   async function handleSaveProfile() {
+    const parsedTargetWeight = parseNullableNumber(targetWeightDraft);
     await saveProfile({
       ...profileDraft,
       calorie_goal: parseNullableInteger(profileDraft.calorie_goal),
       carbs_goal_grams: parseNullableInteger(profileDraft.carbs_goal_grams),
       fat_goal_grams: parseNullableInteger(profileDraft.fat_goal_grams),
-      movement_goal: parseNullableInteger(profileDraft.movement_goal),
+      movement_goal_calories: parseNullableInteger(profileDraft.movement_goal_calories),
+      movement_goal_minutes: parseNullableInteger(profileDraft.movement_goal_minutes),
       protein_goal_grams: parseNullableInteger(profileDraft.protein_goal_grams),
       sleep_goal_minutes: parseNullableInteger(profileDraft.sleep_goal_minutes),
-      target_weight_kg: parseNullableNumber(profileDraft.target_weight_kg),
+      target_weight_kg: parsedTargetWeight === null
+        ? null
+        : displayWeightToKilograms(parsedTargetWeight, profileDraft.preferred_weight_unit ?? activeProfile.preferred_weight_unit),
     });
   }
 
@@ -562,7 +607,8 @@ export function HealthPage({
       serving_label: formatQuantityServingLabel(quantity, mealDraft.servingLabel),
     });
     if (saved) {
-      setMealDraft(DEFAULT_MEAL_DRAFT);
+      setMealDraft((current) => ({ ...DEFAULT_MEAL_DRAFT, mealSlot: current.mealSlot }));
+      setCustomFoodSearchQuery("");
     }
   }
 
@@ -606,6 +652,9 @@ export function HealthPage({
   }
 
   async function handleSaveWeight() {
+    if (!profile) {
+      return;
+    }
     const parsed = Number.parseFloat(weightDraft);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       return;
@@ -641,6 +690,24 @@ export function HealthPage({
     });
   }
 
+  async function handleRemoveFavorite(item: HealthFoodLibraryItem) {
+    await saveFavoriteFood({
+      attribution: item.attribution,
+      barcode: item.barcode,
+      brand_name: item.brand_name,
+      calories: item.calories,
+      carbs_g: item.carbs_g,
+      fat_g: item.fat_g,
+      food_name: item.food_name,
+      id: item.id,
+      is_favorite: false,
+      protein_g: item.protein_g,
+      provider: item.provider,
+      provider_item_id: item.provider_item_id,
+      serving_label: item.serving_label,
+    });
+  }
+
   async function handleSaveFavoriteFromMeal(entry: HealthMealEntry) {
     if (isMealSavedAsFavorite(entry)) {
       return;
@@ -657,62 +724,13 @@ export function HealthPage({
       provider: entry.provider,
       provider_item_id: entry.provider_item_id,
       serving_label: entry.serving_label,
+      is_favorite: true,
     });
   }
 
   function isMealSavedAsFavorite(entry: HealthMealEntry) {
     const key = getHealthFoodIdentityKey(entry);
     return key ? favoriteFoodKeys.has(key) : false;
-  }
-
-  async function handleLogLibraryFood(item: HealthFoodLibraryItem, slot: HealthMealEntry["meal_slot"]) {
-    return addMealEntry({
-      attribution: item.attribution,
-      barcode: item.barcode,
-      brand_name: item.brand_name,
-      calories: item.calories,
-      carbs_g: item.carbs_g,
-      entry_date: today,
-      fat_g: item.fat_g,
-      food_name: item.food_name,
-      meal_slot: slot,
-      protein_g: item.protein_g,
-      provider: item.provider,
-      provider_item_id: item.provider_item_id ?? item.id,
-      serving_label: item.serving_label,
-    });
-  }
-
-  async function handleLogRecipe(recipe: HealthRecipe, slot: HealthMealEntry["meal_slot"]) {
-    const nutrition = getRecipeNutritionPerServing(recipe);
-    return addMealEntry({
-      calories: nutrition.calories,
-      carbs_g: nutrition.carbs,
-      entry_date: today,
-      fat_g: nutrition.fat,
-      food_name: recipe.name,
-      meal_slot: slot,
-      protein_g: nutrition.protein,
-      provider: "custom_recipe",
-      provider_item_id: recipe.id,
-      serving_label: "1 serving",
-    });
-  }
-
-  async function handleLogSavedMeal(meal: HealthSavedMeal) {
-    const nutrition = getSavedMealNutrition(meal);
-    return addMealEntry({
-      calories: nutrition.calories,
-      carbs_g: nutrition.carbs,
-      entry_date: today,
-      fat_g: nutrition.fat,
-      food_name: meal.name,
-      meal_slot: meal.default_meal_slot,
-      protein_g: nutrition.protein,
-      provider: "custom_meal",
-      provider_item_id: meal.id,
-      serving_label: `${meal.items.length} ${meal.items.length === 1 ? "item" : "items"}`,
-    });
   }
 
   async function handleFoodSearch() {
@@ -782,6 +800,7 @@ export function HealthPage({
     providerItemId?: string | null;
     servingLabel: string | null;
   }) {
+    setCustomFoodSearchQuery(result.brandName ? `${result.brandName} · ${result.foodName}` : result.foodName);
     setMealDraft((current) => ({
       ...current,
       attribution: result.attribution ?? null,
@@ -874,23 +893,7 @@ export function HealthPage({
 
   return (
     <section className="px-4 pb-32">
-      <PageShellHeader subtitle="Wellness Ledger" title="Health" />
-
-      <section aria-label="Daily health summary" className="rounded-[1.5rem] border border-[#e9ecff] bg-white/85 p-4 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.05]">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#7d8ba4] dark:text-white/40">Summary</p>
-          <div className="rounded-full bg-[#f3f8f5] px-4 py-2 text-xs font-semibold text-[#247a5e] dark:bg-[#163226] dark:text-[#9ee0be]">
-            {storageMode === "remote" ? "Synced to workspace" : "Local-only until health tables are migrated"}
-          </div>
-        </div>
-
-        <div className="mt-4 grid gap-4 md:grid-cols-4">
-          <WellnessRing colorEnd="#23a26c" colorStart="#7ddfb5" detail={`${todayNutrition.calories}${profile.calorie_goal ? ` / ${profile.calorie_goal}` : ""} kcal`} label="Nutrition" value={nutritionPercent} />
-          <WellnessRing colorEnd="#3f82f8" colorStart="#7bb8ff" detail={`${Math.round(todayMovement)}${profile.movement_goal ? ` / ${profile.movement_goal}` : ""}`} label="Movement" value={movementPercent} />
-          <WellnessRing colorEnd="#f08f39" colorStart="#ffbe82" detail={`${Math.round(todaySleep)}${profile.sleep_goal_minutes ? ` / ${profile.sleep_goal_minutes}` : ""} min`} label="Sleep" value={sleepPercent} />
-          <WellnessRing colorEnd="#da5f87" colorStart="#f59cb7" detail={todayCheckIn ? "Completed today" : "Still open"} label="Check-In" value={checkInPercent} />
-        </div>
-      </section>
+      <PageShellHeader subtitle="Health, Diet, Fitness" title="Health" />
 
       <div aria-label="Health sections" className="mt-5 flex flex-wrap gap-2" role="tablist">
         {HEALTH_TABS.map((tab) => (
@@ -914,76 +917,7 @@ export function HealthPage({
       </div>
 
       {activeTab === "Today" ? (
-        <div aria-labelledby="health-tab-today" className="mt-6 grid gap-5 xl:grid-cols-[1.25fr_0.95fr]" id={getHealthTabPanelId("Today")} role="tabpanel">
-          <HealthPanel
-            icon={<Sparkles />}
-            subtitle="This week"
-            title="7-day rhythm"
-          >
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-              {recentWeekDates.map((dateKey) => {
-                const dayMeals = sumMealNutritionForDate(mealEntries, dateKey);
-                const dayCheckIn = checkIns.find((entry) => entry.entry_date === dateKey);
-                const dayWeight = weightEntries.find((entry) => entry.entry_date === dateKey);
-                return (
-                  <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={dateKey}>
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthDateLabel(dateKey)}</p>
-                      <span className="text-xs text-[#7c88a3] dark:text-white/45">{dayCheckIn ? "Checked in" : "Open"}</span>
-                    </div>
-                    <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-[#6b7591] dark:text-white/55">
-                      <MetricPill icon={<Salad className="h-3.5 w-3.5" />} label={`${dayMeals.calories} kcal`} />
-                      <MetricPill icon={<MoonStar className="h-3.5 w-3.5" />} label={`${Math.round(sumMetricValueForDate(metricEntries, dateKey, ["sleep_minutes"]))}m`} />
-                      <MetricPill icon={<Scale className="h-3.5 w-3.5" />} label={dayWeight ? formatWeight(dayWeight.weight_kg, profile.preferred_weight_unit) : "No weight"} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </HealthPanel>
-
-          <div className="grid gap-5">
-            <HealthPanel icon={<HeartPulse />} subtitle="Snapshot" title="Today at a glance">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <CompactStat detail="logged today" label="Meals" value={String(todayMeals.length)} />
-                <CompactStat detail="latest entry" label="Weight" value={latestWeight ? formatWeight(latestWeight.weight_kg, profile.preferred_weight_unit) : "None"} />
-                <CompactStat detail="imported today" label="Sleep" value={`${Math.round(todaySleep)}m`} />
-                <CompactStat detail="movement signal" label="Activity" value={`${Math.round(todayMovement)}`} />
-              </div>
-            </HealthPanel>
-
-            <HealthPanel icon={<Target />} subtitle="Goals" title="Current targets">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <GoalBadge label="Calories" value={profile.calorie_goal ? `${profile.calorie_goal} kcal` : "Unset"} />
-                <GoalBadge label="Protein" value={profile.protein_goal_grams ? `${profile.protein_goal_grams} g` : "Unset"} />
-                <GoalBadge label="Movement" value={profile.movement_goal ? `${profile.movement_goal}` : "Unset"} />
-                <GoalBadge label="Target Weight" value={formatWeight(profile.target_weight_kg, profile.preferred_weight_unit)} />
-              </div>
-            </HealthPanel>
-
-            <HealthPanel icon={<Sparkles />} subtitle="Task handoff" title="Set gentle reminders">
-              <div className="grid gap-3">
-                {HEALTH_REMINDER_TEMPLATES.map((template) => (
-                  <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={template.key}>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-[#26324f] dark:text-white">{template.title}</p>
-                        <p className="mt-1 text-xs leading-5 text-[#73809c] dark:text-white/50">{template.description}</p>
-                      </div>
-                      <button
-                        className="ui-pill-button-strong-light"
-                        onClick={() => onOpenReminderTemplate(template.key)}
-                        type="button"
-                      >
-                        Open in Tasks
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </HealthPanel>
-          </div>
-        </div>
+        <div aria-labelledby="health-tab-today" className="mt-6" id={getHealthTabPanelId("Today")} role="tabpanel" />
       ) : null}
 
       {activeTab === "Journal" ? (
@@ -1120,7 +1054,7 @@ export function HealthPage({
                 </Field>
               </div>
               <p className="text-xs leading-5 text-[#6a7793] dark:text-white/50">
-                Search uses USDA FoodData Central when available, with Open Food Facts fallback. Barcode lookup currently uses Open Food Facts. If a result is off or missing, the manual form below stays editable so your saved totals stay accurate.
+                Search uses USDA FoodData Central when available, with Open Food Facts fallback. Barcode lookup currently uses Open Food Facts.
               </p>
               {scannerSupport === "unsupported" ? (
                 <EmptyCopy text="Camera barcode scanning is not available in this browser yet, but typed barcode lookup still works." />
@@ -1181,7 +1115,7 @@ export function HealthPage({
               ) : null}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 lg:grid-cols-[0.7fr_1.5fr_0.45fr_auto]">
               <Field label="Meal">
                 <select
                   className="health-input"
@@ -1193,42 +1127,56 @@ export function HealthPage({
                   ))}
                 </select>
               </Field>
-              <Field label="Calories">
-                <input className="health-input" inputMode="numeric" onChange={(event) => setMealDraft((current) => ({ ...current, calories: event.target.value }))} placeholder="420" value={mealDraft.calories} />
-              </Field>
-              <Field label="Food name">
-                <input className="health-input" onChange={(event) => setMealDraft((current) => ({ ...current, foodName: event.target.value }))} placeholder="Chicken bowl" value={mealDraft.foodName} />
-              </Field>
-              <Field label="Brand">
-                <input className="health-input" onChange={(event) => setMealDraft((current) => ({ ...current, brandName: event.target.value }))} placeholder="Optional" value={mealDraft.brandName} />
-              </Field>
-              <Field label="Serving">
-                <input className="health-input" onChange={(event) => setMealDraft((current) => ({ ...current, servingLabel: event.target.value }))} placeholder="1 bowl / 180 g" value={mealDraft.servingLabel} />
+              <Field label="Custom food">
+                <input
+                  className="health-input"
+                  onChange={(event) => setCustomFoodSearchQuery(event.target.value)}
+                  placeholder="Search custom foods"
+                  value={customFoodSearchQuery}
+                />
               </Field>
               <Field label="Amount">
                 <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, quantity: event.target.value }))} placeholder="1" value={mealDraft.quantity} />
               </Field>
-              <div className="grid grid-cols-3 gap-3 sm:col-span-2">
-                <Field label="Protein">
-                  <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, protein: event.target.value }))} placeholder="30" value={mealDraft.protein} />
-                </Field>
-                <Field label="Carbs">
-                  <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, carbs: event.target.value }))} placeholder="40" value={mealDraft.carbs} />
-                </Field>
-                <Field label="Fat">
-                  <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, fat: event.target.value }))} placeholder="14" value={mealDraft.fat} />
-                </Field>
+              <div className="flex items-end">
+                <button
+                  className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={!canSaveMeal}
+                  onClick={() => { void handleSaveMeal(); }}
+                  type="button"
+                >
+                  Log
+                </button>
               </div>
             </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={!canSaveMeal}
-                onClick={() => { void handleSaveMeal(); }}
-                type="button"
-              >
-                Save Meal
-              </button>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {matchingCustomFoods.length === 0 ? (
+                <EmptyCopy text="No custom foods match this search." />
+              ) : matchingCustomFoods.map((item) => (
+                <button
+                  className={`ui-pill-button-light ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
+                  key={item.id}
+                  onClick={() => {
+                    setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name);
+                    applyLookupResult({
+                      attribution: item.attribution,
+                      barcode: item.barcode,
+                      brandName: item.brand_name,
+                      calories: item.calories,
+                      carbs: item.carbs_g,
+                      fat: item.fat_g,
+                      foodName: item.food_name,
+                      protein: item.protein_g,
+                      provider: item.provider,
+                      providerItemId: item.provider_item_id ?? item.id,
+                      servingLabel: item.serving_label,
+                    });
+                  }}
+                  type="button"
+                >
+                  {item.brand_name ? `${item.brand_name} · ` : ""}{item.food_name}
+                </button>
+              ))}
             </div>
 
             <div className="mt-6 grid gap-3">
@@ -1236,11 +1184,26 @@ export function HealthPage({
               {todayMeals.length === 0 ? (
                 <EmptyCopy text="Meals logged today will appear here with calories and macros." />
               ) : (
-                todayMeals.map((entry) => (
+                HEALTH_MEAL_SLOTS.map((slot) => {
+                  const slotMeals = todayMeals.filter((entry) => entry.meal_slot === slot);
+                  const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + entry.calories, 0);
+                  return (
+                  <section className="grid gap-3" key={slot}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="text-sm font-semibold text-[#4f5872] dark:text-white/70">{getMealSlotLabel(slot)}</h4>
+                      {slotMeals.length > 0 ? (
+                        <span className="text-xs font-semibold text-[#74809b] dark:text-white/45">
+                          {Math.round(slotCaloriesTotal)} kcal
+                        </span>
+                      ) : null}
+                    </div>
+                    {slotMeals.length === 0 ? (
+                      <EmptyCopy text={`No ${getMealSlotLabel(slot).toLowerCase()} logged yet.`} />
+                    ) : slotMeals.map((entry) => (
                   <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[#26324f] dark:text-white">{entry.food_name}</p>
+                        <p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(entry)}</p>
                         <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
                           {getMealSlotLabel(entry.meal_slot)} / {entry.serving_label || "No serving"} / {entry.calories} kcal
                         </p>
@@ -1323,7 +1286,10 @@ export function HealthPage({
                       </div>
                     ) : null}
                   </div>
-                ))
+                    ))}
+                  </section>
+                  );
+                })
               )}
             </div>
           </HealthPanel>
@@ -1340,21 +1306,21 @@ export function HealthPage({
 
             <HealthPanel icon={<Sparkles />} subtitle="Favorites">
               <div className="space-y-3">
-                {favorites.length === 0 ? (
+                {favoriteFoods.length === 0 ? (
                   <EmptyCopy text="Save a meal as a favorite and it will show up here for one-tap reuse." />
                 ) : (
-                  favorites.slice(0, 8).map((item) => (
+                  favoriteFoods.slice(0, 8).map((item) => (
                     <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-[#26324f] dark:text-white">{item.food_name}</p>
+                          <p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(item)}</p>
                           <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{item.serving_label || "Saved favorite"} / {item.calories} kcal</p>
                         </div>
                         <div className="flex gap-2">
                           <button className="ui-pill-button-strong-light" onClick={() => { void handleFavoriteReuse(item); }} type="button">
                             Add Today
                           </button>
-                          <button className="ui-pill-button-danger-light" onClick={() => { void deleteFavoriteFood(item.id); }} type="button">
+                          <button className="ui-pill-button-danger-light" onClick={() => { void handleRemoveFavorite(item); }} type="button">
                             Remove
                           </button>
                         </div>
@@ -1374,7 +1340,7 @@ export function HealthPage({
                     <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-[#26324f] dark:text-white">{item.food_name}</p>
+                          <p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(item)}</p>
                           <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
                             {item.brand_name || "No brand"} / {item.serving_label || "Saved meal"} / {item.calories} kcal
                           </p>
@@ -1412,9 +1378,6 @@ export function HealthPage({
             deleteRecipe={deleteRecipe}
             deleteSavedMeal={deleteSavedMeal}
             favorites={favorites}
-            logFood={handleLogLibraryFood}
-            logRecipe={handleLogRecipe}
-            logSavedMeal={handleLogSavedMeal}
             recipes={recipes}
             saveFood={saveFavoriteFood}
             saveRecipe={saveRecipe}
@@ -1486,6 +1449,74 @@ export function HealthPage({
                     </div>
                   );
                 })
+              )}
+            </div>
+          </HealthPanel>
+        </div>
+      ) : null}
+
+      {activeTab === "Sleep" ? (
+        <div aria-labelledby="health-tab-sleep" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Sleep")} role="tabpanel">
+          <HealthPanel icon={<MoonStar />} subtitle="Sleep ledger" title="Health sleep totals">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <CompactStat detail="combined today" label="Today" value={formatSleepMinutes(todaySleep)} />
+              <CompactStat detail={profile.sleep_goal_minutes ? `goal ${formatSleepMinutes(profile.sleep_goal_minutes)}` : "set in goals"} label="Goal" value={`${sleepPercent}%`} />
+              <CompactStat detail="from Sleep Focus timers" label="Focus Clock" value={formatSleepMinutes(todaySleepTotal.focusMinutes)} />
+              <CompactStat detail="from Apple Health imports" label="Imported" value={formatSleepMinutes(todaySleepTotal.importedMinutes)} />
+            </div>
+            <div className="mt-4 rounded-[1.25rem] border border-[#e6ebfb] bg-white/80 px-4 py-4 dark:border-white/10 dark:bg-white/[0.04]">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-[#26324f] dark:text-white">Sleep Focus Clock</p>
+                  <p className="mt-1 text-xs leading-5 text-[#73809c] dark:text-white/50">
+                    Start or resume a Sleep timer in Focus when you want a manual sleep record.
+                  </p>
+                </div>
+                <button className="ui-pill-button-strong-light" onClick={onStartSleepClock} type="button">
+                  Start Sleep Clock
+                </button>
+              </div>
+            </div>
+          </HealthPanel>
+
+          <HealthPanel icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <CompactStat detail="combined week" label="Total" value={formatSleepMinutes(recentSleepTotalMinutes)} />
+              <CompactStat detail="Sleep Focus timers" label="Clock" value={formatSleepMinutes(recentSleepFocusMinutes)} />
+              <CompactStat detail="Apple Health" label="Imported" value={formatSleepMinutes(recentSleepImportedMinutes)} />
+            </div>
+            <div className="mt-4 space-y-3">
+              {recentSleepTotals.map((entry) => (
+                <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.date}>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthDateLabel(entry.date)}</span>
+                    <span className="text-xs font-semibold text-[#74809b] dark:text-white/45">{formatSleepMinutes(entry.totalMinutes)}</span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-[#6a7793] dark:text-white/55">
+                    <MetricPill icon={<MoonStar className="h-3.5 w-3.5" />} label={`${formatSleepMinutes(entry.focusMinutes)} clock`} />
+                    <MetricPill icon={<Apple className="h-3.5 w-3.5" />} label={`${formatSleepMinutes(entry.importedMinutes)} import`} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </HealthPanel>
+
+          <HealthPanel icon={<Sparkles />} subtitle="Migrated history" title="Recent Sleep Focus sessions">
+            <div className="space-y-3">
+              {sleepFocusSessions.length === 0 ? (
+                <EmptyCopy text="Sleep Focus timer sessions will appear here after you log them from the Sleep clock." />
+              ) : (
+                sleepFocusSessions.slice(0, 8).map((session) => (
+                  <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={session.id}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-[#26324f] dark:text-white">{session.title}</p>
+                        <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{formatHealthDateLabel(session.date)}</p>
+                      </div>
+                      <span className="text-sm font-semibold text-[#26324f] dark:text-white">{formatSleepMinutes(session.durationSeconds / 60)}</span>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </HealthPanel>
@@ -1590,118 +1621,18 @@ export function HealthPage({
       ) : null}
 
       {activeTab === "Awards" ? (
-        <div aria-labelledby="health-tab-awards" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Awards")} role="tabpanel">
-          <HealthPanel icon={<Trophy />} subtitle="Earned" title="Care achievements">
-            <div className="space-y-3">
-              {awards.length === 0 ? (
-                <EmptyCopy text="Health awards will appear as your check-ins, meals, and trends build up." />
-              ) : (
-                awards.map((award) => (
-                  <div className="rounded-[1.25rem] border border-[#f0e3ba] bg-[linear-gradient(180deg,#fff8e6_0%,#fffdf7_100%)] px-4 py-3 dark:border-[#4b3d12] dark:bg-[linear-gradient(180deg,rgba(255,229,143,0.12)_0%,rgba(255,255,255,0.03)_100%)]" key={award.id}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-[#43330a] dark:text-[#ffe4a3]">{award.title}</p>
-                        <p className="mt-1 text-xs text-[#7e6b34] dark:text-[#e7d6a1]/75">{award.description}</p>
-                      </div>
-                      <div className="text-right text-xs font-semibold text-[#6f57f6] dark:text-[#cabfff]">
-                        <div>+{award.awarded_points} pts</div>
-                        <div>+{award.awarded_xp} xp</div>
-                        {award.awarded_tokens > 0 ? <div>+{award.awarded_tokens} tok</div> : null}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </HealthPanel>
-
-          <HealthPanel icon={<Sparkles />} subtitle="Care set" title="Health die faces">
-            <div className="rounded-[1.5rem] border border-[#d8ebdf] bg-[linear-gradient(135deg,#f6fff8_0%,#fbfcff_62%,#f3fff5_100%)] p-4 dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(17,40,27,0.72),rgba(17,24,40,0.5))]">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6d9b7c] dark:text-[#a5d7b8]/70">
-                    Unified set
-                  </p>
-                  <h4 className="mt-1 text-2xl font-black text-[#214130] dark:text-white">Health</h4>
-                  <p className="mt-2 max-w-xl text-sm leading-6 text-[#5e7c69] dark:text-white/58">
-                    The Health page now tracks the same dice-face language as Achievements, while keeping your care tools local and gentle.
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <DieFaceTile
-                    accent={ACHIEVEMENT_SET_META.health.accent}
-                    face={Math.max(1, earnedHealthFaces || 1) as AchievementFaceLevel}
-                    glow={earnedHealthFaces === healthFaceSummaries.length}
-                    size="md"
-                  />
-                  <div className="rounded-[1.2rem] bg-white/75 px-4 py-3 text-right shadow-[0_12px_24px_rgba(74,176,114,0.1)] dark:bg-white/[0.06]">
-                    <p className="text-2xl font-black text-[#214130] dark:text-white">{earnedHealthFaces} / {healthFaceSummaries.length}</p>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6d9b7c] dark:text-[#a5d7b8]/70">faces lit</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-3">
-                {healthFaceSummaries.map((face) => (
-                  <div
-                    className={`rounded-[1.35rem] border px-4 py-4 ${
-                      face.status === "earned"
-                        ? "border-[#d8ebdf] bg-white/88 dark:border-white/10 dark:bg-white/[0.06]"
-                        : face.status === "ready"
-                          ? "border-[#dfe3fb] bg-[#f8f5ff] dark:border-white/10 dark:bg-[#21193f]/45"
-                          : "border-dashed border-[#d4dcf5] bg-[#fbfcff] dark:border-white/10 dark:bg-white/[0.03]"
-                    }`}
-                    key={face.definition.id}
-                  >
-                    <div className="flex items-start gap-4">
-                      <DieFaceTile
-                        accent={ACHIEVEMENT_SET_META.health.accent}
-                        face={face.definition.face}
-                        glow={face.status === "earned"}
-                        size="sm"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#7f8aa1] dark:text-white/40">
-                              Face {face.definition.face}
-                            </p>
-                            <p className="mt-1 text-sm font-semibold text-[#26324f] dark:text-white">{face.definition.title}</p>
-                          </div>
-                          <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
-                            face.status === "earned"
-                              ? "bg-[#eef7f2] text-[#23865f] dark:bg-[#173324] dark:text-[#9ce0bc]"
-                              : face.status === "ready"
-                                ? "bg-[#f4efff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
-                                : "bg-[#eef2fb] text-[#74809b] dark:bg-white/8 dark:text-white/55"
-                          }`}>
-                            {face.status === "earned" ? "Earned" : face.status === "ready" ? "Ready to claim" : "In progress"}
-                          </span>
-                        </div>
-                        <p className="mt-2 text-xs leading-5 text-[#7080a0] dark:text-white/55">{face.definition.description}</p>
-                        <p className="mt-2 text-sm font-medium text-[#4f7b61] dark:text-[#b9ecc8]">{face.definition.encouragement}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+        <div aria-labelledby="health-tab-awards" className="mt-6" id={getHealthTabPanelId("Awards")} role="tabpanel">
+          <HealthPanel icon={<Trophy />} subtitle="Awards" title="Under construction">
+            <EmptyCopy text="This tab is under construction." />
           </HealthPanel>
         </div>
       ) : null}
 
-      <div className="mt-8 rounded-[2rem] border border-[#ece8f8] bg-white/85 p-5 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8d87a7] dark:text-white/40">Health settings</p>
-          </div>
-          <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
-            Save Goals
-          </button>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-8">
+        <HealthPanel icon={<Target />} subtitle="Health settings">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Field label="Weight unit">
-            <select className="health-input" onChange={(event) => setProfileDraft((current) => ({ ...current, preferred_weight_unit: event.target.value as HealthProfile["preferred_weight_unit"] }))} value={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit}>
+            <select className="health-input" onChange={(event) => handleWeightUnitChange(event.target.value as HealthProfile["preferred_weight_unit"])} value={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit}>
               <option value="lb">Pounds</option>
               <option value="kg">Kilograms</option>
             </select>
@@ -1718,89 +1649,41 @@ export function HealthPage({
           <Field label="Fat goal (g)">
             <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, fat_goal_grams: event.target.value as unknown as number }))} value={String(profileDraft.fat_goal_grams ?? "")} />
           </Field>
-          <Field label="Movement goal">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal ?? "")} />
+          <Field label="Move goal (kcal)">
+            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_calories: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_calories ?? "")} />
           </Field>
-          <Field label="Sleep goal (min)">
-            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, sleep_goal_minutes: event.target.value as unknown as number }))} value={String(profileDraft.sleep_goal_minutes ?? "")} />
+          <Field label="Move goal (min)">
+            <input className="health-input" inputMode="numeric" onChange={(event) => setProfileDraft((current) => ({ ...current, movement_goal_minutes: event.target.value as unknown as number }))} value={String(profileDraft.movement_goal_minutes ?? "")} />
+          </Field>
+          <Field label="Sleep goal">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Hours</span>
+                <input className="health-input" inputMode="numeric" onChange={(event) => handleSleepGoalHoursChange(event.target.value)} value={sleepGoalHours} />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Minutes</span>
+                <input className="health-input" inputMode="numeric" max={59} onChange={(event) => handleSleepGoalMinutesChange(event.target.value)} value={sleepGoalRemainingMinutes} />
+              </label>
+            </div>
           </Field>
           <Field label={`Target weight (${profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit})`}>
             <input
               className="health-input"
               inputMode="decimal"
-              onChange={(event) =>
-                setProfileDraft((current) => ({
-                  ...current,
-                  target_weight_kg: event.target.value
-                    ? displayWeightToKilograms(Number.parseFloat(event.target.value), (current.preferred_weight_unit ?? profile.preferred_weight_unit))
-                    : null,
-                }))
-              }
-              value={profileDraft.target_weight_kg === null || profileDraft.target_weight_kg === undefined ? "" : kilogramsToDisplayValue(profileDraft.target_weight_kg, profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit).toFixed(1)}
+              onChange={(event) => setTargetWeightDraft(event.target.value)}
+              value={targetWeightDraft}
             />
           </Field>
-        </div>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
+              Save Goals
+            </button>
+          </div>
+        </HealthPanel>
       </div>
     </section>
-  );
-}
-
-function WellnessRing({
-  colorEnd,
-  colorStart,
-  detail,
-  label,
-  value,
-}: {
-  colorEnd: string;
-  colorStart: string;
-  detail: string;
-  label: string;
-  value: number;
-}) {
-  const radius = 42;
-  const circumference = 2 * Math.PI * radius;
-  const dashOffset = circumference - (value / 100) * circumference;
-  const gradientId = `health-ring-${label.toLowerCase().replace(/\s+/g, "-")}`;
-
-  return (
-    <div
-      aria-label={label}
-      aria-valuemax={100}
-      aria-valuemin={0}
-      aria-valuenow={value}
-      className="rounded-[1.75rem] border border-[#ecf0fb] bg-white/85 px-4 py-4 text-center shadow-[0_18px_40px_rgba(63,82,145,0.08)] dark:border-white/10 dark:bg-white/[0.04]"
-      role="progressbar"
-    >
-      <div className="relative mx-auto h-28 w-28">
-        <svg aria-hidden="true" className="h-full w-full -rotate-90" viewBox="0 0 110 110">
-          <circle cx="55" cy="55" fill="none" r={radius} stroke="rgba(151,162,189,0.18)" strokeWidth="10" />
-          <circle
-            cx="55"
-            cy="55"
-            fill="none"
-            r={radius}
-            stroke={`url(#${gradientId})`}
-            strokeDasharray={circumference}
-            strokeDashoffset={dashOffset}
-            strokeLinecap="round"
-            strokeWidth="10"
-          />
-          <defs>
-            <linearGradient id={gradientId} x1="0%" x2="100%" y1="0%" y2="100%">
-              <stop offset="0%" stopColor={colorStart} />
-              <stop offset="100%" stopColor={colorEnd} />
-            </linearGradient>
-          </defs>
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center text-center">
-          <p className="text-xl font-black leading-none text-[#1d2744] dark:text-white">{value}%</p>
-        </div>
-      </div>
-      <span className="sr-only">{label}: {value} percent. {detail}</span>
-      <p className="mt-1 text-sm font-semibold text-[#26324f] dark:text-white">{label}</p>
-      <p className="mt-1 text-xs text-[#73809c] dark:text-white/50">{detail}</p>
-    </div>
   );
 }
 
@@ -1815,18 +1698,31 @@ function HealthPanel({
   subtitle: string;
   title?: string;
 }) {
+  const [isOpen, setIsOpen] = useState(true);
+
   return (
-    <div className="rounded-[2rem] border border-[#ece8f8] bg-white/85 p-5 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]">
-      <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center text-[#6f57f6] dark:text-[#cabfff] [&_svg]:h-6 [&_svg]:w-6">
-          {icon}
-        </div>
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{subtitle}</p>
-          {title ? <h3 className="mt-1 text-xl font-black text-[#1e2744] dark:text-white">{title}</h3> : null}
-        </div>
-      </div>
-      <div className="mt-4">{children}</div>
+    <div className="rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]">
+      <button
+        aria-expanded={isOpen}
+        className="flex w-full items-center justify-between gap-3 px-5 py-5 text-left"
+        onClick={() => setIsOpen((current) => !current)}
+        type="button"
+      >
+        <span className="flex items-center gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center text-[#6f57f6] dark:text-[#cabfff] [&_svg]:h-6 [&_svg]:w-6">
+            {icon}
+          </span>
+          <span>
+            <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{subtitle}</span>
+            {title ? <span className="mt-1 block text-xl font-black text-[#1e2744] dark:text-white">{title}</span> : null}
+          </span>
+        </span>
+        <ChevronDown
+          aria-hidden="true"
+          className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${isOpen ? "rotate-180" : ""}`}
+        />
+      </button>
+      {isOpen ? <div className="px-5 pb-5 pt-4">{children}</div> : null}
     </div>
   );
 }
@@ -1850,13 +1746,17 @@ function MetricPill({ icon, label }: { icon: ReactNode; label: string }) {
   );
 }
 
-function GoalBadge({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[1.25rem] bg-[#f5f3fc] px-4 py-3 dark:bg-white/[0.05]">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-[#26324f] dark:text-white">{value}</p>
-    </div>
-  );
+function formatSleepMinutes(minutes: number) {
+  const roundedMinutes = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(roundedMinutes / 60);
+  const remainingMinutes = roundedMinutes % 60;
+  if (hours === 0) {
+    return `${remainingMinutes}m`;
+  }
+  if (remainingMinutes === 0) {
+    return `${hours}h`;
+  }
+  return `${hours}h ${remainingMinutes}m`;
 }
 
 function ScorePicker({
@@ -1984,6 +1884,12 @@ function formatTimeInput(loggedAt: string) {
 function emptyToNull(value: string) {
   const trimmed = value.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+function formatBrandedFoodName(food: Pick<HealthMealEntry | HealthFoodLibraryItem, "brand_name" | "food_name">) {
+  return food.brand_name?.trim()
+    ? `${food.brand_name.trim()} · ${food.food_name}`
+    : food.food_name;
 }
 
 function getHealthTabPanelId(tab: HealthTab) {

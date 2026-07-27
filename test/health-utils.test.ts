@@ -7,6 +7,8 @@ import {
   buildHealthReminderTemplate,
   displayWeightToKilograms,
   getEligibleHealthAchievements,
+  getHealthSleepDayTotal,
+  getSleepFocusSessions,
   kilogramsToDisplayValue,
 } from "../src/lib/health-utils.ts";
 
@@ -95,4 +97,79 @@ test("health reminder template builds weekly weigh-in on the anchor weekday", ()
   assert.equal(reminder.repeatFrequency, "weekly");
   assert.deepEqual(reminder.repeatDaysOfWeek, [3]);
   assert.deepEqual(reminder.tags, ["health", "weight"]);
+});
+
+test("health sleep totals include imported sleep and sleep focus sessions", () => {
+  const focusCategories = [
+    {
+      color: "#8fb7ff",
+      focusType: "Sleep",
+      icon: "moon",
+      id: "sleep-category",
+      title: "Sleep",
+    },
+    {
+      color: "#6f57f6",
+      focusType: "Work",
+      icon: "code",
+      id: "work-category",
+      title: "Coding",
+    },
+  ];
+  const focusHistory = [
+    {
+      categoryId: "sleep-category",
+      date: "2026-05-27",
+      durationSeconds: 90 * 60,
+      focusType: "Sleep",
+      id: "sleep-session",
+      title: "Sleep",
+    },
+    {
+      categoryId: "work-category",
+      date: "2026-05-27",
+      durationSeconds: 45 * 60,
+      focusType: "Work",
+      id: "work-session",
+      title: "Coding",
+    },
+    {
+      categoryId: null,
+      date: "2026-05-28",
+      durationSeconds: 30 * 60,
+      focusType: "Personal",
+      id: "historical-sleep-session",
+      title: "Sleep nap",
+    },
+  ];
+  const metricEntries = [
+    {
+      created_at: "2026-05-27T07:00:00.000Z",
+      id: "sleep-metric",
+      metric_date: "2026-05-27",
+      metric_type: "sleep_minutes" as const,
+      metric_unit: "min",
+      metric_value: 420,
+      source: "apple_health",
+      source_fingerprint: "sleep-import",
+      updated_at: "2026-05-27T07:00:00.000Z",
+      user_id: "user-1",
+    },
+  ];
+
+  assert.deepEqual(getSleepFocusSessions(focusHistory, focusCategories).map((session) => session.id), [
+    "sleep-session",
+    "historical-sleep-session",
+  ]);
+  assert.deepEqual(getHealthSleepDayTotal({
+    date: "2026-05-27",
+    focusCategories,
+    focusHistory,
+    metricEntries,
+  }), {
+    date: "2026-05-27",
+    focusMinutes: 90,
+    importedMinutes: 420,
+    totalMinutes: 510,
+  });
 });

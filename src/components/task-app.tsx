@@ -153,6 +153,7 @@ import {
   sanitizeFocusLabel,
   sanitizeOptionalFocusLabel,
 } from "@/lib/focus-utils";
+import { isSleepCategory } from "@/lib/focus-goals";
 import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
@@ -538,7 +539,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.5.29";
+const APP_VERSION = "7.5.36";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1216,6 +1217,20 @@ export function TaskApp() {
     taskEditorTaskId,
     userId: session?.user?.id,
   });
+  const startSleepFocusClock = useCallback(() => {
+    const sleepCategory = focusCategories.find((category) => isSleepCategory(category));
+    if (!sleepCategory) {
+      setActivePage("Focus");
+      setMessage({ tone: "warn", text: "Create a Sleep Focus category first, then start the clock." });
+      return;
+    }
+    setActivePage("Focus");
+    if (activeSessions[sleepCategory.id]?.isRunning) {
+      setMessage({ tone: "neutral", text: "Sleep Focus clock is already running." });
+      return;
+    }
+    void handleToggleTimer(sleepCategory.id, { mode: "countup" });
+  }, [activeSessions, focusCategories, handleToggleTimer, setActivePage]);
   const {
     reorderListColumns,
     setSelectedBucket,
@@ -6459,12 +6474,15 @@ export function TaskApp() {
             deleteWaterEntry={deleteHealthWaterEntry}
             deleteWeightEntry={deleteWeightEntry}
             favorites={healthFavorites}
+            focusCategories={focusCategories}
+            focusHistory={focusHistory}
             importAudits={healthImportAudits}
             isLoading={isHealthLoading}
             importAppleHealthData={importAppleHealthData}
             mealEntries={healthMealEntries}
             metricEntries={healthMetricEntries}
             onOpenReminderTemplate={openHealthReminderTemplate}
+            onStartSleepClock={startSleepFocusClock}
             profile={healthProfile}
             recipes={healthRecipes}
             saveCheckIn={saveCheckIn}

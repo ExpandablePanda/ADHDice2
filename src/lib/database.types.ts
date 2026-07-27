@@ -1382,6 +1382,8 @@ export type HealthProfile = {
   carbs_goal_grams: number | null;
   fat_goal_grams: number | null;
   movement_goal: number | null;
+  movement_goal_calories: number | null;
+  movement_goal_minutes: number | null;
   sleep_goal_minutes: number | null;
   target_weight_kg: number | null;
   created_at: string;
@@ -1396,6 +1398,8 @@ export type HealthProfileInsert = {
   carbs_goal_grams?: number | null;
   fat_goal_grams?: number | null;
   movement_goal?: number | null;
+  movement_goal_calories?: number | null;
+  movement_goal_minutes?: number | null;
   sleep_goal_minutes?: number | null;
   target_weight_kg?: number | null;
 };
@@ -1409,6 +1413,8 @@ export type HealthProfileUpdate = Partial<
     | "carbs_goal_grams"
     | "fat_goal_grams"
     | "movement_goal"
+    | "movement_goal_calories"
+    | "movement_goal_minutes"
     | "sleep_goal_minutes"
     | "target_weight_kg"
   >
@@ -1454,6 +1460,7 @@ export type HealthFoodLibraryItem = {
   provider: string;
   provider_item_id: string | null;
   attribution: string | null;
+  is_favorite: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -1472,6 +1479,7 @@ export type HealthFoodLibraryItemInsert = {
   provider?: string;
   provider_item_id?: string | null;
   attribution?: string | null;
+  is_favorite?: boolean;
 };
 
 export type HealthFoodLibraryItemUpdate = Partial<
@@ -1488,6 +1496,7 @@ export type HealthFoodLibraryItemUpdate = Partial<
     | "provider"
     | "provider_item_id"
     | "attribution"
+    | "is_favorite"
   >
 >;
 

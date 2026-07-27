@@ -45,6 +45,17 @@ export function dedupeCategoriesByName(categories: FocusCategory[]) {
   );
 }
 
+export function normalizeFocusCategoriesForPersistence(
+  categories: FocusCategory[],
+  createUuid: () => string,
+) {
+  return categories.map((category) => (
+    isUuid(category.id)
+      ? category
+      : { ...category, id: createUuid() }
+  ));
+}
+
 export function adjustActiveFocusSession(
   session: ActiveFocusSession,
   deltaSeconds: number,

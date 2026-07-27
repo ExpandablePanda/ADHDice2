@@ -4,6 +4,7 @@ import {
   adjustActiveFocusSession,
   dedupeCategoriesByName,
   isUuid,
+  normalizeFocusCategoriesForPersistence,
   preferStoredOptionalValue,
   preferStoredValue,
   sanitizeFocusLabel,
@@ -33,6 +34,35 @@ test("focus utils dedupe categories by normalized title and validate uuids", () 
   assert.equal(categories[1].id, "3");
   assert.equal(isUuid("550e8400-e29b-41d4-a716-446655440000"), true);
   assert.equal(isUuid("not-a-uuid"), false);
+});
+
+test("new focus categories get raw UUIDs before timer persistence uses them", () => {
+  const persisted = normalizeFocusCategoriesForPersistence([
+    {
+      id: "focus-category-4c7633f7-b279-4ffb-99cb-3d38c35b6a47",
+      title: "Deep Work",
+      focusType: "Work",
+      focusSubtype: "Productive",
+      focusSubtype2: null,
+      color: "#6f57f6",
+      icon: "Code",
+      dailyGoalSeconds: null,
+      weeklyGoalSeconds: null,
+    },
+  ], () => "550e8400-e29b-41d4-a716-446655440000");
+
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0].id, "550e8400-e29b-41d4-a716-446655440000");
+  assert.equal(isUuid(persisted[0].id), true);
+  assert.equal(persisted[0].id.startsWith("focus-category-"), false);
+
+  const runtimeCreatePayload = {
+    p_action: "create",
+    p_category_id: persisted[0].id,
+  };
+
+  assert.equal(runtimeCreatePayload.p_category_id, "550e8400-e29b-41d4-a716-446655440000");
+  assert.equal(isUuid(String(runtimeCreatePayload.p_category_id)), true);
 });
 
 test("focus timer adjustments include live elapsed time and preserve running state", () => {

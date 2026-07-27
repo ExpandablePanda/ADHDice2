@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
-import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import type { HealthWaterEntry, HealthWaterUnit } from "@/lib/database.types";
 import {
   formatQuantity,
@@ -14,6 +13,7 @@ import {
   waterAmountToMilliliters,
 } from "@/lib/health-library";
 import { formatHealthDateLabel } from "@/lib/health-utils";
+import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 
 type HealthWaterPanelProps = {
   addWaterEntry: (input: {
@@ -113,7 +113,7 @@ export function HealthWaterPanel({
   return (
     <div aria-labelledby="health-tab-water" className="mt-6 grid gap-5 xl:grid-cols-[0.9fr_1.1fr]" id="health-panel-water" role="tabpanel">
       <div className="grid content-start gap-5">
-        <AdhdPanel
+        <HealthCollapsiblePanel
           header={(
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#eef5ff] text-[#4f73b8] dark:bg-[#17243a] dark:text-[#b7cdfd]">
               <Droplets aria-hidden="true" className="h-5 w-5" />
@@ -159,11 +159,11 @@ export function HealthWaterPanel({
               <AdhdChip onClick={() => { void addAmount(Number.parseFloat(amount), unit); }} selected>Add water</AdhdChip>
             </div>
           </div>
-        </AdhdPanel>
+        </HealthCollapsiblePanel>
       </div>
 
       <div className="grid content-start gap-5">
-        <AdhdPanel subtitle={`${todayEntries.length} ${todayEntries.length === 1 ? "entry" : "entries"} today`} title="Today’s water">
+        <HealthCollapsiblePanel subtitle={`${todayEntries.length} ${todayEntries.length === 1 ? "entry" : "entries"} today`} title="Today’s water">
           {todayEntries.length === 0 ? (
             <p className="text-sm text-[#7d7598] dark:text-white/55">Water entries will appear here as you add them.</p>
           ) : (
@@ -183,9 +183,9 @@ export function HealthWaterPanel({
               ))}
             </div>
           )}
-        </AdhdPanel>
+        </HealthCollapsiblePanel>
 
-        <AdhdPanel subtitle="Previous days" title="Water history">
+        <HealthCollapsiblePanel subtitle="Previous days" title="Water history">
           {waterHistory.length === 0 ? (
             <p className="text-sm text-[#7d7598] dark:text-white/55">Past water totals will appear here after entries exist on earlier days.</p>
           ) : (
@@ -208,7 +208,7 @@ export function HealthWaterPanel({
               ))}
             </div>
           )}
-        </AdhdPanel>
+        </HealthCollapsiblePanel>
       </div>
     </div>
   );

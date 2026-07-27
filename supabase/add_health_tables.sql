@@ -6,6 +6,8 @@ create table if not exists public.adhdice_health_profiles (
   carbs_goal_grams integer check (carbs_goal_grams is null or carbs_goal_grams >= 0),
   fat_goal_grams integer check (fat_goal_grams is null or fat_goal_grams >= 0),
   movement_goal integer check (movement_goal is null or movement_goal >= 0),
+  movement_goal_calories integer check (movement_goal_calories is null or movement_goal_calories >= 0),
+  movement_goal_minutes integer check (movement_goal_minutes is null or movement_goal_minutes >= 0),
   sleep_goal_minutes integer check (sleep_goal_minutes is null or sleep_goal_minutes >= 0),
   target_weight_kg numeric(7,2) check (target_weight_kg is null or target_weight_kg > 0),
   created_at timestamptz not null default now(),
@@ -39,6 +41,7 @@ create table if not exists public.adhdice_health_food_library (
   provider text not null default 'manual',
   provider_item_id text,
   attribution text,
+  is_favorite boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

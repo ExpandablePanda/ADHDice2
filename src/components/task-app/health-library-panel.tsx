@@ -23,6 +23,7 @@ import {
   getSavedMealNutrition,
 } from "@/lib/health-library";
 import { getMealSlotLabel, HEALTH_MEAL_SLOTS } from "@/lib/health-utils";
+import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 
 type LibrarySection = "foods" | "recipes" | "meals";
 
@@ -82,9 +83,6 @@ type HealthLibraryPanelProps = {
   deleteFood: (id: string) => Promise<boolean>;
   deleteRecipe: (id: string) => Promise<boolean>;
   deleteSavedMeal: (id: string) => Promise<boolean>;
-  logFood: (food: HealthFoodLibraryItem, slot: HealthMealSlot) => Promise<boolean>;
-  logRecipe: (recipe: HealthRecipe, slot: HealthMealSlot) => Promise<boolean>;
-  logSavedMeal: (meal: HealthSavedMeal) => Promise<boolean>;
   saveFood: (input: {
     id?: string;
     attribution?: string | null;
@@ -121,17 +119,14 @@ export function HealthLibraryPanel({
   deleteFood,
   deleteRecipe,
   deleteSavedMeal,
-  logFood,
-  logRecipe,
-  logSavedMeal,
   saveFood,
   saveRecipe,
   saveSavedMeal,
 }: HealthLibraryPanelProps) {
   const [section, setSection] = useState<LibrarySection>("foods");
-  const [logMealSlot, setLogMealSlot] = useState<HealthMealSlot>("breakfast");
   const [foodDraft, setFoodDraft] = useState<FoodDraft>(EMPTY_FOOD_DRAFT);
   const [foodSearchQuery, setFoodSearchQuery] = useState("");
+  const [ingredientSearchQuery, setIngredientSearchQuery] = useState("");
   const [recipeDraft, setRecipeDraft] = useState<RecipeDraft>(EMPTY_RECIPE_DRAFT);
   const [mealDraft, setMealDraft] = useState<MealDraft>(EMPTY_MEAL_DRAFT);
 
@@ -148,6 +143,17 @@ export function HealthLibraryPanel({
       food.barcode,
     ].some((value) => value?.toLowerCase().includes(query)));
   }, [favorites, foodSearchQuery]);
+  const filteredIngredientFoods = useMemo(() => {
+    const query = ingredientSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return favorites;
+    }
+    return favorites.filter((food) => [
+      food.brand_name,
+      food.food_name,
+      food.serving_label,
+    ].some((value) => value?.toLowerCase().includes(query)));
+  }, [favorites, ingredientSearchQuery]);
   const recipePreview = useMemo(
     () => getRecipeNutritionPerServing({
       ingredients: recipeDraft.ingredients,
@@ -213,7 +219,7 @@ export function HealthLibraryPanel({
   }
 
   return (
-    <AdhdPanel
+    <HealthCollapsiblePanel
       className="xl:col-span-2"
       subtitle="Create reusable foods, combine ingredients into recipes, or bundle foods and recipes into one-tap meals."
       title="Custom nutrition library"
@@ -229,21 +235,10 @@ export function HealthLibraryPanel({
           Meals
         </AdhdChip>
       </div>
-      {section !== "meals" ? (
-        <div className="mb-5 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Log to</span>
-          {HEALTH_MEAL_SLOTS.map((slot) => (
-            <AdhdChip key={slot} onClick={() => setLogMealSlot(slot)} selected={logMealSlot === slot}>
-              {getMealSlotLabel(slot)}
-            </AdhdChip>
-          ))}
-        </div>
-      ) : null}
-
       {section === "foods" ? (
         <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-4">
-            <AdhdPanel subtitle="Filter saved custom foods in this library." title="Search custom foods" variant="subpanel">
+            <HealthCollapsiblePanel subtitle="Filter saved custom foods in this library." title="Search custom foods" variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
                 <input
                   className="health-input"
@@ -263,8 +258,8 @@ export function HealthLibraryPanel({
               <p className="mt-3 text-xs text-[#7d7598] dark:text-white/55">
                 Showing {filteredFoods.length} of {favorites.length} custom {favorites.length === 1 ? "food" : "foods"}.
               </p>
-            </AdhdPanel>
-            <AdhdPanel subtitle="Nutrition is stored per serving." title={foodDraft.id ? "Edit custom food" : "New custom food"} variant="subpanel">
+            </HealthCollapsiblePanel>
+            <HealthCollapsiblePanel subtitle="Nutrition is stored per serving." title={foodDraft.id ? "Edit custom food" : "New custom food"} variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-2">
                 <LibraryField label="Food name">
                   <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, foodName: event.target.value }))} value={foodDraft.foodName} />
@@ -294,14 +289,16 @@ export function HealthLibraryPanel({
                 </AdhdChip>
                 {foodDraft.id ? <AdhdChip onClick={() => setFoodDraft(EMPTY_FOOD_DRAFT)}>Cancel</AdhdChip> : null}
               </div>
-            </AdhdPanel>
+            </HealthCollapsiblePanel>
           </div>
           <LibraryCards empty={foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."} items={filteredFoods.map((food) => (
             <AdhdCard key={food.id}>
-              <LibraryCardHeader detail={`${food.serving_label || "1 serving"} / ${food.calories} kcal`} title={food.food_name} />
+              <LibraryCardHeader
+                detail={`${food.serving_label || "1 serving"} / ${food.calories} kcal`}
+                title={formatBrandedFoodName(food)}
+              />
               <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
               <div className="mt-3 flex flex-wrap gap-2">
-                <AdhdChip onClick={() => { void logFood(food, logMealSlot); }} selected>Add today</AdhdChip>
                 <AdhdChip contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
                 <AdhdChip contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteFood(food.id); }} tone="danger">Remove</AdhdChip>
               </div>
@@ -313,7 +310,7 @@ export function HealthLibraryPanel({
       {section === "recipes" ? (
         <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-4">
-            <AdhdPanel subtitle="Add foods below, then set the batch yield." title={recipeDraft.id ? "Edit recipe" : "New recipe"} variant="subpanel">
+            <HealthCollapsiblePanel subtitle="Add foods below, then set the batch yield." title={recipeDraft.id ? "Edit recipe" : "New recipe"} variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-2">
                 <LibraryField label="Recipe name">
                   <input className="health-input" onChange={(event) => setRecipeDraft((current) => ({ ...current, name: event.target.value }))} value={recipeDraft.name} />
@@ -346,16 +343,23 @@ export function HealthLibraryPanel({
                 <AdhdChip onClick={() => { void handleSaveRecipe(); }} selected>Save recipe</AdhdChip>
                 {recipeDraft.id ? <AdhdChip onClick={() => setRecipeDraft(EMPTY_RECIPE_DRAFT)}>Cancel</AdhdChip> : null}
               </div>
-            </AdhdPanel>
-            <SourcePicker
-              empty="Create a custom food first, then add it as an ingredient."
-              items={favorites.map((food) => ({
+            </HealthCollapsiblePanel>
+            <HealthCollapsiblePanel subtitle="Search by brand, food, or serving before adding an ingredient." title="Add ingredients" variant="subpanel">
+              <input
+                className="health-input mb-3"
+                onChange={(event) => setIngredientSearchQuery(event.target.value)}
+                placeholder="Search custom foods"
+                value={ingredientSearchQuery}
+              />
+              <SourcePicker
+              empty={ingredientSearchQuery.trim() ? "No custom foods match this ingredient search." : "Create a custom food first, then add it as an ingredient."}
+              items={filteredIngredientFoods.map((food) => ({
                 id: food.id,
-                label: food.food_name,
+                label: formatBrandedFoodName(food),
                 onAdd: () => setRecipeDraft((current) => ({ ...current, ingredients: [...current.ingredients, buildRecipeIngredient(food, 1)] })),
               }))}
-              title="Add ingredients"
-            />
+              />
+            </HealthCollapsiblePanel>
           </div>
           <LibraryCards empty="No recipes yet." items={recipes.map((recipe) => {
             const nutrition = getRecipeNutritionPerServing(recipe);
@@ -364,7 +368,6 @@ export function HealthLibraryPanel({
                 <LibraryCardHeader detail={`${formatQuantity(recipe.servings)} servings / ${recipe.ingredients.length} ingredients`} title={recipe.name} />
                 <NutritionLine {...nutrition} />
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <AdhdChip onClick={() => { void logRecipe(recipe, logMealSlot); }} selected>Log 1 serving</AdhdChip>
                   <AdhdChip contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setRecipeDraft({
                     id: recipe.id,
                     ingredients: recipe.ingredients,
@@ -383,7 +386,7 @@ export function HealthLibraryPanel({
       {section === "meals" ? (
         <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-4">
-            <AdhdPanel subtitle="A meal can contain custom foods and recipe servings." title={mealDraft.id ? "Edit custom meal" : "New custom meal"} variant="subpanel">
+            <HealthCollapsiblePanel subtitle="A meal can contain custom foods and recipe servings." title={mealDraft.id ? "Edit custom meal" : "New custom meal"} variant="subpanel">
               <LibraryField label="Meal name">
                 <input className="health-input" onChange={(event) => setMealDraft((current) => ({ ...current, name: event.target.value }))} value={mealDraft.name} />
               </LibraryField>
@@ -413,13 +416,13 @@ export function HealthLibraryPanel({
                 <AdhdChip onClick={() => { void handleSaveMeal(); }} selected>Save meal</AdhdChip>
                 {mealDraft.id ? <AdhdChip onClick={() => setMealDraft(EMPTY_MEAL_DRAFT)}>Cancel</AdhdChip> : null}
               </div>
-            </AdhdPanel>
+            </HealthCollapsiblePanel>
             <SourcePicker
               empty="Create a custom food or recipe first."
               items={[
                 ...favorites.map((food) => ({
                   id: `food-${food.id}`,
-                  label: food.food_name,
+                  label: formatBrandedFoodName(food),
                   onAdd: () => setMealDraft((current) => ({ ...current, items: [...current.items, buildSavedMealFoodItem(food, 1)] })),
                 })),
                 ...recipes.map((recipe) => ({
@@ -438,7 +441,6 @@ export function HealthLibraryPanel({
                 <LibraryCardHeader detail={`${getMealSlotLabel(meal.default_meal_slot)} / ${meal.items.length} items`} title={meal.name} />
                 <NutritionLine {...nutrition} />
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <AdhdChip onClick={() => { void logSavedMeal(meal); }} selected>Add today</AdhdChip>
                   <AdhdChip contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setMealDraft({
                     id: meal.id,
                     items: meal.items,
@@ -452,23 +454,28 @@ export function HealthLibraryPanel({
           })} />
         </div>
       ) : null}
-    </AdhdPanel>
+    </HealthCollapsiblePanel>
   );
 }
 
-function SourcePicker({ empty, items, title }: { empty: string; items: Array<{ id: string; label: string; onAdd: () => void }>; title: string }) {
+function SourcePicker({ empty, items, title }: { empty: string; items: Array<{ id: string; label: string; onAdd: () => void }>; title?: string }) {
+  const content = items.length === 0 ? <p className="text-sm text-[#7d7598] dark:text-white/55">{empty}</p> : (
+    <div className="flex flex-wrap gap-2">
+      {items.map((item) => (
+        <AdhdChip contentClassName="gap-1.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} key={item.id} onClick={item.onAdd}>
+          {item.label}
+        </AdhdChip>
+      ))}
+    </div>
+  );
+
+  if (!title) {
+    return content;
+  }
   return (
-    <AdhdPanel title={title} variant="subpanel">
-      {items.length === 0 ? <p className="text-sm text-[#7d7598] dark:text-white/55">{empty}</p> : (
-        <div className="flex flex-wrap gap-2">
-          {items.map((item) => (
-            <AdhdChip contentClassName="gap-1.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} key={item.id} onClick={item.onAdd}>
-              {item.label}
-            </AdhdChip>
-          ))}
-        </div>
-      )}
-    </AdhdPanel>
+    <HealthCollapsiblePanel title={title} variant="subpanel">
+      {content}
+    </HealthCollapsiblePanel>
   );
 }
 
@@ -509,6 +516,12 @@ function LibraryCardHeader({ detail, title }: { detail: string; title: string })
       <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{detail}</p>
     </div>
   );
+}
+
+function formatBrandedFoodName(food: Pick<HealthFoodLibraryItem, "brand_name" | "food_name">) {
+  return food.brand_name?.trim()
+    ? `${food.brand_name.trim()} · ${food.food_name}`
+    : food.food_name;
 }
 
 function NutritionLine({ calories, protein, carbs, fat }: { calories: number; protein: number; carbs: number; fat: number }) {

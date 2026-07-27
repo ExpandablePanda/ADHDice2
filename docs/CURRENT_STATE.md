@@ -1,17 +1,59 @@
 # Current State
 
-Last reviewed: 2026-07-26
+Last reviewed: 2026-07-27
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.5.29`.
+- Current working app version: `7.5.36`.
 - Current release group: `7.5.x` PATHS Task Nodes.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.5.36 Health Meal Totals Correction
+
+- Today’s Meals now shows per-slot calorie totals, correcting the prior carb-total interpretation.
+- Logged meal rows keep their existing calorie display without the extra carb-total suffix.
+- Verification for this patch ran `npm run lint -- src/components/task-app/health-page.tsx`, `npm run typecheck`, and `git diff --check`.
+
+## 7.5.35 Health Food Labels and Sleep Goal Inputs
+
+- Health Food panels now collapse to the header cleanly without leaving the old extra closed-state padding behind.
+- Today’s Meals, Favorites, and Recent foods now render brand-first labels so branded entries read consistently across the Food tab.
+- Health settings now edit the sleep target as separate hours and minutes inputs while continuing to save the canonical `sleep_goal_minutes` value.
+- Verification for this patch ran `npm run lint -- src/components/task-app/health-page.tsx`, `npm run typecheck`, and `git diff --check`.
+
+## 7.5.34 Focus Realtime Channel Re-entry Hotfix
+
+- `useFocus.ts` now tears down prior Focus runtime and Focus counter Supabase realtime channels before re-subscribing, preventing duplicate effect re-entry from calling `.on("postgres_changes", ...)` on a channel that has already been subscribed.
+- This fixes the Focus runtime crash `cannot add postgres_changes callbacks ... after subscribe()` seen during Fast Refresh, Strict Mode effect replay, or rapid auth/runtime re-entry.
+- Verification for this patch ran `npm run lint -- src/hooks/useFocus.ts src/components/task-app.tsx`, `npm run typecheck`, and `git diff --check`.
+
+## 7.5.33 Health Page Simplification
+
+- Health now uses the `Health, Diet, Fitness` page label, removes the global summary and the prior Today dashboard sections, keeps Awards as an under-construction tab, and makes Health sections collapsible.
+- Food logging now uses a meal slot, custom-food search/selection, amount, and Log action. Today’s meals are grouped under Breakfast, Lunch, Dinner, and Snack while retaining inline editing.
+- Custom foods no longer become favorites automatically. The nutrition library is creation-only, recipe ingredient selection is searchable with brand-first food chips, and explicit favorites remain available for quick reuse.
+- Health settings now store Move goals for calories and minutes. Target weight keeps the user’s display-unit text while editing and converts to kilograms only when saved.
+- Apply `supabase/add_health_food_favorites_and_move_goals_7_5_33.sql` before expecting the favorite flag and Move calorie/time goals to persist remotely. No live SQL was applied by Codex.
+- Per user instruction, lint, tests, typecheck, build, browser QA, and live database verification were not run. Verification was limited to source inspection and `git diff --check`.
+
+## 7.5.32 Focus Category UUID Persistence
+
+- New Focus categories now convert any temporary client-only category id into a raw UUID before the category enters shared Focus state, local storage, Supabase category upserts, or Focus timer runtime writes.
+- This keeps the existing Focus category editor behavior intact while preventing prefixed UI identifiers from being written into Postgres UUID columns during timer create/update flows.
+
+## 7.5.31 Recurring Same-Day Status Preference
+
+- Recurring task rows now prefer a same-day saved history status over an older overdue missed anchor when deriving the visible active status. This prevents tasks like Drink Water and Take Electrolyte Pack from still rendering as `Missed` immediately after they are marked Done or Did My Best today while the recurrence cursor is still catching up.
+
+## 7.5.30 Health Sleep Totals
+
+- Health now has a dedicated Sleep tab that combines Apple Health `sleep_minutes` imports with Sleep Focus timer sessions, shows 7-day source totals, and lists recent Sleep Focus history inside Health.
+- The Health summary ring and 7-day rhythm Sleep pill now use the combined Health Sleep total. The Start Sleep Clock action opens the existing Focus timer for the first Sleep category so timer persistence stays on the canonical Focus session path.
 
 ## 7.5.29 Health Summary Ring Text Alignment
 
