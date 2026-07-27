@@ -5,13 +5,68 @@ Last reviewed: 2026-07-26
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.4.28`.
-- Current release group: `7.4.x` weekly occurrence-resolution reliability.
+- Current working app version: `7.5.16`.
+- Current release group: `7.5.x` PATHS Task Nodes.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.5.10 Trash Permanent-Delete Cascade Reconciliation
+
+- Successful permanent deletion now removes the selected Task and its full Step/Substep descendant closure from local task and routing state immediately, matching the database `ON DELETE CASCADE` result. Large Trash batches no longer expose temporarily cached descendants as top-level rows in All while Realtime reconciliation catches up.
+
+## 7.5.9 List View Recently Added Sort
+
+- List View adds **Recently Added** to its existing persisted sort-field menu. It uses the canonical Task `created_at` timestamp, with descending ordering newest Tasks first and ascending ordering oldest Tasks first.
+- Sorting continues to reorder only the filtered parent projection, so Steps and Substeps remain attached to their parent in stored sibling order. Table View sort options and behavior are unchanged.
+
+## 7.5.8 Completed Steps QA
+
+- Completed Step grouping resolves every Substep through its explicit owning direct Step, keeping active-Step children visible and completed Step branches intact without duplication or hoisting.
+- The default-collapsed Completed Steps label/count and chevron use the same centered control structure as the existing Steps toggle in Table, List, and the shared editor.
+
+## 7.5.6 Completed Steps Grouping
+
+- Table View, List View, and the shared Edit Task UI use one tree-aware child preview grouping. Direct Steps whose stored status is exactly `complete` move with their full Substep branch into a default-collapsed `Completed Steps (n)` section.
+- Done, Did My Best, Missed, and active direct Steps remain in the normal Steps section. Substeps retain their owning Step, hierarchy order, existing renderers, metadata, and actions regardless of their own status.
+
+## 7.5.5 PATHS Task Chip Discovery
+
+- The blank-canvas picker no longer renders every Task on open. Its initial state is the ordered rail of visible canonical Task List chips; selecting a list reveals its eligible top-level Tasks, while typing a search reveals only matching Task Chips and can be combined with a selected list.
+- Canvas Task Chip candidates remain canonical, exclude Trash/Archive ancestry, and now exclude Step/Substep rows because those render only as attached Step Chips and Substep Chips beneath their parent Task Chip.
+- Current PATHS language is: **PATHS Node** for the large original rectangle, **Task Chip** for the approved compact canonical Task, **Step Chip / Substep Chip** for attached hierarchy, and **Endpoint** for the destination landmark.
+
+## 7.5.4 PATHS Node Long-Press Actions
+
+- Long-pressing an ordinary PATHS chip or canonical Task node now opens the shared PATHS action menu without disrupting drag behavior or accidentally opening the Task editor after the press.
+- Both node kinds expose approved Connect and Delete chips. Delete removes only the node from the map and preserves the canonical Task; ordinary PATHS chips also expose an inline rename input with Enter/Save handling.
+- The compact Path selector uses a smaller chevron so its icon stays within the approved neighboring chip height.
+
+## 7.5.3 PATHS Canvas Action Placement
+
+- The canvas zoom controls now stay at the top-right of the map surface.
+- The top Path selector uses the approved task-table chip geometry instead of the larger input-field treatment; inspector dropdown fields retain their existing layout.
+- Clicking blank map space now presents the approved Add chip action beside Task search. Add chip creates an ordinary PATHS chip at the clicked location, while choosing a Task still creates the canonical Task-backed chip there.
+
+## 7.5.2 PATHS Canvas Controls and Connection Polish
+
+- Task/Step/Substep status controls now render as standalone status circles connected to their title chips by a short purple line; the existing guarded status menu and production mutation callback are unchanged.
+- The PATHS canvas now has approved zoom-out, percentage-reset, and zoom-in controls from 50% through 150%. Canvas clicks, endpoint placement, and node/endpoint dragging normalize pointer coordinates against the active zoom.
+- Both Task-backed hierarchies and ordinary PATHS rectangles retain their connection hit areas without visible handle dots. The right inspector adds viewport-sized white scroll runway so its lowest section can be raised toward the top of the panel.
+
+## 7.5.1 PATHS Task Chip Connection Geometry
+
+- Task-backed PATHS nodes no longer expose the ordinary four visible square-card handles or selection/connection frame. They provide one transparent connection target after the final rendered Task, Step, or Substep chip.
+- PATHS connection geometry now derives the Task hierarchy height and anchors Task-node connections at its bottom edge, preventing path lines and handles from overlapping the connected Step/Substep chips. Ordinary PATHS square chips retain their four visible side handles.
+
+## 7.5.0 PATHS Task Chips
+
+- PATHS nodes now carry a backward-compatible `path` / `task` discriminator. Old saves default to ordinary nodes, while Task Nodes persist one canonical Task reference plus existing canvas-owned position, connection, note, and presentation fields through local save/load, duplication, and archive/restore.
+- Clicking blank map space opens an ADHDice task-search panel at that location. Candidates exclude Trash, Archive, and descendants of either; choosing one creates a canonical Task-backed node without copying Task data into PATHS.
+- Task-backed nodes render as approved ADHDice chips instead of PATHS square cards. Step and Substep chips stay visible below their parent with branch lines, each chip remains sourced from live Task hierarchy/status data, and the adjacent status control uses the guarded production status callback.
+- Task, Step, and Substep title chips use the shared two-column editor overlay over the still-mounted PATHS surface. Ordinary PATHS completion remains local and unchanged.
 
 ## 7.4.28 List Rail diagnostics cleanup
 

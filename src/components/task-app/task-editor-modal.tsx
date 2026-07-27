@@ -490,7 +490,7 @@ export function TaskEditorModal({
 
   const visibleStatusOptions: TaskStatus[] = task
     ? getSelectableTaskStatuses(task)
-    : getSelectableTaskStatusesForRepeatFrequency(draft.repeatFrequency).filter((status) => status !== "complete" && status !== "trashed");
+    : getSelectableTaskStatusesForRepeatFrequency(draft.repeatFrequency).filter((status) => status !== "complete");
   const compactRepeatOptions = repeatFrequencyOptions;
   const compactRepeatLabel = formatRepeatFrequencyLabel(
     draft.repeatFrequency,

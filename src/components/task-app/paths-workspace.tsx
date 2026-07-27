@@ -1,12 +1,15 @@
 "use client";
 
-import { Archive, Bed, BookOpen, Briefcase, Car, Check, ChevronDown, ChevronUp, Copy, Footprints, Home, Link2, Moon, Plus, RotateCcw, Search, ShowerHead, Sparkles, Target, Trash2, Unlink, Utensils, X } from "lucide-react";
+import { Archive, Bed, BookOpen, Briefcase, Car, Check, ChevronDown, ChevronUp, CircleAlert, Copy, Footprints, GripVertical, Home, Link2, Minus, Moon, Plus, RotateCcw, Search, ShowerHead, Sparkles, Target, Trash2, Unlink, Utensils, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Task, TaskStatus } from "@/lib/database.types";
 import { formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import {
   createLocalStoragePathsStorageAdapter,
+  convertPathNodeToTaskNode,
+  convertTaskNodeToPathNode,
+  duplicatePathNode,
   getLocalPathDateKey,
   LOCAL_PATHS_PROTOTYPE_USER_ID,
   PATH_TYPES,
@@ -15,24 +18,29 @@ import {
   type PathRecord,
   type PathType,
 } from "@/lib/paths-domain";
+import { buildPathsTaskNodeView, isPathsNodeComplete, isPathsTaskAvailable, type PathsTaskNodeStep, type PathsTaskNodeView } from "@/lib/paths-task-node";
 import { matchesLinkableTaskSearch } from "@/lib/scratch-paper-task-links";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_CHIP_BASE_CLASS,
+  TASK_TABLE_ICON_LABEL_GAP_CLASS,
   TASK_TABLE_INPUT_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
-import { AdhdDropdownPanel } from "@/components/ui-system";
+import { AdhdChip, AdhdDropdownPanel, AdhdIconButton } from "@/components/ui-system";
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
+import type { TaskListDefinition, TaskListId, TaskListMembership } from "@/lib/task-lists";
 
-type LinkedTaskOption = Pick<Task, "id" | "notes" | "repeat_frequency" | "status" | "tags" | "title" | "trashed_at">;
+type LinkedTaskOption = Task;
 type PathEndpointIconId = keyof typeof PATH_ENDPOINT_ICON_MAP;
 type PathConnectionSource = { kind: "endpoint" } | { kind: "node"; nodeId: string };
 type PathNodeHandleSide = "bottom" | "left" | "right" | "top";
 type InspectorSectionId = "actions" | "endpoint" | "path" | "selectedChip";
 
 type PathsWorkspaceProps = {
+  availableTaskLists?: TaskListDefinition[];
+  listMembershipsByTaskId?: Record<string, TaskListMembership[]>;
   onOpenTask?: (taskId: string) => void;
   onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
   taskDisplayStatusByTaskId?: Record<string, TaskStatus>;
@@ -58,12 +66,19 @@ const CANVAS_WIDTH = 1180;
 const CANVAS_HEIGHT = 720;
 const NODE_CARD_WIDTH = 252;
 const NODE_CARD_HEIGHT = 116;
+const TASK_NODE_CHIP_ROW_HEIGHT = 26;
+const TASK_NODE_HIERARCHY_GAP = 8;
+const CANVAS_ZOOM_MIN = 0.5;
+const CANVAS_ZOOM_MAX = 1.5;
+const CANVAS_ZOOM_STEP = 0.1;
+const NODE_LONG_PRESS_DURATION_MS = 550;
+const NODE_LONG_PRESS_MOVE_TOLERANCE = 8;
 const CANVAS_NODE_PADDING = 24;
 const LINKED_TASK_MENU_PANEL_CLASS = "adhdice-scrollbar max-h-64 overflow-y-auto";
 const LINKED_TASK_LIST_PANEL_CLASS = `${LINKED_TASK_MENU_PANEL_CLASS} flex flex-col gap-2`;
 const LINKED_TASK_CHIP_CLASS = `${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_INACTIVE_CHIP_CLASS} max-w-full gap-1.5 overflow-hidden`;
 const LINKED_TASK_UNAVAILABLE_CHIP_CLASS = `${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_INACTIVE_CHIP_CLASS} max-w-full`;
-const NODE_HANDLE_CLASS = "absolute h-3 w-3 rounded-full border border-[#cfc3f8] bg-white shadow-sm dark:border-[#7f67ff] dark:bg-[#1b152d]";
+const NODE_HANDLE_CLASS = "absolute h-8 w-8 cursor-crosshair border-0 bg-transparent p-0 opacity-0 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f67ff]";
 const INSPECTOR_SECTION_LABEL_CLASS = "text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8e88a9] dark:text-white/40";
 const PATH_PROGRESS_MARKER_COLOR = "#9b8bf0";
 const ENDPOINT_MARKER_RADIUS = 34;
@@ -166,9 +181,42 @@ function getBezierControlPoint(x: number, y: number, side: PathNodeHandleSide, o
   }
 }
 
-function getNodeHandleAnchor(node: Pick<PathNode, "position">, target: { x: number; y: number }) {
+function getTaskNodeRenderHeight(view: PathsTaskNodeView | null) {
+  if (!view || view.kind === "missing") {
+    return TASK_NODE_CHIP_ROW_HEIGHT;
+  }
+
+  const visibleSteps = [...view.activeSteps, ...view.completedSteps];
+  if (visibleSteps.length === 0) {
+    return TASK_NODE_CHIP_ROW_HEIGHT;
+  }
+
+  const stepBlocksHeight = visibleSteps.reduce((height, step) => {
+    const substepsHeight = step.substeps.length > 0
+      ? TASK_NODE_HIERARCHY_GAP
+        + (step.substeps.length * TASK_NODE_CHIP_ROW_HEIGHT)
+        + (Math.max(0, step.substeps.length - 1) * TASK_NODE_HIERARCHY_GAP)
+      : 0;
+    return height + TASK_NODE_CHIP_ROW_HEIGHT + substepsHeight;
+  }, 0);
+
+  return TASK_NODE_CHIP_ROW_HEIGHT
+    + TASK_NODE_HIERARCHY_GAP
+    + stepBlocksHeight
+    + (Math.max(0, visibleSteps.length - 1) * TASK_NODE_HIERARCHY_GAP);
+}
+
+function getNodeHandleAnchor(
+  node: Pick<PathNode, "position">,
+  target: { x: number; y: number },
+  options: { bottomOnly?: boolean; height?: number } = {},
+) {
+  const nodeHeight = options.height ?? NODE_CARD_HEIGHT;
   const centerX = node.position.x + NODE_CARD_WIDTH / 2;
-  const centerY = node.position.y + NODE_CARD_HEIGHT / 2;
+  const centerY = node.position.y + nodeHeight / 2;
+  if (options.bottomOnly) {
+    return { side: "bottom" as const, x: centerX, y: node.position.y + nodeHeight };
+  }
   const deltaX = target.x - centerX;
   const deltaY = target.y - centerY;
   const side: PathNodeHandleSide = Math.abs(deltaX) >= Math.abs(deltaY)
@@ -177,7 +225,7 @@ function getNodeHandleAnchor(node: Pick<PathNode, "position">, target: { x: numb
 
   switch (side) {
     case "bottom":
-      return { side, x: centerX, y: node.position.y + NODE_CARD_HEIGHT };
+      return { side, x: centerX, y: node.position.y + nodeHeight };
     case "left":
       return { side, x: node.position.x, y: centerY };
     case "right":
@@ -286,6 +334,168 @@ function PathLinkedTaskPill({
   );
 }
 
+function PathTaskStatusControl({
+  onSetTaskStatus,
+  task,
+}: {
+  onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
+  task: Task;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef<HTMLSpanElement | null>(null);
+  const statusOptions = useMemo(() => getSelectableTaskStatuses(task), [task]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    function handlePointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [isOpen]);
+
+  return (
+    <span className="relative inline-flex shrink-0" data-path-node-control ref={menuRef}>
+      <button
+        aria-label={`Change task status from ${formatTaskStatusLabel(task.status)}`}
+        className="inline-flex h-6 w-6 items-center justify-center rounded-full border-0 bg-transparent p-0 [&>span]:h-5 [&>span]:w-5"
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsOpen((current) => !current);
+        }}
+        type="button"
+      >
+        {renderTaskStatusCircle(task.status, "sm")}
+      </button>
+      {isOpen ? (
+        <AdhdDropdownPanel className={`right-0 top-[calc(100%+6px)] z-50 ${LINKED_TASK_MENU_PANEL_CLASS}`} widthClassName="min-w-[190px]">
+          {statusOptions.map((status) => (
+            <button
+              className={`flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] font-medium transition ${
+                status === task.status
+                  ? "bg-[#f3efff] text-[#6f57f6] dark:bg-[#241b42] dark:text-[#cabfff]"
+                  : "text-[#5f5878] hover:bg-[#f7f3ff] dark:text-white/72 dark:hover:bg-white/8"
+              }`}
+              key={status}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSetTaskStatus?.(task.id, status);
+                setIsOpen(false);
+              }}
+              type="button"
+            >
+              {renderTaskStatusCircle(status, "sm")}
+              <span>{formatTaskStatusLabel(status)}</span>
+            </button>
+          ))}
+        </AdhdDropdownPanel>
+      ) : null}
+    </span>
+  );
+}
+
+function PathTaskHierarchyChip({
+  onOpenTask,
+  onSetTaskStatus,
+  task,
+}: {
+  onOpenTask?: (taskId: string) => void;
+  onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
+  task: Task;
+}) {
+  return (
+    <div className="inline-flex max-w-[250px] items-center gap-0" data-path-node-control>
+      <AdhdChip
+        className={task.status === "complete" ? "max-w-[210px] line-through opacity-70" : "max-w-[210px]"}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenTask?.(task.id);
+        }}
+      >
+        <span className="truncate">{task.title}</span>
+      </AdhdChip>
+      <span aria-hidden="true" className="h-0.5 w-4 shrink-0 bg-[#b7a8f8] dark:bg-[#7f67ff]" />
+      <PathTaskStatusControl onSetTaskStatus={onSetTaskStatus} task={task} />
+    </div>
+  );
+}
+
+function PathTaskNodeStepList({
+  onOpenTask,
+  onSetTaskStatus,
+  steps,
+}: {
+  onOpenTask?: (taskId: string) => void;
+  onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
+  steps: PathsTaskNodeStep[];
+}) {
+  return (
+    <div className="relative ml-4 mt-2 space-y-2 border-l-2 border-[#cfc3f8] pl-5 dark:border-[#5d48ab]">
+      {steps.map((step) => (
+        <div className="relative" key={step.task.id}>
+          <span className="absolute -left-5 top-[13px] h-0.5 w-5 bg-[#cfc3f8] dark:bg-[#5d48ab]" />
+          <PathTaskHierarchyChip onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={step.task} />
+          {step.substeps.length > 0 ? (
+            <div className="relative ml-4 mt-2 space-y-2 border-l-2 border-[#ddd5ef] pl-5 dark:border-white/15">
+              {step.substeps.map((substep) => (
+                <div className="relative" key={substep.id}>
+                  <span className="absolute -left-5 top-[13px] h-0.5 w-5 bg-[#ddd5ef] dark:bg-white/15" />
+                  <PathTaskHierarchyChip onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={substep} />
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PathTaskNodeCard({
+  onOpenTask,
+  onSetTaskStatus,
+  onUnlink,
+  view,
+}: {
+  onOpenTask?: (taskId: string) => void;
+  onSetTaskStatus?: (taskId: string, status: Task["status"]) => void;
+  onUnlink: () => void;
+  view: PathsTaskNodeView;
+}) {
+  if (view.kind === "missing") {
+    return (
+      <div className="inline-flex items-center gap-1.5">
+        <span className="cursor-grab text-[#8d86a4] active:cursor-grabbing" data-path-node-drag-surface>
+          <GripVertical className="h-4 w-4" />
+        </span>
+        <AdhdChip icon={<CircleAlert className="h-3.5 w-3.5" />} onClick={onUnlink} tone="danger">
+          Task unavailable — relink
+        </AdhdChip>
+      </div>
+    );
+  }
+
+  const visibleSteps = [...view.activeSteps, ...view.completedSteps];
+
+  return (
+    <div className="relative">
+      <div className="inline-flex items-center gap-1.5">
+        <span className="cursor-grab text-[#8d86a4] active:cursor-grabbing" data-path-node-drag-surface>
+          <GripVertical className="h-4 w-4" />
+        </span>
+        <PathTaskHierarchyChip onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={view.task} />
+      </div>
+      {visibleSteps.length > 0 ? (
+        <PathTaskNodeStepList onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} steps={visibleSteps} />
+      ) : null}
+    </div>
+  );
+}
+
 function LinkedTaskPicker({
   linkedTaskIds,
   linkedTasks,
@@ -379,6 +589,105 @@ function LinkedTaskPicker({
   );
 }
 
+function CanvasTaskPicker({
+  availableTaskLists,
+  listMembershipsByTaskId,
+  onAddPathsNode,
+  onSelectTask,
+  position,
+  tasks,
+}: {
+  availableTaskLists: TaskListDefinition[];
+  listMembershipsByTaskId: Record<string, TaskListMembership[]>;
+  onAddPathsNode: () => void;
+  onSelectTask: (taskId: string) => void;
+  position: { x: number; y: number };
+  tasks: LinkedTaskOption[];
+}) {
+  const [query, setQuery] = useState("");
+  const [selectedListId, setSelectedListId] = useState<TaskListId | null>(null);
+  const visibleTaskLists = useMemo(
+    () => availableTaskLists.filter((list) => list.isVisible),
+    [availableTaskLists],
+  );
+  const normalizedQuery = query.trim();
+  const hasDiscoveryScope = normalizedQuery.length > 0 || selectedListId !== null;
+  const filteredTasks = useMemo(
+    () => hasDiscoveryScope
+      ? tasks.filter((task) => {
+          if (
+            selectedListId
+            && !(listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === selectedListId)
+          ) {
+            return false;
+          }
+          return normalizedQuery.length === 0 || matchesLinkableTaskSearch(task, normalizedQuery);
+        })
+      : [],
+    [hasDiscoveryScope, listMembershipsByTaskId, normalizedQuery, selectedListId, tasks],
+  );
+
+  return (
+    <AdhdDropdownPanel
+      className="top-0 z-50"
+      data-paths-task-picker
+      style={{ left: position.x, top: position.y }}
+      widthClassName="w-[320px]"
+    >
+      <div className="flex items-center gap-2">
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-[0.95rem] border border-[#efe9ff] bg-[#fbfaff] px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
+          <Search className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+          <input
+            autoFocus
+            className="min-w-0 flex-1 bg-transparent text-[13px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search Task Chips"
+            value={query}
+          />
+        </label>
+        <TaskTableChipButton
+          className={TASK_TABLE_ICON_LABEL_GAP_CLASS}
+          onClick={onAddPathsNode}
+          toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add PATHS Node
+        </TaskTableChipButton>
+      </div>
+      <div className="adhdice-scrollbar mt-2 flex gap-1.5 overflow-x-auto pb-1">
+        {visibleTaskLists.map((list) => (
+          <AdhdChip
+            key={list.id}
+            onClick={() => setSelectedListId((current) => current === list.id ? null : list.id)}
+            selected={selectedListId === list.id}
+          >
+            {list.name}
+          </AdhdChip>
+        ))}
+      </div>
+      {hasDiscoveryScope ? (
+        <div className={`mt-2 flex flex-col gap-1 ${LINKED_TASK_MENU_PANEL_CLASS}`}>
+          {filteredTasks.length > 0 ? filteredTasks.map((task) => (
+          <AdhdChip
+            className="w-full justify-between"
+            contentClassName="min-w-0 gap-1.5"
+            icon={renderTaskStatusCircle(task.status, "sm")}
+            key={task.id}
+            onClick={() => onSelectTask(task.id)}
+          >
+            <span className="truncate">{task.title}</span>
+          </AdhdChip>
+          )) : (
+            <div className="rounded-[0.9rem] border border-dashed border-[#e6e0f5] px-3 py-3 text-[13px] text-[#8a84a3] dark:border-white/10 dark:text-white/45">
+              {normalizedQuery ? "No Task Chips match that search." : "No Task Chips are available in this list."}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </AdhdDropdownPanel>
+  );
+}
+
 function PathUnavailableLinkedTaskChip({
   label,
   onRemove,
@@ -410,11 +719,13 @@ function PathUnavailableLinkedTaskChip({
 }
 
 function DropdownField({
+  compactTrigger = false,
   options,
   placeholder,
   value,
   onSelect,
 }: {
+  compactTrigger?: boolean;
   onSelect: (value: string) => void;
   options: Array<{ label: string; value: string }>;
   placeholder: string;
@@ -442,17 +753,32 @@ function DropdownField({
 
   return (
     <div className="relative" ref={menuRef}>
-      <button
-        aria-expanded={isOpen}
-        className={`${TASK_TABLE_INPUT_CLASS} flex items-center justify-between gap-2 text-left`}
-        onClick={() => setIsOpen((current) => !current)}
-        type="button"
-      >
-        <span className="min-w-0 truncate">{selectedLabel}</span>
-        <ChevronDown className={`h-4 w-4 shrink-0 text-[#8c84aa] transition dark:text-white/50 ${isOpen ? "rotate-180" : ""}`} />
-      </button>
+      {compactTrigger ? (
+        <TaskTableChipButton
+          aria-expanded={isOpen}
+          className="max-w-full gap-1.5"
+          onClick={() => setIsOpen((current) => !current)}
+          toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+        >
+          <span className="min-w-0 truncate">{selectedLabel}</span>
+          <ChevronDown className={`h-3 w-3 shrink-0 text-[#8c84aa] transition dark:text-white/50 ${isOpen ? "rotate-180" : ""}`} />
+        </TaskTableChipButton>
+      ) : (
+        <button
+          aria-expanded={isOpen}
+          className={`${TASK_TABLE_INPUT_CLASS} flex items-center justify-between gap-2 text-left`}
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
+          <span className="min-w-0 truncate">{selectedLabel}</span>
+          <ChevronDown className={`h-4 w-4 shrink-0 text-[#8c84aa] transition dark:text-white/50 ${isOpen ? "rotate-180" : ""}`} />
+        </button>
+      )}
       {isOpen ? (
-        <AdhdDropdownPanel className={LINKED_TASK_MENU_PANEL_CLASS} widthClassName="left-0 right-0">
+        <AdhdDropdownPanel
+          className={LINKED_TASK_MENU_PANEL_CLASS}
+          widthClassName={compactTrigger ? "left-0 min-w-[280px]" : "left-0 right-0"}
+        >
           {options.map((option) => {
             const selected = option.value === value;
             return (
@@ -506,7 +832,15 @@ function InspectorSection({
   );
 }
 
-export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusByTaskId = {}, tasks = [], userId }: PathsWorkspaceProps) {
+export function PathsWorkspace({
+  availableTaskLists = [],
+  listMembershipsByTaskId = {},
+  onOpenTask,
+  onSetTaskStatus,
+  taskDisplayStatusByTaskId = {},
+  tasks = [],
+  userId,
+}: PathsWorkspaceProps) {
   const workspaceUserId = userId ?? LOCAL_PATHS_PROTOTYPE_USER_ID;
   const adapter = useMemo(() => createLocalStoragePathsStorageAdapter({ userId: workspaceUserId }), [workspaceUserId]);
   const [pathRecords, setPathRecords] = useState<PathRecord[]>([]);
@@ -528,6 +862,16 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
     viewportX: number;
     viewportY: number;
   } | null>(null);
+  const [canvasTaskPicker, setCanvasTaskPicker] = useState<{
+    nodePosition: { x: number; y: number };
+    panelPosition: { x: number; y: number };
+  } | null>(null);
+  const [nodeActionMenu, setNodeActionMenu] = useState<{
+    nodeId: string;
+    position: { x: number; y: number };
+  } | null>(null);
+  const [nodeRenameDraft, setNodeRenameDraft] = useState("");
+  const [canvasZoom, setCanvasZoom] = useState(1);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
@@ -546,6 +890,14 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
     startX: number;
     startY: number;
   } | null>(null);
+  const nodeLongPressRef = useRef<{
+    nodeId: string;
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+  const nodeClickSuppressionRef = useRef<{ nodeId: string; until: number } | null>(null);
 
   const todayKey = getLocalPathDateKey();
   const allLinkedTasks = useMemo(
@@ -560,8 +912,12 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
     [taskDisplayStatusByTaskId, tasks],
   );
   const linkedTasks = useMemo(
-    () => allLinkedTasks.filter((task) => !task.trashed_at),
+    () => allLinkedTasks.filter((task) => isPathsTaskAvailable(task, allLinkedTasks)),
     [allLinkedTasks],
+  );
+  const canvasTaskCandidates = useMemo(
+    () => linkedTasks.filter((task) => !task.parent_task_id),
+    [linkedTasks],
   );
   const linkedTaskById = useMemo(
     () => new Map(allLinkedTasks.map((task) => [task.id, task])),
@@ -602,29 +958,60 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
   }, [adapter, todayKey, workspaceUserId]);
 
   useEffect(() => {
-    if (!canvasContextMenu) {
+    if (!canvasContextMenu && !canvasTaskPicker && !nodeActionMenu) {
       return;
     }
 
     function handlePointerDown(event: PointerEvent) {
-      if ((event.target as HTMLElement).closest("[data-paths-context-menu]")) {
+      if ((event.target as HTMLElement).closest("[data-paths-context-menu], [data-paths-task-picker], [data-paths-node-menu]")) {
         return;
       }
       setCanvasContextMenu(null);
+      setCanvasTaskPicker(null);
+      setNodeActionMenu(null);
     }
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [canvasContextMenu]);
+  }, [canvasContextMenu, canvasTaskPicker, nodeActionMenu]);
+
+  useEffect(() => {
+    return () => {
+      const current = nodeLongPressRef.current;
+      if (current) {
+        clearTimeout(current.timer);
+      }
+    };
+  }, []);
 
   const selectedRecord = pathRecords.find((record) => record.path.id === selectedPathId) ?? null;
   const selectedRecordRef = useRef<PathRecord | null>(null);
   const selectedProgress = selectedRecord ? progressByPathId[selectedRecord.path.id] ?? EMPTY_PROGRESS : EMPTY_PROGRESS;
   const completedNodeIds = useMemo(() => new Set(selectedProgress.completedNodeIds), [selectedProgress.completedNodeIds]);
   const selectedNode = selectedRecord?.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const nodeActionMenuNode = selectedRecord?.nodes.find((node) => node.id === nodeActionMenu?.nodeId) ?? null;
   const nodeById = useMemo(
     () => new Map((selectedRecord?.nodes ?? []).map((node) => [node.id, node])),
     [selectedRecord?.nodes],
+  );
+  const taskNodeViewByNodeId = useMemo(
+    () => new Map((selectedRecord?.nodes ?? [])
+      .filter((node) => node.kind === "task")
+      .map((node) => [node.id, buildPathsTaskNodeView(node, allLinkedTasks)])),
+    [allLinkedTasks, selectedRecord?.nodes],
+  );
+  const effectiveCompletedNodeIds = useMemo(
+    () => new Set((selectedRecord?.nodes ?? [])
+      .filter((node) => {
+        const taskNodeView = taskNodeViewByNodeId.get(node.id);
+        return isPathsNodeComplete({
+          canonicalTaskComplete: taskNodeView?.kind === "task" && taskNodeView.isComplete,
+          localPathComplete: completedNodeIds.has(node.id),
+          nodeKind: node.kind,
+        });
+      })
+      .map((node) => node.id)),
+    [completedNodeIds, selectedRecord?.nodes, taskNodeViewByNodeId],
   );
   const selectedEndpointPosition = selectedRecord ? getPathEndpointRenderPosition(selectedRecord) : null;
   const connectionSegments = useMemo(() => {
@@ -638,21 +1025,27 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
         return [];
       }
 
+      const sourceHeight = node.kind === "task"
+        ? getTaskNodeRenderHeight(taskNodeViewByNodeId.get(node.id) ?? null)
+        : NODE_CARD_HEIGHT;
+      const targetHeight = targetNode.kind === "task"
+        ? getTaskNodeRenderHeight(taskNodeViewByNodeId.get(targetNode.id) ?? null)
+        : NODE_CARD_HEIGHT;
       const sourceAnchor = getNodeHandleAnchor(node, {
         x: targetNode.position.x + NODE_CARD_WIDTH / 2,
-        y: targetNode.position.y + NODE_CARD_HEIGHT / 2,
-      });
+        y: targetNode.position.y + targetHeight / 2,
+      }, { bottomOnly: node.kind === "task", height: sourceHeight });
       const targetAnchor = getNodeHandleAnchor(targetNode, {
         x: node.position.x + NODE_CARD_WIDTH / 2,
-        y: node.position.y + NODE_CARD_HEIGHT / 2,
-      });
+        y: node.position.y + sourceHeight / 2,
+      }, { bottomOnly: targetNode.kind === "task", height: targetHeight });
 
       return [buildConnectionSegment({
         endSide: targetAnchor.side,
         endX: targetAnchor.x,
         endY: targetAnchor.y,
         id: `${node.id}-${nextNodeId}`,
-        sourceCompleted: completedNodeIds.has(node.id),
+        sourceCompleted: effectiveCompletedNodeIds.has(node.id),
         startSide: sourceAnchor.side,
         startX: sourceAnchor.x,
         startY: sourceAnchor.y,
@@ -666,13 +1059,20 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
             return [];
           }
 
-          const sourceAnchor = getNodeHandleAnchor(node, selectedEndpointPosition);
+          const nodeHeight = node.kind === "task"
+            ? getTaskNodeRenderHeight(taskNodeViewByNodeId.get(node.id) ?? null)
+            : NODE_CARD_HEIGHT;
+          const sourceAnchor = getNodeHandleAnchor(
+            node,
+            selectedEndpointPosition,
+            { bottomOnly: node.kind === "task", height: nodeHeight },
+          );
 
           return [buildConnectionSegment({
             endX: selectedEndpointPosition.x,
             endY: selectedEndpointPosition.y,
             id: `${node.id}-endpoint`,
-            sourceCompleted: completedNodeIds.has(node.id),
+            sourceCompleted: effectiveCompletedNodeIds.has(node.id),
             startSide: sourceAnchor.side,
             startX: sourceAnchor.x,
             startY: sourceAnchor.y,
@@ -681,7 +1081,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
       : [];
 
     return [...nodeSegments, ...endpointSegments];
-  }, [completedNodeIds, nodeById, selectedEndpointPosition, selectedRecord]);
+  }, [effectiveCompletedNodeIds, nodeById, selectedEndpointPosition, selectedRecord, taskNodeViewByNodeId]);
   const activePathRecords = pathRecords.filter((record) => !record.path.archivedAt);
   const archivedPathRecords = pathRecords.filter((record) => record.path.archivedAt);
 
@@ -809,10 +1209,6 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
     setStatusMessage("Path deleted.");
   }
 
-  async function addNode() {
-    await addNodeAt(getFallbackNodePosition(selectedRecord?.nodes.length ?? 0));
-  }
-
   async function addNodeAt(position: { x: number; y: number }) {
     if (!selectedRecord) {
       return;
@@ -820,13 +1216,14 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
 
     const node: PathNode = {
       id: createPathId(`${selectedRecord.path.id}-node`),
+      kind: "path",
       linkedTaskIds: [],
       nextNodeIds: [],
       note: null,
       pathId: selectedRecord.path.id,
       position: clampCanvasPosition(position),
       sortOrder: selectedRecord.nodes.length,
-      title: "New chip",
+      title: "New PATHS Node",
     };
     await saveRecord({
       ...selectedRecord,
@@ -834,10 +1231,43 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
       path: { ...selectedRecord.path, updatedAt: new Date().toISOString() },
     });
     setSelectedNodeId(node.id);
-    setStatusMessage("Chip added.");
+    setStatusMessage("PATHS Node added.");
   }
 
-  async function updateNode(nodeId: string, patch: Partial<Pick<PathNode, "linkedTaskIds" | "nextNodeIds" | "note" | "position" | "title">>) {
+  async function addTaskNodeAt(taskId: string, position: { x: number; y: number }) {
+    if (!selectedRecord) {
+      return;
+    }
+
+    const task = linkedTaskById.get(taskId);
+    if (!task || !isPathsTaskAvailable(task, allLinkedTasks)) {
+      setCanvasTaskPicker(null);
+      setStatusMessage("That task is no longer available.");
+      return;
+    }
+
+    const node = convertPathNodeToTaskNode({
+      id: createPathId(`${selectedRecord.path.id}-node`),
+      kind: "path",
+      linkedTaskIds: [],
+      nextNodeIds: [],
+      note: null,
+      pathId: selectedRecord.path.id,
+      position: clampCanvasPosition(position),
+      sortOrder: selectedRecord.nodes.length,
+      title: task.title,
+    }, task.id);
+    await saveRecord({
+      ...selectedRecord,
+      nodes: normalizeNodeOrder([...selectedRecord.nodes, node]),
+      path: { ...selectedRecord.path, updatedAt: new Date().toISOString() },
+    });
+    setCanvasTaskPicker(null);
+    setSelectedNodeId(node.id);
+    setStatusMessage("Task Chip added.");
+  }
+
+  async function updateNode(nodeId: string, patch: Partial<Pick<PathNode, "kind" | "linkedTaskIds" | "nextNodeIds" | "note" | "position" | "title">>) {
     if (!selectedRecord) {
       return;
     }
@@ -864,6 +1294,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
       return;
     }
 
+    setNodeActionMenu(null);
     const nextNodes = normalizeNodeOrder(selectedRecord.nodes.filter((node) => node.id !== nodeId));
     await saveRecord({
       ...selectedRecord,
@@ -895,14 +1326,12 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
       return;
     }
 
-    const duplicate: PathNode = {
-      ...source,
+    const duplicate = duplicatePathNode(source, {
       id: createPathId(`${selectedRecord.path.id}-node`),
-      nextNodeIds: [],
       position: clampCanvasPosition({ x: source.position.x + 36, y: source.position.y + 36 }),
       sortOrder: selectedRecord.nodes.length,
       title: `${source.title} copy`,
-    };
+    });
     await saveRecord({
       ...selectedRecord,
       nodes: normalizeNodeOrder([...selectedRecord.nodes, duplicate]),
@@ -910,7 +1339,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
     });
     setSelectedNodeId(duplicate.id);
     setExpandedNodeIds((current) => current.filter((id) => id !== duplicate.id));
-    setStatusMessage("Chip duplicated.");
+    setStatusMessage(source.kind === "task" ? "Task Chip duplicated." : "PATHS Node duplicated.");
   }
 
   async function connectNodes(sourceNodeId: string, targetNodeId: string) {
@@ -928,7 +1357,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
     await updateNode(sourceNodeId, { nextNodeIds: [...sourceNode.nextNodeIds, targetNodeId] });
     setConnectSource(null);
     setSelectedNodeId(targetNodeId);
-    setStatusMessage("Chips connected.");
+    setStatusMessage("Nodes connected.");
   }
 
   async function connectEndpointToNode(nodeId: string) {
@@ -939,7 +1368,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
 
     if (currentRecord.path.endpointConnectedNodeIds.includes(nodeId)) {
       setSelectedNodeId(nodeId);
-      setStatusMessage("That chip is already connected to the endpoint.");
+      setStatusMessage("That node is already connected to the Endpoint.");
       return;
     }
 
@@ -948,7 +1377,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
     });
     setSelectedNodeId(nodeId);
     setConnectSource({ kind: "endpoint" });
-    setStatusMessage("Endpoint connected. Click another chip to keep linking, or tap Connect endpoint again to stop.");
+    setStatusMessage("Endpoint connected. Click another node to keep linking, or tap Connect Endpoint again to stop.");
   }
 
   async function removeConnection(sourceNodeId: string, targetNodeId: string) {
@@ -1013,7 +1442,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
     setProgressByPathId((current) => ({ ...current, [selectedRecord.path.id]: progress }));
   }
 
-  const completedCount = selectedRecord?.nodes.filter((node) => completedNodeIds.has(node.id)).length ?? 0;
+  const completedCount = selectedRecord?.nodes.filter((node) => effectiveCompletedNodeIds.has(node.id)).length ?? 0;
   const totalCount = selectedRecord?.nodes.length ?? 0;
   const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
@@ -1070,7 +1499,66 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
     setConnectSource(null);
     setSelectedNodeId(null);
     setIsEndpointPlacementMode(true);
-    setStatusMessage(selectedRecord.path.endpointPosition ? "Tap blank canvas space to move the endpoint." : "Tap blank canvas space to place the endpoint.");
+    setStatusMessage(selectedRecord.path.endpointPosition ? "Tap blank canvas space to move the Endpoint." : "Tap blank canvas space to place the Endpoint.");
+  }
+
+  function openNodeActionMenu(node: PathNode, clientX: number, clientY: number) {
+    const canvasPoint = getCanvasCoordinatePoint(clientX, clientY, canvasRef.current, canvasZoom);
+    setCanvasContextMenu(null);
+    setCanvasTaskPicker(null);
+    setSelectedNodeId(node.id);
+    setNodeRenameDraft(node.title);
+    setNodeActionMenu({
+      nodeId: node.id,
+      position: {
+        x: clampNumber(canvasPoint.x, 12, CANVAS_WIDTH - 252),
+        y: clampNumber(canvasPoint.y, 12, CANVAS_HEIGHT - (node.kind === "path" ? 150 : 96)),
+      },
+    });
+  }
+
+  function beginNodeLongPress(node: PathNode, pointerId: number, clientX: number, clientY: number) {
+    const current = nodeLongPressRef.current;
+    if (current) {
+      clearTimeout(current.timer);
+    }
+    const timer = setTimeout(() => {
+      nodeLongPressRef.current = null;
+      dragRef.current = null;
+      nodeClickSuppressionRef.current = { nodeId: node.id, until: Date.now() + 1_000 };
+      openNodeActionMenu(node, clientX, clientY);
+    }, NODE_LONG_PRESS_DURATION_MS);
+    nodeLongPressRef.current = {
+      nodeId: node.id,
+      pointerId,
+      startClientX: clientX,
+      startClientY: clientY,
+      timer,
+    };
+  }
+
+  function updateNodeLongPress(pointerId: number, clientX: number, clientY: number) {
+    const current = nodeLongPressRef.current;
+    if (!current || current.pointerId !== pointerId) {
+      return;
+    }
+    if (
+      Math.abs(clientX - current.startClientX) <= NODE_LONG_PRESS_MOVE_TOLERANCE
+      && Math.abs(clientY - current.startClientY) <= NODE_LONG_PRESS_MOVE_TOLERANCE
+    ) {
+      return;
+    }
+    clearTimeout(current.timer);
+    nodeLongPressRef.current = null;
+  }
+
+  function endNodeLongPress(pointerId: number) {
+    const current = nodeLongPressRef.current;
+    if (!current || current.pointerId !== pointerId) {
+      return;
+    }
+    clearTimeout(current.timer);
+    nodeLongPressRef.current = null;
   }
 
   return (
@@ -1079,12 +1567,14 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
         <div className="rounded-[1.35rem] border border-[#ece8f8] bg-white/92 shadow-[0_18px_48px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/[0.04]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#f0ecfa] px-4 py-3 dark:border-white/10">
             <div className="flex min-w-[260px] flex-1 flex-wrap items-center gap-2">
-              <div className="w-full max-w-[320px]">
+              <div className="max-w-[320px]">
                 <DropdownField
+                  compactTrigger
                   onSelect={(value) => {
                     setSelectedPathId(value || null);
                     setSelectedNodeId(null);
                     setConnectSource(null);
+                    setNodeActionMenu(null);
                   }}
                   options={[...activePathRecords, ...archivedPathRecords].map((record) => ({
                     label: `${record.path.title}${record.path.endpointLabel ? ` -> ${record.path.endpointLabel}` : ""}${record.path.archivedAt ? " (archived)" : ""}`,
@@ -1107,10 +1597,6 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
               <TaskTableChipButton onClick={() => { void createPath(); }} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>
                 Create new path
               </TaskTableChipButton>
-              <TaskTableChipButton disabled={!selectedRecord} onClick={() => { void addNode(); }} toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}>
-                <Plus className="mr-1 h-3.5 w-3.5" />
-                Add chip
-              </TaskTableChipButton>
               <TaskTableChipButton
                 disabled={!selectedNode}
                 onClick={() => {
@@ -1118,7 +1604,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                     return;
                   }
                   setConnectSource({ kind: "node", nodeId: selectedNode.id });
-                  setStatusMessage("Click a target chip to connect.");
+                  setStatusMessage("Click a target node or Endpoint to connect.");
                 }}
                 toneClassName={connectSource?.kind === "node" ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}
               >
@@ -1133,21 +1619,54 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
           </div>
 
           <div className="grid h-[720px] min-h-0 gap-0 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="min-w-0">
+            <div className="relative min-w-0">
               {selectedRecord ? (
-                <div className="adhdice-scrollbar relative h-full overflow-auto bg-[#fdfcff] dark:bg-[#100d1b]" ref={canvasViewportRef}>
+                <>
+                  <div className="absolute right-4 top-4 z-50 flex items-center gap-1 rounded-full border border-[#e5ddf8] bg-white/95 p-1 shadow-[0_12px_30px_rgba(81,61,168,0.12)] backdrop-blur dark:border-white/12 dark:bg-[#1b1530]/95">
+                    <AdhdIconButton
+                      aria-label="Zoom out"
+                      disabled={canvasZoom <= CANVAS_ZOOM_MIN}
+                      onClick={() => setCanvasZoom((current) => Math.max(CANVAS_ZOOM_MIN, Number((current - CANVAS_ZOOM_STEP).toFixed(1))))}
+                      size="sm"
+                    >
+                      <Minus />
+                    </AdhdIconButton>
+                    <AdhdChip
+                      aria-label="Reset map zoom"
+                      className="min-w-[54px]"
+                      onClick={() => setCanvasZoom(1)}
+                    >
+                      {Math.round(canvasZoom * 100)}%
+                    </AdhdChip>
+                    <AdhdIconButton
+                      aria-label="Zoom in"
+                      disabled={canvasZoom >= CANVAS_ZOOM_MAX}
+                      onClick={() => setCanvasZoom((current) => Math.min(CANVAS_ZOOM_MAX, Number((current + CANVAS_ZOOM_STEP).toFixed(1))))}
+                      size="sm"
+                    >
+                      <Plus />
+                    </AdhdIconButton>
+                  </div>
+                  <div className="adhdice-scrollbar relative h-full overflow-auto bg-[#fdfcff] dark:bg-[#100d1b]" ref={canvasViewportRef}>
                   <div
-                    className="relative min-h-[720px] min-w-[1180px] cursor-crosshair overflow-hidden"
+                    className="relative min-h-[720px] min-w-[1180px] cursor-crosshair overflow-visible"
                     onClick={(event) => {
                       if (event.target !== event.currentTarget) {
                         return;
                       }
                       setCanvasContextMenu(null);
                       if (isEndpointPlacementMode) {
-                        void placeEndpointAt(getCanvasCoordinatePoint(event.clientX, event.clientY, canvasRef.current));
+                        void placeEndpointAt(getCanvasCoordinatePoint(event.clientX, event.clientY, canvasRef.current, canvasZoom));
                         return;
                       }
-                      void addNodeAt(getCanvasPoint(event.clientX, event.clientY, canvasRef.current));
+                      const canvasPoint = getCanvasCoordinatePoint(event.clientX, event.clientY, canvasRef.current, canvasZoom);
+                      setCanvasTaskPicker({
+                        nodePosition: getCanvasPoint(event.clientX, event.clientY, canvasRef.current, canvasZoom),
+                        panelPosition: {
+                          x: clampNumber(canvasPoint.x, 12, CANVAS_WIDTH - 332),
+                          y: clampNumber(canvasPoint.y, 12, CANVAS_HEIGHT - 340),
+                        },
+                      });
                     }}
                     onContextMenu={(event) => {
                       if (event.target !== event.currentTarget) {
@@ -1155,20 +1674,22 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                       }
 
                       event.preventDefault();
+                      setCanvasTaskPicker(null);
                       const viewportRect = canvasViewportRef.current?.getBoundingClientRect();
                       const scrollLeft = canvasViewportRef.current?.scrollLeft ?? 0;
                       const scrollTop = canvasViewportRef.current?.scrollTop ?? 0;
                       setCanvasContextMenu({
-                        canvasX: getCanvasCoordinatePoint(event.clientX, event.clientY, canvasRef.current).x,
-                        canvasY: getCanvasCoordinatePoint(event.clientX, event.clientY, canvasRef.current).y,
-                        viewportX: viewportRect ? event.clientX - viewportRect.left + scrollLeft : 0,
-                        viewportY: viewportRect ? event.clientY - viewportRect.top + scrollTop : 0,
+                        canvasX: getCanvasCoordinatePoint(event.clientX, event.clientY, canvasRef.current, canvasZoom).x,
+                        canvasY: getCanvasCoordinatePoint(event.clientX, event.clientY, canvasRef.current, canvasZoom).y,
+                        viewportX: viewportRect ? (event.clientX - viewportRect.left + scrollLeft) / canvasZoom : 0,
+                        viewportY: viewportRect ? (event.clientY - viewportRect.top + scrollTop) / canvasZoom : 0,
                       });
                     }}
                     ref={canvasRef}
                     style={{
                       backgroundImage: "radial-gradient(circle, rgba(111,87,246,0.18) 1px, transparent 1.5px)",
                       backgroundSize: "28px 28px",
+                      zoom: canvasZoom,
                     }}
                   >
                     <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
@@ -1213,14 +1734,22 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                     })}
 
                     {selectedRecord.nodes.length === 0 ? (
-                      <button
-                        className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-[1rem] border border-dashed border-[#cfc3f8] bg-white/90 px-4 py-3 text-sm font-semibold text-[#6f57f6] shadow-[0_16px_40px_rgba(111,87,246,0.12)] dark:border-white/15 dark:bg-[#191329] dark:text-[#cabfff]"
-                        onClick={() => { void addNodeAt({ x: 480, y: 300 }); }}
-                        type="button"
-                      >
-                        <Plus className="h-4 w-4" />
-                        Click canvas to add chip.
-                      </button>
+                      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+                        <AdhdChip
+                          className="gap-1.5 border-dashed px-4 py-3 text-sm shadow-[0_16px_40px_rgba(111,87,246,0.12)]"
+                          icon={<Plus className="h-4 w-4" />}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setCanvasTaskPicker({
+                              nodePosition: { x: 464, y: 282 },
+                              panelPosition: { x: 430, y: 238 },
+                            });
+                          }}
+                          tone="purple"
+                        >
+                          Click canvas to choose a task.
+                        </AdhdChip>
+                      </div>
                     ) : null}
 
                     {selectedEndpointPosition && (selectedRecord.path.endpointLabel || selectedRecord.path.endpointIcon) ? (
@@ -1238,7 +1767,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                               return;
                             }
                             if (connectSource?.kind === "endpoint") {
-                              setStatusMessage("Endpoint connection mode is active. Click chips to connect them.");
+                              setStatusMessage("Endpoint connection mode is active. Click nodes to connect them.");
                               return;
                             }
                             setSelectedNodeId(null);
@@ -1260,8 +1789,8 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                               return;
                             }
                             updateEndpointPositionLocally({
-                              x: drag.startX + event.clientX - drag.startClientX,
-                              y: drag.startY + event.clientY - drag.startClientY,
+                              x: drag.startX + (event.clientX - drag.startClientX) / canvasZoom,
+                              y: drag.startY + (event.clientY - drag.startClientY) / canvasZoom,
                             });
                           }}
                           onPointerUp={(event) => {
@@ -1270,8 +1799,8 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                               return;
                             }
                             const nextPosition = clampEndpointPosition({
-                              x: drag.startX + event.clientX - drag.startClientX,
-                              y: drag.startY + event.clientY - drag.startClientY,
+                              x: drag.startX + (event.clientX - drag.startClientX) / canvasZoom,
+                              y: drag.startY + (event.clientY - drag.startClientY) / canvasZoom,
                             });
                             endpointDragRef.current = null;
                             event.currentTarget.releasePointerCapture(event.pointerId);
@@ -1297,14 +1826,35 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                       const linkedTasksForNode = node.linkedTaskIds.map((taskId) => linkedTaskById.get(taskId) ?? null);
                       const linkedTaskCount = node.linkedTaskIds.length;
                       const expandedLinkedTasks = expandedNodeIds.includes(node.id);
-                      const isComplete = completedNodeIds.has(node.id);
+                      const taskNodeView = taskNodeViewByNodeId.get(node.id) ?? null;
+                      const isTaskNode = node.kind === "task";
+                      const taskNodeHeight = isTaskNode ? getTaskNodeRenderHeight(taskNodeView) : NODE_CARD_HEIGHT;
+                      const isComplete = effectiveCompletedNodeIds.has(node.id);
                       const isSelected = node.id === selectedNodeId;
                       const isConnectSource = connectSource?.kind === "node" && node.id === connectSource.nodeId;
 
                       return (
                         <div
-                          className={`absolute rounded-[1rem] border bg-white/95 p-3 shadow-[0_18px_42px_rgba(81,61,168,0.10)] transition dark:bg-[#1b152d]/95 ${isSelected ? "border-[#7f67ff] ring-4 ring-[#ddd4ff]" : "border-[#ece8f8]"} ${isComplete ? "opacity-75" : ""} ${isConnectSource ? "outline outline-2 outline-offset-2 outline-[#6f57f6]" : ""}`}
+                          className={`absolute select-none transition ${isTaskNode ? "border-transparent bg-transparent shadow-none" : "rounded-[1rem] border bg-white/95 p-3 shadow-[0_18px_42px_rgba(81,61,168,0.10)] dark:bg-[#1b152d]/95"} ${isSelected && !isTaskNode ? "border-[#7f67ff] ring-4 ring-[#ddd4ff]" : !isTaskNode ? "border-[#ece8f8]" : ""} ${isComplete ? "opacity-75" : ""} ${isConnectSource && !isTaskNode ? "outline outline-2 outline-offset-2 outline-[#6f57f6]" : ""}`}
                           key={node.id}
+                          onClickCapture={(event) => {
+                            const suppression = nodeClickSuppressionRef.current;
+                            if (!suppression || suppression.nodeId !== node.id) {
+                              return;
+                            }
+                            if (Date.now() > suppression.until) {
+                              nodeClickSuppressionRef.current = null;
+                              return;
+                            }
+                            nodeClickSuppressionRef.current = null;
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openNodeActionMenu(node, event.clientX, event.clientY);
+                          }}
                           onClick={() => {
                             if (connectSource?.kind === "node") {
                               void connectNodes(connectSource.nodeId, node.id);
@@ -1316,8 +1866,20 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                             }
                             setSelectedNodeId(node.id);
                           }}
+                          onPointerCancelCapture={(event) => endNodeLongPress(event.pointerId)}
+                          onPointerDownCapture={(event) => {
+                            if (event.button !== 0) {
+                              return;
+                            }
+                            beginNodeLongPress(node, event.pointerId, event.clientX, event.clientY);
+                          }}
+                          onPointerMoveCapture={(event) => updateNodeLongPress(event.pointerId, event.clientX, event.clientY)}
+                          onPointerUpCapture={(event) => endNodeLongPress(event.pointerId)}
                           onPointerDown={(event) => {
                             if ((event.target as HTMLElement).closest("[data-path-node-control]")) {
+                              return;
+                            }
+                            if (isTaskNode && !(event.target as HTMLElement).closest("[data-path-node-drag-surface]")) {
                               return;
                             }
                             setSelectedNodeId(node.id);
@@ -1337,8 +1899,8 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                               return;
                             }
                             updateNodePositionLocally(node.id, {
-                              x: drag.startX + event.clientX - drag.startClientX,
-                              y: drag.startY + event.clientY - drag.startClientY,
+                              x: drag.startX + (event.clientX - drag.startClientX) / canvasZoom,
+                              y: drag.startY + (event.clientY - drag.startClientY) / canvasZoom,
                             });
                           }}
                           onPointerUp={(event) => {
@@ -1347,8 +1909,8 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                               return;
                             }
                             const nextPosition = clampCanvasPosition({
-                              x: drag.startX + event.clientX - drag.startClientX,
-                              y: drag.startY + event.clientY - drag.startClientY,
+                              x: drag.startX + (event.clientX - drag.startClientX) / canvasZoom,
+                              y: drag.startY + (event.clientY - drag.startClientY) / canvasZoom,
                             });
                             dragRef.current = null;
                             event.currentTarget.releasePointerCapture(event.pointerId);
@@ -1362,11 +1924,23 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                             }
                             dragRef.current = null;
                           }}
-                          style={{ left: node.position.x, top: node.position.y, width: NODE_CARD_WIDTH }}
+                          style={{ height: taskNodeHeight, left: node.position.x, top: node.position.y, width: NODE_CARD_WIDTH }}
                         >
-                          <div className="flex items-start gap-2">
+                          {isTaskNode && taskNodeView ? (
+                            <PathTaskNodeCard
+                              onOpenTask={onOpenTask}
+                              onSetTaskStatus={onSetTaskStatus}
+                              onUnlink={() => {
+                                const pathNode = convertTaskNodeToPathNode(node);
+                                void updateNode(node.id, { kind: pathNode.kind, linkedTaskIds: pathNode.linkedTaskIds });
+                              }}
+                              view={taskNodeView}
+                            />
+                          ) : (
+                          <>
+                            <div className="flex items-start gap-2">
                             <button
-                              aria-label={isComplete ? "Mark chip incomplete" : "Mark chip complete"}
+                              aria-label={isComplete ? "Mark PATHS Node incomplete" : "Mark PATHS Node complete"}
                               className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${isComplete ? "border-[#6f57f6] bg-[#6f57f6] text-white" : "border-[#ddd2ff] bg-[#f7f3ff] text-[#6f57f6]"} dark:border-white/15 dark:bg-white/8`}
                               data-path-node-control
                               onClick={(event) => {
@@ -1400,27 +1974,50 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                                 </TaskTableChipButton>
                               ) : null}
                             </div>
-                          </div>
-                          {expandedLinkedTasks && linkedTaskCount > 0 ? (
-                            <AdhdDropdownPanel className={`left-3 right-3 top-[calc(100%+8px)] ${LINKED_TASK_LIST_PANEL_CLASS}`} widthClassName="">
-                              {linkedTasksForNode.map((task, index) => {
-                                const taskId = node.linkedTaskIds[index] ?? "";
-                                return task && !task.trashed_at ? (
-                                  <PathLinkedTaskPill key={taskId} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} />
-                                ) : (
-                                  <PathUnavailableLinkedTaskChip
-                                    key={taskId}
-                                    label={task?.trashed_at ? "Linked task trashed" : "Linked task unavailable"}
-                                    onRemove={() => { void updateNode(node.id, { linkedTaskIds: node.linkedTaskIds.filter((id) => id !== taskId) }); }}
-                                  />
-                                );
-                              })}
-                            </AdhdDropdownPanel>
-                          ) : null}
-                          {NODE_HANDLE_SIDES.map((side) => (
+                            </div>
+                            {expandedLinkedTasks && linkedTaskCount > 0 ? (
+                              <AdhdDropdownPanel className={`left-3 right-3 top-[calc(100%+8px)] ${LINKED_TASK_LIST_PANEL_CLASS}`} widthClassName="">
+                                {linkedTasksForNode.map((task, index) => {
+                                  const taskId = node.linkedTaskIds[index] ?? "";
+                                  return task && !task.trashed_at ? (
+                                    <PathLinkedTaskPill key={taskId} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} task={task} />
+                                  ) : (
+                                    <PathUnavailableLinkedTaskChip
+                                      key={taskId}
+                                      label={task?.trashed_at ? "Linked task trashed" : "Linked task unavailable"}
+                                      onRemove={() => { void updateNode(node.id, { linkedTaskIds: node.linkedTaskIds.filter((id) => id !== taskId) }); }}
+                                    />
+                                  );
+                                })}
+                              </AdhdDropdownPanel>
+                            ) : null}
+                          </>
+                          )}
+                          {isTaskNode ? (
+                            <button
+                              aria-label={`Connect after ${taskNodeView?.kind === "task" ? taskNodeView.task.title : node.title}`}
+                              className="absolute left-1/2 top-full h-8 w-12 -translate-x-1/2 -translate-y-1/2 cursor-crosshair border-0 bg-transparent p-0 opacity-0 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7f67ff]"
+                              data-path-node-control
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (connectSource?.kind === "node") {
+                                  void connectNodes(connectSource.nodeId, node.id);
+                                  return;
+                                }
+                                if (connectSource?.kind === "endpoint") {
+                                  void connectEndpointToNode(node.id);
+                                  return;
+                                }
+                                setSelectedNodeId(node.id);
+                                setConnectSource({ kind: "node", nodeId: node.id });
+                                setStatusMessage("Click a target node or Endpoint to connect.");
+                              }}
+                              type="button"
+                            />
+                          ) : NODE_HANDLE_SIDES.map((side) => (
                             <button
                               aria-label={`Connect ${side} side of ${node.title}`}
-                              className={`${getNodeHandleClassName(side)} transition hover:scale-110 hover:border-[#7f67ff] hover:bg-[#f7f3ff]`}
+                              className={getNodeHandleClassName(side)}
                               data-path-node-control
                               key={side}
                               onClick={(event) => {
@@ -1435,7 +2032,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                                 }
                                 setSelectedNodeId(node.id);
                                 setConnectSource({ kind: "node", nodeId: node.id });
-                                setStatusMessage("Click a target chip or endpoint to connect.");
+                                setStatusMessage("Click a target node or Endpoint to connect.");
                               }}
                               type="button"
                             />
@@ -1443,6 +2040,74 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                         </div>
                       );
                     })}
+
+                    {nodeActionMenu && nodeActionMenuNode ? (
+                      <AdhdDropdownPanel
+                        className="absolute z-50"
+                        data-paths-node-menu
+                        style={{
+                          left: nodeActionMenu.position.x,
+                          top: nodeActionMenu.position.y,
+                        }}
+                        widthClassName="w-[280px]"
+                      >
+                        {nodeActionMenuNode.kind === "path" ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              autoFocus
+                              className={TASK_TABLE_INPUT_CLASS}
+                              onChange={(event) => setNodeRenameDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") {
+                                  return;
+                                }
+                                event.preventDefault();
+                                void updateNode(nodeActionMenuNode.id, { title: nodeRenameDraft });
+                                setNodeActionMenu(null);
+                              }}
+                              placeholder="Rename PATHS Node"
+                              value={nodeRenameDraft}
+                            />
+                            <AdhdChip
+                              disabled={!nodeRenameDraft.trim()}
+                              onClick={() => {
+                                void updateNode(nodeActionMenuNode.id, { title: nodeRenameDraft });
+                                setNodeActionMenu(null);
+                              }}
+                              tone="purple"
+                            >
+                              Save
+                            </AdhdChip>
+                          </div>
+                        ) : null}
+                        <div className={nodeActionMenuNode.kind === "path" ? "mt-2 flex flex-wrap gap-2" : "flex flex-wrap gap-2"}>
+                          <AdhdChip
+                            contentClassName={TASK_TABLE_ICON_LABEL_GAP_CLASS}
+                            icon={<Link2 className="h-3 w-3" />}
+                            onClick={() => {
+                              setSelectedNodeId(nodeActionMenuNode.id);
+                              setConnectSource({ kind: "node", nodeId: nodeActionMenuNode.id });
+                              setNodeActionMenu(null);
+                              setStatusMessage("Click a target node or Endpoint to connect.");
+                            }}
+                            tone="purple"
+                          >
+                            Connect
+                          </AdhdChip>
+                          <AdhdChip
+                            contentClassName={TASK_TABLE_ICON_LABEL_GAP_CLASS}
+                            icon={<Trash2 className="h-3 w-3" />}
+                            onClick={() => {
+                              setNodeActionMenu(null);
+                              void deleteNode(nodeActionMenuNode.id);
+                            }}
+                            tone="danger"
+                          >
+                            Delete
+                          </AdhdChip>
+                        </div>
+                      </AdhdDropdownPanel>
+                    ) : null}
 
                     {canvasContextMenu ? (
                       <AdhdDropdownPanel
@@ -1459,12 +2124,29 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                           type="button"
                         >
                           {renderPathEndpointIcon(selectedRecord.path.endpointIcon ?? "target", "h-4 w-4 shrink-0 text-[#6f57f6] dark:text-[#cabfff]")}
-                          <span>{selectedRecord.path.endpointPosition ? "Move endpoint here" : "Place endpoint here"}</span>
+                          <span>{selectedRecord.path.endpointPosition ? "Move Endpoint here" : "Place Endpoint here"}</span>
                         </button>
                       </AdhdDropdownPanel>
                     ) : null}
+                    {canvasTaskPicker ? (
+                      <CanvasTaskPicker
+                        availableTaskLists={availableTaskLists}
+                        listMembershipsByTaskId={listMembershipsByTaskId}
+                        onAddPathsNode={() => {
+                          const position = canvasTaskPicker.nodePosition;
+                          setCanvasTaskPicker(null);
+                          void addNodeAt(position);
+                        }}
+                        onSelectTask={(taskId) => {
+                          void addTaskNodeAt(taskId, canvasTaskPicker.nodePosition);
+                        }}
+                        position={canvasTaskPicker.panelPosition}
+                        tasks={canvasTaskCandidates}
+                      />
+                    ) : null}
                   </div>
-                </div>
+                  </div>
+                </>
               ) : (
                 <div className="flex h-[720px] items-center justify-center bg-[#fdfcff] p-6 dark:bg-[#100d1b]">
                   <div className="rounded-[1rem] border border-dashed border-[#d8d1ea] bg-white/88 p-6 text-sm text-[#6c6685] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/60">
@@ -1476,7 +2158,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
 
             <aside className="adhdice-scrollbar min-h-0 overflow-y-auto border-l border-[#f0ecfa] bg-white p-4 dark:border-white/10 dark:bg-[#171328]">
               {selectedRecord ? (
-                <div className="space-y-4">
+                <div className="space-y-4 pb-[calc(100vh-10rem)]">
                   <InspectorSection
                     isCollapsed={collapsedSections.path}
                     onToggle={() => toggleInspectorSection("path")}
@@ -1543,7 +2225,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                       Right-click blank canvas space to place or move the destination landmark, or use the button below and tap blank canvas space.
                     </p>
                     <TaskTableChipButton onClick={beginEndpointPlacement} toneClassName={isEndpointPlacementMode ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}>
-                      {selectedEndpointPosition ? "Move endpoint on map" : "Place endpoint on map"}
+                      {selectedEndpointPosition ? "Move Endpoint on map" : "Place Endpoint on map"}
                     </TaskTableChipButton>
                     <div className="grid grid-cols-[1fr_120px] gap-2">
                       <input
@@ -1573,27 +2255,27 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                         }
                         setSelectedNodeId(null);
                         setConnectSource({ kind: "endpoint" });
-                        setStatusMessage("Click one or more chips to connect the endpoint.");
+                        setStatusMessage("Click one or more nodes to connect the Endpoint.");
                       }}
                       toneClassName={connectSource?.kind === "endpoint" ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}
                     >
                       <Link2 className="mr-1 h-3.5 w-3.5" />
-                      {connectSource?.kind === "endpoint" ? "Done connecting" : "Connect endpoint"}
+                      {connectSource?.kind === "endpoint" ? "Done connecting" : "Connect Endpoint"}
                     </TaskTableChipButton>
                     <div className="space-y-2">
-                      <p className="text-xs font-semibold text-[#7a7592] dark:text-white/55">Connected chips</p>
+                      <p className="text-xs font-semibold text-[#7a7592] dark:text-white/55">Connected nodes</p>
                       {selectedRecord.path.endpointConnectedNodeIds.length > 0 ? selectedRecord.path.endpointConnectedNodeIds.map((nodeId) => {
                         const node = nodeById.get(nodeId);
                         return (
                           <div className="flex items-center justify-between gap-2 rounded-[0.85rem] border border-[#ece8f8] bg-[#fbfaff] px-2 py-1.5 dark:border-white/10 dark:bg-white/[0.04]" key={nodeId}>
-                            <span className="truncate text-[13px] font-medium text-[#68738c] dark:text-white/60">{node?.title ?? "Missing chip"}</span>
-                            <IconButton ariaLabel="Remove endpoint connection" onClick={() => { void removeEndpointConnection(nodeId); }}>
+                            <span className="truncate text-[13px] font-medium text-[#68738c] dark:text-white/60">{node?.title ?? "Missing node"}</span>
+                            <IconButton ariaLabel="Remove Endpoint connection" onClick={() => { void removeEndpointConnection(nodeId); }}>
                               <X className="h-3.5 w-3.5" />
                             </IconButton>
                           </div>
                         );
                       }) : (
-                        <p className="text-xs text-[#8a84a3] dark:text-white/45">No endpoint connections yet.</p>
+                        <p className="text-xs text-[#8a84a3] dark:text-white/45">No Endpoint connections yet.</p>
                       )}
                     </div>
                   </InspectorSection>
@@ -1601,13 +2283,13 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                   <InspectorSection
                     isCollapsed={collapsedSections.selectedChip}
                     onToggle={() => toggleInspectorSection("selectedChip")}
-                    title="SELECTED CHIP"
+                    title="SELECTED NODE"
                   >
                     {selectedNode ? (
                       <>
                         <div className="flex items-center justify-between gap-2">
                           <button
-                            aria-label="Clear selected chip"
+                            aria-label="Clear selected node"
                             className="flex h-8 w-8 items-center justify-center rounded-full border border-[#e2daf8] bg-white text-[#6f57f6] dark:border-white/10 dark:bg-white/[0.05] dark:text-[#cabfff]"
                             onClick={() => setSelectedNodeId(null)}
                             type="button"
@@ -1615,33 +2297,48 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                             <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
-                        <input
-                          className={TASK_TABLE_INPUT_CLASS}
-                          onBlur={(event) => { void updateNode(selectedNode.id, { title: event.target.value }); }}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setPathRecords((current) => current.map((record) => record.path.id === selectedRecord.path.id
-                              ? { ...record, nodes: record.nodes.map((node) => node.id === selectedNode.id ? { ...node, title: value } : node) }
-                              : record));
-                          }}
-                          value={selectedNode.title}
-                        />
-                        <textarea
-                          className={`${TASK_TABLE_INPUT_CLASS} min-h-[90px] resize-y leading-5`}
-                          onBlur={(event) => { void updateNode(selectedNode.id, { note: event.target.value }); }}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setPathRecords((current) => current.map((record) => record.path.id === selectedRecord.path.id
-                              ? { ...record, nodes: record.nodes.map((node) => node.id === selectedNode.id ? { ...node, note: value } : node) }
-                              : record));
-                          }}
-                          placeholder="Note"
-                          value={selectedNode.note ?? ""}
-                        />
+                        {selectedNode.kind === "path" ? (
+                          <>
+                            <input
+                              className={TASK_TABLE_INPUT_CLASS}
+                              onBlur={(event) => { void updateNode(selectedNode.id, { title: event.target.value }); }}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setPathRecords((current) => current.map((record) => record.path.id === selectedRecord.path.id
+                                  ? { ...record, nodes: record.nodes.map((node) => node.id === selectedNode.id ? { ...node, title: value } : node) }
+                                  : record));
+                              }}
+                              value={selectedNode.title}
+                            />
+                            <textarea
+                              className={`${TASK_TABLE_INPUT_CLASS} min-h-[90px] resize-y leading-5`}
+                              onBlur={(event) => { void updateNode(selectedNode.id, { note: event.target.value }); }}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setPathRecords((current) => current.map((record) => record.path.id === selectedRecord.path.id
+                                  ? { ...record, nodes: record.nodes.map((node) => node.id === selectedNode.id ? { ...node, note: value } : node) }
+                                  : record));
+                              }}
+                              placeholder="Note"
+                              value={selectedNode.note ?? ""}
+                            />
+                          </>
+                        ) : (
+                          <div className="rounded-lg border border-[#e6def8] bg-[#faf8ff] px-3 py-2 text-xs text-[#6f6984] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/58">
+                            Task title, hierarchy, status, due date, and priority stay live from the canonical Task.
+                          </div>
+                        )}
                         <LinkedTaskPicker
                           linkedTaskIds={selectedNode.linkedTaskIds}
                           linkedTasks={linkedTasks}
-                          onSelectTask={(taskId) => { void updateNode(selectedNode.id, { linkedTaskIds: [...selectedNode.linkedTaskIds, taskId] }); }}
+                          onSelectTask={(taskId) => {
+                            if (selectedNode.kind === "task" || selectedNode.linkedTaskIds.length === 0) {
+                              const taskNode = convertPathNodeToTaskNode(selectedNode, taskId);
+                              void updateNode(selectedNode.id, { kind: taskNode.kind, linkedTaskIds: taskNode.linkedTaskIds });
+                              return;
+                            }
+                            void updateNode(selectedNode.id, { linkedTaskIds: [...selectedNode.linkedTaskIds, taskId] });
+                          }}
                         />
                         {selectedNode.linkedTaskIds.length > 0 ? (
                           <div className="flex flex-wrap gap-2">
@@ -1670,13 +2367,39 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                             })}
                           </div>
                         ) : null}
+                        {selectedNode.kind === "path" && selectedNode.linkedTaskIds.length === 1 ? (
+                          <TaskTableChipButton
+                            onClick={() => {
+                              const taskId = selectedNode.linkedTaskIds[0];
+                              if (taskId) {
+                                const taskNode = convertPathNodeToTaskNode(selectedNode, taskId);
+                                void updateNode(selectedNode.id, { kind: taskNode.kind, linkedTaskIds: taskNode.linkedTaskIds });
+                              }
+                            }}
+                            toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}
+                          >
+                            Convert linked Task to Task Chip
+                          </TaskTableChipButton>
+                        ) : null}
+                        {selectedNode.kind === "task" ? (
+                          <TaskTableChipButton
+                            onClick={() => {
+                              const pathNode = convertTaskNodeToPathNode(selectedNode);
+                              void updateNode(selectedNode.id, { kind: pathNode.kind, linkedTaskIds: pathNode.linkedTaskIds });
+                            }}
+                            toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+                          >
+                            <Unlink className="mr-1 h-3.5 w-3.5" />
+                            Convert to PATHS Node
+                          </TaskTableChipButton>
+                        ) : null}
                         <div className="space-y-2">
                           <p className="text-xs font-semibold text-[#7a7592] dark:text-white/55">Outgoing connections</p>
                           {selectedNode.nextNodeIds.length > 0 ? selectedNode.nextNodeIds.map((nextNodeId) => {
                             const target = nodeById.get(nextNodeId);
                             return (
                               <div className="flex items-center justify-between gap-2 rounded-[0.85rem] border border-[#ece8f8] bg-[#fbfaff] px-2 py-1.5 dark:border-white/10 dark:bg-white/[0.04]" key={nextNodeId}>
-                                <span className="truncate text-[13px] font-medium text-[#68738c] dark:text-white/60">{target?.title ?? "Missing chip"}</span>
+                                <span className="truncate text-[13px] font-medium text-[#68738c] dark:text-white/60">{target?.title ?? "Missing node"}</span>
                                 <IconButton ariaLabel="Remove connection" onClick={() => { void removeConnection(selectedNode.id, nextNodeId); }}>
                                   <X className="h-3.5 w-3.5" />
                                 </IconButton>
@@ -1687,10 +2410,12 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                           )}
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          <TaskTableChipButton onClick={() => { void toggleNodeComplete(selectedNode.id); }} toneClassName={completedNodeIds.has(selectedNode.id) ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}>
-                            <Check className="mr-1 h-3.5 w-3.5" />
-                            {completedNodeIds.has(selectedNode.id) ? "Complete" : "Incomplete"}
-                          </TaskTableChipButton>
+                          {selectedNode.kind === "path" ? (
+                            <TaskTableChipButton onClick={() => { void toggleNodeComplete(selectedNode.id); }} toneClassName={completedNodeIds.has(selectedNode.id) ? TASK_TABLE_ACTIVE_LIST_CHIP_CLASS : TASK_TABLE_INACTIVE_CHIP_CLASS}>
+                              <Check className="mr-1 h-3.5 w-3.5" />
+                              {completedNodeIds.has(selectedNode.id) ? "Complete" : "Incomplete"}
+                            </TaskTableChipButton>
+                          ) : null}
                           <TaskTableChipButton onClick={() => { void duplicateNode(selectedNode.id); }} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>
                             <Copy className="mr-1 h-3.5 w-3.5" />
                             Duplicate
@@ -1703,7 +2428,7 @@ export function PathsWorkspace({ onOpenTask, onSetTaskStatus, taskDisplayStatusB
                       </>
                     ) : (
                       <div className="rounded-[1rem] border border-dashed border-[#d8d1ea] bg-white/70 p-4 text-sm text-[#6c6685] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/60">
-                        Select a chip to edit title, note, linked task, connections, and progress.
+                        Select a PATHS Node or Task Chip to edit its available details and connections.
                       </div>
                     )}
                   </InspectorSection>
@@ -1775,30 +2500,23 @@ function normalizeNodeOrder(nodes: PathNode[]) {
   }));
 }
 
-function getCanvasPoint(clientX: number, clientY: number, canvasElement: HTMLDivElement | null) {
-  const coordinatePoint = getCanvasCoordinatePoint(clientX, clientY, canvasElement);
+function getCanvasPoint(clientX: number, clientY: number, canvasElement: HTMLDivElement | null, zoom = 1) {
+  const coordinatePoint = getCanvasCoordinatePoint(clientX, clientY, canvasElement, zoom);
   return clampCanvasPosition({
     x: coordinatePoint.x - NODE_CARD_WIDTH / 2,
     y: coordinatePoint.y - NODE_CARD_HEIGHT / 2,
   });
 }
 
-function getCanvasCoordinatePoint(clientX: number, clientY: number, canvasElement: HTMLDivElement | null) {
+function getCanvasCoordinatePoint(clientX: number, clientY: number, canvasElement: HTMLDivElement | null, zoom = 1) {
   if (!canvasElement) {
     return getFallbackEndpointPosition(0);
   }
 
   const rect = canvasElement.getBoundingClientRect();
   return clampEndpointPosition({
-    x: clientX - rect.left,
-    y: clientY - rect.top,
-  });
-}
-
-function getFallbackNodePosition(index: number) {
-  return clampCanvasPosition({
-    x: 120 + (index % 4) * 260,
-    y: 120 + Math.floor(index / 4) * 150,
+    x: (clientX - rect.left) / zoom,
+    y: (clientY - rect.top) / zoom,
   });
 }
 

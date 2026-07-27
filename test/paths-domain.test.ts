@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   createLocalStoragePathsStorageAdapter,
   createPrototypePathsStorageAdapter,
+  convertPathNodeToTaskNode,
+  duplicatePathNode,
   getLocalPathDateKey,
   LOCAL_PATHS_STORAGE_KEY_PREFIX,
   normalizePathRecordBundle,
@@ -68,6 +70,7 @@ test("path normalization repairs malformed records without embedding task data",
   assert.deepEqual(
     record.nodes.map((node) => ({
       id: node.id,
+      kind: node.kind,
       linkedTaskIds: node.linkedTaskIds,
       nextNodeIds: node.nextNodeIds,
       note: node.note,
@@ -79,6 +82,7 @@ test("path normalization repairs malformed records without embedding task data",
     [
       {
         id: "node-2",
+        kind: "path",
         linkedTaskIds: ["task-123"],
         nextNodeIds: ["node-3"],
         note: "linked but read-only",
@@ -89,6 +93,7 @@ test("path normalization repairs malformed records without embedding task data",
       },
       {
         id: "node-3",
+        kind: "path",
         linkedTaskIds: [],
         nextNodeIds: [],
         note: null,
@@ -99,6 +104,68 @@ test("path normalization repairs malformed records without embedding task data",
       },
     ],
   );
+});
+
+test("Task Node kind defaults safely and survives conversion, duplication, save, load, archive, and restore", async () => {
+  const legacy = normalizePathRecordBundle({
+    nodes: [{ id: "legacy-node", linkedTaskIds: ["task-legacy"], nextNodeIds: [], pathId: "path-a", position: { x: 350, y: 190 }, title: "Legacy" }],
+    path: {
+      createdAt: "2026-07-26T00:00:00.000Z",
+      id: "path-a",
+      pathType: "reset_flow",
+      title: "Path A",
+      updatedAt: "2026-07-26T00:00:00.000Z",
+      userId: "user-1",
+    },
+  });
+  assert.equal(legacy.nodes[0]?.kind, "path");
+
+  const taskNode = convertPathNodeToTaskNode({
+    ...legacy.nodes[0]!,
+    nextNodeIds: ["node-b"],
+  }, "task-1");
+  assert.equal(taskNode.kind, "task");
+  assert.deepEqual(taskNode.linkedTaskIds, ["task-1"]);
+  assert.deepEqual(taskNode.position, { x: 350, y: 190 });
+  assert.deepEqual(taskNode.nextNodeIds, ["node-b"]);
+  assert.equal("taskTitle" in taskNode, false);
+  assert.equal("status" in taskNode, false);
+  assert.equal("steps" in taskNode, false);
+
+  const duplicated = duplicatePathNode(taskNode, {
+    id: "node-copy",
+    position: { x: 386, y: 226 },
+    sortOrder: 2,
+    title: "Legacy copy",
+  });
+  assert.equal(duplicated.kind, "task");
+  assert.deepEqual(duplicated.linkedTaskIds, ["task-1"]);
+  assert.deepEqual(duplicated.nextNodeIds, []);
+
+  const storage = createMemoryStorage();
+  const adapter = createLocalStoragePathsStorageAdapter({ seedRecords: [], storage, userId: "user-1" });
+  const saved = await adapter.savePath({
+    nodes: [
+      taskNode,
+      { ...legacy.nodes[0]!, id: "node-b", linkedTaskIds: [], position: { x: 600, y: 190 } },
+    ],
+    path: legacy.path,
+  });
+  assert.equal(saved.nodes[0]?.kind, "task");
+
+  const reloadedAdapter = createLocalStoragePathsStorageAdapter({ seedRecords: [], storage, userId: "user-1" });
+  const reloaded = await reloadedAdapter.getPath({ pathId: "path-a", userId: "user-1" });
+  assert.equal(reloaded?.nodes[0]?.kind, "task");
+  assert.deepEqual(reloaded?.nodes[0]?.linkedTaskIds, ["task-1"]);
+
+  const archived = await reloadedAdapter.archivePath({
+    archivedAt: "2026-07-26T01:00:00.000Z",
+    pathId: "path-a",
+    userId: "user-1",
+  });
+  assert.equal(archived?.nodes[0]?.kind, "task");
+  const restored = await reloadedAdapter.archivePath({ archivedAt: null, pathId: "path-a", userId: "user-1" });
+  assert.equal(restored?.nodes[0]?.kind, "task");
 });
 
 test("prototype adapter exposes normalized path records and safe future persistence methods", async () => {

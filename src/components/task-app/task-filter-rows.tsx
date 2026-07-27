@@ -118,6 +118,7 @@ const LIST_SORT_OPTIONS: Array<{ label: string; value: ListSortField }> = [
   { label: "Status", value: "status" },
   { label: "Priority", value: "priority" },
   { label: "Title", value: "title" },
+  { label: "Recently Added", value: "recently_added" },
   { label: "Recently updated", value: "recently_updated" },
   { label: "Streak", value: "streak" },
   { label: "Estimated duration", value: "estimated_duration" },

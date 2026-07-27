@@ -103,6 +103,7 @@ export type ChildTaskPreview = {
   repeatMonthlyWeekday: Task["repeat_monthly_weekday"];
   scheduledOn: string | null;
   status: TaskStatus;
+  storedStatus: TaskStatus;
   tags: string[];
   title: string;
   updatedAt: string;
@@ -438,6 +439,7 @@ export function buildChildTaskPreviewLookup(
             taskHistoryByTaskId[descendant.id] ?? [],
             todayDateKey,
           ),
+          storedStatus: descendant.status,
           tags: descendant.tags ?? [],
           title: descendant.title,
           updatedAt: descendant.updated_at,

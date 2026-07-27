@@ -14,11 +14,10 @@ export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = 
   { label: "Upcoming", value: "upcoming" },
   { label: "Not Due", value: "not_due" },
   { label: "Archived", value: "archived" },
-  { label: "Trash", value: "trashed" },
 ];
 
 export const TASK_SUBTASK_STATUS_OPTIONS: Array<{ label: string; value: TaskSubtaskStatus }> = TASK_STATUS_OPTIONS.filter(
-  (option): option is { label: string; value: TaskSubtaskStatus } => option.value !== "delayed" && option.value !== "complete" && option.value !== "archived" && option.value !== "trashed",
+  (option): option is { label: string; value: TaskSubtaskStatus } => option.value !== "delayed" && option.value !== "complete" && option.value !== "archived",
 );
 
 export const TASK_STATUS_CHIP_STYLES: Record<TaskStatus, string> = {

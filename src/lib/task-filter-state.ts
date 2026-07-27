@@ -15,7 +15,6 @@ export const TASK_FILTER_STATUS_OPTIONS: TaskStatus[] = [
   "not_due",
   "complete",
   "archived",
-  "trashed",
 ];
 
 const FILTER_BUCKET_IDS = new Set(["pinned", "routine"]);

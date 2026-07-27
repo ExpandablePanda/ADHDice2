@@ -67,9 +67,9 @@ test("List sort preference and versioned per-surface state normalize safely", ()
 
 test("List sorting preserves Manual order and sorts the filtered parent projection by every approved field", () => {
   const tasks = [
-    task("beta", { due_on: "2026-07-22", estimated_minutes: 30, priority_level: 4, repeat_frequency: "daily", status: "delayed", title: "Beta", updated_at: "2026-07-19T13:00:00.000Z" }),
-    task("alpha", { due_on: "2026-07-20", estimated_minutes: 10, priority_level: 1, status: "pending", title: "Alpha", updated_at: "2026-07-19T11:00:00.000Z" }),
-    task("gamma", { due_on: "2026-07-21", estimated_minutes: 20, priority_level: 3, status: "missed", title: "Gamma", updated_at: "2026-07-19T12:00:00.000Z" }),
+    task("beta", { created_at: "2026-07-19T13:00:00.000Z", due_on: "2026-07-22", estimated_minutes: 30, priority_level: 4, repeat_frequency: "daily", status: "delayed", title: "Beta", updated_at: "2026-07-19T13:00:00.000Z" }),
+    task("alpha", { created_at: "2026-07-19T11:00:00.000Z", due_on: "2026-07-20", estimated_minutes: 10, priority_level: 1, status: "pending", title: "Alpha", updated_at: "2026-07-19T11:00:00.000Z" }),
+    task("gamma", { created_at: "2026-07-19T12:00:00.000Z", due_on: "2026-07-21", estimated_minutes: 20, priority_level: 3, status: "missed", title: "Gamma", updated_at: "2026-07-19T12:00:00.000Z" }),
   ];
   const taskHistoryByTaskId = {
     alpha: [history("alpha", "2026-07-18")],
@@ -84,6 +84,8 @@ test("List sorting preserves Manual order and sorts the filtered parent projecti
   assert.deepEqual(ids("status"), ["alpha", "gamma", "beta"]);
   assert.deepEqual(ids("priority"), ["alpha", "gamma", "beta"]);
   assert.deepEqual(ids("title"), ["alpha", "beta", "gamma"]);
+  assert.deepEqual(ids("recently_added"), ["alpha", "gamma", "beta"]);
+  assert.deepEqual(ids("recently_added", "desc"), ["beta", "gamma", "alpha"]);
   assert.deepEqual(ids("recently_updated"), ["alpha", "gamma", "beta"]);
   assert.deepEqual(ids("streak"), ["gamma", "alpha", "beta"]);
   assert.deepEqual(ids("estimated_duration"), ["alpha", "gamma", "beta"]);
@@ -96,14 +98,15 @@ test("List sorting preserves Manual order and sorts the filtered parent projecti
 });
 
 test("parent sorting leaves descendant hierarchy and sibling order attached to its parent", () => {
-  const parentA = task("parent-a", { sort_order: 2, title: "Zulu" });
-  const parentB = task("parent-b", { sort_order: 1, title: "Alpha" });
+  const parentA = task("parent-a", { created_at: "2026-07-19T13:00:00.000Z", sort_order: 2, title: "Zulu" });
+  const parentB = task("parent-b", { created_at: "2026-07-19T11:00:00.000Z", sort_order: 1, title: "Alpha" });
   const step2 = task("step-2", { parent_task_id: parentA.id, sort_order: 2 });
   const step1 = task("step-1", { parent_task_id: parentA.id, sort_order: 1 });
   const substep = task("substep", { parent_task_id: step1.id, sort_order: 1 });
   const preview = buildChildTaskPreviewLookup([parentA, parentB, step2, step1, substep]);
 
   assert.deepEqual(sortListParentTasks([parentA, parentB], { field: "title", direction: "asc" }).map((entry) => entry.id), ["parent-b", "parent-a"]);
+  assert.deepEqual(sortListParentTasks([parentA, parentB], { field: "recently_added", direction: "desc" }).map((entry) => entry.id), ["parent-a", "parent-b"]);
   assert.deepEqual(preview[parentA.id].items.map((entry) => entry.id), ["step-1", "substep", "step-2"]);
   assert.equal(preview[parentA.id].items.every((entry) => entry.parentTaskId !== null), true);
 });

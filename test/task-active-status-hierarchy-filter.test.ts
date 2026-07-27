@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createTask } from "../src/lib/task-buckets.ts";
-import { filterChildTaskPreviewItemsToMatchingHierarchy, buildChildTaskPreviewVisibility } from "../src/lib/task-child-preview-collapse.ts";
+import { filterChildTaskPreviewItemsToMatchingHierarchy, buildChildTaskPreviewVisibility, groupChildTaskPreviewItemsByStoredCompletion } from "../src/lib/task-child-preview-collapse.ts";
 import { buildCanonicalActiveStatusCounts, computeTaskAppDerivedData } from "../src/lib/task-app-derived.ts";
 import { getBuiltInTaskLists, type TaskListDefinition, type TaskListId } from "../src/lib/task-lists.ts";
 import { DEFAULT_TASK_UI_STATE } from "../src/lib/task-ui-state.ts";
@@ -266,7 +266,7 @@ test("controlled Table column filters drive canonical rows and both facet famili
   assert.deepEqual(result.statusMatchedChildTaskIds, [child.id]);
 });
 
-test("closed Step statuses remain in the normal canonical parent hierarchy", () => {
+test("only stored complete Steps move to the completed branch group", () => {
   const parent = createTask({ id: "closed-parent", sort_order: 1, status: "archived", title: "Archived parent" });
   const children = (["done", "did_my_best", "missed", "complete"] as const).map((status, index) => createTask({
     id: `closed-${status}`,
@@ -276,9 +276,11 @@ test("closed Step statuses remain in the normal canonical parent hierarchy", () 
     title: status,
   }));
   const derived = derive([parent, ...children], []);
-  assert.deepEqual(derived.childTaskPreviewByParentTaskId[parent.id]!.items.map((item) => item.status), ["done", "did_my_best", "missed", "complete"]);
-  assert.doesNotMatch(readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8"), /Completed Steps/);
-  assert.doesNotMatch(readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8"), /Completed Steps/);
+  const items = derived.childTaskPreviewByParentTaskId[parent.id]!.items;
+  const grouped = groupChildTaskPreviewItemsByStoredCompletion(items);
+  assert.deepEqual(items.map((item) => item.storedStatus), ["done", "did_my_best", "missed", "complete"]);
+  assert.deepEqual(grouped.normalItems.map((item) => item.id), ["closed-done", "closed-did_my_best", "closed-missed"]);
+  assert.deepEqual(grouped.completedItems.map((item) => item.id), ["closed-complete"]);
 });
 
 test("Table Active Status keeps parent context but only matching Steps/Substeps", () => {

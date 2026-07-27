@@ -55,6 +55,15 @@ test("task ui state migration drops invalid columns and repairs bucket/view/stat
   assert.equal(new Set(migrated.visibleColumnsByView.grid).size, migrated.visibleColumnsByView.grid.length);
 });
 
+test("task ui state migration removes the retired Trash status filter", () => {
+  const migrated = migrateLegacyTaskUiState({
+    ...DEFAULT_TASK_UI_STATE,
+    statusFilters: ["pending", "trashed"],
+  });
+
+  assert.deepEqual(migrated.statusFilters, ["pending"]);
+});
+
 test("task ui state migration maps legacy list columns onto table view", () => {
   const migrated = migrateLegacyTaskUiState({
     ...DEFAULT_TASK_UI_STATE,

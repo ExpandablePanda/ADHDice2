@@ -5,6 +5,50 @@ export type ChildTaskPreviewVisibility = {
   visibleItems: ChildTaskPreview[];
 };
 
+export type ChildTaskPreviewStepGroups = {
+  completedItems: ChildTaskPreview[];
+  completedStepCount: number;
+  normalItems: ChildTaskPreview[];
+};
+
+/**
+ * Partitions direct Step branches without changing preorder hierarchy.
+ * Every Substep follows its owning direct Step, regardless of its own status.
+ */
+export function groupChildTaskPreviewItemsByStoredCompletion(
+  items: readonly ChildTaskPreview[],
+): ChildTaskPreviewStepGroups {
+  const completedItems: ChildTaskPreview[] = [];
+  const normalItems: ChildTaskPreview[] = [];
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const completedStepIds = new Set(
+    items
+      .filter((item) => item.depth === 1 && item.storedStatus === "complete")
+      .map((item) => item.id),
+  );
+
+  for (const item of items) {
+    let owningStep = item;
+    const visitedTaskIds = new Set<string>();
+    while (owningStep.depth > 1 && owningStep.parentTaskId && !visitedTaskIds.has(owningStep.id)) {
+      visitedTaskIds.add(owningStep.id);
+      const parent = itemById.get(owningStep.parentTaskId);
+      if (!parent) break;
+      owningStep = parent;
+    }
+    const targetItems = owningStep.depth === 1 && completedStepIds.has(owningStep.id)
+      ? completedItems
+      : normalItems;
+    targetItems.push(item);
+  }
+
+  return {
+    completedItems,
+    completedStepCount: completedStepIds.size,
+    normalItems,
+  };
+}
+
 /** Keeps matching Steps/Substeps plus only their ancestor context. */
 export function filterChildTaskPreviewItemsToMatchingHierarchy(
   items: readonly ChildTaskPreview[],

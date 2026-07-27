@@ -8,6 +8,7 @@ import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
 import type { DeleteTaskRowResult, TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import type { ImportedTaskSubtask, ImportedTaskWarning } from "@/lib/task-input-parsing";
 import { parseImportedTaskLines } from "@/lib/task-input-parsing";
+import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import { isMissingTaskActualSecondsColumnError, isMissingTaskEnergyNoneEnumError } from "@/lib/task-db-compat";
 
@@ -171,8 +172,9 @@ export function useTaskCrudActions({
 
   async function deleteTasks(taskIds: string[], options?: DeleteTasksOptions) {
     markPendingTaskMutations?.(taskIds);
+    const taskHierarchy = buildTaskHierarchyAdapter(tasks);
     const taskIdSet = new Set(taskIds);
-    const taskSnapshots = new Map(
+    const taskSnapshots = new Map<string, Task | null>(
       tasks
         .filter((task) => taskIdSet.has(task.id))
         .map((task) => [task.id, task] as const),
@@ -250,6 +252,11 @@ export function useTaskCrudActions({
     }
 
     const removedTaskIds = new Set([...deletedTaskIds, ...missingTaskIds]);
+    for (const taskId of [...removedTaskIds]) {
+      for (const descendant of taskHierarchy.getDescendants(taskId)) {
+        removedTaskIds.add(descendant.id);
+      }
+    }
     const replacementTasks = new Map(
       [...movedToTrashTasks, ...conflictedTasks].map((task) => [task.id, task] as const),
     );

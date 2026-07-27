@@ -24,7 +24,7 @@ import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { buildTaskTableRow, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
-import { useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
@@ -38,7 +38,7 @@ import {
   REPEAT_MONTHLY_ORDINAL_OPTIONS,
   REPEAT_WEEKDAY_FULL_LABELS,
 } from "@/lib/task-repeat";
-import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy } from "@/lib/task-child-preview-collapse";
+import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, groupChildTaskPreviewItemsByStoredCompletion } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { formatLocalDate, todayISO } from "@/lib/utils";
 import { formatTaskPriorityLevel, getSelectedTaskPriorityToneClass, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
@@ -1002,6 +1002,7 @@ function StepsCardPreview({
 }) {
   const [editingStepTitleId, setEditingStepTitleId] = useState<string | null>(null);
   const [collapsedStepIds, setCollapsedStepIds] = useState<Record<string, boolean>>({});
+  const [completedStepsExpanded, setCompletedStepsExpanded] = useState(false);
   const [childTaskDragState, setChildTaskDragState] = useState<ChildTaskDragState | null>(null);
   const [childTaskDropTarget, setChildTaskDropTarget] = useState<ChildTaskDropTarget | null>(null);
   const childTaskDragStateRef = useRef<ChildTaskDragState | null>(null);
@@ -1025,6 +1026,18 @@ function StepsCardPreview({
     ),
     [collapsedStepIdSet, group.items, matchingChildTaskIds],
   );
+  const groupedItems = useMemo(
+    () => groupChildTaskPreviewItemsByStoredCompletion(expandedItems),
+    [expandedItems],
+  );
+  const isCompletedStepsExpanded = Boolean(matchingChildTaskIds) || completedStepsExpanded;
+  const displayedItems = useMemo(
+    () => [
+      ...groupedItems.normalItems,
+      ...(isCompletedStepsExpanded ? groupedItems.completedItems : []),
+    ],
+    [groupedItems, isCompletedStepsExpanded],
+  );
 
   useEffect(() => {
     if (!highlightedActiveTaskId) {
@@ -1047,6 +1060,10 @@ function StepsCardPreview({
       }
       return changed ? next : current;
     });
+    const completedGroup = groupChildTaskPreviewItemsByStoredCompletion(group.items);
+    if (completedGroup.completedItems.some((item) => item.id === highlightedActiveTaskId)) {
+      setCompletedStepsExpanded(true);
+    }
   }, [group, highlightedActiveTaskId]);
 
   if (expandedItems.length === 0 && !group.summary.hasInvalidDescendants && !showParentStepDraft) {
@@ -1153,6 +1170,19 @@ function StepsCardPreview({
       ? "shadow-[inset_0_2px_0_0_rgba(111,87,246,0.95)]"
       : "shadow-[inset_0_-2px_0_0_rgba(111,87,246,0.95)]";
   };
+  const completedStepsHeader = groupedItems.completedStepCount > 0 ? (
+    <li className="mt-2 flex justify-center border-t border-[#f0ebfb] pb-1 pt-2 dark:border-white/10" data-completed-steps-section>
+      <div className="inline-flex items-center gap-2">
+        <span className={TASK_TABLE_TITLE_CELL_CLASS}>Completed Steps ({groupedItems.completedStepCount})</span>
+        <TaskHierarchyChevronButton
+          buttonClassName="inline-flex h-6 w-6 flex-none items-center justify-center rounded-full border border-transparent text-[#9b92be] transition hover:border-[#ddd2ff] hover:bg-[#f3efff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:border-[#42306f] dark:hover:bg-[#22193f]"
+          expanded={isCompletedStepsExpanded}
+          onToggle={() => setCompletedStepsExpanded((current) => !current)}
+          onToggleAll={() => setCompletedStepsExpanded((current) => !current)}
+        />
+      </div>
+    </li>
+  ) : null;
 
   return (
     <section className="mt-3 border-t border-[#f0ebfb] pt-3 dark:border-white/10">
@@ -1210,7 +1240,7 @@ function StepsCardPreview({
       ) : null}
       {expandedItems.length > 0 ? (
         <ul className="mt-2">
-          {expandedItems.map((item) => {
+          {displayedItems.map((item, itemIndex) => {
             const siblingItems = group.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth);
             const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
             const childTask = childTasksById.get(item.id) ?? null;
@@ -1259,10 +1289,11 @@ function StepsCardPreview({
             };
 
             return (
+              <Fragment key={item.id}>
+              {itemIndex === groupedItems.normalItems.length ? completedStepsHeader : null}
               <li
                 className={`cursor-pointer rounded-[0.95rem] border px-1.5 py-2.5 transition hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90 ${getHighlightedListRowClassName(item.id, highlightedActiveTaskId, highlightedTaskIdSet) || "border-transparent bg-transparent"} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                 data-same-table-step-row={item.id}
-                key={item.id}
                 onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                 onDrop={(event) => dropChildTaskOnItem(event, item)}
                 onClick={(event) => {
@@ -1715,8 +1746,10 @@ function StepsCardPreview({
                   />
                 ) : null}
               </li>
+              </Fragment>
             );
           })}
+          {!isCompletedStepsExpanded ? completedStepsHeader : null}
         </ul>
       ) : null}
         </>

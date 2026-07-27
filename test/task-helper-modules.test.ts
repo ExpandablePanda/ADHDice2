@@ -1939,6 +1939,7 @@ test("child task preview lookup exposes direct same-table children", () => {
     repeatMonthlyWeekday: null,
     scheduledOn: "2026-06-20",
     status: "in_progress",
+    storedStatus: "in_progress",
     tags: ["setup", "draft"],
     title: "Child",
     updatedAt: "2026-06-18T08:01:00.000Z",

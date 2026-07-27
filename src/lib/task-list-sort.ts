@@ -9,6 +9,7 @@ export type ListSortField =
   | "status"
   | "priority"
   | "title"
+  | "recently_added"
   | "recently_updated"
   | "streak"
   | "estimated_duration";
@@ -24,6 +25,7 @@ export const LIST_SORT_FIELDS: readonly ListSortField[] = [
   "status",
   "priority",
   "title",
+  "recently_added",
   "recently_updated",
   "streak",
   "estimated_duration",
@@ -103,6 +105,9 @@ export function sortListParentTasks(
         break;
       case "title":
         result = left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+        break;
+      case "recently_added":
+        result = left.created_at.localeCompare(right.created_at);
         break;
       case "recently_updated":
         result = left.updated_at.localeCompare(right.updated_at);

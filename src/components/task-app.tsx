@@ -529,9 +529,16 @@ function formatCollapsedHudTimerLabel(totalSeconds: number) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function formatHudDateTime(nowMs: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(nowMs));
+}
+
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.4.28";
+const APP_VERSION = "7.5.16";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -5481,15 +5488,7 @@ export function TaskApp() {
     }
   };
   const openTaskInSharedTasksEditorFromPaths = (taskId: string) => {
-    setSuppressDetachedListNoticeTaskId(null);
-    setRequestedListOverlayTaskId(taskId);
-    startTransition(() => {
-      setTaskUiState((prev) => ({
-        ...prev,
-        tasksSurface: "tasks",
-        view: prev.view === "table" || prev.view === "list" ? prev.view : "table",
-      }));
-    });
+    openSharedTaskEditor(taskId, { preserveActivePage: true });
   };
   const openTaskInSharedTasksEditorFromOnTime = (taskId: string) => {
     openSharedTaskEditor(taskId, { initialField: "estimated_time" });
@@ -5672,7 +5671,7 @@ export function TaskApp() {
             <HudLoadingShell />
           ) : (
             <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
-              <HudRuntimeClock active={runningTaskTimers.length > 0 || Object.values(activeSessions).some((session) => session.isRunning) || (focusAlarmEnabled && focusAlarmNextRingAt !== null)}>
+              <HudRuntimeClock active>
                 {(hudNow) => {
                   const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
                   const notificationInboxItems = [
@@ -5714,6 +5713,7 @@ export function TaskApp() {
                       profile={profile}
                       runningTaskTimers={runningTaskTimers}
                       setHudUiState={setHudUiState}
+                      hudNow={hudNow}
                       taskTimerNow={hudNow}
                       theme={theme}
                       todayTaskCount={filteredTodayTasks.length}
@@ -5988,6 +5988,8 @@ export function TaskApp() {
             operationsHeaderProps={taskOperationsHeaderProps}
             pathsWorkspacePanel={(
               <PathsWorkspace
+                availableTaskLists={availableTaskLists}
+                listMembershipsByTaskId={taskListMembershipsByTaskId}
                 onOpenTask={openTaskInSharedTasksEditorFromPaths}
                 onSetTaskStatus={(taskId, status) => {
                   const task = tasks.find((entry) => entry.id === taskId);
@@ -7264,6 +7266,7 @@ function CommandCenterHeader({
   profile,
   runningTaskTimers,
   setHudUiState,
+  hudNow,
   taskTimerNow,
   theme,
   todayTaskCount,
@@ -7311,6 +7314,7 @@ function CommandCenterHeader({
   profile: UserProfile;
   runningTaskTimers: RunningTaskTimer[];
   setHudUiState: Dispatch<SetStateAction<import("@/lib/task-hud-layout").HudUiState>>;
+  hudNow: number;
   taskTimerNow: number;
   theme: ThemeMode;
   todayTaskCount: number;
@@ -7348,6 +7352,7 @@ function CommandCenterHeader({
   const collapsedHudFocusTimer = resolveCollapsedHudFocusTimer(focusCategories, activeSessions, taskTimerNow);
   const collapsedHudTaskTimer = activeHudTaskTimer ?? runningTaskTimers[0] ?? null;
   const activeHudPageTitle = hudUiState.hudPages.find((page) => page.id === currentHudPageId)?.title ?? "HUD";
+  const hudDateTime = formatHudDateTime(hudNow);
   const [isNotificationInboxOpen, setIsNotificationInboxOpen] = useState(false);
 
   function setHudCollapsed(isCollapsed: boolean) {
@@ -7661,64 +7666,68 @@ function CommandCenterHeader({
             <div className="shrink-0">{accountButton}</div>
           </div>
         </div>
+        <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55">{hudDateTime}</span>
       </header>
     );
   }
 
   return (
-    <header className="flex flex-col gap-2 px-3 lg:flex-row lg:items-center lg:justify-between">
-      <div className="flex items-center justify-between gap-3 lg:mr-[5px] lg:shrink-0 lg:justify-start">
-        <button
-          aria-label="Collapse HUD"
-          className="flex min-h-12 items-center gap-1 rounded-full bg-[var(--hud-surface)] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
-          onClick={() => setHudCollapsed(true)}
-          type="button"
-        >
-          <span className="pointer-events-none flex items-center">
-            <BrandMark profile={profile} />
-          </span>
-          <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[11px] font-semibold text-[#7f6af7] dark:text-[#c5b8ff]">
-            {HUD_VERSION}
-          </span>
-        </button>
-        <div className="lg:hidden">{accountButton}</div>
-      </div>
-      <HudCommandCenter
-        hudUiState={hudUiState}
-        renderWidget={renderHudWidget}
-        setHudUiState={setHudUiState}
-      />
-      <div className="flex items-center justify-end gap-2 lg:shrink-0">
-        {pendingRewardDiceCount > 0 ? (
-          <TaskTableChipButton
-            aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}
-            className="gap-1.5 text-[#119a69] dark:text-[#8ff0cc]"
-            onClick={onOpenPendingRewardBank}
-            toneClassName="border-[#cfeedd] bg-[#ecfbf3] dark:border-[#1e5a42] dark:bg-[#103726]"
+    <header className="px-3">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center justify-between gap-3 lg:mr-[5px] lg:shrink-0 lg:justify-start">
+          <button
+            aria-label="Collapse HUD"
+            className="flex min-h-12 items-center gap-1 rounded-full bg-[var(--hud-surface)] px-2 py-1.5 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6f57f6]/45"
+            onClick={() => setHudCollapsed(true)}
+            type="button"
           >
-            <Dice5 className="h-3.5 w-3.5" />
-            {formatPendingDiceChipLabel(pendingRewardDiceCount)}
+            <span className="pointer-events-none flex items-center">
+              <BrandMark profile={profile} />
+            </span>
+            <span className="pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[11px] font-semibold text-[#7f6af7] dark:text-[#c5b8ff]">
+              {HUD_VERSION}
+            </span>
+          </button>
+          <div className="lg:hidden">{accountButton}</div>
+        </div>
+        <HudCommandCenter
+          hudUiState={hudUiState}
+          renderWidget={renderHudWidget}
+          setHudUiState={setHudUiState}
+        />
+        <div className="flex items-center justify-end gap-2 lg:shrink-0">
+          {pendingRewardDiceCount > 0 ? (
+            <TaskTableChipButton
+              aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}
+              className="gap-1.5 text-[#119a69] dark:text-[#8ff0cc]"
+              onClick={onOpenPendingRewardBank}
+              toneClassName="border-[#cfeedd] bg-[#ecfbf3] dark:border-[#1e5a42] dark:bg-[#103726]"
+            >
+              <Dice5 className="h-3.5 w-3.5" />
+              {formatPendingDiceChipLabel(pendingRewardDiceCount)}
+            </TaskTableChipButton>
+          ) : null}
+          <TaskTableChipButton
+            aria-label="Open Scratch Paper notes"
+            className="text-[#6f57f6] dark:text-[#cabfff]"
+            onClick={onViewScratchPaper}
+            toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+          >
+            Scratch Paper
           </TaskTableChipButton>
-        ) : null}
-        <TaskTableChipButton
-          aria-label="Open Scratch Paper notes"
-          className="text-[#6f57f6] dark:text-[#cabfff]"
-          onClick={onViewScratchPaper}
-          toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
-        >
-          Scratch Paper
-        </TaskTableChipButton>
-        <TaskTableChipButton
-          aria-label="Collapse HUD"
-          className="gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
-          onClick={() => setHudCollapsed(true)}
-          toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
-        >
-          <ChevronUp className="h-3.5 w-3.5 rotate-180" />
-          Collapse
-        </TaskTableChipButton>
-        <div className="hidden lg:block">{accountButton}</div>
+          <TaskTableChipButton
+            aria-label="Collapse HUD"
+            className="gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
+            onClick={() => setHudCollapsed(true)}
+            toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+          >
+            <ChevronUp className="h-3.5 w-3.5 rotate-180" />
+            Collapse
+          </TaskTableChipButton>
+          <div className="hidden lg:block">{accountButton}</div>
+        </div>
       </div>
+      <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55">{hudDateTime}</span>
     </header>
   );
 }

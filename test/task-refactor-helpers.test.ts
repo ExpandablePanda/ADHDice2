@@ -37,8 +37,9 @@ test("db compat helpers match expected schema fallback errors", () => {
   assert.equal(isMissingTaskActualSecondsColumnError("actual_seconds adhdice_clean_tasks schema cache"), true);
 });
 
-test("task filter status options include permanent Complete", () => {
+test("task filter status options include permanent Complete but exclude Trash", () => {
   assert.equal(TASK_FILTER_STATUS_OPTIONS.includes("complete"), true);
+  assert.equal(TASK_FILTER_STATUS_OPTIONS.includes("trashed"), false);
 });
 
 test("focus-day helpers normalize valid UUID ids and date keys", () => {

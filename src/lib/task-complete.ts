@@ -16,7 +16,6 @@ const ONE_OFF_SELECTABLE_STATUSES: TaskStatus[] = [
   "upcoming",
   "not_due",
   "archived",
-  "trashed",
 ];
 
 const RECURRING_SELECTABLE_STATUSES: TaskStatus[] = [
@@ -30,7 +29,6 @@ const RECURRING_SELECTABLE_STATUSES: TaskStatus[] = [
   "upcoming",
   "not_due",
   "archived",
-  "trashed",
 ];
 
 export function getSelectableTaskStatusesForRepeatFrequency(repeatFrequency: TaskRepeatFrequency) {

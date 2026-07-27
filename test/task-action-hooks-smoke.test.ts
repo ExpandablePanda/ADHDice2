@@ -638,3 +638,69 @@ test("deleteTasks forwards explicit expected snapshots to guarded trash writes",
   assert.equal(receivedUpdateValues?.status, "trashed");
   assert.equal(typeof receivedUpdateValues?.trashed_at, "string");
 });
+
+test("permanent parent deletion immediately removes database-cascaded descendants from local task state", async () => {
+  const parent = createTask({
+    created_at: "2026-07-26T12:00:00.000Z",
+    id: "trashed-parent",
+    sort_order: 1,
+    status: "trashed",
+    title: "Trashed parent",
+    trashed_at: "2026-07-26T12:00:00.000Z",
+  });
+  const child = createTask({
+    created_at: "2026-07-26T12:01:00.000Z",
+    id: "active-child",
+    parent_task_id: parent.id,
+    sort_order: 1,
+    status: "pending",
+    title: "Active child",
+  });
+  const grandchild = createTask({
+    created_at: "2026-07-26T12:02:00.000Z",
+    id: "active-grandchild",
+    parent_task_id: child.id,
+    sort_order: 1,
+    status: "pending",
+    title: "Active grandchild",
+  });
+  const unrelated = createTask({
+    created_at: "2026-07-26T12:03:00.000Z",
+    id: "unrelated-task",
+    sort_order: 2,
+    status: "pending",
+    title: "Unrelated task",
+  });
+  let taskState = [parent, child, grandchild, unrelated];
+  let routingState = Object.fromEntries(taskState.map((task) => [task.id, "inbox" as const]));
+
+  const crud = useTaskCrudActions({
+    client: {} as never,
+    currentUserId: "u1",
+    deleteTaskRow: async (_taskId, expectedTask) => ({ conflict: null, data: expectedTask ?? null, error: null }),
+    setMessage: () => {},
+    setTaskRouting: ((updater: typeof routingState | ((current: typeof routingState) => typeof routingState)) => {
+      routingState = typeof updater === "function" ? updater(routingState) : updater;
+    }) as never,
+    setTasks: ((updater: typeof taskState | ((current: typeof taskState) => typeof taskState)) => {
+      taskState = typeof updater === "function" ? updater(taskState) : updater;
+    }) as never,
+    shouldRouteTaskToInbox: () => false,
+    sortTasksForUi: (tasks) => tasks,
+    tasks: taskState,
+    updateTaskRowWithLegacyEnergyFallback: async () => ({
+      conflict: null,
+      data: null,
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+
+  const deleted = await crud.deleteTasks([parent.id]);
+
+  assert.equal(deleted, true);
+  assert.deepEqual(taskState.map((task) => task.id), [unrelated.id]);
+  assert.deepEqual(Object.keys(routingState), [unrelated.id]);
+});

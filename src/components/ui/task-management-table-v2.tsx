@@ -34,7 +34,7 @@ import {
 import type { TaskActualTimeEntry, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup } from "@/lib/task-app-derived";
-import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
+import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, groupChildTaskPreviewItemsByStoredCompletion, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import { isTaskEditorChildRouteSettled, resolveTaskEditorFocusPhase } from "@/lib/task-editor-focus-request";
 import { getSelectedTaskPriorityToneClass, getTaskPrioritySelection, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
@@ -2394,6 +2394,7 @@ export function TaskManagementTableV2({
   const [tagPickerOpenByTaskId, setTagPickerOpenByTaskId] = useState<Record<string, boolean>>({});
   const [expandedSubtasksByTaskId, setExpandedSubtasksByTaskId] = useState<Record<string, boolean>>({});
   const [expandedStepsByTaskId, setExpandedStepsByTaskId] = useState<Record<string, boolean>>({});
+  const [expandedCompletedStepsByTaskId, setExpandedCompletedStepsByTaskId] = useState<Record<string, boolean>>({});
   const [collapsedChildTaskIds, setCollapsedChildTaskIds] = useState<Record<string, boolean>>({});
   const [showAllSearchStepsByTaskId, setShowAllSearchStepsByTaskId] = useState<Record<string, boolean>>({});
   const [childTaskDragState, setChildTaskDragState] = useState<ChildTaskDragState | null>(null);
@@ -2778,7 +2779,11 @@ export function TaskManagementTableV2({
           statusFilteredItems,
           activeHierarchyParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
         );
-        for (const item of childTaskPreviewVisibility.visibleItems) {
+        const groupedItems = groupChildTaskPreviewItemsByStoredCompletion(childTaskPreviewVisibility.visibleItems);
+        const renderedItems = activeHierarchyParentTaskIdSet.has(task.id) || expandedCompletedStepsByTaskId[task.id]
+          ? [...groupedItems.normalItems, ...groupedItems.completedItems]
+          : groupedItems.normalItems;
+        for (const item of renderedItems) {
           if (highlightedTaskIdSet.has(item.id)) {
             orderedMatches.push(item.id);
           }
@@ -2805,6 +2810,7 @@ export function TaskManagementTableV2({
     childTaskPreviewByParentTaskId,
     collapsedChildTaskIdSet,
     effectiveDisplayedTasks,
+    expandedCompletedStepsByTaskId,
     expandedStepsByTaskId,
     expandedSubtasksByTaskId,
     hiddenSubtaskIds,
@@ -2841,9 +2847,13 @@ export function TaskManagementTableV2({
         statusFilteredItems,
         activeHierarchyParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
       );
-      return [task.id, ...childTaskPreviewVisibility.visibleItems.map((item) => item.id)];
+      const groupedItems = groupChildTaskPreviewItemsByStoredCompletion(childTaskPreviewVisibility.visibleItems);
+      const renderedItems = activeHierarchyParentTaskIdSet.has(task.id) || expandedCompletedStepsByTaskId[task.id]
+        ? [...groupedItems.normalItems, ...groupedItems.completedItems]
+        : groupedItems.normalItems;
+      return [task.id, ...renderedItems.map((item) => item.id)];
     }),
-    [activeHierarchyChildTaskIdSet, activeHierarchyParentTaskIdSet, childTaskPreviewByParentTaskId, collapsedChildTaskIdSet, effectiveDisplayedTasks, expandedStepsByTaskId],
+    [activeHierarchyChildTaskIdSet, activeHierarchyParentTaskIdSet, childTaskPreviewByParentTaskId, collapsedChildTaskIdSet, effectiveDisplayedTasks, expandedCompletedStepsByTaskId, expandedStepsByTaskId],
   );
   const visibleTaskIdSet = useMemo(
     () => new Set(visibleTaskIds),
@@ -3734,6 +3744,14 @@ export function TaskManagementTableV2({
     }
   }, [cancelTableScrollTopHold, highlightedScrollToken]);
 
+  const highlightedRevealTaskId = useMemo(() => {
+    if (!highlightedActiveTaskId) {
+      return null;
+    }
+    const previewRevealTarget = findPreviewAncestorIdsForTask(childTaskPreviewByParentTaskId, highlightedActiveTaskId);
+    return previewRevealTarget?.ancestorIds[0] ?? highlightedActiveTaskId;
+  }, [childTaskPreviewByParentTaskId, highlightedActiveTaskId]);
+
   useEffect(() => {
     if (!highlightedActiveTaskId || highlightedScrollToken === null) {
       return;
@@ -3749,6 +3767,15 @@ export function TaskManagementTableV2({
         ? current
         : { ...current, [previewRevealTarget.parentTaskId]: true }
     ));
+    const previewGroup = childTaskPreviewByParentTaskId[previewRevealTarget.parentTaskId];
+    const completedGroup = groupChildTaskPreviewItemsByStoredCompletion(previewGroup?.items ?? []);
+    if (completedGroup.completedItems.some((item) => item.id === highlightedActiveTaskId)) {
+      setExpandedCompletedStepsByTaskId((current) => (
+        current[previewRevealTarget.parentTaskId]
+          ? current
+          : { ...current, [previewRevealTarget.parentTaskId]: true }
+      ));
+    }
     if (previewRevealTarget.ancestorIds.length === 0) {
       return;
     }
@@ -3775,7 +3802,8 @@ export function TaskManagementTableV2({
       return;
     }
 
-    const selector = `[data-task-table-row="${highlightedActiveTaskId}"], [data-same-table-step-row="${highlightedActiveTaskId}"]`;
+    const revealTaskId = highlightedRevealTaskId ?? highlightedActiveTaskId;
+    const selector = `[data-task-table-row="${revealTaskId}"], [data-same-table-step-row="${revealTaskId}"]`;
     let secondFrameId = 0;
     const revealTarget = () => {
       const target = shellElement.querySelector<HTMLElement>(selector);
@@ -3786,6 +3814,10 @@ export function TaskManagementTableV2({
         fallbackContainer: tableScrollContainerRef.current,
         minVisibleHeight: TABLE_REVEAL_INLINE_MIN_VISIBLE_HEIGHT,
       });
+      const focusTarget = target.matches("[role=button]")
+        ? target
+        : target.querySelector<HTMLElement>("[role=button]");
+      focusTarget?.focus({ preventScroll: true });
     };
 
     const firstFrameId = window.requestAnimationFrame(() => {
@@ -3797,11 +3829,11 @@ export function TaskManagementTableV2({
       window.cancelAnimationFrame(firstFrameId);
       window.cancelAnimationFrame(secondFrameId);
     };
-  }, [highlightedActiveTaskId, highlightedScrollToken]);
+  }, [highlightedActiveTaskId, highlightedRevealTaskId, highlightedScrollToken]);
 
   const getHighlightedRowClassName = (taskId: string) => {
-    if (highlightedActiveTaskId === taskId) {
-      return "border-[#ddd2ff] bg-[#efe6ff] dark:border-[#5a458f] dark:bg-[#2b1d46]";
+    if (highlightedRevealTaskId === taskId) {
+      return "shadow-[0_18px_40px_rgba(109,61,208,0.10)]";
     }
     return "";
   };
@@ -7014,8 +7046,34 @@ export function TaskManagementTableV2({
     );
   }
 
-  const renderEditorChildTaskRows = (group: ChildTaskPreviewGroup | undefined) => {
+  const renderCompletedStepsHeader = (parentTaskId: string, completedStepCount: number, isExpanded: boolean) => {
+    const taskColumnIndex = Math.max(1, visibleHeaderColumns.findIndex((column) => column.id === "title") + 1);
+    return (
+    <div className="grid w-max min-w-full border-t border-[#f0ebfb] px-1.5 pb-1 pt-2 dark:border-white/10" data-completed-steps-section={parentTaskId} style={{ gridTemplateColumns }}>
+      <div className="inline-flex items-center justify-center gap-1.5 justify-self-center leading-none" style={{ gridColumn: taskColumnIndex }}>
+        <span className={TITLE_CELL_CLASS}>Completed Steps ({completedStepCount})</span>
+        <TaskHierarchyChevronButton
+          buttonClassName="inline-flex h-4 w-4 flex-none items-center justify-center text-[#9b92be] transition hover:text-[#6f57f6] hover:[&_svg]:stroke-[2.5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/35 dark:hover:text-[#cabfff] dark:focus-visible:ring-[#3b2f68]/90"
+          expanded={isExpanded}
+          onToggle={() => setExpandedCompletedStepsByTaskId((current) => ({ ...current, [parentTaskId]: !isExpanded }))}
+          onToggleAll={() => setExpandedCompletedStepsByTaskId((current) => ({ ...current, [parentTaskId]: !isExpanded }))}
+        />
+      </div>
+    </div>
+    );
+  };
+
+  const renderEditorChildTaskRows = (parentTaskId: string, group: ChildTaskPreviewGroup | undefined) => {
     const { collapsibleTaskIds, visibleItems: expandedItems } = buildChildTaskPreviewVisibility(group?.items ?? [], collapsedChildTaskIdSet);
+    const groupedItems = groupChildTaskPreviewItemsByStoredCompletion(expandedItems);
+    const isCompletedStepsExpanded = expandedCompletedStepsByTaskId[parentTaskId] === true;
+    const displayedItems = [
+      ...groupedItems.normalItems,
+      ...(isCompletedStepsExpanded ? groupedItems.completedItems : []),
+    ];
+    const completedStepsHeader = groupedItems.completedStepCount > 0
+      ? renderCompletedStepsHeader(parentTaskId, groupedItems.completedStepCount, isCompletedStepsExpanded)
+      : null;
     const canSelectChildTask = Boolean(onOpenChildTask);
     const canDeleteChildTask = Boolean(onOpenDeleteTask);
 
@@ -7028,7 +7086,7 @@ export function TaskManagementTableV2({
         {group?.summary.hasInvalidDescendants ? (
           <p className="text-xs text-[#9a7a24] dark:text-[#f3d38a]">{formatInvalidChildLinkCount(group.summary.invalidChildLinkCount)}</p>
         ) : null}
-        {expandedItems.map((item) => {
+        {displayedItems.map((item, itemIndex) => {
           const siblingItems = group?.items.filter((candidate) => candidate.parentTaskId === item.parentTaskId && candidate.depth === item.depth) ?? [];
           const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
           const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.85;
@@ -7044,10 +7102,11 @@ export function TaskManagementTableV2({
           const activeStepPanel = activeMetadataPanelByTaskId[item.id] ?? null;
 
           return (
+            <Fragment key={item.id}>
+            {itemIndex === groupedItems.normalItems.length ? completedStepsHeader : null}
             <div
               className={`group flex min-w-0 items-start gap-2 rounded-[0.95rem] border border-transparent px-1.5 py-2 text-left transition ${isMetadataTarget ? "bg-[#fbfaff] dark:bg-white/[0.05]" : "bg-transparent"} ${canSelectChildTask ? "cursor-pointer hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.05] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
               data-same-table-step-row={item.id}
-              key={item.id}
               onDragOver={(event) => updateChildTaskDropTarget(event, item)}
               onDrop={(event) => dropChildTaskOnItem(event, item)}
               onClick={canSelectChildTask ? (event) => {
@@ -7320,8 +7379,10 @@ export function TaskManagementTableV2({
                 ) : null}
               </div>
             </div>
+            </Fragment>
           );
         })}
+        {!isCompletedStepsExpanded ? completedStepsHeader : null}
       </div>
     );
   };
@@ -7853,9 +7914,24 @@ export function TaskManagementTableV2({
       childFilterIsActive ? new Set<string>() : collapsedChildTaskIdSet,
     );
     const visibleItems = childTaskPreviewVisibility.visibleItems;
+    const groupedItems = groupChildTaskPreviewItemsByStoredCompletion(visibleItems);
+    const isDraftingCompletedBranch = Boolean(
+      tableStepDraftParentId
+      && groupedItems.completedItems.some((item) => item.id === tableStepDraftParentId),
+    );
+    const isCompletedStepsExpanded = childFilterIsActive
+      || expandedCompletedStepsByTaskId[task.id] === true
+      || isDraftingCompletedBranch;
+    const displayedItems = [
+      ...groupedItems.normalItems,
+      ...(isCompletedStepsExpanded ? groupedItems.completedItems : []),
+    ];
+    const completedStepsHeader = groupedItems.completedStepCount > 0
+      ? renderCompletedStepsHeader(task.id, groupedItems.completedStepCount, isCompletedStepsExpanded)
+      : null;
     const canOpenStepActions = allowInlineInspector || Boolean(onOpenChildTask);
     const isDraftingStepForTask = tableStepDraftParentId === task.id;
-    const isDraftingSubstepForVisibleItem = Boolean(tableStepDraftParentId && visibleItems.some((item) => item.id === tableStepDraftParentId));
+    const isDraftingSubstepForVisibleItem = Boolean(tableStepDraftParentId && displayedItems.some((item) => item.id === tableStepDraftParentId));
 
     if (visibleItems.length === 0 && !group?.summary.hasInvalidDescendants && !isDraftingStepForTask && !isDraftingSubstepForVisibleItem) {
       return null;
@@ -7886,17 +7962,18 @@ export function TaskManagementTableV2({
             ))}
           </form>
         ) : null}
-        {visibleItems.map((item) => {
+        {displayedItems.map((item, itemIndex) => {
           const inlineStepTask = childPreviewToPrototypeTaskRow(item);
           const titleGeometry = getTableHierarchyTitleGeometry(item.depth);
           return (
             <Fragment key={item.id}>
+              {itemIndex === groupedItems.normalItems.length ? completedStepsHeader : null}
               <div
-                className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${highlightedActiveTaskId === item.id ? "bg-[#efe6ff] dark:bg-[#2b1d46]" : ""}`}
+                className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${getHighlightedRowClassName(item.id)}`}
                 data-same-table-step-row={item.id}
               >
                 <div
-                  className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]" : "border-transparent bg-transparent dark:bg-transparent"} ${canOpenStepActions ? "cursor-pointer hover:bg-[#fbfaff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.045] dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                  className={`grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-0.5 pl-[3px] pr-0 text-center transition ${selectedTaskIdSet.has(item.id) ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]" : "border-transparent bg-transparent dark:bg-transparent"} ${canOpenStepActions ? "cursor-pointer hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                   data-task-table-child-grid={item.id}
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
@@ -7979,6 +8056,7 @@ export function TaskManagementTableV2({
             </Fragment>
           );
         })}
+        {!isCompletedStepsExpanded ? completedStepsHeader : null}
       </div>
     );
   };
@@ -8026,7 +8104,7 @@ export function TaskManagementTableV2({
       <div className="w-max min-w-full" data-task-table-source-step-rows={task.id}>
       {rows.map((row) => (
           <div
-            className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${highlightedActiveTaskId === row.subtask.id ? "bg-[#efe6ff] dark:bg-[#2b1d46]" : ""}`}
+            className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${getHighlightedRowClassName(row.subtask.id)}`}
             data-same-table-step-row={row.subtask.id}
             key={row.subtask.id}
             onClick={(event) => event.stopPropagation()}
@@ -8368,9 +8446,7 @@ export function TaskManagementTableV2({
                   key={getPrototypeTaskRowKey(task)}
                 >
                   <motion.div
-                    className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${
-                      highlightedActiveTaskId === task.id ? "bg-[#efe6ff] dark:bg-[#2b1d46]" : ""
-                    } ${hasRenderedDescendants ? "sticky top-8 z-10 bg-white dark:bg-[#181226]" : ""}`}
+                    className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${hasRenderedDescendants ? "sticky top-8 z-10 bg-white dark:bg-[#181226]" : ""}`}
                     data-task-table-row={task.id}
                     initial={shouldAnimateRows ? undefined : false}
                     onClick={(event) => {
@@ -8441,7 +8517,7 @@ export function TaskManagementTableV2({
                     variants={tableRowVariants}
                     whileHover={shouldAnimateRows ? { y: -0.5 } : undefined}
                   >
-                    <div className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${
+                    <div className={`ml-[10px] grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition hover:shadow-[0_18px_40px_rgba(109,61,208,0.10)] ${getHighlightedRowClassName(task.id)} ${
                       selectedTaskIdSet.has(task.id)
                         ? "border-transparent bg-[#f7f2ff] dark:bg-[#201733]"
                         : showInlineAccordion || rowContextMenu?.taskId === task.id
@@ -9118,7 +9194,7 @@ export function TaskManagementTableV2({
                 }
                 const childTaskPreviewGroup = overlayMode === "full" ? childTaskPreviewByParentTaskId[selectedTask.id] : undefined;
                 const hasSameTableStepRows = Boolean(childTaskPreviewGroup && (childTaskPreviewGroup.items.length > 0 || childTaskPreviewGroup.summary.hasInvalidDescendants));
-                const sameTableStepRowsNode = overlayMode === "full" ? renderEditorChildTaskRows(childTaskPreviewGroup) : null;
+                const sameTableStepRowsNode = overlayMode === "full" ? renderEditorChildTaskRows(selectedTask.id, childTaskPreviewGroup) : null;
                 const hasUnifiedStepRows = hasSameTableStepRows || selectedTaskVisibleSubtasks.length > 0;
                 const showNestedStepsEditor = overlayMode === "full" && !selectedTaskParentInfo;
                 const stepsEditorNode = showNestedStepsEditor ? (

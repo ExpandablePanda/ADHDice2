@@ -240,7 +240,9 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     }, { table: false, list: false, cards: false, matrix: false, grid: false }),
     listSortBySurface: normalizeListSortBySurface(state.listSortBySurface),
     selectedBucket: nextBucket,
-    statusFilters: Array.isArray(state.statusFilters) ? state.statusFilters : [],
+    statusFilters: Array.isArray(state.statusFilters)
+      ? state.statusFilters.filter((status) => status !== "trashed")
+      : [],
     tableColumnFilters: {
       priority: Array.isArray(state.tableColumnFilters?.priority) ? state.tableColumnFilters.priority : [],
       repeat: Array.isArray(state.tableColumnFilters?.repeat) ? state.tableColumnFilters.repeat : [],

@@ -1,6 +1,9 @@
 export const PATH_TYPES = ["one_time", "daily_reset", "reset_flow"] as const;
 
 export type PathType = (typeof PATH_TYPES)[number];
+export const PATH_NODE_KINDS = ["path", "task"] as const;
+
+export type PathsNodeKind = (typeof PATH_NODE_KINDS)[number];
 
 export type Path = {
   archivedAt: string | null;
@@ -20,6 +23,7 @@ export type Path = {
 
 export type PathNode = {
   id: string;
+  kind: PathsNodeKind;
   linkedTaskIds: string[];
   nextNodeIds: string[];
   note: string | null;
@@ -109,6 +113,10 @@ export function normalizePathType(value: unknown, fallback: PathType = DEFAULT_P
   return isPathType(value) ? value : fallback;
 }
 
+export function normalizePathsNodeKind(value: unknown): PathsNodeKind {
+  return value === "task" ? "task" : "path";
+}
+
 export function normalizePathRecord(input: unknown, index = 0): Path {
   const record = asRecord(input);
   const pathId = normalizeRequiredString(record.id, `path-${index + 1}`);
@@ -141,16 +149,52 @@ export function normalizePathNodeRecord(
 ): PathNode {
   const { fallbackPathId, index = 0 } = options;
   const record = asRecord(input);
+  const kind = normalizePathsNodeKind(record.kind);
+  const linkedTaskIds = normalizeLinkedTaskIds(record);
 
   return {
     id: normalizeRequiredString(record.id, `${fallbackPathId}-node-${index + 1}`),
-    linkedTaskIds: normalizeLinkedTaskIds(record),
+    kind,
+    linkedTaskIds: kind === "task" ? linkedTaskIds.slice(0, 1) : linkedTaskIds,
     nextNodeIds: normalizeStringArray(record.nextNodeIds),
     note: normalizeOptionalString(record.note),
     pathId: normalizeRequiredString(record.pathId, fallbackPathId),
     position: normalizePathNodePosition(record.position, index),
     sortOrder: normalizeSortOrder(record.sortOrder, index),
     title: normalizeRequiredString(record.title, UNTITLED_NODE_TITLE),
+  };
+}
+
+export function convertPathNodeToTaskNode(node: PathNode, taskId: string): PathNode {
+  return {
+    ...node,
+    kind: "task",
+    linkedTaskIds: [taskId],
+    nextNodeIds: [...node.nextNodeIds],
+    position: { ...node.position },
+  };
+}
+
+export function convertTaskNodeToPathNode(node: PathNode): PathNode {
+  return {
+    ...node,
+    kind: "path",
+    linkedTaskIds: [],
+    nextNodeIds: [...node.nextNodeIds],
+    position: { ...node.position },
+  };
+}
+
+export function duplicatePathNode(
+  node: PathNode,
+  overrides: Pick<PathNode, "id" | "position" | "sortOrder" | "title">,
+): PathNode {
+  return {
+    ...node,
+    ...overrides,
+    linkedTaskIds: [...node.linkedTaskIds],
+    nextNodeIds: [],
+    position: { ...overrides.position },
   };
 }
 
@@ -455,6 +499,7 @@ export const DEFAULT_PROTOTYPE_PATH_RECORDS = [
     nodes: [
       {
         id: "path-morning-reset-node-water",
+        kind: "path",
         linkedTaskIds: [],
         nextNodeIds: ["path-morning-reset-node-face"],
         note: "Start with the lightest reset before deciding what needs more attention.",
@@ -465,6 +510,7 @@ export const DEFAULT_PROTOTYPE_PATH_RECORDS = [
       },
       {
         id: "path-morning-reset-node-face",
+        kind: "path",
         linkedTaskIds: ["task-skincare-am"],
         nextNodeIds: ["path-morning-reset-node-counter"],
         note: "Linked task stays reference-only in PATHS v1.",
@@ -475,6 +521,7 @@ export const DEFAULT_PROTOTYPE_PATH_RECORDS = [
       },
       {
         id: "path-morning-reset-node-counter",
+        kind: "path",
         linkedTaskIds: [],
         nextNodeIds: [],
         note: "Reset the immediate environment before choosing the next path.",
@@ -526,6 +573,7 @@ function clonePathRecord(record: PathRecord): PathRecord {
   return {
     nodes: record.nodes.map((node) => ({
       ...node,
+      linkedTaskIds: [...node.linkedTaskIds],
       nextNodeIds: [...node.nextNodeIds],
       position: { ...node.position },
     })),

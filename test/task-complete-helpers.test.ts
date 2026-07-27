@@ -25,7 +25,6 @@ test("one-off status options include missed and complete but exclude occurrence-
     "upcoming",
     "not_due",
     "archived",
-    "trashed",
   ]);
 });
 
@@ -41,7 +40,6 @@ test("recurring status options keep occurrence statuses and add complete", () =>
     "upcoming",
     "not_due",
     "archived",
-    "trashed",
   ]);
 });
 
