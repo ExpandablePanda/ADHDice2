@@ -1491,6 +1491,102 @@ export type HealthFoodLibraryItemUpdate = Partial<
   >
 >;
 
+export type HealthRecipeIngredient = {
+  food_id: string | null;
+  food_name: string;
+  serving_label: string | null;
+  quantity: number;
+  calories: number;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+};
+
+export type HealthRecipe = {
+  id: string;
+  user_id: string;
+  name: string;
+  notes: string;
+  servings: number;
+  ingredients: HealthRecipeIngredient[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthRecipeInsert = {
+  id?: string;
+  user_id: string;
+  name: string;
+  notes?: string;
+  servings: number;
+  ingredients: HealthRecipeIngredient[];
+};
+
+export type HealthRecipeUpdate = Partial<
+  Pick<HealthRecipe, "name" | "notes" | "servings" | "ingredients">
+>;
+
+export type HealthSavedMealItem = {
+  source_id: string | null;
+  source_type: "food" | "recipe";
+  name: string;
+  serving_label: string | null;
+  quantity: number;
+  calories: number;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+};
+
+export type HealthSavedMeal = {
+  id: string;
+  user_id: string;
+  name: string;
+  default_meal_slot: HealthMealSlot;
+  items: HealthSavedMealItem[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthSavedMealInsert = {
+  id?: string;
+  user_id: string;
+  name: string;
+  default_meal_slot: HealthMealSlot;
+  items: HealthSavedMealItem[];
+};
+
+export type HealthSavedMealUpdate = Partial<
+  Pick<HealthSavedMeal, "name" | "default_meal_slot" | "items">
+>;
+
+export type HealthWaterUnit = "cup" | "fl_oz";
+
+export type HealthWaterEntry = {
+  id: string;
+  user_id: string;
+  entry_date: string;
+  logged_at: string;
+  amount: number;
+  unit: HealthWaterUnit;
+  amount_ml: number;
+  created_at: string;
+};
+
+export type HealthWaterEntryInsert = {
+  id?: string;
+  user_id: string;
+  entry_date: string;
+  logged_at?: string;
+  amount: number;
+  unit: HealthWaterUnit;
+  amount_ml: number;
+};
+
+export type HealthWaterEntryUpdate = Partial<
+  Pick<HealthWaterEntry, "entry_date" | "logged_at" | "amount" | "unit" | "amount_ml">
+>;
+
 export type HealthMealEntry = {
   id: string;
   user_id: string;
@@ -2167,6 +2263,24 @@ export type Database = {
         Row: HealthFoodLibraryItem;
         Insert: HealthFoodLibraryItemInsert;
         Update: HealthFoodLibraryItemUpdate;
+        Relationships: [];
+      };
+      adhdice_health_recipes: {
+        Row: HealthRecipe;
+        Insert: HealthRecipeInsert;
+        Update: HealthRecipeUpdate;
+        Relationships: [];
+      };
+      adhdice_health_saved_meals: {
+        Row: HealthSavedMeal;
+        Insert: HealthSavedMealInsert;
+        Update: HealthSavedMealUpdate;
+        Relationships: [];
+      };
+      adhdice_health_water_entries: {
+        Row: HealthWaterEntry;
+        Insert: HealthWaterEntryInsert;
+        Update: HealthWaterEntryUpdate;
         Relationships: [];
       };
       adhdice_health_meal_entries: {

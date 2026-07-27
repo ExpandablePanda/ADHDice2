@@ -15,10 +15,18 @@ import type {
   HealthImportAuditInsert,
   HealthMealEntry,
   HealthMealEntryInsert,
+  HealthMealEntryUpdate,
   HealthMetricEntry,
   HealthMetricEntryInsert,
   HealthProfile,
   HealthProfileUpdate,
+  HealthRecipe,
+  HealthRecipeInsert,
+  HealthSavedMeal,
+  HealthSavedMealInsert,
+  HealthWaterEntry,
+  HealthWaterEntryInsert,
+  HealthWaterEntryUpdate,
   HealthWeightEntry,
   HealthWeightEntryInsert,
 } from "@/lib/database.types";
@@ -26,7 +34,9 @@ import type { AppleHealthImportPreview } from "@/lib/health-apple-import";
 import {
   buildDefaultHealthProfile,
   getEligibleHealthAchievements,
+  type HealthAchievementCode,
 } from "@/lib/health-utils";
+import { getHealthFoodIdentityKey } from "@/lib/health-library";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -46,6 +56,9 @@ type HealthStateSnapshot = {
   mealEntries: HealthMealEntry[];
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile;
+  recipes: HealthRecipe[];
+  savedMeals: HealthSavedMeal[];
+  waterEntries: HealthWaterEntry[];
   weightEntries: HealthWeightEntry[];
 };
 
@@ -58,6 +71,9 @@ function buildEmptyState(userId: string): HealthStateSnapshot {
     mealEntries: [],
     metricEntries: [],
     profile: buildDefaultHealthProfile(userId),
+    recipes: [],
+    savedMeals: [],
+    waterEntries: [],
     weightEntries: [],
   };
 }
@@ -101,6 +117,9 @@ function readLocalHealthState(userId: string) {
     mealEntries: readStoredJson(storageKey(userId, "meals"), emptyState.mealEntries),
     metricEntries: readStoredJson(storageKey(userId, "metrics"), emptyState.metricEntries),
     profile: readStoredJson(storageKey(userId, "profile"), emptyState.profile),
+    recipes: readStoredJson(storageKey(userId, "recipes"), emptyState.recipes),
+    savedMeals: readStoredJson(storageKey(userId, "saved-meals"), emptyState.savedMeals),
+    waterEntries: readStoredJson(storageKey(userId, "water"), emptyState.waterEntries),
     weightEntries: readStoredJson(storageKey(userId, "weights"), emptyState.weightEntries),
   } satisfies HealthStateSnapshot;
 }
@@ -110,11 +129,26 @@ function persistLocalHealthState(state: HealthStateSnapshot) {
     return;
   }
 
-  const { profile, checkIns, mealEntries, favorites, weightEntries, metricEntries, importAudits, awards } = state;
+  const {
+    profile,
+    checkIns,
+    mealEntries,
+    favorites,
+    recipes,
+    savedMeals,
+    waterEntries,
+    weightEntries,
+    metricEntries,
+    importAudits,
+    awards,
+  } = state;
   window.localStorage.setItem(storageKey(profile.user_id, "profile"), JSON.stringify(profile));
   window.localStorage.setItem(storageKey(profile.user_id, "checkins"), JSON.stringify(checkIns));
   window.localStorage.setItem(storageKey(profile.user_id, "meals"), JSON.stringify(mealEntries));
   window.localStorage.setItem(storageKey(profile.user_id, "favorites"), JSON.stringify(favorites));
+  window.localStorage.setItem(storageKey(profile.user_id, "recipes"), JSON.stringify(recipes));
+  window.localStorage.setItem(storageKey(profile.user_id, "saved-meals"), JSON.stringify(savedMeals));
+  window.localStorage.setItem(storageKey(profile.user_id, "water"), JSON.stringify(waterEntries));
   window.localStorage.setItem(storageKey(profile.user_id, "weights"), JSON.stringify(weightEntries));
   window.localStorage.setItem(storageKey(profile.user_id, "metrics"), JSON.stringify(metricEntries));
   window.localStorage.setItem(storageKey(profile.user_id, "imports"), JSON.stringify(importAudits));
@@ -129,6 +163,9 @@ function buildHealthSnapshot({
   mealEntries,
   metricEntries,
   profile,
+  recipes,
+  savedMeals,
+  waterEntries,
   weightEntries,
 }: HealthStateSnapshot) {
   return {
@@ -139,6 +176,9 @@ function buildHealthSnapshot({
     mealEntries,
     metricEntries,
     profile,
+    recipes,
+    savedMeals,
+    waterEntries,
     weightEntries,
   } satisfies HealthStateSnapshot;
 }
@@ -162,6 +202,9 @@ export function useHealth(
   const [favorites, setFavorites] = useState<HealthFoodLibraryItem[]>([]);
   const [weightEntries, setWeightEntries] = useState<HealthWeightEntry[]>([]);
   const [metricEntries, setMetricEntries] = useState<HealthMetricEntry[]>([]);
+  const [recipes, setRecipes] = useState<HealthRecipe[]>([]);
+  const [savedMeals, setSavedMeals] = useState<HealthSavedMeal[]>([]);
+  const [waterEntries, setWaterEntries] = useState<HealthWaterEntry[]>([]);
   const [importAudits, setImportAudits] = useState<HealthImportAudit[]>([]);
   const [awards, setAwards] = useState<HealthAchievementAward[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -174,6 +217,9 @@ export function useHealth(
     setFavorites(snapshot.favorites);
     setWeightEntries(snapshot.weightEntries);
     setMetricEntries(snapshot.metricEntries);
+    setRecipes(snapshot.recipes);
+    setSavedMeals(snapshot.savedMeals);
+    setWaterEntries(snapshot.waterEntries);
     setImportAudits(snapshot.importAudits);
     setAwards(snapshot.awards);
     persistLocalHealthState(snapshot);
@@ -321,6 +367,9 @@ export function useHealth(
       setFavorites([]);
       setWeightEntries([]);
       setMetricEntries([]);
+      setRecipes([]);
+      setSavedMeals([]);
+      setWaterEntries([]);
       setImportAudits([]);
       setAwards([]);
       setStorageMode("local");
@@ -344,6 +393,9 @@ export function useHealth(
         checkInsResult,
         mealEntriesResult,
         favoritesResult,
+        recipesResult,
+        savedMealsResult,
+        waterEntriesResult,
         weightEntriesResult,
         metricEntriesResult,
         importAuditsResult,
@@ -353,6 +405,9 @@ export function useHealth(
         client.from("adhdice_health_checkins").select("*").eq("user_id", userId).order("entry_date", { ascending: false }),
         client.from("adhdice_health_meal_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
         client.from("adhdice_health_food_library").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
+        client.from("adhdice_health_recipes").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
+        client.from("adhdice_health_saved_meals").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
+        client.from("adhdice_health_water_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
         client.from("adhdice_health_weight_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
         client.from("adhdice_health_metric_entries").select("*").eq("user_id", userId).order("metric_date", { ascending: false }),
         client.from("adhdice_health_import_audits").select("*").eq("user_id", userId).order("started_at", { ascending: false }),
@@ -368,6 +423,9 @@ export function useHealth(
         checkInsResult.error,
         mealEntriesResult.error,
         favoritesResult.error,
+        recipesResult.error,
+        savedMealsResult.error,
+        waterEntriesResult.error,
         weightEntriesResult.error,
         metricEntriesResult.error,
         importAuditsResult.error,
@@ -379,7 +437,7 @@ export function useHealth(
         if (firstError && isMissingHealthPersistence(firstError.message)) {
           setStorageMode("local");
           setMessage({
-            text: "Health is running in local mode until the new Supabase tables are migrated. Run `supabase/add_health_tables.sql` when you’re ready.",
+            text: "Health is running in local mode until its Supabase tables are migrated. Apply the base Health migration, then `supabase/add_health_food_library_recipes_water_7_5_22.sql`.",
             tone: "neutral",
           });
         } else if (firstError) {
@@ -397,6 +455,9 @@ export function useHealth(
         mealEntries: mealEntriesResult.data ?? [],
         metricEntries: metricEntriesResult.data ?? [],
         profile: profileResult.data ?? buildDefaultHealthProfile(userId),
+        recipes: recipesResult.data ?? [],
+        savedMeals: savedMealsResult.data ?? [],
+        waterEntries: waterEntriesResult.data ?? [],
         weightEntries: weightEntriesResult.data ?? [],
       });
       setStorageMode("remote");
@@ -442,6 +503,9 @@ export function useHealth(
       mealEntries,
       metricEntries,
       profile: nextProfile,
+      recipes,
+      savedMeals,
+      waterEntries,
       weightEntries,
     }));
     setMessage({ tone: "good", text: "Health goals saved." });
@@ -495,6 +559,9 @@ export function useHealth(
       mealEntries,
       metricEntries,
       profile,
+      recipes,
+      savedMeals,
+      waterEntries,
       weightEntries,
     });
     applySnapshot(nextSnapshot);
@@ -556,6 +623,9 @@ export function useHealth(
       mealEntries: nextMealEntries,
       metricEntries,
       profile,
+      recipes,
+      savedMeals,
+      waterEntries,
       weightEntries,
     });
     applySnapshot(nextSnapshot);
@@ -585,15 +655,82 @@ export function useHealth(
       mealEntries: mealEntries.filter((entry) => entry.id !== entryId),
       metricEntries,
       profile,
+      recipes,
+      savedMeals,
+      waterEntries,
       weightEntries,
     }));
     setMessage({ tone: "good", text: "Meal removed." });
     return true;
   }
 
+  async function updateMealEntry(entryId: string, input: HealthMealEntryUpdate) {
+    if (!userId || !profile) {
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    const currentEntry = mealEntries.find((entry) => entry.id === entryId);
+    if (!currentEntry) {
+      return false;
+    }
+
+    const localRow: HealthMealEntry = {
+      ...currentEntry,
+      ...input,
+      updated_at: now,
+    };
+
+    let nextRow = localRow;
+    if (client && storageMode === "remote") {
+      const { data, error } = await client
+        .from("adhdice_health_meal_entries")
+        .update(input)
+        .eq("id", entryId)
+        .eq("user_id", userId)
+        .select("*")
+        .single();
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      nextRow = data ?? localRow;
+    }
+
+    const nextMealEntries = mealEntries
+      .map((entry) => entry.id === entryId ? nextRow : entry)
+      .sort((left, right) => right.logged_at.localeCompare(left.logged_at));
+    const nextSnapshot = buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries: nextMealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      weightEntries,
+    });
+    applySnapshot(nextSnapshot);
+    await claimEligibleAwards(nextSnapshot, { persistRemotely: storageMode === "remote" });
+    setMessage({ tone: "good", text: "Meal updated." });
+    return true;
+  }
+
   async function saveFavoriteFood(input: Omit<HealthFoodLibraryItemInsert, "user_id">) {
     if (!userId || !profile) {
       return false;
+    }
+
+    const incomingIdentityKey = getHealthFoodIdentityKey(input);
+    const duplicateFavorite = incomingIdentityKey
+      ? favorites.find((item) => item.id !== input.id && getHealthFoodIdentityKey(item) === incomingIdentityKey)
+      : null;
+    if (duplicateFavorite) {
+      setMessage({ tone: "neutral", text: "That food is already in your library." });
+      return true;
     }
 
     const now = new Date().toISOString();
@@ -644,6 +781,9 @@ export function useHealth(
       mealEntries,
       metricEntries,
       profile,
+      recipes,
+      savedMeals,
+      waterEntries,
       weightEntries,
     }));
     setMessage({ tone: "good", text: "Saved to favorites." });
@@ -671,9 +811,280 @@ export function useHealth(
       mealEntries,
       metricEntries,
       profile,
+      recipes,
+      savedMeals,
+      waterEntries,
       weightEntries,
     }));
     setMessage({ tone: "good", text: "Favorite removed." });
+    return true;
+  }
+
+  async function saveRecipe(input: Omit<HealthRecipeInsert, "user_id">) {
+    if (!userId || !profile) {
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    const localRow: HealthRecipe = {
+      created_at: now,
+      id: input.id ?? createLocalId("health-recipe"),
+      ingredients: input.ingredients,
+      name: input.name,
+      notes: input.notes ?? "",
+      servings: input.servings,
+      updated_at: now,
+      user_id: userId,
+    };
+    let nextRow = localRow;
+    if (client && storageMode === "remote") {
+      const { data, error } = await client
+        .from("adhdice_health_recipes")
+        .upsert({ ...input, user_id: userId })
+        .select("*")
+        .single();
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      nextRow = data ?? localRow;
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes: [nextRow, ...recipes.filter((entry) => entry.id !== nextRow.id)]
+        .sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
+      savedMeals,
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Recipe saved." });
+    return true;
+  }
+
+  async function deleteRecipe(recipeId: string) {
+    if (!profile) {
+      return false;
+    }
+    if (client && storageMode === "remote") {
+      const { error } = await client.from("adhdice_health_recipes").delete().eq("id", recipeId);
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+    }
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes: recipes.filter((entry) => entry.id !== recipeId),
+      savedMeals,
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Recipe removed." });
+    return true;
+  }
+
+  async function saveSavedMeal(input: Omit<HealthSavedMealInsert, "user_id">) {
+    if (!userId || !profile) {
+      return false;
+    }
+    const now = new Date().toISOString();
+    const localRow: HealthSavedMeal = {
+      created_at: now,
+      default_meal_slot: input.default_meal_slot,
+      id: input.id ?? createLocalId("health-saved-meal"),
+      items: input.items,
+      name: input.name,
+      updated_at: now,
+      user_id: userId,
+    };
+    let nextRow = localRow;
+    if (client && storageMode === "remote") {
+      const { data, error } = await client
+        .from("adhdice_health_saved_meals")
+        .upsert({ ...input, user_id: userId })
+        .select("*")
+        .single();
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      nextRow = data ?? localRow;
+    }
+
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals: [nextRow, ...savedMeals.filter((entry) => entry.id !== nextRow.id)]
+        .sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Custom meal saved." });
+    return true;
+  }
+
+  async function deleteSavedMeal(mealId: string) {
+    if (!profile) {
+      return false;
+    }
+    if (client && storageMode === "remote") {
+      const { error } = await client.from("adhdice_health_saved_meals").delete().eq("id", mealId);
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+    }
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals: savedMeals.filter((entry) => entry.id !== mealId),
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Custom meal removed." });
+    return true;
+  }
+
+  async function addWaterEntry(input: Omit<HealthWaterEntryInsert, "user_id">) {
+    if (!userId || !profile) {
+      return false;
+    }
+    const now = new Date().toISOString();
+    const localRow: HealthWaterEntry = {
+      amount: input.amount,
+      amount_ml: input.amount_ml,
+      created_at: now,
+      entry_date: input.entry_date,
+      id: input.id ?? createLocalId("health-water"),
+      logged_at: input.logged_at ?? now,
+      unit: input.unit,
+      user_id: userId,
+    };
+    let nextRow = localRow;
+    if (client && storageMode === "remote") {
+      const { data, error } = await client
+        .from("adhdice_health_water_entries")
+        .insert({ ...input, user_id: userId })
+        .select("*")
+        .single();
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      nextRow = data ?? localRow;
+    }
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries: [nextRow, ...waterEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Water added." });
+    return true;
+  }
+
+  async function deleteWaterEntry(entryId: string) {
+    if (!profile) {
+      return false;
+    }
+    if (client && storageMode === "remote") {
+      const { error } = await client.from("adhdice_health_water_entries").delete().eq("id", entryId);
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+    }
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries: waterEntries.filter((entry) => entry.id !== entryId),
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Water entry removed." });
+    return true;
+  }
+
+  async function updateWaterEntry(entryId: string, input: HealthWaterEntryUpdate) {
+    if (!profile) {
+      return false;
+    }
+    const existingEntry = waterEntries.find((entry) => entry.id === entryId);
+    if (!existingEntry) {
+      setMessage({ tone: "warn", text: "Water entry was not found." });
+      return false;
+    }
+    let nextEntry: HealthWaterEntry = {
+      ...existingEntry,
+      ...input,
+    };
+    if (client && storageMode === "remote") {
+      const { data, error } = await client
+        .from("adhdice_health_water_entries")
+        .update(input)
+        .eq("id", entryId)
+        .select("*")
+        .single();
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      nextEntry = data ?? nextEntry;
+    }
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries: waterEntries
+        .map((entry) => (entry.id === entryId ? nextEntry : entry))
+        .sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: "Water entry updated." });
     return true;
   }
 
@@ -721,6 +1132,9 @@ export function useHealth(
       mealEntries,
       metricEntries,
       profile,
+      recipes,
+      savedMeals,
+      waterEntries,
       weightEntries: nextWeightEntries,
     });
     applySnapshot(nextSnapshot);
@@ -899,6 +1313,9 @@ export function useHealth(
       mealEntries,
       metricEntries: [...insertedMetricRows, ...metricEntries].sort((left, right) => right.metric_date.localeCompare(left.metric_date)),
       profile,
+      recipes,
+      savedMeals,
+      waterEntries,
       weightEntries: [...insertedWeightRows, ...weightEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
     });
     applySnapshot(nextSnapshot);
@@ -937,6 +1354,9 @@ export function useHealth(
       mealEntries,
       metricEntries,
       profile,
+      recipes,
+      savedMeals,
+      waterEntries,
       weightEntries: weightEntries.filter((entry) => entry.id !== entryId),
     }));
     setMessage({ tone: "good", text: "Weight entry removed." });
@@ -948,6 +1368,9 @@ export function useHealth(
     checkIns,
     deleteFavoriteFood,
     deleteMealEntry,
+    deleteRecipe,
+    deleteSavedMeal,
+    deleteWaterEntry,
     deleteWeightEntry,
     favorites,
     importAudits,
@@ -956,12 +1379,20 @@ export function useHealth(
     mealEntries,
     metricEntries,
     profile,
+    recipes,
     saveCheckIn,
     saveFavoriteFood,
+    saveRecipe,
+    savedMeals,
+    saveSavedMeal,
     saveProfile,
     addMealEntry,
+    addWaterEntry,
     addWeightEntry,
+    updateWaterEntry,
+    updateMealEntry,
     storageMode,
+    waterEntries,
     weightEntries,
   };
 }

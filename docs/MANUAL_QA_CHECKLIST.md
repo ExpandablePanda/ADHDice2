@@ -131,6 +131,10 @@ Use this as a repeatable browser smoke test after a Codex implementation pass. K
 - [ ] Health page loads without obvious missing cards, blank panels, or crashes.
 - [ ] Key health summaries or widgets display plausible values.
 - [ ] Health actions or imports, if touched by the change, still respond as expected.
+- [ ] A custom food can be created, edited, logged today, and removed without changing an existing meal-history snapshot.
+- [ ] A recipe calculates nutrition per serving from its ingredient quantities and batch yield; a custom meal can combine foods and recipe servings and log to its default meal slot.
+- [ ] Water quick-add and custom amounts accept cups and US fluid ounces, show equivalent same-day totals in both units, and allow an individual entry to be removed.
+- [ ] Refreshing preserves custom foods, recipes, meals, and water in the active local or remote Health storage mode.
 
 ## Notes
 

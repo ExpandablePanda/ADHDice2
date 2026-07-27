@@ -5,13 +5,54 @@ Last reviewed: 2026-07-26
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.5.16`.
+- Current working app version: `7.5.29`.
 - Current release group: `7.5.x` PATHS Task Nodes.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.5.29 Health Summary Ring Text Alignment
+
+- Health Summary percentage labels now render as smaller, absolutely centered overlays inside their progress rings instead of using a negative margin after the SVG.
+
+## 7.5.28 Health Meal Entry Editing
+
+- Today’s Meals rows now include an Edit chip. The inline editor can correct amount, date, logged time, meal slot, serving, calories, protein, carbs, and fat through the shared Health meal update path.
+- Meal amount editing reuses the `xN / serving` label convention from meal logging: existing `x3` rows open as amount `3`, per-serving nutrition is shown for correction, and saved rows write multiplied totals back to the meal entry.
+- Health section icons are reduced from the oversized badge replacement to a smaller shared header icon size.
+
+## 7.5.27 Health Food Quantity and Header Cleanup
+
+- Food logging now includes an Amount field for single-food multipliers. Saving a meal scales calories/macros by the amount and writes the multiplier into the serving label, so logged rows can show values like `x3 / 1 Stick / 180 kcal` without a schema change.
+- Health section header icons now render at the former badge size without the purple circular badge. The Food tab removes the extra card titles for Meal logging, Daily totals, Favorites, Recent foods, and Health settings while keeping the existing section labels and actions.
+
+## 7.5.26 Health Custom Food Library Search Correction
+
+- Custom Nutrition Library food search now filters only saved custom/library foods already in the Foods section. It no longer searches public food databases from that panel; the right-side food card list shows the current local search result set.
+
+## 7.5.25 Health Food Library Identity and Search
+
+- Custom nutrition Foods now include food search inside the library panel, letting searched provider foods save directly into the reusable food library.
+- Favorite/custom food saves dedupe by a shared stable food identity from provider ids, barcode, or exact manual nutrition details. Today’s Meals uses a heart-only favorite chip that fills red when that food is already saved, and blank custom-food drafts continue to create new library rows instead of reusing the last edited id.
+
+## 7.5.24 Health Water History and Summary Polish
+
+- Health removes the large Daily Ledger banner and keeps its percentage rings in a compact Summary section with the existing sync status.
+- Water entries now expose an Edit chip for amount, unit, date, and time corrections through the shared Health water persistence path. The Water tab also adds recent prior-day water history and tightens the one-tap add-water chip icon spacing.
+
+## 7.5.23 Health Migration Rollback Correction
+
+- The 7.5.22 Health forward migration no longer attempts conditional `ALTER PUBLICATION` statements inside a `DO` function. The Health hook does not use realtime subscriptions for recipes, saved meals, or water, and the hosted PostgreSQL restriction caused the transaction to roll back before any of the three tables became available through PostgREST.
+- `supabase/add_health_food_library_recipes_water_7_5_22.sql` now creates the owner-scoped tables and policies, installs the existing update triggers, explicitly notifies PostgREST to reload its schema, and commits without the unnecessary realtime mutation. A read-only REST probe confirmed all original Health tables were visible while exactly the three new tables were absent before this correction. The corrected migration still requires manual reapplication; no live SQL was applied by Codex.
+
+## 7.5.22 Health Custom Nutrition Library and Water
+
+- Health Food now includes a reusable custom nutrition library with distinct Foods, Recipes, and Meals surfaces. Custom foods store nutrition per serving; recipes combine food servings and calculate per-serving totals from a batch yield; custom meals combine foods and recipe servings with a default meal slot. Logging any library item writes an immutable aggregate snapshot through the existing meal-entry path, so later edits do not rewrite prior daily totals.
+- Health adds a Water tab with one-tap cup and US fluid-ounce amounts, custom entry in either unit, same-day totals shown in both units, and removable timestamped entries. Water persists locally with the rest of the Health snapshot and remotely through the owner-scoped `adhdice_health_water_entries` table.
+- The forward database migration is `supabase/add_health_food_library_recipes_water_7_5_22.sql`. It adds owner-scoped recipe, saved-meal, and water tables with RLS, indexes, update triggers, and an explicit PostgREST schema reload; `supabase/schema.sql` and `src/lib/database.types.ts` mirror the contract. The migration has not been successfully applied to a live database.
+- Verification passed 11 focused Health nutrition/library/hydration and schema-parity tests, targeted ESLint for the new modules and pure Health contracts, the text-button audit with no new Health findings, and `git diff --check`. Repository-wide lint and typecheck were run and remain red on established unrelated debt plus pre-existing Health effect/nullability findings; no new library or water module finding appeared. Browser/mobile QA, build, and live Supabase verification were not run.
 
 ## 7.5.10 Trash Permanent-Delete Cascade Reconciliation
 

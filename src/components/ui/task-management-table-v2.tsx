@@ -6764,7 +6764,7 @@ export function TaskManagementTableV2({
                         setShowAllSearchStepsByTaskId((current) => ({ ...current, [key]: !current[key] }));
                       }}
                     >
-                      {showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] ? "Matching Steps" : "Show all Steps"}
+                      {showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] ? "(Matching Steps)" : "(Show All Steps)"}
                     </TaskHierarchySearchChip>
                   ) : null}
                 </div>
@@ -7647,11 +7647,22 @@ export function TaskManagementTableV2({
       );
     }
 
-    if (columnId === "date_completed" || columnId === "last_done") {
+    if (columnId === "last_done") {
+      const lastDoneValue = item.lastDoneAt ?? item.lastDoneDate;
+      return (
+        <div>
+          <span className={`${CHIP_BASE} ${lastDoneValue ? LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}`}>
+            {item.lastDoneAt ? formatEntryTimestamp(item.lastDoneAt) : item.lastDoneDate ? formatCalendarDate(item.lastDoneDate) : "No done yet"}
+          </span>
+        </div>
+      );
+    }
+
+    if (columnId === "date_completed") {
       return (
         <div>
           <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>
-            {columnId === "last_done" ? "No done yet" : "Not completed"}
+            Not completed
           </span>
         </div>
       );

@@ -538,7 +538,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.5.16";
+const APP_VERSION = "7.5.29";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1139,6 +1139,9 @@ export function TaskApp() {
     checkIns: healthCheckIns,
     deleteFavoriteFood,
     deleteMealEntry,
+    deleteRecipe: deleteHealthRecipe,
+    deleteSavedMeal: deleteHealthSavedMeal,
+    deleteWaterEntry: deleteHealthWaterEntry,
     deleteWeightEntry,
     favorites: healthFavorites,
     importAudits: healthImportAudits,
@@ -1147,13 +1150,21 @@ export function TaskApp() {
     mealEntries: healthMealEntries,
     metricEntries: healthMetricEntries,
     profile: healthProfile,
+    recipes: healthRecipes,
     saveCheckIn,
     saveFavoriteFood,
+    saveRecipe: saveHealthRecipe,
+    savedMeals: healthSavedMeals,
+    saveSavedMeal: saveHealthSavedMeal,
     saveProfile: saveHealthProfile,
     addMealEntry: addHealthMealEntry,
+    addWaterEntry: addHealthWaterEntry,
     addWeightEntry: addHealthWeightEntry,
+    updateMealEntry: updateHealthMealEntry,
+    updateWaterEntry: updateHealthWaterEntry,
     storageMode: healthStorageMode,
     weightEntries: healthWeightEntries,
+    waterEntries: healthWaterEntries,
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy);
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
@@ -6443,6 +6454,9 @@ export function TaskApp() {
             checkIns={healthCheckIns}
             deleteFavoriteFood={deleteFavoriteFood}
             deleteMealEntry={deleteMealEntry}
+            deleteRecipe={deleteHealthRecipe}
+            deleteSavedMeal={deleteHealthSavedMeal}
+            deleteWaterEntry={deleteHealthWaterEntry}
             deleteWeightEntry={deleteWeightEntry}
             favorites={healthFavorites}
             importAudits={healthImportAudits}
@@ -6452,13 +6466,21 @@ export function TaskApp() {
             metricEntries={healthMetricEntries}
             onOpenReminderTemplate={openHealthReminderTemplate}
             profile={healthProfile}
+            recipes={healthRecipes}
             saveCheckIn={saveCheckIn}
             saveFavoriteFood={saveFavoriteFood}
+            saveRecipe={saveHealthRecipe}
+            savedMeals={healthSavedMeals}
+            saveSavedMeal={saveHealthSavedMeal}
             saveProfile={saveHealthProfile}
             addMealEntry={addHealthMealEntry}
+            addWaterEntry={addHealthWaterEntry}
             addWeightEntry={addHealthWeightEntry}
             storageMode={healthStorageMode}
+            updateMealEntry={updateHealthMealEntry}
+            updateWaterEntry={updateHealthWaterEntry}
             weightEntries={healthWeightEntries}
+            waterEntries={healthWaterEntries}
           />
         ) : activePage === "Roll" ? (
           <RollPage

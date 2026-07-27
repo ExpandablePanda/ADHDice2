@@ -1989,6 +1989,8 @@ test("child task preview lookup computes child task streak stats from child hist
   const preview = buildChildTaskPreviewLookup([parent, child], [], { child: history }, "2026-06-18");
 
   assert.equal(preview.parent.items[0].currentStreak, 2);
+  assert.equal(preview.parent.items[0].lastDoneAt, "2026-06-17T12:00:00.000Z");
+  assert.equal(preview.parent.items[0].lastDoneDate, "2026-06-17");
   assert.equal(preview.parent.items[0].missedStreak, 0);
 });
 

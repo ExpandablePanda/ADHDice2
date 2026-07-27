@@ -10,13 +10,13 @@ import type {
   HealthWeightEntry,
 } from "@/lib/database.types";
 
-export type HealthTab = "Today" | "Food" | "Journal" | "Weight" | "Insights" | "Awards";
+export type HealthTab = "Today" | "Food" | "Water" | "Journal" | "Weight" | "Insights" | "Awards";
 export type HealthMealSlot = HealthMealEntry["meal_slot"];
 export type WeightUnit = HealthProfile["preferred_weight_unit"];
 export type HealthAchievementCode = HealthAchievementAward["achievement_code"];
 export type HealthReminderTemplateKey = "daily_check_in" | "meal_log" | "weigh_in" | "movement_intention";
 
-export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Journal", "Weight", "Insights", "Awards"];
+export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Journal", "Weight", "Insights", "Awards"];
 export const HEALTH_MEAL_SLOTS: HealthMealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
 export const HEALTH_MOOD_OPTIONS = [1, 2, 3, 4, 5] as const;
 export const HEALTH_SYMPTOM_TAGS = [

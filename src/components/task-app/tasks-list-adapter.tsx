@@ -1197,7 +1197,7 @@ function StepsCardPreview({
           />
           {onToggleShowAllSearchSteps ? (
             <TaskHierarchySearchChip onClick={onToggleShowAllSearchSteps}>
-              {showAllSearchSteps ? "Matching Steps" : "Show all Steps"}
+              {showAllSearchSteps ? "(Matching Steps)" : "(Show All Steps)"}
             </TaskHierarchySearchChip>
           ) : null}
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Apple, Camera, HeartPulse, MoonStar, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
+import { Activity, Apple, Camera, Check, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
@@ -9,9 +9,16 @@ import type {
   HealthFoodLibraryItem,
   HealthImportAudit,
   HealthMealEntry,
+  HealthMealEntryUpdate,
   HealthMetricEntry,
   HealthProfile,
   HealthProfileUpdate,
+  HealthRecipe,
+  HealthRecipeIngredient,
+  HealthSavedMeal,
+  HealthSavedMealItem,
+  HealthWaterEntry,
+  HealthWaterUnit,
   HealthWeightEntry,
 } from "@/lib/database.types";
 import {
@@ -26,7 +33,6 @@ import {
   buildHealthFaceSummaries,
 } from "@/lib/achievements";
 import {
-  buildHealthCoachMessage,
   clampPercent,
   displayWeightToKilograms,
   formatHealthDateLabel,
@@ -52,7 +58,14 @@ import {
   searchHealthFoods,
   type HealthFoodLookupResult,
 } from "@/lib/health-nutrition";
+import {
+  getRecipeNutritionPerServing,
+  getSavedMealNutrition,
+  getHealthFoodIdentityKey,
+} from "@/lib/health-library";
 import { DieFaceTile } from "./achievement-dice-ui";
+import { HealthLibraryPanel } from "./health-library-panel";
+import { HealthWaterPanel } from "./health-water-panel";
 import { PageShellHeader } from "./page-shell-header";
 
 type HealthPageProps = {
@@ -60,6 +73,9 @@ type HealthPageProps = {
   checkIns: HealthCheckIn[];
   deleteFavoriteFood: (itemId: string) => Promise<boolean>;
   deleteMealEntry: (entryId: string) => Promise<boolean>;
+  deleteRecipe: (recipeId: string) => Promise<boolean>;
+  deleteSavedMeal: (mealId: string) => Promise<boolean>;
+  deleteWaterEntry: (entryId: string) => Promise<boolean>;
   deleteWeightEntry: (entryId: string) => Promise<boolean>;
   favorites: HealthFoodLibraryItem[];
   importAudits: HealthImportAudit[];
@@ -71,6 +87,7 @@ type HealthPageProps = {
   mealEntries: HealthMealEntry[];
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile | null;
+  recipes: HealthRecipe[];
   saveCheckIn: (input: {
     energy_score?: number | null;
     entry_date: string;
@@ -91,6 +108,20 @@ type HealthPageProps = {
     provider?: string;
     provider_item_id?: string | null;
     serving_label?: string | null;
+  }) => Promise<boolean>;
+  saveRecipe: (input: {
+    id?: string;
+    name: string;
+    notes?: string;
+    servings: number;
+    ingredients: HealthRecipeIngredient[];
+  }) => Promise<boolean>;
+  savedMeals: HealthSavedMeal[];
+  saveSavedMeal: (input: {
+    id?: string;
+    name: string;
+    default_meal_slot: HealthMealEntry["meal_slot"];
+    items: HealthSavedMealItem[];
   }) => Promise<boolean>;
   saveProfile: (updates: HealthProfileUpdate) => Promise<boolean>;
   addMealEntry: (input: {
@@ -117,9 +148,24 @@ type HealthPageProps = {
     source?: HealthWeightEntry["source"];
     weight_kg: number;
   }) => Promise<boolean>;
+  addWaterEntry: (input: {
+    amount: number;
+    amount_ml: number;
+    entry_date: string;
+    unit: HealthWaterUnit;
+  }) => Promise<boolean>;
+  updateWaterEntry: (entryId: string, input: {
+    amount: number;
+    amount_ml: number;
+    entry_date: string;
+    logged_at: string;
+    unit: HealthWaterUnit;
+  }) => Promise<boolean>;
+  updateMealEntry: (entryId: string, input: HealthMealEntryUpdate) => Promise<boolean>;
   storageMode: "local" | "remote";
   onOpenReminderTemplate: (templateKey: HealthReminderTemplateKey) => void;
   weightEntries: HealthWeightEntry[];
+  waterEntries: HealthWaterEntry[];
 };
 
 type MealDraft = {
@@ -134,7 +180,20 @@ type MealDraft = {
   protein: string;
   provider: string | null;
   providerItemId: string | null;
+  quantity: string;
   servingLabel: string;
+};
+
+type MealEditDraft = {
+  calories: string;
+  carbs: string;
+  date: string;
+  fat: string;
+  mealSlot: HealthMealEntry["meal_slot"];
+  protein: string;
+  quantity: string;
+  servingLabel: string;
+  time: string;
 };
 
 const DEFAULT_MEAL_DRAFT: MealDraft = {
@@ -149,6 +208,7 @@ const DEFAULT_MEAL_DRAFT: MealDraft = {
   protein: "",
   provider: null,
   providerItemId: null,
+  quantity: "1",
   servingLabel: "",
 };
 
@@ -170,6 +230,9 @@ export function HealthPage({
   checkIns,
   deleteFavoriteFood,
   deleteMealEntry,
+  deleteRecipe,
+  deleteSavedMeal,
+  deleteWaterEntry,
   deleteWeightEntry,
   favorites,
   importAudits,
@@ -178,14 +241,22 @@ export function HealthPage({
   mealEntries,
   metricEntries,
   profile,
+  recipes,
   saveCheckIn,
   saveFavoriteFood,
+  saveRecipe,
+  savedMeals,
+  saveSavedMeal,
   saveProfile,
   addMealEntry,
   addWeightEntry,
+  addWaterEntry,
+  updateWaterEntry,
+  updateMealEntry,
   storageMode,
   onOpenReminderTemplate,
   weightEntries,
+  waterEntries,
 }: HealthPageProps) {
   const [activeTab, setActiveTab] = useState<HealthTab>("Today");
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
@@ -195,6 +266,18 @@ export function HealthPage({
   const [foodLookupResults, setFoodLookupResults] = useState<HealthFoodLookupResult[]>(EMPTY_FOOD_LOOKUP_RESULTS);
   const [foodLookupError, setFoodLookupError] = useState("");
   const [foodLookupStatus, setFoodLookupStatus] = useState<"idle" | "searching" | "barcode">("idle");
+  const [editingMealId, setEditingMealId] = useState<string | null>(null);
+  const [mealEditDraft, setMealEditDraft] = useState<MealEditDraft>({
+    calories: "",
+    carbs: "",
+    date: todayHealthDate(),
+    fat: "",
+    mealSlot: "breakfast",
+    protein: "",
+    quantity: "1",
+    servingLabel: "",
+    time: "12:00",
+  });
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState("");
   const [scannerSupport, setScannerSupport] = useState<"checking" | "ready" | "unsupported">("checking");
@@ -286,6 +369,16 @@ export function HealthPage({
       })
       .slice(0, 8);
   }, [mealEntries]);
+  const favoriteFoodKeys = useMemo(() => {
+    const keys = new Set<string>();
+    favorites.forEach((item) => {
+      const key = getHealthFoodIdentityKey(item);
+      if (key) {
+        keys.add(key);
+      }
+    });
+    return keys;
+  }, [favorites]);
   const recentWeekDates = useMemo(
     () => Array.from({ length: 7 }, (_, index) => {
       const offset = 6 - index;
@@ -295,18 +388,6 @@ export function HealthPage({
     }),
     [today],
   );
-  const coachMessage = useMemo(() => {
-    if (!profile) {
-      return "";
-    }
-    return buildHealthCoachMessage({
-      checkIns,
-      mealEntries,
-      metricEntries,
-      profile,
-      weights: weightEntries,
-    });
-  }, [checkIns, mealEntries, metricEntries, profile, weightEntries]);
   const lockedAchievements = useMemo(
     () =>
       getEligibleHealthAchievements({
@@ -336,7 +417,8 @@ export function HealthPage({
   );
   const importNewMetricCount = importPreview ? Math.max(0, importPreview.metricEntries.length - importDuplicateCount) : 0;
   const mealCaloriesValue = Number.parseInt(mealDraft.calories, 10);
-  const canSaveMeal = mealDraft.foodName.trim().length > 0 && Number.isFinite(mealCaloriesValue) && mealCaloriesValue >= 0;
+  const mealQuantityValue = parsePositiveQuantity(mealDraft.quantity);
+  const canSaveMeal = mealDraft.foodName.trim().length > 0 && Number.isFinite(mealCaloriesValue) && mealCaloriesValue >= 0 && mealQuantityValue !== null;
   const weightValue = Number.parseFloat(weightDraft);
   const canSaveWeight = Number.isFinite(weightValue) && weightValue > 0;
 
@@ -459,7 +541,8 @@ export function HealthPage({
 
   async function handleSaveMeal() {
     const calories = Number.parseInt(mealDraft.calories, 10);
-    if (!mealDraft.foodName.trim() || !Number.isFinite(calories) || calories < 0) {
+    const quantity = parsePositiveQuantity(mealDraft.quantity);
+    if (!mealDraft.foodName.trim() || !Number.isFinite(calories) || calories < 0 || quantity === null) {
       return;
     }
 
@@ -467,19 +550,58 @@ export function HealthPage({
       attribution: mealDraft.attribution,
       barcode: mealDraft.barcode,
       brand_name: emptyToNull(mealDraft.brandName),
-      calories,
-      carbs_g: parseNullableNumber(mealDraft.carbs),
+      calories: Math.round(calories * quantity),
+      carbs_g: scaleNullableNumber(parseNullableNumber(mealDraft.carbs), quantity),
       entry_date: today,
-      fat_g: parseNullableNumber(mealDraft.fat),
+      fat_g: scaleNullableNumber(parseNullableNumber(mealDraft.fat), quantity),
       food_name: mealDraft.foodName.trim(),
       meal_slot: mealDraft.mealSlot,
-      protein_g: parseNullableNumber(mealDraft.protein),
+      protein_g: scaleNullableNumber(parseNullableNumber(mealDraft.protein), quantity),
       provider: mealDraft.provider ?? "manual",
       provider_item_id: mealDraft.providerItemId,
-      serving_label: emptyToNull(mealDraft.servingLabel),
+      serving_label: formatQuantityServingLabel(quantity, mealDraft.servingLabel),
     });
     if (saved) {
       setMealDraft(DEFAULT_MEAL_DRAFT);
+    }
+  }
+
+  function startEditingMeal(entry: HealthMealEntry) {
+    const parsedServing = parseQuantityServingLabel(entry.serving_label ?? "");
+    const quantity = parsedServing.quantity;
+    setEditingMealId(entry.id);
+    setMealEditDraft({
+      calories: String(Math.round(entry.calories / quantity)),
+      carbs: entry.carbs_g === null ? "" : String(scaleNullableNumber(entry.carbs_g / quantity, 1)),
+      date: entry.entry_date,
+      fat: entry.fat_g === null ? "" : String(scaleNullableNumber(entry.fat_g / quantity, 1)),
+      mealSlot: entry.meal_slot,
+      protein: entry.protein_g === null ? "" : String(scaleNullableNumber(entry.protein_g / quantity, 1)),
+      quantity: String(quantity),
+      servingLabel: parsedServing.servingLabel,
+      time: formatTimeInput(entry.logged_at),
+    });
+  }
+
+  async function saveMealEdit(entryId: string) {
+    const calories = Number.parseInt(mealEditDraft.calories, 10);
+    const quantity = parsePositiveQuantity(mealEditDraft.quantity);
+    if (!Number.isFinite(calories) || calories < 0 || quantity === null || !mealEditDraft.date || !mealEditDraft.time) {
+      return;
+    }
+
+    const saved = await updateMealEntry(entryId, {
+      calories: Math.round(calories * quantity),
+      carbs_g: scaleNullableNumber(parseNullableNumber(mealEditDraft.carbs), quantity),
+      entry_date: mealEditDraft.date,
+      fat_g: scaleNullableNumber(parseNullableNumber(mealEditDraft.fat), quantity),
+      logged_at: buildLoggedAt(mealEditDraft.date, mealEditDraft.time),
+      meal_slot: mealEditDraft.mealSlot,
+      protein_g: scaleNullableNumber(parseNullableNumber(mealEditDraft.protein), quantity),
+      serving_label: formatQuantityServingLabel(quantity, mealEditDraft.servingLabel),
+    });
+    if (saved) {
+      setEditingMealId(null);
     }
   }
 
@@ -520,6 +642,9 @@ export function HealthPage({
   }
 
   async function handleSaveFavoriteFromMeal(entry: HealthMealEntry) {
+    if (isMealSavedAsFavorite(entry)) {
+      return;
+    }
     await saveFavoriteFood({
       attribution: entry.attribution,
       barcode: entry.barcode,
@@ -532,6 +657,61 @@ export function HealthPage({
       provider: entry.provider,
       provider_item_id: entry.provider_item_id,
       serving_label: entry.serving_label,
+    });
+  }
+
+  function isMealSavedAsFavorite(entry: HealthMealEntry) {
+    const key = getHealthFoodIdentityKey(entry);
+    return key ? favoriteFoodKeys.has(key) : false;
+  }
+
+  async function handleLogLibraryFood(item: HealthFoodLibraryItem, slot: HealthMealEntry["meal_slot"]) {
+    return addMealEntry({
+      attribution: item.attribution,
+      barcode: item.barcode,
+      brand_name: item.brand_name,
+      calories: item.calories,
+      carbs_g: item.carbs_g,
+      entry_date: today,
+      fat_g: item.fat_g,
+      food_name: item.food_name,
+      meal_slot: slot,
+      protein_g: item.protein_g,
+      provider: item.provider,
+      provider_item_id: item.provider_item_id ?? item.id,
+      serving_label: item.serving_label,
+    });
+  }
+
+  async function handleLogRecipe(recipe: HealthRecipe, slot: HealthMealEntry["meal_slot"]) {
+    const nutrition = getRecipeNutritionPerServing(recipe);
+    return addMealEntry({
+      calories: nutrition.calories,
+      carbs_g: nutrition.carbs,
+      entry_date: today,
+      fat_g: nutrition.fat,
+      food_name: recipe.name,
+      meal_slot: slot,
+      protein_g: nutrition.protein,
+      provider: "custom_recipe",
+      provider_item_id: recipe.id,
+      serving_label: "1 serving",
+    });
+  }
+
+  async function handleLogSavedMeal(meal: HealthSavedMeal) {
+    const nutrition = getSavedMealNutrition(meal);
+    return addMealEntry({
+      calories: nutrition.calories,
+      carbs_g: nutrition.carbs,
+      entry_date: today,
+      fat_g: nutrition.fat,
+      food_name: meal.name,
+      meal_slot: meal.default_meal_slot,
+      protein_g: nutrition.protein,
+      provider: "custom_meal",
+      provider_item_id: meal.id,
+      serving_label: `${meal.items.length} ${meal.items.length === 1 ? "item" : "items"}`,
     });
   }
 
@@ -614,6 +794,7 @@ export function HealthPage({
       protein: result.protein === null ? "" : String(result.protein),
       provider: result.provider ?? null,
       providerItemId: result.providerItemId ?? null,
+      quantity: "1",
       servingLabel: result.servingLabel ?? "",
     }));
   }
@@ -695,38 +876,21 @@ export function HealthPage({
     <section className="px-4 pb-32">
       <PageShellHeader subtitle="Wellness Ledger" title="Health" />
 
-      <div className="rounded-[2rem] border border-[#e9ecff] bg-[radial-gradient(circle_at_top_left,_rgba(118,214,172,0.28),_transparent_32%),linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] p-5 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-[radial-gradient(circle_at_top_left,_rgba(125,228,184,0.12),_transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.06)_0%,rgba(255,255,255,0.03)_100%)]">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#7d8ba4] dark:text-white/40">
-              Daily Ledger
-            </p>
-            <h2 className="mt-2 text-3xl font-black tracking-tight text-[#19243b] dark:text-white">
-              A calmer picture of today
-            </h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-[#66728f] dark:text-white/60">
-              {coachMessage}
-            </p>
-          </div>
+      <section aria-label="Daily health summary" className="rounded-[1.5rem] border border-[#e9ecff] bg-white/85 p-4 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.05]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#7d8ba4] dark:text-white/40">Summary</p>
           <div className="rounded-full bg-[#f3f8f5] px-4 py-2 text-xs font-semibold text-[#247a5e] dark:bg-[#163226] dark:text-[#9ee0be]">
             {storageMode === "remote" ? "Synced to workspace" : "Local-only until health tables are migrated"}
           </div>
         </div>
 
-      <div className="mt-5 grid gap-4 md:grid-cols-4">
+        <div className="mt-4 grid gap-4 md:grid-cols-4">
           <WellnessRing colorEnd="#23a26c" colorStart="#7ddfb5" detail={`${todayNutrition.calories}${profile.calorie_goal ? ` / ${profile.calorie_goal}` : ""} kcal`} label="Nutrition" value={nutritionPercent} />
           <WellnessRing colorEnd="#3f82f8" colorStart="#7bb8ff" detail={`${Math.round(todayMovement)}${profile.movement_goal ? ` / ${profile.movement_goal}` : ""}`} label="Movement" value={movementPercent} />
           <WellnessRing colorEnd="#f08f39" colorStart="#ffbe82" detail={`${Math.round(todaySleep)}${profile.sleep_goal_minutes ? ` / ${profile.sleep_goal_minutes}` : ""} min`} label="Sleep" value={sleepPercent} />
           <WellnessRing colorEnd="#da5f87" colorStart="#f59cb7" detail={todayCheckIn ? "Completed today" : "Still open"} label="Check-In" value={checkInPercent} />
         </div>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          <LedgerAction label="Quick Add Meal" onClick={() => setActiveTab("Food")} />
-          <LedgerAction label="Today Check-In" onClick={() => setActiveTab("Journal")} />
-          <LedgerAction label="Log Weight" onClick={() => setActiveTab("Weight")} />
-          <LedgerAction label="Import Insights" onClick={() => setActiveTab("Insights")} />
-        </div>
-      </div>
+      </section>
 
       <div aria-label="Health sections" className="mt-5 flex flex-wrap gap-2" role="tablist">
         {HEALTH_TABS.map((tab) => (
@@ -752,7 +916,7 @@ export function HealthPage({
       {activeTab === "Today" ? (
         <div aria-labelledby="health-tab-today" className="mt-6 grid gap-5 xl:grid-cols-[1.25fr_0.95fr]" id={getHealthTabPanelId("Today")} role="tabpanel">
           <HealthPanel
-            icon={<Sparkles className="h-4 w-4" />}
+            icon={<Sparkles />}
             subtitle="This week"
             title="7-day rhythm"
           >
@@ -779,7 +943,7 @@ export function HealthPage({
           </HealthPanel>
 
           <div className="grid gap-5">
-            <HealthPanel icon={<HeartPulse className="h-4 w-4" />} subtitle="Snapshot" title="Today at a glance">
+            <HealthPanel icon={<HeartPulse />} subtitle="Snapshot" title="Today at a glance">
               <div className="grid gap-3 sm:grid-cols-2">
                 <CompactStat detail="logged today" label="Meals" value={String(todayMeals.length)} />
                 <CompactStat detail="latest entry" label="Weight" value={latestWeight ? formatWeight(latestWeight.weight_kg, profile.preferred_weight_unit) : "None"} />
@@ -788,7 +952,7 @@ export function HealthPage({
               </div>
             </HealthPanel>
 
-            <HealthPanel icon={<Target className="h-4 w-4" />} subtitle="Goals" title="Current targets">
+            <HealthPanel icon={<Target />} subtitle="Goals" title="Current targets">
               <div className="grid gap-3 sm:grid-cols-2">
                 <GoalBadge label="Calories" value={profile.calorie_goal ? `${profile.calorie_goal} kcal` : "Unset"} />
                 <GoalBadge label="Protein" value={profile.protein_goal_grams ? `${profile.protein_goal_grams} g` : "Unset"} />
@@ -797,7 +961,7 @@ export function HealthPage({
               </div>
             </HealthPanel>
 
-            <HealthPanel icon={<Sparkles className="h-4 w-4" />} subtitle="Task handoff" title="Set gentle reminders">
+            <HealthPanel icon={<Sparkles />} subtitle="Task handoff" title="Set gentle reminders">
               <div className="grid gap-3">
                 {HEALTH_REMINDER_TEMPLATES.map((template) => (
                   <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={template.key}>
@@ -824,7 +988,7 @@ export function HealthPage({
 
       {activeTab === "Journal" ? (
         <div aria-labelledby="health-tab-journal" className="mt-6 grid gap-5 xl:grid-cols-[1.15fr_0.85fr]" id={getHealthTabPanelId("Journal")} role="tabpanel">
-          <HealthPanel icon={<HeartPulse className="h-4 w-4" />} subtitle="Daily check-in" title="How are you actually doing?">
+          <HealthPanel icon={<HeartPulse />} subtitle="Daily check-in" title="How are you actually doing?">
             <div className="grid gap-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <ScorePicker label="Mood" value={journalMood} onSelect={setJournalMood} />
@@ -878,7 +1042,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<Sparkles className="h-4 w-4" />} subtitle="History" title="Recent check-ins">
+          <HealthPanel icon={<Sparkles />} subtitle="History" title="Recent check-ins">
             <div className="space-y-3">
               {checkIns.length === 0 ? (
                 <EmptyCopy text="Your first check-in will start the journal history here." />
@@ -900,7 +1064,7 @@ export function HealthPage({
 
       {activeTab === "Food" ? (
         <div aria-labelledby="health-tab-food" className="mt-6 grid gap-5 xl:grid-cols-[1.08fr_0.92fr]" id={getHealthTabPanelId("Food")} role="tabpanel">
-          <HealthPanel icon={<Salad className="h-4 w-4" />} subtitle="Meal logging" title="Capture food without friction">
+          <HealthPanel icon={<Salad />} subtitle="Meal logging">
             <div className="mb-5 grid gap-4 rounded-[1.5rem] border border-[#e9ecff] bg-[linear-gradient(180deg,#fcfbff_0%,#f8fbff_100%)] p-4 dark:border-white/10 dark:bg-white/[0.03]">
               <div className="grid gap-3 lg:grid-cols-[1.25fr_auto]">
                 <Field label="Search foods">
@@ -1041,7 +1205,10 @@ export function HealthPage({
               <Field label="Serving">
                 <input className="health-input" onChange={(event) => setMealDraft((current) => ({ ...current, servingLabel: event.target.value }))} placeholder="1 bowl / 180 g" value={mealDraft.servingLabel} />
               </Field>
-              <div className="grid grid-cols-3 gap-3">
+              <Field label="Amount">
+                <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, quantity: event.target.value }))} placeholder="1" value={mealDraft.quantity} />
+              </Field>
+              <div className="grid grid-cols-3 gap-3 sm:col-span-2">
                 <Field label="Protein">
                   <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, protein: event.target.value }))} placeholder="30" value={mealDraft.protein} />
                 </Field>
@@ -1079,14 +1246,82 @@ export function HealthPage({
                         </p>
                       </div>
                       <div className="flex gap-2">
-                        <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveFavoriteFromMeal(entry); }} type="button">
-                          Save Favorite
+                        <button
+                          className="ui-pill-button-light inline-flex items-center gap-1.5"
+                          onClick={() => startEditingMeal(entry)}
+                          type="button"
+                        >
+                          <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
+                          Edit
+                        </button>
+                        <button
+                          aria-label={isMealSavedAsFavorite(entry) ? "Saved to favorites" : "Save favorite"}
+                          aria-pressed={isMealSavedAsFavorite(entry)}
+                          className={`ui-pill-button-light inline-flex items-center gap-1.5 ${isMealSavedAsFavorite(entry) ? "border-[#ffd1dc] bg-[#fff0f4] text-[#d64b6b] dark:border-[#703043] dark:bg-[#341821] dark:text-[#ff9fb5]" : ""}`}
+                          onClick={() => { void handleSaveFavoriteFromMeal(entry); }}
+                          type="button"
+                        >
+                          <Heart aria-hidden="true" className="h-4 w-4" fill={isMealSavedAsFavorite(entry) ? "currentColor" : "none"} />
+                          <span className="sr-only">Favorite</span>
                         </button>
                         <button className="ui-pill-button-danger-light" onClick={() => { void deleteMealEntry(entry.id); }} type="button">
                           Remove
                         </button>
                       </div>
                     </div>
+                    {editingMealId === entry.id ? (
+                      <div className="mt-4 grid gap-3 rounded-[1.25rem] border border-[#e8ecfb] bg-[#fbfcff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div className="grid gap-3 sm:grid-cols-4">
+                          <Field label="Amount">
+                            <input className="health-input" inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, quantity: event.target.value }))} value={mealEditDraft.quantity} />
+                          </Field>
+                          <Field label="Date">
+                            <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, date: event.target.value }))} type="date" value={mealEditDraft.date} />
+                          </Field>
+                          <Field label="Time">
+                            <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, time: event.target.value }))} type="time" value={mealEditDraft.time} />
+                          </Field>
+                          <Field label="Meal">
+                            <select
+                              className="health-input"
+                              onChange={(event) => setMealEditDraft((current) => ({ ...current, mealSlot: event.target.value as HealthMealEntry["meal_slot"] }))}
+                              value={mealEditDraft.mealSlot}
+                            >
+                              {HEALTH_MEAL_SLOTS.map((slot) => (
+                                <option key={slot} value={slot}>{getMealSlotLabel(slot)}</option>
+                              ))}
+                            </select>
+                          </Field>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-[1.4fr_repeat(4,minmax(0,1fr))]">
+                          <Field label="Serving">
+                            <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, servingLabel: event.target.value }))} value={mealEditDraft.servingLabel} />
+                          </Field>
+                          <Field label="Calories">
+                            <input className="health-input" inputMode="numeric" onChange={(event) => setMealEditDraft((current) => ({ ...current, calories: event.target.value }))} value={mealEditDraft.calories} />
+                          </Field>
+                          <Field label="Protein">
+                            <input className="health-input" inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, protein: event.target.value }))} value={mealEditDraft.protein} />
+                          </Field>
+                          <Field label="Carbs">
+                            <input className="health-input" inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, carbs: event.target.value }))} value={mealEditDraft.carbs} />
+                          </Field>
+                          <Field label="Fat">
+                            <input className="health-input" inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, fat: event.target.value }))} value={mealEditDraft.fat} />
+                          </Field>
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" onClick={() => setEditingMealId(null)} type="button">
+                            <X aria-hidden="true" className="h-3.5 w-3.5" />
+                            Cancel
+                          </button>
+                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5" onClick={() => { void saveMealEdit(entry.id); }} type="button">
+                            <Check aria-hidden="true" className="h-3.5 w-3.5" />
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}
@@ -1094,7 +1329,7 @@ export function HealthPage({
           </HealthPanel>
 
           <div className="grid gap-5">
-            <HealthPanel icon={<Target className="h-4 w-4" />} subtitle="Daily totals" title="Nutrition targets">
+            <HealthPanel icon={<Target />} subtitle="Daily totals">
               <div className="grid gap-3 sm:grid-cols-2">
                 <CompactStat detail={profile.calorie_goal ? `goal ${profile.calorie_goal}` : "set in goals"} label="Calories" value={String(todayNutrition.calories)} />
                 <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" value={`${Math.round(todayNutrition.protein)}g`} />
@@ -1103,7 +1338,7 @@ export function HealthPage({
               </div>
             </HealthPanel>
 
-            <HealthPanel icon={<Sparkles className="h-4 w-4" />} subtitle="Favorites" title="Fast reuse">
+            <HealthPanel icon={<Sparkles />} subtitle="Favorites">
               <div className="space-y-3">
                 {favorites.length === 0 ? (
                   <EmptyCopy text="Save a meal as a favorite and it will show up here for one-tap reuse." />
@@ -1130,7 +1365,7 @@ export function HealthPage({
               </div>
             </HealthPanel>
 
-            <HealthPanel icon={<Search className="h-4 w-4" />} subtitle="Recent foods" title="Reuse what you already eat">
+            <HealthPanel icon={<Search />} subtitle="Recent foods">
               <div className="space-y-3">
                 {recentFoods.length === 0 ? (
                   <EmptyCopy text="Once you log a few meals, your recent foods will show up here for quick draft-filling." />
@@ -1172,12 +1407,36 @@ export function HealthPage({
               </div>
             </HealthPanel>
           </div>
+          <HealthLibraryPanel
+            deleteFood={deleteFavoriteFood}
+            deleteRecipe={deleteRecipe}
+            deleteSavedMeal={deleteSavedMeal}
+            favorites={favorites}
+            logFood={handleLogLibraryFood}
+            logRecipe={handleLogRecipe}
+            logSavedMeal={handleLogSavedMeal}
+            recipes={recipes}
+            saveFood={saveFavoriteFood}
+            saveRecipe={saveRecipe}
+            savedMeals={savedMeals}
+            saveSavedMeal={saveSavedMeal}
+          />
         </div>
+      ) : null}
+
+      {activeTab === "Water" ? (
+        <HealthWaterPanel
+          addWaterEntry={addWaterEntry}
+          deleteWaterEntry={deleteWaterEntry}
+          today={today}
+          updateWaterEntry={updateWaterEntry}
+          waterEntries={waterEntries}
+        />
       ) : null}
 
       {activeTab === "Weight" ? (
         <div aria-labelledby="health-tab-weight" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Weight")} role="tabpanel">
-          <HealthPanel icon={<Scale className="h-4 w-4" />} subtitle="Weigh-in" title="Track trend, not perfection">
+          <HealthPanel icon={<Scale />} subtitle="Weigh-in" title="Track trend, not perfection">
             <div className="grid gap-4 sm:grid-cols-[0.8fr_1.2fr]">
               <Field label={`Weight (${profile.preferred_weight_unit})`}>
                 <input className="health-input" inputMode="decimal" onChange={(event) => setWeightDraft(event.target.value)} placeholder={profile.preferred_weight_unit === "kg" ? "78.2" : "172.4"} value={weightDraft} />
@@ -1202,7 +1461,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<Activity className="h-4 w-4" />} subtitle="30 days" title="Recent trend">
+          <HealthPanel icon={<Activity />} subtitle="30 days" title="Recent trend">
             <div className="space-y-3">
               {weightTrend30.length === 0 ? (
                 <EmptyCopy text="Your trend will appear once you log a weight entry." />
@@ -1235,7 +1494,7 @@ export function HealthPage({
 
       {activeTab === "Insights" ? (
         <div aria-labelledby="health-tab-insights" className="mt-6 grid gap-5 xl:grid-cols-[1.05fr_0.95fr]" id={getHealthTabPanelId("Insights")} role="tabpanel">
-          <HealthPanel icon={<Apple className="h-4 w-4" />} subtitle="Import pathway" title="Apple Health groundwork">
+          <HealthPanel icon={<Apple />} subtitle="Import pathway" title="Apple Health groundwork">
             <div className="rounded-[1.5rem] border border-dashed border-[#d6def4] bg-[#fbfcff] p-5 dark:border-white/10 dark:bg-white/[0.03]">
               <p className="text-sm font-semibold text-[#22304b] dark:text-white">Upload an Apple Health export to preview what Health can import.</p>
               <p className="mt-2 text-sm leading-6 text-[#67728f] dark:text-white/60">
@@ -1307,7 +1566,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<MoonStar className="h-4 w-4" />} subtitle="Imported trends" title="What will appear here">
+          <HealthPanel icon={<MoonStar />} subtitle="Imported trends" title="What will appear here">
             <div className="space-y-3">
               {metricEntries.length === 0 ? (
                 <EmptyCopy text="Imported sleep, activity, energy, and Apple Health weight data will show up here when the import flow lands." />
@@ -1332,7 +1591,7 @@ export function HealthPage({
 
       {activeTab === "Awards" ? (
         <div aria-labelledby="health-tab-awards" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Awards")} role="tabpanel">
-          <HealthPanel icon={<Trophy className="h-4 w-4" />} subtitle="Earned" title="Care achievements">
+          <HealthPanel icon={<Trophy />} subtitle="Earned" title="Care achievements">
             <div className="space-y-3">
               {awards.length === 0 ? (
                 <EmptyCopy text="Health awards will appear as your check-ins, meals, and trends build up." />
@@ -1356,7 +1615,7 @@ export function HealthPage({
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<Sparkles className="h-4 w-4" />} subtitle="Care set" title="Health die faces">
+          <HealthPanel icon={<Sparkles />} subtitle="Care set" title="Health die faces">
             <div className="rounded-[1.5rem] border border-[#d8ebdf] bg-[linear-gradient(135deg,#f6fff8_0%,#fbfcff_62%,#f3fff5_100%)] p-4 dark:border-white/10 dark:bg-[linear-gradient(135deg,rgba(17,40,27,0.72),rgba(17,24,40,0.5))]">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -1435,7 +1694,6 @@ export function HealthPage({
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8d87a7] dark:text-white/40">Health settings</p>
-            <h3 className="mt-2 text-2xl font-black text-[#1d2744] dark:text-white">Goals and display</h3>
           </div>
           <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
             Save Goals
@@ -1514,7 +1772,7 @@ function WellnessRing({
       className="rounded-[1.75rem] border border-[#ecf0fb] bg-white/85 px-4 py-4 text-center shadow-[0_18px_40px_rgba(63,82,145,0.08)] dark:border-white/10 dark:bg-white/[0.04]"
       role="progressbar"
     >
-      <div className="mx-auto h-28 w-28">
+      <div className="relative mx-auto h-28 w-28">
         <svg aria-hidden="true" className="h-full w-full -rotate-90" viewBox="0 0 110 110">
           <circle cx="55" cy="55" fill="none" r={radius} stroke="rgba(151,162,189,0.18)" strokeWidth="10" />
           <circle
@@ -1535,26 +1793,14 @@ function WellnessRing({
             </linearGradient>
           </defs>
         </svg>
-        <div className="-mt-[4.7rem] text-center">
-          <p className="text-2xl font-black text-[#1d2744] dark:text-white">{value}%</p>
+        <div className="absolute inset-0 flex items-center justify-center text-center">
+          <p className="text-xl font-black leading-none text-[#1d2744] dark:text-white">{value}%</p>
         </div>
       </div>
       <span className="sr-only">{label}: {value} percent. {detail}</span>
       <p className="mt-1 text-sm font-semibold text-[#26324f] dark:text-white">{label}</p>
       <p className="mt-1 text-xs text-[#73809c] dark:text-white/50">{detail}</p>
     </div>
-  );
-}
-
-function LedgerAction({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      className="ui-pill-button-light transition hover:-translate-y-0.5"
-      onClick={onClick}
-      type="button"
-    >
-      {label}
-    </button>
   );
 }
 
@@ -1567,17 +1813,17 @@ function HealthPanel({
   children: ReactNode;
   icon: ReactNode;
   subtitle: string;
-  title: string;
+  title?: string;
 }) {
   return (
     <div className="rounded-[2rem] border border-[#ece8f8] bg-white/85 p-5 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f1ecff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center text-[#6f57f6] dark:text-[#cabfff] [&_svg]:h-6 [&_svg]:w-6">
           {icon}
         </div>
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{subtitle}</p>
-          <h3 className="mt-1 text-xl font-black text-[#1e2744] dark:text-white">{title}</h3>
+          {title ? <h3 className="mt-1 text-xl font-black text-[#1e2744] dark:text-white">{title}</h3> : null}
         </div>
       </div>
       <div className="mt-4">{children}</div>
@@ -1694,6 +1940,45 @@ function parseNullableNumber(value: unknown) {
   }
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parsePositiveQuantity(value: unknown) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function scaleNullableNumber(value: number | null, quantity: number) {
+  return value === null ? null : Math.round(value * quantity * 10) / 10;
+}
+
+function formatQuantityServingLabel(quantity: number, servingLabel: string) {
+  const serving = emptyToNull(servingLabel);
+  if (quantity === 1) {
+    return serving;
+  }
+  const quantityLabel = Number.isInteger(quantity) ? `x${quantity}` : `x${quantity.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}`;
+  return serving ? `${quantityLabel} / ${serving}` : quantityLabel;
+}
+
+function parseQuantityServingLabel(servingLabel: string) {
+  const trimmed = servingLabel.trim();
+  const match = /^x(\d+(?:\.\d+)?)\s*\/\s*(.*)$/i.exec(trimmed);
+  if (!match) {
+    return { quantity: 1, servingLabel: trimmed };
+  }
+  const quantity = parsePositiveQuantity(match[1]) ?? 1;
+  return { quantity, servingLabel: match[2]?.trim() ?? "" };
+}
+
+function buildLoggedAt(date: string, time: string) {
+  return new Date(`${date}T${time}:00`).toISOString();
+}
+
+function formatTimeInput(loggedAt: string) {
+  const date = new Date(loggedAt);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
 }
 
 function emptyToNull(value: string) {
