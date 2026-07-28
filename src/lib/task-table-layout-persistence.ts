@@ -59,8 +59,8 @@ export function taskTableLayoutPreferencesEqual(
     return false;
   }
 
-  const leftSortState = left.sortState;
-  const rightSortState = right.sortState;
+  const leftSortState = left.sortState ?? null;
+  const rightSortState = right.sortState ?? null;
   if (leftSortState === rightSortState) {
     return true;
   }

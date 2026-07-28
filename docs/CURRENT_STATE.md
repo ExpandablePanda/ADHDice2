@@ -5,13 +5,25 @@ Last reviewed: 2026-07-27
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.5.36`.
+- Current working app version: `7.5.38`.
 - Current release group: `7.5.x` PATHS Task Nodes.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.5.38 Health Meal Action Layout and Task Table Layout Persistence
+
+- Today’s Meals keeps Edit, Favorite, and Remove in a fixed right-side action group while long food names wrap within the remaining row width.
+- An empty task-table layout no longer puts the Table View into a stale remote-apply state that suppresses the first column reorder. Legacy saved layouts with an omitted sort state also compare correctly to the explicit unsorted state, so they finish applying instead of blocking future saves.
+- Verification ran the focused table-layout contract test and `git diff --check`; no full lint, build, typecheck, or broad test suite was run.
+
+## 7.5.37 Task Table Layout and Missed Recurring Resolution
+
+- Table View now treats the user-scoped/cloud task-table layout state as authoritative for column order and sort, so a blank/default local mount no longer immediately republishes a generic fallback order that can overwrite another profile or device.
+- Recurring tasks resolved from an overdue missed occurrence now restart their next due date from the day they were actually marked `Done` or `Did My Best` instead of continuing from the older missed anchor. On Tuesday, July 28, 2026, a task that was due on Monday and finally completed on July 28 now starts its repeat interval from July 28.
+- Explicit status updates that mark recurring tasks `Done` or `Did My Best` now still force recurrence finalization even if the raw row was already carrying a finished status, preventing stuck rows from staying `Done` with yesterday's due date after the completion is saved.
 
 ## 7.5.36 Health Meal Totals Correction
 

@@ -246,7 +246,10 @@ export function useTaskRewardController({
       .filter((candidate) =>
         !candidate.claimRef?.subtaskId
         && candidate.task.repeat_frequency !== "none"
-        && isNewRewardCompletion(candidate.previousStatus, candidate.task.status),
+        && (
+          isNewRewardCompletion(candidate.previousStatus, candidate.task.status)
+          || candidate.forceRecurringFinalization === true
+        ),
       )
       .map((candidate) => candidate.task);
   }
@@ -328,10 +331,14 @@ export function useTaskRewardController({
       // Completion may happen before its scheduled occurrence (for example, a
       // Sunday weekly task completed on Wednesday). Advance from the canonical
       // occurrence, not the action day, so the same occurrence cannot remain due.
-      const nextDue = calcNextDueDateFromDate(
-        task,
-        task.active_occurrence_due_on ?? task.due_on ?? currentDayKey,
-      );
+      const currentOccurrenceDueOn = task.active_occurrence_due_on ?? task.due_on ?? currentDayKey;
+      const nextDueReferenceDate = (
+        (task.status === "done" || task.status === "did_my_best")
+        && currentOccurrenceDueOn < currentDayKey
+      )
+        ? currentDayKey
+        : currentOccurrenceDueOn;
+      const nextDue = calcNextDueDateFromDate(task, nextDueReferenceDate);
       if (!nextDue) {
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }

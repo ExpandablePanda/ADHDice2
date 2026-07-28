@@ -140,6 +140,7 @@ export type TaskRewardClaim = {
 
 export type TaskRewardCandidate = {
   claimRef?: { subtaskId: string | null; taskId: string; title: string };
+  forceRecurringFinalization?: boolean;
   previousStatus: TaskStatus | null;
   task: Task;
 };

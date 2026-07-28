@@ -145,7 +145,11 @@ export function useTaskEditorSaveAction({
         return false;
       }
 
-      await onTasksCompleted([{ previousStatus: previousTask?.status ?? null, task: nextData }]);
+      await onTasksCompleted([{
+        forceRecurringFinalization: updateValues.status === "done" || updateValues.status === "did_my_best",
+        previousStatus: previousTask?.status ?? null,
+        task: nextData,
+      }]);
 
       const nextFocusIds = focusToday
         ? Array.from(new Set([...focusedTaskIds, taskId]))

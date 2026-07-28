@@ -110,7 +110,11 @@ export function useTaskUpdateAction({
       if (!historySaved) {
         return;
       }
-      await onTasksCompleted([{ previousStatus: previousTask?.status ?? null, task: nextData }]);
+      await onTasksCompleted([{
+        forceRecurringFinalization: values.status === "done" || values.status === "did_my_best",
+        previousStatus: previousTask?.status ?? null,
+        task: nextData,
+      }]);
 
       if (usedEnergyFallback) {
         setMessage({

@@ -1314,8 +1314,11 @@ function normalizePersistedSortState(sortState: TaskTableLayoutPreferences["sort
 }
 
 function getInitialSortState(persistedLayoutPreferences?: TaskTableLayoutPreferences) {
+  if (persistedLayoutPreferences) {
+    return normalizePersistedSortState(persistedLayoutPreferences.sortState);
+  }
   const preferences = readTaskTablePreferences();
-  return normalizePersistedSortState(persistedLayoutPreferences?.sortState ?? preferences?.sortState);
+  return normalizePersistedSortState(preferences?.sortState);
 }
 
 function getInitialColumnWidths() {
@@ -1342,8 +1345,11 @@ function isReorderableHeaderColumn(columnId: TaskManagementTableColumnId) {
 }
 
 function getInitialColumnOrder(persistedLayoutPreferences?: TaskTableLayoutPreferences) {
+  if (persistedLayoutPreferences) {
+    return normalizePersistedColumnOrder(persistedLayoutPreferences.columnOrder);
+  }
   const preferences = readTaskTablePreferences();
-  return normalizePersistedColumnOrder(persistedLayoutPreferences?.columnOrder ?? preferences?.columnOrder);
+  return normalizePersistedColumnOrder(preferences?.columnOrder);
 }
 
 function getInitialColumnAlignments() {
@@ -3356,7 +3362,9 @@ export function TaskManagementTableV2({
       return;
     }
 
-    isApplyingPersistedLayoutRef.current = true;
+    const hasPersistedLayout = Array.isArray(persistedLayoutPreferences.columnOrder)
+      || Object.prototype.hasOwnProperty.call(persistedLayoutPreferences, "sortState");
+    isApplyingPersistedLayoutRef.current = hasPersistedLayout;
     const nextSortState = normalizePersistedSortState(persistedLayoutPreferences.sortState);
     setSortState((current) => {
       if (
@@ -3451,6 +3459,26 @@ export function TaskManagementTableV2({
 
   useEffect(() => {
     if (!layoutPersistenceEnabled || !onPersistedLayoutPreferencesChange) {
+      return;
+    }
+
+    const persistedHasColumnOrder = Array.isArray(persistedLayoutPreferences?.columnOrder);
+    const persistedHasSortState = Boolean(
+      persistedLayoutPreferences
+      && Object.prototype.hasOwnProperty.call(persistedLayoutPreferences, "sortState"),
+    );
+    const defaultColumnOrder = HEADER_COLUMNS.map((column) => column.id);
+    const currentMatchesDefaultLayout = (
+      sortState === null
+      && columnOrder.length === defaultColumnOrder.length
+      && columnOrder.every((columnId, index) => columnId === defaultColumnOrder[index])
+    );
+    if (
+      persistedLayoutPreferences
+      && !persistedHasColumnOrder
+      && !persistedHasSortState
+      && currentMatchesDefaultLayout
+    ) {
       return;
     }
 

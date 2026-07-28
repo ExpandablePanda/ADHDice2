@@ -182,7 +182,11 @@ export function useTaskBatchEditAction({
         firstErrorMessage ??= `Task "${data.title}" was updated, but its history entry could not be saved.`;
         continue;
       }
-      completedCandidates.push({ previousStatus: task.status, task: data });
+      completedCandidates.push({
+        forceRecurringFinalization: draft.status === "done" || draft.status === "did_my_best",
+        previousStatus: task.status,
+        task: data,
+      });
 
       if (draft.route !== "unchanged" && draft.status !== "done" && draft.status !== "did_my_best") {
         if (draft.route === "clear") {

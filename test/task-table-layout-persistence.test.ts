@@ -86,6 +86,14 @@ test("taskTableLayoutPreferencesEqual compares explicit layout state only", () =
     ),
     false,
   );
+
+  assert.equal(
+    taskTableLayoutPreferencesEqual(
+      { columnOrder: ["title", "due"] },
+      { columnOrder: ["title", "due"], sortState: null },
+    ),
+    true,
+  );
 });
 
 test("persisted layout application cannot echo stale local column order", () => {
@@ -114,6 +122,15 @@ test("persisted layout application cannot echo stale local column order", () => 
       isApplyingPersistedLayout: false,
       nextPreferences: { columnOrder: ["due", "title"] },
       persistedPreferences,
+    }),
+    { isApplyingPersistedLayout: false, shouldPublish: true },
+  );
+
+  assert.deepEqual(
+    resolveTaskTableLayoutPublishDecision({
+      isApplyingPersistedLayout: false,
+      nextPreferences: { columnOrder: ["due", "title"], sortState: null },
+      persistedPreferences: {},
     }),
     { isApplyingPersistedLayout: false, shouldPublish: true },
   );
