@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 
 import {
   buildDefaultHealthProfile,
+  buildWeightGoalForecast,
   buildHealthCoachMessage,
   buildHealthReminderTemplate,
   displayWeightToKilograms,
+  formatEditableWeight,
+  formatMealLoggedTime,
   getEligibleHealthAchievements,
   getHealthSleepDayTotal,
   getSleepFocusSessions,
@@ -17,6 +20,75 @@ test("health weight conversion helpers round-trip between pounds and kilograms",
   assert.ok(Math.abs(kilograms - 81.6466) < 0.01);
   const pounds = kilogramsToDisplayValue(kilograms, "lb");
   assert.ok(Math.abs(pounds - 180) < 0.01);
+});
+
+test("target-weight draft display removes conversion noise", () => {
+  assert.equal(formatEditableWeight(90.72, "lb"), "200");
+  assert.equal(formatEditableWeight(78.24, "kg"), "78.2");
+});
+
+test("meal logged time formats valid timestamps and omits invalid values", () => {
+  assert.equal(formatMealLoggedTime("invalid", "en-US"), null);
+  assert.match(formatMealLoggedTime("2026-07-28T12:30:00.000Z", "en-US") ?? "", /\d{1,2}:30/);
+});
+
+function weight(date: string, weightKg: number, loggedAt = `${date}T08:00:00.000Z`) {
+  return {
+    created_at: loggedAt,
+    entry_date: date,
+    id: `${date}-${weightKg}-${loggedAt}`,
+    logged_at: loggedAt,
+    note: null,
+    source: "manual" as const,
+    updated_at: loggedAt,
+    user_id: "user-1",
+    weight_kg: weightKg,
+  };
+}
+
+test("weight goal forecast requires enough distinct-day history", () => {
+  const forecast = buildWeightGoalForecast([
+    weight("2026-07-20", 95),
+    weight("2026-07-27", 94),
+  ], 90, "2026-07-28");
+  assert.equal(forecast.status, "insufficient");
+});
+
+test("weight goal forecast estimates loss and gain target dates", () => {
+  const loss = buildWeightGoalForecast([
+    weight("2026-07-14", 100),
+    weight("2026-07-21", 99),
+    weight("2026-07-28", 98),
+  ], 96, "2026-07-28");
+  assert.equal(loss.status, "forecast");
+  assert.equal(loss.estimatedDate, "2026-08-11");
+
+  const gain = buildWeightGoalForecast([
+    weight("2026-07-14", 70),
+    weight("2026-07-21", 71),
+    weight("2026-07-28", 72),
+  ], 74, "2026-07-28");
+  assert.equal(gain.status, "forecast");
+  assert.equal(gain.estimatedDate, "2026-08-11");
+});
+
+test("weight goal forecast handles reached, away, and same-day replacement", () => {
+  const reached = buildWeightGoalForecast([
+    weight("2026-07-14", 92),
+    weight("2026-07-21", 91),
+    weight("2026-07-28", 90.04),
+  ], 90, "2026-07-28");
+  assert.equal(reached.status, "reached");
+
+  const away = buildWeightGoalForecast([
+    weight("2026-07-14", 90),
+    weight("2026-07-21", 91),
+    weight("2026-07-28", 92),
+    weight("2026-07-28", 93, "2026-07-28T20:00:00.000Z"),
+  ], 85, "2026-07-28");
+  assert.equal(away.status, "away");
+  assert.equal(away.sampleCount, 3);
+  assert.equal(away.currentWeightKg, 93);
 });
 
 test("health achievements unlock when enough tracking history exists", () => {

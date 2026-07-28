@@ -2,6 +2,7 @@ import type { OnTimeExecutionSnapshot, OnTimePlanItem } from "@/lib/on-time-plan
 import type { RunningTaskTimer } from "@/components/ui/task-management-table-v2";
 import type { Task, TaskActualTimeEntry } from "@/lib/database.types";
 import { buildTaskOccurrenceIdentity } from "@/lib/task-duration-evidence";
+import { reorderListItems } from "@/lib/list-reorder";
 
 export type OnTimeScheduleState = "ahead" | "on_schedule" | "tight" | "behind" | "leave_now" | "incomplete";
 
@@ -250,11 +251,7 @@ export function moveOnTimeItem(items: OnTimePlanItem[], itemId: string, directio
 }
 
 export function reorderOnTimeItems(items: OnTimePlanItem[], from: number, to: number) {
-  if (from < 0 || from >= items.length || to < 0 || to >= items.length || from === to) return items;
-  const next = [...items];
-  const [moved] = next.splice(from, 1);
-  next.splice(to, 0, moved!);
-  return next;
+  return reorderListItems(items, from, to);
 }
 
 /** Resolves a stable insertion index from fixed row midpoints without reordering while dragged. */

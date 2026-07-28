@@ -6,6 +6,7 @@ import {
   buildRecipeIngredient,
   buildSavedMealFoodItem,
   buildSavedMealRecipeItem,
+  composeHealthFoodServingLabel,
   getRecipeNutrition,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
@@ -19,15 +20,20 @@ const food = {
   barcode: null,
   brand_name: null,
   calories: 200,
+  category: "Lunch",
   carbs_g: 24,
   created_at: "2026-07-27T12:00:00.000Z",
   fat_g: 8,
   food_name: "Test food",
   id: "food-1",
+  is_favorite: false,
   protein_g: 12,
   provider: "manual",
   provider_item_id: null,
   serving_label: "1 cup",
+  serving_size: "1 cup",
+  serving_weight_amount: null,
+  serving_weight_unit: null,
   updated_at: "2026-07-27T12:00:00.000Z",
   user_id: "user-1",
 };
@@ -50,6 +56,19 @@ test("recipe totals and per-serving nutrition use ingredient quantities", () => 
     carbs: 12,
     fat: 4,
   });
+});
+
+test("custom food serving fields compose a backward-compatible label", () => {
+  assert.equal(composeHealthFoodServingLabel({
+    servingSize: "1 serving",
+    servingWeightAmount: 28,
+    servingWeightUnit: "g",
+  }), "1 serving / 28 g");
+  assert.equal(composeHealthFoodServingLabel({
+    servingSize: "1 bottle",
+    servingWeightAmount: 12,
+    servingWeightUnit: "fl_oz",
+  }), "1 bottle / 12 fl oz");
 });
 
 test("saved meals can combine food and recipe servings", () => {
@@ -162,4 +181,18 @@ test("7.5.22 Health migration and consolidated schema carry the new owner-scoped
   }
   assert.doesNotMatch(migration, /alter publication/i);
   assert.match(migration, /notify pgrst, 'reload schema'/);
+});
+
+test("7.5.39 Health food migration carries category and structured serving fields", () => {
+  const migration = readFileSync(
+    new URL("../supabase/add_health_food_category_servings_7_5_39.sql", import.meta.url),
+    "utf8",
+  );
+  const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+  for (const column of ["category", "serving_size", "serving_weight_amount", "serving_weight_unit"]) {
+    assert.match(migration, new RegExp(column));
+    assert.match(schema, new RegExp(column));
+  }
+  assert.match(migration, /set serving_size = serving_label/);
+  assert.match(migration, /'g', 'oz', 'fl_oz'/);
 });

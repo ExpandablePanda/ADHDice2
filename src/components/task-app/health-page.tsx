@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Apple, Camera, Check, ChevronDown, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
+import { Activity, Apple, CalendarDays, Camera, Check, ChevronDown, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type {
@@ -17,10 +17,12 @@ import type {
   HealthRecipeIngredient,
   HealthSavedMeal,
   HealthSavedMealItem,
+  HealthServingWeightUnit,
   HealthWaterEntry,
   HealthWaterUnit,
   HealthWeightEntry,
 } from "@/lib/database.types";
+import type { WeightGoalForecast } from "@/lib/health-utils";
 import {
   parseAppleHealthFileInWorker,
   type AppleHealthImportParseProgress,
@@ -29,8 +31,11 @@ import {
 import type { HealthImportSaveProgress } from "@/hooks/useHealth";
 import {
   clampPercent,
+  buildWeightGoalForecast,
   displayWeightToKilograms,
+  formatEditableWeight,
   formatHealthDateLabel,
+  formatMealLoggedTime,
   formatWeight,
   getHealthSleepDayTotal,
   getSleepFocusSessions,
@@ -57,7 +62,13 @@ import {
 import {
   getHealthFoodIdentityKey,
 } from "@/lib/health-library";
+import {
+  TASK_TABLE_CHIP_BASE_CLASS,
+  TASK_TABLE_LIST_CHIP_CLASS,
+} from "@/components/ui/task-table-primitives";
+import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { HealthLibraryPanel } from "./health-library-panel";
+import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthWaterPanel } from "./health-water-panel";
 import { PageShellHeader } from "./page-shell-header";
 
@@ -94,6 +105,7 @@ type HealthPageProps = {
     attribution?: string | null;
     barcode?: string | null;
     brand_name?: string | null;
+    category?: string | null;
     calories: number;
     carbs_g?: number | null;
     fat_g?: number | null;
@@ -103,6 +115,9 @@ type HealthPageProps = {
     provider?: string;
     provider_item_id?: string | null;
     serving_label?: string | null;
+    serving_size?: string | null;
+    serving_weight_amount?: number | null;
+    serving_weight_unit?: HealthServingWeightUnit | null;
     is_favorite?: boolean;
   }) => Promise<boolean>;
   saveRecipe: (input: {
@@ -260,6 +275,7 @@ export function HealthPage({
   const [mealDraft, setMealDraft] = useState<MealDraft>(DEFAULT_MEAL_DRAFT);
   const [foodSearchQuery, setFoodSearchQuery] = useState("");
   const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
+  const [foodHistoryDate, setFoodHistoryDate] = useState(todayHealthDate());
   const [targetWeightDraft, setTargetWeightDraft] = useState("");
   const [barcodeLookup, setBarcodeLookup] = useState("");
   const [foodLookupResults, setFoodLookupResults] = useState<HealthFoodLookupResult[]>(EMPTY_FOOD_LOOKUP_RESULTS);
@@ -315,7 +331,7 @@ export function HealthPage({
     setTargetWeightDraft(
       profile.target_weight_kg === null
         ? ""
-        : String(kilogramsToDisplayValue(profile.target_weight_kg, profile.preferred_weight_unit)),
+        : formatEditableWeight(profile.target_weight_kg, profile.preferred_weight_unit),
     );
   }, [profile]);
 
@@ -344,13 +360,13 @@ export function HealthPage({
     setJournalTags(todayCheckIn?.symptom_tags ?? []);
   }, [todayCheckIn]);
 
-  const todayMeals = useMemo(
-    () => mealEntries.filter((entry) => entry.entry_date === today),
-    [mealEntries, today],
+  const selectedMeals = useMemo(
+    () => mealEntries.filter((entry) => entry.entry_date === foodHistoryDate),
+    [foodHistoryDate, mealEntries],
   );
-  const todayNutrition = useMemo(
-    () => sumMealNutritionForDate(mealEntries, today),
-    [mealEntries, today],
+  const selectedNutrition = useMemo(
+    () => sumMealNutritionForDate(mealEntries, foodHistoryDate),
+    [foodHistoryDate, mealEntries],
   );
   const todayMovement = useMemo(
     () => sumMetricValueForDate(metricEntries, today, ["steps", "active_energy_kcal", "exercise_minutes"]),
@@ -367,6 +383,10 @@ export function HealthPage({
   );
   const latestWeight = useMemo(() => getLatestWeight(weightEntries), [weightEntries]);
   const weightTrend30 = useMemo(() => getWeightTrend(weightEntries, 30), [weightEntries]);
+  const weightForecast = useMemo(
+    () => buildWeightGoalForecast(weightEntries, profile?.target_weight_kg ?? null, today),
+    [profile?.target_weight_kg, today, weightEntries],
+  );
   const recentFoods = useMemo(() => {
     const seen = new Set<string>();
     return mealEntries
@@ -401,7 +421,9 @@ export function HealthPage({
     }
     return favorites.filter((item) => [
       item.brand_name,
+      item.category,
       item.food_name,
+      item.serving_size,
       item.serving_label,
     ].some((value) => value?.toLowerCase().includes(query))).slice(0, 8);
   }, [customFoodSearchQuery, favorites]);
@@ -999,7 +1021,16 @@ export function HealthPage({
       {activeTab === "Food" ? (
         <div aria-labelledby="health-tab-food" className="mt-6 grid gap-5 xl:grid-cols-[1.08fr_0.92fr]" id={getHealthTabPanelId("Food")} role="tabpanel">
           <HealthPanel icon={<Salad />} subtitle="Meal logging">
-            <div className="mb-5 grid gap-4 rounded-[1.5rem] border border-[#e9ecff] bg-[linear-gradient(180deg,#fcfbff_0%,#f8fbff_100%)] p-4 dark:border-white/10 dark:bg-white/[0.03]">
+            <HealthCollapsiblePanel
+              className="mb-5"
+              defaultOpen={false}
+              onOpenChange={(isOpen) => {
+                if (!isOpen) setIsScannerOpen(false);
+              }}
+              subtitle="Search public foods, enter a barcode, or scan with the camera."
+              title="Search foods and barcodes"
+              variant="subpanel"
+            >
               <div className="grid gap-3 lg:grid-cols-[1.25fr_auto]">
                 <Field label="Search foods">
                   <div className="flex gap-2">
@@ -1113,7 +1144,7 @@ export function HealthPage({
                   ))}
                 </div>
               ) : null}
-            </div>
+            </HealthCollapsiblePanel>
 
             <div className="grid gap-3 lg:grid-cols-[0.7fr_1.5fr_0.45fr_auto]">
               <Field label="Meal">
@@ -1180,12 +1211,15 @@ export function HealthPage({
             </div>
 
             <div className="mt-6 grid gap-3">
-              <SectionMiniTitle title="Today’s Meals" />
-              {todayMeals.length === 0 ? (
-                <EmptyCopy text="Meals logged today will appear here with calories and macros." />
+              <SectionMiniTitle
+                actions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
+                title={foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`}
+              />
+              {selectedMeals.length === 0 ? (
+                <EmptyCopy text={foodHistoryDate === today ? "Meals logged today will appear here with calories and macros." : "No meals were logged on this date."} />
               ) : (
                 HEALTH_MEAL_SLOTS.map((slot) => {
-                  const slotMeals = todayMeals.filter((entry) => entry.meal_slot === slot);
+                  const slotMeals = selectedMeals.filter((entry) => entry.meal_slot === slot);
                   const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + entry.calories, 0);
                   return (
                   <section className="grid gap-3" key={slot}>
@@ -1205,7 +1239,7 @@ export function HealthPage({
                       <div className="min-w-0 flex-1">
                         <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(entry)}</p>
                         <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
-                          {getMealSlotLabel(entry.meal_slot)} / {entry.serving_label || "No serving"} / {entry.calories} kcal
+                          {getMealSlotLabel(entry.meal_slot)} / {entry.serving_label || "No serving"} / {entry.calories} kcal{formatMealLoggedTime(entry.logged_at) ? ` / ${formatMealLoggedTime(entry.logged_at)}` : ""}
                         </p>
                       </div>
                       <div className="flex shrink-0 gap-2">
@@ -1295,12 +1329,16 @@ export function HealthPage({
           </HealthPanel>
 
           <div className="grid gap-5">
-            <HealthPanel icon={<Target />} subtitle="Daily totals">
+            <HealthPanel
+              headerActions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
+              icon={<Target />}
+              subtitle="Daily totals"
+            >
               <div className="grid gap-3 sm:grid-cols-2">
-                <CompactStat detail={profile.calorie_goal ? `goal ${profile.calorie_goal}` : "set in goals"} label="Calories" value={String(todayNutrition.calories)} />
-                <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" value={`${Math.round(todayNutrition.protein)}g`} />
-                <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" value={`${Math.round(todayNutrition.carbs)}g`} />
-                <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" value={`${Math.round(todayNutrition.fat)}g`} />
+                <CompactStat detail={profile.calorie_goal ? `goal ${profile.calorie_goal}` : "set in goals"} label="Calories" value={String(selectedNutrition.calories)} />
+                <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" value={`${Math.round(selectedNutrition.protein)}g`} />
+                <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" value={`${Math.round(selectedNutrition.carbs)}g`} />
+                <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" value={`${Math.round(selectedNutrition.fat)}g`} />
               </div>
             </HealthPanel>
 
@@ -1681,6 +1719,7 @@ export function HealthPage({
               Save Goals
             </button>
           </div>
+          <WeightForecastCard forecast={weightForecast} unit={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit} />
         </HealthPanel>
       </div>
     </section>
@@ -1689,11 +1728,13 @@ export function HealthPage({
 
 function HealthPanel({
   children,
+  headerActions,
   icon,
   subtitle,
   title,
 }: {
   children: ReactNode;
+  headerActions?: ReactNode;
   icon: ReactNode;
   subtitle: string;
   title?: string;
@@ -1702,26 +1743,29 @@ function HealthPanel({
 
   return (
     <div className="rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]">
-      <button
-        aria-expanded={isOpen}
-        className="flex w-full items-center justify-between gap-3 px-5 py-5 text-left"
-        onClick={() => setIsOpen((current) => !current)}
-        type="button"
-      >
-        <span className="flex items-center gap-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center text-[#6f57f6] dark:text-[#cabfff] [&_svg]:h-6 [&_svg]:w-6">
-            {icon}
+      <div className="flex items-center gap-2 px-5 py-5">
+        <button
+          aria-expanded={isOpen}
+          className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+          onClick={() => setIsOpen((current) => !current)}
+          type="button"
+        >
+          <span className="flex min-w-0 items-center gap-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center text-[#6f57f6] dark:text-[#cabfff] [&_svg]:h-6 [&_svg]:w-6">
+              {icon}
+            </span>
+            <span>
+              <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{subtitle}</span>
+              {title ? <span className="mt-1 block text-xl font-black text-[#1e2744] dark:text-white">{title}</span> : null}
+            </span>
           </span>
-          <span>
-            <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{subtitle}</span>
-            {title ? <span className="mt-1 block text-xl font-black text-[#1e2744] dark:text-white">{title}</span> : null}
-          </span>
-        </span>
-        <ChevronDown
-          aria-hidden="true"
-          className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${isOpen ? "rotate-180" : ""}`}
-        />
-      </button>
+          <ChevronDown
+            aria-hidden="true"
+            className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${isOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+        {headerActions}
+      </div>
       {isOpen ? <div className="px-5 pb-5 pt-4">{children}</div> : null}
     </div>
   );
@@ -1808,8 +1852,76 @@ function Field({
   );
 }
 
-function SectionMiniTitle({ title }: { title: string }) {
-  return <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{title}</p>;
+function SectionMiniTitle({ actions, title }: { actions?: ReactNode; title: string }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{title}</p>
+      {actions}
+    </div>
+  );
+}
+
+function FoodHistoryDateChip({
+  date,
+  onChange,
+  today,
+}: {
+  date: string;
+  onChange: (date: string) => void;
+  today: string;
+}) {
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <label className="relative inline-flex items-center">
+        <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
+        <input
+          aria-label="Food history date"
+          className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} min-w-[9.5rem] pl-7`}
+          max={today}
+          onChange={(event) => onChange(event.target.value || today)}
+          type="date"
+          value={date}
+        />
+      </label>
+      {date !== today ? <AdhdChip onClick={() => onChange(today)}>Today</AdhdChip> : null}
+    </span>
+  );
+}
+
+function WeightForecastCard({
+  forecast,
+  unit,
+}: {
+  forecast: WeightGoalForecast;
+  unit: HealthProfile["preferred_weight_unit"];
+}) {
+  let title = "More weigh-ins needed";
+  let detail = "Log at least three weigh-ins across seven days to estimate your target date.";
+  if (forecast.status === "reached") {
+    title = "Goal reached";
+    detail = "Your latest weigh-in is at your target weight.";
+  } else if (forecast.status === "away") {
+    title = "Current trend is not moving toward the target";
+    detail = "Your recent 30-day trend does not currently produce a target-date estimate.";
+  } else if (forecast.status === "forecast" && forecast.estimatedDate && forecast.weeklyChangeKg !== null) {
+    title = `Estimated target: ${formatForecastDate(forecast.estimatedDate)}`;
+    const displayWeeklyChange = kilogramsToDisplayValue(Math.abs(forecast.weeklyChangeKg), unit);
+    const direction = forecast.weeklyChangeKg > 0 ? "gaining" : "losing";
+    detail = `Recent trend: ${direction} ${displayWeeklyChange.toFixed(1)} ${unit} per week.`;
+  }
+  return (
+    <div className="mt-5 rounded-[1.25rem] border border-[#e8e2f7] bg-[#fbf9ff] px-4 py-4 dark:border-white/10 dark:bg-white/[0.04]">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Weight target forecast</p>
+      <p className="mt-1 text-sm font-semibold text-[#26324f] dark:text-white">{title}</p>
+      <p className="mt-1 text-xs leading-5 text-[#73809c] dark:text-white/50">{detail}</p>
+    </div>
+  );
+}
+
+function formatForecastDate(dateKey: string) {
+  const timestamp = Date.parse(`${dateKey}T12:00:00`);
+  if (!Number.isFinite(timestamp)) return dateKey;
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(timestamp);
 }
 
 function EmptyCopy({ text }: { text: string }) {

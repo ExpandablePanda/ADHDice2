@@ -1,5 +1,6 @@
 import type {
   HealthFoodLibraryItem,
+  HealthServingWeightUnit,
   HealthRecipe,
   HealthRecipeIngredient,
   HealthSavedMeal,
@@ -19,6 +20,7 @@ type HealthFoodIdentityInput = {
   barcode?: string | null;
   brand_name?: string | null;
   brandName?: string | null;
+  category?: string | null;
   calories?: number | null;
   carbs_g?: number | null;
   carbs?: number | null;
@@ -34,6 +36,12 @@ type HealthFoodIdentityInput = {
   providerItemId?: string | null;
   serving_label?: string | null;
   servingLabel?: string | null;
+  serving_size?: string | null;
+  servingSize?: string | null;
+  serving_weight_amount?: number | null;
+  servingWeightAmount?: number | null;
+  serving_weight_unit?: HealthServingWeightUnit | null;
+  servingWeightUnit?: HealthServingWeightUnit | null;
 };
 
 const MILLILITERS_PER_CUP = 236.588;
@@ -134,7 +142,15 @@ export function getHealthFoodIdentityKey(food: HealthFoodIdentityInput) {
   }
 
   const brand = normalizeIdentityPart(food.brand_name ?? food.brandName) ?? "no-brand";
-  const serving = normalizeIdentityPart(food.serving_label ?? food.servingLabel) ?? "no-serving";
+  const serving = normalizeIdentityPart(
+    food.serving_label
+      ?? food.servingLabel
+      ?? composeHealthFoodServingLabel({
+        servingSize: food.serving_size ?? food.servingSize,
+        servingWeightAmount: food.serving_weight_amount ?? food.servingWeightAmount,
+        servingWeightUnit: food.serving_weight_unit ?? food.servingWeightUnit,
+      }),
+  ) ?? "no-serving";
   return [
     "manual",
     name,
@@ -145,6 +161,48 @@ export function getHealthFoodIdentityKey(food: HealthFoodIdentityInput) {
     roundNutrition(food.carbs_g ?? food.carbs ?? 0),
     roundNutrition(food.fat_g ?? food.fat ?? 0),
   ].join(":");
+}
+
+export function formatHealthServingWeightUnit(unit: HealthServingWeightUnit) {
+  return unit === "fl_oz" ? "fl oz" : unit;
+}
+
+export function composeHealthFoodServingLabel({
+  servingSize,
+  servingWeightAmount,
+  servingWeightUnit,
+}: {
+  servingSize?: string | null;
+  servingWeightAmount?: number | null;
+  servingWeightUnit?: HealthServingWeightUnit | null;
+}) {
+  const size = servingSize?.trim() || null;
+  const hasWeight = typeof servingWeightAmount === "number"
+    && Number.isFinite(servingWeightAmount)
+    && servingWeightAmount > 0
+    && servingWeightUnit;
+  const weight = hasWeight
+    ? `${formatQuantity(servingWeightAmount)} ${formatHealthServingWeightUnit(servingWeightUnit)}`
+    : null;
+  return [size, weight].filter(Boolean).join(" / ") || null;
+}
+
+export function normalizeHealthFoodLibraryItem(food: HealthFoodLibraryItem): HealthFoodLibraryItem {
+  const servingSize = food.serving_size ?? food.serving_label ?? null;
+  const servingWeightAmount = food.serving_weight_amount ?? null;
+  const servingWeightUnit = food.serving_weight_unit ?? null;
+  return {
+    ...food,
+    category: food.category ?? null,
+    serving_label: food.serving_label ?? composeHealthFoodServingLabel({
+      servingSize,
+      servingWeightAmount,
+      servingWeightUnit,
+    }),
+    serving_size: servingSize,
+    serving_weight_amount: servingWeightAmount,
+    serving_weight_unit: servingWeightUnit,
+  };
 }
 
 export function waterAmountToMilliliters(amount: number, unit: HealthWaterUnit) {

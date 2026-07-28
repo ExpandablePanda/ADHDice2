@@ -14,6 +14,7 @@ export function HealthCollapsiblePanel({
   className,
   defaultOpen = true,
   header,
+  onOpenChange,
   padding,
   subtitle,
   title,
@@ -23,6 +24,7 @@ export function HealthCollapsiblePanel({
   className?: string;
   defaultOpen?: boolean;
   header?: ReactNode;
+  onOpenChange?: (isOpen: boolean) => void;
   padding?: AdhdPanelPadding;
   subtitle?: ReactNode;
   title: ReactNode;
@@ -37,7 +39,11 @@ export function HealthCollapsiblePanel({
         <button
           aria-expanded={isOpen}
           className="flex w-full items-start justify-between gap-3 text-left"
-          onClick={() => setIsOpen((current) => !current)}
+          onClick={() => setIsOpen((current) => {
+            const next = !current;
+            onOpenChange?.(next);
+            return next;
+          })}
           type="button"
         >
           <span className="flex min-w-0 items-start gap-3">

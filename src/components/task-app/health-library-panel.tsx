@@ -13,11 +13,13 @@ import type {
   HealthRecipeIngredient,
   HealthSavedMeal,
   HealthSavedMealItem,
+  HealthServingWeightUnit,
 } from "@/lib/database.types";
 import {
   buildRecipeIngredient,
   buildSavedMealFoodItem,
   buildSavedMealRecipeItem,
+  composeHealthFoodServingLabel,
   formatQuantity,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
@@ -31,7 +33,10 @@ type FoodDraft = {
   id?: string;
   foodName: string;
   brandName: string;
-  servingLabel: string;
+  category: string;
+  servingSize: string;
+  servingWeightAmount: string;
+  servingWeightUnit: HealthServingWeightUnit;
   calories: string;
   protein: string;
   carbs: string;
@@ -41,7 +46,10 @@ type FoodDraft = {
 const EMPTY_FOOD_DRAFT: FoodDraft = {
   foodName: "",
   brandName: "",
-  servingLabel: "",
+  category: "",
+  servingSize: "",
+  servingWeightAmount: "",
+  servingWeightUnit: "g",
   calories: "",
   protein: "",
   carbs: "",
@@ -89,7 +97,11 @@ type HealthLibraryPanelProps = {
     barcode?: string | null;
     food_name: string;
     brand_name?: string | null;
+    category?: string | null;
     serving_label?: string | null;
+    serving_size?: string | null;
+    serving_weight_amount?: number | null;
+    serving_weight_unit?: HealthServingWeightUnit | null;
     calories: number;
     protein_g?: number | null;
     carbs_g?: number | null;
@@ -138,11 +150,17 @@ export function HealthLibraryPanel({
     return favorites.filter((food) => [
       food.food_name,
       food.brand_name,
+      food.category,
       food.serving_label,
       food.provider,
       food.barcode,
     ].some((value) => value?.toLowerCase().includes(query)));
   }, [favorites, foodSearchQuery]);
+  const categorySuggestions = useMemo(
+    () => [...new Set(favorites.map((food) => food.category?.trim()).filter((category): category is string => Boolean(category)))]
+      .sort((left, right) => left.localeCompare(right)),
+    [favorites],
+  );
   const filteredIngredientFoods = useMemo(() => {
     const query = ingredientSearchQuery.trim().toLowerCase();
     if (!query) {
@@ -168,19 +186,33 @@ export function HealthLibraryPanel({
 
   async function handleSaveFood() {
     const calories = Number.parseInt(foodDraft.calories, 10);
-    if (!foodDraft.foodName.trim() || !Number.isFinite(calories) || calories < 0) {
+    const servingWeightAmount = nullablePositiveNumber(foodDraft.servingWeightAmount);
+    if (
+      !foodDraft.foodName.trim()
+      || !Number.isFinite(calories)
+      || calories < 0
+      || (foodDraft.servingWeightAmount.trim() && servingWeightAmount === null)
+    ) {
       return;
     }
     const saved = await saveFood({
       id: foodDraft.id,
       brand_name: emptyToNull(foodDraft.brandName),
       calories,
+      category: emptyToNull(foodDraft.category),
       carbs_g: nullableNumber(foodDraft.carbs),
       fat_g: nullableNumber(foodDraft.fat),
       food_name: foodDraft.foodName.trim(),
       protein_g: nullableNumber(foodDraft.protein),
       provider: "manual",
-      serving_label: emptyToNull(foodDraft.servingLabel),
+      serving_label: composeHealthFoodServingLabel({
+        servingSize: foodDraft.servingSize,
+        servingWeightAmount,
+        servingWeightUnit: foodDraft.servingWeightUnit,
+      }),
+      serving_size: emptyToNull(foodDraft.servingSize),
+      serving_weight_amount: servingWeightAmount,
+      serving_weight_unit: foodDraft.servingWeightAmount.trim() ? foodDraft.servingWeightUnit : null,
     });
     if (saved) {
       setFoodDraft(EMPTY_FOOD_DRAFT);
@@ -243,7 +275,7 @@ export function HealthLibraryPanel({
                 <input
                   className="health-input"
                   onChange={(event) => setFoodSearchQuery(event.target.value)}
-                  placeholder="Food, brand, serving, barcode"
+                  placeholder="Food, brand, category, serving, barcode"
                   value={foodSearchQuery}
                 />
                 <AdhdChip
@@ -267,8 +299,26 @@ export function HealthLibraryPanel({
                 <LibraryField label="Brand">
                   <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, brandName: event.target.value }))} value={foodDraft.brandName} />
                 </LibraryField>
-                <LibraryField label="Serving">
-                  <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, servingLabel: event.target.value }))} placeholder="1 cup / 28 g" value={foodDraft.servingLabel} />
+                <LibraryField label="Category">
+                  <input
+                    className="health-input"
+                    onChange={(event) => setFoodDraft((current) => ({ ...current, category: event.target.value }))}
+                    placeholder="Protein, Produce, Snack"
+                    value={foodDraft.category}
+                  />
+                </LibraryField>
+                <LibraryField label="Serving size">
+                  <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, servingSize: event.target.value }))} placeholder="1 serving or 1 cup" value={foodDraft.servingSize} />
+                </LibraryField>
+                <LibraryField label="Serving weight">
+                  <span className="grid grid-cols-[1fr_auto] gap-2">
+                    <input className="health-input" inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, servingWeightAmount: event.target.value }))} placeholder="28" value={foodDraft.servingWeightAmount} />
+                    <select className="health-input min-w-24" onChange={(event) => setFoodDraft((current) => ({ ...current, servingWeightUnit: event.target.value as HealthServingWeightUnit }))} value={foodDraft.servingWeightUnit}>
+                      <option value="g">g</option>
+                      <option value="oz">oz</option>
+                      <option value="fl_oz">fl oz</option>
+                    </select>
+                  </span>
                 </LibraryField>
                 <LibraryField label="Calories">
                   <input className="health-input" inputMode="numeric" onChange={(event) => setFoodDraft((current) => ({ ...current, calories: event.target.value }))} value={foodDraft.calories} />
@@ -283,6 +333,15 @@ export function HealthLibraryPanel({
                   <input className="health-input" inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, fat: event.target.value }))} value={foodDraft.fat} />
                 </LibraryField>
               </div>
+              {categorySuggestions.length ? (
+                <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Previously used food categories">
+                  {categorySuggestions.slice(0, 8).map((category) => (
+                    <AdhdChip key={category} onClick={() => setFoodDraft((current) => ({ ...current, category }))}>
+                      {category}
+                    </AdhdChip>
+                  ))}
+                </div>
+              ) : null}
               <div className="mt-4 flex flex-wrap gap-2">
                 <AdhdChip onClick={() => { void handleSaveFood(); }} selected>
                   Save food
@@ -294,7 +353,7 @@ export function HealthLibraryPanel({
           <LibraryCards empty={foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."} items={filteredFoods.map((food) => (
             <AdhdCard key={food.id}>
               <LibraryCardHeader
-                detail={`${food.serving_label || "1 serving"} / ${food.calories} kcal`}
+                detail={`${food.category ? `${food.category} / ` : ""}${food.serving_label || "1 serving"} / ${food.calories} kcal`}
                 title={formatBrandedFoodName(food)}
               />
               <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
@@ -537,11 +596,14 @@ function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
     id: food.id,
     brandName: food.brand_name ?? "",
     calories: String(food.calories),
+    category: food.category ?? "",
     carbs: food.carbs_g === null ? "" : String(food.carbs_g),
     fat: food.fat_g === null ? "" : String(food.fat_g),
     foodName: food.food_name,
     protein: food.protein_g === null ? "" : String(food.protein_g),
-    servingLabel: food.serving_label ?? "",
+    servingSize: food.serving_size ?? food.serving_label ?? "",
+    servingWeightAmount: food.serving_weight_amount == null ? "" : String(food.serving_weight_amount),
+    servingWeightUnit: food.serving_weight_unit ?? "g",
   };
 }
 
@@ -556,6 +618,12 @@ function nullableNumber(value: string) {
   }
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function nullablePositiveNumber(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function emptyToNull(value: string) {

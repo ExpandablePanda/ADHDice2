@@ -137,6 +137,22 @@ export type OnTimePlanInsert = {
 
 export type OnTimePlanUpdate = Partial<Pick<OnTimePlanRow, "plan_state" | "client_updated_at">>;
 
+export type HomeTodoStateRow = {
+  user_id: string;
+  state: Record<string, unknown>;
+  client_updated_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HomeTodoStateInsert = {
+  user_id: string;
+  state?: Record<string, unknown>;
+  client_updated_at?: string;
+};
+
+export type HomeTodoStateUpdate = Partial<Pick<HomeTodoStateRow, "state" | "client_updated_at">>;
+
 export type BrainstormStateRow = {
   user_id: string;
   source_markdown: string;
@@ -1451,7 +1467,11 @@ export type HealthFoodLibraryItem = {
   user_id: string;
   food_name: string;
   brand_name: string | null;
+  category: string | null;
   serving_label: string | null;
+  serving_size: string | null;
+  serving_weight_amount: number | null;
+  serving_weight_unit: HealthServingWeightUnit | null;
   calories: number;
   protein_g: number | null;
   carbs_g: number | null;
@@ -1470,7 +1490,11 @@ export type HealthFoodLibraryItemInsert = {
   user_id: string;
   food_name: string;
   brand_name?: string | null;
+  category?: string | null;
   serving_label?: string | null;
+  serving_size?: string | null;
+  serving_weight_amount?: number | null;
+  serving_weight_unit?: HealthServingWeightUnit | null;
   calories: number;
   protein_g?: number | null;
   carbs_g?: number | null;
@@ -1487,7 +1511,11 @@ export type HealthFoodLibraryItemUpdate = Partial<
     HealthFoodLibraryItem,
     | "food_name"
     | "brand_name"
+    | "category"
     | "serving_label"
+    | "serving_size"
+    | "serving_weight_amount"
+    | "serving_weight_unit"
     | "calories"
     | "protein_g"
     | "carbs_g"
@@ -1570,6 +1598,7 @@ export type HealthSavedMealUpdate = Partial<
 >;
 
 export type HealthWaterUnit = "cup" | "fl_oz";
+export type HealthServingWeightUnit = "g" | "oz" | "fl_oz";
 
 export type HealthWaterEntry = {
   id: string;
@@ -2128,6 +2157,12 @@ export type Database = {
         Row: OnTimePlanRow;
         Insert: OnTimePlanInsert;
         Update: OnTimePlanUpdate;
+        Relationships: [];
+      };
+      adhdice_home_todo_state: {
+        Row: HomeTodoStateRow;
+        Insert: HomeTodoStateInsert;
+        Update: HomeTodoStateUpdate;
         Relationships: [];
       };
       adhdice_brainstorm_state: {

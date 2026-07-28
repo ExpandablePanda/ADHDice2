@@ -539,7 +539,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.5.38";
+const APP_VERSION = "7.5.39";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2578,11 +2578,8 @@ export function TaskApp() {
     archiveFilteredTasksSorted,
     trashFilteredTasksSorted,
     listColumnPickerColumns,
-    lowEnergyTasks,
     manualListOptions,
     milestoneFilteredTasksSorted,
-    momentumPercent,
-    overdueTasks,
     planningCandidates,
     searchMatchedStepParentTaskIds,
     searchMatchedChildTaskIds,
@@ -5807,41 +5804,8 @@ export function TaskApp() {
           </div>
         ) : activePage === "Home" ? (
           <TaskHomePage
-            activeCount={activeTasks.length}
-            achievementSummary={achievementSummaryPresentation}
-            doneCount={doneTasks.length}
-            lowEnergyTasks={lowEnergyTasks}
-            momentumPercent={momentumPercent}
-            milestoneError={milestoneData.loadError}
-            milestoneLoading={milestoneData.isLoading}
-            milestones={milestoneData.milestones}
-            onOpenCompletedMilestones={() => {
-              setActivePage("Tasks");
-              handleTaskWorkspaceSurfaceChange("completed_milestones");
-              setTaskUiState((current) => getHomeMilestoneNavigationState("completed", current));
-            }}
-            onOpenMilestoneTask={(taskId) => {
-              setActivePage("Tasks");
-              handleTaskWorkspaceSurfaceChange("tasks");
-              setTaskUiState((current) => getHomeMilestoneNavigationState("active", current));
-              setRequestedListOverlayTaskId(taskId);
-            }}
-            onOpenMilestones={() => {
-              setActivePage("Tasks");
-              handleTaskWorkspaceSurfaceChange("tasks");
-              setTaskUiState((current) => getHomeMilestoneNavigationState("active", current));
-            }}
-            onOpenTrophyGallery={() => {
-              setActivePage("Tasks");
-              handleTaskWorkspaceSurfaceChange("completed_milestones");
-              setTaskUiState((current) => getHomeMilestoneNavigationState("completed", current));
-            }}
-            overdueCount={overdueTasks.length}
-            setActivePage={setActivePage}
             tasks={tasks}
-            todayCount={todayQueueTaskCount}
-            todayDateKey={todayKey}
-            urgentTasks={urgentTasks}
+            userId={currentUserId}
           />
         ) : activePage === "Achievements" ? (
           <AchievementsPage

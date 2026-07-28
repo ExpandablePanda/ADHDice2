@@ -36,7 +36,7 @@ import {
   getEligibleHealthAchievements,
   type HealthAchievementCode,
 } from "@/lib/health-utils";
-import { getHealthFoodIdentityKey } from "@/lib/health-library";
+import { getHealthFoodIdentityKey, normalizeHealthFoodLibraryItem } from "@/lib/health-library";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -112,7 +112,8 @@ function readLocalHealthState(userId: string) {
   return {
     awards: readStoredJson(storageKey(userId, "awards"), emptyState.awards),
     checkIns: readStoredJson(storageKey(userId, "checkins"), emptyState.checkIns),
-    favorites: readStoredJson(storageKey(userId, "favorites"), emptyState.favorites),
+    favorites: readStoredJson<HealthFoodLibraryItem[]>(storageKey(userId, "favorites"), emptyState.favorites)
+      .map(normalizeHealthFoodLibraryItem),
     importAudits: readStoredJson(storageKey(userId, "imports"), emptyState.importAudits),
     mealEntries: readStoredJson(storageKey(userId, "meals"), emptyState.mealEntries),
     metricEntries: readStoredJson(storageKey(userId, "metrics"), emptyState.metricEntries),
@@ -450,7 +451,7 @@ export function useHealth(
       const remoteSnapshot = buildHealthSnapshot({
         awards: awardsResult.data ?? [],
         checkIns: checkInsResult.data ?? [],
-        favorites: favoritesResult.data ?? [],
+        favorites: (favoritesResult.data ?? []).map(normalizeHealthFoodLibraryItem),
         importAudits: importAuditsResult.data ?? [],
         mealEntries: mealEntriesResult.data ?? [],
         metricEntries: metricEntriesResult.data ?? [],
@@ -750,16 +751,20 @@ export function useHealth(
       barcode: normalizedInput.barcode ?? null,
       brand_name: normalizedInput.brand_name ?? null,
       calories: normalizedInput.calories,
+      category: normalizedInput.category ?? null,
       carbs_g: normalizedInput.carbs_g ?? null,
       created_at: now,
       fat_g: normalizedInput.fat_g ?? null,
       food_name: normalizedInput.food_name,
       id: normalizedInput.id ?? createLocalId("health-food"),
-      is_favorite: normalizedInput.is_favorite,
+      is_favorite: normalizedInput.is_favorite ?? false,
       protein_g: normalizedInput.protein_g ?? null,
       provider: normalizedInput.provider ?? "manual",
       provider_item_id: normalizedInput.provider_item_id ?? null,
       serving_label: normalizedInput.serving_label ?? null,
+      serving_size: normalizedInput.serving_size ?? normalizedInput.serving_label ?? null,
+      serving_weight_amount: normalizedInput.serving_weight_amount ?? null,
+      serving_weight_unit: normalizedInput.serving_weight_unit ?? null,
       updated_at: now,
       user_id: userId,
     };
@@ -778,7 +783,7 @@ export function useHealth(
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
-      nextRow = data ?? localRow;
+      nextRow = data ? normalizeHealthFoodLibraryItem(data) : localRow;
     }
 
     const nextFavorites = [

@@ -278,6 +278,17 @@ export function displayWeightToKilograms(value: number, unit: WeightUnit) {
   return unit === "kg" ? value : value / 2.2046226218;
 }
 
+export function formatEditableWeight(weightKg: number | null, unit: WeightUnit) {
+  if (weightKg === null || !Number.isFinite(weightKg)) return "";
+  return String(Number(kilogramsToDisplayValue(weightKg, unit).toFixed(1)));
+}
+
+export function formatMealLoggedTime(value: string, locale?: string) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }).format(timestamp);
+}
+
 export function formatWeight(weightKg: number | null, unit: WeightUnit) {
   if (weightKg === null || !Number.isFinite(weightKg)) {
     return `No ${unit === "kg" ? "kg" : "lb"} target`;
@@ -376,6 +387,84 @@ export function getWeightTrend(weights: HealthWeightEntry[], days: number) {
   return [...weights]
     .filter((entry) => entry.entry_date >= floor && entry.entry_date <= today)
     .sort((left, right) => left.entry_date.localeCompare(right.entry_date) || left.logged_at.localeCompare(right.logged_at));
+}
+
+export type WeightGoalForecast = {
+  currentWeightKg: number | null;
+  estimatedDate: string | null;
+  sampleCount: number;
+  spanDays: number;
+  status: "insufficient" | "reached" | "away" | "forecast";
+  targetWeightKg: number | null;
+  weeklyChangeKg: number | null;
+};
+
+export function buildWeightGoalForecast(
+  weights: HealthWeightEntry[],
+  targetWeightKg: number | null,
+  asOfDate = todayHealthDate(),
+): WeightGoalForecast {
+  const floor = shiftHealthDate(asOfDate, -29);
+  const latestByDate = new Map<string, HealthWeightEntry>();
+  for (const entry of weights) {
+    if (
+      entry.entry_date < floor
+      || entry.entry_date > asOfDate
+      || !Number.isFinite(Date.parse(`${entry.entry_date}T12:00:00`))
+      || !Number.isFinite(entry.weight_kg)
+    ) {
+      continue;
+    }
+    const current = latestByDate.get(entry.entry_date);
+    if (!current || entry.logged_at > current.logged_at) latestByDate.set(entry.entry_date, entry);
+  }
+  const samples = [...latestByDate.values()].sort((left, right) => left.entry_date.localeCompare(right.entry_date));
+  const latest = samples.at(-1) ?? null;
+  const firstDateMs = samples[0] ? Date.parse(`${samples[0].entry_date}T12:00:00`) : Number.NaN;
+  const lastDateMs = latest ? Date.parse(`${latest.entry_date}T12:00:00`) : Number.NaN;
+  const spanDays = Number.isFinite(firstDateMs) && Number.isFinite(lastDateMs)
+    ? Math.round((lastDateMs - firstDateMs) / 86_400_000)
+    : 0;
+  const base = {
+    currentWeightKg: latest?.weight_kg ?? null,
+    estimatedDate: null,
+    sampleCount: samples.length,
+    spanDays,
+    targetWeightKg,
+    weeklyChangeKg: null,
+  };
+  if (!latest || targetWeightKg === null || !Number.isFinite(targetWeightKg) || samples.length < 3 || spanDays < 7) {
+    return { ...base, status: "insufficient" };
+  }
+  if (Math.abs(latest.weight_kg - targetWeightKg) <= 0.05) {
+    return { ...base, status: "reached", weeklyChangeKg: 0 };
+  }
+
+  const points = samples.map((entry) => ({
+    x: (Date.parse(`${entry.entry_date}T12:00:00`) - firstDateMs) / 86_400_000,
+    y: entry.weight_kg,
+  }));
+  const meanX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
+  const meanY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
+  const denominator = points.reduce((sum, point) => sum + (point.x - meanX) ** 2, 0);
+  const slope = denominator > 0
+    ? points.reduce((sum, point) => sum + (point.x - meanX) * (point.y - meanY), 0) / denominator
+    : 0;
+  const weeklyChangeKg = slope * 7;
+  const distance = targetWeightKg - latest.weight_kg;
+  if (!Number.isFinite(slope) || Math.abs(slope) < 0.0001 || Math.sign(slope) !== Math.sign(distance)) {
+    return { ...base, status: "away", weeklyChangeKg };
+  }
+  const daysToTarget = distance / slope;
+  if (!Number.isFinite(daysToTarget) || daysToTarget <= 0 || daysToTarget > 3650) {
+    return { ...base, status: "away", weeklyChangeKg };
+  }
+  return {
+    ...base,
+    estimatedDate: shiftHealthDate(latest.entry_date, Math.ceil(daysToTarget)),
+    status: "forecast",
+    weeklyChangeKg,
+  };
 }
 
 type DailyCareFacts = {

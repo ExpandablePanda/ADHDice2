@@ -22,10 +22,12 @@ test("Completed Milestones is a single list-first Trophy Gallery without a room 
   assert.doesNotMatch(completed, /initialMode|mode ===/);
 });
 
-test("Home opens the existing Completed Milestones gallery surface", () => {
-  assert.match(home, /View Trophy Gallery/);
-  assert.match(app, /onOpenTrophyGallery/);
-  assert.match(app, /handleTaskWorkspaceSurfaceChange\("completed_milestones"\)/);
+test("Home reconstruction leaves Trophy Gallery on the existing Tasks surface", () => {
+  assert.match(home, /To-do list/);
+  assert.doesNotMatch(home, /View Trophy Gallery|Home Dashboard|Achievement Progress/);
+  assert.match(app, /completed_milestones/);
+  assert.match(app, /tasksSurface: "completed_milestones"/);
+  assert.match(app, /CompletedMilestonesWorkspace/);
   assert.doesNotMatch(app, /setCompletedMilestonesOpenIntent|onOpenTrophyCase/);
 });
 

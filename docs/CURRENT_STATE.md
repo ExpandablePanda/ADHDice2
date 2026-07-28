@@ -1,17 +1,26 @@
 # Current State
 
-Last reviewed: 2026-07-27
+Last reviewed: 2026-07-28
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.5.38`.
+- Current working app version: `7.5.39`.
 - Current release group: `7.5.x` PATHS Task Nodes.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.5.39 Home To-Do Reconstruction and Health Food/Weight Improvements
+
+- Home now contains one numbered, user-scoped to-do list built from canonical Task, Step, and Substep references. It supports search, removal, arrow movement, drag reordering, local fallback, and cross-device Supabase synchronization without copying Task data.
+- Health Food history uses one calendar selection for Meals and Daily Totals, shows each meal’s logged time after calories, and starts public food/barcode search collapsed.
+- Custom foods now support category, descriptive serving size, and measured serving weight in grams, ounces, or fluid ounces while retaining the legacy serving-label snapshot used by meals and recipes.
+- Target-weight editing removes unit-conversion noise after refresh. Health Settings derives a 30-day trend forecast when at least three weigh-ins span seven days and the trend moves toward the target.
+- Forward migrations are `supabase/add_home_todo_state_7_5_39.sql` and `supabase/add_health_food_category_servings_7_5_39.sql`; neither was applied remotely by Codex.
+- Verification passed 61 focused Home, Health, On-Time, migration, and Trophy integration tests; targeted new/touched-file ESLint; the text-button audit with no new Home/Health findings; the production build; and `git diff --check`. Repository-wide lint and typecheck were also run and remain red on established baseline debt; no task-local typecheck finding remained.
 
 ## 7.5.38 Health Meal Action Layout and Task Table Layout Persistence
 
