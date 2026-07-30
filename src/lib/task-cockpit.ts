@@ -13,7 +13,7 @@ import type { TaskQuickFilter } from "@/lib/task-ui-state";
 import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
 import { todayISO } from "@/lib/utils";
 import { formatOptionLabel } from "@/lib/task-label-format";
-import { getLatestTaskHistoryEntryOnDate, isTaskHistoryStatus } from "@/lib/task-history";
+import { deriveTaskStatusAuthority } from "@/lib/task-active-status";
 
 export type TaskDueDateBucket = "none" | "overdue" | "today" | "upcoming" | "not_due";
 
@@ -159,53 +159,12 @@ export function getTaskDisplayStatus(task: Task) {
   return getTaskDisplayStatusForDate(task, todayISO());
 }
 
-function getTaskVisibleStatusOccurrenceDateKey(task: Task, todayDateKey: string) {
-  if (task.repeat_frequency === "none") {
-    return null;
-  }
-
-  if (!task.due_on) {
-    return todayDateKey;
-  }
-
-  if (task.due_on > todayDateKey) {
-    return null;
-  }
-
-  return task.due_on;
-}
-
 export function getTaskDisplayStatusWithHistory(
   task: Task,
   history: DbTaskHistory[],
   todayDateKey: string,
 ): TaskStatus {
-  if (task.status === "in_progress") {
-    return "in_progress";
-  }
-
-  if (task.repeat_frequency === "none" || history.length === 0) {
-    return getTaskDisplayStatusForDate(task, todayDateKey);
-  }
-
-  const todayHistoryStatus = (!task.due_on || task.due_on <= todayDateKey)
-    ? getLatestTaskHistoryEntryOnDate(history, todayDateKey)?.status
-    : null;
-  if (todayHistoryStatus && isTaskHistoryStatus(todayHistoryStatus)) {
-    return todayHistoryStatus;
-  }
-
-  const currentOccurrenceDateKey = getTaskVisibleStatusOccurrenceDateKey(task, todayDateKey);
-  if (!currentOccurrenceDateKey) {
-    return getTaskDisplayStatusForDate(task, todayDateKey);
-  }
-
-  const currentOccurrenceStatus = getLatestTaskHistoryEntryOnDate(history, currentOccurrenceDateKey)?.status;
-  if (currentOccurrenceStatus && isTaskHistoryStatus(currentOccurrenceStatus)) {
-    return currentOccurrenceStatus;
-  }
-
-  return getTaskDisplayStatusForDate(task, todayDateKey);
+  return deriveTaskStatusAuthority(task, history, todayDateKey).activeStatus;
 }
 
 export function formatDueLabel(date: string | null) {

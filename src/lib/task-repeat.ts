@@ -336,8 +336,9 @@ export function buildDailyUntilCompleteMissedDateKeys(
     return [] as string[];
   }
 
-  const startDate = latestHistoryDate
-    ? (compareDateKeys(shiftDateKey(latestHistoryDate, 1), task.due_on) > 0 ? shiftDateKey(latestHistoryDate, 1) : task.due_on)
+  const nextHistoryOccurrence = latestHistoryDate ? shiftDateKey(latestHistoryDate, 1) : null;
+  const startDate = nextHistoryOccurrence
+    ? (compareDateKeys(nextHistoryOccurrence, task.due_on) > 0 ? nextHistoryOccurrence : task.due_on)
     : task.due_on;
   const endDate = shiftDateKey(currentDayKey, -1);
   if (compareDateKeys(startDate, endDate) > 0) {

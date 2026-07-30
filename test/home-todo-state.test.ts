@@ -5,10 +5,13 @@ import { readFileSync } from "node:fs";
 import type { Task } from "../src/lib/database.types.ts";
 import {
   buildHomeTodoHierarchy,
+  getHomeTodoSearchText,
   isHomeTodoTaskEligible,
   moveHomeTodoTaskId,
+  moveHomeTodoTaskIdToEdge,
   normalizeHomeTodoState,
   reconcileHomeTodoTaskIds,
+  sortHomeTodoSearchResults,
 } from "../src/lib/home-todo-state.ts";
 import { reorderListItems } from "../src/lib/list-reorder.ts";
 
@@ -57,10 +60,38 @@ test("Home todo reconciliation prunes duplicates, missing rows, and unavailable 
   assert.deepEqual(reconcileHomeTodoTaskIds(["b", "missing", "a", "b", "done"], tasks), ["b", "a"]);
 });
 
+test("Home todo search includes Pinned and Routine membership labels", () => {
+  assert.match(getHomeTodoSearchText(task("pinned", { pinned_at: "2026-07-28T12:00:00.000Z" }), [], []), /pinned/);
+  assert.match(getHomeTodoSearchText(task("routine"), [], [{ id: "routine" }]), /routine/);
+});
+
 test("Home todo arrow reordering preserves contiguous array order", () => {
   assert.deepEqual(moveHomeTodoTaskId(["a", "b", "c"], "b", -1), ["b", "a", "c"]);
   assert.deepEqual(moveHomeTodoTaskId(["a", "b", "c"], "b", 1), ["a", "c", "b"]);
   assert.deepEqual(moveHomeTodoTaskId(["a", "b", "c"], "a", -1), ["a", "b", "c"]);
+});
+
+test("Home todo edge reordering moves directly to the top or bottom", () => {
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b", "c", "d"], "c", "top"), ["c", "a", "b", "d"]);
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b", "c", "d"], "b", "bottom"), ["a", "c", "d", "b"]);
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b"], "missing", "top"), ["a", "b"]);
+});
+
+test("Home todo search keeps parents, Steps, and Substeps together", () => {
+  const results = sortHomeTodoSearchResults([
+    { hierarchy: ["Z parent"], task: task("z-step", { title: "Step" }) },
+    { hierarchy: [], task: task("a-parent", { title: "A parent" }) },
+    { hierarchy: ["A parent"], task: task("a-step", { title: "Step" }) },
+    { hierarchy: ["A parent", "Step"], task: task("a-substep", { title: "Substep" }) },
+    { hierarchy: [], task: task("z-parent", { title: "Z parent" }) },
+  ]);
+  assert.deepEqual(results.map((result) => result.task.id), [
+    "a-parent",
+    "a-step",
+    "a-substep",
+    "z-parent",
+    "z-step",
+  ]);
 });
 
 test("shared drag reorder moves Home task ids without mutating the source", () => {

@@ -35,7 +35,7 @@ type UseTaskEditorSaveActionOptions = {
   focusedTaskIds: string[];
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   replaceTaskSubtasks: (taskId: string, subtasks: TaskSubtaskDraft[]) => Promise<{ saved: boolean; usedNestedFallback: boolean }>;
-  reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
+  reconcileOverdueTaskMisses: (task: Task, options?: { syncLiveTask?: boolean }) => Promise<boolean>;
   saveFocusSelection: (nextTaskIds: string[], validTaskIds?: Set<string> | Task[]) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -123,8 +123,24 @@ export function useTaskEditorSaveAction({
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
 
-      if (shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
-        const historyReconciled = await reconcileOverdueTaskMisses(nextData);
+      const isSuccessfulMutation = updateValues.status === "done" || updateValues.status === "did_my_best";
+      const successfulOverdueTask = isSuccessfulMutation
+        && previousTask?.due_on
+        && previousTask.due_on < currentDayKey
+        ? previousTask
+        : null;
+      const dueDateWasBackdated = Boolean(
+        previousTask
+        && updateValues.due_on !== previousTask.due_on
+        && updateValues.due_on
+        && updateValues.due_on < currentDayKey,
+      );
+      const reconciliationTask = successfulOverdueTask
+        ?? (shouldReconcileOverdueTaskMisses(nextData, currentDayKey) ? nextData : null);
+      if (reconciliationTask) {
+        const historyReconciled = await reconcileOverdueTaskMisses(reconciliationTask, {
+          syncLiveTask: dueDateWasBackdated && !isSuccessfulMutation,
+        });
         if (!historyReconciled) {
           return false;
         }

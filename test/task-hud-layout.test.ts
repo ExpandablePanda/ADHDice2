@@ -22,10 +22,12 @@ import {
 
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
-test("collapsed HUD timer chips omit redundant running and paused text", () => {
+test("collapsed HUD uses clickable text actions without chip primitives", () => {
   const collapsedHud = taskAppSource.match(/if \(isHudCollapsed\) \{([\s\S]*?)\n  \}\n\n  return \(/)?.[1] ?? "";
   assert.doesNotMatch(collapsedHud, />Running</);
   assert.doesNotMatch(collapsedHud, />Paused</);
+  assert.doesNotMatch(collapsedHud, /TaskTableChipButton/);
+  assert.match(collapsedHud, /collapsedHudTextActionClass/);
   assert.match(collapsedHud, /aria-label=\{`\$\{collapsedHudFocusTimer\.isPaused \? "Resume" : "Pause"\} timer for/);
   assert.match(collapsedHud, /aria-label=\{`\$\{collapsedHudTaskTimer\.pausedAt \? "Resume" : "Pause"\} timer for/);
 });

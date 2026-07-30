@@ -1,4 +1,5 @@
 import type { Task } from "@/lib/database.types";
+import type { TaskListMembership } from "@/lib/task-lists";
 
 export type HomeTodoStateV1 = {
   clientUpdatedAt: string;
@@ -82,6 +83,24 @@ export function buildHomeTodoHierarchy(
   return labels;
 }
 
+export function getHomeTodoSearchText(
+  task: Pick<Task, "notes" | "pinned_at" | "tags" | "title">,
+  hierarchy: readonly string[],
+  listMemberships: readonly Pick<TaskListMembership, "id">[],
+) {
+  return [
+    task.title,
+    task.notes,
+    ...(task.tags ?? []),
+    ...hierarchy,
+    task.pinned_at ? "pinned" : "",
+    ...listMemberships.map((membership) => membership.id),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
 export function reconcileHomeTodoTaskIds(taskIds: readonly string[], tasks: readonly Task[]) {
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const seen = new Set<string>();
@@ -100,4 +119,42 @@ export function moveHomeTodoTaskId(taskIds: readonly string[], taskId: string, d
   const next = [...taskIds];
   [next[from], next[to]] = [next[to]!, next[from]!];
   return next;
+}
+
+export function moveHomeTodoTaskIdToEdge(
+  taskIds: readonly string[],
+  taskId: string,
+  edge: "bottom" | "top",
+) {
+  const from = taskIds.indexOf(taskId);
+  if (from < 0) return [...taskIds];
+  const next = [...taskIds];
+  const [movedTaskId] = next.splice(from, 1);
+  if (!movedTaskId) return [...taskIds];
+  if (edge === "top") {
+    next.unshift(movedTaskId);
+  } else {
+    next.push(movedTaskId);
+  }
+  return next;
+}
+
+export function sortHomeTodoSearchResults<T extends {
+  hierarchy: readonly string[];
+  task: Pick<Task, "id" | "title">;
+}>(results: readonly T[]) {
+  return [...results].sort((left, right) => {
+    const leftPath = [...left.hierarchy, left.task.title || "Untitled task"];
+    const rightPath = [...right.hierarchy, right.task.title || "Untitled task"];
+    const sharedLength = Math.min(leftPath.length, rightPath.length);
+    for (let index = 0; index < sharedLength; index += 1) {
+      const comparison = leftPath[index]!.localeCompare(rightPath[index]!, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+      if (comparison !== 0) return comparison;
+    }
+    if (leftPath.length !== rightPath.length) return leftPath.length - rightPath.length;
+    return left.task.id.localeCompare(right.task.id);
+  });
 }

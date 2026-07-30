@@ -9,10 +9,6 @@ const achievementRuntime = readFileSync("supabase/add_achievement_mvp_runtime.sq
 const regularStart = canonical.lastIndexOf("if v_task.status not in ('pending'");
 const regularEnd = canonical.indexOf("insert into public.adhdice_task_rollover_ledger", regularStart);
 const regularBranch = canonical.slice(regularStart, regularEnd);
-const oneOffStart = canonical.indexOf("if v_task.repeat_frequency = 'none' then");
-const dailyUntilCompleteStart = canonical.indexOf("if v_task.repeat_frequency = 'daily_until_complete' then");
-const oneOffBranch = canonical.slice(oneOffStart, dailyUntilCompleteStart);
-const dailyUntilCompleteBranch = canonical.slice(dailyUntilCompleteStart, regularStart);
 
 type HistoryRow = {
   occurrenceKey: string | null;
@@ -32,13 +28,16 @@ function insertMissingHistory(rows: Map<string, HistoryRow>, generatedDates: str
   return { achievementTriggerCalls, insertedHistoryCount, rows };
 }
 
-test("regular recurring SQL inserts missing history without updating conflicts", () => {
+test("continuous-overdue SQL inserts every completed logical day without updating conflicts", () => {
   assert.match(regularBranch, /on conflict \(user_id, task_id, entry_date\) do nothing;/);
   assert.match(regularBranch, /get diagnostics v_row_count = row_count;\s+v_inserted_history_count := v_inserted_history_count \+ v_row_count;/);
   assert.doesNotMatch(regularBranch, /on conflict \(user_id, task_id, entry_date\) do update/);
-  assert.match(regularBranch, /adhdice_task_next_due_date/);
-  assert.match(regularBranch, /if v_task\.status = 'in_progress' then[\s\S]*due_on = v_due_on/);
-  assert.match(regularBranch, /else[\s\S]*status = 'missed'/);
+  assert.match(regularBranch, /v_history_date := v_task\.due_on/);
+  assert.match(regularBranch, /v_history_date := v_history_date \+ 1/);
+  assert.match(regularBranch, /status = 'missed'/);
+  assert.doesNotMatch(regularBranch, /adhdice_task_next_due_date/);
+  assert.doesNotMatch(regularBranch, /(^|\n)\s*due_on\s*=/);
+  assert.doesNotMatch(regularBranch, /status\s*=\s*'(pending|upcoming|not_due)'/);
 });
 
 test("existing outcomes, occurrence identity, and timestamps remain authoritative", () => {
@@ -58,7 +57,7 @@ test("existing outcomes, occurrence identity, and timestamps remain authoritativ
   assert.equal(second.achievementTriggerCalls, 0);
 });
 
-test("forward migration is guarded, transactional, and matches the canonical correction", () => {
+test("legacy forward migration remains guarded and transactional", () => {
   const afterStart = forward.indexOf("$after$") + "$after$".length;
   const afterEnd = forward.indexOf("$after$;", afterStart);
   const correctedBlock = forward.slice(afterStart, afterEnd);
@@ -70,17 +69,19 @@ test("forward migration is guarded, transactional, and matches the canonical cor
   assert.match(forward, /notify pgrst, 'reload schema';\s+commit;/);
   assert.match(forward, /\$after\$[\s\S]*on conflict \(user_id, task_id, entry_date\) do nothing;[\s\S]*v_inserted_history_count := v_inserted_history_count \+ v_row_count;/);
   assert.match(forward, /\$before\$[\s\S]*on conflict \(user_id, task_id, entry_date\) do update[\s\S]*v_inserted_history_count := v_inserted_history_count \+ 1;/);
-  assert.equal(canonical.includes(correctedBlock), true);
+  assert.match(correctedBlock, /on conflict \(user_id, task_id, entry_date\) do nothing/);
 });
 
-test("active-status, one-off, Daily Until Complete, ledger, and Achievement trigger contracts stay intact", () => {
-  const activeBranch = canonical.slice(canonical.indexOf("if v_task.status = 'in_progress'\n      and v_task.active_status_logical_date"), oneOffStart);
+test("active-status, all repeat modes, ledger, and Achievement trigger contracts stay intact", () => {
+  const activeBranch = canonical.slice(canonical.indexOf("if v_task.status = 'in_progress'\n      and v_task.active_status_logical_date"), regularStart);
   assert.match(activeBranch, /v_task\.active_status_logical_date,\s+'did_my_best'/);
-  assert.match(activeBranch, /v_task\.active_occurrence_due_on/);
-  assert.match(oneOffBranch, /select max\(entry_date\)/);
-  assert.match(oneOffBranch, /on conflict \(user_id, task_id, entry_date\) do update/);
-  assert.match(dailyUntilCompleteBranch, /select max\(entry_date\)/);
-  assert.match(dailyUntilCompleteBranch, /on conflict \(user_id, task_id, entry_date\) do update/);
+  assert.match(activeBranch, /coalesce\(v_task\.active_occurrence_due_on, v_task\.due_on, v_task\.active_status_logical_date\)/);
+  assert.match(activeBranch, /if v_task\.repeat_frequency = 'none' then/);
+  assert.doesNotMatch(activeBranch, /repeat_frequency = 'none' or v_task\.active_occurrence_due_on is null/);
+  assert.match(activeBranch, /on conflict \(user_id, task_id, entry_date\) do nothing/);
+  assert.match(activeBranch, /adhdice_task_next_due_date/);
+  assert.match(regularBranch, /on conflict \(user_id, task_id, entry_date\) do nothing/);
+  assert.match(canonical, /p_repeat_monthly_mode[\s\S]*p_repeat_monthly_ordinal[\s\S]*p_repeat_monthly_weekday/);
   assert.ok(canonical.indexOf("insert into public.adhdice_task_rollover_ledger") > regularEnd - 1);
   assert.match(achievementRuntime, /after insert or update of status, was_completed, occurrence_key, occurrence_due_on[\s\S]*on public\.adhdice_task_history for each row/);
   assert.doesNotMatch(forward, /create trigger|drop trigger|adhdice_evaluate_achievements\s*\(/i);

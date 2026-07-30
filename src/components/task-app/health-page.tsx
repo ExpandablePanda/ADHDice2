@@ -120,6 +120,7 @@ type HealthPageProps = {
     serving_weight_unit?: HealthServingWeightUnit | null;
     is_favorite?: boolean;
   }) => Promise<boolean>;
+  setFavoriteFoodStatus: (itemId: string, isFavorite: boolean) => Promise<boolean>;
   saveRecipe: (input: {
     id?: string;
     name: string;
@@ -257,6 +258,7 @@ export function HealthPage({
   recipes,
   saveCheckIn,
   saveFavoriteFood,
+  setFavoriteFoodStatus,
   saveRecipe,
   savedMeals,
   saveSavedMeal,
@@ -401,8 +403,20 @@ export function HealthPage({
       .slice(0, 8);
   }, [mealEntries]);
   const favoriteFoods = useMemo(
-    () => favorites.filter((item) => item.is_favorite),
-    [favorites],
+    () => {
+      const loggedCountByIdentity = new Map<string, number>();
+      mealEntries.forEach((entry) => {
+        const identity = getHealthFoodIdentityKey(entry);
+        if (identity) loggedCountByIdentity.set(identity, (loggedCountByIdentity.get(identity) ?? 0) + 1);
+      });
+      return favorites
+        .filter((item) => item.is_favorite)
+        .sort((left, right) => {
+          const countDifference = (loggedCountByIdentity.get(getHealthFoodIdentityKey(right) ?? "") ?? 0) - (loggedCountByIdentity.get(getHealthFoodIdentityKey(left) ?? "") ?? 0);
+          return countDifference || right.updated_at.localeCompare(left.updated_at);
+        });
+    },
+    [favorites, mealEntries],
   );
   const favoriteFoodKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -427,6 +441,14 @@ export function HealthPage({
       item.serving_label,
     ].some((value) => value?.toLowerCase().includes(query))).slice(0, 8);
   }, [customFoodSearchQuery, favorites]);
+  const matchingCustomFoodGroups = useMemo(() => {
+    const groups = new Map<string, HealthFoodLibraryItem[]>();
+    matchingCustomFoods.forEach((item) => {
+      const category = item.category?.trim() || "Uncategorized";
+      groups.set(category, [...(groups.get(category) ?? []), item]);
+    });
+    return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+  }, [matchingCustomFoods]);
   const recentWeekDates = useMemo(
     () => Array.from({ length: 7 }, (_, index) => {
       const offset = 6 - index;
@@ -713,21 +735,7 @@ export function HealthPage({
   }
 
   async function handleRemoveFavorite(item: HealthFoodLibraryItem) {
-    await saveFavoriteFood({
-      attribution: item.attribution,
-      barcode: item.barcode,
-      brand_name: item.brand_name,
-      calories: item.calories,
-      carbs_g: item.carbs_g,
-      fat_g: item.fat_g,
-      food_name: item.food_name,
-      id: item.id,
-      is_favorite: false,
-      protein_g: item.protein_g,
-      provider: item.provider,
-      provider_item_id: item.provider_item_id,
-      serving_label: item.serving_label,
-    });
+    await setFavoriteFoodStatus(item.id, false);
   }
 
   async function handleSaveFavoriteFromMeal(entry: HealthMealEntry) {
@@ -1180,40 +1188,47 @@ export function HealthPage({
                 </button>
               </div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 grid gap-3">
               {matchingCustomFoods.length === 0 ? (
                 <EmptyCopy text="No custom foods match this search." />
-              ) : matchingCustomFoods.map((item) => (
-                <button
-                  className={`ui-pill-button-light ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
-                  key={item.id}
-                  onClick={() => {
-                    setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name);
-                    applyLookupResult({
-                      attribution: item.attribution,
-                      barcode: item.barcode,
-                      brandName: item.brand_name,
-                      calories: item.calories,
-                      carbs: item.carbs_g,
-                      fat: item.fat_g,
-                      foodName: item.food_name,
-                      protein: item.protein_g,
-                      provider: item.provider,
-                      providerItemId: item.provider_item_id ?? item.id,
-                      servingLabel: item.serving_label,
-                    });
-                  }}
-                  type="button"
-                >
-                  {item.brand_name ? `${item.brand_name} · ` : ""}{item.food_name}
-                </button>
+              ) : matchingCustomFoodGroups.map(([category, items]) => (
+                <div className="grid gap-2" key={category}>
+                  <SectionMiniTitle title={category} />
+                  <div className="flex flex-wrap gap-2">
+                    {items.map((item) => (
+                      <button
+                        className={`ui-pill-button-light ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
+                        key={item.id}
+                        onClick={() => {
+                          setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name);
+                          applyLookupResult({
+                            attribution: item.attribution,
+                            barcode: item.barcode,
+                            brandName: item.brand_name,
+                            calories: item.calories,
+                            carbs: item.carbs_g,
+                            fat: item.fat_g,
+                            foodName: item.food_name,
+                            protein: item.protein_g,
+                            provider: item.provider,
+                            providerItemId: item.provider_item_id ?? item.id,
+                            servingLabel: item.serving_label,
+                          });
+                        }}
+                        type="button"
+                      >
+                        {item.brand_name ? `${item.brand_name} · ` : ""}{item.food_name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
 
             <div className="mt-6 grid gap-3">
               <SectionMiniTitle
                 actions={<FoodHistoryDateChip date={foodHistoryDate} onChange={setFoodHistoryDate} today={today} />}
-                title={foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`}
+                title={`${foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`} — ${Math.round(selectedNutrition.calories)} kcal`}
               />
               {selectedMeals.length === 0 ? (
                 <EmptyCopy text={foodHistoryDate === today ? "Meals logged today will appear here with calories and macros." : "No meals were logged on this date."} />
@@ -1223,14 +1238,9 @@ export function HealthPage({
                   const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + entry.calories, 0);
                   return (
                   <section className="grid gap-3" key={slot}>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h4 className="text-sm font-semibold text-[#4f5872] dark:text-white/70">{getMealSlotLabel(slot)}</h4>
-                      {slotMeals.length > 0 ? (
-                        <span className="text-xs font-semibold text-[#74809b] dark:text-white/45">
-                          {Math.round(slotCaloriesTotal)} kcal
-                        </span>
-                      ) : null}
-                    </div>
+                    <h4 className="text-sm font-semibold text-[#4f5872] dark:text-white/70">
+                      {getMealSlotLabel(slot)}{slotMeals.length > 0 ? ` — ${Math.round(slotCaloriesTotal)} kcal` : ""}
+                    </h4>
                     {slotMeals.length === 0 ? (
                       <EmptyCopy text={`No ${getMealSlotLabel(slot).toLowerCase()} logged yet.`} />
                     ) : slotMeals.map((entry) => (
@@ -1335,10 +1345,10 @@ export function HealthPage({
               subtitle="Daily totals"
             >
               <div className="grid gap-3 sm:grid-cols-2">
-                <CompactStat detail={profile.calorie_goal ? `goal ${profile.calorie_goal}` : "set in goals"} label="Calories" value={String(selectedNutrition.calories)} />
-                <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" value={`${Math.round(selectedNutrition.protein)}g`} />
-                <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" value={`${Math.round(selectedNutrition.carbs)}g`} />
-                <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" value={`${Math.round(selectedNutrition.fat)}g`} />
+                <CompactStat detail={profile.calorie_goal ? `goal ${profile.calorie_goal}` : "set in goals"} label="Calories" progressPercent={profile.calorie_goal ? clampPercent((selectedNutrition.calories / profile.calorie_goal) * 100) : null} value={String(selectedNutrition.calories)} />
+                <CompactStat detail={profile.protein_goal_grams ? `goal ${profile.protein_goal_grams}g` : "set in goals"} label="Protein" progressPercent={profile.protein_goal_grams ? clampPercent((selectedNutrition.protein / profile.protein_goal_grams) * 100) : null} value={`${Math.round(selectedNutrition.protein)}g`} />
+                <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${Math.round(selectedNutrition.carbs)}g`} />
+                <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${Math.round(selectedNutrition.fat)}g`} />
               </div>
             </HealthPanel>
 
@@ -1771,12 +1781,19 @@ function HealthPanel({
   );
 }
 
-function CompactStat({ detail, label, value }: { detail: string; label: string; value: string }) {
+function CompactStat({ detail, label, progressPercent, value }: { detail: string; label: string; progressPercent: number | null; value: string }) {
   return (
-    <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</p>
-      <p className="mt-1 text-2xl font-black text-[#1e2744] dark:text-white">{value}</p>
-      <p className="mt-1 text-xs text-[#73809c] dark:text-white/50">{detail}</p>
+    <div className="flex items-center justify-between gap-4 rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{label}</p>
+        <p className="mt-1 text-2xl font-black text-[#1e2744] dark:text-white">{value}</p>
+        <p className="mt-1 text-xs text-[#73809c] dark:text-white/50">{detail}</p>
+      </div>
+      {progressPercent === null ? null : (
+        <div aria-label={`${label} ${Math.round(progressPercent)}% of goal`} className="w-20 shrink-0 rounded-full bg-[#ece8f8] p-1 dark:bg-white/10">
+          <div className="h-2 rounded-full bg-[#6f57f6] transition-[width]" style={{ width: `${progressPercent}%` }} />
+        </div>
+      )}
     </div>
   );
 }

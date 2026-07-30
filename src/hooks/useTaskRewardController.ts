@@ -24,8 +24,13 @@ import {
   type PendingRewardDiceAccountSnapshot,
   type PendingRewardDiceMutationRow,
 } from "@/lib/pending-reward-dice";
-import { filterMissingTaskHistoryDateKeys, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
-import { buildOverdueTaskMissedDateKeys } from "@/lib/task-history";
+import { resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import {
+  buildDerivedMissedOccurrenceKey,
+  isDerivedMissedHistoryEntry,
+  reconcileChronologicalTaskHistory,
+} from "@/lib/task-active-status";
+import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import {
   isMissingTaskRewardClaimSubtaskColumnError,
@@ -254,36 +259,53 @@ export function useTaskRewardController({
       .map((candidate) => candidate.task);
   }
 
-  async function reconcileOverdueTaskMisses(task: Task) {
-    const missedDates = buildOverdueTaskMissedDateKeys(task, currentDayKey);
-    if (missedDates.length === 0) {
-      return true;
-    }
-
+  async function reconcileTaskTimeline(task: Task) {
     const { data: existingRows, error: existingRowsError } = await client
       .from("adhdice_task_history")
       .select("*")
       .eq("user_id", currentUserId)
-      .eq("task_id", task.id)
-      .in("entry_date", missedDates);
+      .eq("task_id", task.id);
 
     if (existingRowsError) {
       setMessage({ tone: "warn", text: existingRowsError.message });
-      return false;
+      return null;
     }
 
-    const normalizedMissedDates = filterMissingTaskHistoryDateKeys(
-      missedDates,
-      (existingRows ?? []).map((entry) => entry.entry_date),
-    );
-    if (normalizedMissedDates.length === 0) {
-      return true;
+    const history = (existingRows ?? []) as DbTaskHistory[];
+    const explicitHistory = history.filter((entry) => !isDerivedMissedHistoryEntry(entry));
+    const reconciliation = reconcileChronologicalTaskHistory(task, explicitHistory, currentDayKey, {
+      calcNextDueDateFromDate,
+    });
+    const missedDates = reconciliation.generatedMissedDateKeys;
+    const expectedDerivedDateSet = new Set(missedDates);
+    const staleDerivedIds = history
+      .filter((entry) => isDerivedMissedHistoryEntry(entry) && !expectedDerivedDateSet.has(entry.entry_date))
+      .map((entry) => entry.id);
+    if (staleDerivedIds.length > 0) {
+      const { error: staleDeleteError } = await client
+        .from("adhdice_task_history")
+        .delete()
+        .eq("user_id", currentUserId)
+        .eq("task_id", task.id)
+        .in("id", staleDerivedIds);
+      if (staleDeleteError) {
+        setMessage({ tone: "warn", text: staleDeleteError.message });
+        return null;
+      }
+      const staleDerivedIdSet = new Set(staleDerivedIds);
+      setTaskHistory((current) => current.filter((entry) => !staleDerivedIdSet.has(entry.id)));
+    }
+    if (missedDates.length === 0) {
+      return reconciliation;
     }
 
-    const payload = normalizedMissedDates.map((entryDate) => ({
-      counted_as_due_occurrence: false,
+    const payload = missedDates.map((entryDate) => ({
       entry_date: entryDate,
-      event_type: "status" as const,
+      ...buildTaskHistoryOccurrenceMetadata(
+        { ...task, active_occurrence_due_on: entryDate },
+        "missed",
+      ),
+      occurrence_key: buildDerivedMissedOccurrenceKey(task.active_occurrence_due_on ?? task.due_on ?? entryDate),
       status: "missed" as const,
       task_id: task.id,
       user_id: currentUserId,
@@ -292,12 +314,15 @@ export function useTaskRewardController({
 
     const { data, error } = await client
       .from("adhdice_task_history")
-      .upsert(payload, { onConflict: "user_id,task_id,entry_date" })
+      .upsert(payload, {
+        ignoreDuplicates: true,
+        onConflict: "user_id,task_id,entry_date",
+      })
       .select("*");
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
-      return false;
+      return null;
     }
 
     if ((data ?? []).length > 0) {
@@ -310,6 +335,40 @@ export function useTaskRewardController({
       });
     }
 
+    return reconciliation;
+  }
+
+  async function reconcileOverdueTaskMisses(task: Task, options?: { syncLiveTask?: boolean }) {
+    const reconciliation = await reconcileTaskTimeline(task);
+    if (!reconciliation) {
+      return false;
+    }
+    if (
+      !options?.syncLiveTask
+      || reconciliation.terminalCompleteEntry
+    ) {
+      return true;
+    }
+
+    const { conflict, data, error } = await updateTaskRowWithLegacyEnergyFallback(
+      task.id,
+      {
+        completed_at: null,
+        status: "missed",
+      },
+      { expectedTask: task },
+    );
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+    if (conflict) {
+      setMessage({ tone: "warn", text: buildTaskUpdateConflictMessage(conflict) });
+      return false;
+    }
+    if (data) {
+      setTasks((current) => sortTasksForUi(current.map((entry) => entry.id === task.id ? data : entry)));
+    }
     return true;
   }
 
@@ -323,22 +382,12 @@ export function useTaskRewardController({
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
 
-      const historySaved = await reconcileOverdueTaskMisses(task);
-      if (!historySaved) {
+      const reconciliation = await reconcileTaskTimeline(task);
+      if (!reconciliation) {
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
 
-      // Completion may happen before its scheduled occurrence (for example, a
-      // Sunday weekly task completed on Wednesday). Advance from the canonical
-      // occurrence, not the action day, so the same occurrence cannot remain due.
-      const currentOccurrenceDueOn = task.active_occurrence_due_on ?? task.due_on ?? currentDayKey;
-      const nextDueReferenceDate = (
-        (task.status === "done" || task.status === "did_my_best")
-        && currentOccurrenceDueOn < currentDayKey
-      )
-        ? currentDayKey
-        : currentOccurrenceDueOn;
-      const nextDue = calcNextDueDateFromDate(task, nextDueReferenceDate);
+      const nextDue = reconciliation.nextDueOn;
       if (!nextDue) {
         return { resetSubtasks: null as DbTaskSubtask[] | null, task: null as Task | null };
       }
@@ -506,34 +555,32 @@ export function useTaskRewardController({
   }
 
   async function queueTaskRewards(candidates: TaskRewardCandidate[]) {
+    const recurringTasksToFinalize = getRecurringFinalizationCandidates(candidates);
     const newlyCompleted = candidates.filter((candidate) =>
       candidate.claimRef?.subtaskId
         ? true
         : isNewRewardCompletion(candidate.previousStatus, candidate.task.status),
     );
     if (newlyCompleted.length === 0) {
+      await finalizeRecurringTasks(recurringTasksToFinalize);
       return;
     }
-
-    const recurringTasksToFinalize = getRecurringFinalizationCandidates(newlyCompleted);
 
     if (areRewardTablesUnavailable) {
       await finalizeRecurringTasks(recurringTasksToFinalize);
       return;
     }
 
-    const { eligible, ineligible, rewardDate } = await loadEligibleCandidates(newlyCompleted);
-    if (ineligible.length > 0) {
-      await finalizeRecurringTasks(getRecurringFinalizationCandidates(ineligible));
-    }
+    const { eligible, rewardDate } = await loadEligibleCandidates(newlyCompleted);
 
     if (eligible.length === 0) {
+      await finalizeRecurringTasks(recurringTasksToFinalize);
       return;
     }
 
     const pendingRewards = await buildPendingRewards(eligible, rewardDate);
     if (pendingRewards.length === 0) {
-      await finalizeRecurringTasks(getRecurringFinalizationCandidates(eligible));
+      await finalizeRecurringTasks(recurringTasksToFinalize);
       return;
     }
 

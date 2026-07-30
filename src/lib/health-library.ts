@@ -205,6 +205,18 @@ export function normalizeHealthFoodLibraryItem(food: HealthFoodLibraryItem): Hea
   };
 }
 
+export function setHealthFoodFavoriteStatus(
+  food: HealthFoodLibraryItem,
+  isFavorite: boolean,
+  updatedAt = food.updated_at,
+): HealthFoodLibraryItem {
+  return {
+    ...food,
+    is_favorite: isFavorite,
+    updated_at: updatedAt,
+  };
+}
+
 export function waterAmountToMilliliters(amount: number, unit: HealthWaterUnit) {
   const multiplier = unit === "cup" ? MILLILITERS_PER_CUP : MILLILITERS_PER_FLUID_OUNCE;
   return roundNutrition(positiveNumber(amount) * multiplier);

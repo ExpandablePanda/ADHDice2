@@ -11,6 +11,7 @@ import {
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
   getHealthFoodIdentityKey,
+  setHealthFoodFavoriteStatus,
   sumWaterForDate,
   waterAmountToMilliliters,
 } from "../src/lib/health-library.ts";
@@ -160,6 +161,25 @@ test("food library identity prefers provider ids and dedupes exact manual foods"
       servingLabel: "1 bowl",
     }),
   );
+});
+
+test("unfavoriting a custom food preserves its stored metadata", () => {
+  const customFood = {
+    ...food,
+    category: "Breakfast",
+    is_favorite: true,
+    serving_size: "1 packet",
+    serving_weight_amount: 42,
+    serving_weight_unit: "g" as const,
+  };
+
+  const unfavorited = setHealthFoodFavoriteStatus(customFood, false, "2026-07-29T12:00:00.000Z");
+
+  assert.deepEqual(unfavorited, {
+    ...customFood,
+    is_favorite: false,
+    updated_at: "2026-07-29T12:00:00.000Z",
+  });
 });
 
 test("7.5.22 Health migration and consolidated schema carry the new owner-scoped tables", () => {

@@ -4,9 +4,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus, TaskUpdate } from "@/lib/database.types";
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
-import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
+import {
+  applyTaskActiveStatusTracking,
+  buildDerivedMissedOccurrenceKey,
+  isDerivedMissedHistoryEntry,
+  reconcileChronologicalTaskHistory,
+} from "@/lib/task-active-status";
 import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
-import { buildMissingScheduledMissedHistoryDateKeys, resolveLiveTaskStatusFromHistory } from "@/lib/task-history";
+import { resolveLiveTaskStatusFromHistory } from "@/lib/task-history";
 
 type Message = {
   text: string;
@@ -265,16 +270,7 @@ export function useTaskHistoryActions({
 
     const task = tasks.find((candidate) => candidate.id === taskId);
     const existingTaskHistory = taskHistory.filter((entry) => entry.task_id === taskId);
-    const missingMissedDates = status === "missed" && task
-      ? uniqueEntryDates.flatMap((entryDate) => buildMissingScheduledMissedHistoryDateKeys(
-        task,
-        existingTaskHistory,
-        entryDate,
-        currentDayKey,
-      ))
-      : [];
-    const entryDatesToUpsert = Array.from(new Set([...uniqueEntryDates, ...missingMissedDates])).sort();
-    const payloads: TaskHistoryInsert[] = entryDatesToUpsert.map((entryDate) => ({
+    const payloads: TaskHistoryInsert[] = uniqueEntryDates.map((entryDate) => ({
       entry_date: entryDate,
       ...buildTaskHistoryOccurrenceMetadata(
         getCalendarOccurrenceTask(task, status, entryDate, existingTaskHistory),
@@ -295,17 +291,82 @@ export function useTaskHistoryActions({
       return false;
     }
 
-    const mappedEntries = (data ?? []).map(mapTaskHistoryRow);
-    const updatedDateSet = new Set(mappedEntries.map((entry) => entry.entry_date));
-    const nextTaskHistory = [
-      ...mappedEntries,
+    const explicitEntries = (data ?? []).map(mapTaskHistoryRow);
+    const explicitDateSet = new Set(explicitEntries.map((entry) => entry.entry_date));
+    let nextTaskHistory = [
+      ...explicitEntries,
       ...taskHistory.filter((entry) => (
-        entry.task_id !== taskId || !updatedDateSet.has(entry.entry_date)
+        entry.task_id !== taskId || !explicitDateSet.has(entry.entry_date)
       )),
     ].filter((entry) => entry.task_id === taskId);
+
+    let generatedEntries: DbTaskHistory[] = [];
+    if (task) {
+      const explicitHistory = nextTaskHistory.filter((entry) => !isDerivedMissedHistoryEntry(entry));
+      const reconciliation = reconcileChronologicalTaskHistory(task, explicitHistory, currentDayKey, {
+        anchorDateKey: task.due_on && uniqueEntryDates[0] && uniqueEntryDates[0] < task.due_on
+          ? uniqueEntryDates[0]
+          : task.active_occurrence_due_on ?? task.due_on,
+        calcNextDueDateFromDate,
+      });
+      const generatedMissedDateKeys = reconciliation.generatedMissedDateKeys;
+      const expectedDerivedDateSet = new Set(generatedMissedDateKeys);
+      const staleDerivedIds = nextTaskHistory
+        .filter((entry) => isDerivedMissedHistoryEntry(entry) && !expectedDerivedDateSet.has(entry.entry_date))
+        .map((entry) => entry.id);
+      if (staleDerivedIds.length > 0) {
+        const staleDeleteResult = await client
+          .from("adhdice_task_history")
+          .delete()
+          .eq("task_id", taskId)
+          .eq("user_id", currentUserId)
+          .in("id", staleDerivedIds);
+        if (staleDeleteResult.error) {
+          setMessage({ tone: "warn", text: staleDeleteResult.error.message });
+          return false;
+        }
+        const staleDerivedIdSet = new Set(staleDerivedIds);
+        nextTaskHistory = nextTaskHistory.filter((entry) => !staleDerivedIdSet.has(entry.id));
+        setTaskHistory((current) => current.filter((entry) => !staleDerivedIdSet.has(entry.id)));
+      }
+      if (generatedMissedDateKeys.length > 0) {
+        const generatedPayloads: TaskHistoryInsert[] = generatedMissedDateKeys.map((entryDate) => ({
+          entry_date: entryDate,
+          ...buildTaskHistoryOccurrenceMetadata(
+            { ...task, active_occurrence_due_on: entryDate },
+            "missed",
+          ),
+          occurrence_key: buildDerivedMissedOccurrenceKey(task.active_occurrence_due_on ?? task.due_on ?? entryDate),
+          status: "missed",
+          task_id: taskId,
+          user_id: currentUserId,
+          was_completed: false,
+        }));
+        const generatedResult = await client
+          .from("adhdice_task_history")
+          .upsert(generatedPayloads, {
+            ignoreDuplicates: true,
+            onConflict: "user_id,task_id,entry_date",
+          })
+          .select("*");
+        if (generatedResult.error) {
+          setMessage({ tone: "warn", text: generatedResult.error.message });
+          return false;
+        }
+        generatedEntries = (generatedResult.data ?? []).map(mapTaskHistoryRow);
+        const generatedDateSet = new Set(generatedEntries.map((entry) => entry.entry_date));
+        nextTaskHistory = [
+          ...generatedEntries,
+          ...nextTaskHistory.filter((entry) => !generatedDateSet.has(entry.entry_date)),
+        ];
+      }
+    }
+
+    const updatedEntries = [...explicitEntries, ...generatedEntries];
+    const updatedDateSet = new Set(updatedEntries.map((entry) => entry.entry_date));
     setTaskHistory((current) => {
       const merged = [
-        ...mappedEntries,
+        ...updatedEntries,
         ...current.filter((entry) => (
           entry.task_id !== taskId || !updatedDateSet.has(entry.entry_date)
         )),

@@ -4973,6 +4973,11 @@ export function TaskManagementTableV2({
   }
 
   function openTaskInCurrentEditor(taskId: string) {
+    if (onOpenTaskEditor) {
+      onOpenTaskEditor(taskId);
+      return;
+    }
+
     if (revealChildTaskInParentEditor(taskId)) {
       return;
     }
@@ -6211,6 +6216,11 @@ export function TaskManagementTableV2({
   function openTaskDetailsFromContextMenu(taskId: string, sourceElement?: HTMLElement | null) {
     setRowContextMenu(null);
 
+    if (onOpenTaskEditor) {
+      onOpenTaskEditor(taskId);
+      return;
+    }
+
     if (enableInspector) {
       openInspector(taskId, "full", sourceElement);
       return;
@@ -6236,6 +6246,11 @@ export function TaskManagementTableV2({
   }
 
   function openRowPrimaryAction(taskId: string, sourceElement: HTMLElement) {
+    if (onOpenTaskEditor) {
+      onOpenTaskEditor(taskId);
+      return;
+    }
+
     if (enableInspector) {
       openInspector(taskId, "full", sourceElement);
       return;

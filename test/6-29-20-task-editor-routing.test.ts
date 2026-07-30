@@ -4,7 +4,7 @@ import test from "node:test";
 
 const source = (path: string) => readFile(new URL(path, import.meta.url), "utf8");
 
-test("shared task editor validates targets and preserves default page navigation", async () => {
+test("shared task editor validates targets without changing the active page", async () => {
   const app = await source("../src/components/task-app.tsx");
   assert.match(app, /import \{ buildTaskOccurrenceIdentity \} from "@\/lib\/task-duration-evidence"/);
   assert.doesNotMatch(app, /import \{ buildTaskOccurrenceIdentity[^\n]*from "@\/lib\/on-time-planner"/);
@@ -13,9 +13,39 @@ test("shared task editor validates targets and preserves default page navigation
   assert.match(opener, /task\.status === "trashed" \|\| task\.status === "archived"/);
   assert.match(opener, /occurrenceIsClearlyStale/);
   assert.match(opener, /setSharedTaskEditorOverlayTaskId\(taskId\)/);
-  assert.match(opener, /if \(!options\?\.preserveActivePage\) \{\s*setActivePage\("Tasks"\);\s*\}/);
+  assert.doesNotMatch(opener, /setActivePage|setSharedTaskEditorReturnPage/);
   assert.doesNotMatch(opener, /setTaskUiState|setActiveTaskWorkspaceTab|setRequestedListOverlayTaskId|tasksSurface|view:|highlight|scroll/);
   assert.doesNotMatch(opener, /updateTask|persist|pause|resume|stop|discard|evidence/i);
+});
+
+test("shared task editor uses one page-independent full-page overlay host", async () => {
+  const app = await source("../src/components/task-app.tsx");
+  const globalHost = app.slice(app.indexOf("{sharedTaskEditorOverlayTaskId && requestedSharedTaskRow"), app.indexOf("{isAccountOpen ?"));
+  assert.match(globalHost, /<TaskManagementTableV2/);
+  assert.match(globalHost, /overlayOnly/);
+  assert.match(globalHost, /requestedOpenTaskId=\{sharedTaskEditorOverlayTaskId\}/);
+  assert.match(globalHost, /onInspectorClose=\{closeSharedTaskEditorOverlay\}/);
+  assert.match(app, /showSharedTaskEditorOverlay=\{false\}/);
+  assert.match(app, /overlayOnly: false/);
+});
+
+test("Home and Table request the shared overlay without changing the active page", async () => {
+  const [app, table] = await Promise.all([
+    source("../src/components/task-app.tsx"),
+    source("../src/components/ui/task-management-table-v2.tsx"),
+  ]);
+  const homeBranch = app.slice(app.indexOf('activePage === "Home"'), app.indexOf('activePage === "Achievements"'));
+  const tableProps = app.slice(app.indexOf("tableViewPanel={"), app.indexOf("listViewPanel={"));
+  const detailsAction = table.slice(table.indexOf("function openTaskDetailsFromContextMenu"), table.indexOf("function clearPendingRowClick"));
+  const rowAction = table.slice(table.indexOf("function openRowPrimaryAction"), table.indexOf("function renderFocusTimerDial"));
+  const childAction = table.slice(table.indexOf("function openTaskInCurrentEditor"), table.indexOf("function openTableStepActions"));
+
+  assert.match(homeBranch, /onOpenTask=\{openTaskEditorFromId\}/);
+  assert.doesNotMatch(homeBranch, /setActivePage|TaskEditFlows/);
+  assert.match(tableProps, /onOpenTaskEditor: openSharedTaskEditor/);
+  assert.match(detailsAction, /if \(onOpenTaskEditor\) \{\s*onOpenTaskEditor\(taskId\);\s*return;/);
+  assert.match(rowAction, /if \(onOpenTaskEditor\) \{\s*onOpenTaskEditor\(taskId\);\s*return;/);
+  assert.match(childAction, /if \(onOpenTaskEditor\) \{\s*onOpenTaskEditor\(taskId\);\s*return;/);
 });
 
 test("normal and explicit field opens keep task identity separate from monotonic focus identity", async () => {
@@ -75,5 +105,6 @@ test("overlay close clears unhandled focus without creating task writes", async 
   const close = app.slice(app.indexOf("const closeSharedTaskEditorOverlay"), app.indexOf("const scratchPaperData"));
   assert.match(close, /setSharedTaskEditorOverlayTaskId\(null\)/);
   assert.match(close, /setTaskEditorFocusRequest\(null\)/);
+  assert.doesNotMatch(close, /setActivePage|setSharedTaskEditorReturnPage/);
   assert.doesNotMatch(close, /updateTask|updatePlan|save|insert|upsert/);
 });

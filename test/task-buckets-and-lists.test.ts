@@ -579,7 +579,7 @@ test("history-status smart lists use today/current-occurrence history instead of
   const recurringDoneMemberships = evaluateTaskListMemberships(recurringDoneTask, lists, context);
 
   assert.equal(staleMissedMemberships.some((membership) => membership.id === "list:exclude-missed-today"), true);
-  assert.equal(recurringDoneMemberships.some((membership) => membership.id === "list:done-today"), true);
+  assert.equal(recurringDoneMemberships.some((membership) => membership.id === "list:done-today"), false);
 });
 
 test("normal status smart lists use visible current status and keep history-status logic separate", () => {
@@ -829,7 +829,7 @@ test("normal status smart lists use visible current status and keep history-stat
   assert.equal(inProgressMemberships.some((membership) => membership.id === "list:due-not-pending"), true);
   assert.equal(rolledForwardDoneTodayMemberships.some((membership) => membership.id === "list:status-done-only"), false);
   assert.equal(rolledForwardDoneTodayMemberships.some((membership) => membership.id === "list:history-done-today-only"), true);
-  assert.equal(rolledForwardMissedTodayMemberships.some((membership) => membership.id === "missed"), false);
+  assert.equal(rolledForwardMissedTodayMemberships.some((membership) => membership.id === "missed"), true);
   assert.equal(rolledForwardMissedTodayMemberships.some((membership) => membership.id === "list:history-missed-today-only"), true);
 });
 

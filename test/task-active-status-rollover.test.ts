@@ -28,13 +28,18 @@ function simulateRegularRecurringRollover({
   status: Task["status"];
   writtenMissedDates: string[];
 }) {
-  const nextDueOn = writtenMissedDates.reduce(
-    (dueOn) => calcNextDueDateFromDate(task({ due_on: dueOn }), dueOn) ?? dueOn,
-    originalDueOn,
-  );
-  return status === "in_progress"
-    ? { dueOn: nextDueOn, historyStatuses: ["did_my_best", ...writtenMissedDates.slice(1).map(() => "missed")], status: "pending" }
-    : { dueOn: originalDueOn, historyStatuses: writtenMissedDates.map(() => "missed"), status: "missed" };
+  if (status === "in_progress") {
+    return {
+      dueOn: calcNextDueDateFromDate(task({ due_on: originalDueOn }), writtenMissedDates[0] ?? originalDueOn),
+      historyStatuses: ["did_my_best"],
+      status: "pending",
+    };
+  }
+  return {
+    dueOn: originalDueOn,
+    historyStatuses: writtenMissedDates.map(() => "missed"),
+    status: "missed",
+  };
 }
 
 function repairCandidateQualifies(candidate: {
@@ -60,6 +65,14 @@ test("entering In Progress captures the logical day and scheduled occurrence", (
   });
 });
 
+test("rollover SQL defers missed processing until the configured logical day starts", () => {
+  const sql = readFileSync("supabase/patch_daily_until_complete_rollover_rpc.sql", "utf8");
+  assert.match(sql, /v_day_start_time := coalesce\(nullif\(v_profile\.day_start_time, ''\), '06:00'\)/);
+  assert.match(sql, /v_effective_date := public\.adhdice_effective_logical_date\(p_now, v_timezone, v_day_start_time\)/);
+  assert.match(sql, /v_rollover_date := v_effective_date - 1/);
+  assert.match(sql, /due_on is not null and due_on <= v_rollover_date/);
+});
+
 test("already-In-Progress edits preserve tracking and leaving clears it", () => {
   const active = task({
     active_occurrence_due_on: "2026-07-12",
@@ -74,7 +87,7 @@ test("already-In-Progress edits preserve tracking and leaving clears it", () => 
   });
 });
 
-test("regular Daily rollover writes missed history while retaining the unresolved active anchor", () => {
+test("regular Daily rollover writes missed history while freezing the overdue boundary", () => {
   assert.deepEqual(simulateRegularRecurringRollover({
     originalDueOn: "2026-07-11",
     status: "pending",
@@ -96,15 +109,15 @@ test("regular Daily rollover writes missed history while retaining the unresolve
   });
 });
 
-test("regular interval recurrences stay Missed whether their calculated next date is today or future", () => {
+test("repeat cadence does not space Missed days after overdue mode begins", () => {
   const originalDueOn = "2026-07-11";
   assert.equal(calcNextDueDateFromDate(task(), originalDueOn), "2026-07-12");
   assert.equal(calcNextDueDateFromDate(task({ repeat_interval: 3 }), originalDueOn), "2026-07-14");
 
-  for (const writtenMissedDates of [[originalDueOn], [originalDueOn, "2026-07-14"]]) {
+  for (const writtenMissedDates of [[originalDueOn], [originalDueOn, "2026-07-12", "2026-07-13"]]) {
     const result = simulateRegularRecurringRollover({ originalDueOn, status: "pending", writtenMissedDates });
-    assert.equal(result.dueOn, originalDueOn);
     assert.equal(result.status, "missed");
+    assert.equal(result.dueOn, originalDueOn);
   }
 });
 
@@ -113,20 +126,21 @@ test("rollover SQL anchors unresolved regular recurrences and preserves In Progr
   assert.match(sql, /due_on is not null and due_on <= v_rollover_date/);
   assert.match(sql, /active_status_logical_date is not null\s+and active_status_logical_date <= v_rollover_date/);
   assert.match(sql, /v_task\.active_status_logical_date,\s+'did_my_best'/);
-  assert.match(sql, /v_task\.active_occurrence_due_on\s+\);/);
+  assert.match(sql, /coalesce\(v_task\.active_occurrence_due_on, v_task\.due_on, v_task\.active_status_logical_date\)/);
+  assert.doesNotMatch(sql, /repeat_frequency = 'none' or v_task\.active_occurrence_due_on is null/);
+  assert.match(sql, /v_task\.active_status_logical_date,\s+v_task\.repeat_monthly_mode,\s+v_task\.repeat_monthly_ordinal,\s+v_task\.repeat_monthly_weekday\s+\);/);
   assert.doesNotMatch(sql, /or \(\s*status = 'in_progress'\s*and active_status_logical_date is null/);
   assert.match(sql, /where id = v_task\.id\s+and user_id = p_user_id/);
 
   const regularBranch = sql.slice(sql.lastIndexOf("if v_task.status not in ('pending'"), sql.lastIndexOf("get diagnostics v_row_count = row_count;"));
-  const inProgressBranch = regularBranch.slice(regularBranch.indexOf("if v_task.status = 'in_progress' then"), regularBranch.indexOf("else", regularBranch.indexOf("if v_task.status = 'in_progress' then")));
-  const missedBranch = regularBranch.slice(regularBranch.indexOf("else", regularBranch.indexOf("if v_task.status = 'in_progress' then")));
   assert.match(regularBranch, /on conflict \(user_id, task_id, entry_date\) do nothing/);
   assert.match(regularBranch, /get diagnostics v_row_count = row_count;\s+v_inserted_history_count := v_inserted_history_count \+ v_row_count/);
   assert.doesNotMatch(regularBranch, /on conflict \(user_id, task_id, entry_date\) do update/);
-  assert.match(inProgressBranch, /v_next_status := public\.adhdice_resolve_recurring_due_status/);
-  assert.match(inProgressBranch, /due_on = v_due_on/);
-  assert.match(missedBranch, /status = 'missed'/);
-  assert.doesNotMatch(missedBranch, /due_on = v_due_on/);
+  assert.match(regularBranch, /v_history_date := v_task\.due_on/);
+  assert.match(regularBranch, /v_history_date := v_history_date \+ 1/);
+  assert.match(regularBranch, /status = 'missed'/);
+  assert.doesNotMatch(regularBranch, /adhdice_task_next_due_date/);
+  assert.doesNotMatch(regularBranch, /(^|\n)\s*due_on\s*=/);
 
   const inProgress = simulateRegularRecurringRollover({
     originalDueOn: "2026-07-11",
@@ -140,13 +154,24 @@ test("rollover SQL anchors unresolved regular recurrences and preserves In Progr
 test("explicit successful handling still advances recurrence through finalization", () => {
   const source = readFileSync("src/hooks/useTaskRewardController.ts", "utf8");
   const finalization = source.slice(source.indexOf("async function finalizeRecurringTasks"), source.indexOf("const updatedTasks", source.indexOf("async function finalizeRecurringTasks")));
-  assert.match(finalization, /task\.active_occurrence_due_on \?\? task\.due_on \?\? currentDayKey/);
+  assert.match(finalization, /const nextDue = reconciliation\.nextDueOn/);
   assert.match(finalization, /\{ completed_at: null, due_on: nextDue, status: nextStatus \}/);
   assert.equal(calcNextDueDateFromDate(task({ status: "done" }), "2026-07-12"), "2026-07-13");
   assert.equal(calcNextDueDateFromDate(task({ status: "did_my_best" }), "2026-07-12"), "2026-07-13");
 });
 
-test("weekly early completion advances from the scheduled occurrence, not the action date", () => {
+test("forced recurring finalization bypasses reward eligibility without duplicating rewards", () => {
+  const source = readFileSync("src/hooks/useTaskRewardController.ts", "utf8");
+  const queue = source.slice(
+    source.indexOf("async function queueTaskRewards"),
+    source.indexOf("async function claimPendingRewardBank"),
+  );
+  assert.ok(queue.indexOf("getRecurringFinalizationCandidates(candidates)") < queue.indexOf("const newlyCompleted"));
+  assert.match(queue, /const newlyCompleted = candidates\.filter[\s\S]*isNewRewardCompletion/);
+  assert.match(queue, /if \(newlyCompleted\.length === 0\) \{\s+await finalizeRecurringTasks\(recurringTasksToFinalize\)/);
+});
+
+test("weekly cadence helper advances from the supplied actual completion date", () => {
   const sundayOnly = task({ due_on: "2026-07-26", repeat_days_of_week: [0], repeat_frequency: "weekly", status: "done" });
   const mondayWednesdayFriday = task({ due_on: "2026-07-20", repeat_days_of_week: [1, 3, 5], repeat_frequency: "weekly", status: "done" });
 
@@ -155,7 +180,7 @@ test("weekly early completion advances from the scheduled occurrence, not the ac
   assert.equal(calcNextDueDateFromDate(mondayWednesdayFriday, "2026-07-22"), "2026-07-24");
 });
 
-test("rollover resolves successful canonical occurrences without action-date or duplicate-Missed logic", () => {
+test("rollover resolves successful canonical occurrences from the actual History entry date", () => {
   const sql = readFileSync("supabase/patch_daily_until_complete_rollover_rpc.sql", "utf8");
   const canonicalResolution = sql.slice(
     sql.indexOf("-- A success may be recorded before its scheduled weekly occurrence."),
@@ -165,8 +190,8 @@ test("rollover resolves successful canonical occurrences without action-date or 
   assert.match(canonicalResolution, /history\.status in \('done', 'did_my_best'\)/);
   assert.match(canonicalResolution, /history\.occurrence_key = 'occurrence:' \|\| v_task\.due_on::text/);
   assert.match(canonicalResolution, /history\.occurrence_due_on = v_task\.due_on/);
-  assert.doesNotMatch(canonicalResolution, /history\.entry_date/);
-  assert.match(canonicalResolution, /v_task\.due_on\s+\);/);
+  assert.match(canonicalResolution, /max\(history\.entry_date\)/);
+  assert.match(canonicalResolution, /v_latest_history_date/);
   assert.match(canonicalResolution, /due_on = v_due_on/);
   assert.doesNotMatch(canonicalResolution, /insert into public\.adhdice_task_history/);
 });
@@ -177,7 +202,7 @@ test("history saves build the merged occurrence snapshot before syncing the live
   const multipleEntrySync = source.slice(source.indexOf("async function syncTaskHistoryEntries"), source.indexOf("return { syncTaskHistoryEntries"));
   assert.match(singleEntrySync, /const nextHistory = \[\s*mappedEntry,[\s\S]*taskHistory\.filter/);
   assert.match(singleEntrySync, /syncLiveTaskStatus\(taskId, nextHistory, \[entryDate\]\)/);
-  assert.match(multipleEntrySync, /const nextTaskHistory = \[\s*\.\.\.mappedEntries,[\s\S]*taskHistory\.filter/);
+  assert.match(multipleEntrySync, /let nextTaskHistory = \[\s*\.\.\.explicitEntries,[\s\S]*taskHistory\.filter/);
   assert.match(multipleEntrySync, /syncLiveTaskStatus\(taskId, nextTaskHistory/);
 });
 

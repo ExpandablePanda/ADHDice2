@@ -1,17 +1,68 @@
 # Current State
 
-Last reviewed: 2026-07-28
+Last reviewed: 2026-07-30
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.5.39`.
+- Current working app version: `7.5.47`.
 - Current release group: `7.5.x` PATHS Task Nodes.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.5.47 Unified Status Authority and Continuous Overdue
+
+- One pure task status/history authority now derives active status, current Calendar occurrence, handled-current-day, continuous-overdue, recurrence anchor, next due after success, and open/finished/overdue facts.
+- Unresolved overdue tasks retain their original `due_on` and active Missed status while each completed logical day receives idempotent Missed History; the unwritten current logical day remains Calendar Pending.
+- Done and Did My Best rebase recurrence from the actual successful logical date, Complete terminates recurrence and counts as handled, and smart-list today facts use only the actual current-day History row.
+- Same-logical-day In Progress remains active; stale prior-logical-day In Progress resolves through the expected Did My Best rollover result and rebases recurrence from that completed logical date instead of becoming Missed.
+- Table, List, Home, editor, task buckets, status filters, and the rollover SQL consume the unified authority. The SQL keeps advisory locking and conflict-safe History inserts; it was not applied remotely.
+
+## 7.5.46 Canonical Recurrence and Calendar History Reconciliation
+
+- Direct completion, Calendar History edits, and recurring due-date backdating now share one chronological recurrence replay that preserves explicit History, fills only missing prior scheduled occurrences, and rebases from actual Done or Did My Best dates.
+- Reconciliation respects the configured logical day, every supported cadence, Complete boundaries, unique History protection, and reward idempotency. One-off overdue tasks create only their single due occurrence.
+- The rollover SQL patch now uses repeat intervals for Daily Until Complete, supports ordinal-monthly fields, preserves conflicting History rows, and advances from actual successful entry dates.
+
+## 7.5.45 Daily Review Corrections
+
+- Unfavoriting a custom food now updates only its favorite state, preserving its stored category and serving metadata.
+- Home’s floating task status rail now dismisses on outside pointer interaction or Escape while keeping its own interactions open until a selection is made.
+
+## 7.5.44 Global Edit Task Overlay Host
+
+- The approved full-page Edit Task UI now mounts once at the app root, independently of the active page.
+- Task clicks open that shared overlay over Home, Table, PATHS, On Time, Achievements, Grid, Matrix, Cards, and other existing edit entry points without changing the active page underneath.
+- Table and task-page renderers no longer own the shared overlay, preventing duplicate editors and page migration.
+
+## 7.5.43 Home Editor Route and Table Full-Overlay Repair
+
+- Home To-do titles now use the existing state-driven Edit Task modal directly, so Home remains mounted throughout editing.
+- Table row/detail and Edit Task actions now request the shared full-page editor before the Table can open its local in-shell inspector.
+
+## 7.5.42 Home Editor, Table Overlay, and Collapsed HUD Corrections
+
+- Home To-do numbering now uses black outlined circles with white fills and black text.
+- Connected Home task titles keep Home as their return page while opening the shared Edit Task UI as a full-page overlay.
+- Table View now uses the same full-page Edit Task overlay behavior as List View instead of containing the editor inside the table shell.
+- Collapsed HUD actions now render as clickable text controls instead of chips.
+
+## 7.5.41 Home To-Do Search and Connected Editor Corrections
+
+- Home To-do search now returns the full matching active set, groups parent Tasks with their matching Steps and Substeps, keeps the picker open for multi-add until Escape or click-out, and omits the redundant `Top-level Task` subtitle.
+- Routine and Pinned remain searchable through the canonical list-membership and pin projections.
+- Connected task titles now route into the approved shared task editor and return to Home when the overlay closes.
+- The redundant one-position Up/Down controls are replaced by direct Top/Bottom moves; drag reordering remains available.
+
+## 7.5.40 Logical-Day Rollover and Home/Health Task Polish
+
+- Home To-do task titles wrap, surface a shared status-circle rail, open the shared task editor on title click, search Pinned/Routine membership, and place tasks after the first ten in a collapsed Do later section.
+- Task History now fills the selected status action in its own semantic status color instead of adding a purple outline.
+- Health Food groups custom-food choices by category, shows meal/day calorie totals near their headings, sorts Favorites by logging frequency, and adds goal-progress bars to Daily Totals.
+- The app invokes the configured logical-day rollover boundary; apply `supabase/patch_daily_until_complete_rollover_rpc.sql` to the remote database to ensure overdue work is not marked missed before the configured day start (default 06:00).
 
 ## 7.5.39 Home To-Do Reconstruction and Health Food/Weight Improvements
 

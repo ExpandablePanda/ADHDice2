@@ -24,7 +24,7 @@ type UseTaskUpdateActionOptions = {
   currentDayKey: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
-  reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
+  reconcileOverdueTaskMisses: (task: Task, options?: { syncLiveTask?: boolean }) => Promise<boolean>;
   routeTask: (taskId: string, bucket: TaskRoutingBucket | null) => void;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -100,8 +100,24 @@ export function useTaskUpdateAction({
       if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {
         routeTask(taskId, null);
       }
-      if (shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
-        const historyReconciled = await reconcileOverdueTaskMisses(nextData);
+      const isSuccessfulMutation = values.status === "done" || values.status === "did_my_best";
+      const successfulOverdueTask = isSuccessfulMutation
+        && previousTask?.due_on
+        && previousTask.due_on < currentDayKey
+        ? previousTask
+        : null;
+      const dueDateWasBackdated = Boolean(
+        previousTask
+        && Object.prototype.hasOwnProperty.call(values, "due_on")
+        && values.due_on
+        && values.due_on < currentDayKey,
+      );
+      const reconciliationTask = successfulOverdueTask
+        ?? (shouldReconcileOverdueTaskMisses(nextData, currentDayKey) ? nextData : null);
+      if (reconciliationTask) {
+        const historyReconciled = await reconcileOverdueTaskMisses(reconciliationTask, {
+          syncLiveTask: dueDateWasBackdated && !isSuccessfulMutation,
+        });
         if (!historyReconciled) {
           return false;
         }

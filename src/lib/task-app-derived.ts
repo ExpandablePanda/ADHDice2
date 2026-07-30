@@ -572,6 +572,8 @@ export function buildCanonicalTaskEntityProjection({
     const searchMatch = !searchIsActive
       || matchesNormalizedSearchValue(task.title, normalizedSearchQuery)
       || matchesNormalizedSearchValues(task.tags, normalizedSearchQuery)
+      || (task.pinned_at && matchesNormalizedSearchValue("pinned", normalizedSearchQuery))
+      || (listMemberships.some((membership) => membership.id === "routine") && matchesNormalizedSearchValue("routine", normalizedSearchQuery))
       || matchesNormalizedSearchValues(milestoneSearchTokensByTaskId?.get(task.id), normalizedSearchQuery)
       || (taskSubtasksByTaskId[task.id] ?? []).some((subtask) => (
         matchesNormalizedSearchValue(subtask.title, normalizedSearchQuery)
@@ -800,8 +802,16 @@ export function computeTaskAppDerivedData({
   taskListEvaluationContext,
   taskSubtasksByTaskId,
   taskUiState,
-  tasks,
+  tasks: sourceTasks,
 }: ComputeTaskAppDerivedDataInput) {
+  const tasks = sourceTasks.map((task) => {
+    const activeStatus = getTaskDisplayStatusWithHistory(
+      task,
+      taskHistoryByTaskId[task.id] ?? [],
+      todayDateKey,
+    );
+    return activeStatus === task.status ? task : { ...task, status: activeStatus };
+  });
   const totalStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const availableRuleCount = availableTaskLists.reduce((count, list) => count + (list.rules?.rules.length ?? 0), 0);
 

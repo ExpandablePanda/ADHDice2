@@ -146,6 +146,25 @@ test("daily until complete missed-date helper backfills overdue days without dup
     ),
     ["2026-05-21"],
   );
+  assert.deepEqual(
+    buildDailyUntilCompleteMissedDateKeys(
+      { ...task, repeat_interval: 3 },
+      "2026-05-30",
+      null,
+    ),
+    [
+      "2026-05-20",
+      "2026-05-21",
+      "2026-05-22",
+      "2026-05-23",
+      "2026-05-24",
+      "2026-05-25",
+      "2026-05-26",
+      "2026-05-27",
+      "2026-05-28",
+      "2026-05-29",
+    ],
+  );
   assert.equal(shouldReconcileOverdueTaskMisses(task, "2026-05-23"), true);
   assert.equal(shouldReconcileOverdueTaskMisses({ ...task, due_on: "2026-05-23" }, "2026-05-23"), false);
   assert.equal(shouldReconcileOverdueTaskMisses({ ...task, repeat_frequency: "daily" }, "2026-05-23"), true);

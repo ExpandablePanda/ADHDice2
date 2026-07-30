@@ -65,7 +65,7 @@ import {
   Zap,
 } from "lucide-react";
 import dynamicIconImports from "lucide-react/dynamicIconImports";
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import {
   BottomDockAdapter as BottomDock,
   FilterRowsAdapter as FilterRows,
@@ -112,12 +112,12 @@ import { ErrorBoundary } from "./error-boundary";
 import {
   ScrollUpButton,
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
-  TASK_TABLE_CHIP_BASE_CLASS,
   TASK_TABLE_INPUT_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
+import { buildTaskTableRow } from "@/lib/task-table-row";
 import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
@@ -539,7 +539,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.5.39";
+const APP_VERSION = "7.5.47";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1154,6 +1154,7 @@ export function TaskApp() {
     recipes: healthRecipes,
     saveCheckIn,
     saveFavoriteFood,
+    setFavoriteFoodStatus,
     saveRecipe: saveHealthRecipe,
     savedMeals: healthSavedMeals,
     saveSavedMeal: saveHealthSavedMeal,
@@ -2400,6 +2401,13 @@ export function TaskApp() {
     ),
     [taskHistoryByTaskId, tasks, todayKey],
   );
+  const taskSurfaceTasks = useMemo(
+    () => tasks.map((task) => {
+      const activeStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
+      return activeStatus === task.status ? task : { ...task, status: activeStatus };
+    }),
+    [taskDisplayStatusByTaskId, tasks],
+  );
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
@@ -3255,7 +3263,6 @@ export function TaskApp() {
   const {
     closeTaskEditor,
     deleteSelectedListTasks,
-    openEditTaskEditor,
     openNewTaskEditor,
     openTaskImportPanel,
     setTaskDuePreset,
@@ -3397,9 +3404,9 @@ export function TaskApp() {
 
   const openExistingTaskEditor = useCallback((task: Task) => {
     setSuppressDetachedListNoticeTaskId(null);
-    setTaskEditorInitialDraft(null);
-    openEditTaskEditor(task);
-  }, [openEditTaskEditor]);
+    setSharedTaskEditorOverlayTaskId(task.id);
+    setTaskEditorFocusRequest(null);
+  }, []);
 
   const duplicateTaskInPlace = useCallback(async (task: Task) => {
     const duplicateValues: TaskDraft = {
@@ -4141,9 +4148,6 @@ export function TaskApp() {
       return false;
     }
 
-    if (!options?.preserveActivePage) {
-      setActivePage("Tasks");
-    }
     setSuppressDetachedListNoticeTaskId(null);
     setSharedTaskEditorOverlayTaskId(taskId);
     setTaskEditorFocusRequest(options?.initialField
@@ -4246,9 +4250,22 @@ export function TaskApp() {
       tasks={selectedBucketTasks}
     />
   );
-  const sharedOverlayTaskId = sharedTaskEditorOverlayTaskId ?? requestedListOverlayTaskId;
-  const requestedOpenListTask = sharedOverlayTaskId
-    ? tasks.find((task) => task.id === sharedOverlayTaskId) ?? null
+  const requestedOpenListTask = requestedListOverlayTaskId
+    ? tasks.find((task) => task.id === requestedListOverlayTaskId) ?? null
+    : null;
+  const sharedTaskEditorRows = sharedTaskEditorOverlayTaskId
+    ? tasks.map((task) => buildTaskTableRow(task, {
+      focusedTaskIdSet,
+      linkedNotes: taskLinkedNotesByTaskId[task.id] ?? [],
+      listDefinitions: availableTaskLists,
+      listMemberships: taskListMembershipsByTaskId[task.id] ?? [],
+      subtasks: taskSubtasksByTaskId[task.id] ?? [],
+      taskHistory: taskHistoryByTaskId[task.id] ?? [],
+      todayDateKey: todayKey,
+    }))
+    : [];
+  const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
+    ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
     : null;
   const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
   const toggleDuplicateTitleMode = () => {
@@ -4933,31 +4950,32 @@ export function TaskApp() {
   }
 
   async function updateTaskStatus(task: Task, status: TaskStatus, bypassTimedCompletion = false, onTimeOrigin?: OnTimeLinkedItemOrigin) {
-    const milestone = milestoneData.milestoneByTaskId.get(task.id);
-    if (shouldReverseCompletedMilestoneForStatusChange(task, milestone, status)) {
+    const canonicalTask = tasks.find((entry) => entry.id === task.id) ?? task;
+    const milestone = milestoneData.milestoneByTaskId.get(canonicalTask.id);
+    if (shouldReverseCompletedMilestoneForStatusChange(canonicalTask, milestone, status)) {
       setPendingMilestoneLifecycle({ action: "reverse", milestoneId: milestone!.id });
       return false;
     }
     if (status === "complete") {
-      requestTaskComplete(task, { onTimeOrigin, source: "status" });
+      requestTaskComplete(canonicalTask, { onTimeOrigin, source: "status" });
       return false;
     }
 
     if (status === "done" || status === "did_my_best") {
       if (!bypassTimedCompletion) {
-        const staged = await stageTimedTaskCompletion(task, { kind: "status", status }, onTimeOrigin);
+        const staged = await stageTimedTaskCompletion(canonicalTask, { kind: "status", status }, onTimeOrigin);
         if (staged !== "none") {
           return false;
         }
       }
     }
 
-    const values = buildTaskStatusUpdate(task, status);
+    const values = buildTaskStatusUpdate(canonicalTask, status);
     const updated = await updateTask(
-      task.id,
+      canonicalTask.id,
       values,
       bypassTimedCompletion || status === "archived" || status === "trashed"
-        ? { expectedTask: task }
+        ? { expectedTask: canonicalTask }
         : undefined,
     );
     if (updated && status !== "missed" && (status === "done" || status === "did_my_best")) {
@@ -5611,6 +5629,27 @@ export function TaskApp() {
     ? milestoneData.milestones.find((milestone) => milestone.id === pendingMilestoneLifecycle.milestoneId) ?? null
     : null;
   const pendingDetachMilestoneTask = pendingDetachMilestoneTaskId ? tasks.find((task) => task.id === pendingDetachMilestoneTaskId) ?? null : null;
+  const handleSharedTaskRepeatChange: NonNullable<ComponentProps<typeof TaskManagementTableV2>["onTaskRepeatChange"]> = (taskId, repeat, cadence) => {
+    void updateTask(taskId, {
+      repeat_frequency: repeat,
+      repeat_day_of_month: repeat === "monthly" && cadence?.repeatMonthlyMode !== "ordinal_weekday"
+        ? cadence?.repeatDayOfMonth ?? null
+        : null,
+      repeat_days_of_week: repeat === "weekly" || repeat === "custom"
+        ? cadence?.repeatDaysOfWeek ?? []
+        : [],
+      repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence?.repeatInterval ?? 1),
+      repeat_monthly_mode: repeat === "monthly"
+        ? cadence?.repeatMonthlyMode ?? "day_of_month"
+        : "day_of_month",
+      repeat_monthly_ordinal: repeat === "monthly" && cadence?.repeatMonthlyMode === "ordinal_weekday"
+        ? cadence.repeatMonthlyOrdinal ?? "first"
+        : null,
+      repeat_monthly_weekday: repeat === "monthly" && cadence?.repeatMonthlyMode === "ordinal_weekday"
+        ? cadence.repeatMonthlyWeekday ?? 1
+        : null,
+    });
+  };
 
   return (
     <main
@@ -5618,6 +5657,99 @@ export function TaskApp() {
       data-lowstim={lowStim ? "" : undefined}
       className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
     >
+      {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
+        <TaskManagementTableV2
+          allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
+          allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
+          allRows={sharedTaskEditorRows}
+          allTagOptions={allTaskTags}
+          childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
+          childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
+          className="m-0 max-w-none p-0"
+          enableInspector
+          getFollowTaskDestination={getFollowTaskDestination}
+          milestoneDetachPromotionTaskIds={milestoneDetachPromotionTaskIds}
+          milestonePromotionTaskIds={milestonePromotionTaskIds}
+          onCreateChildTask={createChildTaskFromPreview}
+          onCreateTaskList={async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null })}
+          onDeleteTaskActualTimeEntry={(entryId) => { void deleteTaskActualTimeEntry(entryId); }}
+          onDetachAndPromoteTaskToMilestone={requestDetachAndPromoteMilestone}
+          onDiscardTaskTimer={requestTaskTimerDiscard}
+          onDuplicateTask={(taskId) => {
+            const task = tasks.find((entry) => entry.id === taskId);
+            if (task) {
+              void duplicateTaskInPlace(task);
+            }
+          }}
+          onFollowDetachedTask={followDetachedTask}
+          onInspectorClose={closeSharedTaskEditorOverlay}
+          onMoveTaskIntoParent={moveTaskIntoParent}
+          onNextTaskTimer={() => cycleHudTaskTimer("next")}
+          onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
+          onOpenNote={(noteId) => {
+            closeSharedTaskEditorOverlay();
+            setNotePageOpenNoteId(noteId);
+            setActivePage("Notes");
+          }}
+          onOpenTaskActualTime={(taskId, options) => {
+            setTaskActualTimeEntryPrefill(options?.durationSeconds && options.durationSeconds > 0
+              ? {
+                  durationSeconds: options.durationSeconds,
+                  title: options.title ?? tasks.find((entry) => entry.id === taskId)?.title ?? "",
+                }
+              : null);
+            setTaskActualTimeEntryTaskId(taskId);
+          }}
+          onOpenTaskHistory={openTaskHistoryForTask}
+          onPauseTaskTimer={pauseHudTaskTimer}
+          onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
+          onPromoteTaskToMilestone={openMilestoneSetup}
+          onReorderChildTask={(taskId, direction) => { void reorderChildTask(taskId, direction); }}
+          onRequestedEditorFocusHandled={(token) => {
+            setTaskEditorFocusRequest((current) => current?.token === token ? null : current);
+          }}
+          onRestoreTask={(taskId) => { void restoreTaskFromTrash(taskId); }}
+          onResumeTaskTimer={resumeHudTaskTimer}
+          onStartTaskTimer={startHudTaskTimer}
+          onStopTaskTimer={stopHudTaskTimer}
+          onTaskActualSecondsChange={(taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); }}
+          onTaskDueChange={(taskId, schedule) => { void updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }); }}
+          onTaskEnergyChange={(taskId, energy) => { void updateTask(taskId, { energy }); }}
+          onTaskEstimatedMinutesChange={(taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); }}
+          onTaskLinkChange={(taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); }}
+          onTaskLinkedNoteIdsChange={(taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); }}
+          onTaskNotesChange={(taskId, notes) => { void updateTask(taskId, { notes: notes || null }); }}
+          onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
+          onTaskPriorityChange={applyTaskPriorityChange}
+          onTaskRepeatChange={handleSharedTaskRepeatChange}
+          onTaskStatusChange={(taskId, status) => {
+            const task = tasks.find((entry) => entry.id === taskId);
+            if (task) {
+              void updateTaskStatus(task, status);
+            }
+          }}
+          onTaskSubtaskAdd={addTaskSubtask}
+          onTaskSubtaskAddChild={addChildTaskSubtask}
+          onTaskSubtaskDelete={(subtaskId) => { void deleteTaskSubtask(subtaskId); }}
+          onTaskSubtaskRename={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
+          onTaskSubtasksAutoResetChange={(taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); }}
+          onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatus(subtaskId, status); }}
+          onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
+          onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
+          onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
+          onUnlinkTask={unlinkSameTableTask}
+          overlayOnly
+          renderFullInspectorExtension={renderMilestoneInspectorExtension}
+          requestedEditorFocus={taskEditorFocusRequest}
+          requestedOpenTask={requestedSharedTaskRow}
+          requestedOpenTaskId={sharedTaskEditorOverlayTaskId}
+          rows={sharedTaskEditorRows}
+          runningTaskTimers={runningTaskTimers}
+          selectedTaskIds={[]}
+          showHeader={false}
+          taskActualTimeEntriesByTaskId={taskActualTimeEntriesByTaskId}
+        />
+      ) : null}
       {isAccountOpen ? (
         <AccountModal
           onClose={() => setIsAccountOpen(false)}
@@ -5804,7 +5936,10 @@ export function TaskApp() {
           </div>
         ) : activePage === "Home" ? (
           <TaskHomePage
-            tasks={tasks}
+            listMembershipsByTaskId={taskListMembershipsByTaskId}
+            onOpenTask={openTaskEditorFromId}
+            onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
+            tasks={taskSurfaceTasks}
             userId={currentUserId}
           />
         ) : activePage === "Achievements" ? (
@@ -5826,7 +5961,6 @@ export function TaskApp() {
               setTaskUiState((current) => getHomeMilestoneNavigationState("active", current));
             }}
             onOpenMilestoneTask={(taskId) => {
-              setActivePage("Tasks");
               openTaskInSharedTasksEditorFromPaths(taskId);
             }}
             tasks={tasks}
@@ -5970,7 +6104,7 @@ export function TaskApp() {
                 updatePlanFromCurrent={onTimePlan.updatePlanFromCurrent}
               />
             )}
-            showSharedTaskEditorOverlay={Boolean(sharedTaskEditorOverlayTaskId)}
+            showSharedTaskEditorOverlay={false}
             onReorderTab={reorderTaskWorkspaceTab}
             onRenameTab={handleRenameTaskWorkspaceTab}
             onSurfaceChange={handleTaskWorkspaceSurfaceChange}
@@ -6097,7 +6231,7 @@ export function TaskApp() {
                   taskActualTimeEntriesByTaskId,
                   learnedTaskDurationStatisticsByTaskId,
                   onSetLink: (taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); },
-                  onOpenTaskEditor: openTaskEditorFromId,
+                  onOpenTaskEditor: openSharedTaskEditor,
                   onOpenTaskInNewTab: openTaskInNewWorkspaceTab,
                   onOpenChildTask: openChildTaskFromPreview,
                   onMoveTaskIntoParent: moveTaskIntoParent,
@@ -6178,12 +6312,12 @@ export function TaskApp() {
                   milestoneDetachPromotionTaskIds,
                   renderFullInspectorExtension: renderMilestoneInspectorExtension,
                   requestedOpenTask: requestedOpenListTask,
-                  requestedOpenTaskId: sharedOverlayTaskId,
-                  overlayOnly: Boolean(sharedTaskEditorOverlayTaskId) && (taskUiState.tasksSurface !== "tasks" || taskUiState.view !== "table"),
+                  requestedOpenTaskId: requestedListOverlayTaskId,
+                  overlayOnly: false,
                   suppressDetachedNoticeTaskId: suppressDetachedListNoticeTaskId,
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
-                  tasks: sharedTaskEditorOverlayTaskId ? tasks : selectedBucketTasks,
+                  tasks: selectedBucketTasks,
                   rowContext: {
                     focusedTaskIdSet,
                     linkedNotesByTaskId: taskLinkedNotesByTaskId,
@@ -6451,6 +6585,7 @@ export function TaskApp() {
             recipes={healthRecipes}
             saveCheckIn={saveCheckIn}
             saveFavoriteFood={saveFavoriteFood}
+            setFavoriteFoodStatus={setFavoriteFoodStatus}
             saveRecipe={saveHealthRecipe}
             savedMeals={healthSavedMeals}
             saveSavedMeal={saveHealthSavedMeal}
@@ -7358,6 +7493,8 @@ function CommandCenterHeader({
   const activeHudPageTitle = hudUiState.hudPages.find((page) => page.id === currentHudPageId)?.title ?? "HUD";
   const hudDateTime = formatHudDateTime(hudNow);
   const [isNotificationInboxOpen, setIsNotificationInboxOpen] = useState(false);
+  const collapsedHudTextActionClass = "inline-flex shrink-0 items-center gap-1.5 px-1 py-1 text-[13px] font-semibold underline-offset-4 transition hover:underline focus-visible:outline-none focus-visible:underline disabled:cursor-not-allowed disabled:opacity-45";
+  const collapsedHudTextClass = "shrink-0 px-1 py-1 text-[13px] font-semibold";
 
   function setHudCollapsed(isCollapsed: boolean) {
     setHudUiState((current) => ({
@@ -7593,80 +7730,80 @@ function CommandCenterHeader({
               </span>
             </button>
             {collapsedHudFocusTimer ? (
-              <TaskTableChipButton
+              <button
                 aria-label={`${collapsedHudFocusTimer.isPaused ? "Resume" : "Pause"} timer for ${collapsedHudFocusTimer.title}`}
-                className="shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
+                className={`${collapsedHudTextActionClass} text-[#5f4ac9] dark:text-[#d6cdff]`}
                 onClick={() => onToggleFocusTimer(collapsedHudFocusTimer.categoryId)}
-                toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+                type="button"
               >
                 {collapsedHudFocusTimer.isPaused ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
                 <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
                   {formatCollapsedHudTimerLabel(collapsedHudFocusTimer.seconds)}
                 </span>
                 <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudFocusTimer.title}</span>
-              </TaskTableChipButton>
+              </button>
             ) : collapsedHudTaskTimer ? (
-              <TaskTableChipButton
+              <button
                 aria-label={`${collapsedHudTaskTimer.pausedAt ? "Resume" : "Pause"} timer for ${collapsedHudTaskTimer.title}`}
-                className="shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
+                className={`${collapsedHudTextActionClass} text-[#5f4ac9] dark:text-[#d6cdff]`}
                 onClick={() => collapsedHudTaskTimer.pausedAt ? onResumeTaskTimer(collapsedHudTaskTimer.taskId) : onPauseTaskTimer(collapsedHudTaskTimer.taskId)}
-                toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+                type="button"
               >
                 {collapsedHudTaskTimer.pausedAt ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
                 <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
                   {formatCollapsedHudTimerLabel(getTaskTimerDisplaySeconds(collapsedHudTaskTimer, taskTimerNow))}
                 </span>
                 <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudTaskTimer.title}</span>
-              </TaskTableChipButton>
+              </button>
             ) : null}
             {currentHudPageId !== "overview" ? (
               <span className="hidden shrink-0 sm:inline">
-                <span className={`${TASK_TABLE_CHIP_BASE_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
+                <span className={`${collapsedHudTextClass} text-[#7f6af7] dark:text-[#c5b8ff]`}>
                   {activeHudPageTitle}
                 </span>
               </span>
             ) : null}
-            <span className={`${TASK_TABLE_CHIP_BASE_CLASS} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
+            <span className={`${collapsedHudTextClass} text-[#6f57f6] dark:text-[#cabfff]`}>
               Points {economy.points}
             </span>
             {pendingRewardDiceCount > 0 ? (
-              <TaskTableChipButton
+              <button
                 aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}
-                className="shrink-0 gap-1.5 text-[#119a69] dark:text-[#8ff0cc]"
+                className={`${collapsedHudTextActionClass} text-[#119a69] dark:text-[#8ff0cc]`}
                 onClick={onOpenPendingRewardBank}
-                toneClassName="border-[#cfeedd] bg-[#ecfbf3] dark:border-[#1e5a42] dark:bg-[#103726]"
+                type="button"
               >
                 <Dice5 className="h-3.5 w-3.5" />
                 {formatPendingDiceChipLabel(pendingRewardDiceCount)}
-              </TaskTableChipButton>
+              </button>
             ) : null}
-            <TaskTableChipButton
+            <button
               aria-label="Refresh workspace"
-              className="shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72"
+              className={`${collapsedHudTextActionClass} text-[#5f56a6] dark:text-white/72`}
               disabled={isWorkspaceRefreshing}
               onClick={onRefreshWorkspace}
-              toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
+              type="button"
             >
               <Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />
               {refreshStatus === "updating" ? "Updating" : isWorkspaceRefreshing ? "Syncing" : "Refresh"}
-            </TaskTableChipButton>
-            <TaskTableChipButton
+            </button>
+            <button
               aria-label="Open Scratch Paper notes"
-              className="shrink-0 text-[#6f57f6] dark:text-[#cabfff]"
+              className={`${collapsedHudTextActionClass} text-[#6f57f6] dark:text-[#cabfff]`}
               onClick={onViewScratchPaper}
-              toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+              type="button"
             >
               Scratch Paper
-            </TaskTableChipButton>
-            <TaskTableChipButton
+            </button>
+            <button
               aria-label="Expand HUD"
-              className="shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]"
+              className={`${collapsedHudTextActionClass} text-[#6f57f6] dark:text-[#cabfff]`}
               onClick={() => setHudCollapsed(false)}
-              toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+              type="button"
             >
               <ChevronUp className="h-3.5 w-3.5" />
               Open
-            </TaskTableChipButton>
+            </button>
             <div className="shrink-0">{accountButton}</div>
           </div>
         </div>

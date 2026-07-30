@@ -6,12 +6,12 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import type { TaskHistory, TaskHistoryInsert, TaskUpdate } from "../src/lib/database.types.ts";
 
 test("task history batch action upserts selected dates together and merges local history", async () => {
-  let capturedPayloads: TaskHistoryInsert[] = [];
+  const capturedPayloads: TaskHistoryInsert[] = [];
   let localHistory: TaskHistory[] = [];
   const client = {
     from: () => ({
       upsert: (payloads: TaskHistoryInsert[]) => {
-        capturedPayloads = payloads;
+        capturedPayloads.push(...payloads);
         return {
           select: async () => ({
             data: payloads.map((payload, index) => ({
@@ -82,12 +82,12 @@ test("History Calendar missed save backfills prior scheduled dates, merges retur
     status: "pending",
     title: "Daily calendar missed backfill",
   });
-  let capturedPayloads: TaskHistoryInsert[] = [];
+  const capturedPayloads: TaskHistoryInsert[] = [];
   let localHistory: TaskHistory[] = [];
   const client = {
     from: () => ({
       upsert: (payloads: TaskHistoryInsert[]) => {
-        capturedPayloads = payloads;
+        capturedPayloads.push(...payloads);
         return {
           select: async () => ({
             data: payloads.map((payload, index) => ({
@@ -239,7 +239,7 @@ test("task history batch action rolls current recurring occurrence to the next l
 });
 
 for (const status of ["done", "did_my_best"] as const) {
-  test(`History Calendar backdated ${status} reuses the resolved occurrence and preserves the live cursor`, async () => {
+  test(`History Calendar backdated ${status} replays the later timeline from the selected date`, async () => {
     const task = createTask({
       created_at: "2026-07-01T09:00:00.000Z",
       due_on: "2026-08-02",
@@ -271,7 +271,7 @@ for (const status of ["done", "did_my_best"] as const) {
 
     assert.equal(await actions.syncTaskHistoryEntries(task.id, status, ["2026-07-23"], { syncLiveTask: true }), true);
     assert.deepEqual(capturedPayload && { occurrence_due_on: capturedPayload.occurrence_due_on, occurrence_key: capturedPayload.occurrence_key }, { occurrence_due_on: "2026-07-26", occurrence_key: "occurrence:2026-07-26" });
-    assert.equal(liveUpdates, 0);
+    assert.equal(liveUpdates, 1);
   });
 }
 
@@ -359,7 +359,8 @@ test("task history batch action rebases a prior-day calendar completion without 
   const saved = await actions.syncTaskHistoryEntries(task.id, "done", ["2026-07-12"], { syncLiveTask: true });
 
   assert.equal(saved, true);
-  assert.equal(upsertCount, 1);
+  assert.equal(upsertCount, 2);
+  assert.equal(localHistory.some((entry) => entry.entry_date === "2026-07-11" && entry.status === "missed"), true);
   assert.equal(localHistory.filter((entry) => entry.entry_date === "2026-07-12").length, 1);
   assert.deepEqual(capturedTaskUpdate, {
     completed_at: null,
@@ -368,7 +369,7 @@ test("task history batch action rebases a prior-day calendar completion without 
   });
 });
 
-test("older recurring history edits do not roll the active task forward", async () => {
+test("older recurring history edits replay chronologically without a redundant live update", async () => {
   const task = createTask({
     created_at: "2026-06-01T09:00:00.000Z",
     due_on: "2026-06-24",
@@ -402,9 +403,7 @@ test("older recurring history edits do not roll the active task forward", async 
     }),
   };
   const actions = useTaskHistoryActions({
-    calcNextDueDateFromDate: () => {
-      throw new Error("old history edits must not calculate recurrence rollover");
-    },
+    calcNextDueDateFromDate: () => "2026-06-24",
     client: client as never,
     currentDayKey: "2026-06-24",
     currentUserId: "user-1",
