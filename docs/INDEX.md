@@ -22,6 +22,7 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - `docs/taskapp-behavior-contract.md` - Current TaskApp behavior contract.
 - `docs/taskapp-orchestrator-contract.md` - Current TaskApp orchestration and extraction boundary contract.
 - `docs/taskapp-quality-check-protocol.md` - Current TaskApp verification protocol.
+- `docs/TASK_STATE_ENGINE.md` - Pure Task State Engine terminology, contracts, recurrence rules, and safety invariants.
 - `docs/ui-design-system.md` - Current UI styling reference for chips, pills, and buttons.
 
 ## Active working docs

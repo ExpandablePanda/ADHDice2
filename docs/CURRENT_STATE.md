@@ -5,13 +5,16 @@ Last reviewed: 2026-07-28
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.5.39`.
+- Current working app version: `7.6.0`.
 - Current release group: `7.5.x` PATHS Task Nodes.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.6.0 Pure Task State Engine Foundation
+- Adds an isolated, deterministic, database-free Task State Engine and focused contract tests. The engine models lifecycle, active status, logical-day Calendar state, History provenance and proposals, recurrence anchors and occurrence identity, continuous overdue, restricted task patches, streak disposition, and reward eligibility. It is not connected to production task mutation, Calendar, Supabase, rollover SQL, rewards, smart-list, Focus, Home, or Health paths.
 
 ## 7.5.39 Home To-Do Reconstruction and Health Food/Weight Improvements
 
