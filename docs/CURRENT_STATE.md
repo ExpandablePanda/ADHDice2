@@ -1,17 +1,24 @@
 # Current State
 
-Last reviewed: 2026-07-28
+Last reviewed: 2026-07-30
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.6.0`.
-- Current release group: `7.5.x` PATHS Task Nodes.
+- Current working app version: `7.6.1`.
+- Current release group: `7.6.x` Task State Engine.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.6.1 Read-only Task State Engine Shadow Mode
+
+- Adds a pure legacy Task/History adapter and comparison report over already-hydrated in-memory arrays. Development builds expose only the manual `window.__ADHDICE_RUN_TASK_STATE_SHADOW__()` console command; it does not execute automatically.
+- Compares production read derivations with engine active/Calendar state, handled and outcome facts, continuous overdue, recurrence/occurrence facts, bounded History proposals, patch keys, streak disposition, and reward eligibility. Differences are classified rather than assumed to be defects.
+- Enforces the 7.6.0 task-patch allowlist, reports unsafe fields, and forbids any patch for explicitly inspected Archived or Trashed tasks. No Supabase query/write, subscription, mutation hook, History/reward persistence, rollover RPC, SQL, or production UI/behavior is connected.
+- Focused adapter, shadow, safety, runtime-bridge, scenario, and large-range tests cover the June 1–July 30 and one-year in-memory windows. Full lint, typecheck, build, browser automation, broad suites, and live database tests are intentionally outside this slice.
 
 ## 7.6.0 Pure Task State Engine Foundation
 - Adds an isolated, deterministic, database-free Task State Engine and focused contract tests. The engine models lifecycle, active status, logical-day Calendar state, History provenance and proposals, recurrence anchors and occurrence identity, continuous overdue, restricted task patches, streak disposition, and reward eligibility. It is not connected to production task mutation, Calendar, Supabase, rollover SQL, rewards, smart-list, Focus, Home, or Health paths.

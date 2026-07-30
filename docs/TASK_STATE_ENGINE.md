@@ -1,6 +1,6 @@
 # Task State Engine
 
-Version 7.6.0 introduces a pure, database-free contract. It is not connected to production callers.
+Version 7.6.1 keeps the 7.6.0 engine contract pure and adds a read-only legacy adapter and development shadow comparator. It is not connected to production mutations.
 
 ## Terminology and contract
 
@@ -53,6 +53,42 @@ Done, Did My Best, and Complete increment/start a positive streak. Delay preserv
 
 The proposed task patch is an allow-list limited to status, due/active occurrence fields, recurrence cursor/identity, and completion time. It cannot represent archive, trash, restore, deletion, content, list, folder, or metadata mutations. The engine performs no database, React, rewards, or Realtime work. Forward recomputation preserves History before its boundary; explicit History remains authoritative and stale derived plans are replaced only in returned proposals.
 
+## Legacy adapter contract
+
+`adaptLegacyTaskState` maps an already-loaded database-shaped Task and its already-loaded History rows into the engine input contract. It maps one-off, Daily, Every X Days/custom, Daily Until Complete, fixed weekly, fixed monthly-date, and fixed monthly-ordinal recurrence; lifecycle and active status; due/active occurrence dates; explicit History outcomes; and occurrence identity. The caller supplies the current timestamp, IANA timezone, and rollover time.
+
+The adapter is pure, does not mutate source rows, and performs no query. Malformed dates, intervals, weekdays, statuses, and contradictory History flags become warnings. Unsupported combinations remain explicit, including a missing pre-Archive/pre-Trash active status, missing counted-occurrence identity, and within-day due-time behavior.
+
+## Development shadow mode
+
+Shadow mode compares the engine with current read-only status, History, Calendar, overdue, recurrence, and patch-derivation helpers over a bounded date window. Results are classified as `match`, `approved semantic difference`, `legacy value unavailable`, `adapter warning`, `possible engine defect`, or `legacy-data anomaly`. Reward eligibility and streak disposition are returned by the engine but marked unavailable where production has no equivalent pure read authority.
+
+The runtime bridge is development-only, registers no subscription, performs no query, and never runs automatically. With a local development build open and hydrated, run:
+
+```js
+window.__ADHDICE_RUN_TASK_STATE_SHADOW__()
+```
+
+Optional targeting:
+
+```js
+window.__ADHDICE_RUN_TASK_STATE_SHADOW__({
+  taskIds: ["TASK_ID"],
+  startDate: "2026-06-01",
+  endDate: "2026-07-30",
+  includeMatches: false,
+  includeTitles: true,
+})
+```
+
+The command returns the report and stores it at `window.__ADHDICE_LATEST_TASK_STATE_SHADOW__`. Titles are omitted by default, and the console prints only grouped counts rather than full History tables.
+
+The patch assertion accepts only `status`, `dueOn`, `activeStatusLogicalDate`, `activeOccurrenceDueOn`, `recurrenceCursor`, `satisfiedOccurrenceIdentity`, and `completedAt`. Any other field is a safety violation. Archived and Trashed tasks may be inspected when explicitly targeted but may not produce patches.
+
+Expected differences from the 7.5.39 production system include the engine’s explicit virtual `Open` Calendar state where legacy Calendar says `Due`, handled-day treatment for Delay and Complete, a formal Unscheduled active state, nearest-occurrence consumption for early fixed-calendar success, and continuous logical-day overdue proposals where legacy helpers expose only scheduled misses. These are approved semantics, not changes to the engine.
+
+Shadow mode performs no writes. It does not import or call Supabase writes, task mutation hooks, History synchronization, reward queues, rollover RPCs, lifecycle actions, SQL, or persistence.
+
 ## Future work
 
-Production adapters, persistence transactions, UI integration, SQL parity, and multiple-times-per-day recurrence are intentionally unresolved. Multiple daily occurrences will require occurrence-level outcome and reward identities.
+Persistence transactions, production behavior integration, SQL parity, and multiple-times-per-day recurrence are intentionally unresolved. Multiple daily occurrences will require occurrence-level outcome and reward identities.

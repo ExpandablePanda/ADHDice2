@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last reviewed: 2026-06-18
+Last reviewed: 2026-07-30
 
 This file is the documentation map for the ADHDice repo. Use it to decide which markdown files are current source of truth, which are working context, and which are supporting or historical only.
 
