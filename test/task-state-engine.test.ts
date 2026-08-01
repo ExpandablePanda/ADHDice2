@@ -8,6 +8,7 @@ import {
   type TaskStateEngineInput,
   type TaskStateHistoryRow,
   type TaskStateSnapshot,
+  projectPersistableTaskStatePatch,
 } from "../src/lib/task-state-engine/index.ts";
 
 const NOW = "2026-07-30T14:00:00.000Z"; // 10:00 America/New_York
@@ -69,6 +70,36 @@ test("open scheduled tasks roll to continuous Missed without advancing due_on", 
   assert.equal(result.handledCurrentDay, false);
 });
 
+test("daily overdue preserves the last satisfied occurrence and proposes exactly one missed day", () => {
+  const satisfiedIdentity = "task:task-1:occurrence:2026-07-29";
+  const result = evaluateTaskState(input({
+    now: "2026-07-31T14:00:00.000Z",
+    task: task({
+      activeStatus: "pending",
+      dueOn: "2026-07-30",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+      recurrenceCursor: "2026-07-29",
+      satisfiedOccurrenceIdentity: satisfiedIdentity,
+    }),
+    history: [history("2026-07-29", "done", { occurrenceIdentity: satisfiedIdentity })],
+  }));
+
+  assert.equal(result.calendar["2026-07-29"], "done");
+  assert.equal(result.calendar["2026-07-30"], "missed");
+  assert.equal(result.calendar["2026-07-31"], "open");
+  assert.equal(result.activeStatus, "missed");
+  assert.equal(result.nextDueDate, "2026-07-30");
+  assert.equal(result.recurrenceAnchor, "2026-07-29");
+  assert.equal(result.satisfiedOccurrenceIdentity, satisfiedIdentity);
+  assert.deepEqual(result.proposedHistoryChanges.map((change) => change.type === "insert"
+    ? [change.row.logicalDate, change.row.outcome]
+    : [change.logicalDate, "rejected"]), [["2026-07-30", "missed"]]);
+  assert.equal(result.rewardEligibility.eligible, false);
+  assert.equal(Object.hasOwn(result.proposedTaskPatch, "recurrenceCursor"), false);
+  assert.equal(Object.hasOwn(result.proposedTaskPatch, "satisfiedOccurrenceIdentity"), false);
+  assert.equal(["archive", "trash", "archived", "trashed"].some((key) => Object.hasOwn(result.proposedTaskPatch, key)), false);
+});
+
 test("stale In Progress always rolls to Did My Best, including Unscheduled", () => {
   for (const snapshot of [
     task({ activeStatus: "in_progress", activeStatusLogicalDate: "2026-07-29" }),
@@ -114,6 +145,128 @@ test("Calendar Open and active Missed coexist while Missed Today remains false",
   assert.equal(result.calendar["2026-07-30"], "open");
   assert.equal(result.activeStatus, "missed");
   assert.equal(result.currentDayOutcome.missedToday, false);
+});
+
+test("active Missed remains Missed when fixed recurrence exposes today or a future occurrence", () => {
+  for (const dueOn of ["2026-07-26", "2026-07-20"]) {
+    const result = evaluateTaskState(input({
+      task: task({
+        activeStatus: "missed",
+        dueOn,
+        recurrence: { kind: "weekly", weekdays: [0], anchorDate: "2026-07-20" },
+      }),
+    }));
+    assert.equal(result.activeStatus, "missed");
+    assert.equal(result.nextDueDate, dueOn);
+    assert.equal(result.calendar["2026-07-30"], "open");
+  }
+});
+
+test("explicit Done History prevents one-off Done-to-Missed conversion and later generated misses", () => {
+  const result = evaluateTaskState(input({
+    task: task({ activeStatus: "done", dueOn: "2026-07-28", recurrence: { kind: "none" } }),
+    history: [history("2026-07-28", "done")],
+  }));
+  assert.equal(result.activeStatus, "done");
+  assert.equal(result.proposedHistoryChanges.length, 0);
+  assert.equal(result.continuousOverdue.active, false);
+});
+
+test("handled History starts continuous overdue after its latest authoritative occurrence", () => {
+  const result = evaluateTaskState(input({
+    task: task({ dueOn: "2026-07-20", recurrence: { kind: "none" } }),
+    history: [history("2026-07-27", "did_my_best")],
+  }));
+  assert.deepEqual(
+    result.proposedHistoryChanges.filter((change) => change.type === "insert").map((change) => change.row.logicalDate),
+    ["2026-07-28", "2026-07-29"],
+  );
+});
+
+test("generated Missed outcomes never advance recurrence and persistence projection excludes metadata", () => {
+  const result = evaluateTaskState(input({ task: task({ dueOn: "2026-07-28" }) }));
+  assert.equal(result.nextDueDate, "2026-07-28");
+  const projected = projectPersistableTaskStatePatch({
+    status: "missed",
+    dueOn: "2026-07-28",
+    recurrenceCursor: "2026-07-27",
+    satisfiedOccurrenceIdentity: "task:task-1:occurrence:2026-07-27",
+  });
+  assert.deepEqual(projected, { dueOn: "2026-07-28", status: "missed" });
+});
+
+test("persistence projection never emits engine-only Unscheduled", () => {
+  assert.deepEqual(projectPersistableTaskStatePatch({ status: "unscheduled" }), { status: "pending" });
+  assert.deepEqual(projectPersistableTaskStatePatch({ status: "unscheduled" }, { status: "pending" }), {});
+  assert.deepEqual(projectPersistableTaskStatePatch({ status: "unscheduled", activeStatusLogicalDate: null }, { status: "in_progress" }), {
+    activeStatusLogicalDate: null,
+    status: "pending",
+  });
+});
+
+test("persistence projection removes canonical date, timestamp, and cleared-field no-ops", () => {
+  assert.deepEqual(projectPersistableTaskStatePatch({
+    dueOn: "2026-07-30T00:00:00.000Z",
+    completedAt: "2026-07-30T14:00:00Z",
+    activeStatusLogicalDate: null,
+    activeOccurrenceDueOn: null,
+  }, {
+    status: "complete",
+    due_on: "2026-07-30",
+    completed_at: "2026-07-30T10:00:00-04:00",
+    active_status_logical_date: null,
+    active_occurrence_due_on: null,
+  }), {});
+});
+
+test("persistence projection compares timestamps at PostgreSQL microsecond precision", () => {
+  assert.deepEqual(projectPersistableTaskStatePatch({
+    completedAt: "2026-07-30T14:00:00.123456Z",
+  }, {
+    completed_at: "2026-07-30T10:00:00.123456-04:00",
+  }), {});
+  assert.deepEqual(projectPersistableTaskStatePatch({
+    completedAt: "2026-07-30T14:00:00.123457Z",
+  }, {
+    completed_at: "2026-07-30T14:00:00.123456Z",
+  }), { completedAt: "2026-07-30T14:00:00.123457Z" });
+  assert.deepEqual(projectPersistableTaskStatePatch({
+    completedAt: "2026-07-30T14:00:00.1234565Z",
+  }, {
+    completed_at: "2026-07-30T14:00:00.123457Z",
+  }), {});
+});
+
+test("persistence projection distinguishes omitted storage from null and normalizes empty values", () => {
+  assert.deepEqual(projectPersistableTaskStatePatch({ activeOccurrenceDueOn: null }, {}), {
+    activeOccurrenceDueOn: null,
+  });
+  assert.deepEqual(projectPersistableTaskStatePatch({ activeOccurrenceDueOn: null }, {
+    active_occurrence_due_on: null,
+  }), {});
+  assert.deepEqual(projectPersistableTaskStatePatch({ dueOn: "" }, {
+    due_on: null,
+  }), {});
+});
+
+test("persistence projection retains genuine canonical database changes", () => {
+  assert.deepEqual(projectPersistableTaskStatePatch({
+    dueOn: "2026-08-02",
+    completedAt: "2026-08-01T16:00:00Z",
+    activeStatusLogicalDate: null,
+    activeOccurrenceDueOn: "2026-08-02",
+  }, {
+    status: "in_progress",
+    due_on: "2026-08-01",
+    completed_at: null,
+    active_status_logical_date: "2026-08-01",
+    active_occurrence_due_on: "2026-08-01",
+  }), {
+    dueOn: "2026-08-02",
+    completedAt: "2026-08-01T16:00:00.000000Z",
+    activeStatusLogicalDate: null,
+    activeOccurrenceDueOn: "2026-08-02",
+  });
 });
 
 test("manual current-day Missed handles but does not advance an active occurrence", () => {
@@ -203,6 +356,123 @@ test("fixed monthly date and ordinal schedules preserve their configured pattern
     }));
     assert.equal(result.nextDueDate, item.expected);
   }
+});
+
+test("reloaded fixed schedules do not replay already-consumed History occurrences", () => {
+  const cases = [
+    {
+      dueOn: "2026-08-09",
+      occurrence: "2026-08-02",
+      recurrence: { kind: "weekly", weekdays: [0], anchorDate: "2026-08-09" } as const,
+    },
+    {
+      dueOn: "2026-08-05",
+      occurrence: "2026-08-04",
+      recurrence: { kind: "weekly", weekdays: [0, 2], anchorDate: "2026-08-05" } as const,
+    },
+    {
+      dueOn: "2026-09-15",
+      occurrence: "2026-08-15",
+      recurrence: { kind: "monthly", mode: "day_of_month", dayOfMonth: 15, anchorDate: "2026-09-15" } as const,
+    },
+    {
+      dueOn: "2026-12-01",
+      occurrence: "2026-08-04",
+      recurrence: { kind: "monthly", intervalMonths: 4, mode: "ordinal_weekday", ordinal: "first", weekday: 2, anchorDate: "2026-12-01" } as const,
+    },
+  ];
+  for (const item of cases) {
+    const result = evaluateTaskState(input({
+      now: "2026-08-01T14:00:00Z",
+      task: task({ dueOn: item.dueOn, recurrence: item.recurrence }),
+      history: [history("2026-07-31", "done", {
+        occurrenceIdentity: `task:task-1:occurrence:${item.occurrence}`,
+      })],
+    }));
+    assert.equal(result.nextDueDate, item.dueOn);
+    assert.equal(Object.hasOwn(result.proposedTaskPatch, "dueOn"), false);
+  }
+});
+
+test("valid future fixed cursors ignore stale display status when legacy History has no occurrence identity", () => {
+  const cases = [
+    {
+      activeStatus: "not_due" as const,
+      dueOn: "2026-08-03",
+      recurrence: { kind: "weekly", weekdays: [1], anchorDate: "2026-08-03" } as const,
+    },
+    {
+      activeStatus: "upcoming" as const,
+      dueOn: "2026-09-01",
+      recurrence: { kind: "monthly", mode: "day_of_month", dayOfMonth: 1, anchorDate: "2026-09-01" } as const,
+    },
+  ];
+  for (const item of cases) {
+    const result = evaluateTaskState(input({
+      now: "2026-08-01T14:00:00Z",
+      task: task({ activeStatus: item.activeStatus, dueOn: item.dueOn, recurrence: item.recurrence }),
+      history: [history("2026-07-31", "done", { occurrenceIdentity: null })],
+    }));
+    assert.equal(result.nextDueDate, item.dueOn);
+    assert.equal(Object.hasOwn(result.proposedTaskPatch, "dueOn"), false);
+  }
+});
+
+test("explicit identity can consume the protected future cursor exactly once", () => {
+  const occurrence = history("2026-07-31", "done", {
+    occurrenceIdentity: "task:task-1:occurrence:2026-08-03",
+  });
+  const first = evaluateTaskState(input({
+    now: "2026-08-01T14:00:00Z",
+    task: task({
+      activeStatus: "not_due",
+      dueOn: "2026-08-03",
+      recurrence: { kind: "weekly", weekdays: [1], anchorDate: "2026-08-03" },
+    }),
+    history: [occurrence],
+  }));
+  assert.equal(first.nextDueDate, "2026-08-10");
+
+  const replay = evaluateTaskState(input({
+    now: "2026-08-01T14:00:00Z",
+    task: task({
+      activeStatus: "not_due",
+      dueOn: "2026-08-10",
+      recurrence: { kind: "weekly", weekdays: [1], anchorDate: "2026-08-10" },
+    }),
+    history: [occurrence],
+  }));
+  assert.equal(replay.nextDueDate, "2026-08-10");
+  assert.equal(Object.hasOwn(replay.proposedTaskPatch, "dueOn"), false);
+});
+
+test("older Missed and Delayed History cannot move a valid future fixed cursor", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-01T14:00:00Z",
+    task: task({
+      activeStatus: "not_due",
+      dueOn: "2026-08-03",
+      recurrence: { kind: "weekly", weekdays: [1], anchorDate: "2026-08-03" },
+    }),
+    history: [history("2026-07-29", "missed"), history("2026-07-30", "delayed")],
+  }));
+  assert.equal(result.nextDueDate, "2026-08-03");
+  assert.equal(Object.hasOwn(result.proposedTaskPatch, "dueOn"), false);
+});
+
+test("fixed occurrence equality still reconciles a same-day task edit", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-03T14:00:00Z",
+    task: task({
+      dueOn: "2026-08-02",
+      recurrence: { kind: "weekly", weekdays: [0], anchorDate: "2026-08-02" },
+    }),
+    history: [history("2026-08-02", "done", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-08-02",
+    })],
+  }));
+  assert.equal(result.nextDueDate, "2026-08-09");
+  assert.equal(result.proposedTaskPatch.dueOn, "2026-08-09");
 });
 
 test("multiple weekdays consume only the nearest scheduled occurrence", () => {
@@ -297,6 +567,21 @@ test("repeated engine evaluation is idempotent", () => {
   const before = structuredClone(value);
   assert.deepEqual(evaluateTaskState(value), evaluateTaskState(value));
   assert.deepEqual(value, before);
+});
+
+test("matching recurrence metadata does not produce redundant patch values", () => {
+  const identity = "task:task-1:occurrence:2026-07-29";
+  const result = evaluateTaskState(input({
+    now: "2026-07-31T14:00:00.000Z",
+    task: task({
+      dueOn: "2026-07-30",
+      recurrenceCursor: "2026-07-29",
+      satisfiedOccurrenceIdentity: identity,
+    }),
+    history: [history("2026-07-29", "done", { occurrenceIdentity: identity })],
+  }));
+  assert.equal(Object.hasOwn(result.proposedTaskPatch, "recurrenceCursor"), false);
+  assert.equal(Object.hasOwn(result.proposedTaskPatch, "satisfiedOccurrenceIdentity"), false);
 });
 
 test("explicit History overrides virtual Calendar state", () => {

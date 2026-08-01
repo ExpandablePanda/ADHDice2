@@ -7,6 +7,8 @@ import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateT
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
 import { buildMissingScheduledMissedHistoryDateKeys, resolveLiveTaskStatusFromHistory } from "@/lib/task-history";
+import { evaluateTaskActionAuthority } from "@/lib/task-state-engine/action-authority";
+import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 
 type Message = {
   text: string;
@@ -82,7 +84,22 @@ export function useTaskHistoryActions({
       return true;
     }
 
-    const nextTaskState = resolveLiveTaskStatusFromHistory(task, nextHistory, {
+    const engineState = evaluateTaskActionAuthority({
+      history: nextHistory,
+      logicalDayRollover: dayStartTime,
+      now,
+      task,
+      timezone,
+    });
+    const nextTaskState = engineState
+      ? {
+        completedAt: engineState.persistableTaskPatch.completedAt ?? task.completed_at,
+        dueOn: Object.hasOwn(engineState.persistableTaskPatch, "dueOn") ? engineState.persistableTaskPatch.dueOn : undefined,
+        // `activeStatus` may be the engine-only derived `unscheduled` state.
+        // Writes must retain the stored canonical status when no safe patch exists.
+        status: engineState.persistableTaskPatch.status ?? task.status,
+      }
+      : resolveLiveTaskStatusFromHistory(task, nextHistory, {
       currentDayKey,
       dayStartTime,
       now,
@@ -265,7 +282,7 @@ export function useTaskHistoryActions({
 
     const task = tasks.find((candidate) => candidate.id === taskId);
     const existingTaskHistory = taskHistory.filter((entry) => entry.task_id === taskId);
-    const missingMissedDates = status === "missed" && task
+    const missingMissedDates = !TASK_STATE_ENGINE_INTEGRATION_ENABLED && status === "missed" && task
       ? uniqueEntryDates.flatMap((entryDate) => buildMissingScheduledMissedHistoryDateKeys(
         task,
         existingTaskHistory,

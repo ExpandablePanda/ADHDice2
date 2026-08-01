@@ -28,6 +28,10 @@ import type {
 const HANDLED = new Set<TaskHistoryOutcome>(["done", "did_my_best", "missed", "delayed", "complete"]);
 const SUCCESS = new Set<TaskHistoryOutcome>(["done", "did_my_best", "complete"]);
 
+export function isSuccessfulTaskHistoryOutcome(outcome: TaskHistoryOutcome) {
+  return SUCCESS.has(outcome);
+}
+
 function historyIdentity(taskId: string, date: string, outcome: TaskHistoryOutcome, provenance: string) {
   return `task-state:${taskId}:${date}:${outcome}:${provenance}`;
 }
@@ -129,8 +133,37 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       satisfied = null;
       continue;
     }
-    if ((task.recurrence.kind === "weekly" || task.recurrence.kind === "monthly") && row.occurrenceIdentity) {
-      const recordedOccurrence = row.occurrenceIdentity.split(":").at(-1) as string;
+    if (task.recurrence.kind === "rolling" && row.occurrenceIdentity) {
+      const identitySuffix = row.occurrenceIdentity.split(":").at(-1) as string;
+      const recordedOccurrence = /^\d{4}-\d{2}-\d{2}$/.test(identitySuffix)
+        ? identitySuffix
+        : row.logicalDate;
+      const result = recurrenceAfterSuccess(task.recurrence, nextDue, row.logicalDate, consumed);
+      recurrenceAnchor = result.anchor;
+      satisfied = recordedOccurrence;
+      nextDue = result.nextDue;
+      continue;
+    }
+    const isFixedRecurrence = task.recurrence.kind === "weekly" || task.recurrence.kind === "monthly";
+    const recordedOccurrence = isFixedRecurrence && row.occurrenceIdentity
+      ? row.occurrenceIdentity.split(":").at(-1) as string
+      : null;
+    const hasRecordedFixedOccurrence = recordedOccurrence !== null && /^\d{4}-\d{2}-\d{2}$/.test(recordedOccurrence);
+    if (
+      (task.recurrence.kind === "weekly" || task.recurrence.kind === "monthly")
+      && hasRecordedFixedOccurrence
+    ) {
+      // The persisted due date is the current fixed-schedule cursor. A History
+      // occurrence strictly before it has already advanced that cursor and
+      // must not be replayed against the advanced anchor on later evaluations.
+      // Equality remains actionable so a newly edited task can reconcile the
+      // occurrence it was moved back onto during the same logical day.
+      if (task.dueOn && recordedOccurrence < task.dueOn) {
+        recurrenceAnchor = recordedOccurrence;
+        satisfied = recordedOccurrence;
+        protectedFixedOccurrence = task.dueOn;
+        continue;
+      }
       recurrenceAnchor = recordedOccurrence;
       satisfied = recordedOccurrence;
       nextDue = nextFixedOccurrence(
@@ -140,6 +173,26 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
         consumed,
       );
       protectedFixedOccurrence = nextDue;
+      continue;
+    }
+    const validFutureFixedCursor = isFixedRecurrence
+      && task.dueOn !== null
+      && task.dueOn > today
+      && scheduledOccurrences(task.recurrence, task.dueOn, task.dueOn, task.dueOn).includes(task.dueOn)
+      ? task.dueOn
+      : null;
+    if (
+      validFutureFixedCursor
+      && !hasRecordedFixedOccurrence
+      && row.logicalDate < validFutureFixedCursor
+      && !(action && row.id === historyIdentity(task.id, actionDate, action.outcome, action.provenance ?? "manual"))
+    ) {
+      // Older rows may lack occurrence identity. A persisted future cursor plus
+      // fixed-schedule and temporal evidence proves that this success predates
+      // the protected occurrence. Display status may be stale without making
+      // the cursor replayable. Overdue/equal-date edits do not satisfy this gate.
+      recurrenceAnchor = row.logicalDate;
+      protectedFixedOccurrence = validFutureFixedCursor;
       continue;
     }
     if (
@@ -163,6 +216,25 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     ) {
       protectedFixedOccurrence = result.nextDue;
     }
+  }
+
+  // A persisted active Missed is an unresolved obligation. Fixed recurrence may
+  // expose a new Calendar occurrence, but that must not replace the frozen
+  // overdue occurrence until an explicit handled outcome resolves it.
+  const activeMissedDueOn = task.lifecycle === "active"
+    && task.activeStatus === "missed"
+    && task.dueOn
+    && task.dueOn < today
+    && ![...byDate.values()].some((row) => (
+      row.logicalDate >= task.dueOn!
+      && row.outcome !== "missed"
+    ))
+    ? task.dueOn
+    : null;
+  if (activeMissedDueOn) {
+    nextDue = activeMissedDueOn;
+    recurrenceAnchor = null;
+    satisfied = null;
   }
 
   const staleInProgress = task.lifecycle === "active"
@@ -198,11 +270,20 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   }
 
   const completed = task.lifecycle === "complete" || [...byDate.values()].some((row) => row.outcome === "complete");
-  const overdueAnchor = task.lifecycle === "active" && !completed && !unscheduled && nextDue && nextDue < today ? nextDue : null;
+  const latestHandledRow = [...byDate.values()]
+    .filter((row) => row.outcome !== "missed")
+    .sort((left, right) => right.logicalDate.localeCompare(left.logicalDate) || right.occurredAt.localeCompare(left.occurredAt))[0] ?? null;
+  const oneOffHandled = task.recurrence.kind === "none"
+    && latestHandledRow
+    && (latestHandledRow.outcome === "done" || latestHandledRow.outcome === "complete");
+  const overdueAnchor = task.lifecycle === "active" && !completed && !oneOffHandled && !unscheduled && nextDue && nextDue < today ? nextDue : null;
   if (overdueAnchor) {
-    const from = input.action?.type === "recompute" && input.action.fromLogicalDate > overdueAnchor
-      ? input.action.fromLogicalDate
+    const continuousStart = latestHandledRow && latestHandledRow.logicalDate >= overdueAnchor
+      ? shiftDateKey(latestHandledRow.logicalDate, 1)
       : overdueAnchor;
+    const from = input.action?.type === "recompute" && input.action.fromLogicalDate > continuousStart
+      ? input.action.fromLogicalDate
+      : continuousStart;
     for (const date of dateRange(from, shiftDateKey(today, -1))) {
       if (byDate.has(date)) continue;
       const row: TaskStateHistoryRow = {
@@ -232,7 +313,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   else if (currentOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) activeStatus = nextDue ? statusForFutureDate(today, nextDue) : "delayed";
   else if (unscheduled) activeStatus = "unscheduled";
   else if (nextDue && nextDue > today) activeStatus = statusForFutureDate(today, nextDue);
-  else if (currentOutcome === "done") activeStatus = "done";
+  else if (oneOffHandled || currentOutcome === "done") activeStatus = "done";
   else if (currentOutcome === "did_my_best") activeStatus = "did_my_best";
   else activeStatus = "pending";
 
@@ -266,8 +347,11 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     patch.activeStatusLogicalDate = null;
     patch.activeOccurrenceDueOn = null;
   }
-  if (recurrenceAnchor) patch.recurrenceCursor = recurrenceAnchor;
-  if (satisfied) patch.satisfiedOccurrenceIdentity = occurrenceIdentity(task.id, satisfied);
+  if (recurrenceAnchor && task.recurrenceCursor !== recurrenceAnchor) patch.recurrenceCursor = recurrenceAnchor;
+  if (satisfied) {
+    const identity = occurrenceIdentity(task.id, satisfied);
+    if (task.satisfiedOccurrenceIdentity !== identity) patch.satisfiedOccurrenceIdentity = identity;
+  }
   if (completedAt) {
     patch.completedAt = completedAt;
     patch.dueOn = null;

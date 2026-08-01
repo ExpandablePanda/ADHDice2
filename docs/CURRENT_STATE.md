@@ -1,17 +1,123 @@
 # Current State
 
-Last reviewed: 2026-07-30
+Last reviewed: 2026-08-01
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.6.1`.
+- Current working app version: `7.6.20`.
 - Current release group: `7.6.x` Task State Engine.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.6.20 Exact twice-advanced cursor correction
+
+- The live 7.6.19 preview found 23 eligible rows and three skipped weekly Monday rows whose cursors had advanced twice from `2026-08-03` to `2026-08-17`: FedEx Remittance (`058390ab-cc42-49ec-a458-8da05773732b`, revision 71), FedEx PDF (`8b50fb4b-a634-4c15-afb3-70307ebc528a`, revision 67), and UPS Import PDFs (`d5d2d1ba-94f1-47d3-a7af-11fd3f208db1`, revision 67).
+- [patch_task_state_forward_reset_7_6_19.sql](../supabase/patch_task_state_forward_reset_7_6_19.sql) and its [preview-only form](../supabase/preview_task_state_forward_reset_7_6_19.sql) now use exact per-row live dates, revisions, recurrence snapshots, and transition counts. Only those three exact IDs permit two configured transitions; the remaining 23 retain a one-transition expectation. Arbitrary multi-transition gaps still fail closed.
+- The guarded update remains limited to `due_on`, `revision`, and `updated_at`, with active-lifecycle, corrected-boundary, exact recurrence, identity, and optimistic-concurrency checks. History, rewards, streaks, status, recurrence, Complete, Archive, and Trash remain untouched. The 7.6.19 runtime future-cursor fix is unchanged, and no live SQL was executed for this correction.
+
+## 7.6.19 Future recurrence-cursor protection
+
+- The 7.6.13 unkeyed-History guard incorrectly required stored status to equal the status freshly derived from a persisted future `due_on`. After the successful 28-row forward reset, valid near-future cursors derived as `upcoming` while some rows still stored `not_due`; rollover therefore replayed older unkeyed successful History and re-advanced 26 cursors. The live correction preview later confirmed 23 one-transition rows and three twice-advanced weekly Monday rows. The two interval-monthly cursors stayed correct because they continued to derive `not_due`.
+- Fixed weekly/monthly recurrence now protects a schedule-valid future persisted cursor from any older unkeyed successful History using recurrence validity and date ordering only. Stored or derived `upcoming`/`not_due` is presentation state and is not written merely to satisfy the guard. Explicit occurrence identity can still consume its named current or future occurrence exactly once; new explicit early completion, equal-date reconciliation, overdue semantics, rolling recurrence, and repeated-rollover idempotency remain unchanged.
+- [patch_task_state_forward_reset_7_6_19.sql](../supabase/patch_task_state_forward_reset_7_6_19.sql) corrects the exact 26 re-advanced live rows. Every row carries its exact post-rollover `due_on`, latest revision, corrected 7.6.18 boundary, complete recurrence snapshot, and permitted transition count. The transaction-local preview, separate guarded update, and post-update verification fail closed unless the task remains active, unique, unchanged in recurrence, at its exact guarded transition count, and still at the live date/revision. Only `due_on`, `revision`, and `updated_at` are assigned.
+- [preview_task_state_forward_reset_7_6_19.sql](../supabase/preview_task_state_forward_reset_7_6_19.sql) is the standalone preview-only form and always rolls back. After correction the 26 rows classify unchanged, eligibility is zero, and a correction rerun updates zero rows. Neither file touches History, rewards, streaks, status, recurrence, Complete, Archive, or Trash, and neither interval-monthly task is in the correction scope.
+
+## 7.6.18 Forward-only recurrence reset
+
+- [patch_task_state_forward_reset_7_6_18.sql](../supabase/patch_task_state_forward_reset_7_6_18.sql) resets only `due_on` plus required revision/update metadata for the exact 28 affected recurring Task IDs. It resolves each user's current logical date from the stored timezone and rollover setting, defaulting to America/New_York and 06:00, then selects the first valid weekly or monthly occurrence on or after that boundary.
+- Explicit successful History occurrence identity is consulted only to skip a current or future occurrence that was already consumed early. Done, Did My Best, and Complete identities count as successful consumption; historical Missed gaps, delayed outcomes, and unkeyed History do not participate in the forward boundary.
+- The transaction-local preview snapshot is the sole input to a separate guarded optimistic-concurrency update and a post-update verification query. Each affected ID carries its exact live-preview corrupted `due_on` value (including the seven `2026-10-01` rows and 21 corrupted 2027 rows); unique scope, active lifecycle, recurrence snapshot, revision/timestamp snapshot, recurrence validity, and forward-boundary guards all fail closed. A successful rerun classifies repaired rows as unchanged and updates zero rows.
+- This is deliberately a forward-only correction. Existing History, Calendar outcomes, rewards, streaks, status, recurrence configuration, completion state, Archive, Trash, and unrelated Task fields remain untouched; old History is not reconstructed or repaired.
+
+## 7.6.17 High-confidence recurring-date repair dry run
+
+- [diagnostic_task_state_date_repair_7_6_17.sql](../supabase/diagnostic_task_state_date_repair_7_6_17.sql) is a read-only database dry run for the 11 high-confidence weekly repair candidates identified by the 7.6.16 report. It returns current row evidence, exact corrupted-date and recurrence checks, proposed occurrence validity, lifecycle and expected-ID uniqueness guards, a fail-closed repair-safety result, and summary counts.
+- The diagnostic uses only CTEs and one `SELECT`. It performs no repair, calls no mutation or rollover RPC, writes no Task or History data, and does not create persistent or temporary objects. Any missing row, changed date, recurrence mismatch, invalid proposed occurrence, inactive task, or duplicate expected ID is unsafe; no replacement is inferred.
+- When validated consumption leaves no later History to replay, `proposalBasis` now names the replay seed and excluded consumed-occurrence boundary without claiming replay through an earlier row. Proposal inference is unchanged.
+
+## 7.6.16 Single-consumption repair-report replay
+
+- The development-only recurring-date repair report now seeds fixed recurrence replay at the first unresolved occurrence strictly after the latest validated consumed occurrence. Successful History at or before that occurrence-identity boundary is not replayed, preventing the same Done or Did My Best outcome from advancing recurrence twice. Early completion uses the explicit consumed occurrence rather than its action date.
+- Bounded JSON evidence now identifies the replay seed and the first and last actually replayed History rows alongside the consumed occurrence and proposed next unresolved occurrence. `derived-missed:YYYY-MM-DD` remains non-success History evidence and is not rejected merely for using the generated-Missed key shape.
+- Weekly, monthly, ordinal-monthly, and multiple-weekday cadence still comes from the shared recurrence helpers. Missed and Delayed preserve engine semantics, Complete terminates recurrence, and ambiguous, malformed, contradictory, or off-schedule evidence still returns no proposal. The report remains deterministic, development-only, read-only, and disconnected from Supabase, task/History mutation, repair SQL, rollover RPCs, rewards, lifecycle actions, and proposal acceptance.
+
+## 7.6.15 Corrected read-only recurring-date repair inference
+
+- The exact 28-task scope now contains the original `723be9b2-64c0-43a9-b49a-5b7f648f57ea` ID and has an exact-set uniqueness contract test.
+- Both approved occurrence-key shapes (`occurrence:YYYY-MM-DD` and the engine task-scoped identity) are parsed. `occurrence_due_on` is authoritative for early/late completion only when it agrees with any key and is valid for the configured weekly or monthly cadence. Sequential legitimate occurrences are ordinary recurring History, not conflicts.
+- The proposal replays all supported History outcomes through the Task State Engine from the earliest validated fixed occurrence. Successful outcomes consume occurrences, Missed and replayable Delayed History preserve the unresolved occurrence, and Complete terminates recurrence. The report exposes bounded validated/rejected evidence and proposal basis without adding private task content.
+- The diagnostic remains development-only and review-only. Ambiguous, malformed, contradictory, or off-schedule evidence returns no proposal, and no Supabase, mutation, reward, lifecycle, rollover, SQL-generation, or auto-accept path was added.
+
+## 7.6.14 Read-only recurring-date repair report
+
+- Development builds expose `window.__ADHDICE_RECURRING_DATE_REPAIR_REPORT__` for the exact 28 fixed-recurring task IDs affected by the earlier browser-diagnosis advancement. The stable JSON-serializable report uses only already-loaded Task and History arrays and includes recurrence configuration, persisted `due_on`, successful and recent History evidence, inferred consumed occurrence, proposed next date, confidence, reasoning, ambiguity, and summary counts.
+- `window.__ADHDICE_BUILD_RECURRING_DATE_REPAIR_REPORT__()` regenerates the report from the latest hydrated snapshot. Explicit History occurrence identity has precedence, followed by on-schedule successful History, persisted live-occurrence state, a schedule-valid future `due_on`, and conservative recent-History inference. Fixed next dates and rolling/custom intervals use the Task State Engine recurrence helpers rather than a second recurrence implementation.
+- The diagnostic is review-only. It performs no Supabase query or update, Task/History mutation, reward award, lifecycle action, rollover RPC, SQL generation, or automatic acceptance of a proposed date. Conflicting or insufficient evidence produces no proposal.
+
+## 7.6.13 Finished rollover idempotency
+
+- Runtime evidence identified 28 remaining `dueOn`-only patches. Every row had an already-advanced fixed weekly or monthly due date, but the engine replayed older successful History—without usable occurrence identity—against that persisted cursor and advanced it again. Identified occurrences earlier than persisted `due_on` are recognized as consumed. The original matching-status check for legacy unkeyed rows was superseded in 7.6.19 by schedule-valid future-cursor evidence because stored `upcoming`/`not_due` may be stale. Equality and overdue edits remain actionable so same-day task edits can still reconcile.
+- Persistence comparison normalizes dates, null/empty/omitted values, derived `unscheduled` as stored `pending`, and timestamps at PostgreSQL microsecond precision. The bounded development rollover diagnostic exposes at most 50 sanitized task ID/key/canonical-value summaries and no task content.
+- [patch_task_state_engine_rollover_7_6_13.sql](../supabase/patch_task_state_engine_rollover_7_6_13.sql) parses trimmed JSON values once into typed SQL targets and retains per-field `IS DISTINCT FROM` guards. Effective no-ops cannot update `revision` or `updated_at`. A zero-commit run still requests no Task/History reconciliation, while completed same-day runs remain eligible for later edited tasks.
+
+## 7.6.12 Idempotent engine rollover persistence
+
+- The persistence projection canonicalizes stored and proposed status, date, timestamp, and nullable cleanup values before building the RPC payload. Persisted `pending` is equivalent to derived `unscheduled`; omitted fields remain omitted; and already-null active-status, occurrence, due-date, and completion cleanup fields are not emitted again.
+- [patch_task_state_engine_rollover_7_6_12.sql](../supabase/patch_task_state_engine_rollover_7_6_12.sql) adds a second no-op boundary. Every supported patch field is normalized and guarded with `IS DISTINCT FROM`, so an effective no-op cannot update `updated_at`, bump `revision`, or contribute to `changed_task_count`. Stale revisions and Archive/Trash exclusions remain unchanged.
+- A final Achievement evaluation runs only when the RPC actually inserts History. A zero-commit engine response queues no rewards and requests no targeted Task/History reconciliation.
+- Idempotency contract: After successful persistence and reload, reevaluating the same task state for the same logical date must produce no database writes.
+
+## 7.6.8 Rollover trigger activation
+
+- The engine coordinator waits for the authenticated Task-ready state and task History readiness signal before its first authoritative run. An empty pre-load render does not reserve the logical day or suppress the loaded-data reconciliation.
+- Authenticated load, the 60-second timer, a genuine hidden-to-visible transition, and persisted BFCache `pageshow` read the same current Task/History ref. Completed no-op runs release the coordinator slot; overlapping triggers remain single-flight and database idempotency remains the persistence guard.
+- Each owned invocation updates `window.__ADHDICE_TASK_STATE_ROLLOVER_DIAGNOSTICS__`, including no-op plans, with authority, source, logical date, evaluated tasks, patch/history/reward counts, deduplication count, execution time, and error summary. Empty plans still perform no RPC or workspace refresh.
+
+## 7.6.7 Engine rollover authority
+
+- `TASK_STATE_ENGINE_INTEGRATION_ENABLED` now selects the Task State Engine rollover planner. Authenticated load, the 60-second safety timer, visibility return, and BFCache restore all route through one coordinator; engine and legacy rollover never run in the same invocation.
+- The engine uses loaded Task/History data, profile timezone, and `day_start_time` (default `06:00`) to create a deterministic supported-only plan. Empty plans do not issue writes or workspace refreshes. The manual atomic RPC patch is [patch_task_state_engine_rollover_7_6_7.sql](../supabase/patch_task_state_engine_rollover_7_6_7.sql); install it before production use. Until then, a missing engine RPC falls back to the installed legacy RPC.
+- Browser, multi-tab/device, BFCache, custom-timezone/DST, installed-SQL, and reward-bank QA remain required before claiming live rollout stabilization.
+
+## 7.6.6 Calendar and action integration
+
+- `TASK_STATE_ENGINE_INTEGRATION_ENABLED` is the single default-on compatibility owner for active-status reads, Task History Calendar state, and supported user action evaluation. Disabling it preserves the legacy Calendar and action paths; it is not user-facing. Development continues to expose `engine` or `legacy` at `window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__`.
+- Task History Calendar resolves explicit History before virtual states and uses the engine for Open, future Due/Upcoming/Not Due, delayed spans, Missed, Done, Did My Best, Complete, legends, and action availability. Calendar UI does not reimplement recurrence/status rules.
+- Done, Did My Best, Missed, Delay, and Complete evaluate through the engine before using the existing guarded task mutation, History upsert, confirmation, reward, and hierarchy infrastructure. Supported task values only are written; occurrence identity remains on existing History fields. Delay anchors to the logical action day, and legacy rollover/RPC/SQL/visibility reconciliation remains unchanged for 7.6.7.
+
+## 7.6.5 Active-status read integration
+
+- The Task State Engine is now the shared read authority for active task status only. A single hydrated projection feeds Table View, List View, Home task displays, Edit Task status display, active-status filters, buckets, and overdue collections. Development exposes the producing authority at `window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__`.
+- `TASK_STATE_ENGINE_ACTIVE_STATUS_READ_ENABLED` is the centralized default-on compatibility switch. Its legacy fallback returns the existing History-aware display status without touching mutations or persistence.
+- Calendar rendering, task-action writes, rewards, rollover RPCs, SQL, History persistence, and recurrence persistence remain legacy behavior. Engine proposals are not connected to writes. The persistence projection explicitly excludes unsupported `recurrenceCursor` and `satisfiedOccurrenceIdentity` metadata.
+
+## 7.6.4 Shadow Accuracy and Performance
+
+- Rolling Daily, Daily Until Complete, and Every X Days Calendar comparisons now treat future legacy `Due` cells as representation differences when they require a future success or continuous-overdue resolution. Fixed weekly/monthly occurrences remain defect candidates.
+- Equivalent short and task-prefixed occurrence identities compare by task and date. Missing task-level recurrence cursor/identity metadata is an adapter limitation only when it is the sole patch difference; actual status and due-date differences remain visible.
+- Approved active-status corrections are limited to supported Pending/Missed/future/Delay transitions. Missed-to-Pending, Missed-to-Upcoming, In Progress-to-Unscheduled, Done-to-Missed, explicit current-day History disagreement, and genuine fixed Calendar mismatches remain possible defects.
+- Calendar defect records now retain a date count, first/last dates, bounded samples, and a normalized pattern rather than repeated per-date value maps; full Calendar defect detail is opt-in. Summary/export helpers remain read-only and do not rerun the engine.
+
+## 7.6.3 Actionable Shadow Diagnostics
+
+- Possible engine defects are now exposed as deduplicated task/semantic-group records containing affected fields, paired current/engine values, classification reasons, relevant adapter diagnostics, the allowlisted sanitized task patch, and bounded proposed-History summaries. Normalized pattern summaries deduplicate repeated Calendar dates and provide affected-task/task-type counts plus five-item samples.
+- Skip accounting now headlines excluded lifecycle tasks, fully skipped unsupported tasks, and evaluated tasks with adapter limitations separately. Reason summaries include lifecycle and task-type counts plus bounded samples; lifecycle/task-type pairs remain separately countable.
+- Every semantic-group summary preserves raw comparison/classification counts and reports distinct evaluated, differing, possible-defect, approved-difference, representation-only, and adapter-limited task counts. Matches no longer inflate the differing-task total.
+- Development builds expose `window.__ADHDICE_SUMMARIZE_TASK_STATE_SHADOW__()` and `window.__ADHDICE_EXPORT_TASK_STATE_SHADOW__()` over the latest stored report. Both are read-only and never rerun the engine; summaries support bounded samples, optional titles, semantic-group filters, and task-type filters. JSON export omits titles unless explicitly requested and contains no notes, links, or unrelated task fields.
+- Shadow execution remains manual, deterministic, bounded, and disconnected from Supabase, SQL, RPCs, persistence, rewards, production mutations, Archive, and Trash. No engine semantics changed in this reporting-only slice.
+
+## 7.6.2 Shadow Comparator Corrections
+
+- Calendar comparison now uses explicit date relation, actual scheduled-occurrence membership, explicit History presence, sparse engine-cell presence, and Unscheduled task facts. Sparse `Not Due`/`No Entry` differences are representation-only; explicit-History disagreements and missing genuinely scheduled states remain visible as possible defects.
+- Reports now separate matches, approved semantic differences, representation-only differences, adapter limitations/warnings, unsupported legacy data, legacy-data anomalies, and possible engine defects. Task-level and semantic-group summaries cover active status, current-day Calendar, overdue classification, recurrence, proposed History, proposed patches, sparse Calendar representation, adapter warnings, and unsupported data. The headline possible-defect total counts task/group combinations rather than every date cell.
+- Approved rules are narrow: due-less/non-recurring legacy Pending becomes Unscheduled; current scheduled Due becomes Open; unresolved overdue scheduled work stays actively Missed while today is Open; prior unresolved logical days become Missed; and future scheduled Due becomes Scheduled. Completely dormant Unscheduled tasks retain today's existing specified/tested virtual Open behavior; whether that should eventually become No Entry remains unresolved product semantics.
+- Each task report now includes full sanitized proposed patch values. The patch allowlist is unchanged and still cannot express Archive, Trash, deletion, content, or placement changes.
+- Database/task-model diagnosis found no persisted task-level `recurrence_cursor` or `satisfied_occurrence_identity`. `active_occurrence_due_on` is not equivalent, and History `occurrence_key` is outcome-level identity. The adapter classifies the missing task-level values as unsupported metadata. Optional current metadata inputs make engine patch generation idempotent when a caller can supply matching values; no SQL, schema, query, write, or persistence path was added.
+- Shadow mode remains development-only, manually invoked, deterministic, read-only, bounded, and disconnected from production task status, Calendar UI, Supabase, rollover RPCs, History/reward persistence, Realtime, Archive, and Trash behavior. The next recommended integration step is a targeted read-only browser shadow run and review of task/group-level possible defects before any production caller is authorized.
 
 ## 7.6.1 Read-only Task State Engine Shadow Mode
 
@@ -1468,3 +1574,19 @@ Scratch Paper removes the stale focus-change callback plumbing that was crashing
 ## 6.8.16 Implementation Note
 
 Import Tasks now creates modern same-table Step and Substep task rows through `parent_task_id` instead of saving new imports into the legacy checklist table, so imported child rows land in the same Table/List/editor surfaces and carry the same task-row metadata fields that manually created Steps/Substeps use today. The shared child-preview derivation also now applies the same display-status normalization as parent tasks, which keeps weekly child rows due next week aligned with the parent's `Upcoming` virtual status while preserving the existing one-off, recurring, legacy-checklist coexistence, and `Daily Until Complete` behavior.
+## 7.6.11 Deferred Achievement evaluation during engine rollover
+
+- [patch_task_state_engine_rollover_7_6_11.sql](../supabase/patch_task_state_engine_rollover_7_6_11.sql) replaces the 7.6.10 engine RPC implementation. It sets the transaction-local `adhdice.achievement_deferred_user_id` marker immediately before the set-based History insert, so the installed row trigger still captures every occurrence and refreshes each Step set but does not run a full achievement evaluation for every History row.
+- After the bulk History insert and supported task update, the RPC clears that marker and runs one deterministic engine-rollover achievement evaluation for the user/logical date. Only `completed` and `inactive` results are accepted; any other result raises, rolling back History, task updates, and diagnostics-visible committed counts together. The marker is transaction-local and cleared before return.
+
+## 7.6.10 Rollover RPC timeout hotfix
+
+- [patch_task_state_engine_rollover_7_6_10.sql](../supabase/patch_task_state_engine_rollover_7_6_10.sql) replaces the installed 7.6.9 RPC implementation without changing Task State Engine semantics. It stages the JSON plan once with `jsonb_to_recordset`, validates supported task/History values before enum casts, locks revision-matching non-Archive/non-Trash task rows as one set, rejects contradictory explicit History as a set, bulk inserts History under the existing `(user_id, task_id, entry_date)` identity, and bulk updates supported changed task fields only. The per-task lock/select, per-History conflict scan, and per-History insert loops that timed out on the approximately 900-task payload are removed.
+- The advisory transaction lock, expected revision safety, explicit-History precedence, atomic rollback, engine/legacy mutual exclusion, empty-plan RPC skip, `unscheduled` to stored `pending` mapping, stale unscheduled In Progress Did My Best behavior, frozen overdue due date, Missed deduplication, fixed/rolling recurrence behavior, and trigger ownership remain unchanged. Archive/Trash and unsupported metadata cannot be mutated through this boundary.
+- Development rollover diagnostics now distinguish planned task patches/History/rewards from committed task patches/History/rewards and RPC deduplications. A failed RPC reports every committed count as zero; only returned bulk row counts are described as committed/inserted.
+
+## 7.6.9 Unscheduled persistence hotfix
+
+- `unscheduled` remains an engine-derived active/read status only. The persistence projection drops it, so dormant tasks retain the supported stored `pending` status; a stored `pending` row therefore needs no task-status write when its engine result is Unscheduled.
+- A stale dormant In Progress rollover still writes its single Did My Best History outcome, clears its active tracking fields, and projects its task row back to stored `pending`. The shared read authority immediately derives and displays Unscheduled from that persisted row.
+- Install [patch_task_state_engine_rollover_7_6_9.sql](../supabase/patch_task_state_engine_rollover_7_6_9.sql) after 7.6.7. It defensively normalizes `unscheduled` to `pending` and rejects other unsupported JSON statuses before enum casts; it does not alter the enum or schema.

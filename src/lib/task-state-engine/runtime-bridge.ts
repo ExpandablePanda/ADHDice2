@@ -1,8 +1,11 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
 import {
+  formatTaskStateShadowReportJson,
   runTaskStateShadow,
+  summarizeTaskStateShadowReport,
   type TaskStateShadowOptions,
   type TaskStateShadowReport,
+  type TaskStateShadowReviewOptions,
 } from "./shadow.ts";
 
 type ShadowSnapshot = {
@@ -16,8 +19,15 @@ type ShadowSnapshot = {
 type ShadowConsole = Pick<Console, "groupCollapsed" | "groupEnd" | "info" | "table" | "warn">;
 
 export type TaskStateShadowWindow = {
+  __ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__?: "engine" | "legacy";
   __ADHDICE_RUN_TASK_STATE_SHADOW__?: (options?: TaskStateShadowOptions) => TaskStateShadowReport;
   __ADHDICE_LATEST_TASK_STATE_SHADOW__?: TaskStateShadowReport;
+  __ADHDICE_SUMMARIZE_TASK_STATE_SHADOW__?: (
+    options?: TaskStateShadowReviewOptions,
+  ) => ReturnType<typeof summarizeTaskStateShadowReport> | undefined;
+  __ADHDICE_EXPORT_TASK_STATE_SHADOW__?: (
+    options?: Pick<TaskStateShadowReviewOptions, "includeTitles">,
+  ) => string | undefined;
 };
 
 declare global {
@@ -31,11 +41,16 @@ function printSummary(report: TaskStateShadowReport, output: ShadowConsole) {
   output.table([{
     logicalDate: report.logicalDate,
     evaluated: report.taskCountEvaluated,
+    excludedLifecycle: report.skippedTasks.excludedLifecycleTaskCount,
+    fullySkippedUnsupported: report.skippedTasks.fullySkippedUnsupportedTaskCount,
     skipped: report.taskCountSkipped,
     matches: report.matchCount,
     adapterWarnings: report.adapterWarningCount,
     approvedDifferences: report.approvedSemanticDifferences.length,
-    unexpectedDifferences: report.unexpectedDifferences.length,
+    representationOnlyDifferences: report.representationOnlyDifferences.length,
+    adapterLimitations: report.adapterLimitations.length,
+    legacyDataAnomalies: report.legacyDataAnomalies.length,
+    possibleEngineDefects: report.possibleEngineDefectCount,
     proposedHistoryRows: report.proposedHistoryRowCount,
     safetyViolations: report.safetyViolations.length,
     slowestTaskMs: report.slowestTaskTimeMs,
@@ -43,10 +58,12 @@ function printSummary(report: TaskStateShadowReport, output: ShadowConsole) {
   if (Object.keys(report.mismatchCountByField).length > 0) {
     output.info("Differences by field", report.mismatchCountByField);
   }
+  output.info("Semantic group summaries", report.semanticGroupSummaries);
+  output.info("Possible defect patterns", report.possibleDefectPatterns);
   if (report.safetyViolations.length > 0) {
     output.warn("Safety violations", report.safetyViolations);
   }
-  output.info("Full report stored on window.__ADHDICE_LATEST_TASK_STATE_SHADOW__");
+  output.info("Review with window.__ADHDICE_SUMMARIZE_TASK_STATE_SHADOW__()");
   output.groupEnd();
 }
 
@@ -64,6 +81,8 @@ export function registerTaskStateShadowBridge({
   if (environment !== "development") {
     delete target.__ADHDICE_RUN_TASK_STATE_SHADOW__;
     delete target.__ADHDICE_LATEST_TASK_STATE_SHADOW__;
+    delete target.__ADHDICE_SUMMARIZE_TASK_STATE_SHADOW__;
+    delete target.__ADHDICE_EXPORT_TASK_STATE_SHADOW__;
     return () => {};
   }
 
@@ -73,12 +92,28 @@ export function registerTaskStateShadowBridge({
     printSummary(report, output);
     return report;
   };
+  const summarize = (options?: TaskStateShadowReviewOptions) => {
+    const report = target.__ADHDICE_LATEST_TASK_STATE_SHADOW__;
+    return report ? summarizeTaskStateShadowReport(report, options) : undefined;
+  };
+  const exportJson = (options?: Pick<TaskStateShadowReviewOptions, "includeTitles">) => {
+    const report = target.__ADHDICE_LATEST_TASK_STATE_SHADOW__;
+    return report ? formatTaskStateShadowReportJson(report, options) : undefined;
+  };
   target.__ADHDICE_RUN_TASK_STATE_SHADOW__ = run;
+  target.__ADHDICE_SUMMARIZE_TASK_STATE_SHADOW__ = summarize;
+  target.__ADHDICE_EXPORT_TASK_STATE_SHADOW__ = exportJson;
 
   return () => {
     if (target.__ADHDICE_RUN_TASK_STATE_SHADOW__ === run) {
       delete target.__ADHDICE_RUN_TASK_STATE_SHADOW__;
       delete target.__ADHDICE_LATEST_TASK_STATE_SHADOW__;
+    }
+    if (target.__ADHDICE_SUMMARIZE_TASK_STATE_SHADOW__ === summarize) {
+      delete target.__ADHDICE_SUMMARIZE_TASK_STATE_SHADOW__;
+    }
+    if (target.__ADHDICE_EXPORT_TASK_STATE_SHADOW__ === exportJson) {
+      delete target.__ADHDICE_EXPORT_TASK_STATE_SHADOW__;
     }
   };
 }

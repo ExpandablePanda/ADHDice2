@@ -54,6 +54,28 @@ function stringValue(row: Record<string, unknown>, key: string) {
   return typeof row[key] === "string" ? row[key] as string : null;
 }
 
+function optionalStringValue(
+  row: Record<string, unknown>,
+  key: string,
+  warnings: LegacyAdapterIssue[],
+) {
+  if (!Object.hasOwn(row, key)) return undefined;
+  const value = row[key];
+  if (value === null || value === "") return null;
+  if (typeof value === "string") return value;
+  warnings.push(issue("malformed_string", key, "Expected a string or null.", value));
+  return null;
+}
+
+function optionalDateValue(
+  row: Record<string, unknown>,
+  key: string,
+  warnings: LegacyAdapterIssue[],
+) {
+  if (!Object.hasOwn(row, key)) return undefined;
+  return nullableDate(row, key, warnings);
+}
+
 function nullableDate(
   row: Record<string, unknown>,
   key: string,
@@ -264,6 +286,22 @@ export function adaptLegacyTaskState(
   const activeOccurrenceDueOn = nullableDate(task, "active_occurrence_due_on", warnings);
   const state = lifecycleAndStatus(task, dueOn, warnings, unsupported);
   const recurrence = recurrenceFromLegacy(task, dueOn, warnings, unsupported);
+  const recurrenceCursor = optionalDateValue(task, "recurrence_cursor", warnings);
+  const satisfiedOccurrenceIdentity = optionalStringValue(task, "satisfied_occurrence_identity", warnings);
+  if (recurrence.kind !== "none" && recurrenceCursor === undefined) {
+    unsupported.push(issue(
+      "recurrence_cursor_unavailable",
+      "recurrence_cursor",
+      "The current task model has no persisted recurrence cursor field; active_occurrence_due_on is a different live-occurrence value.",
+    ));
+  }
+  if (recurrence.kind !== "none" && satisfiedOccurrenceIdentity === undefined) {
+    unsupported.push(issue(
+      "satisfied_occurrence_identity_unavailable",
+      "satisfied_occurrence_identity",
+      "The current task model stores occurrence identity on History rows, not as task-level satisfied-occurrence metadata.",
+    ));
+  }
   if (task.due_time !== null && task.due_time !== undefined) {
     unsupported.push(issue(
       "due_time_not_modeled",
@@ -295,6 +333,8 @@ export function adaptLegacyTaskState(
         dueOn,
         activeStatusLogicalDate,
         activeOccurrenceDueOn,
+        ...(recurrenceCursor !== undefined ? { recurrenceCursor } : {}),
+        ...(satisfiedOccurrenceIdentity !== undefined ? { satisfiedOccurrenceIdentity } : {}),
         recurrence,
       },
       history: mapHistory(historyValues, id, warnings, unsupported),

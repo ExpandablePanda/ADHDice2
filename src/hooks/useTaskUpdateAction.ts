@@ -9,6 +9,7 @@ import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
+import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 
 type Message = {
   text: string;
@@ -106,12 +107,17 @@ export function useTaskUpdateAction({
           return false;
         }
       }
-      const historySaved = await syncTaskHistoryEntry(taskId, data.status, previousTask ?? nextData);
+      // A recurring success may project an active future status. Preserve the
+      // user-selected outcome when writing its existing History row.
+      const historySaved = await syncTaskHistoryEntry(taskId, (values.status ?? data.status) as Task["status"], previousTask ?? nextData);
       if (!historySaved) {
         return;
       }
       await onTasksCompleted([{
-        forceRecurringFinalization: values.status === "done" || values.status === "did_my_best",
+        // The engine action projection already rebases supported recurrence.
+        // Keep legacy finalization only for the compatibility fallback.
+        forceRecurringFinalization: !TASK_STATE_ENGINE_INTEGRATION_ENABLED
+          && (values.status === "done" || values.status === "did_my_best"),
         previousStatus: previousTask?.status ?? null,
         task: nextData,
       }]);

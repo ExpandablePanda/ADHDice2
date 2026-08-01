@@ -37,7 +37,7 @@ test("Strict Mode replay and simultaneous callers share one rollover request", a
   assert.equal(settlements, 1);
 });
 
-test("rerenders and completed startup calls stay settled until a new logical day", async () => {
+test("completed no-op runs release the logical-day slot while simultaneous triggers remain single-flight", async () => {
   const coordinator = new TaskRolloverSingleFlightCoordinator();
   const client = {};
   let executions = 0;
@@ -52,9 +52,11 @@ test("rerenders and completed startup calls stay settled until a new logical day
 
   const completed = run("2026-07-19");
   await completed;
-  assert.equal(run("2026-07-19"), completed);
+  const timer = run("2026-07-19");
+  assert.notEqual(timer, completed);
+  await timer;
   await run("2026-07-20");
-  assert.equal(executions, 2);
+  assert.equal(executions, 3);
 });
 
 test("different logical-day requests are serialized within one ownership session", async () => {

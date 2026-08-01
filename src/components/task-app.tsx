@@ -156,6 +156,7 @@ import {
 import { isSleepCategory } from "@/lib/focus-goals";
 import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
+import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { getLevelProgress } from "@/lib/economy-levels";
 import { buildHealthReminderTemplate, type HealthReminderTemplateKey } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
@@ -173,8 +174,15 @@ import {
   isDueToday,
   isLater,
   isOverdue,
-  getTaskDisplayStatusWithHistory,
 } from "@/lib/task-cockpit";
+import {
+  createEngineRolloverPlan,
+  engineRolloverPlanHasMutations,
+  evaluateTaskActionAuthority,
+  projectTasksForActiveStatusRead,
+  resolveActiveTaskStatuses,
+  TASK_STATE_ENGINE_INTEGRATION_ENABLED,
+} from "@/lib/task-state-engine";
 import {
   getMomentumMetric,
   getNextMomentumView,
@@ -539,7 +547,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.6.1";
+const APP_VERSION = "7.6.20";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1623,6 +1631,7 @@ export function TaskApp() {
 
   const {
     isSoftWorkspaceRefreshing,
+    isTaskHistoryLoaded,
     isTaskListMembershipDataReady,
     isTaskResumeSyncPending,
     isWorkspaceLoading,
@@ -2180,19 +2189,32 @@ export function TaskApp() {
 
     let disposed = false;
     let unregister: (() => void) | undefined;
-    void import("@/lib/task-state-engine/runtime-bridge").then(({ registerTaskStateShadowBridge }) => {
+    void Promise.all([
+      import("@/lib/task-state-engine/runtime-bridge"),
+      import("@/lib/task-state-engine/recurring-date-repair-runtime"),
+    ]).then(([{ registerTaskStateShadowBridge }, { registerRecurringDateRepairReportBridge }]) => {
       if (disposed) return;
-      unregister = registerTaskStateShadowBridge({
+      const snapshot = () => ({
+        tasks,
+        history: taskHistory,
+        now: new Date(logicalDayNow),
+        timezone: userTimeZone,
+        rolloverTime: dayStartTime,
+      });
+      const unregisterShadow = registerTaskStateShadowBridge({
         environment: process.env.NODE_ENV,
         target: window,
-        getSnapshot: () => ({
-          tasks,
-          history: taskHistory,
-          now: new Date(logicalDayNow),
-          timezone: userTimeZone,
-          rolloverTime: dayStartTime,
-        }),
+        getSnapshot: snapshot,
       });
+      const unregisterRepairReport = registerRecurringDateRepairReportBridge({
+        environment: process.env.NODE_ENV,
+        target: window,
+        getSnapshot: snapshot,
+      });
+      unregister = () => {
+        unregisterShadow();
+        unregisterRepairReport();
+      };
     });
 
     return () => {
@@ -2204,50 +2226,129 @@ export function TaskApp() {
     () => formatDateKeyInTimeZone(new Date(logicalDayNow), userTimeZone),
     [logicalDayNow, userTimeZone],
   );
+  const queueRolloverRewardsRef = useRef<((candidates: TaskRewardCandidate[]) => Promise<void>) | null>(null);
+  const rolloverInputsRef = useRef({
+    dayStartTime,
+    isTaskHistoryLoaded,
+    isTasksReady: !isWorkspaceLoading,
+    taskHistory,
+    tasks,
+    todayKey,
+    userTimeZone,
+  });
+  rolloverInputsRef.current = { dayStartTime, isTaskHistoryLoaded, isTasksReady: !isWorkspaceLoading, taskHistory, tasks, todayKey, userTimeZone };
+  const wasDocumentVisibleRef = useRef(typeof document === "undefined" || document.visibilityState === "visible");
 
   useEffect(() => {
     taskRolloverCoordinator.setOwner(supabase, session?.user?.id ?? null);
   }, [session?.user?.id, supabase]);
 
+  const runDayReset = useCallback(async (source: "initial_load" | "timer" | "visibility" | "pageshow") => {
+    const inputs = rolloverInputsRef.current;
+    const client = supabase;
+    const userId = session?.user?.id;
+    if (!client || !userId) return;
+    // The engine plan is authoritative only after both independently loaded inputs exist.
+    if (TASK_STATE_ENGINE_INTEGRATION_ENABLED && (!inputs.isTasksReady || !inputs.isTaskHistoryLoaded)) return;
+    let didMutate = false;
+    let authority: "engine" | "legacy" = TASK_STATE_ENGINE_INTEGRATION_ENABLED ? "engine" : "legacy";
+    let tasksEvaluated = 0;
+    let plannedTaskPatches = 0;
+    let plannedHistoryRows = 0;
+    let plannedRewards = 0;
+    let committedTaskPatches = 0;
+    let committedHistoryRows = 0;
+    let committedRewards = 0;
+    let deduplicatedOutcomes = 0;
+    let remainingTaskPatchSummaries: ReturnType<typeof createEngineRolloverPlan>["remainingPatchSummaries"] = [];
+    let rewardCandidates: TaskRewardCandidate[] = [];
+    const startedAt = performance.now();
+    await taskRolloverCoordinator.run({
+      client,
+      logicalDayKey: inputs.todayKey,
+      userId,
+      execute: async () => {
+        const rpc = client as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{
+          data: Array<{ changed_task_count?: number; deduplicated_outcome_count?: number; inserted_history_count?: number }> | null;
+          error: { message: string } | null;
+        }> };
+        if (TASK_STATE_ENGINE_INTEGRATION_ENABLED) {
+          const plan = createEngineRolloverPlan({ history: inputs.taskHistory, now: new Date(), rolloverTime: inputs.dayStartTime, tasks: inputs.tasks, timezone: inputs.userTimeZone });
+          tasksEvaluated = plan.tasksEvaluated;
+          plannedTaskPatches = plan.tasks.filter((task) => Object.keys(task.patch).length > 0).length;
+          remainingTaskPatchSummaries = plan.remainingPatchSummaries;
+          plannedHistoryRows = plan.tasks.reduce((total, task) => total + task.history.length, 0);
+          const taskById = new Map(inputs.tasks.map((task) => [task.id, task]));
+          rewardCandidates = plan.tasks.flatMap((entry) => {
+            const task = taskById.get(entry.taskId);
+            return entry.rewardEligible && task ? [{ previousStatus: task.status, task: { ...task, status: "did_my_best" as const } }] : [];
+          });
+          plannedRewards = rewardCandidates.length;
+          if (!engineRolloverPlanHasMutations(plan)) return { error: null };
+          const engineResult = await rpc.rpc("adhdice_apply_task_state_engine_rollover", { p_now: new Date().toISOString(), p_plan: plan.tasks, p_user_id: userId });
+          if (!engineResult.error) {
+            const committed = engineResult.data?.[0];
+            committedTaskPatches = committed?.changed_task_count ?? 0;
+            committedHistoryRows = committed?.inserted_history_count ?? 0;
+            deduplicatedOutcomes = committed?.deduplicated_outcome_count ?? 0;
+            didMutate = committedTaskPatches > 0 || committedHistoryRows > 0;
+            return engineResult;
+          }
+          if (!/adhdice_apply_task_state_engine_rollover|function .* does not exist|schema cache/i.test(engineResult.error.message)) return engineResult;
+          authority = "legacy";
+        }
+        didMutate = true;
+        return rpc.rpc("adhdice_reconcile_task_rollover", { p_now: new Date().toISOString(), p_user_id: userId });
+      },
+      onOwnedSettled: async ({ error }) => {
+        if (!error && didMutate && authority === "engine" && committedHistoryRows > 0 && rewardCandidates.length > 0) {
+          const queueRolloverRewards = queueRolloverRewardsRef.current;
+          if (queueRolloverRewards) {
+            await queueRolloverRewards(rewardCandidates);
+            committedRewards = plannedRewards;
+          }
+        }
+        const diagnostics = {
+          authority, deduplicatedOutcomes: error ? 0 : deduplicatedOutcomes, errorSummary: error?.message ?? null,
+          executionMs: Math.round(performance.now() - startedAt), lastLogicalDateEvaluated: inputs.todayKey, lastRunSource: source,
+          plannedHistoryRows, plannedRewards, plannedTaskPatches,
+          remainingTaskPatchSummaries,
+          committedHistoryRows: error ? 0 : committedHistoryRows,
+          committedRewards: error ? 0 : committedRewards,
+          committedTaskPatches: error ? 0 : committedTaskPatches,
+          tasksEvaluated,
+        };
+        if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+          (window as Window & { __ADHDICE_TASK_STATE_ROLLOVER_DIAGNOSTICS__?: typeof diagnostics }).__ADHDICE_TASK_STATE_ROLLOVER_DIAGNOSTICS__ = diagnostics;
+          console.info(`[rollover] Remaining task patch summary count=${remainingTaskPatchSummaries.length}`);
+          if (remainingTaskPatchSummaries.length > 0) {
+            console.info("[rollover] Remaining task patch summaries", JSON.stringify(remainingTaskPatchSummaries));
+          }
+        }
+        if (error) { setMessage((previous) => previous ?? { tone: "warn", text: error.message }); return; }
+        if (!didMutate) return;
+        if (process.env.NODE_ENV !== "production") console.info("[rollover] Rollover completed; requesting targeted workspace reconciliation.");
+        await reconcileRolloverWorkspace();
+      },
+    });
+  }, [reconcileRolloverWorkspace, session?.user?.id, supabase]);
+
   useEffect(() => {
     const client = supabase;
     if (!client || !session?.user) return;
-    const userId = session.user.id;
-
-    async function runDayReset() {
-      await taskRolloverCoordinator.run({
-        client,
-        logicalDayKey: todayKey,
-        userId,
-        execute: () => ((client as unknown) as {
-          rpc: (fn: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
-        }).rpc("adhdice_reconcile_task_rollover", {
-          p_now: new Date().toISOString(),
-          p_user_id: userId,
-        }),
-        onOwnedSettled: async ({ error }) => {
-          if (error) {
-            setMessage((previous) => previous ?? { tone: "warn", text: error.message });
-            return;
-          }
-          if (process.env.NODE_ENV !== "production") {
-            console.info("[rollover] Rollover completed; requesting targeted workspace reconciliation.");
-          }
-          await reconcileRolloverWorkspace();
-        },
-      });
-    }
-
-    void runDayReset();
-    const interval = setInterval(() => { void runDayReset(); }, 60_000);
+    void runDayReset("initial_load");
+    const interval = setInterval(() => { void runDayReset("timer"); }, 60_000);
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void runDayReset();
+      const isVisible = document.visibilityState === "visible";
+      const wasVisible = wasDocumentVisibleRef.current;
+      wasDocumentVisibleRef.current = isVisible;
+      if (!wasVisible && isVisible) {
+        void runDayReset("visibility");
       }
     };
     const handlePageShow = (event: PageTransitionEvent) => {
       if (event.persisted) {
-        void runDayReset();
+        void runDayReset("pageshow");
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -2257,7 +2358,7 @@ export function TaskApp() {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pageshow", handlePageShow);
     };
-  }, [reconcileRolloverWorkspace, session?.user?.id, supabase, todayKey]);
+  }, [isTaskHistoryLoaded, runDayReset, session?.user?.id, supabase]);
   const visibleTaskSubtasks = useMemo(
     () => filterPromotedLegacySubtasks(taskSubtasks, taskLegacySubtaskPromotions),
     [taskLegacySubtaskPromotions, taskSubtasks],
@@ -2418,15 +2519,26 @@ export function TaskApp() {
     ),
     [taskHistoryByTaskId, tasks, todayKey],
   );
-  const taskDisplayStatusByTaskId = useMemo(
-    () => Object.fromEntries(
-      tasks.map((task) => [
-        task.id,
-        getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayKey),
-      ]),
-    ),
-    [taskHistoryByTaskId, tasks, todayKey],
+  const activeStatusRead = useMemo(
+    () => resolveActiveTaskStatuses({
+      historyByTaskId: taskHistoryByTaskId,
+      logicalDayRollover: dayStartTime,
+      now: new Date(logicalDayNow),
+      tasks,
+      timezone: userTimeZone,
+    }),
+    [dayStartTime, logicalDayNow, taskHistoryByTaskId, tasks, userTimeZone],
   );
+  const taskDisplayStatusByTaskId = activeStatusRead.statusesByTaskId;
+  const tasksForActiveStatusRead = useMemo(
+    () => projectTasksForActiveStatusRead(tasks, taskDisplayStatusByTaskId),
+    [taskDisplayStatusByTaskId, tasks],
+  );
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+      window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__ = activeStatusRead.authority;
+    }
+  }, [activeStatusRead.authority]);
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
@@ -2553,7 +2665,7 @@ export function TaskApp() {
       taskListEvaluationContext,
       taskSubtasksByTaskId,
       taskUiState: taskUiStateForDerivedData,
-      tasks,
+      tasks: tasksForActiveStatusRead,
       });
       if (process.env.NODE_ENV !== "production") {
         console.info(`[tasks] Derived data ready in ${Math.round(performance.now() - startedAt)}ms for ${tasks.length} tasks.`);
@@ -3000,6 +3112,7 @@ export function TaskApp() {
     timezone: userTimeZone,
     updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
   });
+  queueRolloverRewardsRef.current = queueTaskRewards;
   const openPendingRewardBank = useCallback(() => {
     if (pendingRewardQueue.length === 0) {
       return;
@@ -3864,9 +3977,9 @@ export function TaskApp() {
     return true;
   }, [applyTaskMutationWithoutHistory, setMessage, tasks]);
 
-  const getTaskDelayAnchorDate = useCallback((task: Task) => (
-    task.due_on && task.due_on > todayKey ? task.due_on : todayKey
-  ), [todayKey]);
+  // Delay is a user action, so it is always anchored to its logical action day
+  // rather than a future (or stale) scheduled occurrence.
+  const getTaskDelayAnchorDate = useCallback((_task: Task) => todayKey, [todayKey]);
 
   const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string | null) => {
     const task = tasks.find((entry) => entry.id === taskId);
@@ -3886,11 +3999,26 @@ export function TaskApp() {
       return false;
     }
 
+    const delayDays = nextDueOn
+      ? Math.round((Date.parse(`${nextDueOn}T00:00:00.000Z`) - Date.parse(`${todayKey}T00:00:00.000Z`)) / 86_400_000)
+      : null;
+    const delayAuthority = delayDays && delayDays > 0
+      ? evaluateTaskActionAuthority({
+        history: taskHistory.filter((entry) => entry.task_id === task.id),
+        logicalDayRollover: dayStartTime,
+        now: new Date(logicalDayNow),
+        delayDays,
+        outcome: "delayed",
+        outcomeDate: todayKey,
+        task,
+        timezone: userTimeZone,
+      })
+      : null;
     const didDelay = await applyTaskMutationWithoutHistory(
       taskId,
       {
         due_on: nextDueOn,
-        status: "delayed",
+        ...(delayAuthority?.persistableTaskPatch.status ? { status: delayAuthority.persistableTaskPatch.status } : { status: "delayed" }),
       },
       { expectedTask: task },
     );
@@ -3903,7 +4031,7 @@ export function TaskApp() {
       text: nextDueOn ? `"${task.title}" was delayed until ${nextDueOn}.` : `"${task.title}" was benched without a date.`,
     });
     return true;
-  }, [applyTaskMutationWithoutHistory, getTaskDelayAnchorDate, setMessage, tasks]);
+  }, [applyTaskMutationWithoutHistory, dayStartTime, getTaskDelayAnchorDate, logicalDayNow, setMessage, taskHistory, tasks, todayKey, userTimeZone]);
 
   const delaySameTableTask = useCallback(async (taskId: string, days: number) => {
     const task = tasks.find((entry) => entry.id === taskId);
@@ -4835,7 +4963,23 @@ export function TaskApp() {
       return true;
     }
 
-    const completeUpdateValues = buildCompleteTaskUpdateValues(task, completeAction.values);
+    const completeAuthority = evaluateTaskActionAuthority({
+      history: taskHistory.filter((entry) => entry.task_id === task.id),
+      logicalDayRollover: dayStartTime,
+      now: new Date(logicalDayNow),
+      outcome: "complete",
+      task,
+      timezone: userTimeZone,
+    });
+    if (completeAuthority?.validationErrors.length) {
+      return fail(completeAuthority.validationErrors[0] ?? "This task cannot be completed.");
+    }
+    const completeUpdateValues: TaskUpdate = {
+      ...buildCompleteTaskUpdateValues(task, completeAction.values),
+      ...(completeAuthority?.persistableTaskPatch.status ? { status: completeAuthority.persistableTaskPatch.status } : {}),
+      ...(Object.hasOwn(completeAuthority?.persistableTaskPatch ?? {}, "dueOn") ? { due_on: completeAuthority!.persistableTaskPatch.dueOn } : {}),
+      ...(Object.hasOwn(completeAuthority?.persistableTaskPatch ?? {}, "completedAt") ? { completed_at: completeAuthority!.persistableTaskPatch.completedAt } : {}),
+    };
     const { conflict, data, error } = await runGuardedTaskRowUpdate(task.id, completeUpdateValues, {
       expectedTask: task,
     });
@@ -4979,7 +5123,30 @@ export function TaskApp() {
       }
     }
 
-    const values = buildTaskStatusUpdate(task, status);
+    const action = status === "done" || status === "did_my_best" || status === "missed"
+      ? evaluateTaskActionAuthority({
+        history: taskHistory.filter((entry) => entry.task_id === task.id),
+        logicalDayRollover: dayStartTime,
+        now: new Date(logicalDayNow),
+        outcome: status,
+        task,
+        timezone: userTimeZone,
+      })
+      : null;
+    if (action?.validationErrors.length) {
+      setMessage({ tone: "warn", text: action.validationErrors[0] ?? "This task action is not available." });
+      return false;
+    }
+    const values: TaskUpdate = action
+      ? {
+        ...buildTaskStatusUpdate(task, status),
+        ...(action.persistableTaskPatch.status ? { status: action.persistableTaskPatch.status } : {}),
+        ...(Object.hasOwn(action.persistableTaskPatch, "dueOn") ? { due_on: action.persistableTaskPatch.dueOn } : {}),
+        ...(Object.hasOwn(action.persistableTaskPatch, "completedAt") ? { completed_at: action.persistableTaskPatch.completedAt } : {}),
+        ...(Object.hasOwn(action.persistableTaskPatch, "activeStatusLogicalDate") ? { active_status_logical_date: action.persistableTaskPatch.activeStatusLogicalDate } : {}),
+        ...(Object.hasOwn(action.persistableTaskPatch, "activeOccurrenceDueOn") ? { active_occurrence_due_on: action.persistableTaskPatch.activeOccurrenceDueOn } : {}),
+      }
+      : buildTaskStatusUpdate(task, status);
     const updated = await updateTask(
       task.id,
       values,
@@ -5399,6 +5566,7 @@ export function TaskApp() {
     taskHistory: taskHistory.filter((entry) => entry.task_id === taskHistoryModalTaskId),
     taskTitle: taskHistoryModalTask.title,
     todayDateKey: todayKey,
+    stateEngineContext: { logicalDayRollover: dayStartTime, now: new Date(logicalDayNow), timezone: userTimeZone },
   } : null;
   function togglePinnedFilter() {
     setTaskUiState((prev) => ({
@@ -5831,7 +5999,7 @@ export function TaskApp() {
           </div>
         ) : activePage === "Home" ? (
           <TaskHomePage
-            tasks={tasks}
+            tasks={tasksForActiveStatusRead}
             userId={currentUserId}
           />
         ) : activePage === "Achievements" ? (
@@ -6064,7 +6232,7 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
-                  allTasks: tasks,
+                  allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
                   columnFilters: taskUiState.tableColumnFilters,
@@ -6241,7 +6409,7 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
-                  allTasks: tasks,
+                  allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
                   columnFilters: taskUiState.tableColumnFilters,

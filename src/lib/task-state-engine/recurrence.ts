@@ -17,7 +17,7 @@ export function allowedOutcomes(recurrence: TaskRecurrence, unscheduled: boolean
   }
   return isUntilComplete(recurrence)
     ? new Set(["did_my_best", "complete", "missed", "delayed"] as const)
-    : new Set(["done", "did_my_best", "missed", "delayed"] as const);
+    : new Set(["done", "did_my_best", "complete", "missed", "delayed"] as const);
 }
 
 function ordinalIndex(ordinal: MonthlyOrdinal) {

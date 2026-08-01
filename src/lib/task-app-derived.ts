@@ -1,7 +1,7 @@
 import { buildTaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
 import { isArchiveLikeTask } from "@/lib/task-complete";
 import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
-import { getTaskDisplayStatusWithHistory, sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
+import { sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
 import type {
   Task,
   TaskHistory,
@@ -192,7 +192,7 @@ export function buildCanonicalActiveStatusCounts(
   const counts = createEmptyTaskStatusCounts();
   for (const task of parentTasks) {
     if (!options.parentTaskIds || options.parentTaskIds.has(task.id)) {
-      counts[getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey)] += 1;
+      counts[task.status] += 1;
     }
     if (options.includeSteps === false) continue;
     for (const item of childTaskPreviewByParentTaskId[task.id]?.items ?? []) {
@@ -434,11 +434,7 @@ export function buildChildTaskPreviewLookup(
           repeatMonthlyOrdinal: descendant.repeat_monthly_ordinal,
           repeatMonthlyWeekday: descendant.repeat_monthly_weekday,
           scheduledOn: descendant.scheduled_on,
-          status: getTaskDisplayStatusWithHistory(
-            descendant,
-            taskHistoryByTaskId[descendant.id] ?? [],
-            todayDateKey,
-          ),
+          status: descendant.status,
           storedStatus: descendant.status,
           tags: descendant.tags ?? [],
           title: descendant.title,
@@ -537,11 +533,7 @@ export function buildCanonicalTaskEntityProjection({
   const taskDisplayStatusByTaskId: Record<string, TaskStatus> = {};
   const focusFilterFactsByTaskId: Record<string, ReturnType<typeof getTaskFocusFilterFacts>> = {};
   for (const task of tasks) {
-    taskDisplayStatusByTaskId[task.id] = getTaskDisplayStatusWithHistory(
-      task,
-      taskHistoryByTaskId[task.id] ?? [],
-      todayDateKey,
-    );
+    taskDisplayStatusByTaskId[task.id] = task.status;
     focusFilterFactsByTaskId[task.id] = getTaskFocusFilterFacts(
       task,
       taskHistoryByTaskId[task.id] ?? [],
@@ -938,7 +930,7 @@ export function computeTaskAppDerivedData({
       return searchMatchesTaskGroup;
     }
 
-    const ownDisplayStatus = getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey);
+    const ownDisplayStatus = task.status;
     const matchesOwnStatus = taskUiState.statusFilters.includes(ownDisplayStatus);
     const matchingChildStatusItems = includeStepsInStatus
       ? matchingChildSearchItems.filter((item) => taskUiState.statusFilters.includes(item.status))
@@ -957,9 +949,7 @@ export function computeTaskAppDerivedData({
       : taskUiState.matchAny
         ? quickChecks.some(Boolean)
         : quickChecks.every(Boolean);
-    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(
-      getTaskDisplayStatusWithHistory(task, taskHistoryByTaskId[task.id] ?? [], todayDateKey),
-    );
+    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(task.status);
     const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
     return matchesQuickFilters && matchesStatus && matchesEnergy;
   };

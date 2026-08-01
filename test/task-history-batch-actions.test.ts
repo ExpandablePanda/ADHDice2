@@ -71,7 +71,7 @@ test("task history batch action upserts selected dates together and merges local
   assert.deepEqual(localHistory.map((entry) => entry.entry_date).sort(), ["2026-06-18", "2026-06-19"]);
 });
 
-test("History Calendar missed save backfills prior scheduled dates, merges returned rows, and excludes today", async () => {
+test("History Calendar manual Missed saves one deduplicated outcome without advancing recurrence", async () => {
   const task = createTask({
     created_at: "2026-07-01T09:00:00.000Z",
     due_on: "2026-07-13",
@@ -138,17 +138,13 @@ test("History Calendar missed save backfills prior scheduled dates, merges retur
 
   await actions.syncTaskHistoryEntries(task.id, "missed", ["2026-07-08"], { syncLiveTask: true });
 
-  assert.deepEqual(capturedPayloads.map((payload) => payload.entry_date), [
-    "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11", "2026-07-12",
-  ]);
-  assert.deepEqual(localHistory.map((entry) => entry.entry_date).sort(), [
-    "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11", "2026-07-12",
-  ]);
+  assert.deepEqual(capturedPayloads.map((payload) => payload.entry_date), ["2026-07-08"]);
+  assert.deepEqual(localHistory.map((entry) => entry.entry_date).sort(), ["2026-07-08"]);
   assert.equal(localHistory.every((entry) => entry.status === "missed"), true);
 
   await actions.syncTaskHistoryEntries(task.id, "missed", ["2026-07-08"], { syncLiveTask: true });
-  assert.equal(localHistory.length, 5);
-  assert.equal(new Set(localHistory.map((entry) => entry.entry_date)).size, 5);
+  assert.equal(localHistory.length, 1);
+  assert.equal(new Set(localHistory.map((entry) => entry.entry_date)).size, 1);
 });
 
 test("task history batch action rolls current recurring occurrence to the next live due date", async () => {

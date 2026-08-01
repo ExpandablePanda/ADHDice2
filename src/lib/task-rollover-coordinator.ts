@@ -51,6 +51,15 @@ export class TaskRolloverSingleFlightCoordinator {
         return { owned, result };
       });
     this.requests.set(logicalDayKey, request);
+    void request.then(() => {
+      if (this.requests.get(logicalDayKey) === request) {
+        this.requests.delete(logicalDayKey);
+      }
+    }, () => {
+      if (this.requests.get(logicalDayKey) === request) {
+        this.requests.delete(logicalDayKey);
+      }
+    });
     this.tail = { generation, promise: request.then(() => undefined, () => undefined) };
     return request;
   }

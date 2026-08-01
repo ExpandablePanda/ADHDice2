@@ -56,6 +56,9 @@ export type TaskStateSnapshot = {
   dueOn: string | null;
   activeStatusLogicalDate?: string | null;
   activeOccurrenceDueOn?: string | null;
+  /** Optional persisted comparison inputs. Undefined means the source model cannot expose them. */
+  recurrenceCursor?: string | null;
+  satisfiedOccurrenceIdentity?: string | null;
   recurrence: TaskRecurrence;
 };
 

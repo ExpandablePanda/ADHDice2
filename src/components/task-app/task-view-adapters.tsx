@@ -39,6 +39,7 @@ import {
 import type { AppPage } from "@/lib/task-ui-state";
 import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
 import { getTaskHistoryCalendarActionStatuses } from "@/lib/task-complete";
+import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates } from "@/lib/task-state-engine";
 import type {
   Task,
   TaskHistory as DbTaskHistory,
@@ -565,6 +566,7 @@ export function TaskHistoryModal({
   taskTitle,
   todayDateKey,
   initialDateKey,
+  stateEngineContext,
 }: {
   onClose: () => void;
   onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<void>;
@@ -574,6 +576,7 @@ export function TaskHistoryModal({
   taskTitle: string;
   todayDateKey: string;
   initialDateKey?: string | null;
+  stateEngineContext?: { logicalDayRollover: string; now: Date | string; timezone: string };
 }) {
   const today = todayDateKey;
   const pastDayCount = 140;
@@ -594,6 +597,9 @@ export function TaskHistoryModal({
   const mobileScrollRef = useRef<HTMLDivElement>(null);
   const weeks: string[][] = [];
   const dueDates = buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, taskHistory);
+  const engineCalendarStates = stateEngineContext
+    ? resolveTaskHistoryCalendarStates({ ...stateEngineContext, history: taskHistory, task })
+    : null;
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
   const stats = computeTaskSpecificHistoryStats(task, taskHistory, today, days[0] ?? today);
@@ -605,7 +611,7 @@ export function TaskHistoryModal({
   const selectedIsFuture = selectedDate > today;
   const selectedIsDue = dueDates.has(selectedDate);
   const selectedIsMissed = selectedEntry?.status === "missed";
-  const selectedVirtualState = getTaskHistoryCalendarVirtualState({
+  const selectedVirtualState = engineCalendarStates?.[selectedDate] ?? getTaskHistoryCalendarVirtualState({
     dateKey: selectedDate,
     delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
     hasHistoryEntry: selectedEntry !== null,
@@ -614,7 +620,9 @@ export function TaskHistoryModal({
     projectsUndatedDelayed: task.status === "delayed" && task.due_on === null,
     todayDateKey: today,
   });
-  const calendarActionStatuses = getTaskHistoryCalendarActionStatuses(task);
+  const calendarActionStatuses = stateEngineContext
+    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: taskHistory, logicalDate: selectedDate, task }) ?? getTaskHistoryCalendarActionStatuses(task)
+    : getTaskHistoryCalendarActionStatuses(task);
   const canDelaySelectedDate = !isMultiSelect
     && !selectedIsFuture
     && Boolean(task.due_on)
@@ -631,7 +639,7 @@ export function TaskHistoryModal({
   function cellTone(dateKey: string) {
     const entry = historyByDate.get(dateKey);
     if (!entry) {
-      const virtualState = getTaskHistoryCalendarVirtualState({
+      const virtualState = engineCalendarStates?.[dateKey] ?? getTaskHistoryCalendarVirtualState({
         dateKey,
         delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
         hasHistoryEntry: false,
@@ -647,6 +655,9 @@ export function TaskHistoryModal({
         return "border-[#cfd6e4] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60";
       }
       if (virtualState === "due") {
+        return "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]";
+      }
+      if (virtualState === "open" || virtualState === "in_progress") {
         return "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]";
       }
       return "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]";
@@ -729,13 +740,16 @@ export function TaskHistoryModal({
     );
   }
 
-  function renderStatusPill(entry: DbTaskHistory | null, virtualState: "delayed" | "due" | "not_due" | "upcoming" | null = null) {
+  function renderStatusPill(entry: DbTaskHistory | null, virtualState: "delayed" | "due" | "not_due" | "upcoming" | "open" | "in_progress" | "missed" | "done" | "did_my_best" | "complete" | null = null) {
     if (!entry) {
       if (virtualState === "delayed") {
         return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]`}>Delayed</span>;
       }
       if (virtualState === "due") {
         return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]`}>Due</span>;
+      }
+      if (virtualState === "open" || virtualState === "in_progress") {
+        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]`}>{virtualState === "in_progress" ? "In Progress" : "Open"}</span>;
       }
       if (virtualState === "upcoming") {
         return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#cfd6e4] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`}>Upcoming</span>;
@@ -795,7 +809,7 @@ export function TaskHistoryModal({
     <button aria-pressed={selectedDateSet.has(dateKey)} className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDateSet.has(dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""} ${isMultiSelect && dateKey > today ? "cursor-not-allowed opacity-45" : ""}`} data-history-date={dateKey} key={dateKey} onClick={() => selectDate(dateKey)} title={dateKey} type="button">{dateKey.slice(-2)}</button>
   );
   const calendarControls = <div className="mt-2 flex flex-wrap gap-2"><TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>{isMultiSelect && selectedDates.length > 1 ? <TaskTableChipButton onClick={() => setSelectedDates([selectedDate])}>Keep Current Only</TaskTableChipButton> : null}</div>;
-  const calendarLegend = <div className="flex flex-wrap items-center gap-2 text-xs">{renderOfficialStatusChip("done", "Done")}{renderOfficialStatusChip("complete", "Marked Complete")}{renderOfficialStatusChip("delayed", "Delayed")}{renderOfficialStatusChip("did_my_best", "Did My Best")}{renderOfficialStatusChip("missed", "Missed")}<span className="text-[#d96b1c] dark:text-[#ffb47c]">Due</span><span className="text-[#68738c] dark:text-white/60">Upcoming</span><span className="text-[#3388c9] dark:text-[#8ed0f6]">Not Due</span></div>;
+  const calendarLegend = <div className="flex flex-wrap items-center gap-2 text-xs">{renderOfficialStatusChip("done", "Done")}{renderOfficialStatusChip("complete", "Marked Complete")}{renderOfficialStatusChip("delayed", "Delayed")}{renderOfficialStatusChip("did_my_best", "Did My Best")}{renderOfficialStatusChip("missed", "Missed")}<span className="text-[#d96b1c] dark:text-[#ffb47c]">Open / Due</span><span className="text-[#68738c] dark:text-white/60">Upcoming</span><span className="text-[#3388c9] dark:text-[#8ed0f6]">Not Due</span></div>;
   const selectedDetailsSection = (
     <section className="rounded-[2rem] border border-[#ece8f8] bg-white p-5 dark:border-white/10 dark:bg-white/[0.03]">
             <div className="flex items-start justify-between gap-3">
@@ -862,7 +876,7 @@ export function TaskHistoryModal({
             {showDelayEditor && canDelaySelectedDate && task.due_on ? (
               <div className="mt-4 rounded-[1.25rem] border border-[#efe9ff] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
                 <TaskDelayPicker
-                  anchorDateKey={selectedDate === today ? (task.due_on > today ? task.due_on : today) : selectedDate}
+                  anchorDateKey={selectedDate === today ? today : selectedDate}
                   description={selectedDate === today
                     ? "Delay today’s live task without changing past rewards or completion history."
                     : "Correct this saved occurrence to Delayed using the app’s existing history semantics without double-counting rewards."}

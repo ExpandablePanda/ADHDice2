@@ -183,6 +183,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   taskListDataGeneration,
 }: UseWorkspaceDataOptions<TTaskGridItem>) {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
+  const [taskHistoryLoadedUserId, setTaskHistoryLoadedUserId] = useState<string | null>(null);
   const [isSoftWorkspaceRefreshing, setIsSoftWorkspaceRefreshing] = useState(false);
   const [isTaskResumeSyncPending, setIsTaskResumeSyncPending] = useState(false);
   const [taskListMembershipDataReadyUserId, setTaskListMembershipDataReadyUserId] = useState<string | null>(null);
@@ -236,6 +237,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       liveWorkspaceUserIdRef.current = null;
       hasLoadedSecondaryDataRef.current = false;
       hasLoadedTaskHistoryRef.current = false;
+      setTaskHistoryLoadedUserId(null);
       secondaryLoadInFlightRef.current = false;
       taskHistoryLoadInFlightRef.current = false;
       queuedTaskHistoryReloadRef.current = false;
@@ -476,6 +478,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             const nextTaskHistory = (taskHistoryResult.data ?? []).map(mapTaskHistoryRow);
             setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, nextTaskHistory));
             hasLoadedTaskHistoryRef.current = true;
+            setTaskHistoryLoadedUserId(userId);
           } while (queuedTaskHistoryReloadRef.current && isActive);
           return true;
         } finally {
@@ -1240,6 +1243,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
   return {
     isSoftWorkspaceRefreshing,
+    isTaskHistoryLoaded: Boolean(currentUser && taskHistoryLoadedUserId === currentUser.id),
     isTaskListMembershipDataReady: !currentUser || taskListMembershipDataReadyUserId === currentUser.id,
     isTaskResumeSyncPending,
     isWorkspaceLoading,

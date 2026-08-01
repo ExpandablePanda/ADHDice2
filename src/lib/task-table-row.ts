@@ -4,7 +4,6 @@ import type {
   TaskHistory,
   TaskSubtask,
 } from "@/lib/database.types";
-import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone } from "@/lib/task-history";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
@@ -84,7 +83,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     repeatMonthlyOrdinal: task.repeat_monthly_ordinal,
     repeatMonthlyWeekday: task.repeat_monthly_weekday,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
-    status: getTaskDisplayStatusWithHistory(task, context.taskHistory, context.todayDateKey),
+    status: task.status,
     subtasks: buildTaskTableSubtasks(context.subtasks),
     tags: task.tags ?? [],
     title: task.title,
