@@ -8,7 +8,7 @@ import { FilterRowsComponent } from "./task-filter-rows";
 import { FocusPlannerModalComponent } from "./focus-planner-modal";
 import { Select } from "./task-status-select";
 import { TaskDelayPicker } from "./task-delay-picker";
-import { formatTaskStatusLabel, renderTaskStatusCircle, TASK_STATUS_CHIP_STYLES } from "./task-status-ui";
+import { formatTaskStatusLabel, renderTaskStatusCircle, TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES } from "./task-status-ui";
 import {
   TASK_TABLE_CHIP_BASE_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
@@ -127,8 +127,6 @@ function formatTaskHistoryEditedLine(entry: Pick<DbTaskHistory, "created_at" | "
 }
 
 const HISTORY_STATUS_CHIP_BASE = "inline-flex items-center justify-center rounded-full border px-2 py-1 text-[13px] font-medium leading-none whitespace-nowrap";
-const ACTIVE_CHIP_RING_CLASS = "ring-2 ring-[#d7cbfb] ring-offset-1 dark:ring-[#6d56d6] dark:ring-offset-[#18112d]";
-
 function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
 }
@@ -856,7 +854,7 @@ export function TaskHistoryModal({
                     setShowDelayEditor(false);
                     void handleSetStatus(status);
                   }}
-                  toneClassName={`${statusTone(status)}${isSelectedStatus(status) ? ` ${ACTIVE_CHIP_RING_CLASS}` : " opacity-78 hover:opacity-100"} disabled:opacity-50`}
+                  toneClassName={`${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
                 >
                   {renderTaskStatusCircle(status, "sm")}
                   <span>{formatTaskStatusLabel(status)}</span>

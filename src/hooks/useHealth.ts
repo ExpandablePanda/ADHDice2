@@ -36,7 +36,7 @@ import {
   getEligibleHealthAchievements,
   type HealthAchievementCode,
 } from "@/lib/health-utils";
-import { getHealthFoodIdentityKey, normalizeHealthFoodLibraryItem } from "@/lib/health-library";
+import { getHealthFoodIdentityKey, normalizeHealthFoodLibraryItem, setHealthFoodFavoriteStatus } from "@/lib/health-library";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -810,6 +810,49 @@ export function useHealth(
     return true;
   }
 
+  async function setFavoriteFoodStatus(itemId: string, isFavorite: boolean) {
+    if (!userId || !profile) return false;
+    const existingFood = favorites.find((item) => item.id === itemId);
+    if (!existingFood) return false;
+
+    const localRow = setHealthFoodFavoriteStatus(existingFood, isFavorite, new Date().toISOString());
+    let nextRow = localRow;
+    if (client && storageMode === "remote") {
+      const { data, error } = await client
+        .from("adhdice_health_food_library")
+        .update({ is_favorite: isFavorite })
+        .eq("id", itemId)
+        .eq("user_id", userId)
+        .select("*")
+        .single();
+      if (error) {
+        setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      nextRow = data ? normalizeHealthFoodLibraryItem(data) : localRow;
+    }
+
+    const nextFavorites = [
+      ...favorites.filter((item) => item.id !== itemId),
+      nextRow,
+    ].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+    applySnapshot(buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites: nextFavorites,
+      importAudits,
+      mealEntries,
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      weightEntries,
+    }));
+    setMessage({ tone: "good", text: isFavorite ? "Saved to favorites." : "Custom food saved." });
+    return true;
+  }
+
   async function deleteFavoriteFood(itemId: string) {
     if (!profile) {
       return false;
@@ -1402,6 +1445,7 @@ export function useHealth(
     recipes,
     saveCheckIn,
     saveFavoriteFood,
+    setFavoriteFoodStatus,
     saveRecipe,
     savedMeals,
     saveSavedMeal,

@@ -5,10 +5,13 @@ import { readFileSync } from "node:fs";
 import type { Task } from "../src/lib/database.types.ts";
 import {
   buildHomeTodoHierarchy,
+  getHomeTodoSearchText,
   isHomeTodoTaskEligible,
   moveHomeTodoTaskId,
+  moveHomeTodoTaskIdToEdge,
   normalizeHomeTodoState,
   reconcileHomeTodoTaskIds,
+  sortHomeTodoSearchResults,
 } from "../src/lib/home-todo-state.ts";
 import { reorderListItems } from "../src/lib/list-reorder.ts";
 
@@ -63,10 +66,44 @@ test("Home todo arrow reordering preserves contiguous array order", () => {
   assert.deepEqual(moveHomeTodoTaskId(["a", "b", "c"], "a", -1), ["a", "b", "c"]);
 });
 
+test("Home todo direct edge reordering preserves the remaining order", () => {
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b", "c", "d"], "c", "top"), ["c", "a", "b", "d"]);
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b", "c", "d"], "b", "bottom"), ["a", "c", "d", "b"]);
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(["a", "b"], "missing", "top"), ["a", "b"]);
+});
+
+test("Home todo search includes Pinned and Routine membership labels", () => {
+  const pinned = task("pinned", { notes: null, pinned_at: "2026-07-28T12:00:00.000Z", tags: [], title: "Pay bill" });
+  assert.match(getHomeTodoSearchText(pinned, [], []), /pinned/);
+  assert.match(getHomeTodoSearchText(task("routine", { notes: null, pinned_at: null, tags: [], title: "Stretch" }), [], [{ id: "routine" }]), /routine/);
+});
+
+test("Home todo search sorts full hierarchy paths together", () => {
+  const results = sortHomeTodoSearchResults([
+    { hierarchy: ["Project B"], task: { id: "b-child", title: "Step 1" } },
+    { hierarchy: [], task: { id: "a", title: "Project A" } },
+    { hierarchy: ["Project A"], task: { id: "a-child", title: "Step 2" } },
+    { hierarchy: [], task: { id: "b", title: "Project B" } },
+  ]);
+  assert.deepEqual(results.map((entry) => entry.task.id), ["a", "a-child", "b", "b-child"]);
+});
+
 test("shared drag reorder moves Home task ids without mutating the source", () => {
   const source = ["a", "b", "c"];
   assert.deepEqual(reorderListItems(source, 0, 2), ["b", "c", "a"]);
   assert.deepEqual(source, ["a", "b", "c"]);
+});
+
+test("Home todo renders the recovered ten-item, wrapped-title, status, and picker behavior", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  assert.match(source, /const HOME_TODO_VISIBLE_LIMIT = 10/);
+  assert.match(source, /todoTasks\.slice\(0, HOME_TODO_VISIBLE_LIMIT\)/);
+  assert.match(source, /Do later \(\{doLaterTasks\.length\}\)/);
+  assert.match(source, /break-words text-sm font-semibold leading-5/);
+  assert.match(source, /<TaskStatusCircleRail/);
+  assert.match(source, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
+  assert.match(source, /setIsSearchOpen\(true\)/);
+  assert.doesNotMatch(source, /setQuery\(""\)/);
 });
 
 test("Home todo migration and schema provide owner-scoped realtime state", () => {

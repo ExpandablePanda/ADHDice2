@@ -5,13 +5,22 @@ Last reviewed: 2026-08-01
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.6.20`.
+- Current working app version: `7.6.21`.
 - Current release group: `7.6.x` Task State Engine.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.6.21 Pre-engine product-work recovery
+
+- Recovered the missing Home To-do presentation and interaction slice: wrapped titles, canonical active-status controls, shared editor opening without page navigation, Pinned and Routine search terms, hierarchy-sorted multi-add search, direct Top/Bottom ordering, drag ordering, and a ten-task visible limit with collapsed Do later items. Home continues to store canonical Task IDs only and receives Task State Engine-projected display rows; status actions resolve back to the canonical current Task before mutation.
+- Recovered Health Food category grouping, per-meal-slot and selected-day calorie totals, frequency-aware favorite sorting, metadata-preserving favorite toggles, and calorie/macro goal-progress bars. Unfavoriting now updates only `is_favorite` and retains the complete custom-food row locally and remotely.
+- Recovered one app-root, page-independent Edit Task overlay and the Table/child-task routing guards that direct existing-task opens through it. The overlay uses current task rows, guarded mutations, Task State Engine-projected display status, and the current shared editor APIs.
+- Recovered semantic inverted fill colors for the selected Task History status action. Focused source and pure-helper tests cover every recovered behavior.
+- Skipped the checkpoint's status authority, recurrence replay/reconciliation, active-status derivation, History mutation logic, rollover coordinator and SQL, editor-save overdue reconciliation, reward finalization logic, and Calendar semantics. Those checkpoint paths are obsolete under the current Task State Engine and were not restored. Existing current reward-idempotency, recurring-date-repair, read/action/Calendar/rollover, and persistence authorities remain unchanged.
+- Also skipped checkpoint changes that were already present in current architecture: structured Health category/serving fields and the Task State Engine active-status projection itself. No checkpoint commit was cherry-picked or merged.
 
 ## 7.6.20 Exact twice-advanced cursor correction
 

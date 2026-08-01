@@ -11,6 +11,7 @@ import {
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
   getHealthFoodIdentityKey,
+  setHealthFoodFavoriteStatus,
   sumWaterForDate,
   waterAmountToMilliliters,
 } from "../src/lib/health-library.ts";
@@ -160,6 +161,40 @@ test("food library identity prefers provider ids and dedupes exact manual foods"
       servingLabel: "1 bowl",
     }),
   );
+});
+
+test("unfavoriting a custom food preserves its stored metadata", () => {
+  const customFood = {
+    ...food,
+    category: "Breakfast",
+    is_favorite: true,
+    serving_size: "1 packet",
+    serving_weight_amount: 42,
+    serving_weight_unit: "g" as const,
+  };
+  assert.deepEqual(setHealthFoodFavoriteStatus(customFood, false, "2026-07-29T12:00:00.000Z"), {
+    ...customFood,
+    is_favorite: false,
+    updated_at: "2026-07-29T12:00:00.000Z",
+  });
+});
+
+test("Health Food renders grouped foods, calorie totals, favorite sorting, and goal progress", () => {
+  const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
+  assert.match(source, /matchingCustomFoodGroups/);
+  assert.match(source, /item\.category\?\.trim\(\) \|\| "Uncategorized"/);
+  assert.match(source, /loggedCountByIdentity/);
+  assert.match(source, /Math\.round\(selectedNutrition\.calories\)\} kcal/);
+  assert.match(source, /Math\.round\(slotCaloriesTotal\)\} kcal/);
+  assert.match(source, /progressPercent=\{profile\.calorie_goal/);
+  assert.match(source, /setFavoriteFoodStatus\(item\.id, false\)/);
+});
+
+test("Task History selected actions use semantic inverted status fills", () => {
+  const source = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
+  assert.match(source, /TASK_STATUS_INVERTED_CHIP_STYLES/);
+  assert.match(source, /isSelectedStatus\(status\) \? TASK_STATUS_INVERTED_CHIP_STYLES\[status\]/);
+  assert.doesNotMatch(source, /ACTIVE_CHIP_RING_CLASS/);
 });
 
 test("7.5.22 Health migration and consolidated schema carry the new owner-scoped tables", () => {
