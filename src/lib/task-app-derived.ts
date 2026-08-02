@@ -1,4 +1,5 @@
-import { buildTaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
+import { buildTaskHierarchyAdapter, type TaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
+import { logDevelopmentComputation, type DevelopmentComputationDiagnostic } from "@/lib/workspace-performance-diagnostics";
 import { isArchiveLikeTask } from "@/lib/task-complete";
 import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
 import { sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
@@ -122,6 +123,12 @@ export type ChildTaskPreviewGroup = {
 };
 
 export type ChildTaskPreviewLookup = Record<string, ChildTaskPreviewGroup>;
+export type TaskAppStructuralData = {
+  childTaskPreviewByParentTaskId: ChildTaskPreviewLookup;
+  hierarchy: TaskHierarchyAdapter<Task>;
+  taskHierarchyDiagnostics: TaskHierarchyDiagnostics;
+  taskPrimaryVisibility: TaskPrimaryVisibility;
+};
 export type TaskRailListOption = {
   count: number;
   description: string;
@@ -143,8 +150,39 @@ export type CanonicalTaskEntityFact = {
   id: string;
   listMemberships: TaskListMembership[];
   rootParentId: string;
-  searchMatch: boolean;
+  searchDocument: string;
   task: Task;
+};
+
+export type StableCanonicalTaskIndex = {
+  availableTaskLists: TaskListDefinition[];
+  entityFactsById: Map<string, CanonicalTaskEntityFact>;
+  focusedTaskIds: string[];
+  listNameById: ReadonlyMap<string, string>;
+  taskById: ReadonlyMap<string, Task>;
+  taskListMembershipsByTaskId: Record<string, TaskListMembership[]>;
+  validChildTaskIdSet: ReadonlySet<string>;
+};
+
+export type TaskAppWorkspaceFacts = {
+  activeTasks: Task[];
+  allTaskTags: string[];
+  archiveTasks: Task[];
+  baseListCounts: Record<string, number>;
+  doneTasks: Task[];
+  focusPlannerTasks: Task[];
+  lowEnergyTasks: Task[];
+  overdueTasks: Task[];
+  planningCandidates: Task[];
+  primaryTasks: Task[];
+  recentlyDeletedTasks: Task[];
+  taskLinkedNotesByTaskId: Record<string, TaskEditorLinkedNote[]>;
+  taskStatusCounts: Record<TaskStatus, number>;
+  todayQueueTaskCount: number;
+  todayTasks: Task[];
+  urgentTasks: Task[];
+  visibleTaskBaseFactsByTaskId: Record<string, VisibleTaskBaseFacts>;
+  visibleTasks: Task[];
 };
 
 export type CanonicalTaskEntityProjection = {
@@ -323,8 +361,10 @@ function mapTaskIdsByParentTaskId(groupedTasks: Map<string, Task[]>) {
   );
 }
 
-export function buildTaskHierarchyDiagnostics(tasks: Task[]): TaskHierarchyDiagnostics {
-  const adapter = buildTaskHierarchyAdapter(tasks);
+export function buildTaskHierarchyDiagnostics(
+  tasks: Task[],
+  adapter = buildTaskHierarchyAdapter(tasks),
+): TaskHierarchyDiagnostics {
   const depthByTaskId = Object.fromEntries(adapter.depthByTaskId.entries());
   const maxDepth = Object.values(depthByTaskId).reduce(
     (currentMax, depth) => (typeof depth === "number" ? Math.max(currentMax, depth) : currentMax),
@@ -351,8 +391,10 @@ export function buildTaskHierarchyDiagnostics(tasks: Task[]): TaskHierarchyDiagn
   };
 }
 
-export function buildTaskPrimaryVisibility(tasks: Task[]): TaskPrimaryVisibility {
-  const adapter = buildTaskHierarchyAdapter(tasks);
+export function buildTaskPrimaryVisibility(
+  tasks: Task[],
+  adapter = buildTaskHierarchyAdapter(tasks),
+): TaskPrimaryVisibility {
   const hiddenChildTaskIds = new Set(adapter.validChildTaskIds);
 
   return {
@@ -375,8 +417,8 @@ export function buildChildTaskPreviewLookup(
   focusedTaskIds: readonly string[] = [],
   taskHistoryByTaskId: Record<string, TaskHistory[]> = {},
   todayDateKey = "",
+  adapter = buildTaskHierarchyAdapter(tasks),
 ): ChildTaskPreviewLookup {
-  const adapter = buildTaskHierarchyAdapter(tasks);
   const focusedTaskIdSet = new Set(focusedTaskIds);
   const previewByParentTaskId: ChildTaskPreviewLookup = {};
 
@@ -453,6 +495,31 @@ export function buildChildTaskPreviewLookup(
   return previewByParentTaskId;
 }
 
+export function buildTaskAppStructuralData({
+  diagnosticDetails,
+  focusedTaskIds,
+  taskHistoryByTaskId,
+  tasks,
+  todayDateKey,
+}: {
+  diagnosticDetails?: DevelopmentComputationDiagnostic;
+  focusedTaskIds: readonly string[];
+  taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  tasks: Task[];
+  todayDateKey: string;
+}): TaskAppStructuralData {
+  const startedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
+  const hierarchy = buildTaskHierarchyAdapter(tasks);
+  const result = {
+    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey, hierarchy),
+    hierarchy,
+    taskHierarchyDiagnostics: buildTaskHierarchyDiagnostics(tasks, hierarchy),
+    taskPrimaryVisibility: buildTaskPrimaryVisibility(tasks, hierarchy),
+  };
+  if (diagnosticDetails) logDevelopmentComputation(diagnosticDetails, performance.now() - startedAt);
+  return result;
+}
+
 function matchesCanonicalTableColumnFilters(
   task: Task,
   memberships: readonly TaskListMembership[],
@@ -475,32 +542,30 @@ function matchesCanonicalTableColumnFilters(
   });
 }
 
-export function buildCanonicalTaskEntityProjection({
+export function buildStableCanonicalTaskIndex({
   availableTaskLists,
+  diagnosticDetails,
   focusedTaskIds,
   milestoneSearchTokensByTaskId,
-  normalizedSearchQuery,
   taskHistoryByTaskId,
   taskListEvaluationContext,
   taskSubtasksByTaskId,
-  taskUiState,
   tasks,
   todayDateKey,
+  hierarchy = buildTaskHierarchyAdapter(tasks),
 }: {
   availableTaskLists: TaskListDefinition[];
+  diagnosticDetails?: DevelopmentComputationDiagnostic;
   focusedTaskIds: string[];
   milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
-  normalizedSearchQuery: string;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   taskListEvaluationContext: TaskListEvaluationContext;
   taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
-  taskUiState: TaskDerivedFilterState;
   tasks: Task[];
   todayDateKey: string;
-}): CanonicalTaskEntityProjection {
-  const hierarchy = buildTaskHierarchyAdapter(tasks);
-  const searchIsActive = normalizedSearchQuery.length > 0;
-  const includeDescendants = taskUiState.includeStepsByView[taskUiState.view] === true;
+  hierarchy?: TaskHierarchyAdapter<Task>;
+}): StableCanonicalTaskIndex {
+  const startedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const validChildTaskIdSet = new Set(hierarchy.validChildTaskIds);
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const inheritedManualMembershipsByTaskId: TaskListEvaluationContext["manualMembershipsByTaskId"] = {};
@@ -516,20 +581,6 @@ export function buildCanonicalTaskEntityProjection({
       ...(taskListEvaluationContext.manualMembershipsByTaskId[rootParentId] ?? []),
     ];
   }
-  const hasTrashedAncestor = (taskId: string) => (
-    (ancestorIdsByTaskId.get(taskId) ?? []).some((ancestorId) => taskById.get(ancestorId)?.status === "trashed")
-  );
-  const isInSelectedBaseScope = (task: Task) => (
-    taskUiState.selectedBucket === "trash"
-      ? isTaskInRecentTrash(task)
-      : task.status !== "trashed" && !hasTrashedAncestor(task.id)
-  );
-  const isInPrimaryFacetBaseScope = (task: Task) => (
-    task.status !== "trashed"
-    && !hasTrashedAncestor(task.id)
-    && isTaskVisibleInPrimaryViews(task)
-  );
-
   const taskDisplayStatusByTaskId: Record<string, TaskStatus> = {};
   const focusFilterFactsByTaskId: Record<string, ReturnType<typeof getTaskFocusFilterFacts>> = {};
   for (const task of tasks) {
@@ -561,23 +612,69 @@ export function buildCanonicalTaskEntityProjection({
       taskListLookup,
     );
     taskListMembershipsByTaskId[task.id] = listMemberships;
-    const searchMatch = !searchIsActive
-      || matchesNormalizedSearchValue(task.title, normalizedSearchQuery)
-      || matchesNormalizedSearchValues(task.tags, normalizedSearchQuery)
-      || matchesNormalizedSearchValues(milestoneSearchTokensByTaskId?.get(task.id), normalizedSearchQuery)
-      || (taskSubtasksByTaskId[task.id] ?? []).some((subtask) => (
-        matchesNormalizedSearchValue(subtask.title, normalizedSearchQuery)
-      ));
+    const searchDocument = [
+      task.title,
+      ...(task.tags ?? []),
+      ...(milestoneSearchTokensByTaskId?.get(task.id) ?? []),
+      ...(taskSubtasksByTaskId[task.id] ?? []).map((subtask) => subtask.title),
+    ].join("\n").toLowerCase();
     entityFactsById.set(task.id, {
       ancestorIds: ancestorIdsByTaskId.get(task.id) ?? [],
       displayStatus: taskDisplayStatusByTaskId[task.id],
       id: task.id,
       listMemberships,
       rootParentId: rootParentIdByTaskId.get(task.id) ?? task.id,
-      searchMatch,
+      searchDocument,
       task,
     });
   }
+
+  const result = {
+    availableTaskLists,
+    entityFactsById,
+    focusedTaskIds,
+    listNameById,
+    taskById,
+    taskListMembershipsByTaskId,
+    validChildTaskIdSet,
+  };
+  if (diagnosticDetails) logDevelopmentComputation(diagnosticDetails, performance.now() - startedAt);
+  return result;
+}
+
+export function queryCanonicalTaskEntityProjection({
+  index,
+  normalizedSearchQuery,
+  taskUiState,
+}: {
+  index: StableCanonicalTaskIndex;
+  normalizedSearchQuery: string;
+  taskUiState: TaskDerivedFilterState;
+}): CanonicalTaskEntityProjection {
+  const {
+    availableTaskLists,
+    entityFactsById,
+    focusedTaskIds,
+    listNameById,
+    taskById,
+    taskListMembershipsByTaskId,
+    validChildTaskIdSet,
+  } = index;
+  const searchIsActive = normalizedSearchQuery.length > 0;
+  const includeDescendants = taskUiState.includeStepsByView[taskUiState.view] === true;
+  const hasTrashedAncestor = (taskId: string) => (
+    (entityFactsById.get(taskId)?.ancestorIds ?? []).some((ancestorId) => taskById.get(ancestorId)?.status === "trashed")
+  );
+  const isInSelectedBaseScope = (task: Task) => (
+    taskUiState.selectedBucket === "trash"
+      ? isTaskInRecentTrash(task)
+      : task.status !== "trashed" && !hasTrashedAncestor(task.id)
+  );
+  const isInPrimaryFacetBaseScope = (task: Task) => (
+    task.status !== "trashed"
+    && !hasTrashedAncestor(task.id)
+    && isTaskVisibleInPrimaryViews(task)
+  );
 
   const matchesSharedNonSearchFilters = (fact: CanonicalTaskEntityFact) => {
     const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(fact.task, filter, focusedTaskIds));
@@ -620,7 +717,7 @@ export function buildCanonicalTaskEntityProjection({
     }
     if (isInSelectedBaseScope(fact.task) && matchesSelectedList(fact) && matchesSharedNonSearchFilters(fact)) {
       selectedScopeCandidateIds.add(fact.id);
-      if (searchIsActive && fact.searchMatch) directSearchMatchedEntityIds.add(fact.id);
+      if (searchIsActive && fact.searchDocument.includes(normalizedSearchQuery)) directSearchMatchedEntityIds.add(fact.id);
     }
     if (isInPrimaryFacetBaseScope(fact.task) && matchesSharedNonSearchFilters(fact)) {
       primaryFacetCandidateIds.add(fact.id);
@@ -654,7 +751,7 @@ export function buildCanonicalTaskEntityProjection({
     selectedScopeCandidateIds.has(id)
   )));
   const primaryDirectMatchIds = new Set(Array.from(entityFactsById.values())
-    .filter((fact) => fact.searchMatch && primaryFacetCandidateIds.has(fact.id))
+    .filter((fact) => fact.searchDocument.includes(normalizedSearchQuery) && primaryFacetCandidateIds.has(fact.id))
     .map((fact) => fact.id));
   const selectedPreStatusResultIds = buildSearchResultUniverse(
     selectedScopeCandidateIds,
@@ -749,6 +846,130 @@ export function buildCanonicalTaskEntityProjection({
   };
 }
 
+export function buildCanonicalTaskEntityProjection(input: {
+  availableTaskLists: TaskListDefinition[];
+  focusedTaskIds: string[];
+  milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
+  normalizedSearchQuery: string;
+  taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  taskListEvaluationContext: TaskListEvaluationContext;
+  taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
+  taskUiState: TaskDerivedFilterState;
+  tasks: Task[];
+  todayDateKey: string;
+  hierarchy?: TaskHierarchyAdapter<Task>;
+}) {
+  const { normalizedSearchQuery, taskUiState, ...stableInputs } = input;
+  return queryCanonicalTaskEntityProjection({
+    index: buildStableCanonicalTaskIndex(stableInputs),
+    normalizedSearchQuery,
+    taskUiState,
+  });
+}
+
+export function buildTaskAppWorkspaceFacts({
+  availableTaskNotes,
+  bucketContext,
+  focusedTaskIds,
+  structuralData,
+  stableCanonicalTaskIndex,
+  tasks,
+}: {
+  availableTaskNotes: TaskEditorLinkedNote[];
+  bucketContext: TaskBucketContext;
+  focusedTaskIds: string[];
+  structuralData: TaskAppStructuralData;
+  stableCanonicalTaskIndex: StableCanonicalTaskIndex;
+  tasks: Task[];
+}): TaskAppWorkspaceFacts {
+  const hiddenChildIds = new Set(structuralData.taskPrimaryVisibility.primaryHiddenChildTaskIds);
+  const primaryTasks = tasks.filter((task) => !hiddenChildIds.has(task.id));
+  const archiveTasks = primaryTasks.filter((task) => isArchiveLikeTask(task));
+  const recentlyDeletedTasks = primaryTasks.filter((task) => isTaskInRecentTrash(task));
+  const visibleTasks: Task[] = [];
+  const activeTasks: Task[] = [];
+  const doneTasks: Task[] = [];
+  const overdueTasks: Task[] = [];
+  const todayTasks: Task[] = [];
+  const urgentFlaggedTasks: Task[] = [];
+  const lowEnergyTasks: Task[] = [];
+  const tags = new Set<string>();
+  const visibleTaskBaseFactsByTaskId: Record<string, VisibleTaskBaseFacts> = {};
+  const taskStatusCounts = primaryTasks.reduce<Record<TaskStatus, number>>((counts, task) => {
+    counts[task.status] += 1;
+    if (!isTaskVisibleInPrimaryViews(task)) return counts;
+    visibleTasks.push(task);
+    const facts = buildVisibleTaskBaseFacts(task);
+    visibleTaskBaseFactsByTaskId[task.id] = facts;
+    for (const tag of task.tags ?? []) tags.add(tag);
+    if (facts.isOpenTask) {
+      activeTasks.push(task);
+      if (facts.isOverdueTask) overdueTasks.push(task);
+      if (facts.isUrgentTask) urgentFlaggedTasks.push(task);
+      if (facts.isLowEnergyTask && lowEnergyTasks.length < 4) lowEnergyTasks.push(task);
+      if (facts.isTodayTask) todayTasks.push(task);
+    }
+    if (facts.isDoneTask) doneTasks.push(task);
+    return counts;
+  }, createEmptyTaskStatusCounts());
+  const taskLinkedNotesByTaskId = availableTaskNotes.reduce<Record<string, TaskEditorLinkedNote[]>>((byTaskId, note) => {
+    for (const taskId of note.linked_task_ids) (byTaskId[taskId] ??= []).push(note);
+    return byTaskId;
+  }, {});
+  const baseListCounts: Record<string, number> = {};
+  const listsById = new Map<string, Task[]>();
+  for (const task of visibleTasks) {
+    for (const membership of stableCanonicalTaskIndex.taskListMembershipsByTaskId[task.id] ?? []) {
+      baseListCounts[membership.id] = (baseListCounts[membership.id] ?? 0) + 1;
+      const members = listsById.get(membership.id) ?? [];
+      members.push(task);
+      listsById.set(membership.id, members);
+    }
+  }
+  const uniquePlanningIds = new Set<string>();
+  const inboxTasks = listsById.get("inbox") ?? [];
+  const laterTasks = listsById.get("later") ?? [];
+  const quickWinTasks = listsById.get("quick_wins") ?? [];
+  const planningCandidates = sortTasksForCockpit([
+    ...inboxTasks,
+    ...laterTasks.filter((task) => !inboxTasks.some((candidate) => candidate.id === task.id)).slice(0, 8),
+    ...quickWinTasks.filter((task) => !inboxTasks.some((candidate) => candidate.id === task.id)).slice(0, 6),
+  ], bucketContext).filter((task) => {
+    if (uniquePlanningIds.has(task.id)) return false;
+    uniquePlanningIds.add(task.id);
+    return true;
+  }).slice(0, 5);
+  const focusPlannerTasks = sortTasksForCockpit(visibleTasks.filter((task) => {
+    const memberships = stableCanonicalTaskIndex.taskListMembershipsByTaskId[task.id] ?? [];
+    return isTaskOpen(task) && memberships.some((membership) => ["today", "priority_5", "quick_wins", "focus"].includes(membership.id));
+  }), bucketContext);
+  const focusedTaskIdSet = new Set(focusedTaskIds);
+  const todayQueueTaskCount = primaryTasks.filter((task) => (
+    isTaskOpen(task)
+    && (visibleTaskBaseFactsByTaskId[task.id]?.isTodayTask || focusedTaskIdSet.has(task.id) || getTaskPriorityLevel(task) === 5)
+  )).length;
+  return {
+    activeTasks,
+    allTaskTags: [...tags].sort(),
+    archiveTasks,
+    baseListCounts,
+    doneTasks,
+    focusPlannerTasks,
+    lowEnergyTasks,
+    overdueTasks,
+    planningCandidates,
+    primaryTasks,
+    recentlyDeletedTasks,
+    taskLinkedNotesByTaskId,
+    taskStatusCounts,
+    todayQueueTaskCount,
+    todayTasks,
+    urgentTasks: urgentFlaggedTasks.slice(0, 6),
+    visibleTaskBaseFactsByTaskId,
+    visibleTasks,
+  };
+}
+
 type ComputeTaskAppDerivedDataInput = {
   activePage: string;
   availableTaskLists: TaskListDefinition[];
@@ -770,6 +991,10 @@ type ComputeTaskAppDerivedDataInput = {
   taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
   taskUiState: TaskDerivedFilterState;
   tasks: Task[];
+  structuralData?: TaskAppStructuralData;
+  stableCanonicalTaskIndex?: StableCanonicalTaskIndex;
+  diagnosticDetails?: DevelopmentComputationDiagnostic;
+  workspaceFacts?: TaskAppWorkspaceFacts;
 };
 
 export function computeTaskAppDerivedData({
@@ -793,29 +1018,102 @@ export function computeTaskAppDerivedData({
   taskSubtasksByTaskId,
   taskUiState,
   tasks,
+  structuralData,
+  stableCanonicalTaskIndex,
+  diagnosticDetails,
+  workspaceFacts,
 }: ComputeTaskAppDerivedDataInput) {
+  if (tasks.length === 0) {
+    const emptyStructuralData = structuralData ?? buildTaskAppStructuralData({
+      focusedTaskIds,
+      taskHistoryByTaskId,
+      tasks,
+      todayDateKey,
+    });
+    const emptyIndex = stableCanonicalTaskIndex ?? buildStableCanonicalTaskIndex({
+      availableTaskLists,
+      focusedTaskIds,
+      milestoneSearchTokensByTaskId,
+      taskHistoryByTaskId,
+      taskListEvaluationContext,
+      taskSubtasksByTaskId,
+      tasks,
+      todayDateKey,
+      hierarchy: emptyStructuralData.hierarchy,
+    });
+    const canonicalEntityProjection = queryCanonicalTaskEntityProjection({
+      availableTaskLists,
+      index: emptyIndex,
+      normalizedSearchQuery: deferredSearchQuery.toLowerCase(),
+      taskUiState,
+    });
+    const emptyTasks: Task[] = [];
+    return {
+      activeTasks: emptyTasks,
+      allTaskTags: [],
+      archiveFilteredTasksSorted: emptyTasks,
+      canonicalEntityProjection,
+      canonicalMatchingChildTaskIds: new Set<string>(),
+      canonicalVisibleRootTasksSorted: emptyTasks,
+      childTaskPreviewByParentTaskId: {},
+      collections: {
+        filteredActiveTasks: emptyTasks, filteredDoneTasks: emptyTasks, filteredFocusTasks: emptyTasks,
+        filteredLowEnergyTasks: emptyTasks, filteredOverdueTasks: emptyTasks, filteredTodayTasks: emptyTasks,
+        filteredUrgentTasks: emptyTasks, inboxTasks: emptyTasks, laterTasks: emptyTasks, missedTasks: emptyTasks,
+        quickWinTasks: emptyTasks, recurringTasks: emptyTasks, waitingTasks: emptyTasks,
+      },
+      doneTasks: emptyTasks,
+      duplicateTitleGroups: [],
+      filteredTasksSorted: emptyTasks,
+      focusPlannerTasks: emptyTasks,
+      listColumnPickerColumns: [
+        ...listVisibleColumns,
+        ...listColumnPickerOrder.filter((columnId) => !listVisibleColumns.includes(columnId)),
+      ],
+      lowEnergyTasks: emptyTasks,
+      manualListOptions: [],
+      milestoneFilteredTasksSorted: emptyTasks,
+      missingGridWidgetTypes: [],
+      momentumPercent: 0,
+      overdueTasks: emptyTasks,
+      planningCandidates: emptyTasks,
+      searchMatchedChildTaskIds: new Set<string>(),
+      searchMatchedParentTaskIds: [],
+      searchMatchedStepParentTaskIds: new Set<string>(),
+      selectedTaskForEditor: null,
+      statusCountScopeArchiveTasksSorted: emptyTasks,
+      statusCountScopeTasksSorted: emptyTasks,
+      statusCountScopeTrashTasksSorted: emptyTasks,
+      statusMatchedChildTaskIds: new Set<string>(),
+      statusMatchedStepParentTaskIds: new Set<string>(),
+      tableStatusCounts: canonicalEntityProjection.statusFacetCounts,
+      taskForActualTimeEntry: null,
+      taskHierarchyDiagnostics: emptyStructuralData.taskHierarchyDiagnostics,
+      taskLinkedNotesByTaskId: {},
+      taskListMembershipsByTaskId: {},
+      taskPrimaryVisibility: emptyStructuralData.taskPrimaryVisibility,
+      taskStatusCounts: createEmptyTaskStatusCounts(),
+      todayQueueTaskCount: 0,
+      todayTasks: emptyTasks,
+      trashFilteredTasksSorted: emptyTasks,
+      urgentTasks: emptyTasks,
+      visibleListCounts: {},
+    };
+  }
   const totalStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const availableRuleCount = availableTaskLists.reduce((count, list) => count + (list.rules?.rules.length ?? 0), 0);
 
   const hierarchyDiagnosticsStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const taskHierarchyDiagnostics = buildTaskHierarchyDiagnostics(tasks);
-  const childTaskPreviewByParentTaskId = buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey);
-  const taskPrimaryVisibility = buildTaskPrimaryVisibility(tasks);
-  const primaryHiddenChildTaskIds = new Set(taskPrimaryVisibility.primaryHiddenChildTaskIds);
-  const normalizedSearchQuery = deferredSearchQuery.toLowerCase();
-  const canonicalEntityProjection = buildCanonicalTaskEntityProjection({
-    availableTaskLists,
+  const resolvedStructuralData = structuralData ?? buildTaskAppStructuralData({
     focusedTaskIds,
-    milestoneSearchTokensByTaskId,
-    normalizedSearchQuery,
     taskHistoryByTaskId,
-    taskListEvaluationContext,
-    taskSubtasksByTaskId,
-    taskUiState,
     tasks,
     todayDateKey,
   });
-  logTaskDeriveStep("hierarchy diagnostics", hierarchyDiagnosticsStartedAt, {
+  const { childTaskPreviewByParentTaskId, hierarchy, taskHierarchyDiagnostics, taskPrimaryVisibility } = resolvedStructuralData;
+  const primaryHiddenChildTaskIds = new Set(taskPrimaryVisibility.primaryHiddenChildTaskIds);
+  const normalizedSearchQuery = deferredSearchQuery.toLowerCase();
+  logTaskDeriveStep("hierarchy preparation", hierarchyDiagnosticsStartedAt, {
     childTasks: taskHierarchyDiagnostics.childTaskIds.length,
     childTaskPreviewParents: Object.keys(childTaskPreviewByParentTaskId).length,
     invalidTasks: taskHierarchyDiagnostics.invalidTaskIds.length,
@@ -823,72 +1121,56 @@ export function computeTaskAppDerivedData({
     primaryHiddenChildren: taskPrimaryVisibility.primaryHiddenChildTaskIds.length,
     tasks: taskHierarchyDiagnostics.totalTaskCount,
   });
-
-  const normalizationStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const primaryTasks = tasks.filter((task) => !primaryHiddenChildTaskIds.has(task.id));
-  const archiveTasks = primaryTasks.filter((task) => isArchiveLikeTask(task));
-  const recentlyDeletedTasks = primaryTasks.filter((task) => isTaskInRecentTrash(task));
-  const visibleTasks: Task[] = [];
-  const taskLinkedNotesByTaskId = availableTaskNotes.reduce<Record<string, TaskEditorLinkedNote[]>>((accumulator, note) => {
-    for (const taskId of note.linked_task_ids) {
-      if (!accumulator[taskId]) {
-        accumulator[taskId] = [];
-      }
-      accumulator[taskId].push(note);
-    }
-    return accumulator;
-  }, {});
-  logTaskDeriveStep("input normalization", normalizationStartedAt, {
-    notes: availableTaskNotes.length,
-    primaryTasks: primaryTasks.length,
-    recentlyDeletedTasks: recentlyDeletedTasks.length,
-    tasks: tasks.length,
-    visibleTasks: visibleTasks.length,
+  const canonicalProjectionStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
+  const canonicalIndex = stableCanonicalTaskIndex ?? buildStableCanonicalTaskIndex({
+    availableTaskLists,
+    focusedTaskIds,
+    milestoneSearchTokensByTaskId,
+    taskHistoryByTaskId,
+    taskListEvaluationContext,
+    taskSubtasksByTaskId,
+    tasks,
+    todayDateKey,
+    hierarchy,
+  });
+  const canonicalEntityProjection = queryCanonicalTaskEntityProjection({
+    index: canonicalIndex,
+    normalizedSearchQuery,
+    taskUiState,
+  });
+  logTaskDeriveStep("lightweight canonical query", canonicalProjectionStartedAt, {
+    ...(diagnosticDetails ?? {}),
+    computationName: "task view query",
+    entities: canonicalEntityProjection.entityFactsById.size,
+    matchedEntities: canonicalEntityProjection.postStatusMatchedEntityIds.size,
+    searchLength: deferredSearchQuery.length,
   });
 
-  const aggregateStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const taskTagSet = new Set<string>();
-  const visibleTaskBaseFactsByTaskId: Record<string, VisibleTaskBaseFacts> = {};
-  const activeTasks: Task[] = [];
-  const doneTasks: Task[] = [];
-  const overdueTasks: Task[] = [];
-  const todayTasks: Task[] = [];
-  const urgentFlaggedTasks: Task[] = [];
-  const lowEnergyTasks: Task[] = [];
-  const taskStatusCounts = primaryTasks.reduce<Record<TaskStatus, number>>((accumulator, task) => {
-    accumulator[task.status] += 1;
-    if (!isTaskVisibleInPrimaryViews(task)) {
-      return accumulator;
-    }
-    visibleTasks.push(task);
-    const baseFacts = buildVisibleTaskBaseFacts(task);
-    visibleTaskBaseFactsByTaskId[task.id] = baseFacts;
-    for (const tag of task.tags ?? []) {
-      taskTagSet.add(tag);
-    }
-    if (baseFacts.isOpenTask) {
-      activeTasks.push(task);
-      if (baseFacts.isOverdueTask) {
-        overdueTasks.push(task);
-      }
-      if (baseFacts.isUrgentTask) {
-        urgentFlaggedTasks.push(task);
-      }
-      if (baseFacts.isLowEnergyTask && lowEnergyTasks.length < 4) {
-        lowEnergyTasks.push(task);
-      }
-      if (baseFacts.isTodayTask) {
-        todayTasks.push(task);
-      }
-    }
-    if (baseFacts.isDoneTask) {
-      doneTasks.push(task);
-    }
-    return accumulator;
-  }, createEmptyTaskStatusCounts());
-  const allTaskTags = [...taskTagSet].sort();
-  const urgentTasks = urgentFlaggedTasks.slice(0, 6);
-  logTaskDeriveStep("base bucket and count aggregation", aggregateStartedAt, {
+  const resolvedWorkspaceFacts = workspaceFacts ?? buildTaskAppWorkspaceFacts({
+    availableTaskNotes,
+    bucketContext,
+    focusedTaskIds,
+    stableCanonicalTaskIndex: canonicalIndex,
+    structuralData: resolvedStructuralData,
+    tasks,
+  });
+  const {
+    activeTasks,
+    allTaskTags,
+    archiveTasks,
+    doneTasks,
+    lowEnergyTasks,
+    overdueTasks,
+    primaryTasks,
+    recentlyDeletedTasks,
+    taskLinkedNotesByTaskId,
+    taskStatusCounts,
+    todayTasks,
+    urgentTasks,
+    visibleTaskBaseFactsByTaskId,
+    visibleTasks,
+  } = resolvedWorkspaceFacts;
+  logTaskDeriveStep("reuse stable workspace facts", totalStartedAt, {
     activeTasks: activeTasks.length,
     doneTasks: doneTasks.length,
     statusBuckets: Object.keys(taskStatusCounts).length,
@@ -1142,24 +1424,8 @@ export function computeTaskAppDerivedData({
     tasks: filteredTasksSorted.length,
   });
 
-  const planningStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const seenPlanningCandidateIds = new Set<string>();
-  const planningCandidates = activePage !== "Tasks"
-    ? []
-    : sortTasksForCockpit([
-      ...collections.inboxTasks,
-      ...collections.laterTasks.filter((task) => !collections.inboxTasks.some((inboxTask) => inboxTask.id === task.id)).slice(0, 8),
-      ...collections.quickWinTasks.filter((task) => !collections.inboxTasks.some((inboxTask) => inboxTask.id === task.id)).slice(0, 6),
-    ], bucketContext)
-      .filter((task) => {
-        if (seenPlanningCandidateIds.has(task.id)) {
-          return false;
-        }
-        seenPlanningCandidateIds.add(task.id);
-        return true;
-      })
-      .slice(0, 5);
-  logTaskDeriveStep("planning candidate sorting/grouping", planningStartedAt, {
+  const planningCandidates = resolvedWorkspaceFacts.planningCandidates;
+  logTaskDeriveStep("reuse planning candidate facts", totalStartedAt, {
     inboxTasks: collections.inboxTasks.length,
     laterTasks: collections.laterTasks.length,
     planningCandidates: planningCandidates.length,
@@ -1167,28 +1433,12 @@ export function computeTaskAppDerivedData({
     tasks: filteredTasksSorted.length,
   });
 
-  const focusPlannerStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
-  const focusPlannerTasks = activePage !== "Tasks"
-    ? []
-    : sortTasksForCockpit(
-      filteredTasksSorted.filter((task) => {
-        const memberships = taskListMembershipsByTaskId[task.id] ?? [];
-        return isTaskOpen(task) && memberships.some((membership) => membership.id === "today" || membership.id === "priority_5" || membership.id === "quick_wins" || membership.id === "focus");
-      }),
-      bucketContext,
-    );
-  logTaskDeriveStep("focus planner grouping/sorting", focusPlannerStartedAt, {
+  const focusPlannerTasks = resolvedWorkspaceFacts.focusPlannerTasks;
+  logTaskDeriveStep("reuse Focus planner facts", totalStartedAt, {
     focusPlannerTasks: focusPlannerTasks.length,
     tasks: filteredTasksSorted.length,
   });
-  const todayQueueTaskCount = primaryTasks.filter((task) => (
-    isTaskOpen(task)
-    && (
-      visibleTaskBaseFactsByTaskId[task.id]?.isTodayTask
-      || focusedTaskIdSet.has(task.id)
-      || getTaskPriorityLevel(task) === 5
-    )
-  )).length;
+  const todayQueueTaskCount = resolvedWorkspaceFacts.todayQueueTaskCount;
 
   const listAssemblyStartedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const momentumPercent = activeTasks.length === 0
@@ -1220,10 +1470,13 @@ export function computeTaskAppDerivedData({
     tasks: tasks.length,
   });
   logTaskDeriveStep("total compute", totalStartedAt, {
+    ...(diagnosticDetails ?? {}),
+    computationName: "complete task derivation",
     lists: availableTaskLists.length,
     rules: availableRuleCount,
     tasks: tasks.length,
   });
+  if (diagnosticDetails) logDevelopmentComputation(diagnosticDetails, performance.now() - totalStartedAt);
   const canonicalVisibleRootTasksSorted = activePage === "Tasks"
     ? sortTasksForCockpit(
       tasks.filter((task) => canonicalEntityProjection.visibleRootParentIds.has(task.id)),
@@ -1307,6 +1560,6 @@ export function computeTaskAppDerivedData({
     todayQueueTaskCount,
     urgentTasks,
     tableStatusCounts: canonicalEntityProjection.statusFacetCounts,
-    visibleListCounts: canonicalEntityProjection.listFacetCounts,
+    visibleListCounts: resolvedWorkspaceFacts.baseListCounts,
   };
 }

@@ -51,6 +51,27 @@ export function getTaskHistoryCalendarActionStatuses(task: Pick<Task, "repeat_fr
     : (["done", "did_my_best", "delayed", "missed", "complete"] as const);
 }
 
+export function getTaskHistoryCalendarVisibleActionStatuses({
+  engineStatuses,
+  isMultiSelect,
+  task,
+}: {
+  engineStatuses: readonly TaskStatus[] | null;
+  isMultiSelect: boolean;
+  task: Pick<Task, "repeat_frequency">;
+}) {
+  const configuredStatuses = getTaskHistoryCalendarActionStatuses(task);
+  if (isMultiSelect) {
+    return configuredStatuses.filter((status) => status !== "complete" && status !== "delayed");
+  }
+  if (!engineStatuses) {
+    return [...configuredStatuses];
+  }
+  return configuredStatuses.filter((status) => (
+    engineStatuses.includes(status)
+  ));
+}
+
 export function getIncompleteCompletionDescendants(taskId: string, tasks: Task[]) {
   return getTaskDescendants(taskId, tasks).filter((descendant) => descendant.status !== "complete");
 }

@@ -196,6 +196,7 @@ export function useHealth(
   setMessage: SetMessage,
   appendEconomyEvent: (opts: AppendEconomyEventOpts) => Promise<void>,
   setEconomy: (updater: EconomyState | ((current: EconomyState) => EconomyState)) => void,
+  active = true,
 ) {
   const [profile, setProfile] = useState<HealthProfile | null>(null);
   const [checkIns, setCheckIns] = useState<HealthCheckIn[]>([]);
@@ -377,6 +378,8 @@ export function useHealth(
       return;
     }
 
+    if (!active) return;
+
     const localState = readLocalHealthState(userId);
     applySnapshot(localState);
 
@@ -470,7 +473,7 @@ export function useHealth(
     return () => {
       isActive = false;
     };
-  }, [client, userId]);
+  }, [active, client, userId]);
 
   async function saveProfile(updates: HealthProfileUpdate) {
     if (!userId || !profile) {

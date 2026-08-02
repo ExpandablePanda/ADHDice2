@@ -9,6 +9,7 @@ import {
   canTaskBeMarkedComplete,
   getTaskCompleteConfirmationCopy,
   getTaskHistoryCalendarActionStatuses,
+  getTaskHistoryCalendarVisibleActionStatuses,
   getSelectableTaskStatusesForRepeatFrequency,
   isArchiveLikeTask,
   shouldOptimisticallyPatchTaskStatus,
@@ -43,8 +44,9 @@ test("recurring status options keep occurrence statuses and add complete", () =>
   ]);
 });
 
-test("calendar action statuses give one-off tasks missed and complete only", () => {
+test("calendar action statuses keep valid one-off Delay, Missed, and Complete actions", () => {
   assert.deepEqual(getTaskHistoryCalendarActionStatuses({ repeat_frequency: "none" }), [
+    "delayed",
     "missed",
     "complete",
   ]);
@@ -54,15 +56,33 @@ test("calendar action statuses keep occurrence actions and separate complete for
   assert.deepEqual(getTaskHistoryCalendarActionStatuses({ repeat_frequency: "daily" }), [
     "done",
     "did_my_best",
+    "delayed",
     "missed",
     "complete",
   ]);
   assert.deepEqual(getTaskHistoryCalendarActionStatuses({ repeat_frequency: "daily_until_complete" }), [
     "done",
     "did_my_best",
+    "delayed",
     "missed",
     "complete",
   ]);
+});
+
+test("Daily Until Complete exposes Done when shared engine authority allows it", () => {
+  assert.deepEqual(getTaskHistoryCalendarVisibleActionStatuses({
+    engineStatuses: ["done", "did_my_best", "delayed", "missed", "complete"],
+    isMultiSelect: false,
+    task: { repeat_frequency: "daily_until_complete" },
+  }), ["done", "did_my_best", "delayed", "missed", "complete"]);
+});
+
+test("History Calendar multi-select exposes batch occurrence actions independent of one selected date", () => {
+  assert.deepEqual(getTaskHistoryCalendarVisibleActionStatuses({
+    engineStatuses: [],
+    isMultiSelect: true,
+    task: { repeat_frequency: "daily_until_complete" },
+  }), ["done", "did_my_best", "missed"]);
 });
 
 test("complete eligibility blocks parents until all descendants recursively are complete", () => {

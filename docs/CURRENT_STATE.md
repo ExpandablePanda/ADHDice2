@@ -1,17 +1,56 @@
 # Current State
 
-Last reviewed: 2026-08-01
+Last reviewed: 2026-08-02
 
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.6.21`.
+- Current working app version: `7.6.26`.
 - Current release group: `7.6.x` Task State Engine.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.6.26 Fast startup and search rendering
+
+- Normal startup loads only current logical-day and persisted live-occurrence Task History facts. Per-Task Calendar History, all-time/range History, notes, and actual-time evidence load through explicit cached consumers, and late detail rows do not change the canonical current-state History revision.
+- Focus History, Health, and Achievement snapshots are page-gated and remain cached after their first load. Existing Reports and Records loaders retain their explicit range/all-time ownership.
+- Table and List views slice a 24-row rendered window plus eight-row overscan before revision-keyed row-model construction. Committed search results extend the window incrementally without prebuilding every matching row.
+- Search uses immediate local input, deferred committed results, and a query-only revision excluded from settings revisions. Rollover attempts only on initial load or resume when the persisted user/logical-day/timezone/rollover-boundary key changes.
+- Workspace stage logs are disabled by default. A single startup summary is available when `window.__ADHDICE_WORKSPACE_PERFORMANCE_DIAGNOSTICS__ = true`; rollover patch summaries additionally require `window.__ADHDICE_TASK_STATE_ROLLOVER_DIAGNOSTICS_ENABLED__ = true`.
+- Black-patch/Safari paint styling, Archive, status/recurrence semantics, rewards, database schema, and unrelated UI remain unchanged.
+
+## 7.6.25 Stable Task actions, derivation, and List rows
+
+- The shared Task State Engine action plan now owns the stored post-action status. Daily Until Complete `Done` records the current occurrence, advances its cursor, and stores the next active status immediately; it no longer falls back to a transient stored `done`, and the resulting Task plus History snapshots require zero rollover repair patches.
+- Task derivation now uses one content-derived key spanning Task, History, list, settings, query, and view revisions. Identical keys return the previous result without a new diagnostic revision, while stable workspace facts remain independently cached across query, editor, menu, overlay, and Table/List UI changes.
+- Base buckets/status counts, tags/list counts, smart-list memberships, planning and Focus planner facts, and Archive/Trash source sets are workspace-revision facts. Search and view work reuse those facts for filtering, sorting, and assembly.
+- List View uses content-revision row-model caches plus memoized row boundaries. Unchanged rows and editor overlay models retain identity across editor-target and unrelated UI updates while selection, expanded Steps, status controls, and shared editor routing remain intact.
+- Unscheduled uses a fixed square, zero-line-height centered calendar wrapper with a smaller glyph. Archive continues to use the distinct book glyph. Black-patch rendering remains open pending browser QA.
+
+## 7.6.24 Stable Task projection and status parity
+
+- Task, Task History, lists/memberships, status settings, and milestone inputs now receive content-derived revisions. An owner-scoped layer cache reuses equivalent active-status, canonical-entity, hierarchy/status, and membership/search-document projections across React development replay and newly allocated but unchanged hydration payloads.
+- The minute timer no longer reevaluates or clones the canonical Task collection while the logical day is unchanged. Effective-status projection retains each unchanged Task object's identity.
+- Immediate controlled search input remains local; deferred query changes match stable lowercase search documents and do not invalidate canonical entities, hierarchy/status, or list memberships. Page navigation and editor/overlay identifiers are excluded from those expensive-layer keys.
+- Daily Until Complete `Done` is accepted by the shared Task State Engine action authority used by normal status surfaces and Calendar, while `Complete` remains the permanent recurrence terminator. The Unscheduled grey calendar is explicitly centered in its status circle and Archive retains the book glyph.
+- This release does not split page loaders, redesign Realtime, add a query dependency, change reward/History persistence, or remove the development projection diagnostics needed for the next architecture phase.
+
+## 7.6.23 Workspace loading architecture diagnostic
+
+- Development-only task projection diagnostics now identify the source owner, previous and next computation revisions, exact changed references, task/History/list/settings reference revisions, active page, and duration without logging task text, notes, search text, or other user content.
+- The diagnostic documents current eager startup ownership and proposed page-scoped cache boundaries. It does not change Task State Engine, recurrence, History, rewards, Calendar, task actions, queries, subscriptions, or user-visible behavior.
+
+## 7.6.22 Recovery regression fixes
+
+- Restored the shared Edit Task overlay row builder and memoized its row projection, so Focus and other page navigation no longer hit the missing `buildTaskTableRow` reference or remap editor rows on unrelated overlay renders.
+- Task History Calendar now keeps Daily Until Complete `Done` available, restores Done/Did My Best/Missed batch actions for multi-date selection, and continues to save through the existing History action APIs. Complete remains single-date and permanently terminates recurrence; Delayed remains a valid single-date action.
+- The shared status glyph projection renders engine-derived Unscheduled as a grey calendar while Archive retains the grey book.
+- Search keeps its deferred query while hierarchy adapter construction, diagnostics, visibility, and child previews are memoized outside query-dependent derivation. The shared projection stays warm across unrelated page navigation, and timing diagnostics now separate hierarchy preparation from canonical entity projection.
+- Removed row-level `content-visibility: auto` paint skipping from the nested task-table scroller, preventing unpainted regions that appeared only after scrolling while retaining incremental row rendering, HUDs, and overlays.
+- Task State Engine, recurrence, Calendar/History authority, reward idempotency, Complete semantics, Home, and Health behavior are otherwise unchanged.
 
 ## 7.6.21 Pre-engine product-work recovery
 

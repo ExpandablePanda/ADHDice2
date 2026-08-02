@@ -58,5 +58,8 @@ function logicalDayKey(now: string | Date, timezone: string, rollover: string) {
 
 /** Presentation-only copies; never pass these to a persistence mutation. */
 export function projectTasksForActiveStatusRead(tasks: Task[], statusesByTaskId: Record<string, TaskStatus>) {
-  return tasks.map((task) => ({ ...task, status: statusesByTaskId[task.id] ?? task.status }));
+  return tasks.map((task) => {
+    const status = statusesByTaskId[task.id] ?? task.status;
+    return status === task.status ? task : { ...task, status };
+  });
 }

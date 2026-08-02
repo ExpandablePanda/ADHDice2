@@ -1028,6 +1028,7 @@ function isKeyboardEventFromEditableTarget(
 type TaskManagementTableV2Props = {
   allowInlineInspector?: boolean;
   allRows?: PrototypeTaskRow[];
+  getAllRows?: () => PrototypeTaskRow[];
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
@@ -2252,6 +2253,7 @@ function sortRows(
 export function TaskManagementTableV2({
   allowInlineInspector = false,
   allRows,
+  getAllRows,
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
@@ -2994,10 +2996,10 @@ export function TaskManagementTableV2({
       ? buildMoveIntoParentOptions({
         childTaskPreviewByParentTaskId,
         sourceTaskId: rowContextMenuTask.id,
-        tasks: allRows && allRows.length > 0 ? allRows : tasks,
+        tasks: getAllRows?.() ?? (allRows && allRows.length > 0 ? allRows : tasks),
       })
       : [],
-    [allRows, childTaskPreviewByParentTaskId, rowContextMenuTask, tasks],
+    [allRows, childTaskPreviewByParentTaskId, getAllRows, rowContextMenuTask, tasks],
   );
   const shouldAnimateRows = !shouldReduceMotion && effectiveDisplayedTasks.length <= 80;
   const tableRowVariants: Variants | undefined = shouldAnimateRows
@@ -8564,10 +8566,6 @@ export function TaskManagementTableV2({
                     }}
                     role="button"
                     tabIndex={0}
-                    style={{
-                      containIntrinsicSize: "72px",
-                      contentVisibility: hasRenderedDescendants ? "visible" : "auto",
-                    }}
                     variants={tableRowVariants}
                     whileHover={shouldAnimateRows ? { y: -0.5 } : undefined}
                   >

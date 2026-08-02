@@ -8,11 +8,12 @@ import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone } from "@/lib/t
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { formatTaskPriorityLevel, getTaskPriorityLevel } from "@/lib/task-priority";
+import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 let buildTaskTableRowDebugCount = 0;
 
-type TaskTableRowContext = {
+export type TaskTableRowContext = {
   focusedTaskIdSet: Set<string>;
   linkedNotes: TaskEditorLinkedNote[];
   listDefinitions: TaskListDefinition[];
@@ -21,6 +22,35 @@ type TaskTableRowContext = {
   taskHistory: TaskHistory[];
   todayDateKey: string;
 };
+
+export function createStableTaskRowModelCache() {
+  const rowsByTaskId = new Map<string, { revision: string; row: PrototypeTaskRow }>();
+  return {
+    getOrCreate(task: Task, context: TaskTableRowContext) {
+      const revision = createProjectionDomainRevision(`task-row:${task.id}`, {
+        focused: context.focusedTaskIdSet.has(task.id),
+        history: context.taskHistory,
+        linkedNotes: context.linkedNotes,
+        listDefinitions: context.listDefinitions,
+        listMemberships: context.listMemberships,
+        subtasks: context.subtasks,
+        task,
+        todayDateKey: context.todayDateKey,
+      });
+      const cached = rowsByTaskId.get(task.id);
+      if (cached?.revision === revision) return cached.row;
+      const row = buildTaskTableRow(task, context);
+      rowsByTaskId.set(task.id, { revision, row });
+      return row;
+    },
+    retain(taskIds: readonly string[]) {
+      const retained = new Set(taskIds);
+      for (const taskId of rowsByTaskId.keys()) {
+        if (!retained.has(taskId)) rowsByTaskId.delete(taskId);
+      }
+    },
+  };
+}
 
 function buildTaskTableSubtasks(subtasks: TaskSubtask[], parentId: string | null = null): PrototypeTaskSubtask[] {
   return subtasks

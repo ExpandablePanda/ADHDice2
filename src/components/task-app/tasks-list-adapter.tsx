@@ -23,8 +23,9 @@ import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
-import { buildTaskTableRow, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
-import { Fragment, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
+import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
+import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
@@ -176,7 +177,18 @@ const COMPACT_REPEAT_UNITS: Array<{ label: string; value: PrototypeTaskRow["repe
   { label: "Weeks", value: "weekly" },
   { label: "Months", value: "monthly" },
 ];
-const isDevelopment = process.env.NODE_ENV !== "production";
+
+const StableListRowBoundary = memo(function StableListRowBoundary({
+  children,
+  taskId,
+}: {
+  children: ReactNode;
+  rowModel: PrototypeTaskRow;
+  taskId: string;
+  uiRevision: string;
+}) {
+  return <div className="space-y-3" data-task-list-hierarchy-group={taskId}>{children}</div>;
+}, (previous, next) => previous.rowModel === next.rowModel && previous.uiRevision === next.uiRevision);
 function priorityTone(priority: TaskPriorityLevelOption) {
   return getTaskPriorityToneClass(priority);
 }
@@ -375,6 +387,9 @@ type TasksTableSourceProps = {
 };
 
 const OVERLAY_VISIBLE_COLUMNS: TaskManagementTableColumnId[] = ["status_icon", "title"];
+const ROW_MODEL_WINDOW_SIZE = 24;
+const ROW_MODEL_OVERSCAN = 8;
+const ROW_MODEL_WINDOW_BATCH = ROW_MODEL_WINDOW_SIZE;
 
 type TasksTableAdapterProps = {
   filterRowsNode: ReactNode;
@@ -457,6 +472,19 @@ export function TasksTableAdapter({
   tableProps,
   panelProps,
 }: TasksTableAdapterProps) {
+  const [rowModelCache] = useState(createStableTaskRowModelCache);
+  const committedResultRevision = useMemo(
+    () => tableProps.tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
+    [tableProps.tasks],
+  );
+  const [rowWindow, setRowWindow] = useState({ count: ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN, revision: committedResultRevision });
+  const rowWindowCount = rowWindow.revision === committedResultRevision
+    ? rowWindow.count
+    : ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN;
+  const windowedTasks = useMemo(
+    () => tableProps.tasks.slice(0, rowWindowCount),
+    [rowWindowCount, tableProps.tasks],
+  );
   function buildStatusScrollAnchorTaskIds(taskId: string) {
     const visibleTaskIds = tableProps.tasks.map((task) => task.id);
     const taskIndex = visibleTaskIds.indexOf(taskId);
@@ -472,8 +500,7 @@ export function TasksTableAdapter({
 
   const rows = useMemo(
     () => {
-      const startedAt = process.env.NODE_ENV !== "production" ? performance.now() : 0;
-      const nextRows = tableProps.tasks.map((task) => buildTaskTableRow(task, {
+      return windowedTasks.map((task) => rowModelCache.getOrCreate(task, {
         focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
         linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
         listDefinitions: tableProps.rowContext.listDefinitions,
@@ -483,18 +510,8 @@ export function TasksTableAdapter({
         todayDateKey: tableProps.rowContext.todayDateKey,
       }));
 
-      if (process.env.NODE_ENV !== "production") {
-        const message = `[tasks:list-switch] rows mapped in ${Math.round(performance.now() - startedAt)}ms for ${tableProps.tasks.length} tasks`;
-        console.info(message);
-        if (typeof window !== "undefined") {
-          window.__ADHDICE_TASK_LIST_SWITCH_LOGS__ ??= [];
-          window.__ADHDICE_TASK_LIST_SWITCH_LOGS__.push(message);
-        }
-      }
-
-      return nextRows;
     },
-    [tableProps.rowContext, tableProps.tasks],
+    [rowModelCache, tableProps.rowContext, tableProps.tasks.length, windowedTasks],
   );
   const visibleColumns = useMemo<TaskManagementTableColumnId[]>(
     () => [
@@ -512,7 +529,7 @@ export function TasksTableAdapter({
   );
   const requestedOpenTaskRow = useMemo(
     () => tableProps.requestedOpenTask
-      ? buildTaskTableRow(tableProps.requestedOpenTask, {
+      ? rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
         focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
         linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
         listDefinitions: tableProps.rowContext.listDefinitions,
@@ -522,23 +539,8 @@ export function TasksTableAdapter({
         todayDateKey: tableProps.rowContext.todayDateKey,
       })
       : null,
-    [tableProps.requestedOpenTask, tableProps.rowContext],
+    [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
   );
-  const allTaskRows = useMemo(
-    () => (tableProps.allTasks ?? [])
-      .filter(isTaskVisibleInPrimaryViews)
-      .map((task) => buildTaskTableRow(task, {
-        focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
-        linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
-        listDefinitions: tableProps.rowContext.listDefinitions,
-        listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
-        subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
-        taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
-        todayDateKey: tableProps.rowContext.todayDateKey,
-      })),
-    [tableProps.allTasks, tableProps.rowContext],
-  );
-
   if (tableProps.tasks.length === 0) {
     return (
       <TasksListViewPanel
@@ -559,7 +561,17 @@ export function TasksTableAdapter({
       agentPlanNode={
         <TaskManagementTableV2
           allowInlineInspector
-          allRows={allTaskRows}
+          getAllRows={() => (tableProps.allTasks ?? tableProps.tasks)
+            .filter(isTaskVisibleInPrimaryViews)
+            .map((task) => rowModelCache.getOrCreate(task, {
+              focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
+              linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
+              listDefinitions: tableProps.rowContext.listDefinitions,
+              listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
+              subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
+              taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+              todayDateKey: tableProps.rowContext.todayDateKey,
+            }))}
           allListOptions={tableProps.allListOptions}
           allNoteOptions={noteOptions}
           allTagOptions={tableProps.allTagOptions}
@@ -657,6 +669,11 @@ export function TasksTableAdapter({
           onToggleTaskList={tableProps.onToggleTaskList}
           primaryBadgeLabel="Live task table"
           rows={rows}
+          hasMoreRows={windowedTasks.length < tableProps.tasks.length}
+          onLoadMoreRows={() => setRowWindow((current) => ({
+            count: Math.min((current.revision === committedResultRevision ? current.count : rowWindowCount) + ROW_MODEL_WINDOW_BATCH, tableProps.tasks.length),
+            revision: committedResultRevision,
+          }))}
           runningTaskTimers={tableProps.runningTaskTimers}
           requestedOpenTaskId={tableProps.requestedOpenTaskId}
           requestedOpenTask={requestedOpenTaskRow}
@@ -2452,6 +2469,7 @@ function TasksSimpleList({
   selectedBucket,
   tableProps,
 }: TasksListAdapterProps) {
+  const [rowModelCache] = useState(createStableTaskRowModelCache);
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [visibleMetadataTaskIds, setVisibleMetadataTaskIds] = useState<Set<string>>(() => new Set());
@@ -2463,6 +2481,7 @@ function TasksSimpleList({
   const [parentStepCreationErrors, setParentStepCreationErrors] = useState<Record<string, string | null>>({});
   const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
   const listShellRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreListRowsRef = useRef<HTMLDivElement | null>(null);
   const pendingMeasuredStatusScrollAnchorRef = useRef<MeasuredStatusScrollAnchor | null>(null);
   const parentStepDraftInputRef = useRef<HTMLInputElement | null>(null);
   const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
@@ -2474,6 +2493,28 @@ function TasksSimpleList({
     }),
     [listSortPreference, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.todayDateKey, tableProps.tasks],
   );
+  const committedResultRevision = useMemo(
+    () => tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
+    [tasks],
+  );
+  const [rowWindow, setRowWindow] = useState({ count: ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN, revision: committedResultRevision });
+  const rowWindowCount = rowWindow.revision === committedResultRevision
+    ? rowWindow.count
+    : ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN;
+  const windowedTasks = useMemo(() => tasks.slice(0, rowWindowCount), [rowWindowCount, tasks]);
+  useEffect(() => {
+    const sentinel = loadMoreListRowsRef.current;
+    if (!sentinel || windowedTasks.length >= tasks.length || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setRowWindow((current) => ({
+        count: Math.min((current.revision === committedResultRevision ? current.count : rowWindowCount) + ROW_MODEL_WINDOW_BATCH, tasks.length),
+        revision: committedResultRevision,
+      }));
+    }, { rootMargin: "720px 0px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [committedResultRevision, rowWindowCount, tasks.length, windowedTasks.length]);
   const rowContext = tableProps.rowContext;
   const runningTimerByTaskId = useMemo(
     () => new Map((tableProps.runningTaskTimers ?? []).map((timer) => [timer.taskId, timer] as const)),
@@ -2565,7 +2606,7 @@ function TasksSimpleList({
     [tableProps.allTasks, tasks],
   );
   const overlayRows = useMemo(
-    () => tasks.map((task) => buildTaskTableRow(task, {
+    () => tableProps.requestedOpenTask ? [rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
       focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
       linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
       listDefinitions: tableProps.rowContext.listDefinitions,
@@ -2573,12 +2614,12 @@ function TasksSimpleList({
       subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
       taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
       todayDateKey: tableProps.rowContext.todayDateKey,
-    })),
-    [tableProps.rowContext, tasks],
+    })] : [],
+    [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
   );
   const requestedOpenTaskRow = useMemo(
     () => tableProps.requestedOpenTask
-      ? buildTaskTableRow(tableProps.requestedOpenTask, {
+      ? rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
         focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
         linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
         listDefinitions: tableProps.rowContext.listDefinitions,
@@ -2588,10 +2629,10 @@ function TasksSimpleList({
         todayDateKey: tableProps.rowContext.todayDateKey,
       })
       : null,
-    [tableProps.requestedOpenTask, tableProps.rowContext],
+    [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
   );
   useEffect(() => {
-    if (!isDevelopment) {
+    if (!isWorkspacePerformanceDiagnosticsEnabled()) {
       return;
     }
 
@@ -2619,10 +2660,18 @@ function TasksSimpleList({
       ? buildMoveIntoParentOptions({
         childTaskPreviewByParentTaskId: tableProps.childTaskPreviewByParentTaskId ?? {},
         sourceTaskId: rowContextMenuTask.id,
-        tasks: (allRows?.length ?? 0) > 0 ? allRows ?? [] : overlayRows,
+        tasks: (allRows?.length ?? 0) > 0 ? allRows ?? [] : tasks.map((task) => rowModelCache.getOrCreate(task, {
+          focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
+          linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
+          listDefinitions: tableProps.rowContext.listDefinitions,
+          listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
+          subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
+          taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+          todayDateKey: tableProps.rowContext.todayDateKey,
+        })),
       })
       : [],
-    [allRows, overlayRows, rowContextMenuTask, tableProps.childTaskPreviewByParentTaskId],
+    [allRows, rowContextMenuTask, rowModelCache, tableProps.childTaskPreviewByParentTaskId, tableProps.rowContext, tasks],
   );
   useEffect(() => {
     if (parentStepDraftTaskId) {
@@ -2927,7 +2976,7 @@ function TasksSimpleList({
               visibleColumns={OVERLAY_VISIBLE_COLUMNS}
             />
           ) : null}
-          {tasks.map((task) => {
+          {windowedTasks.map((task) => {
         const displayStatus = getTaskDisplayStatusWithHistory(
           task,
           rowContext.taskHistoryByTaskId[task.id] ?? [],
@@ -2938,7 +2987,7 @@ function TasksSimpleList({
         const dueMeta = dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;
         const isMetadataVisible = visibleMetadataTaskIds.has(task.id);
         const repeatSummary = formatRepeatSummary(task);
-        const taskRow = buildTaskTableRow(task, {
+        const taskRow = rowModelCache.getOrCreate(task, {
           focusedTaskIdSet: rowContext.focusedTaskIdSet,
           linkedNotes: rowContext.linkedNotesByTaskId[task.id] ?? [],
           listDefinitions: rowContext.listDefinitions,
@@ -2998,8 +3047,24 @@ function TasksSimpleList({
           && effectiveStepPreviewGroup
           && (effectiveStepPreviewGroup.items.length > 0 || parentStepDraftTaskId === task.id),
         );
+        const rowUiRevision = [
+          selectedTaskIdSet.has(task.id),
+          highlightedTaskIdSet.has(task.id),
+          tableProps.highlightedActiveTaskId === task.id,
+          isMetadataVisible,
+          activePanelMode ?? "",
+          isRenamingTaskTitle,
+          taskTitleDraft,
+          isStepSectionExpanded,
+          parentStepDraftTaskId === task.id,
+          parentStepTitleDrafts[task.id] ?? "",
+          parentStepCreationErrors[task.id] ?? "",
+          showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] === true,
+          runningTimerByTaskId.get(task.id)?.startedAt ?? "",
+          runningTimerByTaskId.get(task.id)?.pausedAt ?? "",
+        ].join("|");
         return (
-          <div className="space-y-3" data-task-list-hierarchy-group={task.id} key={task.id}>
+          <StableListRowBoundary key={task.id} rowModel={taskRow} taskId={task.id} uiRevision={rowUiRevision}>
             <article
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${
                 selectedTaskIdSet.has(task.id)
@@ -3492,9 +3557,10 @@ function TasksSimpleList({
                 visibleMetadataTaskIds={visibleMetadataTaskIds}
               />
             ) : null}
-          </div>
+          </StableListRowBoundary>
         );
       })}
+          {windowedTasks.length < tasks.length ? <div aria-hidden="true" className="h-px" ref={loadMoreListRowsRef} /> : null}
           {rowContextMenu && rowContextMenuTask ? (
             <TaskRowContextMenu
               allowInlineInspector
@@ -3611,22 +3677,7 @@ function TasksSimpleList({
 }
 
 export function TasksListAdapter(props: TasksListAdapterProps) {
-  const allTaskRows = useMemo(
-    () => (props.tableProps.allTasks ?? [])
-      .filter(isTaskVisibleInPrimaryViews)
-      .map((task) => buildTaskTableRow(task, {
-        focusedTaskIdSet: props.tableProps.rowContext.focusedTaskIdSet,
-        linkedNotes: props.tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
-        listDefinitions: props.tableProps.rowContext.listDefinitions,
-        listMemberships: props.tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
-        subtasks: props.tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
-        taskHistory: props.tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
-        todayDateKey: props.tableProps.rowContext.todayDateKey,
-      })),
-    [props.tableProps.allTasks, props.tableProps.rowContext],
-  );
-
-  return <TasksSimpleList {...props} allRows={allTaskRows} />;
+  return <TasksSimpleList {...props} />;
 }
 
 type DuplicateTaskGroupsAdapterProps = {

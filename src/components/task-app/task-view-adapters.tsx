@@ -38,7 +38,7 @@ import {
 } from "@/lib/task-history-calendar-focus";
 import type { AppPage } from "@/lib/task-ui-state";
 import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
-import { getTaskHistoryCalendarActionStatuses } from "@/lib/task-complete";
+import { getTaskHistoryCalendarVisibleActionStatuses } from "@/lib/task-complete";
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates } from "@/lib/task-state-engine";
 import type {
   Task,
@@ -618,17 +618,20 @@ export function TaskHistoryModal({
     projectsUndatedDelayed: task.status === "delayed" && task.due_on === null,
     todayDateKey: today,
   });
-  const calendarActionStatuses = stateEngineContext
-    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: taskHistory, logicalDate: selectedDate, task }) ?? getTaskHistoryCalendarActionStatuses(task)
-    : getTaskHistoryCalendarActionStatuses(task);
+  const engineCalendarActionStatuses = stateEngineContext
+    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: taskHistory, logicalDate: selectedDate, task })
+    : null;
+  const calendarActionStatuses = getTaskHistoryCalendarVisibleActionStatuses({
+    engineStatuses: engineCalendarActionStatuses,
+    isMultiSelect,
+    task,
+  });
   const canDelaySelectedDate = !isMultiSelect
     && !selectedIsFuture
     && Boolean(task.due_on)
     && Boolean(onSetDelayedStatus)
     && (selectedDate === today || selectedIsMissed || selectedVirtualState === "due");
-  const visibleCalendarActionStatuses = isMultiSelect
-    ? calendarActionStatuses.filter((status) => status !== "complete" && status !== "delayed")
-    : calendarActionStatuses;
+  const visibleCalendarActionStatuses = calendarActionStatuses;
 
   for (let weekIndex = 0; weekIndex < Math.ceil(totalDays / 7); weekIndex += 1) {
     weeks.push(days.slice(weekIndex * 7, weekIndex * 7 + 7));

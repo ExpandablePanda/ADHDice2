@@ -48,6 +48,7 @@ const MAX_REMAINING_PATCH_SUMMARIES = 50;
  */
 export function createEngineRolloverPlan(input: {
   history: TaskHistory[];
+  includeDiagnostics?: boolean;
   now: Date | string;
   rolloverTime: string;
   tasks: Task[];
@@ -82,7 +83,7 @@ export function createEngineRolloverPlan(input: {
       taskId: task.id,
     }] : []);
     const patch = projectPersistableTaskStatePatch(result.proposedTaskPatch, task);
-    if (Object.keys(patch).length > 0 && remainingPatchSummaries.length < MAX_REMAINING_PATCH_SUMMARIES) {
+    if (input.includeDiagnostics !== false && Object.keys(patch).length > 0 && remainingPatchSummaries.length < MAX_REMAINING_PATCH_SUMMARIES) {
       remainingPatchSummaries.push({
         patchKeys: Object.keys(patch) as Array<keyof PersistableTaskStatePatch>,
         projectedNormalizedValues: canonicalizePersistableTaskStatePatch(patch),

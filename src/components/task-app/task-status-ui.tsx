@@ -1,7 +1,9 @@
-import { ArrowRight, BookOpen, CalendarClock, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarClock, CalendarDays, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
 import type { MouseEvent } from "react";
 
 import type { TaskStatus, TaskSubtaskStatus } from "@/lib/database.types";
+
+export type TaskDisplayStatus = TaskStatus | TaskSubtaskStatus | "unscheduled";
 
 export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = [
   { label: "Pending", value: "pending" },
@@ -49,7 +51,7 @@ export const TASK_STATUS_INVERTED_CHIP_STYLES: Record<TaskStatus, string> = {
 };
 
 export function getTaskStatusCircleClassName(
-  status: TaskStatus | TaskSubtaskStatus,
+  status: TaskDisplayStatus,
   options: { inverted?: boolean } = {},
 ) {
   const key = (status === "trashed" ? "trashed" : status) as TaskStatus;
@@ -59,7 +61,7 @@ export function getTaskStatusCircleClassName(
   return TASK_STATUS_CHIP_STYLES[key] ?? "border border-[#6b738f] bg-white text-[#6b738f]";
 }
 
-export function getTaskStatusCircleHoverInvertedClassName(status: TaskStatus | TaskSubtaskStatus) {
+export function getTaskStatusCircleHoverInvertedClassName(status: TaskDisplayStatus) {
   const key = (status === "trashed" ? "trashed" : status) as TaskStatus;
   const hoverClassMap: Record<TaskStatus, string> = {
     archived: "group-hover:border-[#68738c] group-hover:bg-[#68738c] group-hover:text-white dark:group-hover:border-[#68738c] dark:group-hover:bg-[#68738c] dark:group-hover:text-white",
@@ -93,7 +95,7 @@ export function formatTaskStatusLabel(value: string) {
 }
 
 export function renderTaskStatusGlyph(
-  status: TaskStatus | TaskSubtaskStatus,
+  status: TaskDisplayStatus,
   size: "sm" | "md" = "md",
 ) {
   const iconSize = size === "sm" ? "h-3 w-3" : "h-3.25 w-3.25";
@@ -139,6 +141,14 @@ export function renderTaskStatusGlyph(
     return <CalendarClock className={iconSize} />;
   }
 
+  if (status === "unscheduled") {
+    return (
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center leading-[0]" aria-hidden="true">
+        <CalendarDays className={`${size === "sm" ? "h-2.5 w-2.5" : "h-3 w-3"} block shrink-0`} />
+      </span>
+    );
+  }
+
   if (status === "trashed") {
     return <Trash2 className={iconSize} />;
   }
@@ -147,7 +157,7 @@ export function renderTaskStatusGlyph(
 }
 
 export function renderTaskStatusCircle(
-  status: TaskStatus | TaskSubtaskStatus,
+  status: TaskDisplayStatus,
   size: "sm" | "md" = "md",
   options: { className?: string; inverted?: boolean } = {},
 ) {
@@ -208,7 +218,7 @@ export function TaskStatusCircleRail<Status extends TaskStatus | TaskSubtaskStat
 }
 
 export function renderTaskStatusChip(
-  status: TaskStatus | TaskSubtaskStatus,
+  status: TaskDisplayStatus,
   options: { count?: number; size?: "sm" | "md" } = {},
 ) {
   return (

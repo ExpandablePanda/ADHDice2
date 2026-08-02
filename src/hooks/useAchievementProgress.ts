@@ -97,14 +97,14 @@ const INITIAL_LOAD_STATE: AchievementSnapshotLoadState = {
   status: "no_user",
 };
 
-export function useAchievementProgress(client: AchievementClient, userId: string | null) {
+export function useAchievementProgress(client: AchievementClient, userId: string | null, active = true) {
   const [loadState, setLoadState] = useState<AchievementSnapshotLoadState>(INITIAL_LOAD_STATE);
   const loadRequestIdRef = useRef(0);
 
   useEffect(() => {
     const requestId = ++loadRequestIdRef.current;
     const requestedUserId = userId;
-    if (!client || !requestedUserId) {
+    if (!client || !requestedUserId || !active) {
       return () => {
         if (loadRequestIdRef.current === requestId) loadRequestIdRef.current += 1;
       };
@@ -130,7 +130,7 @@ export function useAchievementProgress(client: AchievementClient, userId: string
     return () => {
       if (loadRequestIdRef.current === requestId) loadRequestIdRef.current += 1;
     };
-  }, [client, userId]);
+  }, [active, client, userId]);
 
   const readiness = getAchievementSnapshotReadiness(loadState, userId, Boolean(client));
   const isReadyForUser = readiness === "loaded" && loadState.ownerUserId === userId;

@@ -4,6 +4,7 @@ import test from "node:test";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { evaluateTaskActionAuthority } from "../src/lib/task-state-engine/action-authority.ts";
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
+import { createEngineRolloverPlan } from "../src/lib/task-state-engine/rollover-authority.ts";
 
 function task(overrides: Partial<Task> = {}): Task {
   return {
@@ -44,4 +45,95 @@ test("action authority projects only supported fields and preserves legacy fallb
   assert.equal(evaluateTaskActionAuthority({ ...context, enabled: false, history: [], outcome: "done", task: task() }), null);
   assert.equal(resolveTaskHistoryCalendarStates({ ...context, enabled: false, history: [], task: task() }), null);
   assert.deepEqual(resolveTaskHistoryCalendarActionStatuses({ ...context, history: [], logicalDate: "2026-07-31", task: task() }), ["done", "did_my_best", "delayed", "missed", "complete"]);
+});
+
+test("saved Daily Until Complete Done History advances one occurrence without completing recurrence", () => {
+  const dailyUntilCompleteTask = task({
+    due_on: "2026-07-31",
+    repeat_frequency: "daily_until_complete",
+  });
+  const doneHistory = history("done", "2026-08-01");
+  doneHistory.occurrence_due_on = "2026-07-31";
+  doneHistory.occurrence_key = "occurrence:2026-07-31";
+
+  const result = evaluateTaskActionAuthority({
+    ...context,
+    history: [doneHistory],
+    now: "2026-08-01T14:00:00.000Z",
+    task: dailyUntilCompleteTask,
+  });
+
+  assert.equal(result?.lifecycle, "active");
+  assert.equal(result?.nextDueDate, "2026-08-02");
+  assert.equal(result?.persistableTaskPatch.dueOn, "2026-08-02");
+  assert.notEqual(result?.persistableTaskPatch.status, "complete");
+});
+
+test("Daily Until Complete accepts Done through the shared action authority", () => {
+  const result = evaluateTaskActionAuthority({
+    ...context,
+    history: [],
+    outcome: "done",
+    task: task({ due_on: "2026-07-31", repeat_frequency: "daily_until_complete" }),
+  });
+
+  assert.deepEqual(result?.validationErrors, []);
+  assert.equal(result?.lifecycle, "active");
+  assert.equal(result?.nextDueDate, "2026-08-01");
+  assert.equal(result?.mutationPlan.taskUpdate.status, "upcoming");
+  assert.notEqual(result?.mutationPlan.taskUpdate.status, "done");
+});
+
+test("successful Daily Until Complete Done action leaves zero rollover repair patches", () => {
+  const original = task({ due_on: "2026-07-31", repeat_frequency: "daily_until_complete", status: "upcoming" });
+  const action = evaluateTaskActionAuthority({
+    ...context,
+    history: [],
+    outcome: "done",
+    task: original,
+  });
+  assert.ok(action);
+  assert.equal(action.mutationPlan.taskUpdate.status, "upcoming");
+
+  const savedTask: Task = {
+    ...original,
+    ...action.mutationPlan.taskUpdate,
+    revision: original.revision + 1,
+  };
+  const savedHistory = action.mutationPlan.history.map((row): TaskHistory => ({
+    counted_as_due_occurrence: true,
+    created_at: row.occurredAt,
+    entry_date: row.logicalDate,
+    event_type: "status",
+    id: row.id,
+    occurrence_due_on: row.occurrenceIdentity?.split(":").at(-1) ?? null,
+    occurrence_key: row.occurrenceIdentity ? `occurrence:${row.occurrenceIdentity.split(":").at(-1)}` : null,
+    status: row.outcome,
+    task_id: row.taskId,
+    updated_at: row.occurredAt,
+    user_id: original.user_id,
+    was_completed: row.outcome === "done" || row.outcome === "did_my_best" || row.outcome === "complete",
+  }));
+  const rollover = createEngineRolloverPlan({
+    history: savedHistory,
+    now: context.now,
+    rolloverTime: context.logicalDayRollover,
+    tasks: [savedTask],
+    timezone: context.timezone,
+  });
+
+  assert.deepEqual(rollover.remainingPatchSummaries, []);
+  assert.deepEqual(rollover.tasks, []);
+});
+
+test("shared status action applies the engine Task and History plan optimistically together", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(
+    new URL("../src/components/task-app.tsx", import.meta.url),
+    "utf8",
+  ));
+  const actionPath = source.slice(source.indexOf("async function updateTaskStatus"), source.indexOf("async function toggleTaskPinned"));
+
+  assert.match(actionPath, /const values: TaskUpdate = action[\s\S]*?action\.mutationPlan\.taskUpdate/);
+  assert.match(actionPath, /if \(action\) \{[\s\S]*?setTasks\([\s\S]*?setTaskHistory\(/);
+  assert.doesNotMatch(actionPath, /\.\.\.buildTaskStatusUpdate\(task, status\)[\s\S]*?action\.persistableTaskPatch/);
 });

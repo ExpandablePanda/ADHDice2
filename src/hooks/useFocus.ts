@@ -296,6 +296,7 @@ export function useFocus(
   client: SupabaseClient,
   userId: string | null,
   setMessage: SetMessage,
+  historyActive = true,
 ) {
   const [focusCategories, setFocusCategories] = useState<FocusCategory[]>([]);
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
@@ -312,6 +313,7 @@ export function useFocus(
   const runtimeOperationIdsRef = useRef(new Map<string, string>());
   const runtimeCreateSessionIdsRef = useRef(new Map<string, string>());
   const completingRuntimeIdsRef = useRef(new Set<string>());
+  const loadedFocusHistoryUserIdRef = useRef<string | null>(null);
   const migratedRuntimeUserRef = useRef<string | null>(null);
   const runtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const runtimeChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
@@ -340,7 +342,7 @@ export function useFocus(
   }, [userId]);
 
   useEffect(() => {
-    if (!client || !userId) {
+    if (!client || !userId || !historyActive) {
       const timeoutId = window.setTimeout(() => {
         setFocusDailyGoalAdjustments([]);
         setPendingDailyGoalSurplus(null);
@@ -366,7 +368,22 @@ export function useFocus(
         }
         setFocusDailyGoalAdjustments((data ?? []).map(mapFocusDailyGoalAdjustmentRow));
       });
-  }, [client, setMessage, userId]);
+  }, [client, historyActive, setMessage, userId]);
+
+  useEffect(() => {
+    if (!client || !userId || !historyActive || loadedFocusHistoryUserIdRef.current === userId) return;
+    let active = true;
+    void client.from("adhdice_focus_sessions").select("*").eq("user_id", userId)
+      .order("session_date", { ascending: false }).order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (!active || error) return;
+        const next = mergeStoredFocusHistory((data ?? []).map((row) => mapFocusSessionRow(row)));
+        loadedFocusHistoryUserIdRef.current = userId;
+        setFocusHistory(next);
+        saveFocusHistory(next);
+      });
+    return () => { active = false; };
+  }, [client, historyActive, userId]);
 
   const applyRuntimeRow = useCallback((row: FocusRuntimeRow) => {
     runtimeRequestGenerationRef.current += 1;

@@ -55,13 +55,21 @@ test("initial boot guards lifecycle refreshes and only persisted pageshow is eli
   assert.match(source, /resumeRefreshCoordinator\.focus\(\)/);
 });
 
-test("secondary workspace loading excludes Focus sessions because core owns Focus history", async () => {
+test("normal startup loads critical Task History facts without starting a full History scan", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
-  const secondaryLoader = source.slice(source.indexOf("async function loadSecondaryWorkspaceData"), source.indexOf("function canApplyCoreWorkspaceResult"));
+  const coreLoader = source.slice(source.indexOf("async function loadCoreWorkspaceData"), source.indexOf("const requestCoreWorkspaceRefresh"));
 
-  assert.doesNotMatch(secondaryLoader, /adhdice_focus_sessions/);
-  assert.doesNotMatch(secondaryLoader, /setFocusHistory/);
-  assert.match(source, /Secondary loader skips Focus sessions; core owns Focus history/);
+  assert.match(coreLoader, /loadCriticalTaskHistoryFacts\(nextTasks\)/);
+  assert.doesNotMatch(coreLoader, /loadTaskHistory\(\{ silent: true, source: "secondary" \}\)/);
+  assert.doesNotMatch(coreLoader, /loadActualTime\(|loadNotes\(/);
+  assert.match(source, /loadFullTaskHistoryRef\.current = \(\) => loadTaskHistory/);
+});
+
+test("empty critical hydration returns before complete Task derivation stages", async () => {
+  const source = await readFile(new URL("../src/lib/task-app-derived.ts", import.meta.url), "utf8");
+  const emptyGuard = source.slice(source.indexOf("if (tasks.length === 0)"), source.indexOf("const totalStartedAt"));
+  assert.match(emptyGuard, /return \{/);
+  assert.doesNotMatch(emptyGuard, /logTaskDeriveStep|logDevelopmentComputation/);
 });
 
 test("rollover reconciliation reloads only task rows and does not request a broad core refresh", async () => {
@@ -75,21 +83,22 @@ test("rollover reconciliation reloads only task rows and does not request a broa
   assert.doesNotMatch(reconciliation, /requestCoreWorkspaceRefresh|loadCoreWorkspaceData|softRefreshWorkspace/);
 });
 
-test("rollover history reconciliation defers to pending startup history and reloads loaded history once", async () => {
+test("rollover reconciliation never promotes critical startup facts into a full History load", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const reconciliation = source.slice(
     source.indexOf("rolloverWorkspaceReconciliationRef.current = async () =>"),
     source.indexOf("prepareTaskMutationRef.current", source.indexOf("rolloverWorkspaceReconciliationRef.current = async () =>")),
   );
 
-  assert.match(reconciliation, /if \(!hasLoadedTaskHistoryRef\.current\)[\s\S]*startup history is pending/);
+  assert.match(reconciliation, /if \(!hasLoadedFullTaskHistoryRef\.current\)/);
+  assert.match(reconciliation, /only critical facts are cached/);
   assert.match(reconciliation, /Rollover history reconciliation requested after already-loaded history/);
   assert.match(reconciliation, /await loadTaskHistory\(\{ silent: true, source: "rollover" \}\)/);
 });
 
 test("canonical paginated history reload joins an active scan instead of duplicating it", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
-  const historyLoader = source.slice(source.indexOf("async function loadTaskHistory"), source.indexOf("async function loadSecondaryWorkspaceData"));
+  const historyLoader = source.slice(source.indexOf("async function loadTaskHistory"), source.indexOf("async function loadCriticalTaskHistoryFacts"));
 
   assert.match(historyLoader, /if \(taskHistoryLoadInFlightRef\.current\)[\s\S]*queuedTaskHistoryReloadRef\.current = true/);
   assert.match(historyLoader, /Rollover history reconciliation joined an in-flight history load/);
