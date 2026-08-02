@@ -5,13 +5,17 @@ Last reviewed: 2026-08-02
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.6.27`.
+- Current working app version: `7.6.28`.
 - Current release group: `7.6.x` Task State Engine.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.6.28 Tasks rail transition import hotfix
+
+- Restored the missing React `startTransition` import used by Tasks list and folder rail selection; list/folder behavior is unchanged.
 
 ## 7.6.27 Deterministic search and fast Tasks loading
 

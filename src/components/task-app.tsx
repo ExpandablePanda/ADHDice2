@@ -253,6 +253,7 @@ import {
   createStableTaskProjectionCache,
   createTaskDerivationRevisionKey,
 } from "@/lib/stable-task-projection";
+import { createTasksCanvasRenderRevision } from "@/lib/tasks-canvas-render-revision";
 import {
   buildCompleteHistoryPayload,
   canTaskBeMarkedComplete,
@@ -572,7 +573,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.6.27";
+const APP_VERSION = "7.6.28";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3465,17 +3466,18 @@ export function TaskApp() {
     tasks,
     visibleListTaskIds,
   });
-  const tasksCanvasRenderRevision = combineProjectionRevisions(
+  const tasksCanvasRenderRevision = createTasksCanvasRenderRevision({
+    activeTabId: taskWorkspaceTabsState.activeTabId,
+    currentFolderId,
+    folderBreadcrumbIds: taskListFolderBreadcrumbs.map((folder) => folder.id),
+    openFolderRailIds: taskListRailStructureOptions.openFolderRails.map((rail) => rail.folderId),
+    searchResultIds: taskSearchSelection?.visibleTasks.map((task) => `${task.id}:${task.revision}`) ?? [],
+    selectedBucket: taskUiState.selectedBucket,
+    selectedTaskIds: selectedListTaskIds,
+    surface: taskUiState.tasksSurface,
     taskDerivationRevision,
-    createProjectionDomainRevision("tasks-canvas", {
-      activeTabId: taskWorkspaceTabsState.activeTabId,
-      searchResultIds: taskSearchSelection?.visibleTasks.map((task) => `${task.id}:${task.revision}`) ?? [],
-      selectedBucket: taskUiState.selectedBucket,
-      selectedTaskIds: selectedListTaskIds,
-      surface: taskUiState.tasksSurface,
-      view: taskUiState.view,
-    }),
-  );
+    view: taskUiState.view,
+  });
   const selectedListTasks = tasks.filter((task) => selectedListTaskIds.includes(task.id));
   const {
     claimPendingRewardBank,

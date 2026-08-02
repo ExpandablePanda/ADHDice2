@@ -1,7 +1,7 @@
 "use client";
 
 import { BookOpen, Check, ChevronDown, Eye, EyeOff, Folder, Search, Trash2, X } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, startTransition, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
