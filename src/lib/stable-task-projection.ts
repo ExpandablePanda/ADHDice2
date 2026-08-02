@@ -41,7 +41,7 @@ export function combineProjectionRevisions(...revisions: string[]) {
 export function createTaskDerivationRevisionKey(input: {
   historyRevision: string;
   listRevision: string;
-  queryRevision: string;
+  queryRevision?: string;
   settingsRevision: string;
   taskRevision: string;
   viewRevision: string;
@@ -51,7 +51,7 @@ export function createTaskDerivationRevisionKey(input: {
     input.historyRevision,
     input.listRevision,
     input.settingsRevision,
-    input.queryRevision,
+    ...(input.queryRevision ? [input.queryRevision] : []),
     input.viewRevision,
   );
 }

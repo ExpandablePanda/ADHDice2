@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Children, Fragment, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowUp,
@@ -81,6 +81,7 @@ import {
 import { mergeMeasuredColumnWidths, normalizeMeasuredColumnWidth } from "@/lib/task-table-measurements";
 import { TaskTimerDial } from "@/components/task-app/task-timer-display";
 import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
+import { areTaskRowPropsEqual } from "@/lib/task-row-memoization";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = TaskPriorityLevelOption;
@@ -2249,6 +2250,17 @@ function sortRows(
 
   return sorted;
 }
+
+const TaskTableRow = memo(function TaskTableRow({
+  render,
+}: {
+  render: () => ReactNode;
+  rowModel: unknown;
+  taskId: string;
+  uiRevision: string;
+}) {
+  return render();
+}, areTaskRowPropsEqual);
 
 export function TaskManagementTableV2({
   allowInlineInspector = false,
@@ -8496,10 +8508,12 @@ export function TaskManagementTableV2({
                 && isInlineAccordionMode(overlayMode);
 
               return (
+                <TaskTableRow
+                  key={`task:${getPrototypeTaskRowKey(task)}`}
+                  render={() => (
                 <div
                   className={`w-max min-w-full space-y-1.5 ${hasRenderedDescendants ? "bg-white dark:bg-[#181226]" : ""}`}
                   data-task-table-hierarchy-group={task.id}
-                  key={getPrototypeTaskRowKey(task)}
                 >
                   <motion.div
                     className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${hasRenderedDescendants ? "sticky top-8 z-10 bg-white dark:bg-[#181226]" : ""}`}
@@ -8606,6 +8620,11 @@ export function TaskManagementTableV2({
                     </motion.div>
                   ) : null}
                 </div>
+                  )}
+                  rowModel={task}
+                  taskId={task.id}
+                  uiRevision={`${getPrototypeTaskRowKey(task)}|${selectedTaskIds.includes(task.id)}|${highlightedTaskIds?.includes(task.id) ?? false}|${hasRenderedDescendants}|${showInlineAccordion}`}
+                />
               );
             })}
             {remainingRenderedTaskCount > 0 || hasMoreRows ? (

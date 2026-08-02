@@ -10,13 +10,14 @@ test("Table and List slice the committed result window before constructing row m
   assert.match(source, /ROW_MODEL_WINDOW_SIZE = 24[\s\S]*ROW_MODEL_OVERSCAN = 8/);
 });
 
-test("search owns a query revision and is excluded from settings revision sources", async () => {
+test("search owns a query-only selector and is excluded from complete derivation revisions", async () => {
   const source = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
-  assert.match(source, /const searchQueryRevision = createProjectionDomainRevision\("search-query"/);
-  assert.match(source, /queryRevision: searchQueryRevision/);
+  assert.match(source, /const taskSearchSelection = useMemo\(/);
+  assert.match(source, /const stableTaskSearchScope = useMemo\(/);
+  assert.doesNotMatch(source, /queryRevision:/);
   assert.match(source, /const taskRowContext = useMemo/);
   assert.equal((source.match(/rowContext: taskRowContext/g) ?? []).length, 2);
   const settingsSource = source.slice(source.indexOf("settings: {", source.indexOf("derivedDiagnosticTracker.capture")), source.indexOf("task: {", source.indexOf("derivedDiagnosticTracker.capture")));
   assert.doesNotMatch(settingsSource, /effectiveSearchQuery|searchQueryRevision/);
-  assert.match(source, /setTaskSearchInput\(search\)[\s\S]*?startTransition/);
+  assert.doesNotMatch(source, /setTaskSearchInput|useDeferredValue/);
 });

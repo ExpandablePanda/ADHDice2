@@ -1,5 +1,5 @@
 import { buildTaskHierarchyAdapter, type TaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
-import { logDevelopmentComputation, type DevelopmentComputationDiagnostic } from "@/lib/workspace-performance-diagnostics";
+import { isWorkspacePerformanceDiagnosticsEnabled, logDevelopmentComputation, type DevelopmentComputationDiagnostic } from "@/lib/workspace-performance-diagnostics";
 import { isArchiveLikeTask } from "@/lib/task-complete";
 import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
 import { sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
@@ -290,7 +290,7 @@ function logTaskDeriveStep(
   startedAt: number,
   details: Record<string, number | string>,
 ) {
-  if (!isDevelopment || typeof performance === "undefined") {
+  if (!isDevelopment || !isWorkspacePerformanceDiagnosticsEnabled() || typeof performance === "undefined") {
     return;
   }
 

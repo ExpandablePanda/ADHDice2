@@ -65,7 +65,7 @@ import {
   Zap,
 } from "lucide-react";
 import dynamicIconImports from "lucide-react/dynamicIconImports";
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import {
   BottomDockAdapter as BottomDock,
   FilterRowsAdapter as FilterRows,
@@ -175,6 +175,7 @@ import {
   isDueToday,
   isLater,
   isOverdue,
+  sortTasksForCockpit,
 } from "@/lib/task-cockpit";
 import {
   createEngineRolloverPlan,
@@ -235,6 +236,7 @@ import {
   computeTaskAppDerivedData,
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
+import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
 import {
   createTaskRolloverSettingsKey,
@@ -243,6 +245,7 @@ import {
 } from "@/lib/task-rollover-gate";
 import {
   createDevelopmentComputationTracker,
+  isWorkspacePerformanceDiagnosticsEnabled,
 } from "@/lib/workspace-performance-diagnostics";
 import {
   combineProjectionRevisions,
@@ -569,7 +572,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.6.26";
+const APP_VERSION = "7.6.27";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1198,13 +1201,6 @@ export function TaskApp() {
     taskEditorTaskId,
     userId: session?.user?.id,
   });
-  const [taskSearchInput, setTaskSearchInput] = useState(taskUiState.search);
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setTaskSearchInput((current) => current === taskUiState.search ? current : taskUiState.search);
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [taskUiState.search]);
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const {
     focusCategories, setFocusCategories,
@@ -2727,11 +2723,10 @@ export function TaskApp() {
     todayDateKey: todayKey,
   }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
-    () => parseTaskSearchInput(taskSearchInput, taskUiState.duplicateTitleMode),
-    [taskSearchInput, taskUiState.duplicateTitleMode],
+    () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
+    [taskUiState.duplicateTitleMode, taskUiState.search],
   );
-  const deferredSearchQuery = useDeferredValue(parsedTaskSearch.cleanedQuery);
-  const effectiveSearchQuery = taskSearchInput.trim().length === 0 ? "" : deferredSearchQuery;
+  const effectiveSearchQuery = parsedTaskSearch.cleanedQuery;
   const duplicateTitleModeActive = parsedTaskSearch.duplicateTitleMode;
   const taskUiStateForDerivedData = useMemo(() => ({
     duplicateTitleMode: duplicateTitleModeActive,
@@ -2849,6 +2844,55 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canonicalIndexRevision, projectionCache, taskAppStructuralData],
   );
+  const stableTaskSearchScope = useMemo(() => buildStableTaskSearchScope(
+    Array.from(stableCanonicalTaskIndex.entityFactsById.values()).map((fact) => ({
+      ancestorIds: fact.ancestorIds,
+      displayStatus: fact.displayStatus,
+      id: fact.id,
+      listIds: fact.listMemberships.map((membership) => membership.id),
+      rootParentId: fact.rootParentId,
+      searchDocument: fact.searchDocument,
+      task: fact.task,
+    })),
+    {
+      energyFilters: taskUiStateForDerivedData.energyFilters,
+      focusedTaskIds,
+      listNameById: stableCanonicalTaskIndex.listNameById,
+      matchAny: taskUiStateForDerivedData.matchAny,
+      quickFilters: taskUiStateForDerivedData.quickFilters,
+      selectedBucket: taskUiStateForDerivedData.selectedBucket,
+      statusFilters: taskUiStateForDerivedData.statusFilters,
+      tableColumnFilters: taskUiStateForDerivedData.tableColumnFilters,
+    },
+  ), [focusedTaskIds, stableCanonicalTaskIndex, taskUiStateForDerivedData]);
+  const taskSearchSelection = useMemo(() => {
+    if (!shouldRunTaskSearch(activePage)) return null;
+    const result = queryTaskSearch(
+      effectiveSearchQuery,
+      stableTaskSearchScope,
+      taskUiStateForDerivedData.includeStepsByView[taskUiStateForDerivedData.view] === true,
+    );
+    const visibleTasks = sortTasksForCockpit(
+      result.visibleRootTaskIds
+        .map((taskId) => stableCanonicalTaskIndex.taskById.get(taskId))
+        .filter((task): task is NonNullable<typeof task> => Boolean(task)),
+      bucketContext,
+    );
+    return { ...result, visibleTasks };
+  }, [activePage, bucketContext, effectiveSearchQuery, stableCanonicalTaskIndex, stableTaskSearchScope, taskUiStateForDerivedData]);
+  const taskSearchMeasurementRef = useRef<{ inputPublishedAt: number; query: string; searchStartedAt: number } | null>(null);
+  useEffect(() => {
+    if (!taskSearchSelection || !isWorkspacePerformanceDiagnosticsEnabled() || typeof performance === "undefined") return;
+    const measurement = taskSearchMeasurementRef.current;
+    if (!measurement || measurement.query !== taskUiState.search) return;
+    const reactCommitAt = performance.now();
+    console.info(
+      `[tasks:search] query=${JSON.stringify(measurement.query)} inputPublicationMs=0 searchStartMs=0`
+        + ` searchCompleteMs=${Math.round(reactCommitAt - measurement.searchStartedAt)}`
+        + ` reactCommitMs=0 totalElapsedMs=${Math.round(reactCommitAt - measurement.inputPublishedAt)}`,
+    );
+    taskSearchMeasurementRef.current = null;
+  }, [taskSearchSelection, taskUiState.search]);
   const taskNotesRevision = useMemo(
     () => createProjectionDomainRevision("task-notes", availableTaskNotes),
     [availableTaskNotes],
@@ -2874,10 +2918,6 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projectionCache, workspaceFactsRevision],
   );
-  const searchQueryRevision = createProjectionDomainRevision("search-query", {
-    duplicateTitleMode: duplicateTitleModeActive,
-    query: effectiveSearchQuery,
-  });
   const derivationViewRevision = createProjectionDomainRevision("view", taskUiStateForDerivedData);
   const derivationSettingsRevision = createProjectionDomainRevision("view-settings", {
     grid: taskGridLayout,
@@ -2886,7 +2926,6 @@ export function TaskApp() {
   const taskDerivationRevision = createTaskDerivationRevisionKey({
     historyRevision: taskHistoryRevision,
     listRevision: workspaceFactsRevision,
-    queryRevision: searchQueryRevision,
     settingsRevision: derivationSettingsRevision,
     taskRevision: taskDomainRevision,
     viewRevision: derivationViewRevision,
@@ -2937,7 +2976,7 @@ export function TaskApp() {
       availableTaskLists,
       availableTaskNotes,
       bucketContext,
-      deferredSearchQuery: effectiveSearchQuery,
+      deferredSearchQuery: "",
       focusedTaskIds,
       listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
       listVisibleColumns: taskUiState.visibleColumnsByView.table,
@@ -2995,8 +3034,8 @@ export function TaskApp() {
     manualListOptions,
     milestoneFilteredTasksSorted,
     planningCandidates,
-    searchMatchedStepParentTaskIds,
-    searchMatchedChildTaskIds,
+    searchMatchedStepParentTaskIds: derivedSearchMatchedStepParentTaskIds,
+    searchMatchedChildTaskIds: derivedSearchMatchedChildTaskIds,
     statusMatchedChildTaskIds,
     statusMatchedStepParentTaskIds,
     taskHierarchyDiagnostics,
@@ -3169,7 +3208,13 @@ export function TaskApp() {
     todayTasks,
     urgentTasks,
   }, momentumView);
-  const selectedBucketTasks = canonicalVisibleRootTasksSorted;
+  const selectedBucketTasks = taskSearchSelection?.visibleTasks ?? canonicalVisibleRootTasksSorted;
+  const searchMatchedChildTaskIds = taskSearchSelection
+    ? Array.from(taskSearchSelection.matchingStepIds)
+    : derivedSearchMatchedChildTaskIds;
+  const searchMatchedStepParentTaskIds = taskSearchSelection
+    ? taskSearchSelection.visibleRootTaskIds
+    : derivedSearchMatchedStepParentTaskIds;
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const visiblePinnedTaskCount = visibleListCounts.pinned ?? 0;
   const allOpenPinnedTaskCount = useMemo(
@@ -3413,6 +3458,17 @@ export function TaskApp() {
     tasks,
     visibleListTaskIds,
   });
+  const tasksCanvasRenderRevision = combineProjectionRevisions(
+    taskDerivationRevision,
+    createProjectionDomainRevision("tasks-canvas", {
+      activeTabId: taskWorkspaceTabsState.activeTabId,
+      searchResultIds: taskSearchSelection?.visibleTasks.map((task) => `${task.id}:${task.revision}`) ?? [],
+      selectedBucket: taskUiState.selectedBucket,
+      selectedTaskIds: selectedListTaskIds,
+      surface: taskUiState.tasksSurface,
+      view: taskUiState.view,
+    }),
+  );
   const selectedListTasks = tasks.filter((task) => selectedListTaskIds.includes(task.id));
   const {
     claimPendingRewardBank,
@@ -4163,23 +4219,21 @@ export function TaskApp() {
     if (search.length === 0) {
       setTaskHighlightScrollToken(null);
     }
-    setTaskSearchInput(search);
-    startTransition(() => {
-      setTaskUiState((prev) => ({ ...prev, search }));
-    });
+    if (isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" && taskSearchMeasurementRef.current?.query !== search) {
+      const now = performance.now();
+      taskSearchMeasurementRef.current = { inputPublishedAt: now, query: search, searchStartedAt: now };
+    }
+    setTaskUiState((prev) => (prev.search === search ? prev : { ...prev, search }));
   }, [setTaskUiState]);
   const handleTaskOperationsSearchSubmit = useCallback((search: string) => {
-    if (search !== taskSearchInput) {
+    if (search !== taskUiState.search) {
       pendingTaskHighlightCommittedSearchRef.current = null;
       pendingTaskHighlightSubmitSearchRef.current = search;
-      setTaskSearchInput(search);
-      startTransition(() => {
-        setTaskUiState((prev) => ({ ...prev, search }));
-      });
+      setTaskUiState((prev) => (prev.search === search ? prev : { ...prev, search }));
       return;
     }
     advanceTaskHighlightMatch();
-  }, [advanceTaskHighlightMatch, setTaskUiState, taskSearchInput]);
+  }, [advanceTaskHighlightMatch, setTaskUiState, taskUiState.search]);
 
   useEffect(() => {
     if (!session?.user) {
@@ -6063,7 +6117,7 @@ export function TaskApp() {
     onOpenArchive: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "archive" })),
     onOpenTrash: () => setTaskUiState((prev) => ({ ...prev, selectedBucket: "trash" })),
     onUpdateSearch: handleTaskOperationsSearchChange,
-    search: taskSearchInput,
+    search: taskUiState.search,
     selectedBucket: taskUiState.selectedBucket,
     expandAllColumnsToken,
     shrinkAllColumnsToken,
@@ -6515,6 +6569,7 @@ export function TaskApp() {
         ) : activePage === "Tasks" ? (
           <TasksWorkspace
             activeTabId={taskWorkspaceTabsState.activeTabId}
+            renderRevision={tasksCanvasRenderRevision}
             flows={(
               <>
                 <TaskEditFlows

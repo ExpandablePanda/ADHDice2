@@ -24,6 +24,7 @@ import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
+import { areTaskRowPropsEqual } from "@/lib/task-row-memoization";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
@@ -178,17 +179,17 @@ const COMPACT_REPEAT_UNITS: Array<{ label: string; value: PrototypeTaskRow["repe
   { label: "Months", value: "monthly" },
 ];
 
-const StableListRowBoundary = memo(function StableListRowBoundary({
-  children,
+const TaskListRow = memo(function TaskListRow({
+  render,
   taskId,
 }: {
-  children: ReactNode;
+  render: () => ReactNode;
   rowModel: PrototypeTaskRow;
   taskId: string;
   uiRevision: string;
 }) {
-  return <div className="space-y-3" data-task-list-hierarchy-group={taskId}>{children}</div>;
-}, (previous, next) => previous.rowModel === next.rowModel && previous.uiRevision === next.uiRevision);
+  return <div className="space-y-3" data-task-list-hierarchy-group={taskId}>{render()}</div>;
+}, areTaskRowPropsEqual);
 function priorityTone(priority: TaskPriorityLevelOption) {
   return getTaskPriorityToneClass(priority);
 }
@@ -3064,7 +3065,8 @@ function TasksSimpleList({
           runningTimerByTaskId.get(task.id)?.pausedAt ?? "",
         ].join("|");
         return (
-          <StableListRowBoundary key={task.id} rowModel={taskRow} taskId={task.id} uiRevision={rowUiRevision}>
+          <TaskListRow key={task.id} render={() => (
+            <>
             <article
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${
                 selectedTaskIdSet.has(task.id)
@@ -3557,7 +3559,8 @@ function TasksSimpleList({
                 visibleMetadataTaskIds={visibleMetadataTaskIds}
               />
             ) : null}
-          </StableListRowBoundary>
+            </>
+          )} rowModel={taskRow} taskId={task.id} uiRevision={rowUiRevision} />
         );
       })}
           {windowedTasks.length < tasks.length ? <div aria-hidden="true" className="h-px" ref={loadMoreListRowsRef} /> : null}

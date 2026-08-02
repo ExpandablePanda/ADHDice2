@@ -5,13 +5,21 @@ Last reviewed: 2026-08-02
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.6.26`.
+- Current working app version: `7.6.27`.
 - Current release group: `7.6.x` Task State Engine.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.6.27 Deterministic search and fast Tasks loading
+
+- TaskSearchBox keeps immediate draft input but publishes one committed query after a generation-guarded 180ms debounce; Enter and Clear publish immediately. TaskApp no longer owns a duplicate input or deferred query mirror.
+- Stable canonical entity facts feed a query-only Tasks selector. Search results are scoped to the selected surface and sorted once; workspace facts, Archive/Trash arrays, rail counts, status authority, and canonical entities remain outside query changes.
+- TasksWorkspace is memoized behind a task-canvas revision, and List rows now defer row JSX to a memoized TaskListRow boundary while retaining the 24-row window plus eight-row overscan.
+- Derive-stage logs are silent unless workspace performance diagnostics are explicitly enabled. Critical startup History keeps the logical day and live cursor dates while excluding irrelevant closed-task due dates; full History remains deferred.
+- Focus/Health, recurrence, rewards, Archive behavior, database schema, black-paint styling, Home, and unrelated UI remain unchanged. Browser proof for commit counts, inactive-page CPU, and cross-tab/BFCache behavior remains pending.
 
 ## 7.6.26 Fast startup and search rendering
 

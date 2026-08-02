@@ -11,10 +11,11 @@ test("shared editor recovery imports and memoizes its task row projection", asyn
   assert.match(app, /tasksForActiveStatusRead\.map\(\(task\) => buildTaskTableRow/);
 });
 
-test("search defers query work and reuses memoized hierarchy preparation", async () => {
+test("search uses the committed query selector and reuses memoized hierarchy preparation", async () => {
   const app = await source("../src/components/task-app.tsx");
   const derived = await source("../src/lib/task-app-derived.ts");
-  assert.match(app, /const deferredSearchQuery = useDeferredValue/);
+  assert.doesNotMatch(app, /useDeferredValue|taskSearchInput/);
+  assert.match(app, /queryTaskSearch\(/);
   assert.match(app, /const taskAppStructuralData = useMemo\(/);
   assert.match(app, /activePage: TASK_DERIVATION_SCOPE/);
   assert.match(app, /structuralData: taskAppStructuralData/);

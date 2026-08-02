@@ -5,9 +5,15 @@ const HISTORY_DATE_QUERY_CHUNK_SIZE = 40;
 export function collectCriticalTaskHistoryDates(tasks: readonly Task[], logicalDayKey: string) {
   const dates = new Set<string>([logicalDayKey]);
   for (const task of tasks) {
+    if (task.status === "archived" || task.status === "trashed" || task.status === "complete") continue;
     if (task.active_status_logical_date) dates.add(task.active_status_logical_date);
     if (task.active_occurrence_due_on) dates.add(task.active_occurrence_due_on);
-    if (task.due_on) dates.add(task.due_on);
+    const closedOneOff = task.repeat_frequency === "none"
+      && (task.completed_at !== null || task.status === "done" || task.status === "missed" || task.status === "did_my_best");
+    const needsDueDateForLiveOccurrence = task.due_on !== null
+      && task.active_occurrence_due_on === null
+      && (!closedOneOff || task.repeat_frequency !== "none");
+    if (needsDueDateForLiveOccurrence) dates.add(task.due_on);
   }
   return Array.from(dates).sort();
 }

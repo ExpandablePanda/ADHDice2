@@ -34,8 +34,10 @@ function history(id: string, entryDate: string, occurrenceDueOn: string | null):
   };
 }
 
-test("startup dates contain only the logical day and persisted task-state cursor dates", () => {
-  assert.deepEqual(collectCriticalTaskHistoryDates([task()], "2026-08-02"), ["2026-08-01", "2026-08-02", "2026-08-03"]);
+test("startup dates contain the logical day and live cursor dates, not every task due date", () => {
+  assert.deepEqual(collectCriticalTaskHistoryDates([task()], "2026-08-02"), ["2026-08-01", "2026-08-02"]);
+  assert.deepEqual(collectCriticalTaskHistoryDates([task({ status: "archived", due_on: "2025-01-01", active_status_logical_date: null, active_occurrence_due_on: null })], "2026-08-02"), ["2026-08-02"]);
+  assert.deepEqual(collectCriticalTaskHistoryDates([task({ status: "done", completed_at: "2025-01-02T12:00:00Z", due_on: "2025-01-01", repeat_frequency: "none", active_status_logical_date: null, active_occurrence_due_on: null })], "2026-08-02"), ["2026-08-02"]);
   assert.equal(chunkCriticalTaskHistoryDates(Array.from({ length: 81 }, (_, index) => `date-${index}`)).length, 3);
 });
 

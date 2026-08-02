@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Ellipsis, Pencil, Plus, X } from "lucide-react";
 import { TaskPage } from "./task-page";
 import { TaskOperationsHeader } from "./tasks-page";
@@ -32,13 +32,14 @@ type TasksPageOrchestratorProps = {
   operationsHeaderProps: ComponentProps<typeof TaskOperationsHeader>;
   pathsWorkspacePanel: ReactNode;
   reportWorkspacePanel: ReactNode;
+  renderRevision: string;
   surface: TasksSurface;
   tableViewPanel: ReactNode;
   tabs: TaskWorkspaceTab[];
   view: TaskViewMode;
 };
 
-export function TasksWorkspace({
+export const TasksWorkspace = memo(function TasksWorkspace({
   activeTabId,
   alternateViewPanel,
   brainstormWorkspacePanel,
@@ -56,11 +57,13 @@ export function TasksWorkspace({
   operationsHeaderProps,
   pathsWorkspacePanel,
   reportWorkspacePanel,
+  renderRevision,
   surface,
   tableViewPanel,
   tabs,
   view,
 }: TasksPageOrchestratorProps) {
+  void renderRevision;
   const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
@@ -360,6 +363,6 @@ export function TasksWorkspace({
       ) : null}
     </>
   );
-}
+}, (previous, next) => previous.renderRevision === next.renderRevision);
 
 export const TasksPageOrchestrator = TasksWorkspace;

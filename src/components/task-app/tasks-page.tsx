@@ -1,7 +1,7 @@
 "use client";
 
 import { BookOpen, Check, ChevronDown, Eye, EyeOff, Folder, Search, Trash2, X } from "lucide-react";
-import { memo, startTransition, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
@@ -27,6 +27,7 @@ import {
   type TaskListRailSiblingDropIntent,
 } from "@/lib/task-list-rail-order";
 import type { TaskViewMode } from "@/lib/task-ui-state";
+import { createTaskSearchCommitController } from "@/lib/task-search-controller";
 
 const SHARED_CHIP_MUTED_CLASS = TASK_TABLE_LIST_CHIP_CLASS;
 const SHARED_CHIP_ACTIVE_CLASS = TASK_TABLE_ACTIVE_LIST_CHIP_CLASS;
@@ -49,56 +50,39 @@ const TaskSearchBox = memo(function TaskSearchBox({
   onSearchSubmit?: (search: string) => void;
   search: string;
 }) {
-  const searchCommitTimeoutRef = useRef<number | null>(null);
   const isFocusedRef = useRef(false);
-  const lastCommittedSearchRef = useRef(search);
   const [searchDraft, setSearchDraft] = useState(search);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [searchController] = useState(() => createTaskSearchCommitController(onSearchChange, {
+      clearTimeout: (handle) => window.clearTimeout(handle as number),
+      setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
+    }, TASK_SEARCH_COMMIT_DELAY_MS));
 
   useEffect(() => {
     if (isFocusedRef.current) {
       return;
     }
     if (search === searchDraft) {
-      lastCommittedSearchRef.current = search;
       return;
     }
-    if (searchCommitTimeoutRef.current !== null) {
-      window.clearTimeout(searchCommitTimeoutRef.current);
-      searchCommitTimeoutRef.current = null;
-    }
-    lastCommittedSearchRef.current = search;
+    searchController.dispose();
+    // Restored workspace-tab search is an external controlled-value update.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSearchDraft(search);
-  }, [search, searchDraft]);
+  }, [search, searchController, searchDraft]);
 
   useEffect(() => {
-    return () => {
-      if (searchCommitTimeoutRef.current !== null) {
-        window.clearTimeout(searchCommitTimeoutRef.current);
-      }
-    };
-  }, []);
+    return () => searchController.dispose();
+  }, [searchController]);
 
   const handleSearchDraftChange = (nextValue: string) => {
     setSearchDraft(nextValue);
-    if (searchCommitTimeoutRef.current !== null) {
-      window.clearTimeout(searchCommitTimeoutRef.current);
-    }
-    searchCommitTimeoutRef.current = window.setTimeout(() => {
-      lastCommittedSearchRef.current = nextValue;
-      onSearchChange(nextValue);
-      searchCommitTimeoutRef.current = null;
-    }, TASK_SEARCH_COMMIT_DELAY_MS);
+    searchController.schedule(nextValue);
   };
 
   const handleClearSearch = () => {
-    if (searchCommitTimeoutRef.current !== null) {
-      window.clearTimeout(searchCommitTimeoutRef.current);
-      searchCommitTimeoutRef.current = null;
-    }
-    lastCommittedSearchRef.current = "";
     setSearchDraft("");
-    onSearchChange("");
+    searchController.publish("");
     searchInputRef.current?.focus();
   };
 
@@ -126,11 +110,7 @@ const TaskSearchBox = memo(function TaskSearchBox({
             return;
           }
           event.preventDefault();
-          if (searchCommitTimeoutRef.current !== null) {
-            window.clearTimeout(searchCommitTimeoutRef.current);
-            searchCommitTimeoutRef.current = null;
-          }
-          lastCommittedSearchRef.current = searchDraft;
+          searchController.publish(searchDraft);
           onSearchSubmit(searchDraft);
         }}
         placeholder="Search tasks, or type duplicate:title"
