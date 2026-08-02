@@ -3081,6 +3081,9 @@ export function TaskApp() {
       todayKey,
     ],
   );
+  const activeListFacetCounts = taskSearchSelection?.listFacetCounts ?? canonicalEntityProjection.listFacetCounts;
+  const activePrimaryFacetVisibleEntityIds = taskSearchSelection?.primaryFacetVisibleEntityIds
+    ?? canonicalEntityProjection.primaryFacetVisibleEntityIds;
   const taskListFolderCounts = useMemo(
     () => buildTaskListFolderCounts(
       canonicalTaskListRailTree,
@@ -3091,9 +3094,9 @@ export function TaskApp() {
           listMemberships: fact.listMemberships,
           task: fact.task,
         })),
-      canonicalEntityProjection.primaryFacetVisibleEntityIds,
+      activePrimaryFacetVisibleEntityIds,
     ),
-    [canonicalEntityProjection, canonicalTaskListRailTree],
+    [activePrimaryFacetVisibleEntityIds, canonicalEntityProjection.entityFactsById, canonicalTaskListRailTree],
   );
   const taskListRailStructureOptions = useMemo(() => {
     const rootContainerRevision = getTaskListContainerRevision(taskListContainers, null);
@@ -3143,7 +3146,7 @@ export function TaskApp() {
             containerId: folderId,
             containerKey: getTaskListContainerKey(folderId),
             containerIndex,
-            count: canonicalEntityProjection.listFacetCounts[item.id] ?? 0,
+            count: activeListFacetCounts[item.id] ?? 0,
             description: taskListFolderTree.listPathById.get(item.id) ?? item.entity.name,
             draggableEligible: true,
             entityId: item.entityId ?? undefined,
@@ -3170,7 +3173,7 @@ export function TaskApp() {
       })),
     };
   }, [
-    canonicalEntityProjection.listFacetCounts,
+    activeListFacetCounts,
     canonicalTaskListRailTree,
     currentFolderId,
     taskListFolderBreadcrumbs,
@@ -3216,12 +3219,16 @@ export function TaskApp() {
     ? taskSearchSelection.visibleRootTaskIds
     : derivedSearchMatchedStepParentTaskIds;
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
-  const visiblePinnedTaskCount = visibleListCounts.pinned ?? 0;
+  const visiblePinnedTaskCount = taskSearchSelection
+    ? activeListFacetCounts.pinned ?? 0
+    : visibleListCounts.pinned ?? 0;
   const allOpenPinnedTaskCount = useMemo(
     () => tasks.filter((task) => isTaskPinned(task) && task.status !== "archived" && task.status !== "trashed").length,
     [tasks],
   );
-  const visibleRoutineTaskCount = visibleListCounts.routine ?? 0;
+  const visibleRoutineTaskCount = taskSearchSelection
+    ? activeListFacetCounts.routine ?? 0
+    : visibleListCounts.routine ?? 0;
   const listVisibleColumns = taskUiState.visibleColumnsByView.table;
   const listSelectionResetKey = JSON.stringify({
     duplicateTitleMode: duplicateTitleModeActive,

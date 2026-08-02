@@ -20,8 +20,18 @@ test("one settled search publishes one committed query update", () => {
   const commits: string[] = [];
   const controller = createTaskSearchCommitController((value) => commits.push(value), fake.scheduler);
   controller.schedule("needle");
+  assert.deepEqual(commits, []);
   fake.flush();
   assert.deepEqual(commits, ["needle"]);
+});
+
+test("explicit publish updates the committed query immediately, including clear", () => {
+  const fake = fakeScheduler();
+  const commits: string[] = [];
+  const controller = createTaskSearchCommitController((value) => commits.push(value), fake.scheduler);
+  controller.publish("needle");
+  controller.publish("");
+  assert.deepEqual(commits, ["needle", ""]);
 });
 
 test("obsolete debounced searches cannot commit", () => {

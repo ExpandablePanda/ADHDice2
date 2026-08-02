@@ -16,6 +16,14 @@ test("inactive pages skip query-only search derivation", () => {
   assert.match(appSource, /deferredSearchQuery: ""/);
 });
 
+test("search rows and rail totals share one committed selection result", () => {
+  assert.match(appSource, /const activeListFacetCounts = taskSearchSelection\?\.listFacetCounts/);
+  assert.match(appSource, /const activePrimaryFacetVisibleEntityIds = taskSearchSelection\?\.primaryFacetVisibleEntityIds/);
+  assert.match(appSource, /const selectedBucketTasks = taskSearchSelection\?\.visibleTasks/);
+  assert.match(appSource, /count: activeListFacetCounts\[item\.id\]/);
+  assert.match(appSource, /activePrimaryFacetVisibleEntityIds,\n    \),/);
+});
+
 test("search does not invalidate the stable complete-derivation revision", () => {
   const revisionBlock = appSource.slice(appSource.indexOf("const taskDerivationRevision"), appSource.indexOf("const derivedData"));
   assert.doesNotMatch(revisionBlock, /search|effectiveSearchQuery|taskUiState\.search/);
