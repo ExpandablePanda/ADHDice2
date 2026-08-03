@@ -1,3 +1,5 @@
+> Retired on 2026-08-03. Historical reference only. Durable design guidance moved to [`docs/UI_SYSTEM.md`](../../UI_SYSTEM.md); implementation lookup moved to [`docs/UI_SOURCE_MAP.md`](../../UI_SOURCE_MAP.md). Agents should not load this archived file as current authority.
+
 # ADHDice UI Design System
 
 Last reviewed: 2026-07-14

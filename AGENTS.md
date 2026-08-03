@@ -176,7 +176,7 @@ For every new identifier, prop, callback, or exported value:
 
 Follow:
 
-* `docs/FRONTEND_UI_RULES.md`
+* `docs/UI_SYSTEM.md`
 * `docs/UI_SOURCE_MAP.md`
 
 Reuse approved ADHDice primitives and live source surfaces.

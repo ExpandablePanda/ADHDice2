@@ -21,12 +21,11 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - `AGENTS.md` - Durable agent operating rules for this repo.
 - `docs/AGENT_WORKFLOW.md` - Canonical ADHDice development workflow, roles, work modes, and prompt shape.
 - `docs/VERIFICATION.md` - Canonical verification standard for production-path evidence and reporting.
-- `docs/FRONTEND_UI_RULES.md` - Approved frontend reuse rules for chips, segmented toggles, and dropdown shells.
-- `docs/UI_SOURCE_MAP.md` - Practical source map for approved, deferred, and off-model ADHDice UI surfaces.
+- `docs/UI_SYSTEM.md` - Canonical ADHDice visual, interaction, and reuse rules.
+- `docs/UI_SOURCE_MAP.md` - Canonical implementation lookup for approved, deferred, and off-model UI surfaces.
 - `docs/taskapp-behavior-contract.md` - Current TaskApp behavior contract.
 - `docs/taskapp-orchestrator-contract.md` - Current TaskApp orchestration and extraction boundary contract.
 - `docs/TASK_STATE_ENGINE.md` - Pure Task State Engine terminology, contracts, recurrence rules, and safety invariants.
-- `docs/ui-design-system.md` - Current UI styling reference for chips, pills, and buttons.
 
 ## Active working docs
 
@@ -49,4 +48,6 @@ Archived docs live under `docs/archive/`.
 - Do not use archived docs as default current context unless the user explicitly asks.
 - [`docs/archive/2026-08-retired/current-state-release-history.md`](archive/2026-08-retired/current-state-release-history.md) - Preserved release chronology and retired Current State notes; historical reference only, not current product authority.
 - [`docs/archive/2026-08-retired/manual-qa-checklist.md`](archive/2026-08-retired/manual-qa-checklist.md) - Former combined manual QA checklist preserved for historical reference; do not load as the default current QA source.
+- [`docs/archive/2026-08-retired/FRONTEND_UI_RULES.md`](archive/2026-08-retired/FRONTEND_UI_RULES.md) - Retired UI rules preserved for historical reference; use `UI_SYSTEM.md` and `UI_SOURCE_MAP.md` instead.
+- [`docs/archive/2026-08-retired/ui-design-system.md`](archive/2026-08-retired/ui-design-system.md) - Retired chip and text-control reference preserved for historical reference; use `UI_SYSTEM.md` and `UI_SOURCE_MAP.md` instead.
 - When a doc is retired, move it into `docs/archive/YYYY-MM-retired/` and add a short retirement note explaining what replaced it.

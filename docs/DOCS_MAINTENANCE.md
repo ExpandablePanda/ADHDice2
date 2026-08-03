@@ -37,7 +37,10 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/taskapp-orchestrator-contract.md` - `canonical`
 - `docs/AGENT_WORKFLOW.md` - `canonical`
 - `docs/VERIFICATION.md` - `canonical`
-- `docs/ui-design-system.md` - `canonical`
+- `docs/UI_SYSTEM.md` - `canonical`; active ADHDice visual and interaction authority.
+- `docs/UI_SOURCE_MAP.md` - `canonical`; active implementation lookup for UI sources and migration status.
+- `docs/archive/2026-08-retired/FRONTEND_UI_RULES.md` - `archived`; historical UI rules replaced by `docs/UI_SYSTEM.md` and `docs/UI_SOURCE_MAP.md`.
+- `docs/archive/2026-08-retired/ui-design-system.md` - `archived`; historical chip and text-control guidance replaced by `docs/UI_SYSTEM.md`.
 - `Skills/generated-skill-library/**/SKILL.md` - `tooling/generated`
 
 ## Cross-reference notes
