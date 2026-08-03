@@ -253,7 +253,6 @@ import {
   createStableTaskProjectionCache,
   createTaskDerivationRevisionKey,
 } from "@/lib/stable-task-projection";
-import { createTasksCanvasRenderRevision } from "@/lib/tasks-canvas-render-revision";
 import {
   buildCompleteHistoryPayload,
   canTaskBeMarkedComplete,
@@ -573,7 +572,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.6.28";
+const APP_VERSION = "7.6.35";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1676,7 +1675,13 @@ export function TaskApp() {
     loadTaskNotes,
     prepareTaskMutation,
     reconcileRolloverWorkspace,
+    retryTaskHistoryForTask,
+    refreshTaskHistoryStreakSummary,
     softRefreshWorkspace,
+    taskHistoryByTaskId: taskHistoryModalHistoryByTaskId,
+    taskHistoryLoadStateByTaskId,
+    taskHistoryStreakSummaries,
+    updateTaskHistoryForTask,
   } = useWorkspaceData({
     activePage,
     currentUser: session?.user,
@@ -1752,6 +1757,7 @@ export function TaskApp() {
     setTasks,
     suppressCategoryReload,
     supabase,
+    tasks,
     taskGridStarterLayout: TASK_GRID_STARTER_LAYOUT,
     taskListDataGeneration,
     todayKey,
@@ -2604,6 +2610,10 @@ export function TaskApp() {
     () => taskStateHistoryContentRevision,
     [taskStateHistoryContentRevision],
   );
+  const taskHistoryStreakSummaryRevision = useMemo(
+    () => createProjectionDomainRevision("task-history-streak-summary", taskHistoryStreakSummaries),
+    [taskHistoryStreakSummaries],
+  );
   const taskStatusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("task-status-settings", {
       dayStartTime,
@@ -2779,6 +2789,7 @@ export function TaskApp() {
   const hierarchyStatusRevision = combineProjectionRevisions(
     taskDomainRevision,
     taskHistoryRevision,
+    taskHistoryStreakSummaryRevision,
     statusSettingsRevision,
     activeStatusRevision,
   );
@@ -2794,9 +2805,9 @@ export function TaskApp() {
     () => projectionCache.getOrCreate("hierarchy-status", hierarchyStatusRevision, () => {
       const diagnostic = process.env.NODE_ENV === "development" ? structuralDiagnosticTracker.capture({
         activePage,
-        dependencies: { activeStatusRevision, statusSettingsRevision, taskDomainRevision, taskHistoryRevision },
+        dependencies: { activeStatusRevision, statusSettingsRevision, taskDomainRevision, taskHistoryRevision, taskHistoryStreakSummaryRevision },
         revisionSources: {
-          history: { taskHistoryRevision },
+          history: { taskHistoryRevision, taskHistoryStreakSummaryRevision },
           list: {},
           settings: { statusSettingsRevision },
           task: { activeStatusRevision, taskDomainRevision },
@@ -2806,6 +2817,7 @@ export function TaskApp() {
         diagnosticDetails: diagnostic,
         focusedTaskIds,
         taskHistoryByTaskId,
+        taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
         tasks: tasksForActiveStatusRead,
         todayDateKey: todayKey,
       });
@@ -2988,6 +3000,7 @@ export function TaskApp() {
       taskGridLayout,
       taskGridWidgetTypes: Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[],
       taskHistoryByTaskId,
+      taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
       todayDateKey: todayKey,
       taskListEvaluationContext,
       taskSubtasksByTaskId,
@@ -3066,6 +3079,7 @@ export function TaskApp() {
         listMemberships: taskListMembershipsByTaskId[task.id] ?? [],
         subtasks: taskSubtasksByTaskId[task.id] ?? [],
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
+        taskHistoryStreakSummary: taskHistoryStreakSummaries[task.id],
         todayDateKey: todayKey,
       }))
       : [],
@@ -3075,6 +3089,7 @@ export function TaskApp() {
       sharedEditorRowModelCache,
       sharedTaskEditorOverlayTaskId,
       taskHistoryByTaskId,
+      taskHistoryStreakSummaries,
       taskLinkedNotesByTaskId,
       taskListMembershipsByTaskId,
       taskSubtasksByTaskId,
@@ -3252,11 +3267,13 @@ export function TaskApp() {
     listMembershipsByTaskId: taskListMembershipsByTaskId,
     subtasksByTaskId: taskSubtasksByTaskId,
     taskHistoryByTaskId,
+    taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
     todayDateKey: todayKey,
   }), [
     availableTaskLists,
     focusedTaskIdSet,
     taskHistoryByTaskId,
+    taskHistoryStreakSummaries,
     taskLinkedNotesByTaskId,
     taskListMembershipsByTaskId,
     taskSubtasksByTaskId,
@@ -3335,11 +3352,13 @@ export function TaskApp() {
     : taskHighlightMatches.matchedRowIds;
   const [taskHighlightActiveMatchIndex, setTaskHighlightActiveMatchIndex] = useState(0);
   const [taskHighlightScrollToken, setTaskHighlightScrollToken] = useState<number | null>(null);
+  const [taskHighlightShouldFocusResult, setTaskHighlightShouldFocusResult] = useState(false);
   const taskHighlightScrollSequenceRef = useRef(0);
   const pendingTaskHighlightCommittedSearchRef = useRef<string | null>(null);
   const pendingTaskHighlightSubmitSearchRef = useRef<string | null>(null);
-  const queueTaskHighlightScrollIntent = useCallback(() => {
+  const queueTaskHighlightScrollIntent = useCallback((shouldFocusResult = false) => {
     taskHighlightScrollSequenceRef.current += 1;
+    setTaskHighlightShouldFocusResult(shouldFocusResult);
     setTaskHighlightScrollToken(taskHighlightScrollSequenceRef.current);
   }, []);
   const advanceTaskHighlightMatch = useCallback(() => {
@@ -3349,7 +3368,7 @@ export function TaskApp() {
     setTaskHighlightActiveMatchIndex((current) => (
       current + 1 >= activeTaskHighlightMatchIds.length ? 0 : current + 1
     ));
-    queueTaskHighlightScrollIntent();
+    queueTaskHighlightScrollIntent(true);
   }, [activeTaskHighlightMatchIds.length, queueTaskHighlightScrollIntent]);
   useEffect(() => {
     setTaskHighlightActiveMatchIndex(0);
@@ -3465,18 +3484,6 @@ export function TaskApp() {
     resetKey: listSelectionResetKey,
     tasks,
     visibleListTaskIds,
-  });
-  const tasksCanvasRenderRevision = createTasksCanvasRenderRevision({
-    activeTabId: taskWorkspaceTabsState.activeTabId,
-    currentFolderId,
-    folderBreadcrumbIds: taskListFolderBreadcrumbs.map((folder) => folder.id),
-    openFolderRailIds: taskListRailStructureOptions.openFolderRails.map((rail) => rail.folderId),
-    searchResultIds: taskSearchSelection?.visibleTasks.map((task) => `${task.id}:${task.revision}`) ?? [],
-    selectedBucket: taskUiState.selectedBucket,
-    selectedTaskIds: selectedListTaskIds,
-    surface: taskUiState.tasksSurface,
-    taskDerivationRevision,
-    view: taskUiState.view,
   });
   const selectedListTasks = tasks.filter((task) => selectedListTaskIds.includes(task.id));
   const {
@@ -3637,6 +3644,7 @@ export function TaskApp() {
       isTaskHistoryStatus,
       mapTaskHistoryRow,
       now: new Date(logicalDayNow),
+      onHistoryMutation: refreshTaskHistoryStreakSummary,
       setMessage,
       setTaskHistory,
       setTasks,
@@ -4226,6 +4234,7 @@ export function TaskApp() {
     pendingTaskHighlightSubmitSearchRef.current = null;
     pendingTaskHighlightCommittedSearchRef.current = search.length > 0 ? search : null;
     if (search.length === 0) {
+      setTaskHighlightShouldFocusResult(false);
       setTaskHighlightScrollToken(null);
     }
     if (isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" && taskSearchMeasurementRef.current?.query !== search) {
@@ -5451,6 +5460,13 @@ export function TaskApp() {
         }
         return [...byKey.values()];
       });
+      updateTaskHistoryForTask(task.id, (current) => {
+        const byKey = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
+        for (const row of historyRows ?? []) {
+          byKey.set(`${row.task_id}:${row.entry_date}`, row);
+        }
+        return [...byKey.values()];
+      });
     }
 
     routeTask(task.id, null);
@@ -5547,11 +5563,33 @@ export function TaskApp() {
     const optimisticActionHistoryRows = action
       ? action.mutationPlan.history.filter((row) => row.logicalDate === action.logicalDate && row.outcome === status)
       : [];
+    const actionHistoryStatus = action?.mutationPlan.historyOutcome ?? status;
     if (action) {
       const optimisticTask = { ...task, ...values } as Task;
       setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === task.id ? optimisticTask : candidate)));
       if (optimisticActionHistoryRows.length > 0) {
         setTaskHistory((current) => {
+          const next = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
+          for (const row of optimisticActionHistoryRows) {
+            const occurrenceDueOn = row.occurrenceIdentity?.split(":").at(-1) ?? null;
+            next.set(`${row.taskId}:${row.logicalDate}`, {
+              counted_as_due_occurrence: Boolean(occurrenceDueOn),
+              created_at: row.occurredAt,
+              entry_date: row.logicalDate,
+              event_type: "status",
+              id: row.id,
+              occurrence_due_on: occurrenceDueOn,
+              occurrence_key: occurrenceDueOn ? `occurrence:${occurrenceDueOn}` : null,
+              status: row.outcome,
+              task_id: row.taskId,
+              updated_at: row.occurredAt,
+              user_id: currentUserIdText,
+              was_completed: row.outcome === "done" || row.outcome === "did_my_best" || row.outcome === "complete",
+            });
+          }
+          return [...next.values()];
+        });
+        updateTaskHistoryForTask(task.id, (current) => {
           const next = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
           for (const row of optimisticActionHistoryRows) {
             const occurrenceDueOn = row.occurrenceIdentity?.split(":").at(-1) ?? null;
@@ -5578,12 +5616,13 @@ export function TaskApp() {
       task.id,
       values,
       action || bypassTimedCompletion || status === "archived" || status === "trashed"
-        ? { expectedTask: task }
+        ? { expectedTask: task, ...(action ? { historyStatus: actionHistoryStatus } : {}) }
         : undefined,
     );
     if (action && updated !== true) {
       const optimisticIds = new Set(optimisticActionHistoryRows.map((row) => row.id));
       setTaskHistory((current) => current.filter((entry) => !optimisticIds.has(entry.id)));
+      updateTaskHistoryForTask(task.id, (current) => current.filter((entry) => !optimisticIds.has(entry.id)));
       if (updated === false) {
         setTasks((current) => sortTasksForUi(current.map((candidate) => (
           candidate.id === task.id && candidate.revision === task.revision ? task : candidate
@@ -5999,8 +6038,11 @@ export function TaskApp() {
       );
     },
     task: taskHistoryModalTask,
-    taskHistory: taskHistory.filter((entry) => entry.task_id === taskHistoryModalTaskId),
+    taskHistory: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [],
     taskTitle: taskHistoryModalTask.title,
+    taskHistoryLoadError: taskHistoryLoadStateByTaskId[taskHistoryModalTaskId]?.error ?? null,
+    taskHistoryLoadStatus: taskHistoryLoadStateByTaskId[taskHistoryModalTaskId]?.status ?? "loading",
+    onRetryTaskHistoryLoad: () => retryTaskHistoryForTask(taskHistoryModalTaskId),
     todayDateKey: todayKey,
     stateEngineContext: { logicalDayRollover: dayStartTime, now: new Date(logicalDayNow), timezone: userTimeZone },
   } : null;
@@ -6260,6 +6302,89 @@ export function TaskApp() {
         : null,
     });
   };
+
+  const taskWorkspaceFlowLayer = (
+    <>
+      <TaskEditFlows
+        actualTimeEntryFlow={actualTimeEntryFlow}
+        batchDeleteFlow={batchDeleteFlow}
+        batchEditFlow={batchEditFlow}
+        completeFlow={(() => {
+          if (!pendingCompleteAction) {
+            return null;
+          }
+          const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
+          const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
+          const pendingCompleteMilestone = pendingCompleteTask ? milestoneData.milestoneByTaskId.get(pendingCompleteTask.id) : null;
+          const isMilestoneComplete = pendingCompleteMilestone?.status === "active" && pendingCompleteMilestone.task_trashed_at === null;
+          return {
+            confirmLabel: isMilestoneComplete ? "Complete Milestone" : "Mark Complete",
+            description: isMilestoneComplete
+              ? "The task will be permanently completed. The locked trophy will be awarded. Aura eligibility depends on the locked target and grace dates."
+              : getTaskCompleteConfirmationDescription(completeFlowTask),
+            modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
+              ? "Mark step complete"
+              : "Mark task permanently complete",
+            onClose: () => setPendingCompleteAction(null),
+            onConfirm: () => { void confirmPendingTaskComplete(); },
+            pending: isMilestoneComplete && isMilestoneLifecyclePending,
+            taskTitle: pendingCompleteTask?.title ?? "Task",
+            title: isMilestoneComplete
+              ? "Complete Milestone and award trophy?"
+              : (pendingCompleteTask?.parent_task_id ?? null)
+              ? "Mark this Step Complete?"
+              : "Mark permanently Complete?",
+          };
+        })()}
+        focusPlannerFlow={focusPlannerFlow}
+        momentumFlow={momentumFlow}
+        taskEditorFlow={taskEditorFlow}
+        taskHistoryFlow={taskHistoryFlow}
+      />
+      {milestoneSetupTask ? (
+        <MilestoneSetupModal
+          localDate={milestoneLocalDate}
+          onClose={() => setMilestoneSetupTaskId(null)}
+          onLock={milestoneData.lockMilestone}
+          onSuccess={(milestone) => {
+            setMilestoneSetupTaskId(null);
+            setMessage({ tone: "good", text: `“${milestone.task_title_snapshot}” is now a Milestone.` });
+            if (milestone.task_id) openSharedTaskEditor(milestone.task_id);
+          }}
+          task={milestoneSetupTask}
+          timezone={userTimeZone}
+        />
+      ) : null}
+      {milestoneCorrection ? (
+        <MilestoneCorrectionModal
+          milestone={milestoneCorrection}
+          onClose={() => setMilestoneCorrectionId(null)}
+          onCorrect={milestoneData.correctMilestone}
+          onSuccess={() => {
+            setMilestoneCorrectionId(null);
+            setMessage({ tone: "good", text: "Milestone setup corrected." });
+          }}
+        />
+      ) : null}
+      {pendingDetachMilestoneTask ? (
+        <DetachAndPromoteMilestoneModal
+          onCancel={() => setPendingDetachMilestoneTaskId(null)}
+          onConfirm={() => { void confirmDetachAndPromoteMilestone(); }}
+          pending={isDetachingMilestoneTask}
+          task={pendingDetachMilestoneTask}
+        />
+      ) : null}
+      {pendingMilestoneLifecycle && pendingMilestoneLifecycleRecord ? (
+        <MilestoneLifecycleModal
+          action={pendingMilestoneLifecycle.action}
+          milestone={pendingMilestoneLifecycleRecord}
+          onCancel={() => setPendingMilestoneLifecycle(null)}
+          onConfirm={(reason) => { void confirmMilestoneLifecycle(reason); }}
+          pending={isMilestoneLifecyclePending}
+        />
+      ) : null}
+    </>
+  );
 
   return (
     <main
@@ -6576,91 +6701,10 @@ export function TaskApp() {
             userId={session?.user?.id ?? null}
           />
         ) : activePage === "Tasks" ? (
-          <TasksWorkspace
-            activeTabId={taskWorkspaceTabsState.activeTabId}
-            renderRevision={tasksCanvasRenderRevision}
-            flows={(
-              <>
-                <TaskEditFlows
-                actualTimeEntryFlow={actualTimeEntryFlow}
-                batchDeleteFlow={batchDeleteFlow}
-                batchEditFlow={batchEditFlow}
-                completeFlow={(() => {
-                  if (!pendingCompleteAction) {
-                    return null;
-                  }
-                  const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
-                  const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
-                  const pendingCompleteMilestone = pendingCompleteTask ? milestoneData.milestoneByTaskId.get(pendingCompleteTask.id) : null;
-                  const isMilestoneComplete = pendingCompleteMilestone?.status === "active" && pendingCompleteMilestone.task_trashed_at === null;
-                  return {
-                  confirmLabel: isMilestoneComplete ? "Complete Milestone" : "Mark Complete",
-                  description: isMilestoneComplete
-                    ? "The task will be permanently completed. The locked trophy will be awarded. Aura eligibility depends on the locked target and grace dates."
-                    : getTaskCompleteConfirmationDescription(completeFlowTask),
-                  modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
-                    ? "Mark step complete"
-                    : "Mark task permanently complete",
-                  onClose: () => setPendingCompleteAction(null),
-                  onConfirm: () => { void confirmPendingTaskComplete(); },
-                  pending: isMilestoneComplete && isMilestoneLifecyclePending,
-                  taskTitle: pendingCompleteTask?.title ?? "Task",
-                  title: isMilestoneComplete
-                    ? "Complete Milestone and award trophy?"
-                    : (pendingCompleteTask?.parent_task_id ?? null)
-                    ? "Mark this Step Complete?"
-                    : "Mark permanently Complete?",
-                };
-                })()}
-                focusPlannerFlow={focusPlannerFlow}
-                momentumFlow={momentumFlow}
-                taskEditorFlow={taskEditorFlow}
-                taskHistoryFlow={taskHistoryFlow}
-                />
-                {milestoneSetupTask ? (
-                  <MilestoneSetupModal
-                    localDate={milestoneLocalDate}
-                    onClose={() => setMilestoneSetupTaskId(null)}
-                    onLock={milestoneData.lockMilestone}
-                    onSuccess={(milestone) => {
-                      setMilestoneSetupTaskId(null);
-                      setMessage({ tone: "good", text: `“${milestone.task_title_snapshot}” is now a Milestone.` });
-                      if (milestone.task_id) openSharedTaskEditor(milestone.task_id);
-                    }}
-                    task={milestoneSetupTask}
-                    timezone={userTimeZone}
-                  />
-                ) : null}
-                {milestoneCorrection ? (
-                  <MilestoneCorrectionModal
-                    milestone={milestoneCorrection}
-                    onClose={() => setMilestoneCorrectionId(null)}
-                    onCorrect={milestoneData.correctMilestone}
-                    onSuccess={() => {
-                      setMilestoneCorrectionId(null);
-                      setMessage({ tone: "good", text: "Milestone setup corrected." });
-                    }}
-                  />
-                ) : null}
-                {pendingDetachMilestoneTask ? (
-                  <DetachAndPromoteMilestoneModal
-                    onCancel={() => setPendingDetachMilestoneTaskId(null)}
-                    onConfirm={() => { void confirmDetachAndPromoteMilestone(); }}
-                    pending={isDetachingMilestoneTask}
-                    task={pendingDetachMilestoneTask}
-                  />
-                ) : null}
-                {pendingMilestoneLifecycle && pendingMilestoneLifecycleRecord ? (
-                  <MilestoneLifecycleModal
-                    action={pendingMilestoneLifecycle.action}
-                    milestone={pendingMilestoneLifecycleRecord}
-                    onCancel={() => setPendingMilestoneLifecycle(null)}
-                    onConfirm={(reason) => { void confirmMilestoneLifecycle(reason); }}
-                    pending={isMilestoneLifecyclePending}
-                  />
-                ) : null}
-              </>
-            )}
+          <>
+            {taskWorkspaceFlowLayer}
+            <TasksWorkspace
+              activeTabId={taskWorkspaceTabsState.activeTabId}
             onAddTab={() => createTaskWorkspaceTab({
               isRailHidden: false,
               taskUiState: {
@@ -6790,6 +6834,7 @@ export function TaskApp() {
                   onStatusColumnFiltersChange: (statusFilters) => setTaskUiState((prev) => ({ ...prev, statusFilters })),
                   childTaskCreationBlockedTaskIds,
                   highlightedActiveTaskId: activeHighlightedTaskId,
+                  highlightedRevealShouldFocus: taskHighlightShouldFocusResult,
                   highlightedScrollToken: taskHighlightScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
                   onVisibleSearchMatchIdsChange: handleTableVisibleSearchMatchIdsChange,
@@ -6959,6 +7004,7 @@ export function TaskApp() {
                   onStatusColumnFiltersChange: (statusFilters) => setTaskUiState((prev) => ({ ...prev, statusFilters })),
                   childTaskCreationBlockedTaskIds,
                   highlightedActiveTaskId: activeHighlightedTaskId,
+                  highlightedRevealShouldFocus: taskHighlightShouldFocusResult,
                   highlightedScrollToken: taskHighlightScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
@@ -7110,7 +7156,8 @@ export function TaskApp() {
                 view={taskUiState.view}
               />
             )}
-          />
+            />
+          </>
         ) : activePage === "Focus" ? (
           <FocusPage
             activeSessions={activeSessions}

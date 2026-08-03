@@ -10,6 +10,7 @@ import type {
   TaskSubtask as DbTaskSubtask,
 } from "@/lib/database.types";
 import { computeTaskSpecificHistoryStats, getTaskFocusFilterFacts, getTaskHistoryLastDone } from "@/lib/task-history";
+import type { TaskHistoryStreakSummary, TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
   TaskBucketContext,
@@ -418,6 +419,7 @@ export function buildChildTaskPreviewLookup(
   taskHistoryByTaskId: Record<string, TaskHistory[]> = {},
   todayDateKey = "",
   adapter = buildTaskHierarchyAdapter(tasks),
+  taskHistoryStreakSummaryByTaskId: TaskHistoryStreakSummaryMap = {},
 ): ChildTaskPreviewLookup {
   const focusedTaskIdSet = new Set(focusedTaskIds);
   const previewByParentTaskId: ChildTaskPreviewLookup = {};
@@ -441,12 +443,19 @@ export function buildChildTaskPreviewLookup(
         const relativeDepth = typeof descendantDepth === "number"
           ? Math.max(1, descendantDepth - parentBaseDepth)
           : 1;
-        const historyStats = computeTaskSpecificHistoryStats(
-          descendant,
-          taskHistoryByTaskId[descendant.id] ?? [],
-          todayDateKey,
-        );
-        const lastDone = getTaskHistoryLastDone(taskHistoryByTaskId[descendant.id] ?? []);
+        const streakSummary = taskHistoryStreakSummaryByTaskId[descendant.id];
+        const historyStats: Pick<TaskHistoryStreakSummary, "currentStreak" | "missedStreak"> = streakSummary
+          ?? computeTaskSpecificHistoryStats(
+            descendant,
+            taskHistoryByTaskId[descendant.id] ?? [],
+            todayDateKey,
+          );
+        const lastDone = streakSummary
+          ? {
+            dateKey: streakSummary.lastDoneDate,
+            timestamp: streakSummary.lastDoneAt,
+          }
+          : getTaskHistoryLastDone(taskHistoryByTaskId[descendant.id] ?? []);
 
         return {
           actualSeconds: descendant.actual_seconds,
@@ -499,19 +508,21 @@ export function buildTaskAppStructuralData({
   diagnosticDetails,
   focusedTaskIds,
   taskHistoryByTaskId,
+  taskHistoryStreakSummaryByTaskId,
   tasks,
   todayDateKey,
 }: {
   diagnosticDetails?: DevelopmentComputationDiagnostic;
   focusedTaskIds: readonly string[];
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   tasks: Task[];
   todayDateKey: string;
 }): TaskAppStructuralData {
   const startedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const hierarchy = buildTaskHierarchyAdapter(tasks);
   const result = {
-    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey, hierarchy),
+    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey, hierarchy, taskHistoryStreakSummaryByTaskId),
     hierarchy,
     taskHierarchyDiagnostics: buildTaskHierarchyDiagnostics(tasks, hierarchy),
     taskPrimaryVisibility: buildTaskPrimaryVisibility(tasks, hierarchy),
@@ -559,6 +570,7 @@ export function buildStableCanonicalTaskIndex({
   focusedTaskIds: string[];
   milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   taskListEvaluationContext: TaskListEvaluationContext;
   taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
   tasks: Task[];
@@ -986,6 +998,7 @@ type ComputeTaskAppDerivedDataInput = {
   taskGridLayout: TaskGridItem[];
   taskGridWidgetTypes: string[];
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   todayDateKey: string;
   taskListEvaluationContext: TaskListEvaluationContext;
   taskSubtasksByTaskId: Record<string, DbTaskSubtask[]>;
@@ -1013,6 +1026,7 @@ export function computeTaskAppDerivedData({
   taskGridLayout,
   taskGridWidgetTypes,
   taskHistoryByTaskId,
+  taskHistoryStreakSummaryByTaskId,
   todayDateKey,
   taskListEvaluationContext,
   taskSubtasksByTaskId,
@@ -1027,6 +1041,7 @@ export function computeTaskAppDerivedData({
     const emptyStructuralData = structuralData ?? buildTaskAppStructuralData({
       focusedTaskIds,
       taskHistoryByTaskId,
+      taskHistoryStreakSummaryByTaskId,
       tasks,
       todayDateKey,
     });
@@ -1107,6 +1122,7 @@ export function computeTaskAppDerivedData({
   const resolvedStructuralData = structuralData ?? buildTaskAppStructuralData({
     focusedTaskIds,
     taskHistoryByTaskId,
+    taskHistoryStreakSummaryByTaskId,
     tasks,
     todayDateKey,
   });

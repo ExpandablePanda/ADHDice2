@@ -5,6 +5,7 @@ import type {
   TaskSubtask,
 } from "@/lib/database.types";
 import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone } from "@/lib/task-history";
+import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { formatTaskPriorityLevel, getTaskPriorityLevel } from "@/lib/task-priority";
@@ -20,6 +21,7 @@ export type TaskTableRowContext = {
   listMemberships: Array<{ id: string; isManual: boolean }>;
   subtasks: TaskSubtask[];
   taskHistory: TaskHistory[];
+  taskHistoryStreakSummary?: TaskHistoryStreakSummary;
   todayDateKey: string;
 };
 
@@ -35,6 +37,7 @@ export function createStableTaskRowModelCache() {
         listMemberships: context.listMemberships,
         subtasks: context.subtasks,
         task,
+        taskHistoryStreakSummary: context.taskHistoryStreakSummary,
         todayDateKey: context.todayDateKey,
       });
       const cached = rowsByTaskId.get(task.id);
@@ -72,8 +75,14 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
   if (isDevelopment) {
     buildTaskTableRowDebugCount += 1;
   }
-  const historyStats = computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
-  const lastDone = getTaskHistoryLastDone(context.taskHistory);
+  const historyStats = context.taskHistoryStreakSummary
+    ?? computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
+  const lastDone = context.taskHistoryStreakSummary
+    ? {
+      dateKey: context.taskHistoryStreakSummary.lastDoneDate,
+      timestamp: context.taskHistoryStreakSummary.lastDoneAt,
+    }
+    : getTaskHistoryLastDone(context.taskHistory);
   const priorities: PrototypeTaskRow["priorities"] = [formatTaskPriorityLevel(getTaskPriorityLevel(task))];
 
   const listLabels = context.listDefinitions.flatMap((listDefinition) =>

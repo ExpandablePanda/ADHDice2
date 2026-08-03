@@ -47,6 +47,13 @@ export type TaskHistoryLastDone = {
   timestamp: string | null;
 };
 
+export const TASK_HISTORY_COLUMNS = "id,task_id,user_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at";
+
+export type TaskHistoryStreakEntry = Pick<
+  DbTaskHistory,
+  "id" | "task_id" | "entry_date" | "status" | "was_completed" | "created_at" | "updated_at"
+>;
+
 export function mapTaskHistoryRow(row: DbTaskHistory) {
   return row;
 }
@@ -168,7 +175,7 @@ function getHistoryTimestamp(entry: Pick<DbTaskHistory, "created_at" | "entry_da
   return entry.updated_at || entry.created_at || null;
 }
 
-function compareLastDoneEntries(left: DbTaskHistory, right: DbTaskHistory) {
+function compareLastDoneEntries(left: TaskHistoryStreakEntry, right: TaskHistoryStreakEntry) {
   const leftTimestamp = getHistoryTimestamp(left);
   const rightTimestamp = getHistoryTimestamp(right);
   if (leftTimestamp && rightTimestamp && leftTimestamp !== rightTimestamp) {
@@ -186,7 +193,7 @@ function compareLastDoneEntries(left: DbTaskHistory, right: DbTaskHistory) {
   return dateOrder !== 0 ? dateOrder : left.id.localeCompare(right.id);
 }
 
-export function getTaskHistoryLastDone(history: DbTaskHistory[]): TaskHistoryLastDone | null {
+export function getTaskHistoryLastDone(history: readonly TaskHistoryStreakEntry[]): TaskHistoryLastDone | null {
   const latestEntry = history
     .filter(isLastDoneHistoryEntry)
     .sort(compareLastDoneEntries)
@@ -826,7 +833,7 @@ export function buildOverdueTaskMissedDateKeys(task: Task, currentDayKey: string
 
 export function computeTaskSpecificHistoryStats(
   task: Task,
-  history: DbTaskHistory[],
+  history: readonly TaskHistoryStreakEntry[],
   todayDateKey: string,
   startDateKey = shiftDateKey(todayDateKey, -139),
 ): TaskHistoryStats & { dueDays: number } {

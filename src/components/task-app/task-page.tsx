@@ -7,7 +7,6 @@ type TaskPageProps = {
   alternateViewPanel: ReactNode;
   brainstormWorkspacePanel: ReactNode;
   completedMilestonesWorkspacePanel: ReactNode;
-  flows: ReactNode;
   listViewPanel: ReactNode;
   onTimeWorkspacePanel: ReactNode;
   showSharedTaskEditorOverlay?: boolean;
@@ -25,7 +24,6 @@ export function TaskPage({
   alternateViewPanel,
   brainstormWorkspacePanel,
   completedMilestonesWorkspacePanel,
-  flows,
   listViewPanel,
   onTimeWorkspacePanel,
   showSharedTaskEditorOverlay = false,
@@ -40,7 +38,6 @@ export function TaskPage({
 }: TaskPageProps) {
   return (
     <>
-      {flows}
       <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
         {surfaceSwitch}
         {tabs}

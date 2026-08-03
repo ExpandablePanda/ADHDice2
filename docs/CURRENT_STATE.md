@@ -5,13 +5,39 @@ Last reviewed: 2026-08-02
 Role: active working
 
 ## Current App Version
-- Current working app version: `7.6.28`.
+- Current working app version: `7.6.35`.
 - Current release group: `7.6.x` Task State Engine.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+
+## 7.6.35 History current-date auto-scroll
+
+- History Calendar waits for authoritative per-task History readiness before scheduling its existing date-strip scroll, then focuses the explicitly selected date or today. Reopening a cached task and switching tasks retrigger focus through the task ID/readiness transition, while later History mutations and manual scrolling do not recenter the strip.
+
+## 7.6.33 Search focus and History readiness
+
+- Passive Table search reveals scroll and highlight matches without taking focus from `#task-search-input`; explicit Enter navigation retains result focus behavior. Task History opens from an authenticated, per-task full-history cache and shows loading/retry UI until that task is ready, without widening critical startup History.
+
+## 7.6.32 Recurring completion History and search focus
+
+- Task State Engine action plans now expose the explicit History outcome separately from the persisted next-occurrence status. Engine-managed Done, Did My Best, Complete, Delayed, and Missed paths no longer infer History from projected `upcoming`, `not_due`, or `pending` task status; the existing one-off and manual History-clear paths remain status-driven.
+- The deterministic Tasks header regression keeps the search input focused on the same DOM node through the 180ms committed-query update and preserves the local draft for subsequent characters. The failure was not a header/input remount; no alternate search focus path was found in the active source path.
+- Existing user data is not repaired by this release.
+
+## 7.6.31 Task streak summaries
+
+- Parent and Step/Substep Table/List title chips use a paged, background compact History summary cache while critical startup History remains narrow.
+
+## 7.6.29 Task History flow boundary
+
+- Tasks modal flows were moved immediately outside the `TasksWorkspace` canvas, so History, editor, timing, batch, delete, Focus planner, Momentum, and milestone flows no longer depended on canvas revision changes. The 7.6.30 repair removes the remaining workspace comparator.
+
+## 7.6.30 Tasks interaction rendering repair
+
+- Removed unsafe render-prop row memoization and the render-revision-only `TasksWorkspace` comparator. Table and List hierarchy groups now render directly, while bounded row windowing/overscan and stable row-model caches remain the performance controls; the external 7.6.29 flow layer and folder navigation remain preserved.
 
 ## 7.6.28 Tasks rail transition import hotfix
 

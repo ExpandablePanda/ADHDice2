@@ -33,13 +33,14 @@ test("derive-stage logging is gated by the explicit workspace diagnostics flag",
   assert.match(derivedSource, /!isWorkspacePerformanceDiagnosticsEnabled\(\)/);
 });
 
-test("list rows are real memoized components rather than children boundaries", () => {
-  assert.match(listSource, /const TaskListRow = memo\(/);
-  assert.match(listSource, /render=\{\(\) => \(/);
-  assert.doesNotMatch(listSource, /StableListRowBoundary/);
+test("list hierarchy groups render directly without an unsafe render-prop memo boundary", () => {
+  assert.doesNotMatch(listSource, /TaskListRow|render=\{\(\) => \(/);
+  assert.match(listSource, /<div className="space-y-3" data-task-list-hierarchy-group=\{task\.id\} key=\{task\.id\}>/);
+  assert.match(listSource, /windowedTasks\.map\(\(task\) =>/);
 });
 
-test("table rows also defer row JSX behind a memo boundary", () => {
-  assert.match(tableSource, /const TaskTableRow = memo\(/);
-  assert.match(tableSource, /<TaskTableRow[\s\S]*?render=\{\(\) => \(/);
+test("table hierarchy groups render directly without an unsafe render-prop memo boundary", () => {
+  assert.doesNotMatch(tableSource, /TaskTableRow|render=\{\(\) => \(/);
+  assert.match(tableSource, /<div\s+key=\{`task:\$\{getPrototypeTaskRowKey\(task\)\}`\}/);
+  assert.match(tableSource, /renderedTasks\.map\(\(task\) =>/);
 });

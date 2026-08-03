@@ -24,9 +24,9 @@ import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
 import { createStableTaskRowModelCache, snapshotBuildTaskTableRowDebugCount } from "@/lib/task-table-row";
-import { areTaskRowPropsEqual } from "@/lib/task-row-memoization";
+import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
-import { Fragment, memo, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
@@ -179,17 +179,6 @@ const COMPACT_REPEAT_UNITS: Array<{ label: string; value: PrototypeTaskRow["repe
   { label: "Months", value: "monthly" },
 ];
 
-const TaskListRow = memo(function TaskListRow({
-  render,
-  taskId,
-}: {
-  render: () => ReactNode;
-  rowModel: PrototypeTaskRow;
-  taskId: string;
-  uiRevision: string;
-}) {
-  return <div className="space-y-3" data-task-list-hierarchy-group={taskId}>{render()}</div>;
-}, areTaskRowPropsEqual);
 function priorityTone(priority: TaskPriorityLevelOption) {
   return getTaskPriorityToneClass(priority);
 }
@@ -274,6 +263,7 @@ type TasksTableSourceProps = {
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
   highlightedActiveTaskId?: string | null;
+  highlightedRevealShouldFocus?: boolean;
   highlightedScrollToken?: number | null;
   highlightedTaskIds?: string[];
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
@@ -372,6 +362,7 @@ type TasksTableSourceProps = {
     listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
     subtasksByTaskId: Record<string, TaskSubtask[]>;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
+    taskHistoryStreakSummaryByTaskId: Record<string, TaskHistoryStreakSummary>;
     todayDateKey: string;
   };
   onRequestedOpenTaskHandled?: (taskId: string) => void;
@@ -508,6 +499,7 @@ export function TasksTableAdapter({
         listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
         subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+        taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
         todayDateKey: tableProps.rowContext.todayDateKey,
       }));
 
@@ -537,6 +529,7 @@ export function TasksTableAdapter({
         listMemberships: tableProps.rowContext.listMembershipsByTaskId[tableProps.requestedOpenTask.id] ?? [],
         subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
         todayDateKey: tableProps.rowContext.todayDateKey,
       })
       : null,
@@ -571,6 +564,7 @@ export function TasksTableAdapter({
               listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
               subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
               taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+              taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
               todayDateKey: tableProps.rowContext.todayDateKey,
             }))}
           allListOptions={tableProps.allListOptions}
@@ -579,6 +573,7 @@ export function TasksTableAdapter({
           childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
           highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
+          highlightedRevealShouldFocus={tableProps.highlightedRevealShouldFocus}
           highlightedScrollToken={tableProps.highlightedScrollToken}
           highlightedTaskIds={tableProps.highlightedTaskIds}
           onVisibleSearchMatchIdsChange={tableProps.onVisibleSearchMatchIdsChange}
@@ -2614,6 +2609,7 @@ function TasksSimpleList({
       listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
       subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
       taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+      taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
       todayDateKey: tableProps.rowContext.todayDateKey,
     })] : [],
     [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
@@ -2627,6 +2623,7 @@ function TasksSimpleList({
         listMemberships: tableProps.rowContext.listMembershipsByTaskId[tableProps.requestedOpenTask.id] ?? [],
         subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
         todayDateKey: tableProps.rowContext.todayDateKey,
       })
       : null,
@@ -2668,6 +2665,7 @@ function TasksSimpleList({
           listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
           subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
           taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+          taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
           todayDateKey: tableProps.rowContext.todayDateKey,
         })),
       })
@@ -2884,6 +2882,7 @@ function TasksSimpleList({
               childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
               childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
               highlightedActiveTaskId={tableProps.highlightedActiveTaskId}
+              highlightedRevealShouldFocus={tableProps.highlightedRevealShouldFocus}
               highlightedScrollToken={tableProps.highlightedScrollToken}
               highlightedTaskIds={tableProps.highlightedTaskIds}
               className="m-0 max-w-none p-0"
@@ -2995,6 +2994,7 @@ function TasksSimpleList({
           listMemberships: rowContext.listMembershipsByTaskId[task.id] ?? [],
           subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
           taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
+          taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
           todayDateKey: rowContext.todayDateKey,
         });
         const categoryLabel = resolveTaskCategoryLabel({
@@ -3048,25 +3048,8 @@ function TasksSimpleList({
           && effectiveStepPreviewGroup
           && (effectiveStepPreviewGroup.items.length > 0 || parentStepDraftTaskId === task.id),
         );
-        const rowUiRevision = [
-          selectedTaskIdSet.has(task.id),
-          highlightedTaskIdSet.has(task.id),
-          tableProps.highlightedActiveTaskId === task.id,
-          isMetadataVisible,
-          activePanelMode ?? "",
-          isRenamingTaskTitle,
-          taskTitleDraft,
-          isStepSectionExpanded,
-          parentStepDraftTaskId === task.id,
-          parentStepTitleDrafts[task.id] ?? "",
-          parentStepCreationErrors[task.id] ?? "",
-          showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] === true,
-          runningTimerByTaskId.get(task.id)?.startedAt ?? "",
-          runningTimerByTaskId.get(task.id)?.pausedAt ?? "",
-        ].join("|");
         return (
-          <TaskListRow key={task.id} render={() => (
-            <>
+          <div className="space-y-3" data-task-list-hierarchy-group={task.id} key={task.id}>
             <article
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${
                 selectedTaskIdSet.has(task.id)
@@ -3559,8 +3542,7 @@ function TasksSimpleList({
                 visibleMetadataTaskIds={visibleMetadataTaskIds}
               />
             ) : null}
-            </>
-          )} rowModel={taskRow} taskId={task.id} uiRevision={rowUiRevision} />
+          </div>
         );
       })}
           {windowedTasks.length < tasks.length ? <div aria-hidden="true" className="h-px" ref={loadMoreListRowsRef} /> : null}

@@ -82,6 +82,37 @@ test("Daily Until Complete accepts Done through the shared action authority", ()
   assert.equal(result?.nextDueDate, "2026-08-01");
   assert.equal(result?.mutationPlan.taskUpdate.status, "upcoming");
   assert.notEqual(result?.mutationPlan.taskUpdate.status, "done");
+  assert.equal(result?.mutationPlan.historyOutcome, "done");
+});
+
+test("engine action plans keep Did My Best History separate from the projected next status", () => {
+  const result = evaluateTaskActionAuthority({
+    ...context,
+    history: [],
+    outcome: "did_my_best",
+    task: task({ due_on: "2026-07-31", repeat_frequency: "daily" }),
+  });
+
+  assert.equal(result?.mutationPlan.historyOutcome, "did_my_best");
+  assert.notEqual(result?.mutationPlan.taskUpdate.status, "did_my_best");
+  assert.equal(result?.mutationPlan.taskUpdate.due_on, "2026-08-01");
+});
+
+test("all engine-managed History outcomes remain explicit in the mutation plan", () => {
+  for (const [outcome, options] of [
+    ["complete", {}],
+    ["delayed", { delayDays: 1 }],
+    ["missed", {}],
+  ] as const) {
+    const result = evaluateTaskActionAuthority({
+      ...context,
+      ...options,
+      history: [],
+      outcome,
+      task: task({ due_on: "2026-07-31", repeat_frequency: "daily" }),
+    });
+    assert.equal(result?.mutationPlan.historyOutcome, outcome);
+  }
 });
 
 test("successful Daily Until Complete Done action leaves zero rollover repair patches", () => {
@@ -134,6 +165,8 @@ test("shared status action applies the engine Task and History plan optimistical
   const actionPath = source.slice(source.indexOf("async function updateTaskStatus"), source.indexOf("async function toggleTaskPinned"));
 
   assert.match(actionPath, /const values: TaskUpdate = action[\s\S]*?action\.mutationPlan\.taskUpdate/);
+  assert.match(actionPath, /historyStatus: actionHistoryStatus/);
+  assert.match(actionPath, /actionHistoryStatus = action\?\.mutationPlan\.historyOutcome/);
   assert.match(actionPath, /if \(action\) \{[\s\S]*?setTasks\([\s\S]*?setTaskHistory\(/);
   assert.doesNotMatch(actionPath, /\.\.\.buildTaskStatusUpdate\(task, status\)[\s\S]*?action\.persistableTaskPatch/);
 });

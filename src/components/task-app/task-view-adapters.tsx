@@ -557,20 +557,26 @@ export function MomentumTaskModal({
 
 export function TaskHistoryModal({
   onClose,
+  onRetryTaskHistoryLoad,
   onSetDelayedStatus,
   onSetStatuses,
   task,
   taskHistory,
+  taskHistoryLoadError = null,
+  taskHistoryLoadStatus = "ready",
   taskTitle,
   todayDateKey,
   initialDateKey,
   stateEngineContext,
 }: {
   onClose: () => void;
+  onRetryTaskHistoryLoad?: () => Promise<boolean> | void;
   onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<void>;
   onSetDelayedStatus?: (entryDate: string, nextDueOn: string) => Promise<void>;
   task: Task;
   taskHistory: DbTaskHistory[];
+  taskHistoryLoadError?: string | null;
+  taskHistoryLoadStatus?: "error" | "loading" | "ready";
   taskTitle: string;
   todayDateKey: string;
   initialDateKey?: string | null;
@@ -774,6 +780,10 @@ export function TaskHistoryModal({
   }
 
   useEffect(() => {
+    if (taskHistoryLoadStatus !== "ready") {
+      return;
+    }
+
     const frame = window.requestAnimationFrame(() => {
       const isMobile = window.matchMedia("(max-width: 1023px)").matches;
       const container = isMobile ? mobileCalendarViewportRef.current : desktopCalendarViewportRef.current;
@@ -804,7 +814,30 @@ export function TaskHistoryModal({
       });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [initialFocusDate]);
+  }, [initialFocusDate, task.id, taskHistoryLoadStatus]);
+
+  if (taskHistoryLoadStatus !== "ready") {
+    const isLoadError = taskHistoryLoadStatus === "error";
+    return (
+      <ModalShell className="w-full max-w-xl rounded-[2.4rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Task history" onClose={onClose}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Task History</p>
+            <h2 className="mt-2 truncate text-2xl font-black text-[#1f2746] dark:text-white">{taskTitle}</h2>
+          </div>
+          <button aria-label="Close task history" className="shrink-0 p-2 text-2xl leading-none text-[#8e97af] dark:text-white/55" onClick={onClose} type="button">×</button>
+        </div>
+        <div aria-live="polite" aria-busy={!isLoadError} className="mt-6 rounded-[1.5rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-5 py-6 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
+          {isLoadError ? (
+            <>
+              <p>{taskHistoryLoadError ?? "Could not load task history."}</p>
+              {onRetryTaskHistoryLoad ? <button className="mt-4 rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-4 py-2 text-sm font-semibold text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" onClick={() => { void onRetryTaskHistoryLoad(); }} type="button">Retry History</button> : null}
+            </>
+          ) : "Loading full task history…"}
+        </div>
+      </ModalShell>
+    );
+  }
 
   const calendarButton = (dateKey: string) => (
     <button aria-pressed={selectedDateSet.has(dateKey)} className={`flex h-9 w-9 items-center justify-center rounded-[0.85rem] border text-[10px] font-black tabular-nums transition ${cellTone(dateKey)} ${selectedDateSet.has(dateKey) ? "ring-2 ring-[#6f57f6] ring-offset-2 ring-offset-white dark:ring-[#cabfff] dark:ring-offset-[#171328]" : ""} ${isMultiSelect && dateKey > today ? "cursor-not-allowed opacity-45" : ""}`} data-history-date={dateKey} key={dateKey} onClick={() => selectDate(dateKey)} title={dateKey} type="button">{dateKey.slice(-2)}</button>

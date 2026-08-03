@@ -6,7 +6,7 @@ import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus,
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
-import { buildMissingScheduledMissedHistoryDateKeys, resolveLiveTaskStatusFromHistory } from "@/lib/task-history";
+import { buildMissingScheduledMissedHistoryDateKeys, resolveLiveTaskStatusFromHistory, TASK_HISTORY_COLUMNS } from "@/lib/task-history";
 import { evaluateTaskActionAuthority } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 
@@ -25,6 +25,7 @@ type UseTaskHistoryActionsOptions = {
   isTaskHistoryStatus: (status: TaskStatus) => boolean;
   mapTaskHistoryRow: (row: DbTaskHistory) => DbTaskHistory;
   now: Date;
+  onHistoryMutation?: (taskId: string, taskHistory?: DbTaskHistory[]) => void | Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTaskHistory: Dispatch<SetStateAction<DbTaskHistory[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -45,6 +46,7 @@ export function useTaskHistoryActions({
   isTaskHistoryStatus,
   mapTaskHistoryRow,
   now,
+  onHistoryMutation,
   setMessage,
   setTaskHistory,
   setTasks,
@@ -54,6 +56,10 @@ export function useTaskHistoryActions({
   timezone,
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskHistoryActionsOptions) {
+  function notifyHistoryMutation(taskId: string, nextHistory?: DbTaskHistory[]) {
+    void onHistoryMutation?.(taskId, nextHistory);
+  }
+
   function getCalendarOccurrenceTask(task: Task | undefined, status: TaskStatus, entryDate: string, history: DbTaskHistory[]) {
     if (!task || (status !== "done" && status !== "did_my_best") || task.repeat_frequency === "none") {
       return task;
@@ -185,9 +191,12 @@ export function useTaskHistoryActions({
       });
 
       if (options?.syncLiveTask) {
-        return syncLiveTaskStatus(taskId, nextHistory, [entryDate]);
+        const result = await syncLiveTaskStatus(taskId, nextHistory, [entryDate]);
+        notifyHistoryMutation(taskId, nextHistory);
+        return result;
       }
 
+      notifyHistoryMutation(taskId, nextHistory);
       return true;
     }
 
@@ -205,7 +214,7 @@ export function useTaskHistoryActions({
     const { data, error } = await client
       .from("adhdice_task_history")
       .upsert(payload, { onConflict: "user_id,task_id,entry_date" })
-      .select("*")
+      .select(TASK_HISTORY_COLUMNS)
       .single();
 
     if (error) {
@@ -213,9 +222,10 @@ export function useTaskHistoryActions({
       return false;
     }
 
+    let nextHistory = taskHistory.filter((entry) => entry.task_id === taskId);
     if (data) {
       const mappedEntry = mapTaskHistoryRow(data);
-      const nextHistory = [
+      nextHistory = [
         mappedEntry,
         ...taskHistory.filter((entry) =>
           !(entry.task_id === mappedEntry.task_id && entry.entry_date === mappedEntry.entry_date),
@@ -232,10 +242,13 @@ export function useTaskHistoryActions({
       });
 
       if (options?.syncLiveTask) {
-        return syncLiveTaskStatus(taskId, nextHistory, [entryDate]);
+        const result = await syncLiveTaskStatus(taskId, nextHistory, [entryDate]);
+        notifyHistoryMutation(taskId, nextHistory);
+        return result;
       }
     }
 
+    notifyHistoryMutation(taskId, nextHistory);
     return true;
   }
 
@@ -275,9 +288,11 @@ export function useTaskHistoryActions({
         return filtered;
       });
 
-      return options?.syncLiveTask
-        ? syncLiveTaskStatus(taskId, nextTaskHistory, uniqueEntryDates)
+      const result = options?.syncLiveTask
+        ? await syncLiveTaskStatus(taskId, nextTaskHistory, uniqueEntryDates)
         : true;
+      notifyHistoryMutation(taskId, nextTaskHistory);
+      return result;
     }
 
     const task = tasks.find((candidate) => candidate.id === taskId);
@@ -305,7 +320,7 @@ export function useTaskHistoryActions({
     const { data, error } = await client
       .from("adhdice_task_history")
       .upsert(payloads, { onConflict: "user_id,task_id,entry_date" })
-      .select("*");
+      .select(TASK_HISTORY_COLUMNS);
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
@@ -341,12 +356,14 @@ export function useTaskHistoryActions({
         .at(0)
       : null;
 
-    return options?.syncLiveTask
-      ? syncLiveTaskStatus(taskId, nextTaskHistory, [
+    const result = options?.syncLiveTask
+      ? await syncLiveTaskStatus(taskId, nextTaskHistory, [
         ...uniqueEntryDates,
         ...(laterCompletionDateKey ? [laterCompletionDateKey] : []),
       ])
       : true;
+    notifyHistoryMutation(taskId, nextTaskHistory);
+    return result;
   }
 
   return { syncTaskHistoryEntries, syncTaskHistoryEntry };

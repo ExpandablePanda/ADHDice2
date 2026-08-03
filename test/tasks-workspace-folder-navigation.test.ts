@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
-import { createTasksCanvasRenderRevision } from "@/lib/tasks-canvas-render-revision";
 
 type TestElement = {
   props?: Record<string, unknown>;
@@ -113,16 +112,6 @@ function findElements(node: unknown, predicate: (element: TestElement) => boolea
   return [...matches, ...findElements(element.props?.children, predicate)];
 }
 
-const baseRevisionInput = {
-  activeTabId: "tab-1",
-  searchResultIds: ["task-1:3"],
-  selectedBucket: "all",
-  selectedTaskIds: [],
-  surface: "tasks",
-  taskDerivationRevision: "tasks:revision-1",
-  view: "list",
-};
-
 const rootLists = [
   { id: "list-1", label: "Inbox", structureKind: "list", count: 2 },
   { id: "folder-a", label: "Projects", structureKind: "folder", folderCounts: { containedListCount: 1, visibleTaskCount: 2, dueTodayCount: 1, overdueCount: 0 } },
@@ -138,7 +127,7 @@ function workspaceProps(currentFolderId: string | null, folderBreadcrumbIds: str
     actionLabel: "Focus",
     activeCount: 1,
     allListDirectoryEntries: [],
-    appVersion: "7.6.28",
+    appVersion: "7.6.33",
     archiveCount: 0,
     currentFolderBreadcrumbs: folderBreadcrumbIds.map((id) => ({ id, name: id })),
     currentFolderId,
@@ -183,18 +172,11 @@ function workspaceProps(currentFolderId: string | null, folderBreadcrumbIds: str
     todayCount: 1,
     view: "list",
   };
-  const renderRevision = createTasksCanvasRenderRevision({
-    ...baseRevisionInput,
-    currentFolderId,
-    folderBreadcrumbIds,
-    openFolderRailIds: openFolderRails.map((rail) => rail.folderId),
-  });
   return {
     activeTabId: "tab-1",
     alternateViewPanel: null,
     brainstormWorkspacePanel: null,
     completedMilestonesWorkspacePanel: null,
-    flows: null,
     listViewPanel: null,
     onAddTab: () => undefined,
     onTimeWorkspacePanel: null,
@@ -206,7 +188,6 @@ function workspaceProps(currentFolderId: string | null, folderBreadcrumbIds: str
     operationsHeaderProps,
     pathsWorkspacePanel: null,
     reportWorkspacePanel: null,
-    renderRevision,
     surface: "tasks",
     tableViewPanel: null,
     tabs: [{ id: "tab-1", label: "Tasks" }],
@@ -227,25 +208,9 @@ function renderTaskOperationsHeader(props: Record<string, unknown>) {
 }
 
 test("TasksWorkspace rerenders folder rails when only folder navigation identity changes", () => {
-  const appRevisionBlock = appSource.slice(
-    appSource.indexOf("const tasksCanvasRenderRevision"),
-    appSource.indexOf("const selectedListTasks", appSource.indexOf("const tasksCanvasRenderRevision")),
-  );
-  assert.match(appRevisionBlock, /currentFolderId/);
-  assert.match(appRevisionBlock, /folderBreadcrumbIds: taskListFolderBreadcrumbs\.map\(\(folder\) => folder\.id\)/);
-  assert.match(appRevisionBlock, /openFolderRailIds: taskListRailStructureOptions\.openFolderRails\.map\(\(rail\) => rail\.folderId\)/);
-
-  const compare = workspaceExports.TasksWorkspace.compare;
-  assert.ok(compare);
-  let previousProps: Record<string, unknown> | null = null;
-  let rendered: unknown;
-  const rerender = (props: Record<string, unknown>) => {
-    if (!previousProps || !compare(previousProps, props)) {
-      rendered = renderTaskOperationsHeader(props);
-    }
-    previousProps = props;
-    return rendered;
-  };
+  assert.match(workspaceSource, /export function TasksWorkspace\(/);
+  assert.doesNotMatch(workspaceSource, /renderRevision|memo\(/);
+  const rerender = (props: Record<string, unknown>) => renderTaskOperationsHeader(props);
   const folderRailCount = (tree: unknown) => findElements(tree, (element) => Boolean(element.props?.["data-folder-content-rail"])).length;
 
   assert.equal(folderRailCount(rerender(workspaceProps(null, [], []))), 0);
@@ -272,4 +237,53 @@ test("TasksWorkspace rerenders folder rails when only folder navigation identity
   assert.ok(listButton);
   (listButton.props?.onClick as ((event: { preventDefault: () => void }) => void) | undefined)?.({ preventDefault() {} });
   assert.deepEqual(selectedBuckets, ["list-1"]);
+});
+
+test("Tasks modal flows render outside the memoized canvas boundary", () => {
+  const flowLayerStart = appSource.indexOf("const taskWorkspaceFlowLayer");
+  const tasksBranchStart = appSource.indexOf(') : activePage === "Tasks" ? (');
+  const focusBranchStart = appSource.indexOf(') : activePage === "Focus" ?', tasksBranchStart);
+  const workspaceStart = appSource.indexOf("<TasksWorkspace", tasksBranchStart);
+  const workspaceEnd = appSource.indexOf("\n            />", workspaceStart);
+  assert.ok(flowLayerStart >= 0);
+  assert.ok(tasksBranchStart > flowLayerStart);
+  assert.ok(focusBranchStart > tasksBranchStart);
+  assert.ok(workspaceStart > tasksBranchStart);
+  assert.ok(workspaceEnd > workspaceStart);
+
+  const flowLayer = appSource.slice(flowLayerStart, tasksBranchStart);
+  const tasksBranch = appSource.slice(tasksBranchStart, focusBranchStart);
+  const workspaceInvocation = appSource.slice(workspaceStart, workspaceEnd);
+  assert.match(tasksBranch, /\{taskWorkspaceFlowLayer\}\s*<TasksWorkspace/);
+  assert.doesNotMatch(workspaceInvocation, /\bflows\s*=/);
+  for (const flowProp of [
+    "actualTimeEntryFlow",
+    "batchDeleteFlow",
+    "batchEditFlow",
+    "focusPlannerFlow",
+    "momentumFlow",
+    "taskEditorFlow",
+    "taskHistoryFlow",
+  ]) {
+    assert.match(flowLayer, new RegExp(`${flowProp}=`));
+  }
+
+  assert.equal("compare" in workspaceExports.TasksWorkspace, false);
+
+  let canvasRenderCount = 0;
+  let flowLayerRenderCount = 0;
+  const renderRoot = (props: Record<string, unknown>) => {
+    flowLayerRenderCount += 1;
+    canvasRenderCount += 1;
+    renderTaskOperationsHeader(props);
+  };
+  renderRoot(workspaceProps(null, [], []));
+  renderRoot(workspaceProps("folder-a", ["folder-a"], [{ folderId: "folder-a", lists: folderALists }]));
+  renderRoot(workspaceProps(null, [], []));
+  renderRoot(workspaceProps("folder-b", ["folder-a", "folder-b"], [
+    { folderId: "folder-a", lists: folderALists },
+    { folderId: "folder-b", lists: folderBLists },
+  ]));
+  assert.equal(flowLayerRenderCount, 4);
+  assert.equal(canvasRenderCount, 4);
 });

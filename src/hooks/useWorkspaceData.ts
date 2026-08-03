@@ -22,6 +22,7 @@ import type {
 } from "@/lib/database.types";
 import { loadProfileMedia, setActiveProfileUserId, WORKSPACE_PROFILE_COLUMNS, type WorkspaceProfileRow } from "@/lib/profile-store";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
+import { TASK_HISTORY_COLUMNS, type TaskHistoryStreakEntry } from "@/lib/task-history";
 import { reconcileTaskListRows } from "@/lib/task-list-mappers";
 import { loadTaskListFolders } from "@/lib/task-list-folders";
 import type { TaskListDefinition, TaskListManualMembership } from "@/lib/task-lists";
@@ -38,6 +39,13 @@ import {
   mergeTaskHistoryCache,
   selectCriticalTaskHistoryFacts,
 } from "@/lib/workspace-critical-task-facts";
+import {
+  buildTaskHistoryStreakSummary,
+  buildTaskHistoryStreakSummaryMap,
+  TASK_HISTORY_STREAK_SUMMARY_COLUMNS,
+  updateTaskHistoryStreakSummaryMap,
+  type TaskHistoryStreakSummaryMap,
+} from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -91,6 +99,7 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   setTasks: Dispatch<SetStateAction<Task[]>>;
   suppressCategoryReload: MutableRefObject<boolean>;
   supabase: SupabaseClient;
+  tasks: Task[];
   taskGridStarterLayout: TTaskGridItem[];
   taskListDataGeneration: MutableRefObject<number>;
   todayKey: string;
@@ -107,6 +116,13 @@ type PagedFetchResult<T> = {
   data: T[] | null;
   error: { message?: string } | null;
 };
+
+export type TaskHistoryTaskLoadState = {
+  error: string | null;
+  status: "error" | "loading" | "ready";
+};
+
+type TaskHistoryCacheUpdate = DbTaskHistory[] | ((current: DbTaskHistory[]) => DbTaskHistory[]);
 
 export async function fetchAllPagedRows<T>(
   fetchPage: (from: number, to: number) => Promise<PagedFetchResult<T>>,
@@ -182,12 +198,16 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   setTasks,
   suppressCategoryReload,
   supabase,
+  tasks,
   taskGridStarterLayout,
   taskListDataGeneration,
   todayKey,
 }: UseWorkspaceDataOptions<TTaskGridItem>) {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [taskHistoryLoadedUserId, setTaskHistoryLoadedUserId] = useState<string | null>(null);
+  const [taskHistoryByTaskId, setTaskHistoryByTaskId] = useState<Record<string, DbTaskHistory[]>>({});
+  const [taskHistoryLoadStateByTaskId, setTaskHistoryLoadStateByTaskId] = useState<Record<string, TaskHistoryTaskLoadState>>({});
+  const [taskHistoryStreakSummaries, setTaskHistoryStreakSummaries] = useState<TaskHistoryStreakSummaryMap>({});
   const [isSoftWorkspaceRefreshing, setIsSoftWorkspaceRefreshing] = useState(false);
   const [isTaskResumeSyncPending, setIsTaskResumeSyncPending] = useState(false);
   const [taskListMembershipDataReadyUserId, setTaskListMembershipDataReadyUserId] = useState<string | null>(null);
@@ -195,9 +215,15 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const hasLoadedActualTimeRef = useRef(false);
   const hasLoadedFullTaskHistoryRef = useRef(false);
   const hasLoadedTaskHistoryRef = useRef(false);
+  const fullTaskHistoryRowsRef = useRef<DbTaskHistory[]>([]);
   const taskHistoryLoadInFlightRef = useRef(false);
   const queuedTaskHistoryReloadRef = useRef(false);
   const taskHistoryLoadPromiseRef = useRef<Promise<boolean> | null>(null);
+  const taskHistoryByTaskIdRef = useRef<Record<string, DbTaskHistory[]>>({});
+  const taskHistoryLoadStateByTaskIdRef = useRef<Record<string, TaskHistoryTaskLoadState>>({});
+  const taskHistoryTaskLoadPromisesRef = useRef(new Map<string, Promise<boolean>>());
+  const taskHistoryStreakSummaryLoadPromiseRef = useRef<Promise<boolean> | null>(null);
+  const taskHistoryStreakSummaryTaskReloadsRef = useRef(new Map<string, Promise<boolean>>());
   const taskReloadInFlightRef = useRef(false);
   const queuedTaskReloadRef = useRef(false);
   const taskReloadPromiseRef = useRef<Promise<void> | null>(null);
@@ -230,6 +256,47 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const loadFullTaskHistoryRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadNotesRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadTaskHistoryForTaskRef = useRef<((taskId: string) => Promise<boolean>) | null>(null);
+  const refreshTaskHistoryStreakSummaryRef = useRef<((taskId: string, nextTaskHistory?: DbTaskHistory[]) => Promise<boolean>) | null>(null);
+  const retryTaskHistoryForTaskRef = useRef<((taskId: string) => Promise<boolean>) | null>(null);
+  const tasksRef = useRef(tasks);
+
+  const setTaskHistoryTaskLoadState = useCallback((taskId: string, state: TaskHistoryTaskLoadState) => {
+    taskHistoryLoadStateByTaskIdRef.current = {
+      ...taskHistoryLoadStateByTaskIdRef.current,
+      [taskId]: state,
+    };
+    setTaskHistoryLoadStateByTaskId((current) => (
+      current[taskId]?.status === state.status && current[taskId]?.error === state.error
+        ? current
+        : { ...current, [taskId]: state }
+    ));
+  }, []);
+
+  const setTaskHistoryCacheForTask = useCallback((taskId: string, rows: DbTaskHistory[]) => {
+    const nextRows = rows.filter((entry) => entry.task_id === taskId);
+    taskHistoryByTaskIdRef.current = { ...taskHistoryByTaskIdRef.current, [taskId]: nextRows };
+    setTaskHistoryByTaskId((current) => (
+      JSON.stringify(current[taskId] ?? []) === JSON.stringify(nextRows)
+        ? current
+        : { ...current, [taskId]: nextRows }
+    ));
+  }, []);
+
+  const updateTaskHistoryForTask = useCallback((taskId: string, update: TaskHistoryCacheUpdate) => {
+    if (taskHistoryLoadStateByTaskIdRef.current[taskId]?.status !== "ready" && !Object.hasOwn(taskHistoryByTaskIdRef.current, taskId)) {
+      return;
+    }
+    const currentRows = taskHistoryByTaskIdRef.current[taskId] ?? [];
+    setTaskHistoryCacheForTask(taskId, typeof update === "function" ? update(currentRows) : update);
+  }, [setTaskHistoryCacheForTask]);
+
+  const clearTaskHistoryTaskCache = useCallback(() => {
+    taskHistoryByTaskIdRef.current = {};
+    taskHistoryLoadStateByTaskIdRef.current = {};
+    taskHistoryTaskLoadPromisesRef.current.clear();
+    setTaskHistoryByTaskId({});
+    setTaskHistoryLoadStateByTaskId({});
+  }, []);
 
   useEffect(() => {
     activePageRef.current = activePage;
@@ -242,6 +309,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   useEffect(() => {
     todayKeyRef.current = todayKey;
   }, [todayKey]);
+
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   useEffect(() => {
     shouldSkipTaskReloadRef.current = shouldSkipTaskReload;
@@ -257,10 +328,17 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       hasLoadedActualTimeRef.current = false;
       hasLoadedFullTaskHistoryRef.current = false;
       hasLoadedTaskHistoryRef.current = false;
+      fullTaskHistoryRowsRef.current = [];
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped History modal cache on sign-out.
+      clearTaskHistoryTaskCache();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped display cache on sign-out.
+      setTaskHistoryStreakSummaries({});
       setTaskHistoryLoadedUserId(null);
       taskHistoryLoadInFlightRef.current = false;
       queuedTaskHistoryReloadRef.current = false;
       taskHistoryLoadPromiseRef.current = null;
+      taskHistoryStreakSummaryLoadPromiseRef.current = null;
+      taskHistoryStreakSummaryTaskReloadsRef.current.clear();
       taskReloadInFlightRef.current = false;
       queuedTaskReloadRef.current = false;
       taskReloadPromiseRef.current = null;
@@ -280,6 +358,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       loadFullTaskHistoryRef.current = null;
       loadNotesRef.current = null;
       loadTaskHistoryForTaskRef.current = null;
+      refreshTaskHistoryStreakSummaryRef.current = null;
+      retryTaskHistoryForTaskRef.current = null;
       if (taskResumeSyncTimeoutRef.current !== null) {
         window.clearTimeout(taskResumeSyncTimeoutRef.current);
         taskResumeSyncTimeoutRef.current = null;
@@ -290,6 +370,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     const client = supabase;
     const user = currentUser;
     const userId = user.id;
+    clearTaskHistoryTaskCache();
+    setTaskHistoryStreakSummaries((current) => Object.keys(current).length === 0 ? current : {});
+    fullTaskHistoryRowsRef.current = [];
     setActiveProfileUserId(userId);
     if (startupRequestUserIdRef.current && startupRequestUserIdRef.current !== userId) {
       workspaceStartupRequestRegistry.invalidate(startupRequestUserIdRef.current);
@@ -462,7 +545,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       silent?: boolean;
       source?: "rollover" | "secondary";
     } = {}) {
-      if ((!isActive && !canApplyCoreWorkspaceResult())) {
+      if (!isActive || !canApplyCoreWorkspaceResult()) {
         return false;
       }
 
@@ -481,7 +564,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             queuedTaskHistoryReloadRef.current = false;
             const taskHistoryResult = await fetchAllPagedRows<DbTaskHistory>((from, to) => client
               .from("adhdice_task_history")
-              .select("*")
+              .select(TASK_HISTORY_COLUMNS)
               .eq("user_id", userId)
               .order("entry_date", { ascending: false })
               .order("created_at", { ascending: false })
@@ -499,6 +582,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             }
 
             const nextTaskHistory = (taskHistoryResult.data ?? []).map(mapTaskHistoryRow);
+            fullTaskHistoryRowsRef.current = nextTaskHistory;
             setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, nextTaskHistory));
             hasLoadedTaskHistoryRef.current = true;
             hasLoadedFullTaskHistoryRef.current = true;
@@ -520,8 +604,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const dates = collectCriticalTaskHistoryDates(nextTasks, logicalDayKey);
       const chunks = chunkCriticalTaskHistoryDates(dates);
       const results = await Promise.all(chunks.flatMap((datesChunk) => [
-        client.from("adhdice_task_history").select("*").eq("user_id", userId).in("entry_date", datesChunk),
-        client.from("adhdice_task_history").select("*").eq("user_id", userId).in("occurrence_due_on", datesChunk),
+        client.from("adhdice_task_history").select(TASK_HISTORY_COLUMNS).eq("user_id", userId).in("entry_date", datesChunk),
+        client.from("adhdice_task_history").select(TASK_HISTORY_COLUMNS).eq("user_id", userId).in("occurrence_due_on", datesChunk),
       ]));
       const error = results.find((result) => result.error)?.error;
       if (error) return { error, rows: [] as DbTaskHistory[] };
@@ -529,16 +613,145 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       return { error: null, rows: selectCriticalTaskHistoryFacts(nextTasks, mapped, logicalDayKey) };
     }
 
-    async function loadTaskHistoryForTask(taskId: string, { silent = false }: { silent?: boolean } = {}) {
-      const result = await client.from("adhdice_task_history").select("*").eq("user_id", userId).eq("task_id", taskId)
-        .order("entry_date", { ascending: false }).order("created_at", { ascending: false });
-      if (result.error) {
-        if (!silent) setMessage({ tone: "warn", text: result.error.message ?? "Could not load task history." });
+    async function loadTaskHistoryForTask(taskId: string, { force = false, silent = false }: { force?: boolean; silent?: boolean } = {}) {
+      if (!isActive || !canApplyCoreWorkspaceResult()) {
         return false;
       }
-      const rows = (result.data ?? []).map(mapTaskHistoryRow);
-      setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, mergeTaskHistoryCache(current, rows)));
-      return true;
+      if (!force && taskHistoryLoadStateByTaskIdRef.current[taskId]?.status === "ready") {
+        return true;
+      }
+      const existingLoad = taskHistoryTaskLoadPromisesRef.current.get(taskId);
+      if (existingLoad) {
+        return await existingLoad;
+      }
+
+      setTaskHistoryTaskLoadState(taskId, { error: null, status: "loading" });
+      const taskLoadPromise = (async () => {
+        try {
+          const result = await client.from("adhdice_task_history").select(TASK_HISTORY_COLUMNS).eq("user_id", userId).eq("task_id", taskId)
+            .order("entry_date", { ascending: false }).order("created_at", { ascending: false });
+          if (result.error) {
+            setTaskHistoryTaskLoadState(taskId, { error: result.error.message ?? "Could not load task history.", status: "error" });
+            if (!silent) setMessage({ tone: "warn", text: result.error.message ?? "Could not load task history." });
+            return false;
+          }
+          const rows = (result.data ?? []).map(mapTaskHistoryRow);
+          setTaskHistoryCacheForTask(taskId, rows);
+          setTaskHistoryTaskLoadState(taskId, { error: null, status: "ready" });
+          setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, mergeTaskHistoryCache(current, rows)));
+          return true;
+        } finally {
+          taskHistoryTaskLoadPromisesRef.current.delete(taskId);
+        }
+      })();
+      taskHistoryTaskLoadPromisesRef.current.set(taskId, taskLoadPromise);
+      return await taskLoadPromise;
+    }
+
+    async function loadTaskHistoryStreakSummaries(nextTasks: Task[] = tasksRef.current) {
+      if ((!isActive && !canApplyCoreWorkspaceResult())) {
+        return false;
+      }
+
+      if (taskHistoryStreakSummaryLoadPromiseRef.current) {
+        return await taskHistoryStreakSummaryLoadPromiseRef.current;
+      }
+
+      const summaryLoadPromise = (async () => {
+        try {
+          if (taskHistoryLoadPromiseRef.current && !hasLoadedFullTaskHistoryRef.current) {
+            await taskHistoryLoadPromiseRef.current;
+          }
+
+          let compactHistory: TaskHistoryStreakEntry[];
+          if (hasLoadedFullTaskHistoryRef.current) {
+            compactHistory = fullTaskHistoryRowsRef.current;
+          } else {
+            const result = await fetchAllPagedRows<TaskHistoryStreakEntry>((from, to) => client
+              .from("adhdice_task_history")
+              .select(TASK_HISTORY_STREAK_SUMMARY_COLUMNS)
+              .eq("user_id", userId)
+              .order("entry_date", { ascending: false })
+              .order("updated_at", { ascending: false })
+              .order("created_at", { ascending: false })
+              .range(from, to));
+            if (result.error) return false;
+            compactHistory = result.data ?? [];
+          }
+
+          if (!isActive || !canApplyCoreWorkspaceResult()) {
+            return false;
+          }
+
+          const nextSummaries = buildTaskHistoryStreakSummaryMap(nextTasks, compactHistory, todayKeyRef.current);
+          setTaskHistoryStreakSummaries((current) => keepCurrentIfStructurallyEqual(current, nextSummaries));
+          return true;
+        } finally {
+          taskHistoryStreakSummaryLoadPromiseRef.current = null;
+        }
+      })();
+      taskHistoryStreakSummaryLoadPromiseRef.current = summaryLoadPromise;
+      return await summaryLoadPromise;
+    }
+
+    async function reloadTaskHistoryStreakSummaryForTask(taskId: string, nextTaskHistory?: DbTaskHistory[]) {
+      const existingReload = taskHistoryStreakSummaryTaskReloadsRef.current.get(taskId);
+      if (existingReload) return await existingReload;
+
+      const reloadPromise = (async () => {
+        try {
+          if (taskHistoryStreakSummaryLoadPromiseRef.current) {
+            await taskHistoryStreakSummaryLoadPromiseRef.current;
+          }
+
+          const task = tasksRef.current.find((candidate) => candidate.id === taskId);
+          if (!task) return false;
+          if (nextTaskHistory) {
+            setTaskHistoryCacheForTask(taskId, nextTaskHistory);
+          }
+          if (hasLoadedFullTaskHistoryRef.current) {
+            const taskHistory = nextTaskHistory ?? fullTaskHistoryRowsRef.current.filter((entry) => entry.task_id === taskId);
+            if (nextTaskHistory) {
+              fullTaskHistoryRowsRef.current = [
+                ...fullTaskHistoryRowsRef.current.filter((entry) => entry.task_id !== taskId),
+                ...nextTaskHistory,
+              ];
+            }
+            if (nextTaskHistory || taskHistoryLoadStateByTaskIdRef.current[taskId]?.status === "ready") {
+              setTaskHistoryCacheForTask(taskId, taskHistory);
+            }
+            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current);
+            setTaskHistoryStreakSummaries((current) => (
+              JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
+                ? current
+                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current)
+            ));
+            return true;
+          }
+          const result = await fetchAllPagedRows<TaskHistoryStreakEntry>((from, to) => client
+            .from("adhdice_task_history")
+            .select(TASK_HISTORY_STREAK_SUMMARY_COLUMNS)
+            .eq("user_id", userId)
+            .eq("task_id", taskId)
+            .order("entry_date", { ascending: false })
+            .order("updated_at", { ascending: false })
+            .order("created_at", { ascending: false })
+            .range(from, to));
+          if (result.error || !isActive || !canApplyCoreWorkspaceResult()) return false;
+
+          const nextSummary = buildTaskHistoryStreakSummary(task, result.data ?? [], todayKeyRef.current);
+          setTaskHistoryStreakSummaries((current) => (
+            JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
+              ? current
+              : updateTaskHistoryStreakSummaryMap(current, task, result.data ?? [], todayKeyRef.current)
+          ));
+          return true;
+        } finally {
+          taskHistoryStreakSummaryTaskReloadsRef.current.delete(taskId);
+        }
+      })();
+      taskHistoryStreakSummaryTaskReloadsRef.current.set(taskId, reloadPromise);
+      return await reloadPromise;
     }
 
     async function loadNotes({ silent = false }: { silent?: boolean } = {}) {
@@ -570,6 +783,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     loadFullTaskHistoryRef.current = () => loadTaskHistory({ silent: true, source: "secondary" });
     loadNotesRef.current = () => loadNotes({ silent: true });
     loadTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { silent: true });
+    refreshTaskHistoryStreakSummaryRef.current = reloadTaskHistoryStreakSummaryForTask;
+    retryTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { force: true });
 
     function canApplyCoreWorkspaceResult() {
       return liveWorkspaceUserIdRef.current === userId;
@@ -680,6 +895,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
       const nextTaskLegacySubtaskPromotions = taskLegacySubtaskPromotionsResult.data ?? [];
       const nextTasks = taskResult.data ?? [];
+      tasksRef.current = nextTasks;
       const criticalHistoryResult = await loadCriticalTaskHistoryFacts(nextTasks);
       if (criticalHistoryResult.error) {
         setMessage({ tone: "warn", text: criticalHistoryResult.error.message ?? "Could not load current task state." });
@@ -713,6 +929,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[workspace] Tasks ready in ${Math.round(performance.now() - loadStartedAt)}ms.`);
       }
+      void loadTaskHistoryStreakSummaries(nextTasks);
 
       const secondaryCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
       const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult, folderStructureResult] = await secondaryCoreRequest;
@@ -1199,13 +1416,20 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           filter: `user_id=eq.${userId}`,
         },
         (payload) => {
-          if (hasLoadedFullTaskHistoryRef.current) {
-            void loadTaskHistory({ silent: true, source: "secondary" });
-            return;
-          }
           const taskId = ((payload.new as { task_id?: string } | null)?.task_id
             ?? (payload.old as { task_id?: string } | null)?.task_id);
-          if (taskId) void loadTaskHistoryForTask(taskId, { silent: true });
+          if (hasLoadedFullTaskHistoryRef.current) {
+            void loadTaskHistory({ silent: true, source: "secondary" }).then(() => (
+              taskId ? reloadTaskHistoryStreakSummaryForTask(taskId) : loadTaskHistoryStreakSummaries()
+            ));
+            return;
+          }
+          if (taskId) {
+            void loadTaskHistoryForTask(taskId, { force: true, silent: true });
+            void reloadTaskHistoryStreakSummaryForTask(taskId);
+          } else {
+            void loadTaskHistoryStreakSummaries();
+          }
         },
       )
       .subscribe((status) => {
@@ -1299,6 +1523,16 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     async (taskId: string) => await loadTaskHistoryForTaskRef.current?.(taskId) ?? false,
     [],
   );
+  const retryTaskHistoryForTask = useCallback(
+    async (taskId: string) => await retryTaskHistoryForTaskRef.current?.(taskId) ?? false,
+    [],
+  );
+  const refreshTaskHistoryStreakSummary = useCallback(
+    async (taskId: string, nextTaskHistory?: DbTaskHistory[]) => (
+      await refreshTaskHistoryStreakSummaryRef.current?.(taskId, nextTaskHistory) ?? false
+    ),
+    [],
+  );
   const loadTaskNotes = useCallback(
     async () => await loadNotesRef.current?.() ?? false,
     [],
@@ -1315,6 +1549,12 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     softRefreshWorkspace,
     loadTaskActualTimeDetails,
     loadTaskHistoryForTask,
+    retryTaskHistoryForTask,
     loadTaskNotes,
+    refreshTaskHistoryStreakSummary,
+    taskHistoryByTaskId,
+    taskHistoryLoadStateByTaskId,
+    taskHistoryStreakSummaries,
+    updateTaskHistoryForTask,
   };
 }

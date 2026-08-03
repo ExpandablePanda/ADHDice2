@@ -1,0 +1,134 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+import { createTask } from "../src/lib/task-buckets.ts";
+import type { TaskHistory } from "../src/lib/database.types.ts";
+import {
+  buildTaskHistoryStreakSummaryMap,
+  TASK_HISTORY_STREAK_SUMMARY_COLUMNS,
+  updateTaskHistoryStreakSummaryMap,
+} from "../src/lib/task-history-streak-summaries.ts";
+import { selectCriticalTaskHistoryFacts } from "../src/lib/workspace-critical-task-facts.ts";
+
+const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+const streakSummarySource = readFileSync(new URL("../src/lib/task-history-streak-summaries.ts", import.meta.url), "utf8");
+const historyActionSource = readFileSync(new URL("../src/hooks/useTaskHistoryActions.ts", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
+const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
+
+function task(id = "task-streak") {
+  return createTask({
+    due_on: "2026-08-03",
+    id,
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    status: "done",
+    title: "Streak task",
+  });
+}
+
+function history(id: string, entryDate: string, status: TaskHistory["status"], wasCompleted: boolean, taskId = "task-streak"): TaskHistory {
+  return {
+    counted_as_due_occurrence: true,
+    created_at: `${entryDate}T12:00:00.000Z`,
+    entry_date: entryDate,
+    event_type: "status",
+    id,
+    occurrence_due_on: entryDate,
+    occurrence_key: `occurrence:${entryDate}`,
+    status,
+    task_id: taskId,
+    updated_at: `${entryDate}T12:00:00.000Z`,
+    user_id: "user-1",
+    was_completed: wasCompleted,
+  };
+}
+
+test("narrow critical History can coexist with a three-day compact completion streak", () => {
+  const currentTask = task();
+  const rows = [
+    history("done-1", "2026-08-01", "done", true),
+    history("done-2", "2026-08-02", "done", true),
+    history("done-3", "2026-08-03", "done", true),
+  ];
+  const critical = selectCriticalTaskHistoryFacts([currentTask], rows, "2026-08-03");
+  const summaries = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-03");
+
+  assert.ok(critical.length < rows.length);
+  assert.equal(summaries[currentTask.id]?.currentStreak, 3);
+});
+
+test("compact summaries count three trailing missed entries", () => {
+  const currentTask = task();
+  const summaries = buildTaskHistoryStreakSummaryMap([currentTask], [
+    history("missed-1", "2026-08-01", "missed", false),
+    history("missed-2", "2026-08-02", "missed", false),
+    history("missed-3", "2026-08-03", "missed", false),
+  ], "2026-08-03");
+
+  assert.equal(summaries[currentTask.id]?.missedStreak, 3);
+});
+
+test("a nonmatching trailing status breaks the corresponding streak", () => {
+  const currentTask = task();
+  const summaries = buildTaskHistoryStreakSummaryMap([currentTask], [
+    history("done-1", "2026-08-01", "done", true),
+    history("done-2", "2026-08-02", "done", true),
+    history("missed-3", "2026-08-03", "missed", false),
+  ], "2026-08-03");
+
+  assert.equal(summaries[currentTask.id]?.currentStreak, 0);
+  assert.equal(summaries[currentTask.id]?.missedStreak, 1);
+});
+
+test("an affected task summary updates without rebuilding other task summaries", () => {
+  const currentTask = task();
+  const otherTask = task("other-task");
+  const initial = buildTaskHistoryStreakSummaryMap([currentTask, otherTask], [
+    history("done-1", "2026-08-03", "done", true),
+  ], "2026-08-03");
+  const updated = updateTaskHistoryStreakSummaryMap(initial, currentTask, [
+    history("done-1", "2026-08-03", "done", true),
+    history("done-2", "2026-08-04", "done", true),
+  ], "2026-08-04");
+
+  assert.equal(updated[currentTask.id]?.currentStreak, 2);
+  assert.strictEqual(updated[otherTask.id], initial[otherTask.id]);
+});
+
+test("parent and child Table/List title paths consume compact summary fields", () => {
+  assert.match(appSource, /taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries/);
+  assert.match(tableSource, /task\.currentStreak > 0/);
+  assert.match(tableSource, /task\.missedStreak > 0/);
+  assert.match(tableSource, /renderStepHistoryChips\(item\.currentStreak, item\.missedStreak\)/);
+  assert.match(listSource, /currentStreak=\{taskRow\.currentStreak\}/);
+  assert.match(listSource, /missedStreak=\{taskRow\.missedStreak\}/);
+  assert.match(listSource, /taskHistoryStreakSummary: rowContext\.taskHistoryStreakSummaryByTaskId\[task\.id\]/);
+});
+
+test("normal Tasks startup uses a paged compact query and never starts full History", () => {
+  const coreLoader = workspaceSource.slice(
+    workspaceSource.indexOf("async function loadCoreWorkspaceData"),
+    workspaceSource.indexOf("const requestCoreWorkspaceRefresh"),
+  );
+
+  assert.match(workspaceSource, /TASK_HISTORY_STREAK_SUMMARY_COLUMNS/);
+  assert.equal(TASK_HISTORY_STREAK_SUMMARY_COLUMNS, "id,task_id,entry_date,status,was_completed,created_at,updated_at");
+  assert.match(streakSummarySource, /TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,status,was_completed,created_at,updated_at"/);
+  assert.match(workspaceSource, /fetchAllPagedRows<TaskHistoryStreakEntry>/);
+  assert.match(workspaceSource, /\.range\(from, to\)/);
+  assert.match(coreLoader, /void loadTaskHistoryStreakSummaries\(nextTasks\)/);
+  assert.doesNotMatch(coreLoader, /loadTaskHistory\(\{ silent: true, source: "secondary" \}\)/);
+  assert.doesNotMatch(workspaceSource, /from\("adhdice_task_history"\)\.select\("\*"\)/);
+  assert.match(workspaceSource, /hasLoadedFullTaskHistoryRef\.current/);
+});
+
+test("History mutation callbacks refresh one task summary", () => {
+  assert.match(historyActionSource, /onHistoryMutation\?:/);
+  assert.match(historyActionSource, /notifyHistoryMutation\(taskId, nextTaskHistory\)/);
+  assert.match(appSource, /onHistoryMutation: refreshTaskHistoryStreakSummary/);
+  assert.match(workspaceSource, /refreshTaskHistoryStreakSummaryRef\.current = reloadTaskHistoryStreakSummaryForTask/);
+  assert.doesNotMatch(historyActionSource, /loadTaskHistoryStreakSummaries/);
+});

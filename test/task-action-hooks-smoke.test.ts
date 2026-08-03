@@ -469,6 +469,101 @@ test("updateTask forwards an explicit expected snapshot to guarded writes", asyn
   assert.equal(receivedExpectedTask?.status, "pending");
 });
 
+test("engine History outcome wins over recurring projected task status", async () => {
+  const recurringTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    due_on: "2026-06-21",
+    id: "task-recurring-history-authority",
+    repeat_frequency: "daily",
+    revision: 4,
+    sort_order: 1,
+    status: "pending",
+    title: "Recurring History authority",
+  });
+  let projectedStatus: typeof recurringTask.status = "upcoming";
+  let syncCalls = 0;
+  let syncedStatus: typeof recurringTask.status | null = null;
+  const update = useTaskUpdateAction({
+    currentDayKey: "2026-06-21",
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async (_taskId, status) => {
+      syncCalls += 1;
+      syncedStatus = status;
+      return true;
+    },
+    tasks: [recurringTask],
+    updateTaskRowWithLegacyEnergyFallback: async () => ({
+      conflict: null,
+      data: { ...recurringTask, due_on: "2026-06-22", status: projectedStatus },
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+
+  for (const [historyStatus, nextProjectedStatus] of [
+    ["done", "upcoming"],
+    ["did_my_best", "not_due"],
+    ["done", "pending"],
+  ] as const) {
+    projectedStatus = nextProjectedStatus;
+    syncCalls = 0;
+    syncedStatus = null;
+    await update.updateTask(
+      recurringTask.id,
+      { due_on: "2026-06-22", status: nextProjectedStatus },
+      { expectedTask: recurringTask, historyStatus },
+    );
+    assert.equal(syncCalls, 1);
+    assert.equal(syncedStatus, historyStatus);
+  }
+});
+
+test("manual one-off History behavior still follows the persisted status", async () => {
+  const oneOffTask = createTask({
+    created_at: "2026-06-11T12:00:00.000Z",
+    due_on: "2026-06-21",
+    id: "task-one-off-history-authority",
+    repeat_frequency: "none",
+    sort_order: 1,
+    status: "pending",
+    title: "One-off History behavior",
+  });
+  const syncedStatuses: string[] = [];
+  const update = useTaskUpdateAction({
+    currentDayKey: "2026-06-21",
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async (_taskId, status) => {
+      syncedStatuses.push(status);
+      return true;
+    },
+    tasks: [oneOffTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => ({
+      conflict: null,
+      data: { ...oneOffTask, ...values, status: values.status ?? oneOffTask.status },
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+
+  await update.updateTask(oneOffTask.id, { status: "done" });
+  await update.updateTask(oneOffTask.id, { status: "pending" });
+  assert.deepEqual(syncedStatuses, ["done", "pending"]);
+});
+
 test("due-date edits recalculate open status in update, editor, and batch flows", async () => {
   const baseTask = createTask({
     created_at: "2026-06-11T12:00:00.000Z",

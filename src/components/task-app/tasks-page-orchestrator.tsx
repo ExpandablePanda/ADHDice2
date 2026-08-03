@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { Ellipsis, Pencil, Plus, X } from "lucide-react";
 import { TaskPage } from "./task-page";
 import { TaskOperationsHeader } from "./tasks-page";
@@ -19,7 +19,6 @@ type TasksPageOrchestratorProps = {
   alternateViewPanel: ReactNode;
   brainstormWorkspacePanel: ReactNode;
   completedMilestonesWorkspacePanel: ReactNode;
-  flows: ReactNode;
   listViewPanel: ReactNode;
   onAddTab: () => void;
   onTimeWorkspacePanel: ReactNode;
@@ -32,19 +31,17 @@ type TasksPageOrchestratorProps = {
   operationsHeaderProps: ComponentProps<typeof TaskOperationsHeader>;
   pathsWorkspacePanel: ReactNode;
   reportWorkspacePanel: ReactNode;
-  renderRevision: string;
   surface: TasksSurface;
   tableViewPanel: ReactNode;
   tabs: TaskWorkspaceTab[];
   view: TaskViewMode;
 };
 
-export const TasksWorkspace = memo(function TasksWorkspace({
+export function TasksWorkspace({
   activeTabId,
   alternateViewPanel,
   brainstormWorkspacePanel,
   completedMilestonesWorkspacePanel,
-  flows,
   listViewPanel,
   onAddTab,
   onTimeWorkspacePanel,
@@ -57,13 +54,11 @@ export const TasksWorkspace = memo(function TasksWorkspace({
   operationsHeaderProps,
   pathsWorkspacePanel,
   reportWorkspacePanel,
-  renderRevision,
   surface,
   tableViewPanel,
   tabs,
   view,
 }: TasksPageOrchestratorProps) {
-  void renderRevision;
   const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
@@ -158,7 +153,6 @@ export const TasksWorkspace = memo(function TasksWorkspace({
         alternateViewPanel={alternateViewPanel}
         brainstormWorkspacePanel={brainstormWorkspacePanel}
         completedMilestonesWorkspacePanel={completedMilestonesWorkspacePanel}
-        flows={flows}
         listViewPanel={listViewPanel}
         onTimeWorkspacePanel={onTimeWorkspacePanel}
         showSharedTaskEditorOverlay={showSharedTaskEditorOverlay}
@@ -363,6 +357,6 @@ export const TasksWorkspace = memo(function TasksWorkspace({
       ) : null}
     </>
   );
-}, (previous, next) => previous.renderRevision === next.renderRevision);
+}
 
 export const TasksPageOrchestrator = TasksWorkspace;

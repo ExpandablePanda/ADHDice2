@@ -37,10 +37,19 @@ export function evaluateTaskActionAuthority(input: {
     ...(Object.hasOwn(persistableTaskPatch, "activeStatusLogicalDate") ? { active_status_logical_date: persistableTaskPatch.activeStatusLogicalDate } : {}),
     ...(Object.hasOwn(persistableTaskPatch, "activeOccurrenceDueOn") ? { active_occurrence_due_on: persistableTaskPatch.activeOccurrenceDueOn } : {}),
   };
+  const actionHistoryDate = input.outcomeDate ?? result.logicalDate;
+  const historyOutcome = input.outcome
+    ? result.proposedHistoryChanges.find((change) => (
+      change.type === "insert"
+      && change.row.logicalDate === actionHistoryDate
+      && change.row.outcome === input.outcome
+    ))?.row.outcome ?? null
+    : null;
   return {
     ...result,
     mutationPlan: {
       history: result.proposedHistoryChanges.flatMap((change) => change.type === "insert" ? [change.row] : []),
+      historyOutcome,
       taskUpdate,
     },
     persistableTaskPatch,

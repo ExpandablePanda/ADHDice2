@@ -18,6 +18,7 @@ type Message = {
 
 type UpdateTaskActionOptions = {
   expectedTask?: Task | null;
+  historyStatus?: Task["status"];
 };
 
 type UseTaskUpdateActionOptions = {
@@ -107,9 +108,13 @@ export function useTaskUpdateAction({
           return false;
         }
       }
-      // A recurring success may project an active future status. Preserve the
-      // user-selected outcome when writing its existing History row.
-      const historySaved = await syncTaskHistoryEntry(taskId, (values.status ?? data.status) as Task["status"], previousTask ?? nextData);
+      // The engine plan owns History outcome. A recurring success may project
+      // an active future status, which must never replace or clear that row.
+      const historySaved = await syncTaskHistoryEntry(
+        taskId,
+        (options?.historyStatus ?? values.status ?? data.status) as Task["status"],
+        previousTask ?? nextData,
+      );
       if (!historySaved) {
         return;
       }

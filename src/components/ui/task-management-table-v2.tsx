@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, Fragment, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Children, Fragment, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowUp,
@@ -81,7 +81,6 @@ import {
 import { mergeMeasuredColumnWidths, normalizeMeasuredColumnWidth } from "@/lib/task-table-measurements";
 import { TaskTimerDial } from "@/components/task-app/task-timer-display";
 import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
-import { areTaskRowPropsEqual } from "@/lib/task-row-memoization";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = TaskPriorityLevelOption;
@@ -185,6 +184,18 @@ const TABLE_REVEAL_BOTTOM_PADDING = 16;
 const TABLE_REVEAL_VIEWPORT_SAFE_BOTTOM = 104;
 const TABLE_REVEAL_INLINE_MIN_VISIBLE_HEIGHT = 104;
 const TABLE_REVEAL_STEPS_MIN_VISIBLE_HEIGHT = 144;
+
+export function shouldFocusTaskTableRevealTarget(
+  shouldFocusResult: boolean | undefined,
+  activeElementId?: string,
+) {
+  const resolvedActiveElementId = activeElementId
+    ?? (typeof document === "undefined" ? undefined : document.activeElement?.id);
+  if (shouldFocusResult === false) {
+    return false;
+  }
+  return shouldFocusResult === true || resolvedActiveElementId !== "task-search-input";
+}
 
 function isInlineAccordionMode(mode: OverlayMode) {
   return INLINE_ACCORDION_MODES.includes(mode);
@@ -1036,6 +1047,7 @@ type TaskManagementTableV2Props = {
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
   highlightedActiveTaskId?: string | null;
+  highlightedRevealShouldFocus?: boolean;
   highlightedScrollToken?: number | null;
   highlightedTaskIds?: string[];
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
@@ -2251,17 +2263,6 @@ function sortRows(
   return sorted;
 }
 
-const TaskTableRow = memo(function TaskTableRow({
-  render,
-}: {
-  render: () => ReactNode;
-  rowModel: unknown;
-  taskId: string;
-  uiRevision: string;
-}) {
-  return render();
-}, areTaskRowPropsEqual);
-
 export function TaskManagementTableV2({
   allowInlineInspector = false,
   allRows,
@@ -2272,6 +2273,7 @@ export function TaskManagementTableV2({
   childTaskCreationBlockedTaskIds = [],
   childTaskPreviewByParentTaskId = {},
   highlightedActiveTaskId = null,
+  highlightedRevealShouldFocus,
   highlightedScrollToken = null,
   highlightedTaskIds = [],
   onVisibleSearchMatchIdsChange,
@@ -3846,6 +3848,7 @@ export function TaskManagementTableV2({
 
     const revealTaskId = highlightedRevealTaskId ?? highlightedActiveTaskId;
     const selector = `[data-task-table-row="${revealTaskId}"], [data-same-table-step-row="${revealTaskId}"]`;
+    const shouldFocusRevealTarget = shouldFocusTaskTableRevealTarget(highlightedRevealShouldFocus);
     let secondFrameId = 0;
     const revealTarget = () => {
       const target = shellElement.querySelector<HTMLElement>(selector);
@@ -3859,7 +3862,9 @@ export function TaskManagementTableV2({
       const focusTarget = target.matches("[role=button]")
         ? target
         : target.querySelector<HTMLElement>("[role=button]");
-      focusTarget?.focus({ preventScroll: true });
+      if (shouldFocusRevealTarget) {
+        focusTarget?.focus({ preventScroll: true });
+      }
     };
 
     const firstFrameId = window.requestAnimationFrame(() => {
@@ -3871,7 +3876,7 @@ export function TaskManagementTableV2({
       window.cancelAnimationFrame(firstFrameId);
       window.cancelAnimationFrame(secondFrameId);
     };
-  }, [highlightedActiveTaskId, highlightedRevealTaskId, highlightedScrollToken]);
+  }, [highlightedActiveTaskId, highlightedRevealShouldFocus, highlightedRevealTaskId, highlightedScrollToken]);
 
   const getHighlightedRowClassName = (taskId: string) => {
     if (highlightedRevealTaskId === taskId) {
@@ -8508,10 +8513,8 @@ export function TaskManagementTableV2({
                 && isInlineAccordionMode(overlayMode);
 
               return (
-                <TaskTableRow
-                  key={`task:${getPrototypeTaskRowKey(task)}`}
-                  render={() => (
                 <div
+                  key={`task:${getPrototypeTaskRowKey(task)}`}
                   className={`w-max min-w-full space-y-1.5 ${hasRenderedDescendants ? "bg-white dark:bg-[#181226]" : ""}`}
                   data-task-table-hierarchy-group={task.id}
                 >
@@ -8620,11 +8623,6 @@ export function TaskManagementTableV2({
                     </motion.div>
                   ) : null}
                 </div>
-                  )}
-                  rowModel={task}
-                  taskId={task.id}
-                  uiRevision={`${getPrototypeTaskRowKey(task)}|${selectedTaskIds.includes(task.id)}|${highlightedTaskIds?.includes(task.id) ?? false}|${hasRenderedDescendants}|${showInlineAccordion}`}
-                />
               );
             })}
             {remainingRenderedTaskCount > 0 || hasMoreRows ? (
