@@ -21,10 +21,18 @@ type UpdateTaskActionOptions = {
   historyStatus?: Task["status"];
 };
 
+export type TaskHistoryFailureCompensation = (input: {
+  committedTask: Task;
+  previousTask: Task;
+  rollbackValues: TaskUpdate;
+  taskId: string;
+}) => Promise<boolean>;
+
 type UseTaskUpdateActionOptions = {
   clearPendingTaskMutations?: (taskIds: string[]) => void;
   currentDayKey: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
+  onTaskHistoryFailure?: TaskHistoryFailureCompensation;
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
   routeTask: (taskId: string, bucket: TaskRoutingBucket | null) => void;
@@ -40,6 +48,7 @@ export function useTaskUpdateAction({
   clearPendingTaskMutations,
   currentDayKey,
   markPendingTaskMutations,
+  onTaskHistoryFailure,
   onTasksCompleted,
   reconcileOverdueTaskMisses,
   routeTask,
@@ -65,6 +74,32 @@ export function useTaskUpdateAction({
     const nextValues = previousTask
       ? applyTaskActiveStatusTracking(previousTask, normalizedValues, currentDayKey)
       : normalizedValues;
+    const compensateHistoryFailure = async (committedTask: Task) => {
+      clearPendingTaskMutations?.([taskId]);
+      if (onTaskHistoryFailure && previousTask) {
+        const rollbackFields = [
+          "active_occurrence_due_on",
+          "active_status_logical_date",
+          "completed_at",
+          "due_on",
+          "status",
+          "trashed_at",
+        ] as const;
+        const rollbackValues = rollbackFields.reduce<TaskUpdate>((valuesToRestore, field) => {
+          if (Object.prototype.hasOwnProperty.call(nextValues, field)) {
+            valuesToRestore[field] = previousTask[field];
+          }
+          return valuesToRestore;
+        }, {});
+        await onTaskHistoryFailure({
+          committedTask,
+          previousTask,
+          rollbackValues,
+          taskId,
+        });
+      }
+      return false;
+    };
     const {
       conflict,
       data,
@@ -105,7 +140,7 @@ export function useTaskUpdateAction({
       if (shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
         const historyReconciled = await reconcileOverdueTaskMisses(nextData);
         if (!historyReconciled) {
-          return false;
+          return await compensateHistoryFailure(nextData);
         }
       }
       // The engine plan owns History outcome. A recurring success may project
@@ -116,7 +151,7 @@ export function useTaskUpdateAction({
         previousTask ?? nextData,
       );
       if (!historySaved) {
-        return;
+        return await compensateHistoryFailure(nextData);
       }
       await onTasksCompleted([{
         // The engine action projection already rebases supported recurrence.

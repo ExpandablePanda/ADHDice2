@@ -43,8 +43,10 @@ test("full History readiness is cached per authenticated task and mutations upda
   assert.match(workspaceSource, /if \(!force && taskHistoryLoadStateByTaskIdRef\.current\[taskId\]\?\.status === "ready"\)/);
   assert.match(workspaceSource, /clearTaskHistoryTaskCache\(\)/);
   assert.match(workspaceSource, /updateTaskHistoryForTask/);
-  assert.match(workspaceSource, /setTaskHistoryCacheForTask\(taskId, nextTaskHistory\)/);
+  assert.match(workspaceSource, /deduplicateTaskHistoryByLogicalDate/);
+  assert.match(workspaceSource, /fetchAllPagedRows<DbTaskHistory>/);
   assert.match(workspaceSource, /loadTaskHistoryForTask\(taskId, \{ force: true, silent: true \}\)/);
+  assert.doesNotMatch(workspaceSource, /setTaskHistoryCacheForTask\(taskId, nextTaskHistory\)/);
   assert.match(workspaceSource, /\.eq\("task_id", taskId\)/);
   assert.doesNotMatch(workspaceSource, /loadTaskHistory\(\{ silent: true, source: "secondary" \}\).*taskId/);
 });

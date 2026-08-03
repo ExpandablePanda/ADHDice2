@@ -1,6 +1,7 @@
 import type { Task } from "@/lib/database.types";
 import {
   computeTaskSpecificHistoryStats,
+  deduplicateTaskHistoryByLogicalDate,
   getTaskHistoryLastDone,
   type TaskHistoryStreakEntry,
 } from "@/lib/task-history";
@@ -21,8 +22,9 @@ export function buildTaskHistoryStreakSummary(
   history: readonly TaskHistoryStreakEntry[],
   todayDateKey: string,
 ): TaskHistoryStreakSummary {
-  const stats = computeTaskSpecificHistoryStats(task, history, todayDateKey);
-  const lastDone = getTaskHistoryLastDone(history);
+  const normalizedHistory = deduplicateTaskHistoryByLogicalDate(history);
+  const stats = computeTaskSpecificHistoryStats(task, normalizedHistory, todayDateKey);
+  const lastDone = getTaskHistoryLastDone(normalizedHistory);
   return {
     currentStreak: stats.currentStreak,
     lastDoneAt: lastDone?.timestamp ?? null,
@@ -37,7 +39,7 @@ export function buildTaskHistoryStreakSummaryMap(
   todayDateKey: string,
 ): TaskHistoryStreakSummaryMap {
   const historyByTaskId = new Map<string, TaskHistoryStreakEntry[]>();
-  for (const entry of history) {
+  for (const entry of deduplicateTaskHistoryByLogicalDate(history)) {
     const entries = historyByTaskId.get(entry.task_id) ?? [];
     entries.push(entry);
     historyByTaskId.set(entry.task_id, entries);

@@ -54,6 +54,35 @@ export type TaskHistoryStreakEntry = Pick<
   "id" | "task_id" | "entry_date" | "status" | "was_completed" | "created_at" | "updated_at"
 >;
 
+type TaskHistoryIdentityEntry = Pick<DbTaskHistory, "id" | "task_id" | "entry_date" | "created_at" | "updated_at">;
+
+export function getTaskHistoryLogicalIdentity(entry: Pick<DbTaskHistory, "task_id" | "entry_date">) {
+  return `${entry.task_id}:${entry.entry_date}`;
+}
+
+function compareHistoryRowFreshness(left: TaskHistoryIdentityEntry, right: TaskHistoryIdentityEntry) {
+  const leftTimestamp = getHistoryTimestamp(left);
+  const rightTimestamp = getHistoryTimestamp(right);
+  if (leftTimestamp !== rightTimestamp) {
+    if (!leftTimestamp) return -1;
+    if (!rightTimestamp) return 1;
+    return leftTimestamp < rightTimestamp ? -1 : 1;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+export function deduplicateTaskHistoryByLogicalDate<T extends TaskHistoryIdentityEntry>(history: readonly T[]) {
+  const byLogicalDate = new Map<string, T>();
+  for (const entry of history) {
+    const identity = getTaskHistoryLogicalIdentity(entry);
+    const existing = byLogicalDate.get(identity);
+    if (!existing || compareHistoryRowFreshness(existing, entry) <= 0) {
+      byLogicalDate.set(identity, entry);
+    }
+  }
+  return [...byLogicalDate.values()];
+}
+
 export function mapTaskHistoryRow(row: DbTaskHistory) {
   return row;
 }
@@ -194,7 +223,7 @@ function compareLastDoneEntries(left: TaskHistoryStreakEntry, right: TaskHistory
 }
 
 export function getTaskHistoryLastDone(history: readonly TaskHistoryStreakEntry[]): TaskHistoryLastDone | null {
-  const latestEntry = history
+  const latestEntry = deduplicateTaskHistoryByLogicalDate(history)
     .filter(isLastDoneHistoryEntry)
     .sort(compareLastDoneEntries)
     .at(-1);
@@ -840,7 +869,8 @@ export function computeTaskSpecificHistoryStats(
   void todayDateKey;
   void startDateKey;
 
-  const sortedHistory = [...history].sort((left, right) => compareDateKeys(left.entry_date, right.entry_date));
+  const sortedHistory = deduplicateTaskHistoryByLogicalDate(history)
+    .sort((left, right) => compareDateKeys(left.entry_date, right.entry_date));
   const completedDays = sortedHistory.filter((entry) => entry.was_completed).length;
   const missedDays = sortedHistory.filter((entry) => !entry.was_completed).length;
   const loggedDays = sortedHistory.length;

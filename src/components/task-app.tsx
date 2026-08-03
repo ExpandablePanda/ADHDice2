@@ -572,7 +572,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.6.35";
+const APP_VERSION = "7.6.39";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1134,6 +1134,11 @@ export function TaskApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthResolved, setIsAuthResolved] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const canonicalTasksRef = useRef<Task[]>([]);
+  const taskStatusMutationInFlightRef = useRef(new Map<string, Promise<boolean | undefined>>());
+  useEffect(() => {
+    canonicalTasksRef.current = tasks;
+  }, [tasks]);
   const [message, setMessage] = useState<Message | null>(null);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
   const [activeRewardBankSession, setActiveRewardBankSession] = useState<import("@/lib/task-rewards").PendingTaskReward[] | null>(null);
@@ -1682,6 +1687,7 @@ export function TaskApp() {
     taskHistoryLoadStateByTaskId,
     taskHistoryStreakSummaries,
     updateTaskHistoryForTask,
+    workspaceGenerationRef,
   } = useWorkspaceData({
     activePage,
     currentUser: session?.user,
@@ -1762,6 +1768,7 @@ export function TaskApp() {
     taskListDataGeneration,
     todayKey,
   });
+  const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
   useEffect(() => {
     if (isTaskEditorOpen) void loadTaskNotes();
@@ -3687,6 +3694,37 @@ export function TaskApp() {
     update: {
       clearPendingTaskMutations,
       markPendingTaskMutations,
+      onTaskHistoryFailure: async ({ committedTask, rollbackValues, taskId }) => {
+        let rollbackResult: Awaited<ReturnType<typeof updateTaskRowWithLegacyEnergyFallback>> | null = null;
+        try {
+          if (Object.keys(rollbackValues).length > 0) {
+            rollbackResult = await updateTaskRowWithLegacyEnergyFallback(
+              taskId,
+              rollbackValues,
+              { expectedTask: committedTask },
+            );
+          }
+        } catch {
+          rollbackResult = null;
+        }
+
+        const rollbackTask = rollbackResult?.data ?? null;
+        if (!rollbackResult || rollbackResult.error || rollbackResult.conflict || !rollbackTask) {
+          try {
+            await softRefreshWorkspace();
+          } catch {
+            // The failure message below still makes the action failure visible.
+          }
+          setMessage({
+            tone: "warn",
+            text: "History could not be saved and the task could not be safely rolled back. The latest task and History state was reloaded.",
+          });
+          return false;
+        }
+
+        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? rollbackTask : task)));
+        return true;
+      },
       onTasksCompleted: queueTaskRewards,
       reconcileOverdueTaskMisses,
       setMessage: setTaskUpdateMessage,
@@ -5524,6 +5562,46 @@ export function TaskApp() {
   }
 
   async function updateTaskStatus(task: Task, status: TaskStatus, bypassTimedCompletion = false, onTimeOrigin?: OnTimeLinkedItemOrigin) {
+    const canonicalTask = canonicalTasksRef.current.find((candidate) => candidate.id === task.id) ?? null;
+    if (workspaceGenerationRef.current !== actionWorkspaceGeneration) {
+      setMessage({ tone: "warn", text: "This task action was discarded because the workspace changed. Please try again." });
+      return false;
+    }
+    if (!canonicalTask) {
+      setMessage({ tone: "warn", text: "This task is no longer available in the current workspace." });
+      return false;
+    }
+    if (
+      task.user_id !== canonicalTask.user_id
+      || task.id !== canonicalTask.id
+      || task.revision !== canonicalTask.revision
+    ) {
+      setMessage({ tone: "warn", text: "This task changed before the action started. Please try again from the current task." });
+      return false;
+    }
+
+    const activeMutation = taskStatusMutationInFlightRef.current.get(canonicalTask.id);
+    if (activeMutation) {
+      return await activeMutation;
+    }
+
+    const mutationPromise = Promise.resolve().then(() => runTaskStatusMutation(
+      canonicalTask,
+      status,
+      bypassTimedCompletion,
+      onTimeOrigin,
+    ));
+    taskStatusMutationInFlightRef.current.set(canonicalTask.id, mutationPromise);
+    try {
+      return await mutationPromise;
+    } finally {
+      if (taskStatusMutationInFlightRef.current.get(canonicalTask.id) === mutationPromise) {
+        taskStatusMutationInFlightRef.current.delete(canonicalTask.id);
+      }
+    }
+  }
+
+  async function runTaskStatusMutation(task: Task, status: TaskStatus, bypassTimedCompletion = false, onTimeOrigin?: OnTimeLinkedItemOrigin) {
     const milestone = milestoneData.milestoneByTaskId.get(task.id);
     if (shouldReverseCompletedMilestoneForStatusChange(task, milestone, status)) {
       setPendingMilestoneLifecycle({ action: "reverse", milestoneId: milestone!.id });

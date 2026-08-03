@@ -18,6 +18,7 @@ import { TaskGridViewComponent } from "./task-grid-view";
 import {
   buildTaskHistoryCalendarDueDateSet,
   computeTaskSpecificHistoryStats,
+  deduplicateTaskHistoryByLogicalDate,
   formatTaskHistoryEntryLabel,
   getTaskHistoryLastDone,
   getTaskHistoryCalendarVirtualState,
@@ -587,7 +588,8 @@ export function TaskHistoryModal({
   const futureDayCount = 42;
   const totalDays = pastDayCount + futureDayCount;
   const days = Array.from({ length: totalDays }, (_, index) => shiftDateKey(today, index - (pastDayCount - 1)));
-  const historyByDate = new Map(taskHistory.map((historyEntry) => [historyEntry.entry_date, historyEntry]));
+  const normalizedTaskHistory = deduplicateTaskHistoryByLogicalDate(taskHistory);
+  const historyByDate = new Map(normalizedTaskHistory.map((historyEntry) => [historyEntry.entry_date, historyEntry]));
   const [initialFocusDate] = useState(() => getTaskHistoryInitialFocusDateKey({ initialDateKey, todayDateKey }));
   const initialSelectedDate = initialFocusDate;
   const [selectedDate, setSelectedDate] = useState(initialSelectedDate);
@@ -600,15 +602,15 @@ export function TaskHistoryModal({
   const mobileCalendarViewportRef = useRef<HTMLDivElement>(null);
   const mobileScrollRef = useRef<HTMLDivElement>(null);
   const weeks: string[][] = [];
-  const dueDates = buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, taskHistory);
+  const dueDates = buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, normalizedTaskHistory);
   const engineCalendarStates = stateEngineContext
-    ? resolveTaskHistoryCalendarStates({ ...stateEngineContext, history: taskHistory, task })
+    ? resolveTaskHistoryCalendarStates({ ...stateEngineContext, history: normalizedTaskHistory, task })
     : null;
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
-  const stats = computeTaskSpecificHistoryStats(task, taskHistory, today, days[0] ?? today);
-  const lastDone = getTaskHistoryLastDone(taskHistory);
-  const sortedHistory = [...taskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));
+  const stats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
+  const lastDone = getTaskHistoryLastDone(normalizedTaskHistory);
+  const sortedHistory = [...normalizedTaskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));
   const selectedEntry = historyByDate.get(selectedDate) ?? null;
   const selectedDateSet = new Set(selectedDates);
   const selectedEntries = selectedDates.map((dateKey) => historyByDate.get(dateKey) ?? null);

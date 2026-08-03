@@ -47,6 +47,42 @@ test("action authority projects only supported fields and preserves legacy fallb
   assert.deepEqual(resolveTaskHistoryCalendarActionStatuses({ ...context, history: [], logicalDate: "2026-07-31", task: task() }), ["done", "did_my_best", "delayed", "missed", "complete"]);
 });
 
+test("weekly Vera Reports fixture advances the canonical August 3 cursor once", () => {
+  const vera = task({
+    due_on: "2026-08-03",
+    id: "81b64697-4291-4d3d-913a-c9d0e2f8d804",
+    repeat_days_of_week: [1],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    status: "pending",
+  });
+  const actionContext = {
+    logicalDayRollover: "06:00",
+    now: "2026-08-03T14:00:00.000Z",
+    timezone: "America/New_York",
+  };
+
+  const canonicalAction = evaluateTaskActionAuthority({ ...actionContext, history: [], outcome: "done", task: vera });
+  const projectedAction = evaluateTaskActionAuthority({
+    ...actionContext,
+    history: [],
+    outcome: "done",
+    task: { ...vera, due_on: "2026-08-10" },
+  });
+  const duplicateAction = evaluateTaskActionAuthority({
+    ...actionContext,
+    history: [{ ...history("done", "2026-08-03"), task_id: vera.id }],
+    outcome: "done",
+    task: vera,
+  });
+
+  assert.equal(canonicalAction?.nextDueDate, "2026-08-10");
+  assert.equal(canonicalAction?.mutationPlan.taskUpdate.due_on, "2026-08-10");
+  assert.equal(projectedAction?.nextDueDate, "2026-08-17");
+  assert.equal(projectedAction?.mutationPlan.taskUpdate.due_on, "2026-08-17");
+  assert.ok(duplicateAction?.validationErrors.length);
+});
+
 test("saved Daily Until Complete Done History advances one occurrence without completing recurrence", () => {
   const dailyUntilCompleteTask = task({
     due_on: "2026-07-31",
@@ -169,4 +205,46 @@ test("shared status action applies the engine Task and History plan optimistical
   assert.match(actionPath, /actionHistoryStatus = action\?\.mutationPlan\.historyOutcome/);
   assert.match(actionPath, /if \(action\) \{[\s\S]*?setTasks\([\s\S]*?setTaskHistory\(/);
   assert.doesNotMatch(actionPath, /\.\.\.buildTaskStatusUpdate\(task, status\)[\s\S]*?action\.persistableTaskPatch/);
+});
+
+test("status actions resolve canonical task state and single-flight the complete mutation", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(
+    new URL("../src/components/task-app.tsx", import.meta.url),
+    "utf8",
+  ));
+  const actionPath = source.slice(source.indexOf("async function updateTaskStatus"), source.indexOf("async function toggleTaskPinned"));
+
+  assert.match(actionPath, /canonicalTasksRef\.current\.find\(\(candidate\) => candidate\.id === task\.id\)/);
+  assert.match(actionPath, /task\.revision !== canonicalTask\.revision/);
+  assert.match(actionPath, /taskStatusMutationInFlightRef\.current\.get\(canonicalTask\.id\)/);
+  assert.match(actionPath, /taskStatusMutationInFlightRef\.current\.delete\(canonicalTask\.id\)/);
+  assert.match(actionPath, /runTaskStatusMutation\(\s*canonicalTask/);
+  assert.match(actionPath, /history: taskHistory\.filter\(\(entry\) => entry\.task_id === task\.id\)/);
+});
+
+test("History failure uses revision-aware compensation and refreshes on rollback conflict", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(
+    new URL("../src/components/task-app.tsx", import.meta.url),
+    "utf8",
+  ));
+  const compensationStart = source.indexOf("onTaskHistoryFailure: async");
+  const compensationPath = source.slice(compensationStart, source.indexOf("onTasksCompleted: queueTaskRewards", compensationStart));
+
+  assert.match(compensationPath, /updateTaskRowWithLegacyEnergyFallback\(\s*taskId,\s*rollbackValues,\s*\{ expectedTask: committedTask \}/);
+  assert.match(compensationPath, /await softRefreshWorkspace\(\)/);
+  assert.match(compensationPath, /History could not be saved and the task could not be safely rolled back/);
+  assert.doesNotMatch(compensationPath, /runGuardedTaskRowUpdate/);
+});
+
+test("Table and List status adapters enter the canonical-by-ID action boundary", async () => {
+  const source = await import("node:fs/promises").then((fs) => fs.readFile(
+    new URL("../src/components/task-app.tsx", import.meta.url),
+    "utf8",
+  ));
+  const tableCallback = source.slice(source.indexOf("onSetStatus: (taskId, status, expectedTask"), source.indexOf("onSetStatus: (taskId, status, expectedTask", source.indexOf("onSetStatus: (taskId, status, expectedTask") + 1));
+
+  assert.match(tableCallback, /const task = expectedTask \?\? tasks\.find\(\(entry\) => entry\.id === taskId\)/);
+  assert.match(tableCallback, /void updateTaskStatus\(task, status\)/);
+  assert.match(source, /allTasks: tasksForActiveStatusRead/);
+  assert.match(source, /tasks: selectedBucketTasks/);
 });

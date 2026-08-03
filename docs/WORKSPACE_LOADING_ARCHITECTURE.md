@@ -29,7 +29,7 @@ The startup boundary should be read together with the Task State Engine authorit
 
 ## Deferred and Consumer-Scoped Loads
 
-Full per-task History uses explicit task/page-scoped loaders. The inspected consumers expose loading, ready, error, and retry states for requested data.
+Full per-task History uses explicit task/page-scoped loaders. The inspected consumers expose loading, ready, error, and retry states for requested data. The Task History modal keeps full rows in its task-scoped cache and does not merge them into shared bounded workspace History.
 
 Notes, actual-time detail, and full History have explicit loaders and consumer/page triggers where inspected. They are not documented here as unconditional post-startup work, and this pass did not exhaustively trace every consumer or page path.
 
@@ -39,7 +39,7 @@ Streak-summary loading can use a compact or paged History path when full task Hi
 
 ## History Loading and Readiness
 
-Critical History loading is bounded to the current logical-day/live-occurrence facts required by the workspace. Full History remains a separate readiness boundary and must not replace canonical task rows with partial detail payloads.
+Critical History loading is bounded to the current logical-day/live-occurrence facts required by the workspace. Full History remains a separate readiness boundary and must not replace canonical task rows with partial detail payloads. Modal History mutations update or invalidate the private task cache, while shared bounded History changes only through an actual workspace/History mutation path.
 
 Readiness is consumer-scoped: a page that needs full History or another detail dataset must wait for its requested data, expose retry behavior, and avoid treating an incomplete response as ready. The exact loading policy for every consumer remains a source-validation question.
 
@@ -58,6 +58,8 @@ The registry's narrow responsibility also limits what can be concluded about dup
 ## Realtime and Refresh Ownership
 
 `useWorkspaceData` owns the authenticated workspace hydration and readiness boundary. Source-level refresh coordinators and Realtime subscription paths can trigger targeted refresh or single-flight work for workspace data.
+
+Workspace-owned async History summary and modal loaders are scoped to the authenticated workspace effect generation. A stale same-user generation cannot join or apply a newer generation's in-flight result.
 
 This document records ownership and call structure only. It does not establish the exact production channel lifecycle, event coverage, cross-tab behavior, BFCache behavior, or whether a refresh is observed by every consumer.
 
@@ -94,8 +96,7 @@ The following are intentionally separate evidence classes:
 The following remain design options, not shipped architecture:
 
 - a repository or stable workspace-facts layer separating canonical entities from consumer detail;
-- durable cache or invalidation layers beyond in-flight request sharing;
-- explicit refresh generations and consumer-scoped cache ownership;
+- durable cache or invalidation layers beyond in-flight request sharing and the existing task-scoped modal cache;
 - measured startup, paint, request-volume, or inactive-page performance budgets.
 
 Future work may retain these ideas, but implementation status and measured targets must be documented separately after source and runtime validation.

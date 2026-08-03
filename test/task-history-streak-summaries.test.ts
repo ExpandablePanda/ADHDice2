@@ -9,6 +9,7 @@ import {
   TASK_HISTORY_STREAK_SUMMARY_COLUMNS,
   updateTaskHistoryStreakSummaryMap,
 } from "../src/lib/task-history-streak-summaries.ts";
+import { computeTaskSpecificHistoryStats, deduplicateTaskHistoryByLogicalDate } from "../src/lib/task-history.ts";
 import { selectCriticalTaskHistoryFacts } from "../src/lib/workspace-critical-task-facts.ts";
 
 const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
@@ -83,6 +84,55 @@ test("a nonmatching trailing status breaks the corresponding streak", () => {
   assert.equal(summaries[currentTask.id]?.missedStreak, 1);
 });
 
+test("optimistic and persisted copies of one task date count once", () => {
+  const currentTask = task();
+  const rows = [
+    history("done-1", "2026-07-31", "done", true),
+    history("done-2", "2026-08-01", "done", true),
+    history("done-3", "2026-08-02", "done", true),
+    history("optimistic-aug-3", "2026-08-03", "did_my_best", true),
+    history("persisted-aug-3", "2026-08-03", "did_my_best", true),
+  ];
+
+  const summary = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-03");
+
+  assert.equal(deduplicateTaskHistoryByLogicalDate(rows).length, 4);
+  assert.equal(summary[currentTask.id]?.currentStreak, 4);
+});
+
+test("a genuine fifth consecutive qualifying occurrence changes the streak from four to five", () => {
+  const currentTask = task();
+  const rows = [
+    history("done-1", "2026-07-31", "done", true),
+    history("done-2", "2026-08-01", "done", true),
+    history("done-3", "2026-08-02", "done", true),
+    history("best-4", "2026-08-03", "did_my_best", true),
+  ];
+
+  assert.equal(buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-03")[currentTask.id]?.currentStreak, 4);
+  assert.equal(buildTaskHistoryStreakSummaryMap([currentTask], [
+    ...rows,
+    history("done-5", "2026-08-04", "done", true),
+  ], "2026-08-04")[currentTask.id]?.currentStreak, 5);
+});
+
+test("the reported task shape agrees between compact summary, Table fallback, and modal statistics", () => {
+  const currentTask = task("case-519329");
+  const rows = [
+    history("done-1", "2026-07-31", "done", true, currentTask.id),
+    history("done-2", "2026-08-01", "done", true, currentTask.id),
+    history("done-3", "2026-08-02", "done", true, currentTask.id),
+    history("optimistic-aug-3", "2026-08-03", "did_my_best", true, currentTask.id),
+    history("persisted-aug-3", "2026-08-03", "did_my_best", true, currentTask.id),
+  ];
+  const normalized = deduplicateTaskHistoryByLogicalDate(rows);
+  const summary = buildTaskHistoryStreakSummaryMap([currentTask], rows, "2026-08-03")[currentTask.id];
+  const modalStats = computeTaskSpecificHistoryStats(currentTask, normalized, "2026-08-03");
+
+  assert.equal(summary?.currentStreak, 4);
+  assert.equal(modalStats.currentStreak, 4);
+});
+
 test("an affected task summary updates without rebuilding other task summaries", () => {
   const currentTask = task();
   const otherTask = task("other-task");
@@ -131,4 +181,14 @@ test("History mutation callbacks refresh one task summary", () => {
   assert.match(appSource, /onHistoryMutation: refreshTaskHistoryStreakSummary/);
   assert.match(workspaceSource, /refreshTaskHistoryStreakSummaryRef\.current = reloadTaskHistoryStreakSummaryForTask/);
   assert.doesNotMatch(historyActionSource, /loadTaskHistoryStreakSummaries/);
+});
+
+test("modal calendar and statistics normalize saved Done, Did My Best, and Missed rows", () => {
+  const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
+
+  assert.match(modalSource, /const normalizedTaskHistory = deduplicateTaskHistoryByLogicalDate\(taskHistory\)/);
+  assert.match(modalSource, /const historyByDate = new Map\(normalizedTaskHistory\.map/);
+  assert.match(modalSource, /computeTaskSpecificHistoryStats\(task, normalizedTaskHistory/);
+  assert.match(modalSource, /entry\.status === "missed"/);
+  assert.match(modalSource, /entry\.status === "did_my_best"/);
 });

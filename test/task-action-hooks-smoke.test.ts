@@ -469,6 +469,74 @@ test("updateTask forwards an explicit expected snapshot to guarded writes", asyn
   assert.equal(receivedExpectedTask?.status, "pending");
 });
 
+test("History failure returns false and requests compensation for the exact pre-action fields", async () => {
+  const previousTask = createTask({
+    active_occurrence_due_on: null,
+    active_status_logical_date: null,
+    created_at: "2026-08-03T12:00:00.000Z",
+    due_on: "2026-08-03",
+    id: "task-history-compensation",
+    repeat_days_of_week: [1],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    revision: 70,
+    sort_order: 1,
+    status: "pending",
+    title: "History compensation",
+  });
+  const committedTask = {
+    ...previousTask,
+    due_on: "2026-08-10",
+    revision: 71,
+    status: "upcoming" as const,
+  };
+  let compensationInput: {
+    committedTask: typeof previousTask;
+    previousTask: typeof previousTask;
+    rollbackValues: unknown;
+    taskId: string;
+  } | null = null;
+
+  const update = useTaskUpdateAction({
+    currentDayKey: "2026-08-03",
+    onTaskHistoryFailure: async (input) => {
+      compensationInput = input;
+      return true;
+    },
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => false,
+    tasks: [previousTask],
+    updateTaskRowWithLegacyEnergyFallback: async () => ({
+      conflict: null,
+      data: committedTask,
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+
+  const result = await update.updateTask(
+    previousTask.id,
+    { due_on: committedTask.due_on, status: committedTask.status },
+    { expectedTask: previousTask, historyStatus: "done" },
+  );
+
+  assert.equal(result, false);
+  assert.equal(compensationInput?.taskId, previousTask.id);
+  assert.equal(compensationInput?.previousTask.revision, 70);
+  assert.equal(compensationInput?.committedTask.revision, 71);
+  assert.deepEqual(compensationInput?.rollbackValues, {
+    due_on: "2026-08-03",
+    status: "pending",
+  });
+});
+
 test("engine History outcome wins over recurring projected task status", async () => {
   const recurringTask = createTask({
     created_at: "2026-06-11T12:00:00.000Z",
