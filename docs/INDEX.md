@@ -12,6 +12,7 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - Read `docs/VERIFICATION.md` for verification classes and reporting requirements.
 - Use canonical docs for current implemented behavior, design standards, architecture boundaries, and verification rules.
 - Use active working docs for roadmap direction, product scope, and future-facing planning.
+- Load `docs/WORKSPACE_LOADING_ARCHITECTURE.md` only for a loading, readiness, History-loading, Realtime-refresh, or caching-ownership ticket; it is a qualified source diagnostic, not canonical runtime proof.
 - Do not treat tooling/generated docs or archived docs as current product truth by default.
 - Treat `CLAUDE.md` as a pointer-only file that defers to `AGENTS.md`.
 
@@ -25,7 +26,11 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - `docs/UI_SOURCE_MAP.md` - Canonical implementation lookup for approved, deferred, and off-model UI surfaces.
 - `docs/TASKAPP_ARCHITECTURE.md` - Canonical TaskApp production routing, ownership, and change-boundary contract.
 - `docs/TASKAPP_SOURCE_MAP.md` - Current TaskApp source and symbol lookup; implementation locations may change.
-- `docs/TASK_STATE_ENGINE.md` - Pure Task State Engine terminology, contracts, recurrence rules, and safety invariants.
+- `docs/TASK_STATE_ENGINE.md` - Canonical active Task State Engine authority for state evaluation, status/action routing, recurrence, rollover, Calendar projection, rewards eligibility, and persistence projection.
+
+## Qualified diagnostics
+
+- `docs/WORKSPACE_LOADING_ARCHITECTURE.md` - Qualified source diagnostic for workspace hydration, readiness, History loading, Realtime refresh, and caching ownership; not canonical runtime proof.
 
 ## Active working docs
 
@@ -52,4 +57,6 @@ Archived docs live under `docs/archive/`.
 - [`docs/archive/2026-08-retired/ui-design-system.md`](archive/2026-08-retired/ui-design-system.md) - Retired chip and text-control reference preserved for historical reference; use `UI_SYSTEM.md` and `UI_SOURCE_MAP.md` instead.
 - [`docs/archive/2026-08-retired/taskapp-behavior-contract.md`](archive/2026-08-retired/taskapp-behavior-contract.md) - Retired TaskApp behavior contract; historical reference only. Use `TASKAPP_ARCHITECTURE.md` and `TASKAPP_SOURCE_MAP.md` instead.
 - [`docs/archive/2026-08-retired/taskapp-orchestrator-contract.md`](archive/2026-08-retired/taskapp-orchestrator-contract.md) - Retired TaskApp orchestration addendum; historical reference only. Use `TASKAPP_ARCHITECTURE.md` and `TASKAPP_SOURCE_MAP.md` instead.
+- [`docs/archive/2026-08-retired/TASK_STATE_ENGINE.md`](archive/2026-08-retired/TASK_STATE_ENGINE.md) - Preserved earlier release-specific Task State Engine authority; historical reference only. Use `TASK_STATE_ENGINE.md` instead.
+- [`docs/archive/2026-08-retired/WORKSPACE_LOADING_ARCHITECTURE.md`](archive/2026-08-retired/WORKSPACE_LOADING_ARCHITECTURE.md) - Preserved earlier release-specific workspace-loading diagnostic; historical reference only. Use `WORKSPACE_LOADING_ARCHITECTURE.md` for qualified current source observations.
 - When a doc is retired, move it into `docs/archive/YYYY-MM-retired/` and add a short retirement note explaining what replaced it.

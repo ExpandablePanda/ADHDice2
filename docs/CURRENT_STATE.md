@@ -12,24 +12,24 @@ Role: active working
   - `package-lock.json`
   - `public/app-version.json`
 - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
-- This Phase 2A change is documentation-only and does not change the app version.
+- This Phase 5A change is documentation-only and does not change the app version.
 - Historical patch descriptions are intentionally excluded from this active document.
 
 ## Current Architectural Authorities
 
 ### Task State Engine
 
-- The shared Task State Engine is the current authority for active-status reads, Calendar facts, action planning, rollover planning, and the allow-listed persistence projection.
+- The shared Task State Engine is the canonical active authority for pure state evaluation, active-status reads, Calendar facts, action planning, rollover planning, reward eligibility, and the allow-listed persistence projection.
 - Engine-derived values remain distinct from persisted task-row values. In particular, engine-only `unscheduled` is projected to supported stored `pending`; engine-only cursor or occurrence metadata is not persisted as task-row metadata.
 - Guarded revisions, explicit History identity, idempotent no-op handling, and engine/legacy mutual exclusion remain load-bearing safety boundaries.
-- [`docs/TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md) remains the canonical contract reference, but its release header stops at 7.6.19 and is not a complete current release summary.
+- [`docs/TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md) is the canonical contract reference; release chronology remains in the historical archive.
 
 ### Workspace, Loading, and Cache Ownership
 
 - Startup keeps critical current-state facts bounded; full per-task History and other detail data remain owned by explicit cached consumers rather than broad critical startup loading.
 - Query changes should reuse stable workspace facts and avoid invalidating canonical entities, status authority, Archive/Trash sets, or unrelated page data.
 - Workspace performance diagnostics are development-only. Browser evidence for commit counts, inactive-page CPU, cross-tab/BFCache behavior, and Safari paint behavior remains unverified.
-- [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) is a source-based 7.6.23 diagnostic, not a fully current architecture summary; its open measurements remain unresolved.
+- [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) is a qualified source diagnostic, not canonical runtime proof; its browser, deployment, and performance questions remain unresolved.
 
 ### Task History and Readiness
 
@@ -53,7 +53,7 @@ Role: active working
 
 - The black/glitched HUD/UI state during reload or boot remains an open source-documented issue; it is not documented as fixed.
 - Browser behavior remains unverified for the startup/rendering, Safari paint, performance, cross-tab, and BFCache claims recorded in the 7.6.x history.
-- The current documentation contains freshness gaps in the Task State Engine and workspace architecture documents; those are not resolved by this phase.
+- The refreshed engine authority and workspace diagnostic still require review when their covered seams change; runtime evidence gaps remain unresolved.
 
 ## Fragile and High-Risk Seams
 
@@ -86,8 +86,8 @@ Role: active working
 - [`docs/VERIFICATION.md`](VERIFICATION.md) — production-path verification and reporting requirements.
 - [`docs/TASKAPP_ARCHITECTURE.md`](TASKAPP_ARCHITECTURE.md) — current TaskApp production routing and ownership contract.
 - [`docs/TASKAPP_SOURCE_MAP.md`](TASKAPP_SOURCE_MAP.md) — current TaskApp source and symbol lookup.
-- [`docs/TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md) — canonical engine contract with the freshness caveat above.
-- [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) — source-based diagnostic with the freshness caveat above.
+- [`docs/TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md) — canonical engine authority and persistence boundary.
+- [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) — qualified source diagnostic for loading and readiness ownership.
 - [`docs/task-hierarchy-plan.md`](task-hierarchy-plan.md) — hierarchy rollout and deferred movement boundaries.
 - [`docs/daily-until-complete-plan.md`](daily-until-complete-plan.md) — Daily Until Complete product rules and rollout plan.
 - [Historical 7.6.x and earlier release notes](archive/2026-08-retired/current-state-release-history.md).

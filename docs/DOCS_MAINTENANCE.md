@@ -1,6 +1,6 @@
 # Documentation Maintenance
 
-Last reviewed: 2026-06-04
+Last reviewed: 2026-08-03
 
 This repo keeps markdown lightweight on purpose. Every markdown file must have one clear job so future sessions can load the right context quickly.
 
@@ -9,6 +9,8 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `canonical` - Current source of truth for implemented behavior, design standards, architecture boundaries, or verification rules.
 - `active working` - Live product direction, scope, or future-facing implementation planning.
 - `tooling/generated` - Useful for agent capabilities or repo tooling, but not product truth.
+- `active lookup` - Current implementation lookup for a canonical subsystem; locations may change.
+- `qualified source diagnostic` - Source-backed observations with explicit inference and runtime-evidence limits; not canonical runtime proof.
 - `archived` - Historical reference only and not part of default current context.
 - `pointer-only` - A file that exists only to redirect readers to another source of truth.
 
@@ -35,6 +37,8 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/archive/2026-08-retired/manual-qa-checklist.md` - `archived`; former combined QA checklist preserved as historical reference.
 - `docs/TASKAPP_ARCHITECTURE.md` - `canonical`; current TaskApp production routing, ownership, and change-boundary authority.
 - `docs/TASKAPP_SOURCE_MAP.md` - `active lookup`; current TaskApp implementation locations and symbols.
+- `docs/TASK_STATE_ENGINE.md` - `canonical`; current Task State Engine authority for state evaluation, status/action routing, recurrence, rollover, Calendar, reward eligibility, and persistence projection.
+- `docs/WORKSPACE_LOADING_ARCHITECTURE.md` - `qualified source diagnostic`; source-backed workspace hydration, readiness, History loading, Realtime refresh, and caching observations.
 - `docs/AGENT_WORKFLOW.md` - `canonical`
 - `docs/VERIFICATION.md` - `canonical`
 - `docs/UI_SYSTEM.md` - `canonical`; active ADHDice visual and interaction authority.
@@ -43,7 +47,15 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/archive/2026-08-retired/ui-design-system.md` - `archived`; historical chip and text-control guidance replaced by `docs/UI_SYSTEM.md`.
 - `docs/archive/2026-08-retired/taskapp-behavior-contract.md` - `archived`; historical TaskApp behavior contract replaced by `docs/TASKAPP_ARCHITECTURE.md` and `docs/TASKAPP_SOURCE_MAP.md`.
 - `docs/archive/2026-08-retired/taskapp-orchestrator-contract.md` - `archived`; historical TaskApp orchestration addendum replaced by `docs/TASKAPP_ARCHITECTURE.md` and `docs/TASKAPP_SOURCE_MAP.md`.
+- `docs/archive/2026-08-retired/TASK_STATE_ENGINE.md` - `archived`; earlier release-specific engine authority preserved by `docs/TASK_STATE_ENGINE.md`.
+- `docs/archive/2026-08-retired/WORKSPACE_LOADING_ARCHITECTURE.md` - `archived`; earlier release-specific loading diagnostic preserved by `docs/WORKSPACE_LOADING_ARCHITECTURE.md`.
 - `Skills/generated-skill-library/**/SKILL.md` - `tooling/generated`
+
+## Freshness policy
+
+- Review `docs/TASK_STATE_ENGINE.md` when status, action, History, recurrence, rollover, Calendar, reward eligibility, or persistence projection changes.
+- Review `docs/WORKSPACE_LOADING_ARCHITECTURE.md` when startup loading, readiness, History loading, Realtime refresh, or caching ownership changes.
+- Archived originals remain historical reference only and must not be promoted to current authority without a new review.
 
 ## Cross-reference notes
 
@@ -53,5 +65,5 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 ## Archive policy
 
 - `docs/archive/` exists as the home for retired documentation.
-- If no file is being retired yet, leave the archive directory empty aside from repository placeholders.
+- Keep retired originals beneath a dated retirement directory with a note linking to their replacement.
 - Do not delete old docs permanently during cleanup passes unless the user explicitly asks for deletion.
