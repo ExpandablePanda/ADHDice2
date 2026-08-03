@@ -28,15 +28,17 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 
 ## Current role map
 
-- `README.md` - `canonical`
+- `README.md` - `canonical`; concise project entry point, local setup, environment, and deployment-evidence boundaries.
 - `AGENTS.md` - `canonical`
 - `CLAUDE.md` - `pointer-only`
-- `docs/ADHDICE_BUILD_BRIEF.md` - `active working`
+- `docs/ADHDICE_BUILD_BRIEF.md` - `active working`; high-level product direction and roadmap context, not implementation authority.
 - `docs/CURRENT_STATE.md` - `active working`
 - `docs/qa/*.md` - `active working`; focused subsystem browser QA checklists selected by ticket scope.
 - `docs/archive/2026-08-retired/manual-qa-checklist.md` - `archived`; former combined QA checklist preserved as historical reference.
 - `docs/TASKAPP_ARCHITECTURE.md` - `canonical`; current TaskApp production routing, ownership, and change-boundary authority.
 - `docs/TASKAPP_SOURCE_MAP.md` - `active lookup`; current TaskApp implementation locations and symbols.
+- `docs/task-hierarchy-plan.md` - `active working`; current hierarchy product decisions and unresolved movement/migration boundaries.
+- `docs/daily-until-complete-plan.md` - `active working`; current Daily Until Complete and permanent-Complete rules plus unresolved product decisions.
 - `docs/TASK_STATE_ENGINE.md` - `canonical`; current Task State Engine authority for state evaluation, status/action routing, recurrence, rollover, Calendar, reward eligibility, and persistence projection.
 - `docs/WORKSPACE_LOADING_ARCHITECTURE.md` - `qualified source diagnostic`; source-backed workspace hydration, readiness, History loading, Realtime refresh, and caching observations.
 - `docs/AGENT_WORKFLOW.md` - `canonical`
@@ -47,12 +49,19 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/archive/2026-08-retired/ui-design-system.md` - `archived`; historical chip and text-control guidance replaced by `docs/UI_SYSTEM.md`.
 - `docs/archive/2026-08-retired/taskapp-behavior-contract.md` - `archived`; historical TaskApp behavior contract replaced by `docs/TASKAPP_ARCHITECTURE.md` and `docs/TASKAPP_SOURCE_MAP.md`.
 - `docs/archive/2026-08-retired/taskapp-orchestrator-contract.md` - `archived`; historical TaskApp orchestration addendum replaced by `docs/TASKAPP_ARCHITECTURE.md` and `docs/TASKAPP_SOURCE_MAP.md`.
+- `docs/archive/2026-08-retired/task-hierarchy-plan.md` - `archived`; earlier hierarchy rollout and implementation history replaced by `docs/task-hierarchy-plan.md`.
+- `docs/archive/2026-08-retired/daily-until-complete-plan.md` - `archived`; earlier recurrence and Complete rollout history replaced by `docs/daily-until-complete-plan.md`.
+- `docs/archive/2026-08-retired/google-deployment-setup.md` - `archived`; historical and unverified Google setup material; no current deployment authority.
 - `docs/archive/2026-08-retired/TASK_STATE_ENGINE.md` - `archived`; earlier release-specific engine authority preserved by `docs/TASK_STATE_ENGINE.md`.
 - `docs/archive/2026-08-retired/WORKSPACE_LOADING_ARCHITECTURE.md` - `archived`; earlier release-specific loading diagnostic preserved by `docs/WORKSPACE_LOADING_ARCHITECTURE.md`.
 - `Skills/generated-skill-library/**/SKILL.md` - `tooling/generated`
 
 ## Freshness policy
 
+- Review `README.md` when setup commands, required environment, current version, or deployment entry points change.
+- Review `docs/ADHDICE_BUILD_BRIEF.md` when high-level product scope or vision changes.
+- Review `docs/task-hierarchy-plan.md` when hierarchy product rules or movement/archive semantics change.
+- Review `docs/daily-until-complete-plan.md` when recurrence or completion rules change.
 - Review `docs/TASK_STATE_ENGINE.md` when status, action, History, recurrence, rollover, Calendar, reward eligibility, or persistence projection changes.
 - Review `docs/WORKSPACE_LOADING_ARCHITECTURE.md` when startup loading, readiness, History loading, Realtime refresh, or caching ownership changes.
 - Archived originals remain historical reference only and must not be promoted to current authority without a new review.

@@ -1,12 +1,13 @@
 # ADHDice Build Brief
 
-Last reviewed: 2026-06-04
+Last reviewed: 2026-08-03
+Role: active product direction
 
 ADHDice is a gamified task, focus, and personal-support app for ADHD brains. The core promise is still simple:
 
 > Do real-life tasks and focus sessions, build momentum, and turn that progress into meaningful rewards.
 
-This is an active working spec. It captures current product direction and roadmap priorities, not frozen implemented behavior; use the TaskApp contract docs for current behavior truth.
+This is an active product-direction brief. It captures high-level product vision and roadmap priorities, not frozen implemented behavior. Patch/version truth remains in `docs/CURRENT_STATE.md`; use the current architecture, state, UI, and verification documents for implementation truth.
 
 ## Product Pillars
 
@@ -181,5 +182,11 @@ As of this brief, the repo includes:
 ## Guidance For Future Work
 
 - Treat this brief as roadmap and product-direction context.
-- Treat the TaskApp contract docs as the source of truth for current implemented behavior.
+- Treat [`docs/INDEX.md`](INDEX.md) as the documentation map.
+- Treat [`docs/CURRENT_STATE.md`](CURRENT_STATE.md), [`docs/TASKAPP_ARCHITECTURE.md`](TASKAPP_ARCHITECTURE.md), [`docs/TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md), [`docs/UI_SYSTEM.md`](UI_SYSTEM.md), and [`docs/VERIFICATION.md`](VERIFICATION.md) as the relevant current authorities.
 - When a product decision is clearly resolved in code and UI, remove it from open questions and reflect it as current direction instead of leaving stale uncertainty in place.
+
+## Related Documents
+
+- [`docs/task-hierarchy-plan.md`](task-hierarchy-plan.md) — current hierarchy decisions and unresolved movement/migration choices.
+- [`docs/daily-until-complete-plan.md`](daily-until-complete-plan.md) — current recurrence and permanent-completion product rules.

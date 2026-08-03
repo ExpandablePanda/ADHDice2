@@ -1,65 +1,76 @@
-ADHDice is a gamified task, todo list, and personal planner prototype for ADHD minds. This clean prototype uses Next.js, TypeScript, Tailwind, and Supabase for auth, Postgres storage, and realtime task syncing.
+# ADHDice
 
-For deeper project documentation, see `docs/INDEX.md`.
+Last reviewed: 2026-08-03
+Role: canonical project entry point
 
-Last reviewed: 2026-06-04
+## Overview
 
-## Getting Started
+ADHDice is a gamified task, todo-list, focus, and personal-support app for ADHD brains. It uses Next.js, TypeScript, Tailwind, and Supabase for authenticated data, Postgres-backed storage, and workspace synchronization.
 
-Install dependencies, then run the development server:
+This repository is intentionally separate from the older `adhdice-obsidian` prototype.
+
+## Current Status
+
+- Current app version: `7.6.35`.
+- Current surfaces include Tasks, Focus, Roll, Achievements, Health, Notes, Stats, Settings, Games, and isolated Test-page prototypes.
+- Current behavior authority is mapped in [`docs/INDEX.md`](docs/INDEX.md).
+- Browser, live deployment, Supabase RPC, Realtime, and cross-tab behavior require separate verification; this README does not claim those are proven.
+
+Tasks is the primary planning surface. Focus supports timers and work logs; Roll and Achievements support the reward loop; Health and Notes provide adjacent personal-support tools. The product brief describes direction, while the active architecture and decision documents describe current boundaries.
+
+## Product Orientation
+
+- Tasks handles capture, planning, hierarchy, recurrence, and History.
+- Focus handles timers, work logs, and focus categories.
+- Roll and Achievements connect progress to the reward loop.
+- Health and Notes provide supportive personal-management surfaces.
+- Test-page prototypes remain separate from the main production surfaces.
+
+## Local Setup
+
+1. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+2. Copy the repository environment template:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+3. Create or select a Supabase project, run [`supabase/schema.sql`](supabase/schema.sql) in the SQL editor, and set the required values in `.env.local`:
+
+   ```text
+   NEXT_PUBLIC_SUPABASE_URL=
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=
+   ```
+
+The environment template also contains optional development variables. Use only variables confirmed by the current `.env.example`; no Google deployment values are assumed here.
+
+## Environment
+
+Keep secrets server-side where the source requires it. Do not move server-only credentials into `NEXT_PUBLIC_*` variables. Local configuration is read from `.env.local`, which should not be committed.
+
+## Run Locally
+
+Start the development server:
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in Safari or another browser.
+Open [http://localhost:3000](http://localhost:3000).
 
-`npm run dev` also serves the development-only `POST /api/local-qa-session` helper. Configure `ADHDICE_LOCAL_QA_EMAIL` and `ADHDICE_LOCAL_QA_PASSWORD` in `.env.local`; they stay in the local Node process and are not part of the static production export.
+## Documentation
 
-## Supabase Setup
+Start with [`docs/INDEX.md`](docs/INDEX.md), then load only the subsystem documents relevant to the work. Useful current references include [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md), [`docs/TASKAPP_ARCHITECTURE.md`](docs/TASKAPP_ARCHITECTURE.md), [`docs/TASK_STATE_ENGINE.md`](docs/TASK_STATE_ENGINE.md), [`docs/UI_SYSTEM.md`](docs/UI_SYSTEM.md), and the focused [QA checklists](docs/qa/).
 
-1. Create a Supabase project.
-2. Run `supabase/schema.sql` in the Supabase SQL editor.
-3. Copy `.env.example` to `.env.local`.
-4. Fill in `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-5. Restart `npm run dev`.
+## Deployment Status
 
-Current app surfaces include task planning, focus tracking, reward rolls, achievements, health logging, notes, stats, and isolated Test-page prototypes, with realtime task syncing across signed-in browsers.
+The repository contains Supabase schema/setup material and source for the `on-time-route` Edge Function, but live deployment state is unverified. Optional Google integration configuration exists in source; public Pages variables, Edge deployment, and user-facing Google activation were not verified. Do not use the [archived Google setup material](docs/archive/2026-08-retired/google-deployment-setup.md) as current deployment authority without a fresh source and deployment review.
 
-## Google destination and traffic setup (manual; not yet complete)
+## Related Projects
 
-ADHDice 6.29.0 adds configuration and secure routing foundations only. The user-facing Places, location, traffic, refresh, and Maps controls remain deferred to 6.29.1.
-
-### Google Cloud
-
-1. Create or select a billing-enabled Google Cloud project.
-2. Enable Maps JavaScript API, Places API (New), and Routes API.
-3. Create a browser key restricted to the production GitHub Pages origin and explicit local development origins (for example `http://localhost:3000/*` and `http://127.0.0.1:3000/*`). Restrict its APIs to Maps JavaScript API and Places API (New).
-4. Create a separate server key restricted to Routes API only. Do not place this key in browser, GitHub Pages, or `NEXT_PUBLIC_*` configuration.
-5. Configure conservative Routes API quotas, a billing budget, and billing alerts. Durable per-user server-side rate limiting is deferred; the approved boundary is authenticated requests, strict validation, client throttling/signature suppression/caching, and Google Cloud quotas.
-
-### GitHub Pages
-
-1. Add the browser key as a GitHub Actions build secret.
-2. Expose only that browser key to the existing static Pages build as `NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY`.
-3. Set `NEXT_PUBLIC_GOOGLE_MAPS_ENABLED=true` and `NEXT_PUBLIC_APP_ORIGIN` to the exact production Pages origin during the build.
-4. Never add `GOOGLE_MAPS_ROUTES_API_KEY` to the static build or any `NEXT_PUBLIC_*` variable.
-
-### Supabase Edge Function
-
-Set these server-only Supabase secrets, then manually deploy `on-time-route` when ready:
-
-```text
-GOOGLE_MAPS_ROUTES_API_KEY=server-key-restricted-to-routes-api
-GOOGLE_MAPS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,https://your-production-pages-origin
-```
-
-`GOOGLE_MAPS_ALLOWED_ORIGINS` is an exact comma-separated allowlist. Add every explicit development origin actually used and the configured production origin; wildcards are not accepted. No SQL migration is required for 6.29.0 because the On-Time plan remains stored in the existing JSONB column.
-
-### Location privacy
-
-In 6.29.1, coordinates will be acquired only after the user presses `Use current location` and sent to the authenticated Edge Function for route calculation. ADHDice will not persist or sync those coordinates in Supabase, planner JSON, local storage, analytics, or logs. Traffic results, route distance, polylines, and device freshness state also remain device-only and unsynced.
-
-## Project Notes
-
-This repository is intentionally separate from the older `adhdice-obsidian` prototype. Do not copy the old design system into this clean prototype.
+The older `adhdice-obsidian` prototype is a separate project. Do not copy its design system, setup assumptions, or implementation history into this repository.

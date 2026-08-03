@@ -18,7 +18,7 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 
 ## Canonical docs
 
-- `README.md` - Setup and high-level repo overview.
+- `README.md` - Canonical concise project entry point, local setup, environment, and deployment-evidence boundaries.
 - `AGENTS.md` - Durable agent operating rules for this repo.
 - `docs/AGENT_WORKFLOW.md` - Canonical ADHDice development workflow, roles, work modes, and prompt shape.
 - `docs/VERIFICATION.md` - Canonical verification standard for production-path evidence and reporting.
@@ -34,11 +34,11 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 
 ## Active working docs
 
-- `docs/ADHDICE_BUILD_BRIEF.md` - Active product-direction brief and target feature map.
+- `docs/ADHDICE_BUILD_BRIEF.md` - Active high-level product-direction brief and target feature map; not implementation authority.
 - `docs/CURRENT_STATE.md` - Current stabilization state, known bugs, fragile areas, performance watchpoints, and next priorities.
-- `docs/daily-until-complete-plan.md` - Active product rules and phased rollout plan for the Daily Until Complete repeat option and permanent Complete status.
+- `docs/daily-until-complete-plan.md` - Active Daily Until Complete product rules, limitations, and unresolved decisions.
 - `docs/qa/` - Focused active browser QA checklists. Load `CORE_SMOKE.md` plus only the subsystem checklist relevant to the ticket: `TASKS.md`, `TASK_HIERARCHY.md`, `STEP_MIGRATION.md`, `REWARDS_ROLL.md`, `FOCUS.md`, `HEALTH.md`, `NOTES_STATS_SETTINGS.md`, or `DEPLOY.md`.
-- `docs/task-hierarchy-plan.md` - Active decision record and rollout plan for same-table child-task hierarchy and legacy subtask bridge work.
+- `docs/task-hierarchy-plan.md` - Active hierarchy decisions for same-table Steps/Substeps, movement, completion/archive semantics, and legacy migration boundaries.
 
 ## Tooling/generated docs
 
@@ -57,6 +57,9 @@ Archived docs live under `docs/archive/`.
 - [`docs/archive/2026-08-retired/ui-design-system.md`](archive/2026-08-retired/ui-design-system.md) - Retired chip and text-control reference preserved for historical reference; use `UI_SYSTEM.md` and `UI_SOURCE_MAP.md` instead.
 - [`docs/archive/2026-08-retired/taskapp-behavior-contract.md`](archive/2026-08-retired/taskapp-behavior-contract.md) - Retired TaskApp behavior contract; historical reference only. Use `TASKAPP_ARCHITECTURE.md` and `TASKAPP_SOURCE_MAP.md` instead.
 - [`docs/archive/2026-08-retired/taskapp-orchestrator-contract.md`](archive/2026-08-retired/taskapp-orchestrator-contract.md) - Retired TaskApp orchestration addendum; historical reference only. Use `TASKAPP_ARCHITECTURE.md` and `TASKAPP_SOURCE_MAP.md` instead.
+- [`docs/archive/2026-08-retired/task-hierarchy-plan.md`](archive/2026-08-retired/task-hierarchy-plan.md) - Earlier hierarchy rollout and implementation history; historical reference only. Use `task-hierarchy-plan.md` instead.
+- [`docs/archive/2026-08-retired/daily-until-complete-plan.md`](archive/2026-08-retired/daily-until-complete-plan.md) - Earlier recurrence and Complete rollout history; historical reference only. Use `daily-until-complete-plan.md` instead.
+- [`docs/archive/2026-08-retired/google-deployment-setup.md`](archive/2026-08-retired/google-deployment-setup.md) - Historical, unverified Google deployment/setup material; do not treat it as current authority.
 - [`docs/archive/2026-08-retired/TASK_STATE_ENGINE.md`](archive/2026-08-retired/TASK_STATE_ENGINE.md) - Preserved earlier release-specific Task State Engine authority; historical reference only. Use `TASK_STATE_ENGINE.md` instead.
 - [`docs/archive/2026-08-retired/WORKSPACE_LOADING_ARCHITECTURE.md`](archive/2026-08-retired/WORKSPACE_LOADING_ARCHITECTURE.md) - Preserved earlier release-specific workspace-loading diagnostic; historical reference only. Use `WORKSPACE_LOADING_ARCHITECTURE.md` for qualified current source observations.
 - When a doc is retired, move it into `docs/archive/YYYY-MM-retired/` and add a short retirement note explaining what replaced it.
