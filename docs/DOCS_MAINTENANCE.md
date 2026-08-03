@@ -33,14 +33,16 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/CURRENT_STATE.md` - `active working`
 - `docs/qa/*.md` - `active working`; focused subsystem browser QA checklists selected by ticket scope.
 - `docs/archive/2026-08-retired/manual-qa-checklist.md` - `archived`; former combined QA checklist preserved as historical reference.
-- `docs/taskapp-behavior-contract.md` - `canonical`
-- `docs/taskapp-orchestrator-contract.md` - `canonical`
+- `docs/TASKAPP_ARCHITECTURE.md` - `canonical`; current TaskApp production routing, ownership, and change-boundary authority.
+- `docs/TASKAPP_SOURCE_MAP.md` - `active lookup`; current TaskApp implementation locations and symbols.
 - `docs/AGENT_WORKFLOW.md` - `canonical`
 - `docs/VERIFICATION.md` - `canonical`
 - `docs/UI_SYSTEM.md` - `canonical`; active ADHDice visual and interaction authority.
 - `docs/UI_SOURCE_MAP.md` - `canonical`; active implementation lookup for UI sources and migration status.
 - `docs/archive/2026-08-retired/FRONTEND_UI_RULES.md` - `archived`; historical UI rules replaced by `docs/UI_SYSTEM.md` and `docs/UI_SOURCE_MAP.md`.
 - `docs/archive/2026-08-retired/ui-design-system.md` - `archived`; historical chip and text-control guidance replaced by `docs/UI_SYSTEM.md`.
+- `docs/archive/2026-08-retired/taskapp-behavior-contract.md` - `archived`; historical TaskApp behavior contract replaced by `docs/TASKAPP_ARCHITECTURE.md` and `docs/TASKAPP_SOURCE_MAP.md`.
+- `docs/archive/2026-08-retired/taskapp-orchestrator-contract.md` - `archived`; historical TaskApp orchestration addendum replaced by `docs/TASKAPP_ARCHITECTURE.md` and `docs/TASKAPP_SOURCE_MAP.md`.
 - `Skills/generated-skill-library/**/SKILL.md` - `tooling/generated`
 
 ## Cross-reference notes

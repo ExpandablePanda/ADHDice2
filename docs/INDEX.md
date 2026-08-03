@@ -23,8 +23,8 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - `docs/VERIFICATION.md` - Canonical verification standard for production-path evidence and reporting.
 - `docs/UI_SYSTEM.md` - Canonical ADHDice visual, interaction, and reuse rules.
 - `docs/UI_SOURCE_MAP.md` - Canonical implementation lookup for approved, deferred, and off-model UI surfaces.
-- `docs/taskapp-behavior-contract.md` - Current TaskApp behavior contract.
-- `docs/taskapp-orchestrator-contract.md` - Current TaskApp orchestration and extraction boundary contract.
+- `docs/TASKAPP_ARCHITECTURE.md` - Canonical TaskApp production routing, ownership, and change-boundary contract.
+- `docs/TASKAPP_SOURCE_MAP.md` - Current TaskApp source and symbol lookup; implementation locations may change.
 - `docs/TASK_STATE_ENGINE.md` - Pure Task State Engine terminology, contracts, recurrence rules, and safety invariants.
 
 ## Active working docs
@@ -50,4 +50,6 @@ Archived docs live under `docs/archive/`.
 - [`docs/archive/2026-08-retired/manual-qa-checklist.md`](archive/2026-08-retired/manual-qa-checklist.md) - Former combined manual QA checklist preserved for historical reference; do not load as the default current QA source.
 - [`docs/archive/2026-08-retired/FRONTEND_UI_RULES.md`](archive/2026-08-retired/FRONTEND_UI_RULES.md) - Retired UI rules preserved for historical reference; use `UI_SYSTEM.md` and `UI_SOURCE_MAP.md` instead.
 - [`docs/archive/2026-08-retired/ui-design-system.md`](archive/2026-08-retired/ui-design-system.md) - Retired chip and text-control reference preserved for historical reference; use `UI_SYSTEM.md` and `UI_SOURCE_MAP.md` instead.
+- [`docs/archive/2026-08-retired/taskapp-behavior-contract.md`](archive/2026-08-retired/taskapp-behavior-contract.md) - Retired TaskApp behavior contract; historical reference only. Use `TASKAPP_ARCHITECTURE.md` and `TASKAPP_SOURCE_MAP.md` instead.
+- [`docs/archive/2026-08-retired/taskapp-orchestrator-contract.md`](archive/2026-08-retired/taskapp-orchestrator-contract.md) - Retired TaskApp orchestration addendum; historical reference only. Use `TASKAPP_ARCHITECTURE.md` and `TASKAPP_SOURCE_MAP.md` instead.
 - When a doc is retired, move it into `docs/archive/YYYY-MM-retired/` and add a short retirement note explaining what replaced it.

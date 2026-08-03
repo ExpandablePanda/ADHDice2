@@ -1,3 +1,7 @@
+> Retired on 2026-08-03. Historical reference only. Replaced by [`TASKAPP_ARCHITECTURE.md`](../../TASKAPP_ARCHITECTURE.md); current source lookup lives in [`TASKAPP_SOURCE_MAP.md`](../../TASKAPP_SOURCE_MAP.md). Agents must not use this archived contract as current authority.
+
+---
+
 # TaskApp Orchestrator Contract (Step 1 Addendum)
 
 Last reviewed: 2026-06-04

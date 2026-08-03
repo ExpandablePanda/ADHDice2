@@ -41,7 +41,7 @@ Role: active working
 
 - Same-table Steps/Substeps already have shared hierarchy derivation, previews, editor routing, and same-parent reorder/drag behavior.
 - Remaining deferred hierarchy work is narrower: cross-parent movement, promote/demote, broader legacy-subtask migration, custom child metadata/reward rules, and any recurrence semantics that still require product approval.
-- [`docs/taskapp-behavior-contract.md`](taskapp-behavior-contract.md), [`docs/taskapp-orchestrator-contract.md`](taskapp-orchestrator-contract.md), and [`docs/task-hierarchy-plan.md`](task-hierarchy-plan.md) describe the surrounding contracts and rollout boundaries.
+- [`docs/TASKAPP_ARCHITECTURE.md`](TASKAPP_ARCHITECTURE.md) and [`docs/TASKAPP_SOURCE_MAP.md`](TASKAPP_SOURCE_MAP.md) describe current TaskApp ownership and source boundaries; [`docs/task-hierarchy-plan.md`](task-hierarchy-plan.md) remains the active hierarchy decision record.
 
 ### Persistence Boundaries
 
@@ -84,8 +84,8 @@ Role: active working
 - [`docs/INDEX.md`](INDEX.md) — documentation roles and source-of-truth map.
 - [`docs/AGENT_WORKFLOW.md`](AGENT_WORKFLOW.md) — work modes, scope control, and handoff rules.
 - [`docs/VERIFICATION.md`](VERIFICATION.md) — production-path verification and reporting requirements.
-- [`docs/taskapp-behavior-contract.md`](taskapp-behavior-contract.md) — current TaskApp behavior contract.
-- [`docs/taskapp-orchestrator-contract.md`](taskapp-orchestrator-contract.md) — orchestration boundary contract.
+- [`docs/TASKAPP_ARCHITECTURE.md`](TASKAPP_ARCHITECTURE.md) — current TaskApp production routing and ownership contract.
+- [`docs/TASKAPP_SOURCE_MAP.md`](TASKAPP_SOURCE_MAP.md) — current TaskApp source and symbol lookup.
 - [`docs/TASK_STATE_ENGINE.md`](TASK_STATE_ENGINE.md) — canonical engine contract with the freshness caveat above.
 - [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) — source-based diagnostic with the freshness caveat above.
 - [`docs/task-hierarchy-plan.md`](task-hierarchy-plan.md) — hierarchy rollout and deferred movement boundaries.
