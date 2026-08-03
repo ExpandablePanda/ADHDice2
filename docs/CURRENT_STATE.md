@@ -11,7 +11,7 @@ Role: active working
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
-- visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
+  - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish deployed SQL, browser, or runtime parity.
 - Historical patch descriptions are intentionally excluded from this active document.
 
@@ -71,7 +71,6 @@ Role: active working
 - Do not persist engine-only status, cursor, or occurrence metadata, and do not replace canonical rows with partial payloads.
 - Do not use historical release notes as current authority; use the linked canonical contracts and verify freshness caveats.
 - Browser QA, live Supabase behavior, deployed RPC state, multi-tab behavior, BFCache behavior, and Safari rendering require separate authorized verification.
-- This documentation change does not authorize source, SQL, test, version, deployment, or product-scope changes.
 
 ## Immediate Priorities
 

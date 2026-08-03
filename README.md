@@ -11,7 +11,7 @@ This repository is intentionally separate from the older `adhdice-obsidian` prot
 
 ## Current Status
 
-- Current app version: `7.6.35`.
+- Current app version and release group: see [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md).
 - Current surfaces include Tasks, Focus, Roll, Achievements, Health, Notes, Stats, Settings, Games, and isolated Test-page prototypes.
 - Current behavior authority is mapped in [`docs/INDEX.md`](docs/INDEX.md).
 - Browser, live deployment, Supabase RPC, Realtime, and cross-tab behavior require separate verification; this README does not claim those are proven.

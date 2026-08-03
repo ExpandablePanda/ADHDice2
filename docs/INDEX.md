@@ -6,11 +6,12 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 
 ## How to use this map
 
-- Read `README.md` for setup and a high-level overview.
-- Read `AGENTS.md` for repo-specific agent operating rules.
-- Read `docs/AGENT_WORKFLOW.md` for the ADHDice development workflow and role boundaries.
-- Read `docs/VERIFICATION.md` for verification classes and reporting requirements.
-- Read `docs/DOCS_MAINTENANCE.md` for documentation governance, role classification, archive policy, and freshness routing.
+- Normal starting context: read `AGENTS.md`, then `docs/INDEX.md`, then only the relevant subsystem document.
+- Read `README.md` for setup or project orientation.
+- Read `docs/AGENT_WORKFLOW.md` for planning, model selection, workflow design, or Codex prompt construction.
+- Read `docs/VERIFICATION.md` for implementation, review, QA interpretation, or evidence requirements.
+- Read `docs/DOCS_MAINTENANCE.md` for documentation creation, retirement, classification, indexing, or freshness work.
+- Read `docs/CURRENT_STATE.md` when version, fragile seams, current risks, or priorities matter.
 - Use canonical docs for current implemented behavior, design standards, architecture boundaries, and verification rules.
 - Use active working docs for roadmap direction, product scope, and future-facing planning.
 - Load `docs/WORKSPACE_LOADING_ARCHITECTURE.md` only for a loading, readiness, History-loading, Realtime-refresh, or caching-ownership ticket; it is a qualified source diagnostic, not canonical runtime proof.
@@ -28,12 +29,12 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - `docs/AGENT_WORKFLOW.md` - Canonical durable workflow and execution-routing authority for roles, work modes, and prompt shape.
 - `docs/VERIFICATION.md` - Canonical durable verification and evidence authority for production-path validation and reporting.
 - `docs/UI_SYSTEM.md` - Canonical ADHDice visual, interaction, and reuse rules.
-- `docs/UI_SOURCE_MAP.md` - Canonical implementation lookup for approved, deferred, and off-model UI surfaces.
 - `docs/TASKAPP_ARCHITECTURE.md` - Canonical TaskApp production routing, ownership, and change-boundary contract.
 - `docs/TASK_STATE_ENGINE.md` - Canonical active Task State Engine authority for state evaluation, status/action routing, recurrence, rollover, Calendar projection, rewards eligibility, and persistence projection.
 
 ## Active implementation lookups
 
+- `docs/UI_SOURCE_MAP.md` - Mutable lookup for current primitive locations, approved source surfaces, exclusions, and migration status; not the canonical UI authority.
 - `docs/TASKAPP_SOURCE_MAP.md` - Mutable implementation lookup for current TaskApp paths, symbols, and ownership seams; not the canonical architecture authority.
 
 ## Qualified diagnostics
@@ -61,6 +62,7 @@ Archived docs live under `docs/archive/`.
 - Do not use archived docs as default current context unless the user explicitly asks.
 - [`docs/archive/2026-08-retired/current-state-release-history.md`](archive/2026-08-retired/current-state-release-history.md) - Preserved release chronology and retired Current State notes; historical reference only, not current product authority.
 - [`docs/archive/2026-08-retired/manual-qa-checklist.md`](archive/2026-08-retired/manual-qa-checklist.md) - Former combined manual QA checklist preserved for historical reference; do not load as the default current QA source.
+- [`docs/archive/2026-08-retired/taskapp-quality-check-protocol.md`](archive/2026-08-retired/taskapp-quality-check-protocol.md) - Retired TaskApp extraction quality-check protocol; historical reference only. Use `docs/VERIFICATION.md` instead.
 - [`docs/archive/2026-08-retired/FRONTEND_UI_RULES.md`](archive/2026-08-retired/FRONTEND_UI_RULES.md) - Retired UI rules preserved for historical reference; use `UI_SYSTEM.md` and `UI_SOURCE_MAP.md` instead.
 - [`docs/archive/2026-08-retired/ui-design-system.md`](archive/2026-08-retired/ui-design-system.md) - Retired chip and text-control reference preserved for historical reference; use `UI_SYSTEM.md` and `UI_SOURCE_MAP.md` instead.
 - [`docs/archive/2026-08-retired/taskapp-behavior-contract.md`](archive/2026-08-retired/taskapp-behavior-contract.md) - Retired TaskApp behavior contract; historical reference only. Use `TASKAPP_ARCHITECTURE.md` and `TASKAPP_SOURCE_MAP.md` instead.

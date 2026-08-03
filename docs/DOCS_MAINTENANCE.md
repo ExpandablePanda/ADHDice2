@@ -37,6 +37,7 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/DOCS_MAINTENANCE.md` - `canonical`; documentation governance, role, archive-policy, and freshness map; not product architecture.
 - `docs/qa/*.md` - `active working`; focused subsystem browser QA checklists selected by ticket scope.
 - `docs/archive/2026-08-retired/manual-qa-checklist.md` - `archived`; former combined QA checklist preserved as historical reference.
+- `docs/archive/2026-08-retired/taskapp-quality-check-protocol.md` - `archived`; retired TaskApp extraction quality-check protocol replaced by `docs/VERIFICATION.md`.
 - `docs/TASKAPP_ARCHITECTURE.md` - `canonical`; current TaskApp production routing, ownership, and change-boundary authority.
 - `docs/TASKAPP_SOURCE_MAP.md` - `active lookup`; mutable implementation lookup for current TaskApp paths, symbols, and ownership seams.
 - `docs/task-hierarchy-plan.md` - `active working`; current hierarchy product decisions and unresolved movement/migration boundaries.
@@ -46,7 +47,7 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/AGENT_WORKFLOW.md` - `canonical`; durable workflow and execution-routing authority.
 - `docs/VERIFICATION.md` - `canonical`; durable verification and evidence authority.
 - `docs/UI_SYSTEM.md` - `canonical`; active ADHDice visual and interaction authority.
-- `docs/UI_SOURCE_MAP.md` - `canonical`; active implementation lookup for UI sources and migration status.
+- `docs/UI_SOURCE_MAP.md` - `active lookup`; mutable lookup for current primitive locations, approved source surfaces, exclusions, and migration status.
 - `docs/archive/2026-08-retired/FRONTEND_UI_RULES.md` - `archived`; historical UI rules replaced by `docs/UI_SYSTEM.md` and `docs/UI_SOURCE_MAP.md`.
 - `docs/archive/2026-08-retired/ui-design-system.md` - `archived`; historical chip and text-control guidance replaced by `docs/UI_SYSTEM.md`.
 - `docs/archive/2026-08-retired/taskapp-behavior-contract.md` - `archived`; historical TaskApp behavior contract replaced by `docs/TASKAPP_ARCHITECTURE.md` and `docs/TASKAPP_SOURCE_MAP.md`.
@@ -60,7 +61,10 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 
 ## Freshness policy
 
-- Review `README.md` when setup commands, required environment, current version, or deployment entry points change.
+- Review `README.md` when setup commands, required environment, or deployment entry points change.
+- Review `AGENTS.md` when standing repo operating rules, versioning, browser policy, worktree policy, or documentation routing changes.
+- Review `docs/CURRENT_STATE.md` when the current app version, release group, confirmed risks, fragile seams, active warnings, or immediate priorities change.
+- Review `docs/INDEX.md` when documents are created, retired, renamed, reclassified, or their normal loading route changes.
 - Review `docs/ADHDICE_BUILD_BRIEF.md` when high-level product scope or vision changes.
 - Review `docs/task-hierarchy-plan.md` when hierarchy product rules or movement/archive semantics change.
 - Review `docs/daily-until-complete-plan.md` when recurrence or completion rules change.
@@ -68,6 +72,11 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - Review `docs/WORKSPACE_LOADING_ARCHITECTURE.md` when startup loading, readiness, History loading, Realtime refresh, or caching ownership changes.
 - Review `docs/AGENT_WORKFLOW.md` when model-routing policy, work modes, diagnosis-versus-implementation boundaries, prompt construction, checkpoint rules, or agent responsibilities change.
 - Review `docs/VERIFICATION.md` when risk classes, required validation, production-seam verification, browser/manual QA ownership, stop conditions, or late-edit rerun rules change.
+- Review `docs/UI_SYSTEM.md` when canonical UI primitives, visual rules, interaction standards, or reuse policy change.
+- Review `docs/UI_SOURCE_MAP.md` when primitive locations, approved source surfaces, exclusions, or migration status change.
+- Review `docs/TASKAPP_ARCHITECTURE.md` when TaskApp routing, component ownership, mutation boundaries, or shared-surface ownership change.
+- Review `docs/TASKAPP_SOURCE_MAP.md` when named TaskApp paths, symbols, adapters, hooks, or known source seams move.
+- Review `docs/qa/*.md` when observable subsystem behavior, migration support, deployment expectations, or QA ownership changes; update the affected checklist.
 - Archived originals remain historical reference only and must not be promoted to current authority without a new review.
 
 ## Cross-reference notes

@@ -1,7 +1,7 @@
 # UI Source Map
 
 Last reviewed: 2026-08-03
-Role: canonical active implementation lookup
+Role: active implementation lookup
 
 Use this document with [`UI_SYSTEM.md`](UI_SYSTEM.md). The system owns durable
 rules; this map owns current sources, exclusions, and migration status.
