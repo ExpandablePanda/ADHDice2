@@ -31,7 +31,8 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `CLAUDE.md` - `pointer-only`
 - `docs/ADHDICE_BUILD_BRIEF.md` - `active working`
 - `docs/CURRENT_STATE.md` - `active working`
-- `docs/MANUAL_QA_CHECKLIST.md` - `active working`
+- `docs/qa/*.md` - `active working`; focused subsystem browser QA checklists selected by ticket scope.
+- `docs/archive/2026-08-retired/manual-qa-checklist.md` - `archived`; former combined QA checklist preserved as historical reference.
 - `docs/taskapp-behavior-contract.md` - `canonical`
 - `docs/taskapp-orchestrator-contract.md` - `canonical`
 - `docs/AGENT_WORKFLOW.md` - `canonical`

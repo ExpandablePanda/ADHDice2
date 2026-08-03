@@ -33,7 +33,7 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - `docs/ADHDICE_BUILD_BRIEF.md` - Active product-direction brief and target feature map.
 - `docs/CURRENT_STATE.md` - Current stabilization state, known bugs, fragile areas, performance watchpoints, and next priorities.
 - `docs/daily-until-complete-plan.md` - Active product rules and phased rollout plan for the Daily Until Complete repeat option and permanent Complete status.
-- `docs/MANUAL_QA_CHECKLIST.md` - Repeatable manual browser smoke-test checklist for post-change QA and pre-deploy checks.
+- `docs/qa/` - Focused active browser QA checklists. Load `CORE_SMOKE.md` plus only the subsystem checklist relevant to the ticket: `TASKS.md`, `TASK_HIERARCHY.md`, `STEP_MIGRATION.md`, `REWARDS_ROLL.md`, `FOCUS.md`, `HEALTH.md`, `NOTES_STATS_SETTINGS.md`, or `DEPLOY.md`.
 - `docs/task-hierarchy-plan.md` - Active decision record and rollout plan for same-table child-task hierarchy and legacy subtask bridge work.
 
 ## Tooling/generated docs
@@ -48,4 +48,5 @@ Archived docs live under `docs/archive/`.
 - Archived markdown is historical reference only.
 - Do not use archived docs as default current context unless the user explicitly asks.
 - [`docs/archive/2026-08-retired/current-state-release-history.md`](archive/2026-08-retired/current-state-release-history.md) - Preserved release chronology and retired Current State notes; historical reference only, not current product authority.
+- [`docs/archive/2026-08-retired/manual-qa-checklist.md`](archive/2026-08-retired/manual-qa-checklist.md) - Former combined manual QA checklist preserved for historical reference; do not load as the default current QA source.
 - When a doc is retired, move it into `docs/archive/YYYY-MM-retired/` and add a short retirement note explaining what replaced it.

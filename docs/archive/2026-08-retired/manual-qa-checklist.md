@@ -1,3 +1,5 @@
+> Retired 2026-08-03. Current QA is organized under [`docs/qa/`](../../qa/). This archived file preserves the former combined checklist as historical reference and should not be loaded as the default current QA source.
+
 # Manual QA Checklist
 
 Last reviewed: 2026-06-07
