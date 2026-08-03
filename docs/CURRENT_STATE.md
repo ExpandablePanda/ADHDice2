@@ -12,7 +12,7 @@ Role: active working
   - `package-lock.json`
   - `public/app-version.json`
 - visible app constants in `src/components/task-app.tsx` (`APP_VERSION` / `HUD_VERSION`)
-- This Phase 5A change is documentation-only and does not change the app version.
+- This document summarizes current authority and known limits; it does not establish deployed SQL, browser, or runtime parity.
 - Historical patch descriptions are intentionally excluded from this active document.
 
 ## Current Architectural Authorities

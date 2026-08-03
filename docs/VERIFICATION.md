@@ -1,5 +1,8 @@
 # ADHDice Verification Standard
 
+Last reviewed: 2026-08-03
+Role: canonical durable verification authority
+
 ## Purpose
 
 Verification must provide evidence that the changed production path is correct.

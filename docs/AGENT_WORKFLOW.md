@@ -1,5 +1,8 @@
 # ADHDice Agent Workflow
 
+Last reviewed: 2026-08-03
+Role: canonical durable workflow authority
+
 ## Purpose
 
 This document defines how Andrew, ChatGPT, and Codex divide ADHDice development work.

@@ -10,23 +10,31 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - Read `AGENTS.md` for repo-specific agent operating rules.
 - Read `docs/AGENT_WORKFLOW.md` for the ADHDice development workflow and role boundaries.
 - Read `docs/VERIFICATION.md` for verification classes and reporting requirements.
+- Read `docs/DOCS_MAINTENANCE.md` for documentation governance, role classification, archive policy, and freshness routing.
 - Use canonical docs for current implemented behavior, design standards, architecture boundaries, and verification rules.
 - Use active working docs for roadmap direction, product scope, and future-facing planning.
 - Load `docs/WORKSPACE_LOADING_ARCHITECTURE.md` only for a loading, readiness, History-loading, Realtime-refresh, or caching-ownership ticket; it is a qualified source diagnostic, not canonical runtime proof.
 - Do not treat tooling/generated docs or archived docs as current product truth by default.
 - Treat `CLAUDE.md` as a pointer-only file that defers to `AGENTS.md`.
 
+## Documentation governance
+
+- `docs/DOCS_MAINTENANCE.md` - Documentation governance, role, archive-policy, and freshness map; not product architecture.
+
 ## Canonical docs
 
 - `README.md` - Canonical concise project entry point, local setup, environment, and deployment-evidence boundaries.
 - `AGENTS.md` - Durable agent operating rules for this repo.
-- `docs/AGENT_WORKFLOW.md` - Canonical ADHDice development workflow, roles, work modes, and prompt shape.
-- `docs/VERIFICATION.md` - Canonical verification standard for production-path evidence and reporting.
+- `docs/AGENT_WORKFLOW.md` - Canonical durable workflow and execution-routing authority for roles, work modes, and prompt shape.
+- `docs/VERIFICATION.md` - Canonical durable verification and evidence authority for production-path validation and reporting.
 - `docs/UI_SYSTEM.md` - Canonical ADHDice visual, interaction, and reuse rules.
 - `docs/UI_SOURCE_MAP.md` - Canonical implementation lookup for approved, deferred, and off-model UI surfaces.
 - `docs/TASKAPP_ARCHITECTURE.md` - Canonical TaskApp production routing, ownership, and change-boundary contract.
-- `docs/TASKAPP_SOURCE_MAP.md` - Current TaskApp source and symbol lookup; implementation locations may change.
 - `docs/TASK_STATE_ENGINE.md` - Canonical active Task State Engine authority for state evaluation, status/action routing, recurrence, rollover, Calendar projection, rewards eligibility, and persistence projection.
+
+## Active implementation lookups
+
+- `docs/TASKAPP_SOURCE_MAP.md` - Mutable implementation lookup for current TaskApp paths, symbols, and ownership seams; not the canonical architecture authority.
 
 ## Qualified diagnostics
 

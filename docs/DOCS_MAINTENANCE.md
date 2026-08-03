@@ -1,6 +1,7 @@
 # Documentation Maintenance
 
 Last reviewed: 2026-08-03
+Role: canonical documentation governance and freshness authority
 
 This repo keeps markdown lightweight on purpose. Every markdown file must have one clear job so future sessions can load the right context quickly.
 
@@ -33,16 +34,17 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `CLAUDE.md` - `pointer-only`
 - `docs/ADHDICE_BUILD_BRIEF.md` - `active working`; high-level product direction and roadmap context, not implementation authority.
 - `docs/CURRENT_STATE.md` - `active working`
+- `docs/DOCS_MAINTENANCE.md` - `canonical`; documentation governance, role, archive-policy, and freshness map; not product architecture.
 - `docs/qa/*.md` - `active working`; focused subsystem browser QA checklists selected by ticket scope.
 - `docs/archive/2026-08-retired/manual-qa-checklist.md` - `archived`; former combined QA checklist preserved as historical reference.
 - `docs/TASKAPP_ARCHITECTURE.md` - `canonical`; current TaskApp production routing, ownership, and change-boundary authority.
-- `docs/TASKAPP_SOURCE_MAP.md` - `active lookup`; current TaskApp implementation locations and symbols.
+- `docs/TASKAPP_SOURCE_MAP.md` - `active lookup`; mutable implementation lookup for current TaskApp paths, symbols, and ownership seams.
 - `docs/task-hierarchy-plan.md` - `active working`; current hierarchy product decisions and unresolved movement/migration boundaries.
 - `docs/daily-until-complete-plan.md` - `active working`; current Daily Until Complete and permanent-Complete rules plus unresolved product decisions.
 - `docs/TASK_STATE_ENGINE.md` - `canonical`; current Task State Engine authority for state evaluation, status/action routing, recurrence, rollover, Calendar, reward eligibility, and persistence projection.
 - `docs/WORKSPACE_LOADING_ARCHITECTURE.md` - `qualified source diagnostic`; source-backed workspace hydration, readiness, History loading, Realtime refresh, and caching observations.
-- `docs/AGENT_WORKFLOW.md` - `canonical`
-- `docs/VERIFICATION.md` - `canonical`
+- `docs/AGENT_WORKFLOW.md` - `canonical`; durable workflow and execution-routing authority.
+- `docs/VERIFICATION.md` - `canonical`; durable verification and evidence authority.
 - `docs/UI_SYSTEM.md` - `canonical`; active ADHDice visual and interaction authority.
 - `docs/UI_SOURCE_MAP.md` - `canonical`; active implementation lookup for UI sources and migration status.
 - `docs/archive/2026-08-retired/FRONTEND_UI_RULES.md` - `archived`; historical UI rules replaced by `docs/UI_SYSTEM.md` and `docs/UI_SOURCE_MAP.md`.
@@ -64,12 +66,15 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - Review `docs/daily-until-complete-plan.md` when recurrence or completion rules change.
 - Review `docs/TASK_STATE_ENGINE.md` when status, action, History, recurrence, rollover, Calendar, reward eligibility, or persistence projection changes.
 - Review `docs/WORKSPACE_LOADING_ARCHITECTURE.md` when startup loading, readiness, History loading, Realtime refresh, or caching ownership changes.
+- Review `docs/AGENT_WORKFLOW.md` when model-routing policy, work modes, diagnosis-versus-implementation boundaries, prompt construction, checkpoint rules, or agent responsibilities change.
+- Review `docs/VERIFICATION.md` when risk classes, required validation, production-seam verification, browser/manual QA ownership, stop conditions, or late-edit rerun rules change.
 - Archived originals remain historical reference only and must not be promoted to current authority without a new review.
 
 ## Cross-reference notes
 
 - `AGENTS.md` carries the standing Codex workflow rules, including versioning policy.
 - `docs/CURRENT_STATE.md` carries the live app version, release group, and roadmap.
+- This document is reviewed when documentation classifications, archive policy, freshness triggers, or index-routing rules change.
 
 ## Archive policy
 
