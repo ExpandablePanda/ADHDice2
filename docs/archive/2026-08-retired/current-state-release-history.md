@@ -1,0 +1,1914 @@
+# ADHDice Release History
+
+> Historical reference only. This file was extracted from `docs/CURRENT_STATE.md` on 2026-08-03.
+>
+> This file is not current product authority. Current operational context remains in
+> [`docs/CURRENT_STATE.md`](../../CURRENT_STATE.md).
+>
+> The source document contained no `7.6.34` release section; no missing release entry
+> has been invented here. Historical wording, warnings, limitations, SQL details, and
+> row counts are preserved as recorded.
+
+## 7.6.x Release History
+
+### 7.6.35 History current-date auto-scroll
+
+- History Calendar waits for authoritative per-task History readiness before scheduling its existing date-strip scroll, then focuses the explicitly selected date or today. Reopening a cached task and switching tasks retrigger focus through the task ID/readiness transition, while later History mutations and manual scrolling do not recenter the strip.
+
+
+### 7.6.33 Search focus and History readiness
+
+- Passive Table search reveals scroll and highlight matches without taking focus from `#task-search-input`; explicit Enter navigation retains result focus behavior. Task History opens from an authenticated, per-task full-history cache and shows loading/retry UI until that task is ready, without widening critical startup History.
+
+
+### 7.6.32 Recurring completion History and search focus
+
+- Task State Engine action plans now expose the explicit History outcome separately from the persisted next-occurrence status. Engine-managed Done, Did My Best, Complete, Delayed, and Missed paths no longer infer History from projected `upcoming`, `not_due`, or `pending` task status; the existing one-off and manual History-clear paths remain status-driven.
+- The deterministic Tasks header regression keeps the search input focused on the same DOM node through the 180ms committed-query update and preserves the local draft for subsequent characters. The failure was not a header/input remount; no alternate search focus path was found in the active source path.
+- Existing user data is not repaired by this release.
+
+
+### 7.6.31 Task streak summaries
+
+- Parent and Step/Substep Table/List title chips use a paged, background compact History summary cache while critical startup History remains narrow.
+
+
+### 7.6.30 Tasks interaction rendering repair
+
+- Removed unsafe render-prop row memoization and the render-revision-only `TasksWorkspace` comparator. Table and List hierarchy groups now render directly, while bounded row windowing/overscan and stable row-model caches remain the performance controls; the external 7.6.29 flow layer and folder navigation remain preserved.
+
+
+### 7.6.29 Task History flow boundary
+
+- Tasks modal flows were moved immediately outside the `TasksWorkspace` canvas, so History, editor, timing, batch, delete, Focus planner, Momentum, and milestone flows no longer depended on canvas revision changes. The 7.6.30 repair removes the remaining workspace comparator.
+
+
+### 7.6.28 Tasks rail transition import hotfix
+
+- Restored the missing React `startTransition` import used by Tasks list and folder rail selection; list/folder behavior is unchanged.
+
+
+### 7.6.27 Deterministic search and fast Tasks loading
+
+- TaskSearchBox keeps immediate draft input but publishes one committed query after a generation-guarded 180ms debounce; Enter and Clear publish immediately. TaskApp no longer owns a duplicate input or deferred query mirror.
+- Stable canonical entity facts feed a query-only Tasks selector. Search results are scoped to the selected surface and sorted once; workspace facts, Archive/Trash arrays, rail counts, status authority, and canonical entities remain outside query changes.
+- TasksWorkspace is memoized behind a task-canvas revision, and List rows now defer row JSX to a memoized TaskListRow boundary while retaining the 24-row window plus eight-row overscan.
+- Derive-stage logs are silent unless workspace performance diagnostics are explicitly enabled. Critical startup History keeps the logical day and live cursor dates while excluding irrelevant closed-task due dates; full History remains deferred.
+- Focus/Health, recurrence, rewards, Archive behavior, database schema, black-paint styling, Home, and unrelated UI remain unchanged. Browser proof for commit counts, inactive-page CPU, and cross-tab/BFCache behavior remains pending.
+
+
+### 7.6.26 Fast startup and search rendering
+
+- Normal startup loads only current logical-day and persisted live-occurrence Task History facts. Per-Task Calendar History, all-time/range History, notes, and actual-time evidence load through explicit cached consumers, and late detail rows do not change the canonical current-state History revision.
+- Focus History, Health, and Achievement snapshots are page-gated and remain cached after their first load. Existing Reports and Records loaders retain their explicit range/all-time ownership.
+- Table and List views slice a 24-row rendered window plus eight-row overscan before revision-keyed row-model construction. Committed search results extend the window incrementally without prebuilding every matching row.
+- Search uses immediate local input, deferred committed results, and a query-only revision excluded from settings revisions. Rollover attempts only on initial load or resume when the persisted user/logical-day/timezone/rollover-boundary key changes.
+- Workspace stage logs are disabled by default. A single startup summary is available when `window.__ADHDICE_WORKSPACE_PERFORMANCE_DIAGNOSTICS__ = true`; rollover patch summaries additionally require `window.__ADHDICE_TASK_STATE_ROLLOVER_DIAGNOSTICS_ENABLED__ = true`.
+- Black-patch/Safari paint styling, Archive, status/recurrence semantics, rewards, database schema, and unrelated UI remain unchanged.
+
+
+### 7.6.25 Stable Task actions, derivation, and List rows
+
+- The shared Task State Engine action plan now owns the stored post-action status. Daily Until Complete `Done` records the current occurrence, advances its cursor, and stores the next active status immediately; it no longer falls back to a transient stored `done`, and the resulting Task plus History snapshots require zero rollover repair patches.
+- Task derivation now uses one content-derived key spanning Task, History, list, settings, query, and view revisions. Identical keys return the previous result without a new diagnostic revision, while stable workspace facts remain independently cached across query, editor, menu, overlay, and Table/List UI changes.
+- Base buckets/status counts, tags/list counts, smart-list memberships, planning and Focus planner facts, and Archive/Trash source sets are workspace-revision facts. Search and view work reuse those facts for filtering, sorting, and assembly.
+- List View uses content-revision row-model caches plus memoized row boundaries. Unchanged rows and editor overlay models retain identity across editor-target and unrelated UI updates while selection, expanded Steps, status controls, and shared editor routing remain intact.
+- Unscheduled uses a fixed square, zero-line-height centered calendar wrapper with a smaller glyph. Archive continues to use the distinct book glyph. Black-patch rendering remains open pending browser QA.
+
+
+### 7.6.24 Stable Task projection and status parity
+
+- Task, Task History, lists/memberships, status settings, and milestone inputs now receive content-derived revisions. An owner-scoped layer cache reuses equivalent active-status, canonical-entity, hierarchy/status, and membership/search-document projections across React development replay and newly allocated but unchanged hydration payloads.
+- The minute timer no longer reevaluates or clones the canonical Task collection while the logical day is unchanged. Effective-status projection retains each unchanged Task object's identity.
+- Immediate controlled search input remains local; deferred query changes match stable lowercase search documents and do not invalidate canonical entities, hierarchy/status, or list memberships. Page navigation and editor/overlay identifiers are excluded from those expensive-layer keys.
+- Daily Until Complete `Done` is accepted by the shared Task State Engine action authority used by normal status surfaces and Calendar, while `Complete` remains the permanent recurrence terminator. The Unscheduled grey calendar is explicitly centered in its status circle and Archive retains the book glyph.
+- This release does not split page loaders, redesign Realtime, add a query dependency, change reward/History persistence, or remove the development projection diagnostics needed for the next architecture phase.
+
+
+### 7.6.23 Workspace loading architecture diagnostic
+
+- Development-only task projection diagnostics now identify the source owner, previous and next computation revisions, exact changed references, task/History/list/settings reference revisions, active page, and duration without logging task text, notes, search text, or other user content.
+- The diagnostic documents current eager startup ownership and proposed page-scoped cache boundaries. It does not change Task State Engine, recurrence, History, rewards, Calendar, task actions, queries, subscriptions, or user-visible behavior.
+
+
+### 7.6.22 Recovery regression fixes
+
+- Restored the shared Edit Task overlay row builder and memoized its row projection, so Focus and other page navigation no longer hit the missing `buildTaskTableRow` reference or remap editor rows on unrelated overlay renders.
+- Task History Calendar now keeps Daily Until Complete `Done` available, restores Done/Did My Best/Missed batch actions for multi-date selection, and continues to save through the existing History action APIs. Complete remains single-date and permanently terminates recurrence; Delayed remains a valid single-date action.
+- The shared status glyph projection renders engine-derived Unscheduled as a grey calendar while Archive retains the grey book.
+- Search keeps its deferred query while hierarchy adapter construction, diagnostics, visibility, and child previews are memoized outside query-dependent derivation. The shared projection stays warm across unrelated page navigation, and timing diagnostics now separate hierarchy preparation from canonical entity projection.
+- Removed row-level `content-visibility: auto` paint skipping from the nested task-table scroller, preventing unpainted regions that appeared only after scrolling while retaining incremental row rendering, HUDs, and overlays.
+- Task State Engine, recurrence, Calendar/History authority, reward idempotency, Complete semantics, Home, and Health behavior are otherwise unchanged.
+
+
+### 7.6.21 Pre-engine product-work recovery
+
+- Recovered the missing Home To-do presentation and interaction slice: wrapped titles, canonical active-status controls, shared editor opening without page navigation, Pinned and Routine search terms, hierarchy-sorted multi-add search, direct Top/Bottom ordering, drag ordering, and a ten-task visible limit with collapsed Do later items. Home continues to store canonical Task IDs only and receives Task State Engine-projected display rows; status actions resolve back to the canonical current Task before mutation.
+- Recovered Health Food category grouping, per-meal-slot and selected-day calorie totals, frequency-aware favorite sorting, metadata-preserving favorite toggles, and calorie/macro goal-progress bars. Unfavoriting now updates only `is_favorite` and retains the complete custom-food row locally and remotely.
+- Recovered one app-root, page-independent Edit Task overlay and the Table/child-task routing guards that direct existing-task opens through it. The overlay uses current task rows, guarded mutations, Task State Engine-projected display status, and the current shared editor APIs.
+- Recovered semantic inverted fill colors for the selected Task History status action. Focused source and pure-helper tests cover every recovered behavior.
+- Skipped the checkpoint's status authority, recurrence replay/reconciliation, active-status derivation, History mutation logic, rollover coordinator and SQL, editor-save overdue reconciliation, reward finalization logic, and Calendar semantics. Those checkpoint paths are obsolete under the current Task State Engine and were not restored. Existing current reward-idempotency, recurring-date-repair, read/action/Calendar/rollover, and persistence authorities remain unchanged.
+- Also skipped checkpoint changes that were already present in current architecture: structured Health category/serving fields and the Task State Engine active-status projection itself. No checkpoint commit was cherry-picked or merged.
+
+
+### 7.6.20 Exact twice-advanced cursor correction
+
+- The live 7.6.19 preview found 23 eligible rows and three skipped weekly Monday rows whose cursors had advanced twice from `2026-08-03` to `2026-08-17`: FedEx Remittance (`058390ab-cc42-49ec-a458-8da05773732b`, revision 71), FedEx PDF (`8b50fb4b-a634-4c15-afb3-70307ebc528a`, revision 67), and UPS Import PDFs (`d5d2d1ba-94f1-47d3-a7af-11fd3f208db1`, revision 67).
+- [patch_task_state_forward_reset_7_6_19.sql](../../../supabase/patch_task_state_forward_reset_7_6_19.sql) and its [preview-only form](../../../supabase/preview_task_state_forward_reset_7_6_19.sql) now use exact per-row live dates, revisions, recurrence snapshots, and transition counts. Only those three exact IDs permit two configured transitions; the remaining 23 retain a one-transition expectation. Arbitrary multi-transition gaps still fail closed.
+- The guarded update remains limited to `due_on`, `revision`, and `updated_at`, with active-lifecycle, corrected-boundary, exact recurrence, identity, and optimistic-concurrency checks. History, rewards, streaks, status, recurrence, Complete, Archive, and Trash remain untouched. The 7.6.19 runtime future-cursor fix is unchanged, and no live SQL was executed for this correction.
+
+
+### 7.6.19 Future recurrence-cursor protection
+
+- The 7.6.13 unkeyed-History guard incorrectly required stored status to equal the status freshly derived from a persisted future `due_on`. After the successful 28-row forward reset, valid near-future cursors derived as `upcoming` while some rows still stored `not_due`; rollover therefore replayed older unkeyed successful History and re-advanced 26 cursors. The live correction preview later confirmed 23 one-transition rows and three twice-advanced weekly Monday rows. The two interval-monthly cursors stayed correct because they continued to derive `not_due`.
+- Fixed weekly/monthly recurrence now protects a schedule-valid future persisted cursor from any older unkeyed successful History using recurrence validity and date ordering only. Stored or derived `upcoming`/`not_due` is presentation state and is not written merely to satisfy the guard. Explicit occurrence identity can still consume its named current or future occurrence exactly once; new explicit early completion, equal-date reconciliation, overdue semantics, rolling recurrence, and repeated-rollover idempotency remain unchanged.
+- [patch_task_state_forward_reset_7_6_19.sql](../../../supabase/patch_task_state_forward_reset_7_6_19.sql) corrects the exact 26 re-advanced live rows. Every row carries its exact post-rollover `due_on`, latest revision, corrected 7.6.18 boundary, complete recurrence snapshot, and permitted transition count. The transaction-local preview, separate guarded update, and post-update verification fail closed unless the task remains active, unique, unchanged in recurrence, at its exact guarded transition count, and still at the live date/revision. Only `due_on`, `revision`, and `updated_at` are assigned.
+- [preview_task_state_forward_reset_7_6_19.sql](../../../supabase/preview_task_state_forward_reset_7_6_19.sql) is the standalone preview-only form and always rolls back. After correction the 26 rows classify unchanged, eligibility is zero, and a correction rerun updates zero rows. Neither file touches History, rewards, streaks, status, recurrence, Complete, Archive, or Trash, and neither interval-monthly task is in the correction scope.
+
+
+### 7.6.18 Forward-only recurrence reset
+
+- [patch_task_state_forward_reset_7_6_18.sql](../../../supabase/patch_task_state_forward_reset_7_6_18.sql) resets only `due_on` plus required revision/update metadata for the exact 28 affected recurring Task IDs. It resolves each user's current logical date from the stored timezone and rollover setting, defaulting to America/New_York and 06:00, then selects the first valid weekly or monthly occurrence on or after that boundary.
+- Explicit successful History occurrence identity is consulted only to skip a current or future occurrence that was already consumed early. Done, Did My Best, and Complete identities count as successful consumption; historical Missed gaps, delayed outcomes, and unkeyed History do not participate in the forward boundary.
+- The transaction-local preview snapshot is the sole input to a separate guarded optimistic-concurrency update and a post-update verification query. Each affected ID carries its exact live-preview corrupted `due_on` value (including the seven `2026-10-01` rows and 21 corrupted 2027 rows); unique scope, active lifecycle, recurrence snapshot, revision/timestamp snapshot, recurrence validity, and forward-boundary guards all fail closed. A successful rerun classifies repaired rows as unchanged and updates zero rows.
+- This is deliberately a forward-only correction. Existing History, Calendar outcomes, rewards, streaks, status, recurrence configuration, completion state, Archive, Trash, and unrelated Task fields remain untouched; old History is not reconstructed or repaired.
+
+
+### 7.6.17 High-confidence recurring-date repair dry run
+
+- [diagnostic_task_state_date_repair_7_6_17.sql](../../../supabase/diagnostic_task_state_date_repair_7_6_17.sql) is a read-only database dry run for the 11 high-confidence weekly repair candidates identified by the 7.6.16 report. It returns current row evidence, exact corrupted-date and recurrence checks, proposed occurrence validity, lifecycle and expected-ID uniqueness guards, a fail-closed repair-safety result, and summary counts.
+- The diagnostic uses only CTEs and one `SELECT`. It performs no repair, calls no mutation or rollover RPC, writes no Task or History data, and does not create persistent or temporary objects. Any missing row, changed date, recurrence mismatch, invalid proposed occurrence, inactive task, or duplicate expected ID is unsafe; no replacement is inferred.
+- When validated consumption leaves no later History to replay, `proposalBasis` now names the replay seed and excluded consumed-occurrence boundary without claiming replay through an earlier row. Proposal inference is unchanged.
+
+
+### 7.6.16 Single-consumption repair-report replay
+
+- The development-only recurring-date repair report now seeds fixed recurrence replay at the first unresolved occurrence strictly after the latest validated consumed occurrence. Successful History at or before that occurrence-identity boundary is not replayed, preventing the same Done or Did My Best outcome from advancing recurrence twice. Early completion uses the explicit consumed occurrence rather than its action date.
+- Bounded JSON evidence now identifies the replay seed and the first and last actually replayed History rows alongside the consumed occurrence and proposed next unresolved occurrence. `derived-missed:YYYY-MM-DD` remains non-success History evidence and is not rejected merely for using the generated-Missed key shape.
+- Weekly, monthly, ordinal-monthly, and multiple-weekday cadence still comes from the shared recurrence helpers. Missed and Delayed preserve engine semantics, Complete terminates recurrence, and ambiguous, malformed, contradictory, or off-schedule evidence still returns no proposal. The report remains deterministic, development-only, read-only, and disconnected from Supabase, task/History mutation, repair SQL, rollover RPCs, rewards, lifecycle actions, and proposal acceptance.
+
+
+### 7.6.15 Corrected read-only recurring-date repair inference
+
+- The exact 28-task scope now contains the original `723be9b2-64c0-43a9-b49a-5b7f648f57ea` ID and has an exact-set uniqueness contract test.
+- Both approved occurrence-key shapes (`occurrence:YYYY-MM-DD` and the engine task-scoped identity) are parsed. `occurrence_due_on` is authoritative for early/late completion only when it agrees with any key and is valid for the configured weekly or monthly cadence. Sequential legitimate occurrences are ordinary recurring History, not conflicts.
+- The proposal replays all supported History outcomes through the Task State Engine from the earliest validated fixed occurrence. Successful outcomes consume occurrences, Missed and replayable Delayed History preserve the unresolved occurrence, and Complete terminates recurrence. The report exposes bounded validated/rejected evidence and proposal basis without adding private task content.
+- The diagnostic remains development-only and review-only. Ambiguous, malformed, contradictory, or off-schedule evidence returns no proposal, and no Supabase, mutation, reward, lifecycle, rollover, SQL-generation, or auto-accept path was added.
+
+
+### 7.6.14 Read-only recurring-date repair report
+
+- Development builds expose `window.__ADHDICE_RECURRING_DATE_REPAIR_REPORT__` for the exact 28 fixed-recurring task IDs affected by the earlier browser-diagnosis advancement. The stable JSON-serializable report uses only already-loaded Task and History arrays and includes recurrence configuration, persisted `due_on`, successful and recent History evidence, inferred consumed occurrence, proposed next date, confidence, reasoning, ambiguity, and summary counts.
+- `window.__ADHDICE_BUILD_RECURRING_DATE_REPAIR_REPORT__()` regenerates the report from the latest hydrated snapshot. Explicit History occurrence identity has precedence, followed by on-schedule successful History, persisted live-occurrence state, a schedule-valid future `due_on`, and conservative recent-History inference. Fixed next dates and rolling/custom intervals use the Task State Engine recurrence helpers rather than a second recurrence implementation.
+- The diagnostic is review-only. It performs no Supabase query or update, Task/History mutation, reward award, lifecycle action, rollover RPC, SQL generation, or automatic acceptance of a proposed date. Conflicting or insufficient evidence produces no proposal.
+
+
+### 7.6.13 Finished rollover idempotency
+
+- Runtime evidence identified 28 remaining `dueOn`-only patches. Every row had an already-advanced fixed weekly or monthly due date, but the engine replayed older successful History—without usable occurrence identity—against that persisted cursor and advanced it again. Identified occurrences earlier than persisted `due_on` are recognized as consumed. The original matching-status check for legacy unkeyed rows was superseded in 7.6.19 by schedule-valid future-cursor evidence because stored `upcoming`/`not_due` may be stale. Equality and overdue edits remain actionable so same-day task edits can still reconcile.
+- Persistence comparison normalizes dates, null/empty/omitted values, derived `unscheduled` as stored `pending`, and timestamps at PostgreSQL microsecond precision. The bounded development rollover diagnostic exposes at most 50 sanitized task ID/key/canonical-value summaries and no task content.
+- [patch_task_state_engine_rollover_7_6_13.sql](../../../supabase/patch_task_state_engine_rollover_7_6_13.sql) parses trimmed JSON values once into typed SQL targets and retains per-field `IS DISTINCT FROM` guards. Effective no-ops cannot update `revision` or `updated_at`. A zero-commit run still requests no Task/History reconciliation, while completed same-day runs remain eligible for later edited tasks.
+
+
+### 7.6.12 Idempotent engine rollover persistence
+
+- The persistence projection canonicalizes stored and proposed status, date, timestamp, and nullable cleanup values before building the RPC payload. Persisted `pending` is equivalent to derived `unscheduled`; omitted fields remain omitted; and already-null active-status, occurrence, due-date, and completion cleanup fields are not emitted again.
+- [patch_task_state_engine_rollover_7_6_12.sql](../../../supabase/patch_task_state_engine_rollover_7_6_12.sql) adds a second no-op boundary. Every supported patch field is normalized and guarded with `IS DISTINCT FROM`, so an effective no-op cannot update `updated_at`, bump `revision`, or contribute to `changed_task_count`. Stale revisions and Archive/Trash exclusions remain unchanged.
+- A final Achievement evaluation runs only when the RPC actually inserts History. A zero-commit engine response queues no rewards and requests no targeted Task/History reconciliation.
+- Idempotency contract: After successful persistence and reload, reevaluating the same task state for the same logical date must produce no database writes.
+
+
+### 7.6.11 Deferred Achievement evaluation during engine rollover
+
+- [patch_task_state_engine_rollover_7_6_11.sql](../../../supabase/patch_task_state_engine_rollover_7_6_11.sql) replaces the 7.6.10 engine RPC implementation. It sets the transaction-local `adhdice.achievement_deferred_user_id` marker immediately before the set-based History insert, so the installed row trigger still captures every occurrence and refreshes each Step set but does not run a full achievement evaluation for every History row.
+- After the bulk History insert and supported task update, the RPC clears that marker and runs one deterministic engine-rollover achievement evaluation for the user/logical date. Only `completed` and `inactive` results are accepted; any other result raises, rolling back History, task updates, and diagnostics-visible committed counts together. The marker is transaction-local and cleared before return.
+
+
+### 7.6.10 Rollover RPC timeout hotfix
+
+- [patch_task_state_engine_rollover_7_6_10.sql](../../../supabase/patch_task_state_engine_rollover_7_6_10.sql) replaces the installed 7.6.9 RPC implementation without changing Task State Engine semantics. It stages the JSON plan once with `jsonb_to_recordset`, validates supported task/History values before enum casts, locks revision-matching non-Archive/non-Trash task rows as one set, rejects contradictory explicit History as a set, bulk inserts History under the existing `(user_id, task_id, entry_date)` identity, and bulk updates supported changed task fields only. The per-task lock/select, per-History conflict scan, and per-History insert loops that timed out on the approximately 900-task payload are removed.
+- The advisory transaction lock, expected revision safety, explicit-History precedence, atomic rollback, engine/legacy mutual exclusion, empty-plan RPC skip, `unscheduled` to stored `pending` mapping, stale unscheduled In Progress Did My Best behavior, frozen overdue due date, Missed deduplication, fixed/rolling recurrence behavior, and trigger ownership remain unchanged. Archive/Trash and unsupported metadata cannot be mutated through this boundary.
+- Development rollover diagnostics now distinguish planned task patches/History/rewards from committed task patches/History/rewards and RPC deduplications. A failed RPC reports every committed count as zero; only returned bulk row counts are described as committed/inserted.
+
+
+### 7.6.9 Unscheduled persistence hotfix
+
+- `unscheduled` remains an engine-derived active/read status only. The persistence projection drops it, so dormant tasks retain the supported stored `pending` status; a stored `pending` row therefore needs no task-status write when its engine result is Unscheduled.
+- A stale dormant In Progress rollover still writes its single Did My Best History outcome, clears its active tracking fields, and projects its task row back to stored `pending`. The shared read authority immediately derives and displays Unscheduled from that persisted row.
+- Install [patch_task_state_engine_rollover_7_6_9.sql](../../../supabase/patch_task_state_engine_rollover_7_6_9.sql) after 7.6.7. It defensively normalizes `unscheduled` to `pending` and rejects other unsupported JSON statuses before enum casts; it does not alter the enum or schema.
+
+### 7.6.8 Rollover trigger activation
+
+- The engine coordinator waits for the authenticated Task-ready state and task History readiness signal before its first authoritative run. An empty pre-load render does not reserve the logical day or suppress the loaded-data reconciliation.
+- Authenticated load, the 60-second timer, a genuine hidden-to-visible transition, and persisted BFCache `pageshow` read the same current Task/History ref. Completed no-op runs release the coordinator slot; overlapping triggers remain single-flight and database idempotency remains the persistence guard.
+- Each owned invocation updates `window.__ADHDICE_TASK_STATE_ROLLOVER_DIAGNOSTICS__`, including no-op plans, with authority, source, logical date, evaluated tasks, patch/history/reward counts, deduplication count, execution time, and error summary. Empty plans still perform no RPC or workspace refresh.
+
+
+### 7.6.7 Engine rollover authority
+
+- `TASK_STATE_ENGINE_INTEGRATION_ENABLED` now selects the Task State Engine rollover planner. Authenticated load, the 60-second safety timer, visibility return, and BFCache restore all route through one coordinator; engine and legacy rollover never run in the same invocation.
+- The engine uses loaded Task/History data, profile timezone, and `day_start_time` (default `06:00`) to create a deterministic supported-only plan. Empty plans do not issue writes or workspace refreshes. The manual atomic RPC patch is [patch_task_state_engine_rollover_7_6_7.sql](../../../supabase/patch_task_state_engine_rollover_7_6_7.sql); install it before production use. Until then, a missing engine RPC falls back to the installed legacy RPC.
+- Browser, multi-tab/device, BFCache, custom-timezone/DST, installed-SQL, and reward-bank QA remain required before claiming live rollout stabilization.
+
+
+### 7.6.6 Calendar and action integration
+
+- `TASK_STATE_ENGINE_INTEGRATION_ENABLED` is the single default-on compatibility owner for active-status reads, Task History Calendar state, and supported user action evaluation. Disabling it preserves the legacy Calendar and action paths; it is not user-facing. Development continues to expose `engine` or `legacy` at `window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__`.
+- Task History Calendar resolves explicit History before virtual states and uses the engine for Open, future Due/Upcoming/Not Due, delayed spans, Missed, Done, Did My Best, Complete, legends, and action availability. Calendar UI does not reimplement recurrence/status rules.
+- Done, Did My Best, Missed, Delay, and Complete evaluate through the engine before using the existing guarded task mutation, History upsert, confirmation, reward, and hierarchy infrastructure. Supported task values only are written; occurrence identity remains on existing History fields. Delay anchors to the logical action day, and legacy rollover/RPC/SQL/visibility reconciliation remains unchanged for 7.6.7.
+
+
+### 7.6.5 Active-status read integration
+
+- The Task State Engine is now the shared read authority for active task status only. A single hydrated projection feeds Table View, List View, Home task displays, Edit Task status display, active-status filters, buckets, and overdue collections. Development exposes the producing authority at `window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__`.
+- `TASK_STATE_ENGINE_ACTIVE_STATUS_READ_ENABLED` is the centralized default-on compatibility switch. Its legacy fallback returns the existing History-aware display status without touching mutations or persistence.
+- Calendar rendering, task-action writes, rewards, rollover RPCs, SQL, History persistence, and recurrence persistence remain legacy behavior. Engine proposals are not connected to writes. The persistence projection explicitly excludes unsupported `recurrenceCursor` and `satisfiedOccurrenceIdentity` metadata.
+
+
+### 7.6.4 Shadow Accuracy and Performance
+
+- Rolling Daily, Daily Until Complete, and Every X Days Calendar comparisons now treat future legacy `Due` cells as representation differences when they require a future success or continuous-overdue resolution. Fixed weekly/monthly occurrences remain defect candidates.
+- Equivalent short and task-prefixed occurrence identities compare by task and date. Missing task-level recurrence cursor/identity metadata is an adapter limitation only when it is the sole patch difference; actual status and due-date differences remain visible.
+- Approved active-status corrections are limited to supported Pending/Missed/future/Delay transitions. Missed-to-Pending, Missed-to-Upcoming, In Progress-to-Unscheduled, Done-to-Missed, explicit current-day History disagreement, and genuine fixed Calendar mismatches remain possible defects.
+- Calendar defect records now retain a date count, first/last dates, bounded samples, and a normalized pattern rather than repeated per-date value maps; full Calendar defect detail is opt-in. Summary/export helpers remain read-only and do not rerun the engine.
+
+
+### 7.6.3 Actionable Shadow Diagnostics
+
+- Possible engine defects are now exposed as deduplicated task/semantic-group records containing affected fields, paired current/engine values, classification reasons, relevant adapter diagnostics, the allowlisted sanitized task patch, and bounded proposed-History summaries. Normalized pattern summaries deduplicate repeated Calendar dates and provide affected-task/task-type counts plus five-item samples.
+- Skip accounting now headlines excluded lifecycle tasks, fully skipped unsupported tasks, and evaluated tasks with adapter limitations separately. Reason summaries include lifecycle and task-type counts plus bounded samples; lifecycle/task-type pairs remain separately countable.
+- Every semantic-group summary preserves raw comparison/classification counts and reports distinct evaluated, differing, possible-defect, approved-difference, representation-only, and adapter-limited task counts. Matches no longer inflate the differing-task total.
+- Development builds expose `window.__ADHDICE_SUMMARIZE_TASK_STATE_SHADOW__()` and `window.__ADHDICE_EXPORT_TASK_STATE_SHADOW__()` over the latest stored report. Both are read-only and never rerun the engine; summaries support bounded samples, optional titles, semantic-group filters, and task-type filters. JSON export omits titles unless explicitly requested and contains no notes, links, or unrelated task fields.
+- Shadow execution remains manual, deterministic, bounded, and disconnected from Supabase, SQL, RPCs, persistence, rewards, production mutations, Archive, and Trash. No engine semantics changed in this reporting-only slice.
+
+
+### 7.6.2 Shadow Comparator Corrections
+
+- Calendar comparison now uses explicit date relation, actual scheduled-occurrence membership, explicit History presence, sparse engine-cell presence, and Unscheduled task facts. Sparse `Not Due`/`No Entry` differences are representation-only; explicit-History disagreements and missing genuinely scheduled states remain visible as possible defects.
+- Reports now separate matches, approved semantic differences, representation-only differences, adapter limitations/warnings, unsupported legacy data, legacy-data anomalies, and possible engine defects. Task-level and semantic-group summaries cover active status, current-day Calendar, overdue classification, recurrence, proposed History, proposed patches, sparse Calendar representation, adapter warnings, and unsupported data. The headline possible-defect total counts task/group combinations rather than every date cell.
+- Approved rules are narrow: due-less/non-recurring legacy Pending becomes Unscheduled; current scheduled Due becomes Open; unresolved overdue scheduled work stays actively Missed while today is Open; prior unresolved logical days become Missed; and future scheduled Due becomes Scheduled. Completely dormant Unscheduled tasks retain today's existing specified/tested virtual Open behavior; whether that should eventually become No Entry remains unresolved product semantics.
+- Each task report now includes full sanitized proposed patch values. The patch allowlist is unchanged and still cannot express Archive, Trash, deletion, content, or placement changes.
+- Database/task-model diagnosis found no persisted task-level `recurrence_cursor` or `satisfied_occurrence_identity`. `active_occurrence_due_on` is not equivalent, and History `occurrence_key` is outcome-level identity. The adapter classifies the missing task-level values as unsupported metadata. Optional current metadata inputs make engine patch generation idempotent when a caller can supply matching values; no SQL, schema, query, write, or persistence path was added.
+- Shadow mode remains development-only, manually invoked, deterministic, read-only, bounded, and disconnected from production task status, Calendar UI, Supabase, rollover RPCs, History/reward persistence, Realtime, Archive, and Trash behavior. The next recommended integration step is a targeted read-only browser shadow run and review of task/group-level possible defects before any production caller is authorized.
+
+
+### 7.6.1 Read-only Task State Engine Shadow Mode
+
+- Adds a pure legacy Task/History adapter and comparison report over already-hydrated in-memory arrays. Development builds expose only the manual `window.__ADHDICE_RUN_TASK_STATE_SHADOW__()` console command; it does not execute automatically.
+- Compares production read derivations with engine active/Calendar state, handled and outcome facts, continuous overdue, recurrence/occurrence facts, bounded History proposals, patch keys, streak disposition, and reward eligibility. Differences are classified rather than assumed to be defects.
+- Enforces the 7.6.0 task-patch allowlist, reports unsafe fields, and forbids any patch for explicitly inspected Archived or Trashed tasks. No Supabase query/write, subscription, mutation hook, History/reward persistence, rollover RPC, SQL, or production UI/behavior is connected.
+- Focused adapter, shadow, safety, runtime-bridge, scenario, and large-range tests cover the June 1–July 30 and one-year in-memory windows. Full lint, typecheck, build, browser automation, broad suites, and live database tests are intentionally outside this slice.
+
+
+### 7.6.0 Pure Task State Engine Foundation
+- Adds an isolated, deterministic, database-free Task State Engine and focused contract tests. The engine models lifecycle, active status, logical-day Calendar state, History provenance and proposals, recurrence anchors and occurrence identity, continuous overdue, restricted task patches, streak disposition, and reward eligibility. It is not connected to production task mutation, Calendar, Supabase, rollover SQL, rewards, smart-list, Focus, Home, or Health paths.
+
+
+## 7.5.x and Earlier Release History
+
+### 7.5.39 Home To-Do Reconstruction and Health Food/Weight Improvements
+
+- Home now contains one numbered, user-scoped to-do list built from canonical Task, Step, and Substep references. It supports search, removal, arrow movement, drag reordering, local fallback, and cross-device Supabase synchronization without copying Task data.
+- Health Food history uses one calendar selection for Meals and Daily Totals, shows each meal’s logged time after calories, and starts public food/barcode search collapsed.
+- Custom foods now support category, descriptive serving size, and measured serving weight in grams, ounces, or fluid ounces while retaining the legacy serving-label snapshot used by meals and recipes.
+- Target-weight editing removes unit-conversion noise after refresh. Health Settings derives a 30-day trend forecast when at least three weigh-ins span seven days and the trend moves toward the target.
+- Forward migrations are `supabase/add_home_todo_state_7_5_39.sql` and `supabase/add_health_food_category_servings_7_5_39.sql`; neither was applied remotely by Codex.
+- Verification passed 61 focused Home, Health, On-Time, migration, and Trophy integration tests; targeted new/touched-file ESLint; the text-button audit with no new Home/Health findings; the production build; and `git diff --check`. Repository-wide lint and typecheck were also run and remain red on established baseline debt; no task-local typecheck finding remained.
+
+
+### 7.5.38 Health Meal Action Layout and Task Table Layout Persistence
+
+- Today’s Meals keeps Edit, Favorite, and Remove in a fixed right-side action group while long food names wrap within the remaining row width.
+- An empty task-table layout no longer puts the Table View into a stale remote-apply state that suppresses the first column reorder. Legacy saved layouts with an omitted sort state also compare correctly to the explicit unsorted state, so they finish applying instead of blocking future saves.
+- Verification ran the focused table-layout contract test and `git diff --check`; no full lint, build, typecheck, or broad test suite was run.
+
+
+### 7.5.37 Task Table Layout and Missed Recurring Resolution
+
+- Table View now treats the user-scoped/cloud task-table layout state as authoritative for column order and sort, so a blank/default local mount no longer immediately republishes a generic fallback order that can overwrite another profile or device.
+- Recurring tasks resolved from an overdue missed occurrence now restart their next due date from the day they were actually marked `Done` or `Did My Best` instead of continuing from the older missed anchor. On Tuesday, July 28, 2026, a task that was due on Monday and finally completed on July 28 now starts its repeat interval from July 28.
+- Explicit status updates that mark recurring tasks `Done` or `Did My Best` now still force recurrence finalization even if the raw row was already carrying a finished status, preventing stuck rows from staying `Done` with yesterday's due date after the completion is saved.
+
+
+### 7.5.36 Health Meal Totals Correction
+
+- Today’s Meals now shows per-slot calorie totals, correcting the prior carb-total interpretation.
+- Logged meal rows keep their existing calorie display without the extra carb-total suffix.
+- Verification for this patch ran `npm run lint -- src/components/task-app/health-page.tsx`, `npm run typecheck`, and `git diff --check`.
+
+
+### 7.5.35 Health Food Labels and Sleep Goal Inputs
+
+- Health Food panels now collapse to the header cleanly without leaving the old extra closed-state padding behind.
+- Today’s Meals, Favorites, and Recent foods now render brand-first labels so branded entries read consistently across the Food tab.
+- Health settings now edit the sleep target as separate hours and minutes inputs while continuing to save the canonical `sleep_goal_minutes` value.
+- Verification for this patch ran `npm run lint -- src/components/task-app/health-page.tsx`, `npm run typecheck`, and `git diff --check`.
+
+
+### 7.5.34 Focus Realtime Channel Re-entry Hotfix
+
+- `useFocus.ts` now tears down prior Focus runtime and Focus counter Supabase realtime channels before re-subscribing, preventing duplicate effect re-entry from calling `.on("postgres_changes", ...)` on a channel that has already been subscribed.
+- This fixes the Focus runtime crash `cannot add postgres_changes callbacks ... after subscribe()` seen during Fast Refresh, Strict Mode effect replay, or rapid auth/runtime re-entry.
+- Verification for this patch ran `npm run lint -- src/hooks/useFocus.ts src/components/task-app.tsx`, `npm run typecheck`, and `git diff --check`.
+
+
+### 7.5.33 Health Page Simplification
+
+- Health now uses the `Health, Diet, Fitness` page label, removes the global summary and the prior Today dashboard sections, keeps Awards as an under-construction tab, and makes Health sections collapsible.
+- Food logging now uses a meal slot, custom-food search/selection, amount, and Log action. Today’s meals are grouped under Breakfast, Lunch, Dinner, and Snack while retaining inline editing.
+- Custom foods no longer become favorites automatically. The nutrition library is creation-only, recipe ingredient selection is searchable with brand-first food chips, and explicit favorites remain available for quick reuse.
+- Health settings now store Move goals for calories and minutes. Target weight keeps the user’s display-unit text while editing and converts to kilograms only when saved.
+- Apply `supabase/add_health_food_favorites_and_move_goals_7_5_33.sql` before expecting the favorite flag and Move calorie/time goals to persist remotely. No live SQL was applied by Codex.
+- Per user instruction, lint, tests, typecheck, build, browser QA, and live database verification were not run. Verification was limited to source inspection and `git diff --check`.
+
+
+### 7.5.32 Focus Category UUID Persistence
+
+- New Focus categories now convert any temporary client-only category id into a raw UUID before the category enters shared Focus state, local storage, Supabase category upserts, or Focus timer runtime writes.
+- This keeps the existing Focus category editor behavior intact while preventing prefixed UI identifiers from being written into Postgres UUID columns during timer create/update flows.
+
+
+### 7.5.31 Recurring Same-Day Status Preference
+
+- Recurring task rows now prefer a same-day saved history status over an older overdue missed anchor when deriving the visible active status. This prevents tasks like Drink Water and Take Electrolyte Pack from still rendering as `Missed` immediately after they are marked Done or Did My Best today while the recurrence cursor is still catching up.
+
+
+### 7.5.30 Health Sleep Totals
+
+- Health now has a dedicated Sleep tab that combines Apple Health `sleep_minutes` imports with Sleep Focus timer sessions, shows 7-day source totals, and lists recent Sleep Focus history inside Health.
+- The Health summary ring and 7-day rhythm Sleep pill now use the combined Health Sleep total. The Start Sleep Clock action opens the existing Focus timer for the first Sleep category so timer persistence stays on the canonical Focus session path.
+
+
+### 7.5.29 Health Summary Ring Text Alignment
+
+- Health Summary percentage labels now render as smaller, absolutely centered overlays inside their progress rings instead of using a negative margin after the SVG.
+
+
+### 7.5.28 Health Meal Entry Editing
+
+- Today’s Meals rows now include an Edit chip. The inline editor can correct amount, date, logged time, meal slot, serving, calories, protein, carbs, and fat through the shared Health meal update path.
+- Meal amount editing reuses the `xN / serving` label convention from meal logging: existing `x3` rows open as amount `3`, per-serving nutrition is shown for correction, and saved rows write multiplied totals back to the meal entry.
+- Health section icons are reduced from the oversized badge replacement to a smaller shared header icon size.
+
+
+### 7.5.27 Health Food Quantity and Header Cleanup
+
+- Food logging now includes an Amount field for single-food multipliers. Saving a meal scales calories/macros by the amount and writes the multiplier into the serving label, so logged rows can show values like `x3 / 1 Stick / 180 kcal` without a schema change.
+- Health section header icons now render at the former badge size without the purple circular badge. The Food tab removes the extra card titles for Meal logging, Daily totals, Favorites, Recent foods, and Health settings while keeping the existing section labels and actions.
+
+
+### 7.5.26 Health Custom Food Library Search Correction
+
+- Custom Nutrition Library food search now filters only saved custom/library foods already in the Foods section. It no longer searches public food databases from that panel; the right-side food card list shows the current local search result set.
+
+
+### 7.5.25 Health Food Library Identity and Search
+
+- Custom nutrition Foods now include food search inside the library panel, letting searched provider foods save directly into the reusable food library.
+- Favorite/custom food saves dedupe by a shared stable food identity from provider ids, barcode, or exact manual nutrition details. Today’s Meals uses a heart-only favorite chip that fills red when that food is already saved, and blank custom-food drafts continue to create new library rows instead of reusing the last edited id.
+
+
+### 7.5.24 Health Water History and Summary Polish
+
+- Health removes the large Daily Ledger banner and keeps its percentage rings in a compact Summary section with the existing sync status.
+- Water entries now expose an Edit chip for amount, unit, date, and time corrections through the shared Health water persistence path. The Water tab also adds recent prior-day water history and tightens the one-tap add-water chip icon spacing.
+
+
+### 7.5.23 Health Migration Rollback Correction
+
+- The 7.5.22 Health forward migration no longer attempts conditional `ALTER PUBLICATION` statements inside a `DO` function. The Health hook does not use realtime subscriptions for recipes, saved meals, or water, and the hosted PostgreSQL restriction caused the transaction to roll back before any of the three tables became available through PostgREST.
+- `supabase/add_health_food_library_recipes_water_7_5_22.sql` now creates the owner-scoped tables and policies, installs the existing update triggers, explicitly notifies PostgREST to reload its schema, and commits without the unnecessary realtime mutation. A read-only REST probe confirmed all original Health tables were visible while exactly the three new tables were absent before this correction. The corrected migration still requires manual reapplication; no live SQL was applied by Codex.
+
+
+### 7.5.22 Health Custom Nutrition Library and Water
+
+- Health Food now includes a reusable custom nutrition library with distinct Foods, Recipes, and Meals surfaces. Custom foods store nutrition per serving; recipes combine food servings and calculate per-serving totals from a batch yield; custom meals combine foods and recipe servings with a default meal slot. Logging any library item writes an immutable aggregate snapshot through the existing meal-entry path, so later edits do not rewrite prior daily totals.
+- Health adds a Water tab with one-tap cup and US fluid-ounce amounts, custom entry in either unit, same-day totals shown in both units, and removable timestamped entries. Water persists locally with the rest of the Health snapshot and remotely through the owner-scoped `adhdice_health_water_entries` table.
+- The forward database migration is `supabase/add_health_food_library_recipes_water_7_5_22.sql`. It adds owner-scoped recipe, saved-meal, and water tables with RLS, indexes, update triggers, and an explicit PostgREST schema reload; `supabase/schema.sql` and `src/lib/database.types.ts` mirror the contract. The migration has not been successfully applied to a live database.
+- Verification passed 11 focused Health nutrition/library/hydration and schema-parity tests, targeted ESLint for the new modules and pure Health contracts, the text-button audit with no new Health findings, and `git diff --check`. Repository-wide lint and typecheck were run and remain red on established unrelated debt plus pre-existing Health effect/nullability findings; no new library or water module finding appeared. Browser/mobile QA, build, and live Supabase verification were not run.
+
+
+### 7.5.10 Trash Permanent-Delete Cascade Reconciliation
+
+- Successful permanent deletion now removes the selected Task and its full Step/Substep descendant closure from local task and routing state immediately, matching the database `ON DELETE CASCADE` result. Large Trash batches no longer expose temporarily cached descendants as top-level rows in All while Realtime reconciliation catches up.
+
+
+### 7.5.9 List View Recently Added Sort
+
+- List View adds **Recently Added** to its existing persisted sort-field menu. It uses the canonical Task `created_at` timestamp, with descending ordering newest Tasks first and ascending ordering oldest Tasks first.
+- Sorting continues to reorder only the filtered parent projection, so Steps and Substeps remain attached to their parent in stored sibling order. Table View sort options and behavior are unchanged.
+
+
+### 7.5.8 Completed Steps QA
+
+- Completed Step grouping resolves every Substep through its explicit owning direct Step, keeping active-Step children visible and completed Step branches intact without duplication or hoisting.
+- The default-collapsed Completed Steps label/count and chevron use the same centered control structure as the existing Steps toggle in Table, List, and the shared editor.
+
+
+### 7.5.6 Completed Steps Grouping
+
+- Table View, List View, and the shared Edit Task UI use one tree-aware child preview grouping. Direct Steps whose stored status is exactly `complete` move with their full Substep branch into a default-collapsed `Completed Steps (n)` section.
+- Done, Did My Best, Missed, and active direct Steps remain in the normal Steps section. Substeps retain their owning Step, hierarchy order, existing renderers, metadata, and actions regardless of their own status.
+
+
+### 7.5.5 PATHS Task Chip Discovery
+
+- The blank-canvas picker no longer renders every Task on open. Its initial state is the ordered rail of visible canonical Task List chips; selecting a list reveals its eligible top-level Tasks, while typing a search reveals only matching Task Chips and can be combined with a selected list.
+- Canvas Task Chip candidates remain canonical, exclude Trash/Archive ancestry, and now exclude Step/Substep rows because those render only as attached Step Chips and Substep Chips beneath their parent Task Chip.
+- Current PATHS language is: **PATHS Node** for the large original rectangle, **Task Chip** for the approved compact canonical Task, **Step Chip / Substep Chip** for attached hierarchy, and **Endpoint** for the destination landmark.
+
+
+### 7.5.4 PATHS Node Long-Press Actions
+
+- Long-pressing an ordinary PATHS chip or canonical Task node now opens the shared PATHS action menu without disrupting drag behavior or accidentally opening the Task editor after the press.
+- Both node kinds expose approved Connect and Delete chips. Delete removes only the node from the map and preserves the canonical Task; ordinary PATHS chips also expose an inline rename input with Enter/Save handling.
+- The compact Path selector uses a smaller chevron so its icon stays within the approved neighboring chip height.
+
+
+### 7.5.3 PATHS Canvas Action Placement
+
+- The canvas zoom controls now stay at the top-right of the map surface.
+- The top Path selector uses the approved task-table chip geometry instead of the larger input-field treatment; inspector dropdown fields retain their existing layout.
+- Clicking blank map space now presents the approved Add chip action beside Task search. Add chip creates an ordinary PATHS chip at the clicked location, while choosing a Task still creates the canonical Task-backed chip there.
+
+
+### 7.5.2 PATHS Canvas Controls and Connection Polish
+
+- Task/Step/Substep status controls now render as standalone status circles connected to their title chips by a short purple line; the existing guarded status menu and production mutation callback are unchanged.
+- The PATHS canvas now has approved zoom-out, percentage-reset, and zoom-in controls from 50% through 150%. Canvas clicks, endpoint placement, and node/endpoint dragging normalize pointer coordinates against the active zoom.
+- Both Task-backed hierarchies and ordinary PATHS rectangles retain their connection hit areas without visible handle dots. The right inspector adds viewport-sized white scroll runway so its lowest section can be raised toward the top of the panel.
+
+
+### 7.5.1 PATHS Task Chip Connection Geometry
+
+- Task-backed PATHS nodes no longer expose the ordinary four visible square-card handles or selection/connection frame. They provide one transparent connection target after the final rendered Task, Step, or Substep chip.
+- PATHS connection geometry now derives the Task hierarchy height and anchors Task-node connections at its bottom edge, preventing path lines and handles from overlapping the connected Step/Substep chips. Ordinary PATHS square chips retain their four visible side handles.
+
+
+### 7.5.0 PATHS Task Chips
+
+- PATHS nodes now carry a backward-compatible `path` / `task` discriminator. Old saves default to ordinary nodes, while Task Nodes persist one canonical Task reference plus existing canvas-owned position, connection, note, and presentation fields through local save/load, duplication, and archive/restore.
+- Clicking blank map space opens an ADHDice task-search panel at that location. Candidates exclude Trash, Archive, and descendants of either; choosing one creates a canonical Task-backed node without copying Task data into PATHS.
+- Task-backed nodes render as approved ADHDice chips instead of PATHS square cards. Step and Substep chips stay visible below their parent with branch lines, each chip remains sourced from live Task hierarchy/status data, and the adjacent status control uses the guarded production status callback.
+- Task, Step, and Substep title chips use the shared two-column editor overlay over the still-mounted PATHS surface. Ordinary PATHS completion remains local and unchanged.
+
+
+### 7.4.28 List Rail diagnostics cleanup
+
+- Removed the temporary development-only List Rail snapshot panel, Copy/Reset controls, pointer/mutation logging, diagnostic DOM snapshots, and callback threading after manual List Rail QA passed. The canonical placement resolver, pointer capture, release tolerance, latching, generation gating, optimistic rollback/conflict refresh, and realtime reconciliation remain unchanged.
+
+
+### 7.4.27 List Rail folder-to-root movement
+
+- A hierarchy-owned drag session now lets a list leave an expanded folder rail and resolve root List halves, root Folder edge/center zones, or the valid root end area without changing its drag generation. All list subtypes use the same production pointer engine and canonical bounded-integer resolver.
+- Root sibling drops persist `null`, Folder-center drops persist the target Folder UUID, and the existing placement mutation supplies the source and destination CAS revisions. Cross-rail optimism removes the source exactly once, preserves expansion and root scroll, restores exact placement on ordinary failure, and defers to authoritative refresh on stale conflict.
+- The commit-ready destination alone controls the root-edge/end insertion line or Folder outline. Cross-rail latches and indicators clear on cancellation, invalid corridor exit, cleanup, mutation completion/failure, and new generations.
+
+
+### 7.4.26 List Rail pointer-release tolerance
+
+- Active List Rail drags now latch the latest actionable sibling or folder-center destination with its generation, target identity/type/bounds, intent, container, and bounded integer destination index.
+- Pointer-up uses the live destination first, then the same-rail latch within a 14px vertical corridor. The insertion line or folder outline is rendered only from that commit-ready destination, while corridor exit, cross-rail entry, cancellation, invalidation, generation replacement, and cleanup clear the active latch.
+
+
+### 7.4.25 Integer-only List Rail reorder correction
+
+- Built-in List defaults and reconciliation manifests now use bounded integers only. The forward `supabase/patch_task_list_rail_integer_order_7_4_25.sql` patch normalizes each saved container to contiguous `0..n-1` positions, mirrors those integers to legacy folder/List columns, preserves locations, and replaces the already-applied 7.4.22 reconciliation and CAS mutation functions. SQL application remains manual.
+- Each drag freezes the rendered structural-key sequence from the active render. One pure resolver result supplies source, target, reduced-target, destination, reconstructed order, invalid reason, and exact-sequence no-op state to optimistic order, same-position blocking, and mutation dispatch.
+
+
+### 7.4.24 Rendered List Rail order correction
+
+- Each rail now snapshots the exact rendered structural-key sequence and uses it for target registration order, candidate discovery, reduced-array destination indexing, same-position comparison, optimistic rendering, and mutation dispatch. The insertion marker anchors to the hovered chip's own DOM edge or folder outline, independent of legacy order metadata, mixed chip widths, or horizontal scroll.
+- Drag and mutation generations isolate async completion so a superseded mutation cannot trigger rollback, refresh, or surface an older database error.
+
+
+### 7.4.23 Integer List Rail destination correction
+
+- Sibling drag placement now removes the source from the ordered structural item-key array, resolves before/after against that reduced array, and sends the resulting bounded integer index directly to the canonical RPC. The same-position guard compares the complete resulting item-key sequence instead of inferring position from stale container metadata.
+- Folder-center moves continue to append at the direct-child count.
+
+
+### 7.4.22 Canonical List Rail placement architecture
+
+- Every visible built-in, smart, hybrid, rule-based, manual List, and folder now derives one stable rail identity and one saved mixed placement. Root and expanded-folder rails read only canonical placement order; list subtype remains membership metadata and never controls drag eligibility.
+- `supabase/add_task_list_rail_placement_7_4_22.sql` extends the 7.4.10 folder schema with owner-scoped placement rows, idempotent manifest reconciliation/backfill, realtime support, bounded-index CAS movement, cycle protection, and transactional legacy location/order mirrors. SQL must be applied manually before browser QA.
+- The shared pointer engine retains click thresholds, pointer capture, native-drag suppression, exclusive list-edge/folder-containment feedback, and rollback/conflict refresh. Folder-center append uses a real direct-child count rather than an integer sentinel.
+
+
+### 7.4.21 Root drag mutation metadata hotfix
+
+- Root structural mutation dispatch now validates `structuralKey`, raw `entityId`, and `entityType` independently, with no obsolete `structuralId` gate. Persisted custom List lookup is keyed by raw UUID across the same root structural item set rendered by the rail.
+- Root sibling moves retain `null` persistence containers and shared root CAS revisions; folder-center moves retain raw folder UUID destinations and their destination-container revisions. Existing RPC, rollback, conflict refresh, and drag feedback behavior is unchanged. Manual UI QA remains pending.
+
+
+### 7.4.20 Root drag mutation and drop feedback correction
+
+- Movable root Lists and folders now carry separate namespaced structural keys and raw persistence entity IDs. Mixed sibling edge reorders dispatch raw IDs through the existing revisioned structural action, while folder-center drops use the raw destination folder ID and destination revision.
+- List targets resolve only to before/after halves. Folder targets use stable 25/50/25 before/inside/after zones with mutually exclusive insertion-line or folder-outline feedback. Manual UI QA remains pending.
+
+
+### 7.4.19 Root structural-item derivation fix
+
+- The primary rail now derives one canonical movable-root collection from root custom Lists and root folders in persisted mixed order. Fixed system/smart chips remain visible but non-structural, while rendering, sibling targeting, and structural mutation use the same root IDs and preserve the `__root__` UI / `null` persistence boundary.
+
+
+### 7.4.17 Root-container drag hotfix
+
+- Root is now normalized to the in-memory `__root__` container key for primary-rail metadata, structural target discovery, and revision lookup, while root RPC payloads remain `null` as required by the existing persistence contract. Fixed chips are excluded without obscuring root lists or folders.
+
+
+### 7.4.16 List Folder rail consolidation and pointer repair
+
+- Fixed/smart/system chips plus mixed-order root folders and root custom Lists now share one compact primary rail. Each open folder depth adds only its direct-child mixed rail, with compact spacing through the filter rail and no separate folder rail, heading, Back control, or breadcrumbs.
+- The visible chip button is the sole pointer hit surface and owns grab/grabbing state, pointer capture, threshold activation, drag-click suppression, cancellation cleanup, sibling-edge reorder, and centered folder drops. Folder overflow chips were removed; all folder management remains in List Settings.
+
+
+### 7.4.15 List Folder rail density hotfix
+
+- Folder, nested List, standalone List, and fixed/smart/system rail chips again use the approved compact chip composition and tighter stacked-row spacing without changing hierarchy, selection, filtering, or structural drag behavior.
+- Folder chips show only the folder icon, name, and numeric contained-List count. Recursive Task, due-today, and overdue totals remain available through accessible labeling.
+
+
+### 7.4.14 List Folder rail hierarchy and browser drag hotfix
+
+- Root folders now occupy the first rail, each open folder depth adds a direct-child content rail, and the fixed/smart plus root standalone List rail stays last. Folder branch toggles remain independent of the selected bucket and Task dataset, with no Back or breadcrumb row.
+- Folder chips show readable recursive List counts while retaining Task, due-today, and overdue totals in accessible text. The rendered chip button now owns pointer handlers and grab/grabbing affordances directly, with click-safe movement thresholds and structural-RPC persistence.
+
+
+### 7.4.13 List Folder rail behavior and reorder regression hotfix
+
+- Folder navigation now preserves the primary List rail and renders direct folder children in a contextual secondary rail without changing Task selection or filtering.
+- Root and folder mixed-order rails share the structural RPC path, with click-safe drag thresholds and a centered folder drop intent that leaves sibling reorder targets available.
+
+
+### 7.4.12 Folder settings runtime hotfix
+
+- Restored the canonical workspace-hydrated folder collection as the `TaskListSettingsModal` `folders` prop. This removes the orphaned module-scope reference that blocked TaskApp from loading while preserving folder refresh, realtime, navigation, counts, All Lists, and structural actions.
+
+
+### 7.4.11 List Folders UI and workspace integration
+
+- Workspace load, refresh, and realtime now hydrate folder rows and container revisions beside list rows. A cycle-safe canonical tree derives mixed folder/list siblings, hierarchy paths, descendants, and recursive unique filtered Task counts without per-folder queries.
+- The task-list rail preserves fixed smart/system chips while showing the current folder container, compact recursive counts, Back/breadcrumb navigation, pointer/touch structural drops, and keyboard-accessible move controls. Folder navigation remains independent from the selected list.
+- All Lists searches names and full paths across folders, normal lists (including hidden nested lists), and smart/system lists. List settings manages folder creation, rename, promotion-only deletion, eligible destinations, and mixed sibling ordering through the authoritative structural RPC and revision-conflict refresh contract.
+
+
+### 7.4.10 List Folders persistence foundation
+
+- `adhdice_task_list_folders` stores owner-scoped nested folders, while `folder_id` places eligible user-created normal lists in root or a folder. Folders and lists share directly comparable, normalized `sort_order` positions inside each container; deterministic entity-type and ID fallback is reserved for tied or corrupt data.
+- Root and nested containers use `adhdice_task_list_containers` revision rows. The authoritative structure RPC locks and compare-and-swaps every affected source/destination container before rewriting mixed sibling order, while folder rename uses the folder row revision.
+- Folder deletion promotes direct lists and child folders into the deleted folder's parent at its former mixed-order position, deleting only the folder and its container-revision row. The forward migration is `supabase/add_task_list_folders_7_4_10.sql`; it was manually applied before the 7.4.11 UI ticket.
+- This release intentionally adds no folder UI, breadcrumbs, counts, drag-and-drop surface, local fallback persistence, or changes to Tasks, memberships, list semantics, reporting, or lifecycle behavior.
+
+
+### 7.4.9 Reporting correctness and density hotfix
+
+- Routine Performance counts canonical selected-range Done, Did My Best, and Missed outcomes even when recurrence/reward metadata marks `counted_as_due_occurrence` false, while preserving occurrence deduplication and inherited root-parent Routine membership.
+- Ordinary report calculations exclude entire branches below trashed ancestors. Records Markdown lists all current global Records, summarizes the persisted per-task catalog, caps deterministic per-task highlights at 12, preserves all selected-range events, and disambiguates task scopes with hierarchy paths.
+- Report presentation now centralizes Record-unit inflection, separates Milestone lifecycle and trophy/aura empty states, and waits for canonical Task/list membership inputs before enabling preview or clipboard output.
+
+
+### 7.4.8 Reporting clarity
+
+- Report Markdown now follows the fixed Overview, Routine Performance, Achievements, Milestones, Records, Focus, Task History/details, and Analysis Request order, with preview and clipboard sharing the same generated string.
+- Routine reporting uses current canonical Routine membership and selected-range occurrence outcomes with canonical deduplication; persisted Achievement, Milestone, and Record sources are presented without report-triggered recalculation or reconciliation.
+- One report date formatter preserves logical date-only values across report sections.
+
+
+### 7.4.7 Compact Collapsible Records Layout
+
+- Progress → Records now presents Global Task, Streak, Focus, and per-task Records in compact responsive cards: two columns on readable mobile widths, one on narrower screens, and up to six columns on desktop. Each card keeps its title, current value, achieved date, change from the previous valid Record, icon, and category visible; longer scope, period, and evidence details open in the Records detail overlay.
+- All five Records sections collapse independently. Their disclosure state persists in a dedicated user-scoped local preference (`adhdice-records-sections:<user-id>`) because the existing synced workspace UI state is Tasks-specific. Collapsing changes presentation only and leaves Records loading, calculation, ordering, history, and stored data untouched.
+
+
+### 7.4.6 Canonical Trash and search result correction
+
+- Trash membership is enforced before canonical search, filters, facets, counts, and hierarchy projection. Ordinary views exclude trashed entities and branches below trashed ancestors; Trash keeps only trashed entities plus uncounted structural ancestors.
+- Search distinguishes direct matches from descendants expanded by a directly matching parent Task. Include Steps controls only that expansion, status filtering uses each entity's own status, and structural ancestors never inflate facets.
+- Table and List reuse one white 15px hierarchy search chip, keeping Show all Steps display-only without increasing row or hierarchy-header height.
+
+
+### 7.4.5 Canonical task entity result projection
+
+- One entity-level projection now evaluates parent Tasks, Steps, and Substeps once, then derives list facets, status facets, selected-list/status results, visible root groups, matching descendant branches, and uncounted ancestor context from the same IDs.
+- Search overrides descendant exclusion without mutating the saved per-view Include Steps preference. Manual list membership inherits from the root; smart-list and filter facts remain entity-owned.
+- Table column filters are shared canonical filters that remain visible/removable outside Table View. Table and List share the same hierarchy branch projection and scope-keyed Show all Steps override, and Table renders the compact chip inline beside Steps and its chevron.
+
+
+### 7.4.4 Scoped search and status hierarchy correction
+
+- Search, non-status filters, list scope, and selected status now intersect on the same parent/child entity set.
+- Include Steps now controls both child status-facet participation and child status matching, while child search remains unconditional.
+- Table and List use the same compact shared Show all Steps chip treatment without adding Table row height.
+
+
+### 7.4.3 Include Steps counter facets and child search correction
+
+- Include Steps now affects scoped status counters only; child search stays enabled in Table and List.
+- Restored ordinary child hierarchy rows and compact per-parent search reveal controls.
+
+
+### 7.4.2 Include Steps and completed hierarchy discoverability
+
+- Added the per-view, per-workspace-tab Include Steps filter and child-match hierarchy context for Table and List.
+- Completed child rows remain parent-owned and discoverable through the canonical preview/editor path.
+
+
+### 7.4.1 History Calendar Canonical Occurrence Cursor Guard
+
+History Calendar success edits now retain an already-resolved canonical occurrence identity when one exists, and cannot move a recurring live cursor backward. Done and Did My Best history corrections for a resolved occurrence remain historical only; duplicate logical occurrences continue to collapse for Records, Achievements, rewards, and duration evidence. No SQL migration is required or applied.
+
+
+### 7.4.0 Weekly Early-Completion Occurrence Resolution
+
+Weekly completion now advances from the canonical scheduled occurrence rather than the action date. A Sunday occurrence completed earlier in its Monday-Sunday week keeps its `occurrence_key` / `occurrence_due_on`, advances past that Sunday, and cannot later receive a rollover Missed row. Rollover uses the same canonical identity for Done and Did My Best; separate scheduled weekdays remain separate occurrences. Apply the updated full `supabase/patch_daily_until_complete_rollover_rpc.sql` manually before relying on database rollover behavior. No migration was applied by this release.
+
+
+### 7.3.45 Profile Media Session Reload Cache
+- Successful profile-media hydration now keeps a best-effort, user-scoped avatar/logo snapshot in sessionStorage alongside the existing loaded marker. A normal reload restores that snapshot without a second media query; old or incomplete markers still reload from Supabase rather than treating missing media as hydrated.
+- The persistent localStorage profile cache remains media-free and quota-safe. Session cache storage failures leave the existing in-memory de-duplication and normal retry behavior intact.
+
+
+### 7.3.44 Quota-Safe Profile Cache
+- The user-scoped localStorage profile cache now persists only non-media fields. Avatar and logo data URLs remain in the authenticated user's in-memory session snapshot, so cache quota failures cannot interrupt an otherwise successful Supabase profile save.
+- Legacy user-scoped profile entries have their media fields removed on read while preserving legitimate small fields; unavailable, full, or malformed localStorage is handled without affecting the authoritative profile state.
+
+
+### 7.3.43 Profile Avatar Render Synchronization
+- The expanded HUD and far-right account control now share one avatar renderer keyed by the authoritative profile-store source, so a current-user media update remounts both image placements instead of retaining a stale image instance.
+- The 7.3.42 user-scoped cache, retryable failure behavior, in-flight deduplication, and late-result ownership checks remain unchanged.
+
+
+### 7.3.42 Profile Media Retry and Account Ownership
+- Profile media is marked session-loaded only after a successful matching-user request. Failed requests remain retryable, while matching-user successes remain session-deduplicated.
+- Local profile media snapshots and late-response application are scoped to the active authenticated user, preventing a prior account from overwriting the current account's avatar or logo cache.
+
+
+### 7.3.41 Targeted Startup Rollover Reconciliation
+- Successful task rollover now reloads only canonical task rows and, once its initial load has completed, the existing paginated task-history dataset. Pending startup history is left to its already-scheduled secondary load, so rollover no longer queues a second broad core workspace batch.
+- Manual Refresh, lifecycle recovery, Realtime subscriptions, recurrence/status/history semantics, and the rollover RPC contract remain unchanged. No SQL or schema change is required.
+
+
+### 7.3.40 Startup Request Consolidation
+- A per-user startup request registry keeps the initial core request single-flight across development Strict Mode effect replay. Only the live same-user effect owner can apply its result; failed, logged-out, and switched-user ownership is evicted or invalidated.
+- Focus-session history remains a core-only startup fetch. Secondary loading now covers complete task history, actual-time entries, and linked notes without overwriting Focus history. No SQL or schema changes.
+
+
+### 7.3.39 Resume Refresh Eligibility Repair
+- Workspace lifecycle events now record hidden time and refresh only after a five-minute hidden interval, a genuine offline-to-online recovery, or a persisted back-forward-cache restoration. Focus and ordinary `pageshow` remain non-refresh signals, while clustered qualifying signals share one coordinated refresh.
+- Startup marks its initial core request active, preventing lifecycle noise from queueing a redundant core pass. Manual Refresh, mutation recovery, rollover callers, and existing Realtime synchronization retain their coordinator paths.
+
+
+### 7.3.38 Workspace Refresh Coordination
+- The authenticated workspace lifecycle no longer depends on the active page, so navigation preserves the existing core loader, browser-resume listeners, and task/workspace Realtime subscriptions.
+- A per-mounted-user coordinator joins duplicate core refresh callers and allows at most one trailing refresh for a distinct event during an active load. Resume signals retain debounce/cooldown behavior and skip immediately after a fresh core load.
+- Broad Realtime reloads, manual Refresh, mutation recovery, and startup all use that coordinator; Focus data semantics, task-history scope, schema, and Realtime payload handling are unchanged.
+
+
+### 7.3.37 Profile Media Egress Emergency Fix
+- Routine workspace profile hydration now requests an explicit non-media column set, keeping `avatar_src` and `logo_src` out of core loads and soft refreshes.
+- Profile media still bootstraps immediately from the existing profile-store cache, then synchronizes at most once per authenticated user per browser session through a shared in-flight request. Account saves update that cache and session marker immediately without a follow-up profile fetch.
+- This release intentionally does not change workspace lifecycle, Realtime, task-history loading, uploads, Supabase Storage, or schema.
+
+
+### 7.3.36 New Questionnaire Session Editing Repair
+- New Questionnaire sessions now survive the local state-normalization handoff, keeping the selected session active and its source editor writable after creation. Existing sessions, QA Checklist state, and sync serialization are unchanged.
+
+
+### 7.3.35 Brainstorm Questionnaire Panel Alignment
+- Questionnaire session, source, form, and summary sections now use the shared QA `AdhdPanel` geometry: its 16px section rhythm, padding, border, and stronger raised shadow. The session panel is structurally separated from the Source/Form pair, matching the QA workspace’s spacing and elevation without altering controls or persistence.
+
+
+### 7.3.34 Saved Brainstorm Questionnaires
+- Brainstorm Questionnaire now supports multiple saved sessions, each with its own title, Markdown source, parsed form, answers, and Markdown summary. New, duplicate, switch, clear-current, and delete-current controls preserve other questionnaire sessions and all QA Checklist sessions.
+- Existing single-questionnaire data automatically becomes a saved Questionnaire session. The session collection is stored in the existing Brainstorm JSONB state, with the selected session mirrored to the legacy fields for backwards compatibility.
+- Focused Brainstorm/QA tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.33 Collapsed HUD Timer Copy
+- `7.3.33` also removes the visible `Paused` suffix from collapsed HUD Focus and task timer chips. Timer state remains clear through the play/pause icon and moving or frozen time, while the existing accessible Pause/Resume labels and handlers remain unchanged.
+- Focused HUD layout tests, targeted source checks, and `git diff --check` are the intended checks. Browser and mobile visual QA remain manual QA.
+- Targeted ESLint for `task-app.tsx` was attempted against its existing unrelated lint backlog; `git diff --check` was run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.32 Collapsed HUD Timer Status
+- `7.3.32` removes the redundant visible `Running` suffix from active Focus and task timer chips in the collapsed HUD. Live seconds continue communicating the running state, while stopped timers retain the visible `Paused` suffix and both states keep their existing Pause/Resume accessible labels and handlers.
+- Focused HUD layout tests, targeted source checks, and `git diff --check` are the intended checks. Browser and mobile visual QA remain manual QA.
+
+
+### 7.3.31 Achievement Trophy Showcase
+- `7.3.31` places the existing Trophy Gallery showcase at the top of the active Achievements tab. The four counts come from earned Achievement tier awards across the current progress model, so each earned Bronze, Silver, Gold, or Platinum tier contributes to its matching die count.
+- Achievements and Completed Milestones now reuse one showcase component, including the shared Canvas, static thumbnails, quality controls, reduced-motion behavior, and renderer fallback handling. Milestone tier chips retain their filter behavior; Achievement counts remain informative rather than presenting a non-existent filter.
+- Focused Progress and Trophy Gallery tests, targeted ESLint, and `git diff --check` are the intended checks. Browser, mobile, reduced-motion visual QA, and cross-GPU WebGL rendering remain manual QA.
+
+
+### 7.3.30 Trophy Dice Centering and Materials
+- `7.3.30` vertically centers the shared live trophy dice in their preview regions. Gold uses a brighter yellow-gold body and joins Platinum in using white pips.
+- Platinum keeps its decal-free body but now uses a deterministic fine-grain bump and roughness texture beneath the polished physical material, producing a visible glitter-like surface in both the live canvas and generated thumbnails.
+- Focused trophy tests, targeted ESLint, and `git diff --check` are the intended checks. Browser, mobile, reduced-motion visual QA, and cross-GPU WebGL rendering remain manual QA.
+
+
+### 7.3.29 Trophy Dice Presentation
+- `7.3.29` gives all four Trophy Gallery collection dice one shared flat, audience-facing one-pip presentation and rotates them in place around the vertical axis instead of starting from different tilted angles.
+- Platinum now uses white pips plus a polished physical material with restrained shifting shimmer rather than literal sparkle decals. The live shared canvas and generated tier thumbnails reuse the same pose, pip-color rule, and platinum material treatment.
+- Focused trophy integration/unit tests, targeted ESLint, and `git diff --check` are the intended checks. Browser, mobile, reduced-motion visual QA, and cross-GPU WebGL rendering remain manual QA.
+
+
+### 7.3.28 Collapsed HUD Centering
+- `7.3.28` centers the collapsed HUD's intrinsic-width control row inside its full-width horizontal scroller whenever it fits. Narrow viewports retain native horizontal scrolling and the existing rounded borderless surface, spacing, controls, and behavior.
+
+
+### 7.3.27 Alphabetical Goal Chips and Draggable Focus Tabs
+- `7.3.27` sorts the Focus Goals category chip rail alphabetically while keeping Overview first and leaving recommendation and progress-bar ranking unchanged. Clocks and Focus Bars now copy the Tasks workspace native tab-drag interaction, including drag preview, post-drag click suppression, persisted visual order, and reordered click/keyboard/swipe navigation; their underlying page identities and timer behavior remain unchanged.
+- Focused Focus Goals/Bars tests, targeted ESLint for the directly changed Focus files/tests, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.26 Focus Timer Dropdown Highlight
+- `7.3.26` gives the keyboard/hover-highlighted Focus Timer dropdown option the exact active Clocks chip purple (`#6f57f6`) with white text. The Countdown icon also becomes white while highlighted; inactive rows, category dots, option selection, keyboard navigation, and dropdown behavior remain unchanged.
+- Focused Focus tests, targeted ESLint for `focus-page.tsx` and its focused test, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.25 Focus Goals Borderless Vertical Tracks
+- `7.3.25` removes the border and aura from every Focus Goals vertical bar track. The unfilled region now reuses the overall progress treatment's muted surface with a subtle inset shadow, including the matching dark surface, while fill colors, percentages, dimensions, alignment, ordering, and scrolling remain unchanged.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.24 Focus Toolbar Chip Tone Match
+- `7.3.24` gives Edit Categories, Edit Goals, Manual Entry, Add focus timer, and Add Counter the exact inactive Focus Goals category-chip tone: elevated white fill, light gray border, and muted text, with the matching dark treatment. Existing compact sizing, icon/text alignment, dropdown behavior, and handlers remain unchanged.
+- Focused Focus tests, targeted ESLint for `focus-page.tsx` and its focused test, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.23 Collapsed HUD Border Removal
+- `7.3.23` removes the visible outer border from the collapsed HUD shell while preserving its rounded surface, padding, horizontal scrolling, expand controls, account access, and all inner chip borders and behavior.
+- Targeted ESLint for `task-app.tsx` was attempted and remains blocked by its existing unrelated lint backlog (20 errors and 43 warnings); none point to the collapsed HUD shell change. `git diff --check` was run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.22 Focus Goals Category Label and Progress Ordering
+- `7.3.22` keeps every vertical-bar category label black in light mode regardless of completed or over-goal status, with white retained for dark-mode contrast. Overview now groups bars as completed, in progress, then not started; completed and in-progress groups sort by actual time descending, while not-started goals sort by target size descending, with stable category order resolving ties.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.21 Focus Goals Label Wrap and Track Glow
+- `7.3.21` gives every vertical-bar label a fixed centered two-line slot with added separation below the track, replacing truncation while keeping all bars aligned. Track edges now use a faint neutral border plus the approved low-opacity lavender aura family already present in Trophy/HUD surfaces, retaining contrast without a visibly black stroke; dark mode receives the corresponding light treatment.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.20 Focus Goals Vertical-bar Outlines
+- `7.3.20` gives every shared Focus Goals vertical bar track a consistent thin dark outline in light mode and a light outline in dark mode, keeping unfilled space visible against the card background. The outline applies across Overview and individual Daily, Weekly, and Monthly graphs without changing fill colors, percentages, dimensions, ordering, or scrolling.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.19 Focus Goals Vertical-bar Typography
+- `7.3.19` gives every Focus Goals vertical-bar value, goal, and label the same `text-sm` medium-semibold typography used by the nearby capacity status text. One shared column text class applies the match across Overview and individual Daily, Weekly, and Monthly graphs while preserving semantic colors, fixed label alignment, truncation, spacing, and percentage geometry.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.18 Focus Goals Vertical-bar Alignment
+- `7.3.18` aligns every Focus Goals vertical column from the same top edge and gives category labels a fixed centered single-line slot with truncation and a full-text title. Overview columns use a consistent wider footprint and larger approved spacing, preventing long names from wrapping or shifting individual bars while preserving horizontal scrolling and percentage fills.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.17 Focus Goals Overview Vertical Category Bars
+- `7.3.17` replaces Overview's horizontal category progress rows with one horizontally scrollable row of the existing vertical Focus Goals columns. Categories remain ranked by scoped actual time from highest to lowest, while each column fill is independently calculated as actual divided by its own goal and capped at 100%; category colors, values, goals, and active Daily/Weekly/Monthly scope remain visible.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.16 Focus Goals Overview Category Progress
+- `7.3.16` adds every category's progress bar to Focus Goals Overview, ranked by actual time from highest to lowest for the active Daily, Weekly, or Monthly scope. Each compact full-width row shows the category, scoped actual/goal values, and existing progress treatment; individual category views and goal derivation remain unchanged.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.15 Focus Goals Keys and Wordmark Dimensions
+- `7.3.15` gives the weekly Focus Goals bars stable positional keys rather than the repeated single-letter weekday labels, preventing React's Tuesday/Thursday and Saturday/Sunday duplicate-key warnings. The header wordmark now renders at explicit proportional dimensions, preventing Next's one-sided image-resize warning without changing its visible size.
+- Verification: focused ESLint and `git diff --check`. Browser QA remains: weekly Focus Goals graph rendering and header wordmark sizing.
+
+
+### 7.3.14 Focus Goals Metadata Row
+- `7.3.14` places the selected category's Today, Week, weekly pace, carryover, and Status details in one compact non-wrapping row. The row retains native horizontal scrolling on narrow screens so the information stays readable without restoring the previous vertical stack.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.13 Focus Goals Category Search
+- `7.3.13` adds an approved compact task-table search chip before Overview in the Focus Goals category rail. Its 13px chip typography and quiet outline match the adjacent category chips; typing filters category choices without changing the selected category, goal calculations, or persistence, and Escape clears the query.
+- Focused Focus Goals tests, targeted ESLint, and `git diff --check` were run. Browser and narrow-mobile QA remain.
+
+
+### 7.3.12 Focus Goals Activity-shell Redesign
+- `7.3.12` replaces the dense two-column Focus Goals category grid with the approved Focus Activity Summary shell: the same modal-radius surface, border, elevated background, shadow, spacing, heading hierarchy, and connected chip treatment. A compact Overview/category chip rail renders one full-width selection at a time while retaining Recommended Now, productive totals, warnings, carryover, priority, target, and status information.
+- Daily and Weekly reuse the existing authoritative Focus Goal plan. Monthly aggregates the calendar month’s logged activity against the sum of each day’s existing effective adjusted target, using the same `buildFocusGoalPlan` rules day-by-day and presenting seven-day buckets. No persistence, adjustment, runtime, SQL, or category-order semantics changed.
+- Verification: focused Focus Goals tests, targeted ESLint for the Focus Goals component/helper/test, and `git diff --check`. Remaining browser/mobile QA: Activity-shell match, category rail overflow, Daily/Weekly/Monthly switching, selected-category chart fit, Overview readability, dark mode, and month totals against saved history.
+
+
+### 7.3.11 Add Focus Timer Chip Match
+- `7.3.11` gives the editable Add Focus Timer combobox the exact live Manual Entry `ui-pill-button-strong-light` shell: approved compact padding, 13px medium text, line-height-1, border, fill, radius, and dark treatment. The transparent inner input explicitly retains the same 13px chip typography during focus, while its dropdown indicator, filtering, keyboard selection, and options remain unchanged.
+- Verification: focused Focus tests, targeted ESLint for `focus-page.tsx` and its focused test, and `git diff --check`. Remaining browser/mobile QA: exact height/text alignment beside Manual Entry, focused typography, dropdown placement, keyboard entry, and light/dark appearance.
+
+
+### 7.3.10 Focus Tab Formatting Correction
+- `7.3.10` replaces the visible Focus pager arrows with the exact approved task-surface grouped-chip presentation: one centered `TASKS_SURFACE_GROUP_CLASS` outer chip containing `AdhdChip` controls for Clocks and Focus Bars with the shared active/inactive tones. Click selection, `aria-pressed`, left/right keyboard switching, and swipe navigation remain intact.
+- Verification: focused Focus tests, targeted ESLint for `focus-page.tsx` and its focused test, and `git diff --check`. Remaining browser/mobile QA: centered two-chip fit, active contrast, keyboard focus, click switching, and swipe switching in light/dark modes.
+
+
+### 7.3.9 Focus Pager Alignment and Timer-control Sizing Correction
+- `7.3.9` centers the existing compact Clocks/Focus Bars segmented pager through one full-width Focus sandbox wrapper, preserving its arrows, active styling, keyboard/click navigation, and shared swipe surface on both pages.
+- Active count-up clock faces now open the complete shared direction-first adjustment interface in one click. The clock gear menu adds an `Adjust time` entry with the same `showAdjustMenu` state and centered component, while outside-click and Escape closing, the clock ring, Play/Pause, Settings, Countdown behavior, validation, pending protection, and persistence remain unchanged.
+- Clocks use regular approved task-table chip/input sizing with comfortable centered row spacing. Focus Bars retain the compact 26px launcher but use the established micro 20px/10px expanded treatment inside narrow lanes; their Play/Pause/Finish/Reset controls now use the approved small 28px icon-button size with 16px icons. Lane width, fixed graph content, downward expansion, horizontal insets, and semantic colors remain unchanged.
+- Verification: focused Focus tests, targeted ESLint for directly changed Focus files/tests, and `git diff --check`. Remaining browser/mobile QA: pager centering on both pages, one-click face and gear entry, outside-click/Escape behavior, clock-face fit, narrow-lane control readability/touch targets, dark mode, and unchanged timer persistence/actions.
+
+
+### 7.3.8 Focus Sandbox Control Sizing and Shell Cleanup
+- `7.3.8` reuses the approved `TaskTableChipButton`, compact cadence input, `AdhdChip`, Tasks/Paths segmented shell, and task-table input classes. Focus Bars now uses the compact 26px adjustment trigger aligned with its icon controls, while Clocks uses the established larger chip padding inside the circular clock face.
+- The complete Clocks adjustment group is centered over the normal clock-center content without changing the ring or card dimensions, and the duplicate adjustment control was removed from the external settings panel. Direction-first selection, semantic green/red states, immediate presets, custom validation/Apply, pending protection, and persistence remain unchanged.
+- The Clocks/Focus Bars pager now uses the approved compact segmented chips, and Add Focus Timer uses the compact task-table input-chip treatment with reduced height, padding, and width. Focus Bars renders directly in the existing Focus sandbox without its nested card shell; lane scrolling, end insets, and downward control expansion remain intact.
+- Verification: focused Focus tests, targeted ESLint for directly changed files, and `git diff --check`. Remaining browser/mobile QA: centered clock controls and touch targets, pager/input density and dropdown alignment, Focus Bars end-lane visibility and downward expansion, dark mode, and unchanged timer actions/navigation.
+
+
+### 7.3.7 Clocks Adjustment Parity and Focus Bars Icon Controls
+- `7.3.7` makes Clocks and Focus Bars use the same direction-first shared adjustment controls: `+` defaults on open, selected add/remove directions use green/red semantic treatments, `5m` and `10m` apply immediately in that direction, and custom whole minutes use one matching Apply action. Existing adjustment mutation routing, pending protection, success-only clearing, failure retention, clamping, persistence, and running/paused behavior remain unchanged.
+- Focus Bars now use compact, labeled icon controls: green Play for Start/Resume, yellow Pause, green Plus for Finish session, and the shared red reverse-arrow Reset. The fixed graph content remains above controls so expanded adjustments grow down without moving lanes; Focus Bars semantics, goals, ordering, Today/Session derivation, and Finish modal path are unchanged.
+- Verification: focused Focus Bars/Clocks adjustment tests, targeted ESLint, and `git diff --check`. Remaining browser/mobile QA: icon touch targets/tooltips and focus rings, expanded-control lane spacing, pending behavior, failed adjustment retention, and timer state/persistence continuity.
+
+
+### 7.3.6 Focus Bars Adjustment Layout and Interaction Correction
+- `7.3.6` replaces the expanded Focus Bars adjustment menu's separate signed actions with a `+` / `−` direction toggle (defaulting to `+` on each open), immediate `5m` and `10m` presets, and one custom-minute Apply action that uses the selected direction. The existing adjustment mutation, pending guard, success-only input clearing, failure retention, clamping, persistence, and running/paused behavior remain authoritative and unchanged; Clocks retain their existing preset presentation.
+- Custom minutes now use spinner-free numeric digit entry with a separate visible `min` suffix and the existing positive-whole-minute validation. Focus Bars lanes top-align a fixed graph/content region, while expanded controls grow only beneath the normal control row so the panel expands downward without moving lane content or changing horizontal scrolling.
+- Verification: focused Focus Bars/adjustment-control tests, targeted ESLint, and `git diff --check`. Browser/mobile QA, full tests, full lint, build, and typecheck were intentionally not run.
+
+
+### 7.3.5 Focus Bars Final Control Polish
+- `7.3.5` gives the active Focus Bars Finish chip the shared Focus timer success treatment, renames the compact Time trigger to `+ / −` while retaining its descriptive accessible label, and keeps Reset in the existing neutral control tone. The compact menu and Clocks’ intentionally shared adjustment controls retain the existing `onAdjustTimer` route to `useFocus` `transitionFocusRuntime("adjust")`; the handler now returns its existing RPC success result solely so the control can keep a custom value after failure and clear it after success.
+- The adjustment controls retain the four preset actions (`−10m`, `−5m`, `+5m`, `+10m`) and add a compact positive-whole-minute input with explicit `− Apply` and `+ Apply` chips. Invalid blank, zero, negative, decimal, and nonnumeric values remain disabled; Enter has no default direction; pending controls are disabled; the existing RPC preserves running/paused state and authoritative count-up/countdown minimum clamping.
+- Verification: focused Focus Bars/adjustment-control tests, targeted ESLint, and `git diff --check`. Remaining browser/mobile QA: narrow-lane menu wrapping and offscreen behavior, touch targets, failed-adjustment input retention, persisted refresh/minimum clamping, timer-state continuity, and unchanged Clocks controls.
+
+
+### 7.3.4 Focus Bars Timer-control Parity
+- `7.3.4` adds compact Reset and Time controls to active Focus Bars lanes while preserving the approved geometry, labels, ordering, overtime, scroll insets, and Clocks presentation. Bars reuse the same `onResetTimer` and `onAdjustTimer` props through `focus-page.tsx`; those invoke the existing `useFocus` `transitionFocusRuntime` RPC actions (`reset` and `adjust`) with its session/revision idempotency and authoritative state update.
+- Running and paused lanes show Pause/Resume, Finish, Reset, and a compact Time menu with Clocks’ existing add/remove 5- and 10-minute increments. Inactive lanes still show Start only. Reset affects the active runtime only, so saved historical activity remains in Today; count-up reset follows Clocks by returning the runtime to paused zero, and adjustments retain running/paused state while the RPC clamps count-up time at zero (or Countdown target at 60 seconds).
+- Verification: focused Focus Bars/timer-control tests, targeted ESLint, and `git diff --check` were run. Remaining browser/mobile QA: compact Time expansion on narrow lanes, persisted refresh after add/remove/reset, live Today/Session updates, state transitions after adjustments/reset, control spacing with Goal complete/overtime, and unchanged Clocks.
+
+
+### 7.3.3 Focus Bars Per-category Goal Normalization Checkpoint
+- `7.3.3` normalizes each goal-bearing lane against its own adjusted daily goal: before completion, fill is `combined / goal` and the marker remains at 100%; in overtime, fill stays at 100% while the marker becomes `goal / combined`, continuing to update with the existing one-second running tick. Zero progress renders a 0% fill with a top marker, and exact-goal renders both at the top. No-goal lanes retain their stable fallback fill and no goal marker.
+- Today and Goal are now distinct nonwrapping label rows with a slightly smaller Today label, extra separation, and modestly wider/spaced lanes; the Focus Bars-only horizontal insets preserve end-lane visibility. Saved/runtime derivation, text, states, ordering, controls, persistence, Clocks, Countdown exclusion, Focus Goals, and Activity Summary are unchanged.
+- Verification: focused `test/focus-bars.test.ts` passed 31/31, targeted ESLint passed for `src/lib/focus-bars.ts`, `src/components/focus-bars.tsx`, and `test/focus-bars.test.ts`, and `git diff --check` passed. Remaining browser QA: per-lane fill/marker geometry across goals and overtime, narrow-width label readability/end lanes, dark mode, live ticking/pause/resume, Finish handoff, and unchanged Clocks.
+
+
+### 7.3.2 Focus Bars Scale, Labels, Ordering, and Layout Checkpoint
+- `7.3.2` corrects the active dirty `7.3.1` Focus Bars baseline without changing runtime persistence, Finish behavior, Clocks, Countdown exclusion, goal calculations, or Activity Summary. Goal-bearing rows now share a scale of twice the largest adjusted goal, fills cap at lane height while exact Today/overtime text remains intact, and no-goal-only views use a stable fallback scale. Rows sort active/paused first, then activity, goals, and display order.
+- Today displays the saved-plus-runtime total; active and paused rows additionally show their authoritative Session duration. State, goal-completed state, overtime, and controls reserve separate vertical regions. The horizontal strip has Focus Bars-only side insets so its end lanes and controls are not clipped.
+- Verification: focused `test/focus-bars.test.ts` passed 30/30, targeted ESLint passed for the directly changed Focus Bars files, and `git diff --check` passed. Remaining browser QA: lane scale/marker position, capped overtime fill, labels and controls at narrow widths, horizontal end-lane visibility, dark mode, timer ticking/pause/resume, Finish handoff, and unchanged Clocks.
+
+
+### 7.3.1 Focus Bars Live-runtime QA Checkpoint
+- `7.3.1` corrects only the Focus Bars live-display path. Its existing one-second tick remains active only while a category runtime is running and still passes `nowMs` into the pure authoritative row derivation. Running labels now expose seconds, and goal-based chart scaling reserves visible overtime headroom instead of allowing an advancing leading bar to define its own 100% ceiling. Paused runtimes, timer actions, Finish/history handoff, persistence, goals, category inclusion/order, Countdown, and styling remain unchanged.
+- Verification: focused `test/focus-bars.test.ts`, targeted ESLint for `src/components/focus-bars.tsx` and `src/lib/focus-bars.ts`, and `git diff --check` are required for this checkpoint. Manual QA remains: running label/bar/overtime motion, pause/resume freeze and continuation, Finish handoff, horizontal scrolling, category colors/order, empty state, and dark mode.
+
+
+### 7.3.0 Focus Bars Live Daily-goal Graph Checkpoint
+- `7.3.0` replaces the read-only horizontal Focus Bars timer cards with an ordered, horizontally scrollable vertical category graph matching the Focus Activity visual language. Eligible non-system categories remain visible for an adjusted effective daily goal, saved logical-day activity, or a running/paused runtime; standalone Countdown remains excluded.
+- Each bar combines positive saved activity for the current logical day with `getAuthoritativeFocusElapsedSeconds(...)` only while its active runtime record exists. Goals come from `buildFocusGoalPlan(...).summaries[].adjustedTodayTargetSeconds`; uncapped actual progress continues beyond the goal marker and reports explicit overtime, while no-goal categories receive no percentage or completion state.
+- Compact Start/Resume, Pause, and Finish controls reuse the existing Focus timer toggle and finish-modal paths. The one-second graph tick exists only while a category runtime is running; paused bars remain fixed. Clocks, runtime persistence, RPCs, Focus Goals behavior, Activity Summary, and standalone Countdown are unchanged.
+- Verification: focused `test/focus-bars.test.ts` passed 19/19, targeted ESLint passed for the directly changed Focus Bars files, and `git diff --check` passed. Remaining manual QA: confirm live bar motion, pause freezing, Finish history handoff without a transient double count, adjusted-goal/overtime marker scaling, horizontal scrolling across many categories, category colors/order, empty state, dark mode, and unchanged Clocks behavior.
+
+
+### 7.2.29 Records Reconciliation Timestamp Checkpoint
+- `7.2.29` preserves a current Record's `first_achieved_at` only when both its stable candidate identity and value survive reconciliation unchanged. Corrected values and replacement candidates now take the staged candidate timestamp, while exact replay, stable tie events, authoritative current deletion, absent-event invalidation, and PostgreSQL 15 compatibility remain intact. No SQL was applied by this checkpoint.
+
+
+### 7.2.28 Static Export Local QA Server Checkpoint
+- `7.2.28` removes the request-time Local QA `POST` route from the App Router and serves the same development-only `/api/local-qa-session` contract through the `npm run dev` Node wrapper. QA credentials remain server-only, the existing fixture builder and authenticated Supabase seeding path are reused, and production remains a GitHub Pages static export with no runtime API route.
+
+
+### 7.2.27 Records SQL Validation Safety Checkpoint
+- `7.2.27` rewrites the still-unapplied Records validation compatibility migration in place: required containers are NULL-safe, all canonical payload casts remain bounded and guarded, logical day start accepts canonical minute or second precision, and finalization obtains the per-user advisory try-lock before locking or reading the run. Compact evidence, chunk/digest limits, staging, atomic publication, first-achieved preservation, and event invalidation are unchanged. No SQL was applied by this checkpoint.
+
+
+### 7.2.26 Records SQL Validation Compatibility Checkpoint
+- `7.2.26` removes PostgreSQL-16-only `pg_input_is_valid` validation from all chunked Records RPC definitions and replaces it with JSON-type checks, bounded canonical scalar formats, and guarded PostgreSQL-15 casts with concise Records errors. Apply only `supabase/patch_records_validation_compatibility.sql` manually before retrying Records; it preserves the three JSONB signatures, staged resume flow, atomic publication, evidence limits, lock behavior, first-achieved metadata, event invalidation, and RLS. No SQL was applied by this checkpoint.
+
+
+### 7.2.25 Records RPC Argument Contract Checkpoint
+- `7.2.25` confirms and centralizes the chunked begin/upload/finalize client contract so every Supabase RPC receives exactly one `p_payload` SQL argument. PostgREST wrong-argument signature failures now remain concise and stage-specific instead of being classified as missing Records storage, while genuine absent-function/table errors retain the setup fallback and failed refreshes keep the last successful Records snapshot. No SQL changed.
+
+
+### 7.2.24 Compact Chunked Records Reconciliation Checkpoint
+- `7.2.24` moves detailed evaluator evidence behind a schema-v2 compact serializer with deterministic sorted-identity SHA-256 digests, bounded UTF-8 chunk envelopes, sequential staged upload, same-manifest resume, and an authenticated begin/upload/finalize protocol. Live current Records and history remain unchanged until finalization verifies the complete generation and publishes atomically; stale runs are safely discarded and oversized legacy evidence is compacted without deleting events or first-achieved metadata. Apply `supabase/patch_records_chunked_reconciliation.sql` manually before browser QA; no SQL was applied by this checkpoint.
+
+
+### 7.2.23 Records Reconciliation Temp-Spill Checkpoint
+- `7.2.23` keeps full Record evidence while removing it from the two materializing `jsonb_to_recordset` row shapes: narrow scalar rows are staged once, evidence is attached by deterministic current/event identity, and unchanged large snapshots are retained by fingerprint during conflict updates. The RPC remains transactional, nonblocking, identity-based, first-achieved preserving, and compact; the repository continues to reload current Records and events after reconciliation. Apply `supabase/patch_records_reconciliation_temp_spill.sql` manually before QA; no SQL was applied by this checkpoint.
+
+
+### 7.2.22 Records Nonblocking Reconciliation Checkpoint
+- `7.2.22` makes the owner-scoped Records advisory lock transaction-scoped and nonblocking: cross-context overlap returns a structured `busy` result before staging or writes, while the client retains the last successful snapshot and allows a later manual Refresh. `supabase/patch_records_reconciliation_nonblocking.sql` drops every obsolete RPC overload, recreates only the canonical JSONB signature with phase-labeled set-based writes, preserves required indexes and first-achieved/event invalidation behavior, and reloads PostgREST metadata. Apply the patch manually before browser QA; no SQL was applied by this checkpoint.
+
+
+### 7.2.21 Records Reconciliation Timeout Checkpoint
+- `7.2.21` replaces row-by-row Records reconciliation with validated `jsonb_to_recordset` staging and set-based current/event upserts, authoritative current deletion, and indexed `NOT EXISTS` event invalidation while preserving transaction-scoped ownership locking and first-achieved metadata. A user-scoped module single-flight also reuses an active pipeline across hook remounts, preventing an overlapping RPC from waiting on the Records advisory lock. Apply `supabase/patch_records_reconciliation_timeout.sql` manually before browser QA; no database migration was applied by this checkpoint.
+
+
+### 7.2.20 Records Refresh Pipeline Checkpoint
+- `7.2.20` replaces the Records repository's concurrent source/persisted request fan-out with one ordered, stage-aware pipeline after bounded Local QA verification confirmed the installed Records tables/RPC and all seven live stages succeed against the same account data. Native fetch failures now identify the Task, Task History, Focus Session, evaluation, reconciliation, current-Records, or event stage without exposing payloads.
+- A failed refresh retains the last successful Records snapshot and calculated time. Initial failures no longer render misleading empty sections; successful empty recalculations still show genuine empty states. Lazy activation, overlap prevention, evaluator rules, deterministic identities, reconciliation idempotency/invalidation, RLS, and Achievement isolation are unchanged.
+
+
+### 7.2.19 Records MVP Checkpoint
+- `7.2.19` adds a lazy Records tab to Progress backed by a pure `records-v1` evaluator over independently paginated Task, Task History, and completed persisted Focus-session data. It covers the approved closed-period Task/Step/Focus aggregates, completion-day and Focus-day streaks, longest Focus session, per-task successful occurrence streaks, and Biggest Comeback; current open periods remain labeled provisional.
+- `supabase/add_records_foundation.sql` adds owner-scoped current/event storage plus one authenticated, advisory-locked reconciliation RPC that replaces current rows, idempotently upserts deterministic break/tie events, and invalidates corrected-away events without touching Achievement storage. The migration is not applied by this checkpoint. Canonical schema/types are synchronized, including the previously migrated Task History `event_type` and `counted_as_due_occurrence` columns that were missing from the fresh-install schema.
+- Records preserve credited logical dates and evidence snapshots with timezone/day-start settings. The UI discloses the limits of hard deletions, historical hierarchy/recurrence changes, and fallback occurrence identity. No record celebrations, notifications, trophies, Achievement reuse, deferred hierarchy-size metrics, Focus Bars redesign, or additional Table Step/Substep visual work is included.
+
+
+### 7.2.18 Focus Bars Sandbox Checkpoint
+- `7.2.18` preserves Clocks as the default Focus sandbox page and adds a read-only Focus Bars page with bounded pager/keyboard/swipe navigation, authoritative live elapsed time, targeted progress plus overtime continuation, open-ended live lanes, paused-state freezing, and Focus Bars-only failure isolation.
+
+
+### 7.2.17 Table Hierarchy Plane and Title Geometry Checkpoint
+- `7.2.17` paints expanded same-table descendants on the normal Table surface, removes the sticky parent's downward child-overlap shadow, and uses explicit title-only geometry: Steps begin 10px inside the parent title boundary and Substeps add a clear 14px increment without moving shared metadata columns.
+
+
+### 7.2.16 Table Child Mini-Row Surface and Indentation Checkpoint
+- `7.2.16` corrects the active Table Step/Substep mini-row itself: normal children use the surrounding Table background without a default shadow, while explicit hover, selection, editing, search/active highlight, drag/drop, separators, and hierarchy guides remain. Depth padding now belongs only to the child Task/title grid cell, placing Steps inside the parent title boundary and Substeps one increment deeper without shifting shared metadata columns.
+
+
+### 7.2.15 Sort and Table Hierarchy Visual Correction Checkpoint
+- `7.2.15` removes the Sort menu checkmark reserve so all eight option labels align to the compact chip edge and the existing purple selected chip remains the sole selection signal. Table Step/Substep continuation rows now use the surrounding background by default and add a parent-boundary content inset while retaining deeper Substep indentation, selection, hover, grid, and sticky contracts.
+
+
+### 7.2.14 Task Views QA Corrections and Clear Passed Checkpoint
+- `7.2.14` moves List sorting into the approved filter rail dropdown, corrects the List sticky release boundary, aligns default Table descendant surfaces, and adds shared click/hold Steps expansion behavior for the currently rendered List or Table view. Brainstorm QA adds confirmed active-session-only removal of passed items while preserving all remaining checklist and session data.
+
+
+### 7.2.13 List Sorting and Sticky Hierarchy Checkpoint
+- `7.2.13` adds compact, independently persisted List/smart-list sorting for Manual, due date, normalized display status, priority, title, recently updated, streak, and estimated duration. List and Table parent rows now use their real interactive row inside a rendered parent/descendant boundary so expanded parents stay visible only while their visible descendants scroll; Table header, shared columns, horizontal overflow, selection, menus, and inline actions remain on their existing paths. No database ordering, List drag-and-drop, hierarchy, or Table sorting semantics changed.
+
+
+### 7.2.12 Platinum Fixture and Presentation Checkpoint
+- `7.2.12` adds a dedicated memory-only Platinum Achievement fixture/control using the current `last_step` Platinum threshold, and appends it deterministically to Trigger All. Celebration-only Platinum now uses a brighter, cooler tone distinct from Silver without changing Trophy Gallery materials; Collection mastery continues through the same Platinum mapping. The neutral legacy fixture is labeled as an unknown award missing from the current catalog. Achievement qualification, descriptions, queueing, persistence, and production gating are unchanged.
+
+
+### 7.2.11 Achievement Celebration Tier Tones Checkpoint
+- `7.2.11` threads the existing awarded tier through celebration presentation and uses the existing Trophy Gallery bronze, silver, gold, and platinum material palette as one canonical D6/fallback color source. Collection mastery presents as Platinum; unknown or legacy metadata is neutral. The centered face-one pose, lazy/error-safe modal renderer, queue, claim/seen behavior, description builder, and memory-only development harness remain unchanged; a development-only Gold fixture completes all four tier-color checks.
+
+
+### 7.2.10 Achievement Celebration Dice Trophy Checkpoint
+- `7.2.10` replaces only the transient Achievement celebration modal’s generic Trophy icon with a lazy, bounded D6 trophy canvas using the existing model, materials, and face-one preset. A CSS one-pip die remains visible if WebGL or model loading fails, so modal copy and dismissal stay available. Canonical award descriptions now use plain-language day/week/month, streak, activation, and full-week phrasing; thresholds, logical-day calculations, Collections, queueing, claim/seen behavior, and the memory-only development harness are unchanged.
+
+
+### 7.2.9 Development Achievement Celebration Harness Checkpoint
+- `7.2.9` adds development-only, client-memory controls in Progress for representative parent Task, Step, Focus, consecutive logical-day streak, Collection mastery, and legacy fallback Achievement celebrations. Synthetic claimed-notification fixtures pass through the existing description builder and sequential queue, but never claim, see, create, award, progress, activate, or write any Achievement data. The controls and trigger API are unavailable in production; dismissal skips the seen RPC only for synthetic fixtures.
+
+
+### 7.2.8 Achievement Notification Descriptions Checkpoint
+- `7.2.8` derives deterministic, award-threshold-specific accomplishment descriptions from the canonical Achievement catalog for the existing notification queue and celebration modal. Tier and Collection titles remain intact; runtime qualification, thresholds, activation, queue, seen state, replay, and Supabase contracts are unchanged.
+
+
+### 7.2.7 Brainstorm QA Session Controls Checkpoint
+- `7.2.7` aligns New Session icon-and-label chips with the shared gap treatment and adds a confirmed, QA-only session deletion action. Deleting a session selects the next saved session or leaves an empty QA workspace; Questionnaire state remains untouched.
+
+
+### 7.2.6 Brainstorm QA Chip Alignment Checkpoint
+- `7.2.6` aligns QA status radio labels and version metadata with the exact shared task-table chip geometry and quiet baseline. Native radio semantics, QA data, and existing behavior remain unchanged.
+
+
+### 7.2.5 Brainstorm Navigation and Clear Checkpoint
+- `7.2.5` restores the explicit Questionnaire / QA Checklist tab-panel contract and reconnects BrainstormWorkspace to the existing scoped reset hook. Clear Brainstorm now clears only Questionnaire source and answers while preserving saved QA sessions and their sync state; QA behavior and schema remain unchanged.
+
+
+### 7.2.4 Brainstorm QA Mixed-version Checkpoint
+- `7.2.4` normalizes Brainstorm QA state to V2 with item-level versions that inherit V1 session defaults, supports import-specific and manual item versions, displays shared version/status chips, and includes item versions in reports. No SQL or sync architecture change is required; passed-item collapse and Questionnaire behavior are unchanged.
+
+
+### 7.2.3 Brainstorm QA Inline Status Checkpoint
+- `7.2.3` replaces item Status selects and duplicate status chips with compact native inline radio controls for Not Tested, Pass, Fail, and Blocked. The existing Pass collapse and non-Pass expansion behavior remains intact, including on collapsed rows; persistence, sync, reports, and Questionnaire behavior are unchanged.
+
+
+### 7.2.2 Brainstorm QA Passed-item Checkpoint
+- `7.2.2` collapses Pass QA items by default with local-only manual expansion overrides, compact accessible status/reorder/delete controls, notes indicators, and session-local Collapse passed / Expand all actions. QA persistence, sync, parsing, reports, and Questionnaire behavior are unchanged.
+
+
+### 7.2.1 Brainstorm QA Checklist Checkpoint
+- `7.2.1` adds saved manual-QA sessions inside Brainstorm with defensive V1 JSON normalization, narrow sibling-safe Questionnaire/QA writes, checklist import and item management, retest/duplicate workflows, status progress, accessible pointer and keyboard reordering, observations, and clipboard-ready full or follow-up reports. Apply `supabase/add_brainstorm_qa_state.sql` manually before browser QA; no SQL was applied by this implementation.
+
+
+### 7.2 Active Timer Open Task Checkpoint
+- `7.2.0` renames the Active Timer action to `Open task` and routes it through the existing shared Edit Task overlay without changing the active page, list, task-row selection, or scroll position. The shared opener now has a narrow Active Timer-only `preserveActivePage` option; all other callers retain default Tasks-page navigation. Parent Tasks still use the shared overlay and Step/Substep requests remain on the existing child-editor route. The tray closes only after a successful open; unavailable, archived, trashed, or stale tasks retain the tray and show `Task unavailable.` Timer runtime, persistence, elapsed time, Focus history, list behavior, and schema are unchanged.
+
+
+### 7.1 Progress Checkpoint
+- `7.1.0` replaces the obsolete dice-face Achievements prototype with the shared `Progress` workspace at the existing trophy-icon destination. Accessible `Achievements` and `Milestones` tabs use roving focus, Arrow/Home/End keyboard selection, and a compact application layout; Achievements is the default. The oversized motivational hero, fake face collection percentage, Level/XP, charged-dice, streak, sync-mode, and fake collection values are retired from the page, Home, and Stats summaries.
+
+  The Achievements tab reads the installed runtime through `src/lib/achievement-progress-repository.ts` and `src/hooks/useAchievementProgress.ts`. Focused owner reads load `adhdice_achievement_profiles`, `adhdice_achievement_progress`, `adhdice_achievement_tier_awards`, and `adhdice_achievement_collection_awards`; presentation mapping in `src/lib/achievement-progress.ts` joins the canonical four-Collection/18-track catalog without recalculating progress from Tasks, history, or Focus sessions. Permanent awards remain authoritative when progress rows are partial or absent. Loading, error, unactivated-profile, activated-empty, partial-progress, award-only, and real summary states are represented.
+
+  Pending notifications are claimed only through `adhdice_claim_achievement_notifications(integer)`, ordered by the returned `created_at, id` contract, deduplicated across rerenders, and presented one at a time in the existing modal shell. A celebration is removed only through user acknowledgment/dismissal, then `adhdice_mark_achievement_notification_seen(uuid)` is called. Claim/seen failures remain nonfatal and do not mutate award rows or use direct notification updates. The Milestones tab reuses the existing completed-Milestones Trophy Gallery, including its client-only 3D renderer and static fallback, when earned trophies exist; otherwise it shows a restrained foundation state linked to the existing Tasks Milestones experience. No Milestone storage, lifecycle, SQL, scoring, Aura, deadline, navigation destination, or Achievement evaluator/capture/threshold/schema behavior changed.
+
+  The pre-commit notification-loading correction makes Achievement snapshot readiness explicitly user-owned. No-user, loading, loaded, and error states can no longer leak readiness across authentication transitions; every load has an invalidated request generation, so a stale user-A result cannot replace user B. Notification claiming now requires a fully loaded snapshot owned by the exact authenticated user, resets its per-session guard and user-owned queue on auth changes, retains deterministic one-at-a-time delivery, and reserves each seen acknowledgment once. Claimed rows whose award metadata is unexpectedly absent receive a safe generic permanent-award celebration instead of being discarded. Home and Stats consume the same readiness-aware summary presentation and show unknown/loading values instead of transient `0 / 72`, `0%`, or no-unlock claims. No SQL, RPC, RLS, evaluator, thresholds, runtime capture, permanent awards, Progress layout, or Milestones behavior changed.
+
+  Final browser QA passed on the real Progress page: four pending Achievement celebrations appeared one at a time, dismissal advanced the queue, seen notifications did not replay, and the Strict Mode claim race remained fixed. Live rollover QA confirmed two timeout causes: duplicate frontend invocations and repeated full Achievement evaluation while recurring History rows were replayed. The frontend now coordinates one user/day RPC; regular recurring rollover inserts only missing History and preserves existing outcomes; per-row Achievement capture remains active while full evaluation runs once before the ledger write. The first corrected live rollover completed without timeout in 1.673 seconds and recorded ledger row `(5baf63d9-6f80-4dd7-ac91-ea18bdeb8547, 2026-07-19)`; a same-day no-op RPC completed successfully in 2.124 seconds with no `57014` or duplicate burst. Both 7.1.0 forward migrations were manually applied to the live database in order: `fix_recurring_rollover_history_replay_7_1_0.sql`, then `defer_rollover_achievement_evaluation_7_1_0.sql`; older rollover patches must not be reapplied afterward. Canonical runtime, rollover, and consolidated-schema SQL are synchronized with both migrations. Temporary Supabase operation instrumentation used for timeout diagnosis was removed after QA. All 99 focused Progress, notification-controller, rollover, SQL/parity, Achievement runtime, and persistence tests passed; targeted ESLint passed across the 13 changed files expected to be clean, and `git diff --check` passed. Known unrelated repository lint/typecheck debt remains, including existing shared `task-app.tsx` hook/ref/purity findings and established Task, Roll, Health, catalog, Trophy, and other typing failures. Full lint, typecheck, build, and broad test suites were not rerun.
+
+
+### 6.25 Checkpoint
+- `6.29.50` fixes the live `adhdice_claim_achievement_notifications(integer)` startup failure caused by schema-qualifying PostgreSQL's special `GREATEST` and `LEAST` expressions as nonexistent `pg_catalog` functions. The canonical foundation, original `6.29.49` migration, consolidated schema, and new installed-database repair migration now use `least(greatest(coalesce(p_limit, 10), 1), 50)`. The failing declaration initializer was evaluated before the function body reached its claim query, so the reported `42883` attempt mutated no notifications. Security-definer ownership checks, empty search path, authenticated-only execution, deterministic ordering, `FOR UPDATE SKIP LOCKED`, state transitions, idempotency, read-only table permissions, awards, and existing rows are unchanged. Apply `supabase/fix_achievement_notification_claim_clamp_6_29_50.sql`; no live SQL was executed by this version. Focused tests cover null, 0, 1, 10, 50, and above-50 clamp inputs plus canonical/migration/schema parity and absence of invalid qualifiers.
+- `6.29.49` adds the secure client-facing delivery contract for the existing Achievement notification outbox without implementing the deferred Progress UI. `public.adhdice_claim_achievement_notifications(integer default 10)` claims only the authenticated user's pending rows in deterministic `created_at, id` order, clamps batches to 1-50, uses `FOR UPDATE SKIP LOCKED` to prevent two tabs/devices from receiving the same celebration, and atomically records `delivered_at`. `public.adhdice_mark_achievement_notification_seen(uuid)` owner-locks one notification, permits only delivered-to-seen, returns explicit `seen`, `already_seen`, `not_delivered`, or `not_found` JSON results, and records `seen_at` once.
+
+  Both RPCs are `SECURITY DEFINER` with an empty search path, schema-qualified access, and authenticated-only execution. Existing owner SELECT policies remain intact; no table UPDATE grant or UPDATE policy was added, and permanent tier/Collection awards are untouched. The rerunnable forward migration is `supabase/add_achievement_notification_delivery_6_29_49.sql`; `supabase/add_achievement_mvp_foundation.sql`, `supabase/schema.sql`, `src/lib/database.types.ts`, `test/achievement-notification-delivery-sql.test.ts`, the standard version bundle, and this checkpoint are synchronized. Verification passed 27 focused Achievement SQL tests, targeted ESLint, and `git diff --check`. Repository-wide typecheck was run and remains red on existing unrelated shared Task, Roll, Health, Trophy, and other TypeScript debt, with no finding in the new test or RPC type declarations. No live SQL, Progress UI, browser QA, full build, or live concurrency test was performed. Manual QA after applying the migration: record current pending IDs; claim a small batch in one authenticated session; confirm ordering and delivered timestamps; confirm a second session cannot reclaim them; mark one claimed ID seen twice and verify `seen` then `already_seen`; verify a pending ID returns `not_delivered`; and verify another authenticated user plus anon cannot operate on those IDs.
+- `6.29.48` fixes Achievement parent Step-set requalification after a Task History correction from Missed to Done/Did My Best. `adhdice_refresh_achievement_step_set(uuid, uuid)` still derives current Step membership from the same-table task tree, but now determines completion from the current qualifying Step occurrences instead of also requiring the asynchronously synchronized live task status. Existing Step-set identity, `outcome_snapshot = 'done'`, original `first_qualified_at`, permanent awards, and notification dedupe remain unchanged. Apply `supabase/fix_achievement_step_set_requalification_6_29_48.sql` to an installed Achievement runtime; no live SQL was executed by this version.
+- `6.29.47` corrects the Achievement digest forward migration's step-set prerequisite from the nonexistent one-argument signature to `public.adhdice_refresh_achievement_step_set(uuid, uuid)`. Both affected runtime prerequisites are now validated before either stored function is replaced, so missing prerequisites abort before schema mutation. The migration remains transaction-wrapped, idempotent, data-preserving, and synchronized with `supabase/schema.sql`; the intended `extensions.digest(text, 'sha256'::text)` replacements are unchanged.
+- `6.29.46` fixes the confirmed Achievement runtime digest resolution failure under `SECURITY DEFINER` functions with an empty search path. All Achievement-owned SHA-256 calls now use `extensions.digest(text, text)` explicitly in the original runtime migration and consolidated schema. The idempotent forward migration `supabase/fix_achievement_digest_schema_6_29_46.sql` replaces only the two affected live function definitions, preserving profiles, captured occurrences, progress, awards, and notifications; reevaluation continues to use existing occurrence and award/notification uniqueness contracts.
+- `6.29.45` corrects the Achievements MVP foundation migration's duplicate evaluation-run status constraint. The inline status check is consolidated into the single canonical named constraint, with `supabase/schema.sql` kept byte-aligned and focused parity tests covering duplicate named SQL objects, policies, legacy unlock isolation, and the eight-table foundation. No Achievement runtime, UI, Trophy Gallery, Milestone, Home, Reports, or Task behavior changed.
+- `6.29.44` fixes Table View Active Status rail counts for descendant-aware filtering. The rail now aggregates the canonical rendered status of every scoped parent Task plus same-table Step/Substep before Active Status projection. Rendering-only hierarchy ancestors and hidden nonmatching siblings remain excluded, while a selected status retains its actual count.
+
+- `6.29.43` corrects Table View Active Status rail counts. Counts now aggregate canonical display statuses for scoped parent Tasks plus same-table Steps/Substeps before status-filter projection, so rendering-only context ancestors and hidden siblings do not inflate totals and an active selected chip retains its real count.
+
+- `6.29.42` removes a duplicate `searchMatchedStepParentTaskIds` destructuring binding from `TaskManagementTableV2`; the declared prop and 6.29.41 descendant-aware Active Status filtering behavior are unchanged.
+
+- `6.29.41` makes Table View Active Status descendant-aware for same-table Steps and Substeps. A matching child retains only its required parent/ancestor context, temporarily opens the Steps path, and hides unrelated siblings; context-only parents remain nonmatching. Clearing the filter restores ordinary expansion. Task status persistence, recurrence, Task History, Achievements, Smart Lists, and Milestones are unchanged; List View keeps its existing hierarchy behavior.
+
+- `6.29.40` fixes recurring Task status rollover after Task History edits. The live-status sync now derives its occurrence history snapshot immediately from the saved history result instead of waiting for React state scheduling, so a July 16 Done or Did My Best remains historical while the July 17 active recurrence is persisted and displayed as Pending. Table View, List View, editor status, Smart Lists, and search retain their shared history-aware visible-status resolver. Achievement, Milestone, recurrence schedules, and unrelated UI are unchanged.
+
+- `6.29.39` corrects the Achievement MVP runtime occurrence identity contract without changing thresholds, Collections, UI, Trophy Gallery, Milestones, Focus capture, or streak math. Task History `source_id` remains the exact source row UUID for retries and row updates, while `dedupe_key` is now the logical one-count Achievement occurrence: `task_history`, parent Task vs Step entity kind, Task/Step ID, and the best available occurrence part. The fallback order is persisted `occurrence_key`, then `lifetime:<task-id>` for non-recurring rows missing an occurrence key, then `logical-date:<entry-date>` only when no stronger identity exists.
+
+  The runtime capture function used by both immediate triggers and full recalculation now reconciles by logical `dedupe_key` before insert, then by exact source row, and only inserts when neither exists. Logical collisions update mutable snapshots/outcome, preserve the earliest first-qualified timestamp, avoid duplicate occurrence progress, and keep permanent tier/Collection awards plus notification dedupe intact. The corrected `supabase/add_achievement_mvp_runtime.sql` remains a manual database migration after the foundation migration; no remote database migration was applied by this version.
+
+- `6.29.38` connects the isolated Achievements MVP foundation to authoritative Task History and completed Focus-session storage through additive database triggers and a user-locked evaluator. Same-table parent Tasks and Steps/Substeps use frozen classification and recurrence-aware deterministic identities; legacy subtasks remain excluded. Focus uses stored `duration_seconds`. All 18 launch tracks now share pure calculation rules and server-side progress rebuilding, ordered permanent tier awards, immutable launch-track Collection mastery, and deduplicated notification outbox rows. Corrections can lower current progress without deleting awards or mastery, while captured history survives Task deletion and reparenting.
+
+  Recalculation is a bounded, cursor-resumable authenticated RPC that reuses immediate-capture identities, repairs stale source state, records sanitized run failures, and never rewrites original award dates. Task History stores a logical date and source-row creation time but not an exact original completion timestamp; therefore a legacy row genuinely created after activation on the activation logical date cannot prove whether its completion preceded the exact activation instant. The runtime conservatively requires both post-activation source creation and an on/after-activation logical date. Collection UI, Trophy Gallery integration, celebrations, notification presentation, and Realtime presentation remain deferred. The runtime migration must be applied manually after the foundation migration.
+
+- `6.29.37` adds the isolated statistics-based Achievements MVP foundation without replacing the existing Achievement feature or connecting live Task, Step, Focus, or streak activity. A versioned source catalog defines the four launch Collections, all 18 stable tracks, exact Bronze/Silver/Gold/Platinum thresholds, immutable launch mastery requirements, and bonus-track defaults. Pure helpers freeze IANA timezone, 06:00 logical-day, Monday-Sunday week, and calendar-month grouping snapshots and provide deterministic occurrence, award, mastery, and notification identities.
+
+  The new read-only-to-clients Supabase contract adds activation profiles, append-oriented qualifying occurrences and track matches, rebuildable progress, retry-safe evaluation runs, permanent tier and Collection mastery awards, and notification outbox rows. Unique identities prevent duplicate occurrences, matches, awards, mastery, operations, and notifications; post-activation inserts are enforced server-side; earned award rows reject update/delete mutations while still permitting account-cascade cleanup. Live mutation capture, evaluator runtime, recalculation RPC, Realtime controller, notifications/celebrations, Collection UI, Trophy Gallery integration, and legacy subtasks remain explicitly deferred. Focused catalog/calendar/identity/schema tests cover exact thresholds, bonus isolation, mastery snapshots, 06:00 and DST grouping, calendar boundaries, deduplication, permanence, and monotonic recalculation.
+
+- `6.29.36` simplifies the top Trophy Collection into one shared rectangular trophy sandbox. Bronze, Silver, Gold, and Platinum now render together on the single uninterrupted Canvas surface rather than appearing inside four separate visual cards. Their accessible tier totals and selected states remain HTML buttons in a compact aligned row underneath the sandbox. The four fixed renderer stages are evenly centered within the shared surface with additional framing space; live rotation, one-Canvas rendering, static fallback, retry, counts, tier filtering, and the rest of the gallery remain unchanged. Verification passed all 34 focused Trophy Gallery tests, targeted ESLint on the five narrowly touched showcase/test files, the text-button audit with its existing baseline and no Trophy Gallery finding, and `git diff --check`. No full lint, typecheck, build, browser suite, SQL, or package change was run.
+
+- `6.29.35` fixes the top Trophy Collection centering and scroll instability by removing the active four-portal Drei `View`/DOM-tracked scissor path. Safari no longer has to reconcile four scroll-relative bounding rectangles and per-view default cameras while the page moves. One stable shared Canvas now owns four fixed, deterministic stages derived only from the renderer surface size and the existing responsive two- or four-column grid. Each stage maps to the center of its corresponding square preview, uses one shared camera, and preserves the normalized d6 geometry, `0.82` die scale, tier materials, DPR profiles, local-axis rotation, and HTML tier-button interaction.
+
+  The Canvas moves with the Trophy Collection as one normal composited surface; no scroll observer, per-tile viewport registration, scissor rectangle, or scroll-driven remount remains in the active showcase path. Counts, filters, search, sorting, fallback/retry, context restoration, motion policies, and card thumbnails are unchanged. Verification passed all 34 focused Trophy Gallery tests, targeted ESLint on the six narrowly touched showcase/state/test files, and `git diff --check`. No full lint, typecheck, build, browser suite, SQL, or package change was run.
+
+- `6.29.34` fixes the Trophy Gallery live-renderer fallback trap. The strict Safari WebGL2 performance-caveat probe is no longer authoritative: a failed strict probe now falls through to an ordinary WebGL2 probe on a fresh temporary canvas, and a successful probe context is released. Static fallback now retains a concrete reason for explicit user choice, detection failure, renderer error, context loss, or dynamic-import failure while reduced motion, Low Stimulation, hidden documents, and Performance quality remain pause/quality policies rather than fallback triggers.
+
+  Renderer diagnostics now use a user- and `6.29.34`-scoped session key, retain failure count/reason/timestamp for crash-loop protection, and permit one fresh live mount after refresh instead of restoring static mode. Manual retry remains available after repeated failures, clears the active renderer reason, resets the Trophy boundary, reruns detection, and remounts the lazy renderer without changing filters or search. Context loss is prevented and given a bounded restoration window; restoration remounts the shared renderer, while timeout returns safely to reason-aware static previews. The existing one-Canvas/four-square-view layout, DPR profiles, camera, scale, rotation driver, and `0.22` rad/s motion are unchanged. Verification passed all 33 focused Trophy Gallery tests, targeted ESLint on the seven narrowly touched renderer/state/test files, and `git diff --check`. The first package-script invocation also ran its built-in broad test wildcard unintentionally and failed only on an overbroad new Trophy assertion that was corrected before the focused rerun. No full lint, typecheck, build, browser suite, SQL, or package change was run.
+
+- `6.29.33` restores visible slow rotation to the four top Trophy Collection dice without changing the approved `6.29.32` square scissor-view layout, model centering, `0.82` scale, `5.4` camera distance, or High/Balanced/Performance DPR profiles. The regression came from leaving animation and render-loop ownership inside the portalled trophy views after the shared Canvas became a manually rendered Drei `View.Port` host; the root had no explicit rotation driver, frameloop, or invalidation contract ahead of its positive-priority scissor renders. One root-level driver now mutates all four registered local trophy groups before the shared views render, invalidates the single Canvas, and runs `always` only while collection motion is active and the document is visible; paused states use `demand`.
+
+  Each tier rotates around its own centered local Y axis at `0.22` radians per second with a small deterministic starting-angle offset. Frame delta is clamped to `0.05` seconds so tab returns cannot jump. A direct `visibilitychange` listener pauses on any non-visible document state and resumes immediately when visible; OS reduced motion and ADHDice Low Stimulation still disable rotation, while Performance quality does not. Verification passed all 24 focused and existing Trophy Gallery tests, targeted ESLint on the narrowly touched renderer/policy/test files, and `git diff --check`. No full lint, typecheck, build, or browser suite was run.
+
+- `6.29.32` corrects the top Trophy Collection showcase alignment and live-render quality without changing gallery data or controls. Bronze, Silver, Gold, and Platinum now each own an HTML-aligned square tracked preview region rendered through four clipped Drei scissor views in one shared React Three Fiber Canvas/WebGL context, eliminating gutter overlap and preserving one trophy per tier tile across the four-column desktop and two-column mobile grids. The normalized d6 is centered around its actual model bounds, framed with a closer per-view camera, and scaled consistently so the full die reads as an intentional preview rather than a distant room object.
+
+  High, Balanced/Auto, and Performance now use intentional 2.5, 2, and 1.25 live-render DPR profiles while the Canvas backing size follows the actual tracked tile bounds, avoiding the previous undersized scene/CSS alignment mismatch. Rotation, hidden-document pausing, reduced motion/Low Stimulation, counts, filters, search, sorting, card thumbnails, deleted-task details, and fallback behavior are unchanged. Verification passed all 21 focused and existing Trophy Gallery tests, targeted ESLint on the narrowly touched showcase/quality/test files, and `git diff --check`. No full lint, typecheck, build, or browser suite was run.
+
+- `6.29.31` benches the full navigable Trophy Case room and makes Completed Milestones a list-first Trophy Gallery. The active surface has one Trophy Collection summary with Bronze, Silver, Gold, and Platinum totals derived from the same currently-earned adapter as the cards. The four tier trophies use one shared dynamically loaded WebGL context, rotate independently when motion is allowed, pause while the document is hidden, clamp return-frame time, and act only as accessible tier filters. Full-collection Standard Aura, Diamond Aura, No Aura, and total counts remain stable while tier, Aura, normalized title search, and newest/oldest controls filter and sort the card result set.
+
+  Each Completed Milestone card uses one of four session-cached static tier renders created in a single disposable renderer pass from the normalized d6 GLB geometry and shared runtime tier materials; cards never mount a live canvas. Standard Aura and Diamond Aura receive lightweight CSS framing while No Aura remains untreated, with final production Aura shaders and production trophy assets still deferred. Renderer, context, WebGL2, or thumbnail failure falls back locally to static trophy visuals without replacing or disabling the semantic gallery, counts, filters, sorting, cards, linked full-detail action, or deleted-task snapshot detail. Auto/High/Balanced/Performance quality settings remain compact; reduced motion and Low Stimulation disable rotation and decorative effects.
+
+  The List/Trophy Case switch, room, shelves, pedestal, guided camera, inspection, featured-trophy action, and duplicate trophy presentation are removed from the active UI and bundle path. Home now says `View Trophy Gallery` and opens the existing Completed Milestones Tasks surface without a dock destination. Reusable earned-trophy adaptation, normalized filtering/sorting, tier materials, GLB normalization, quality selection, motion policy, WebGL detection, bounded renderer failure handling, static fallback, deleted-task title fallback, and deterministic trophy metadata remain isolated; room-only layout/navigation files are benched for later work. Verification passed all 92 focused Trophy Gallery and Milestone foundation/Ticket 2-4/QA tests, targeted ESLint on the new and narrowly touched files, and `git diff --check`. The text-button audit returned its existing baseline list and no Trophy Gallery finding. No full lint, typecheck, build, browser suite, SQL, or package addition was run. Durable Milestone reminder delivery remains separate.
+
+- `6.29.30` adds the first experimental Interactive 3D Trophy Case prototype inside Completed Milestones. The existing List remains intact and is joined by a local `List / Trophy Case` mode; Home's existing Milestone dashboard can open the Tasks Completed Milestones surface directly in Trophy Case mode without URL routing or a dock destination. A pure adapter consumes the synchronized Milestone controller rows and admits only currently earned, non-reversed, well-formed completed trophies while preserving deleted-task title snapshots. Search, tier/Aura filters, newest/oldest sorting, deterministic six-slot tier shelves, semantic camera targets, local featured selection, and derived placement live in isolated Trophy Case modules.
+
+  The optional renderer is loaded through top-level `next/dynamic(..., { ssr: false })` and keeps Three.js, React Three Fiber, Drei, GLB loading, and scene code outside ordinary Home/List startup. The restrained primitive room includes tier areas, automatic shelves, a featured pedestal, runtime Bronze/Silver/Gold/Platinum materials, guided overview/tier/shelf/trophy camera positions, bounded inspection controls, reduced-motion/Low Stimulation behavior, and Auto/High/Balanced/Performance profiles. `public/d6.glb` is loaded with `withBasePath()` and remains prototype-only, not production-approved; its embedded metadata credits juliov.cg / Sketchfab and identifies CC-BY-4.0 licensing. Production trophy geometry/material art, Standard Aura effects, Diamond Aura shaders, room assets, and advanced context-loss restoration remain pending.
+
+  Semantic HTML search, filters, trophy list, metadata, feature/detail actions, quality/static controls, keyboard selection, Escape focus return, restrained live announcements, conservative WebGL2 detection, a resettable Trophy-specific boundary, bounded session retry state, and a data-equivalent static gallery keep essential information and actions outside the canvas. Verification passed 53 focused Trophy Case plus affected Milestones Ticket 3/4 tests, targeted ESLint on the new and narrowly touched files, and `git diff --check`. The text-button audit returned only its existing baseline list and no Trophy Case finding. No full lint, typecheck, build, browser suite, package addition, or SQL work was performed. Durable Milestone reminder delivery remains a separate ticket.
+
+- `6.29.29` implements Milestones Ticket 4 across Home and Reports. Home now uses the synchronized Milestone controller and existing task lookups for Active, Completed, In Grace, and Past Aura Window summaries; up to three date-ordered active previews; the most recent completion even after physical task deletion; and currently valid trophy-tier plus Standard/Diamond Aura distribution. Existing app-state callbacks open the built-in Milestones system list, Completed Milestones workspace, and shared task editor without new routing or a dock destination.
+
+  Reports now fetch range-scoped semantic lifecycle events from `adhdice_milestone_events` using local-midnight `occurred_at` boundaries (`>=` selected start and `<` the day after selected end), plus current completed `adhdice_milestones` rows within the selected completion-date range. The shared pure report generator adds promoted, on-time/grace/late completion, abandonment, reversal, currently earned trophy, Aura, and optional capped detail output, so preview and copy/export remain identical and ordinary task/focus sections are preserved. Verification passed the 84 focused Milestones Tickets 1-4 and affected report tests, targeted ESLint on the new/narrowly touched Home/report files, the text-button audit with its existing baseline findings, and `git diff --check`. No full lint, typecheck, build, browser suite, long browser suite, or SQL operation was run. Ticket 5 is still required for durable reminder delivery.
+
+- `6.29.28` fixes the remaining full Edit Task Milestone overlap at its confirmed structural cause. The editor/Steps card and sticky metadata card now live in their own width-bounded two-column grid, while the full-inspector Milestone extension renders immediately after and outside that sticky grid. Zero-minimum grid tracks, explicit desktop column width constraints, and outer horizontal-overflow suppression prevent inspector content from widening or scrolling beneath the metadata column; the existing vertical scroll, inner horizontal scrollers, sticky metadata behavior, and single-column mobile shell remain intact.
+
+  Verification passed the focused inspector/Milestone layout test, targeted ESLint completed with only the touched shared renderer's pre-existing findings, and `git diff --check`. No full lint, typecheck, build, browser suite, or SQL operation was run.
+
+- `6.29.27` is the focused Milestones QA correction. Milestone setup, recommendation, confirmation, correction, and inspector summaries now display date-only values as `M-D-YY` without changing ISO persistence or calculations. The full-inspector extension owns an explicit full-width grid region so the Milestone section stays inside the main scroll area instead of overlapping the metadata column. Active and completed task-backed Milestones expose compact accessible trophy indicators and searchable `milestone`, `milestones`, and tier metadata. The Milestones Smart List uniquely includes active and completed task-backed rows while excluding abandoned, trashed, and deleted-task records without changing completed visibility in other lists. Changing a completed Milestone from Complete to Pending now opens the existing authoritative reversal confirmation/controller/RPC path; ordinary task status changes remain unchanged.
+
+  Verification passed the existing 57 focused Milestones tests plus 6 focused QA-correction tests, targeted ESLint on the narrow Milestone/helper files, and `git diff --check`. The text-button audit returned its existing baseline list, and targeted lint of the three pre-existing shared task renderers still returned their existing 108 effect/unused-symbol findings. No full lint, typecheck, build, browser suite, remote SQL application, Home/Reports work, or reminder delivery was performed.
+
+- `6.29.26` implements Milestones Ticket 3 lifecycle. The new rerunnable `supabase/add_milestone_lifecycle.sql` migration (created locally, not remotely applied) adds authenticated, revision-checked, operation-idempotent RPCs for permanent completion, server-time target/grace classification, trophy and standard/Diamond Aura awards, exact task-state reversal, abandonment, and atomic task Trash/restore/permanent deletion coordination. Permanent completion retains the existing descendant, confirmation, timed-evidence, history, and ordinary reward paths without Milestone bonus XP, dice, or multipliers. Reversal preserves the original locked tier, target, aura deadline, and correction history; abandonment preserves the task.
+
+Warning: truncated output (original token count: 5181)
+Total output lines: 50
+
+  Active, completed, and abandoned inspector states now expose the applicable lifecycle detail and confirmations. The Tasks workspace adds a Completed Milestones collection linked from the Milestones system list; it uses loaded Milestone rows and preserves completed records when the task is archived, trashed, or physically deleted. The reserved visual shell uses the generic Trophy icon and accessible tier text. Ticket 4 is still required for Home and Reports integration; Ticket 5 is still required for durable reminder delivery. Verification passed all 57 focused Ticket 1-3 tests, the targeted new/narrow Milestone ESLint set (with one pre-existing unused fallback warning in `useTaskCrudActions.ts`), the text-button audit with only its existing baseline findings, and `git diff --check`. The focused Complete/reward set passed 26 of 28 tests; its two failures are pre-existing expectations that omit the already-implemented `delayed` calendar action. Targeted lint of the pre-existing shared task renderers still reports their existing effect/ref findings. No full lint, typecheck, build, browser suite, remote SQL application, Home/Reports work, or reminder delivery was performed.
+
+- `6.29.25` implements Milestones Ticket 2 as the first browser-testable production slice. Eligible finite parent tasks can open a nine-question stepped setup from shared task menus and the full inspector; Steps and Substeps use the existing guarded same-row detach path before setup. The shared deterministic Ticket 1 rules produce the recommendation, adjustment range, aura deadline, and lock payload, while the authoritative RPC remains the only persistence path and retry attempts retain their operation UUID. Authenticated Milestone rows load through a focused controller, merge RPC and Realtime results by identity/revision, and supply precomputed task lookups.
+
+  The app-owned, non-editable `Milestones` Smart List derives active membership from loaded Milestone rows without redundant membership storage. The full task inspector shows locked tier/date/aura, timing, explanations, setup answers, versions, and the one-time 24-hour correction action, which uses the authoritative correction RPC and expected revision. Until Ticket 3 provides atomic trophy awarding and completion lifecycle operations, permanent Complete is blocked only for active Milestones before task history or status mutation. The Ticket 1 SQL foundation was applied manually before this ticket; this ticket adds no SQL and does not apply anything remotely. Verification completed with 29 focused foundation/Ticket 2 tests, targeted ESLint passing on new and narrowly touched Milestone modules, the text-button audit (which reported its existing baseline list and no new Milestone controls), and `git diff --check`. Targeted lint of the pre-existing shared task-app renderers still reports their existing React effect/ref/purity findings; no full lint, build, typecheck, browser suite, or database execution was run.
+
+- `6.29.24` implements the Milestones Ticket 1 persistence and deterministic-rules foundation without adding production Milestones UI. The isolated `milestone-questions-v1` / `milestone-rules-v1` TypeScript modules cover parent-task eligibility, tier scoring, target and allowed-range calculations, calendar-date aura/timing classification, and durable reminder scheduling. The new rerunnable `supabase/add_milestones_foundation.sql` migration defines Milestone, append-only event, and versioned reminder tables with authenticated read-only RLS plus retry-safe security-definer lock and one-time setup-correction RPCs. `supabase/schema.sql` and the hand-maintained database type surface represent the new contract without removing newer task statuses or recurrence values.
+
+  The migration was subsequently applied manually and verified before Ticket 2. Ticket 1 itself added no Q&A, promotion action, Milestones Smart List, dashboard, completion, award, undo, abandonment, Trash/restore, report, reminder-delivery, achievement, Trophy Room, or trophy-asset UI. Verification completed with 17 focused rules and SQL-contract tests, targeted ESLint on the new/narrowly touched TypeScript files, and `git diff --check`; no full lint, build, typecheck, browser suite, or database execution was run.
+
+- `6.29.23` makes resolved Step and nested Substep editor routing idempotent after the one-time Estimated Time focus request is acknowledged. When the parent shell already owns the inspector and `metadataTargetTaskId` already equals the requested child, the requested-open effect now preserves the active child metadata panel instead of rerunning child reveal and clearing it back to the Due default. Parent opens, unresolved child routing, token handling, and verified-focus acknowledgement are unchanged. No SQL migration is required.
+
+- `6.29.22` moves On-Time Estimated Time field handling out of open-task routing. After the full inspector resolves its render-owned parent, Step, or nested Substep metadata task, manual tab clicks and automatic requests now share one canonical metadata-panel selector keyed by that resolved task ID. A token is acknowledged only after the Estimated Time input mounts, receives focus and selection, and is confirmed as `document.activeElement`; closing still cancels a pending request, fresh tokens can focus the same task again, and normal editor and Active Timer opens retain the default metadata behavior. No SQL migration is required.
+Warning: truncated output (original token count: 5001)
+Total output lines: 50
+
+
+  Task saving, Manual-duration reconciliation, On-Time timing calculations, task timers, Stop & Save, Finish & Log, actual-time evidence, recurrence, History Calendar, rewards/economy, Focus runtime and counters, and pending reward dice are unchanged.
+- `6.29.21` couples the On-Time `estimated_time` request to the inspector's resolved parent, Step, or nested Substep open path before open-task acknowledgement. The correct metadata target now activates its Estimated Time panel deterministically, after which the existing one-time post-mount ref focus and nearest-only scrolling run. Normal editor opens and task-save behavior are unchanged. No SQL migration is required.
+- `6.29.20` routes Active Timer `Go to Task` through the shared task-table full inspector without forcing Table View, changing the current Tasks surface, or queuing row reveal, highlight, or scroll work. The shared opener validates missing, archived, trashed, and clearly stale occurrence targets while preserving the existing parent, Step, and nested Substep shell/metadata routing. A separate one-time semantic editor-field request uses a monotonically increasing token; On-Time preparation-item `Open` requests `estimated_time`, activates the target task's Estimated Time panel, then focuses the shared desktop/mobile input after mount with nearest-only scrolling. Closing returns to the same Table, List, On-Time, or other supported Tasks surface.
+
+  No SQL migration is required. Task timers and their pause/resume/stop/discard behavior, Stop & Save, Finish & Log, actual-time evidence, On-Time timing math, duration reconciliation, recurrence, History Calendar, rewards/economy, Focus systems and counters, pending dice, and task-save behavior were unchanged.
+- `6.29.19` gives authoritative raw In Progress narrow display precedence over anchored Missed, Done, or Did My Best occurrence history for recurring parents, Steps, and Substeps without removing or changing historical rows. Table View's existing Pinned and Routine glyphs now add selected-only fill while retaining their established shell, foreground, stroke, membership behavior, and unselected outline treatment.
+
+  Start Deadline now uses the existing occurrence-exact task-timer elapsed calculation to adopt matching saved evidence plus running or paused active work, shifting the execution anchor earlier and allowing immediate overtime when elapsed work exceeds the captured configured duration. A same-task timer from another occurrence is rejected rather than accepted as matching success. Restart Deadline remains an explicit fresh full-duration deadline anchored now and does not start, reset, duplicate, or otherwise mutate task-timer evidence. Clearing or invalidating a present linked task's Manual estimate now reconciles its configured `plannedSeconds` to `null` and `Time needed`; an active execution retains its captured start, duration, countdown, fixed ETA, and Reset action, while Restart stays unavailable until a valid configured duration returns. Missing task rows remain unchanged during partial hydration, and reconciliation remains idempotent.
+
+  No SQL migration is required. Stop & Save, Finish & Log, evidence-safe completion and completion-only retry, terminal execution clearing, recurrence, History Calendar, rewards, Focus systems and counters, pending dice, routes, traffic freshness, and actual-time evidence semantics were unchanged.
+- `6.29.18` coordinates the existing task timer and On-Time execution deadline without merging their storage models. On-Time-origin Stop & Save still uses the existing actual-time submission path and clears only the matching linked occurrence's execution anchor after evidence succeeds; failure or cancellation preserves the deadline, status, configured duration, and other planner executions. The linked-row Finish & Log action offers Done, Did My Best, and confirmed Complete through the existing evidence-safe timed-completion workflow, while successful terminal choices from the existing On-Time status control also clear the matching execution anchor; Missed does not.
+
+  Routine and Pinned row-toolbar membership icons now retain visible dark-purple outline glyphs on the established pale selected shell without relying on hover or filled SVG shapes. On-Time icon-and-label chips use the shared explicit `gap-1.5` rule, and the canonical UI design guide now records that contract plus the approved Focus Activity horizontal overflow-arrow implementation and Codex checklist. No SQL migration is required. Focus Activity …181 tokens truncated…tores a paused timer, the latest authoritative task row drives Done, Did My Best, or already-confirmed permanent Complete, and a real terminal failure retains its error and offers completion-only retry without inserting evidence or applying actual time twice.
+
+  Missed remains visibly Missed but is no longer schedule-resolved in On-Time, so Manual, Typical, and Custom duration, missing-time prompts, Start/countdown/overtime, preparation left, projected arrival, and downstream ETAs remain active. Table Routine and Pinned membership use the strong filled selected treatment; Start/Restart deadline chips have local icon spacing. The existing schedule categories now add early/on-time/late arrival detail against the buffer-adjusted operational target, while a timestamp-derived live header counts down to preparation, leave, and target-arrival boundaries with trusted-schedule fallback. Focus Activity keeps its native horizontal interaction with a hidden scrollbar, direction-aware overflow arrows, ResizeObserver recalculation, reduced-motion behavior, and unchanged Daily Overall uncapped bars, Weekly dates, Categories aggregation, values, order, and bar count.
+
+  No SQL migration is required. Focus runtime synchronization, Focus counter synchronization, pending reward dice, recurrence, History Calendar, reward formulas/economy paths, On-Time route fetching and traffic freshness, and Focus Activity aggregation were unchanged.
+- `6.29.16` is a five-fix correctness patch on the protected `6.29.15` On-Time worktree. Focus counter migration divergence backup/notice behavior now runs only for a fresh result, so replayed RPC results still hydrate authoritative counters without rewriting the backup or replaying the warning. Table row presentation receives the full list-definition set, restoring Routine's existing active icon treatment while generic manual destinations remain filtered and All/Routine remain excluded there. On-Time schedule resolution is now separate from visible terminal semantics: Done, Did My Best, Complete, and Missed contribute zero remaining time while rendering their exact authoritative labels; temporary items retain their existing Completed wording and unresolved statuses retain timing.
+
+  Successful task-editor saves now reconcile the saved authoritative estimate into matching linked Manual On-Time items immediately through the existing plan mutation path. Typical, Custom, unrelated, and temporary items are unchanged, and an active schema-v3 execution anchor retains its captured duration and fixed ETA until Reset/Restart. Done, Did My Best, and confirmed permanent Complete now share a root completion gate: an authoritative timer is stopped before the existing actual-time submission opens, completion is deferred until one evidence save succeeds, and cancellation restores the stopped timer paused without changing task status/history/rewards. Stop, evidence, or restoration errors remain visible and cannot silently complete or discard the timer.
+
+  No SQL migration is required. Focus runtime, counter mutation/RPC semantics, Focus Activity production UI, route fetching, recurrence, rewards/economy formulas, and pending reward dice were untouched.
+- `6.29.15` makes the shared history-aware task display-status map authoritative in On-Time as well as Paths, so linked parent, Step, Substep, due-today, future, and recurring occurrence statuses match Table/List while raw task objects still flow through the existing mutation system. On-Time plan JSON is schema v3: every item normalizes an optional persisted execution anchor containing an ISO `startedAt` and captured positive `plannedSeconds`; v1/v2 plans preserve their items, order, occurrence identity, destination, travel, and duration data while gaining null execution state, and schema-first conflict ordering prevents older clients from stripping v3 anchors. Relinking clears the old occurrence's execution anchor.
+
+  Manual Start/Reset/Restart controls now create or clear fixed execution deadlines without per-second writes. Linked starts reuse the task timer and persist the planner anchor only after timer start succeeds; task-timer pause/resume and Stop & Save retain their existing actual-time evidence behavior and do not pause or move the planner deadline. Timestamp-derived remaining time catches up after refresh, backgrounding, visibility return, and `pageshow`, reaches `00:00`, then continues into negative overtime. Running execution replaces evidence deduction for that row, overtime is clamped to zero only for downstream projection, and each row keeps its fixed estimated finish. The responsive row uses a large tabular countdown with adjacent estimated-finish text on desktop and a compact title-below timing layout on mobile without a new card or modal.
+
+  No SQL or table migration is required because the existing JSONB plan and local cache carry schema v3 whole-plan state. Focus Activity production code remains unchanged: focused verification confirms uncapped Daily Overall session bars, seven Weekly date bars, complete Monthly buckets, top-six-plus-Other Categories, stable ordering/date behavior, and horizontal chart access. Focus runtime, Focus counters, pending dice, rewards/economy, task history, recurrence, task-timer evidence storage, and route architecture were untouched.
+- `6.29.14` replaces user-facing Focus runtime hard deletion with server-authoritative soft closure. `adhdic…1 tokens truncated…ocus_active_sessions.closed_at` and constrained `close_reason` values (`reset`, `completed`, `stopped`) retain closed runtime audit rows while defining active runtimes as `closed_at IS NULL`. Reset and Trash/stop lock the open row, freeze elapsed state, mark it paused/closed, and increment revision. Completion preserves the existing atomic duration, unique history, XP, level-up token/free-roll, and ledger transaction exactly once, then closes the same runtime with reason `completed` instead of deleting it. Operation UUID replay and the unique completed-session identity return the authoritative closed runtime/result without duplicating history or economy effects.
+
+  Migration order is manual and sequential: first confirm the deployed `6.29.10` runtime migration (`supabase/add_focus_runtime_sync.sql`) and its required Focus/economy dependencies are present; then run the complete new `supabase/add_focus_runtime_soft_close.sql`. The follow-up adds nullable closure fields without rewriting existing rows, so every deployed active timer remains open with its session/category/timing/countdown/revision data preserved. It catalog-checks and replaces the two old slot indexes with partial unique indexes for one open category slot per `(user_id, category_id)` and one open standalone slot per user; historical closed rows do not block new timers. It also replaces transition, completion, and legacy migration RPCs so normal reads/mutations target open rows, then reasserts select-only authenticated table access, RPC grants, Realtime publication, and PostgREST schema reload. The script is transactional and rerunnable. Do not rerun the original migration as a substitute and do not execute either script automatically from the app.
+
+  Filtered Realtime `INSERT`/`UPDATE` remains the live path. A closure `UPDATE` advances the runtime generation, records a bounded session/revision tombstone, and removes only that matching timer while leaving other categories active. Older fetches and older open updates cannot resurrect the closed session. Hydration requests only open rows and still replaces the full local map, including empty snapshots; visibility, `pageshow`, online, subscription recovery, same-browser runtime broadcast, and HUD Refresh remain recovery paths. No private Broadcast DELETE, polling, replica-identity change, hard-delete cleanup, timer UI change, Focus counter/Activity change, or economy-formula change is included. After manual SQL deployment, verify both partial index predicates, closure constraints, RPC visibility/grants, Realtime publication, and two-device reset/completion/pause/resume behavior.
+- `6.29.13` makes user-defined Focus counters server-authoritative without changing Focus timers, Focus Activity, rewards, reports, or counter UI. Definitions, signed values, step/goal metadata, stable order, revisions, and soft-delete state live in `adhdice_focus_counters`; append-only `adhdice_focus_counter_events` retain create/adjust/set-value/update/delete/migration operations with value and title/step snapshots; and `adhdice_focus_counter_migrations` durably records each device snapshot and result. All mutations use the user-scoped `adhdice_mutate_focus_counter` RPC with row locks and operation UUID replay protection. Adjustments apply the locked server step exactly once and intentionally do not reject a stale revision, so concurrent device increments both land. Absolute value/metadata/delete changes use expected revisions and return the authoritative row on conflict. Authenticated clients have own-row `SELECT` only under RLS; direct table mutation is revoked and RPC payloads cannot select a user ID.
+
+  Legacy migration order: the client reads the complete per-user local counter/history snapshot before server hydration, creates or reuses a stable installation UUID and per-user migration batch UUID, then calls `adhdice_migrate_focus_counters`. Under a per-user transaction lock, the first successful snapshot is imported only when that user has no server counter rows. Array order becomes `sort_order`, server UUIDs are assigned, legacy IDs are retained in migration metadata, and local history becomes durable migration events. Once any server counters exist, later snapshots are audited but never summed, title-matched, merged, or allowed to overwrite the server. If a later non-empty snapshot differs, it is saved under a versioned local backup key, the existing notification system warns the user, and the full server snapshot wins. Exact device/batch replay returns the stored result harmlessly.
+Warning: truncated output (original token count: 5875)
+Total output lines: 50
+
+
+  Hydration replaces the complete local counter definition/value set, including clearing it for an empty server snapshot, and replaces browser history with durable server events. Realtime publishes both counter rows and event rows; counter deletion propagates as a filterable `UPDATE` while historical events remain. Initial load, subscription success/recovery, visibility, `pageshow`, online, same-browser broadcast, and HUD Refresh reconcile from Supabase. Owner, generation, and row-revision guards prevent account leakage and older fetch/Realtime results from replacing newer authoritative state. Local storage remains only the migration source, versioned divergence backup, and post-migration cache.
+
+  Manual Supabase deployment is required: after confirming the project uses the expected `auth.users`/Realtime setup, run the complete `supabase/add_focus_counter_sync.sql` once in SQL Editor, then confirm `adhdice_focus_counters` and `adhdice_focus_counter_events` are in `supabase_realtime`, the two RPCs are visible after the included PostgREST reload, authenticated has table `SELECT` plus RPC execution, anon has neither, and direct authenticated table mutation remains revoked. The script is transactional and rerunnable; do not execute it automatically from the app. Deploy SQL before relying on cross-device counters. Two-device QA should cover create/edit/adjust/concurrent adjust/replayed operation/stale absolute edit/soft delete, empty/full recovery, account switching, first and later-device migration, offline/resume, and HUD Refresh. Focus runtime live DELETE propagation remains benched and untouched.
+- `6.29.12` removes the artificial seven-bar cap from Focus Activity Daily Overall, so every session on the selected date renders in the existing order and scrollable chart. Daily totals and session counts, `session_date` and timezone behavior, Weekly Overall's seven date bars, Monthly Overall's seven-day buckets, Categories' top-six-plus-Other aggregation, fetching, accounting, range controls, and chart styling are unchanged.
+- `6.29.11` fixes Focus runtime reset/delete convergence after the `6.29.9` authoritative-runtime rollout. The reset/delete RPC already removed the server runtime by stable `session_id`, but a remote client’s Realtime DELETE handling only filtered a fully populated `old.session_id`, and the HUD Refresh chip only ran the workspace refresh after active runtime loading had been moved out of that path. A DELETE now removes the matching local runtime by stable session ID immediately, with a logical category/standalone-slot fallback only for legacy payloads lacking session identity. The event advances the runtime generation guard, so an older fetch cannot revive the deleted timer. The HUD Refresh chip now also runs the authoritative Focus runtime snapshot reconciliation; snapshots replace the full runtime map and therefore remove stale local rows, including when the server returns no active runtimes. Start, pause, resume, countdown, completion, concurrent categories, SQL/RPC schema, Focus counters, and Focus Activity remain unchanged.
+- `6.29.10` repairs the failed `6.29.9` Focus runtime migration without changing the runtime client, UI, counters, Focus Activity, or completion formulas. The original script attempted `ALTER COLUMN category_id DROP NOT NULL` while the deployed primary key was still `(user_id, category_id)`, producing PostgreSQL `42P16`. Depending on SQL Editor batching, the preceding guarded column-add and runtime backfill statements may already have committed; the corrected script treats those changes as potentially present.
+
+  Corrected migration order: add missing runtime identity/state columns; backfill only missing runtime values while temporarily disabling the existing active-session `updated_at` trigger; reject any remaining null or duplicate `session_id`; set required runtime columns non-null; catalog-detect and drop any primary key that is not already `PRIMARY KEY (session_id)` (including the confirmed `adhdice_focus_active_sessions_pkey` legacy key); make `category_id` nullable; add the guarded `session_id` primary key; replace the runtime kind/mode/state/shape/countdown checks; and add partial unique indexes for `(user_id, category_id)` category slots and one standalone slot per user. Existing `user_id`, `category_id`, `start_time`, `current_run_started_at`, `accumulated_seconds`, `is_running`, state, and current `updated_at` values are preserved, as is `adhdice_focus_active_sessions_user_updated_idx`. If the failed script's original backfill committed separately, it may already have advanced `updated_at`; that prior timestamp cannot be reconstructed, but the corrected rerun does not advance it again. The remaining history-idempotency column/index, operations table, RLS/grants, RPC replacements, Realtime publication guard, and PostgREST reload are rerunnable. The whole corrected script is transactional.
+
+  Exact manual recovery: do not edit or clear production rows. Open Supabase SQL Editor and rerun the complete current `supabase/add_focus_runtime_sync.sql` from `begin;` through `commit;` once. If it succeeds, run `notify pgrst, 'reload schema';` once more only if PostgREST still reports stale table/function metadata. Do not run an older excerpt or manually delete the legacy primary key outside the corrected transaction.
+
+  Read-only verification queries after deployment:
+  ```sql
+  select conname, pg_get_constraintdef(oid) from pg_constraint where conrelid = 'public.adhdice_focus_active_sessions'::regclass order by contype, conname;
+  select indexname, indexdef from pg_indexes where schemaname = 'public' and tablename = 'adhdice_focus_active_sessions' order by indexname;
+  select count(*) as runtime_rows, count(session_id) as identified_rows, count(distinct session_id) as unique_session_ids from public.adhdice_focus_active_sessions;
+  select session_id, user_id, runtime_kind, category_id, mode, state, current_run_started_at, start_time, accumulated_seconds, is_running, revision, updated_at from public.adhdice_focus_active_sessions order by user_id, updated_at desc;
+  select pubname, schemaname, tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'adhdice_focus_active_sessions';
+  select routine_name from information_schema.routines where routine_schema = 'public' and routine_name in ('adhdice_transition_focus_runtime', 'adhdice_complete_focus_runtime', 'adhdice_migrate_focus_runtime') order by routine_name;
+  select grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' and table_name in ('adhdice_focus_active_sessions', 'adhdice_focus_runtime_operations') order by table_name, grantee, privilege_type;
+  select grantee, routine_name, privilege_type from information_schema.role_routine_grants where routine_schema = 'public' and routine_name in ('adhdice_transition_focus_runtime', 'adhdice_complete_focus_runtime', 'adhdice_migrate_focus_runtime') order by routine_name, grantee;
+  ```
+- `6.29.9` makes Focus Timer runtime state server-authoritative across devices. `adhdice_focus_active_sessions` retains existing category rows and independent per-category concurrency while adding stable session identity, a single standalone Countdown slot, synchronized count-up/countdown mode and target, server-timestamped running/paused segments, accumulated time, revision, and timestamps. Authenticated clients receive read-only table access; create, pause, resume, configure, adjust, reset/delete, migration, and completion go through user-scoped transactional RPCs with operation UUID replay and compare-and-set revision protection. One runtime hydration/controller now owns startup, Realtime, visibility, pageshow/PWA resume, online, timeout/error, and reconnect recovery, and generation/revision checks prevent delayed fetches from replacing newer RPC or Realtime state. Local intervals remain display-only. Focus counters remain device-local, and Focus Activity/chart ranges are unchanged.
+
+  Completion is atomic and idempotent by runtime session ID and operation UUID: the server calculates elapsed duration, clamps countdown duration, inserts one compatible `adhdice_focus_sessions` row, applies the existing `floor(minutes * 1.5)` Focus XP plus existing level-up token/free-roll effects once, writes the Focus ledger row once, and deletes the runtime in the same transaction. Simultaneous countdown-zero detection therefore replays the original completed row without duplicate duration or economy credit.
+
+  Manual Supabase deployment order: (1) confirm the existing migrations that provide `adhdice_focus_active_sessions`, `adhdice_focus_sessions`, economy/profile columns, `free_roll_bank`, `adhdice_point_ledger`, and `adhdice_level_from_xp` are already applied; (2) run all of `supabase/add_focus_runtime_sync.sql` once in the SQL Editor; (3) confirm the included `notify pgrst, 'reload schema'` completed, or manually run that notification if PostgREST still reports stale function/table metadata; (4) verify `adhdice_transition_focus_runtime`, `adhdice_complete_focus_runtime`, and `adhdice_migrate_focus_runtime` appear in the API schema; (5) query `pg_publication_tables` and confirm `public.adhdice_focus_active_sessions` is present for `supabase_realtime`; and (6) confirm authenticated has table `SELECT` plus RPC execution while anon has neither. Do not run this SQL automatically from the app or against production without review.
+
+  Legacy migration defaults retained category rows without authoritative local metadata to count-up. A device may promote its matching category row to countdown only when category, session ID, and revision still match and the row has never received authoritative mode data. A legacy standalone Countdown creates the one server slot only when none exists; otherwise the server row wins. Migration operation IDs are idempotent, local keys clear only after server confirmation, and confl…875 tokens truncated… or against production without the normal manual review/deployment step.
+
+  Legacy migration and two-device QA: before first 6.29.7 launch, note each device's HUD pending count (for example desktop 129 and mobile 44). Open the larger-balance device, sign in, and confirm the server/HUD becomes 129 and that device's `adhdice-pending-task-rewards:<user_id>` key is cleared/marked migrated. Open the smaller device and confirm the balance stays 129 rather than becoming 173 or dropping to 44. A later device reporting a genuinely higher legacy count may raise the server to that number; repeating the same device migration must not change it. This highest-known legacy balance prevents overlapping old rewards from being duplicated, but it cannot reconstruct whether different device-local banks contained disjoint rewards.
+
+  Then complete one task at each streak tier and confirm the server adds 1, 2, 3, 4, 5, or 6 exactly once; repeat an award operation ID and confirm no second addition; complete two different tasks and confirm both additions. With the same account open on desktop and mobile, confirm Realtime updates the other HUD, refresh/resume/reconnect converge, and an older delayed fetch cannot undo the newer count. Open the reward modal without automatic launch, start the same pending claim nearly simultaneously on both devices, and confirm only one operation consumes/awards while the other cannot reuse the inventory. Retry the winning claim UUID and confirm the identical stored rolls/result return without another point/token/claim write. Force an insufficient/inconsistent claim and confirm balance, points, XP, tokens, rolls, claims, and ledger are unchanged. Confirm animation still uses at most six visible dice per batch, preserves timing/aggregate/breakdown, and the HUD chip disappears at zero. Finally, verify another authenticated user cannot read or operate on the first user's rows.
+- `6.29.6` makes dice payment and balance rewards server-authoritative and idempotent per client-generated operation UUID. `adhdice_execute_roll` locks the authenticated user's profile, consumes exactly one banked roll or the point cost, writes the point ledger plus base roll history in the same transaction, safely replays duplicate operation IDs, and applies free-roll/token prizes at most once through that same operation. Roll now waits for the authoritative RPC before animation, retains an ambiguous-failure operation ID for safe retry, rejects stale hydration responses, consumes profile Realtime updates, and refetches on subscription recovery, visibility, pageshow, and online events. Manual Supabase deployment is required before deploying the client: run all of `supabase/add_atomic_roll_operation.sql` in the Supabase SQL Editor, confirm `adhdice_execute_roll` is exposed after the included PostgREST schema reload notification, and confirm `adhdice_user_profiles` appears in `pg_publication_tables` for `supabase_realtime`. Then QA with the same account on desktop and mobile: verify one free roll decrements once, two near-simultaneous rolls decrement twice, a point-funded roll writes one matching ledger/history operation, refresh/resume/reconnect converge, insufficient balance leaves every value unchanged, and a deliberately retried operation UUID returns the original roll without a second charge or reward. Focus timers, Focus counters, task rewards/formulas, recurrence, History Calendar, task status, dice probabilities, prize selection, animation, and visual design are unchanged.
+- `6.29.5` fixes History Calendar historical Missed backfill when the current `due_on` anchor is later than the edited date: missing scheduled historical occurrences are included in the same idempotent history upsert and returned-row merge, while today remains active and no-reward behavior is unchanged.
+- `6.29.4` closes the History Calendar missed-history gap: saving a scheduled historical Missed backfills only missing scheduled occurrences to the first later Done, Did My Best, or supported Complete history entry, or through yesterday when unresolved. Existing history is preserved and repeated saves are idempotent; the active row remains anchored Missed when unresolved, while completion rebasing and no-reward/no-subtask-reset behavior remain unchanged.
+- `6.29.3` corrects History Calendar recurrence rebasing: a Done or Did My Best edit uses its latest edited completion date as the recurrence base, even when it differs from the old `due_on`; it calculates one next occurrence, preserves prior Missed history, and keeps the calendar no-reward/no-subtask-reset behavior. Rollover RPC and repair SQL remain unchanged.
+- `6.29.2` fixes History Calendar reconciliation for regular recurring missed anchors: resolving the history row matching the active `due_on` through Done or Did My Best advances from that anchored occurrence, carries through contiguous resolved scheduled history, stops at the first unresolved occurrence, and preserves the calendar’s no-reward/no-subtask-reset behavior. Rollover RPC and repair SQL remain unchanged.
+- `6.29.1` corrects regular recurring rollover so unresolved overdue occurrences continue writing required Missed history while the active row remains `Missed` on its original `due_on`; anchored `In Progress -> Did My Best` and explicit successful finalization still advance normally, and `Daily Until Complete` behavior is unchanged. Manual Supabase deployment remains required: (1) run only the read-only preview in `supabase/repair_regular_recurring_missed_anchors.sql`; (2) inspect every proposed row, including known examples Prep Task, Turkey Bacon, and Oatmeal; (3) run the full `supabase/patch_daily_until_complete_rollover_rpc.sql` replacement; (4) run the repair statement only after preview approval; and (5) rerun the preview to confirm no qualifying rows remain. The repair intentionally skips incomplete history chains, later resolving/ambiguous history, active In Progress anchors, completed or trashed rows, unsupported recurrence types, and any row whose current due date is not exactly the next scheduled occurrence after its trailing Missed sequence.
+- `6.29.0` establishes the approved Google destination/traffic foundation without user-facing integration. The persisted On-Time plan is now schema v2 with nested Manual/Google destination identity, current-location origin mode, Manual/Traffic preference, manual duration in seconds, and schema-first downgrade protection before timestamp-based whole-plan last-write-wins; valid v1 JSONB plans migrate internally with preparation items preserved, so no SQL migration is required. Pure route helpers cover validation, Google duration/result normalization, effective Manual/Traffic duration, 15/30-minute freshness, five-minute departure movement, ten-minute automatic-request spacing, quantized deterministic request signatures, duplicate in-flight suppression, and universal Google Maps handoff URLs. The authenticated `on-time-route` Supabase Edge Function uses a fixed Google Routes endpoint, driving plus traffic-aware optimal/best-guess routing, a narrow field mask/result, exact configured CORS origins, body/request validation, conservative timeout, server-only `GOOGLE_MAPS_ROUTES_API_KEY`, and sanitized typed errors without coordinate/body logging. Google Cloud API/key/quota/billing setup, GitHub browser-key build configuration, Supabase secrets/origins, manual Edge Function deployment, and privacy review remain required. Durable per-user server rate limiting is deferred under the approved quota/client-throttling boundary. Browser Places loading/autocomplete, geolocation controls, traffic calls/freshness/refresh UI, Manual/Traffic selector changes, route distance, and the visible Maps button remain deferred to `6.29.1`; the existing Manual destination/travel UI remains active. Manual QA and deployment are still required.
+- `6.28.2` keeps every Brainstorm question title fully inside its bordered section shell by using an in-card heading plus a borderless `fieldset` labelled by that heading. Desktop and mobile manual QA remains required for long-title wrapping, explanation placement, touch targets, and horizontal overflow.
+- `6.28.1` corrects Brainstorm action-chip icon/text spacing through the existing shared chip primitive and makes generated Markdown summaries distinguish selected answers, text responses, and optional overrides with separate lines and nested multiple-choice bullets. The Brainstorm SQL migration is confirmed applied. Manual copy and `.md` download output QA remains required.
+- `6.28.0` adds a `Brainstorm` Tasks surface immediately after On-Time for one active questionnaire per account. It accepts controlled plain Markdown with one `#` form title, optional introduction paragraphs, `##` question headings, required `@type single|multiple|short-text|long-text`, repeatable exact-match `@recommended`, optional `@other true`, `>` explanation text, and `-` options; arbitrary HTML is never rendered as HTML. Valid reparses preserve compatible answers by stable question ID and remove incompatible or deleted selections without auto-selecting recommendations. The workspace provides responsive Source/Form/Summary sections, progress, safe Markdown summary generation from current answers, copy/download feedback, reset confirmation, local recovery, and whole-state cross-device last-write-wins sync. Only source Markdown and answers persist; parsed output, errors, summary, focus, and panel state do not. Apply `supabase/add_brainstorm_state.sql` manually before cloud sync is available. Form libraries/history, templates, duplication/archive, conditional logic, and multiple forms remain deferred. Google destination, Maps, routing, and traffic integration moves to `6.29.x`. Manual QA must cover desktop/mobile layout, malformed-source errors, parse answer preservation, refresh/navigation recovery, two-device replacement, missing-table warning, reset confirmation, clipboard failure, and Markdown download.
+Warning: truncated output (original token count: 5609)
+Total output lines: 50
+
+- `6.27.3` keeps On-Time selected while opening the existing shared Table edit overlay in place: it retains an overlay target without Table navigation, scrolling, filtering, or row reveal, and clears only that target on close. Available linked task cards now place the shared current-status circle and existing status rail immediately before Open, delegating every parent/Step/Substep save to the guarded root status mutation path. Manual QA must cover parent, Step, and Substep overlay targeting; overlay close retaining planner position/draft; status-menu-only clicks; completion/projection refresh; unavailable/stale suppression; and compact mobile action layout.
+- `6.27.2` corrects On-Time Planner QA: linked `Open` now routes through the approved shared Table overlay and restores On-Time on close; the planner drag leaf uses RAF-coalesced pointer tracking, stable midpoint insertion, source placeholder, and cancel/click cleanup; Reset plan is visible beside sync status. Every ordered item now shows a planner-local sequential Estimated finish based on remaining occurrence-aware time, with completed and unknown-duration states handled explicitly. Linked active timers expose the existing shared Stop & Save handoff beside Pause/Resume. Destination remains a plain label input: Google Places, Maps handoff, traffic, routing, GPS, and route APIs are deferred to the next major ticket after planner stabilization.
+- `6.27.1` completes the On-Time Planner MVP interaction layer: its root-task picker includes eligible parent tasks, Steps, and Substeps while retaining hierarchy and occurrence snapshots; Manual, eligible learned Typical, and planner-only Custom durations are explicitly selected and snapshotted; temporary preparation items share the ordered list with linked tasks. Exact-occurrence saved `task_timer` evidence plus only the active unsaved delta reduces remaining time in a planner-local second clock, while stale and unavailable tasks retain their snapshots. Pointer/touch handle sorting uses delayed touch activation, optimistic array ordering, the existing debounced whole-plan cloud hook, and Move Up/Down fallbacks. Cross-device last-write-wins and remote-update notice behavior remain unchanged. Google Maps, traffic, routing, and alerts remain deferred. Manual QA is required for mobile hold-drag/scroll separation, editor and Active Timer Tray routing, discard/Stop & Save deductions, recurring relink, responsive overflow, and two-device reorder replacement.
+- `6.27.0` adds the On-Time Planner foundation inside the Tasks page: a normalized version-1 plan contract, pure wall-clock schedule calculations, a responsive `On-Time` Tasks surface, a user-scoped resilience cache, and whole-plan last-write-wins Supabase/realtime synchronization. Apply `supabase/add_on_time_planner.sql` manually before cloud synchronization is available; until then the workspace shows `On-Time sync unavailable` and continues from validated local cache. This phase supports destination, arrive-by time, timezone display, manual travel, arrival buffer, reset, and schedule summaries. Task/temporary-item picking, learned-duration selection, live timer deduction, task opening/timers, reordering, and drag-and-drop are deferred to `6.27.1`. Manual responsive and cross-device QA remains required.
+- `6.26.2` separates completion action dates from scheduled occurrence identity so early and rollover completions link trusted duration evidence correctly, and groups learned samples by completion history.
+- `6.26.3` adds a root-mounted Active Timers chip and non-modal tray so persisted task timers remain reachable across workspace navigation, with authoritative Stop & Save and true discard paths.
+- `6.26.4` stabilizes table column measurement around active task timers by removing the table-level clock tick, using stable visible-column dependencies, and normalizing measured widths before grow-only updates.
+- `6.26.5` moves active task-timer presentation ticking into leaf displays, refreshes the compact Table timer dial, and makes the global timer chip locally repositionable.
+- `6.26.6` completes List View active task-timer chip parity through the shared leaf display and lightens the compact Table dial typography.
+- `6.26.7` removes the duplicate List metadata shell around active task-timer chips while retaining the normal manual Actual Time control.
+- `6.26.8` compacts the List live timer chip and adds existing start, pause/resume, and Stop & Save timer controls to its Actual Time panel.
+- `6.26.9` renders the List live timer through the exact shared task-table chip primitive so its font, padding, height, and button reset match adjacent metadata chips.
+- `6.26.10` fixes the global timer chip pointer lifecycle so taps reliably open the tray and only deliberate movement initiates a persisted drag.
+- `6.26.1` admits new trusted manual actual-time entries into learned-duration evidence when their exact task occurrence is completed, while preserving manual estimates and existing rollover/history semantics.
+Warning: truncated output (original token count: 5247)
+Total output lines: 50
+
+- `6.26.0` adds learned task-duration evidence while preserving manual estimates and existing rollover/history semantics.
+- `6.25.36` keeps a dropped primary-rail order pinned locally while its atomic reorder request is pending, preventing intermediate stale list props from snapping the rail back before the authoritative response and success notification arrive. The reorder callback now reports persistence success so genuine failures still restore the latest authoritative order.
+- `6.25.35` restores smooth desktop primary-rail dragging without reopening the direction-dependent insertion bug: desktop now uses the same pointer-following fixed chip preview as touch and pen while the source slot and gesture-start order remain stable until drop.
+- `6.25.34` makes primary-rail chip dragging direction-symmetric by resolving desktop and mobile insertion against the stable order captured at gesture start. Chips no longer mutate underneath the active pointer while calculating the next target; leftward and rightward drops share the same midpoint insertion and existing atomic persistence path. The shared fixed notification alert is now anchored at the safe-area-aware top right beside the HUD instead of centered across the viewport, without changing its width constraints, tones, timing, announcement, or dismissal behavior.
+- `6.25.33` restores app-owned system-list semantics for All and Routine from their canonical persisted identifiers while retaining schema-compatible `manual` storage. All now respects its saved primary-rail visibility, Routine is excluded from List Settings and manual-list destinations, and shared eligibility helpers keep those rules consistent across hydration, persistence responses, reorder responses, settings, and derived list surfaces.
+- `6.25.32` converts the shared success, warning, and neutral status banner into a fixed safe-area-aware overlay on authenticated and authentication surfaces. Notifications retain their existing message timing, tones, accessibility announcements, and Dismiss action without entering document flow or shifting mobile/desktop page content when they appear or disappear.
+- `6.25.31` fixes the remaining direction-dependent Safari primary-list reorder failure by binding the active touch guard to the current gesture's finger instead of allowing a stale pre-session touch identifier to reject movement suppression. The live session now accepts the touch identifier regardless of touch/pointer event ordering and can resolve the authoritative active touch by proximity after activation, preventing rightward dragging from falling back to native rail scrolling.
+- `6.25.30` corrects the Safari mobile primary-list handoff after the stationary hold by registering a capture-phase non-passive touch-move guard at gesture start while leaving it inert before activation. Native pre-hold rail/page scrolling remains available, but the already-registered guard suppresses Safari scrolling as soon as reorder activates so pointer capture, the fixed preview, and stable insertion marker retain ownership through drop.
+- `6.25.29` restores native horizontal scrolling and Safari momentum to the mobile primary-list rail before the stationary 350ms hold, delays pointer capture and scoped non-passive movement suppression until reorder activation, keeps the source chip in its original DOM slot with a fixed preview and non-layout-shifting insertion marker, and commits the stable pending insertion once on valid drop. Desktop's immediate 5px reorder path and existing list-order persistence remain unchanged.
+- `6.25.28` reconciles persisted task-list rows by normalized canonical ID before they enter client state, preferring exact `priority_3_4` and `priority_5` database identities over their `important` and `urgent` aliases while retaining alias-only compatibility. Initial hydration, shared persistence responses, and atomic reorder responses now use the same collision-safe mapping. Mobile primary-list reordering adds a pointer-offset fixed drag preview after the existing 350ms hold, continuously follows the authoritative touch or pen pointer without intercepting hit testing, keeps the source chip in layout with active feedback, and preserves pre-hold rail scrolling, vertical cancellation, desktop activation, midpoint insertion, and pointer-owned cleanup.
+- `6.25.27` replaces the globally owned `adhdice_task_lists.id` primary key with per-account `(user_id, id)` ownership and adds the atomic `reorder_task_lists(text[])` operation. The RPC validates one duplicate-free permitted primary-list order, creates missing current-user built-ins from controlled metadata using schema-compatible membership modes, assigns unique primary `sort_order` values transactionally, and returns the complete authoritative account row set. Direct rail and List Settings ordering now share that operation, use newest-request-wins reconciliation, reject empty/incomplete success responses, and invalidat…609 tokens truncated… cards, and makes eligible primary-rail list chips directly reorderable with immediate persistence through the existing List Settings `sort_order` path. Desktop uses a 5px movement threshold; touch uses a 350ms hold with an 8px pre-drag cancellation tolerance so taps and horizontal scrolling remain intact. Inbox, Today, All, Pinned, and Routine remain fixed to their approved rails and positions.
+- `6.25.21` corrects the three remaining `6.25.20` QA gaps: List metadata long-press now toggles all and only currently rendered parent/Step/Substep cards while preserving individual click behavior; Routine is omitted from the primary list rail and remains beside Pinned in the filter rail with its existing count, selection, toolbar membership, and persistence paths; and the shared current-status normalization/display resolver preserves undated `status = delayed` tasks as visibly Delayed across List, Table, editor, and shared status consumers without requiring a due date or changing dated-delay reconciliation.
+- `6.25.20` completes the narrow QA correction pass: List metadata disclosure now lives beside each parent/Step/Substep streak-history cluster with per-card click and rendered-result-only long-press reveal; Routine is excluded from manual-list management and classified as system-owned while retaining its membership-table storage and toolbar toggle; and undated Delayed saves immediately without opening the date picker, stays out of Inbox/date buckets, and projects continuously as Delayed on future History Calendar dates without synthetic history rows.
+- `6.25.19` completes the six confirmed QA updates as one coordinated release: List parent/Step/Substep cards now keep titles, actions, status rails, and streak/history visible while optional metadata is toggled per stable task id; revealed child metadata always includes the existing Repeat control with `No Repeat`; Table child/source/draft title cells stay left-aligned without changing parent or saved alignment preferences; Manual Focus Log uses a searchable, alphabetized, keyboard-operable saved-category picker with `No saved category` first; Routine is classified as a system-owned built-in list while preserving its existing membership-table records and toolbar-toggle mutation path; and Delayed supports an undated benched state through the existing picker/editor/mutation paths. Undated Delayed remains open, is excluded from Inbox and date-derived buckets, creates no synthetic history date, and still participates in All, Pinned, Routine, and independently matching custom lists. Future delay dates and existing due-date reconciliation remain intact; no schema migration was added.
+- `6.25.18` fixes the expanded Table View step status rail DOM nesting regression by rendering expanded step rails outside the compact step action-wrapper button, while compact step status circles still open the existing status action rail.
+- `6.25.17` restores compact Table View status-circle click behavior after the expanded rail follow-ups: when the first status column is not expanded, parent status circles again open the existing status action rail on normal click, while long-press still expands the status column.
+- `6.25.16` extends the Table View expanded first-column status rail to visible step mini-rows: compact step rows still show one current status circle, while expanded mode uses the same shared circle-only rail and existing step status save/delay paths as the parent status column.
+- `6.25.15` removes the duplicate current-status circle from expanded Table View parent status rails: compact mode still shows only the current circle, expanded mode now shows the shared rail itself with the active status inverted in-place, and the temporary expanded width is tightened to the rail-only footprint. Step mini-rows remain on their existing single-current-circle status cell unless their row-local metadata controls are open.
+- `6.25.14` widens the temporary Table View expanded status-column rail width so the full recurring-task status circle row reaches the last circle without clipping, while compact mode and saved column widths remain unchanged.
+- `6.25.13` fixes the Table View first status-column rail sizing follow-up: compact mode now forces the local status column back to one-circle width, expanded mode uses a temporary display-only column width for the circle rail, expanded rail scrolling hides native scrollbar chrome, and long-press collapse from the expanded status area stays on the existing Table status save path without persisting expanded width. List View, Inbox, Focus, Reports, Priority 0, Manual Lists, Tabs, PATHS, Countdown, rewards, recurrence, history, and completion semantics remain unchanged.
+- `6.25.12` fixes the shipped Priority 0 and workspace-tab accessibility regressions, and adds the Table View status-circle rail to the existing first status column: compact Table rows show only the current circle, long-press expands the local status column to show the shared circle-only rail for v…247 tokens truncated…card instead of behind the 6.25.8/6.25.9 chevron expansion model. Status clicks still use the existing List parent `onSetStatus` path, delayed status still opens the existing delay panel when needed, and the rest of the parent card content now sits below the always-visible compact status row. Table View, Steps/Substeps, Inbox, Focus, Reports, Priority 0, manual lists, PATHS, Countdown, and reward/recurrence/history internals remain unchanged.
+- `6.25.9` corrects the expanded one-click status controls for parent rows in List View and Table View: the compact status circle still opens the existing full picker, the adjacent expand control now only shows or hides inline row-local status chips, and selected statuses continue through the existing List `onSetStatus` or Table `setTaskStatus` save paths. The prior dropdown-like palette treatment is removed. Steps/Substeps, Inbox, Focus, Reports, Priority 0, manual lists, PATHS, Countdown, and reward/recurrence/history internals remain unchanged.
+- `6.25.8` adds controlled v1 expanded one-click status controls to parent rows in List View and Table View: the existing compact status circle still opens the current picker/accordion, a small adjacent chevron reveals row-local direct status chips, and selected statuses flow through the existing List `onSetStatus` or Table `setTaskStatus` save paths so recurrence, completion, rewards, history, delay handling, selection, context menus, and scroll/reveal code remain unchanged. Steps/Substeps, Inbox, Focus, Reports, Priority 0, manual lists, PATHS, Countdown, and reward/recurrence/history internals remain unchanged.
+- `6.25.7` fixes the chip-first workspace tab action regressions without reopening the old icon-heavy rail: tab chips still drag directly for persisted reorder, double-click now enters the existing inline rename path for active or inactive tabs, and the active tab `...` menu now opens as a compact anchored popover with Rename and Close that closes on outside click, Escape, or action selection. Inbox, Focus, Reports, Priority 0, manual lists, table/list task rows, PATHS, and unrelated task behavior remain unchanged.
+- `6.25.6` replaces the always-visible workspace-tab drag, rename, and close micro-controls with a quieter chip-first tab rail: each tab chip now drags directly for reorder, inactive-tab clicks stay dedicated to tab switching, and only the active tab exposes a compact actions menu for Rename and Close while preserving the existing rename input path, close semantics, and persisted internal tab order. Focus crash/search guards, Inbox, Priority 0, Reports, manual lists, table/list task rows, PATHS, and unrelated UI systems remain unchanged.
+- `6.25.3` is an integrated cleanup pass for unresolved 6.25.x QA: Inbox saved-rule membership no longer lets priority smart-list membership hide otherwise eligible Inbox tasks, Focus Activity headline totals exclude Sleep while retaining Sleep bars, mobile Countdown custom values have an explicit Start action, Reports support custom date ranges, task workspace tabs use drag reorder, manual rule-free lists can add existing active tasks in-list, and Priority 0 is wired through app/domain surfaces with a Supabase migration (`supabase/add_task_priority_zero.sql`) required before deployed database writes can use it. Expanded one-click Table/List status mode was deferred because the current Table/List status paths are separate and scroll-anchor-sensitive.
+- `6.25.2` is a narrow report/history correction pass: `All available` report ranges now include focus-goal reallocation-only days when deriving exported Focus Report bounds, and task history/report timestamp wording now treats `created_at` as the logged time while labeling later `updated_at` values as edited timestamps instead of logged timestamps. PATHS, Inbox/list membership, Focus Activity sleep-total behavior, priority defaults, reports custom ranges, task-history mutation semantics, and database schema remain unchanged.
+
+
+### 6.24 Checkpoint
+Warning: truncated output (original token count: 5403)
+Total output lines: 50
+
+- `6.24.8` fixes the remaining PATHS linked-task search bug: PATHS linked-task candidate search now excludes tasks with `trashed_at` across title, note, and tag matching, while saved linked ids pointing at trashed tasks are preserved and render as unavailable/trashed with a remove control instead of normal clickable task pills. PATHS stays local-first and task-reference-only; Reports, Focus, task-history pagination/loading, Supabase persistence, endpoint connections, and top-right Connect behavior remain unchanged.
+- Checks run for `6.24.8`: `git diff --check`; targeted `npx eslint src/components/task-app/paths-workspace.tsx src/components/task-app.tsx` was attempted and still reports existing React Compiler/ref lint blockers plus existing unused warnings in those files.
+- Not tested for `6.24.8`: manual PATHS browser/touch QA, broader lint/build/typecheck passes, Reports, Focus, task-history loading, Supabase persistence, and `test/paths-domain.test.ts` because `src/lib/paths-domain.ts` was unchanged.
+- `6.24.7` fixes the Task History Calendar/streak regression caused by capped workspace history loading: `useWorkspaceData` now paginates all `adhdice_task_history` rows with stable `entry_date` descending / `created_at` descending ordering, so calendar, streak, and report consumers can receive the full loaded history instead of only the newest capped response. No schema change, database mutation, title-based merge, task lineage work, PATHS change, Focus change, or task-history semantics change was included.
+- Checks run for `6.24.7`: `git diff --check`; `node --import ./test/register-alias.mjs --experimental-strip-types --test test/workspace-data.test.ts`; targeted `npx eslint src/hooks/useWorkspaceData.ts test/workspace-data.test.ts` completed with the existing `useWorkspaceData` hook dependency warning and no errors.
+- Not tested for `6.24.7`: live Supabase fetch against the user account, manual Appanda calendar QA, broader lint/build/typecheck passes, PATHS, Focus, and full Reports export QA.
+- `6.24.6` fixes the remaining narrow PATHS QA failures on top of `6.24.5`: the top-right Connect flow can now land a selected chip on the in-map endpoint landmark while preserving append-only endpoint multi-connect behavior, path chips expose subtle top/right/bottom/left connection handles, connection lines choose direction-aware chip handles for cleaner routing, linked-task chips and picker options reuse the compact approved PATHS chip treatment, and the PATHS linked-task picker dedupes current candidates by task id while displaying the same current task status semantics used by Table/List. PATHS remains local-first and task-reference-only; Reports, Focus, history timestamp behavior, image upload, and Supabase persistence remain unchanged.
+- Checks run for `6.24.6`: `git diff --check`; `node --import ./test/register-alias.mjs --experimental-strip-types --test test/paths-domain.test.ts`; targeted `npx eslint src/components/task-app/paths-workspace.tsx src/components/task-app.tsx` was attempted and still reports existing React Compiler/ref lint blockers in those files.
+- Not tested for `6.24.6`: manual PATHS browser/touch QA, reload verification in the live UI, broader lint/build/typecheck passes, automated UI-level assertions, Reports, Focus, history timestamp behavior, Supabase persistence, and image upload.
+- `6.24.5` is a narrow PATHS-only correction pass after the incomplete `6.24.4` QA attempt: endpoint multi-connect now saves against the latest selected PATH record so repeated endpoint-to-chip links append instead of racing, endpoint connect mode stays active until explicitly stopped, all saved endpoint connection lines keep rendering together, and the in-map linked-task count chip now reuses the same compact shared chip treatment already used by the approved top-right PATHS controls. PATHS remains local-first and task-reference-only; Reports, Focus, history timestamp behavior, image upload, and Supabase persistence remain unchanged.
+- Checks run for `6.24.5`: `git diff --check`, plus targeted `npx eslint src/components/task-app/paths-workspace.tsx` which still reports pre-existing React Compiler/ref lint errors already present in that file.
+- Not tested for `6.24.5`: manual PATHS browser/touch QA, reload verification in the live UI, broader lint/build/typecheck passes, automated UI-level assertions, and domain tests because `src/lib/paths-domain.ts` was unchanged.
+- `6.24.4` fixes the observed 6.24.3 QA follow-ups without widening scope: PATHS endpoint connect mode now supports linking the in-map endpoint landmark to multiple chips in one pass while keeping all saved endpoint connections, linked-task pills in PATHS reuse the shared compact chip styling with clearer expanded spacing in the map and inspector, reports now add compact Pinned Tasks, Routine Tasks, and priority-by-status summaries using the existing routine-membership and priority-compatibility seams, and task history/report output now distinguishes the credited ADHDice day from the real logged timestamp using the existing `entry_date` plus `updated_at` / `created_at` fields. PATHS remains local-first and task-reference-only, endpoint links still do not affect PATH step counts or task status, and no schema migration was needed for task history.
+- Checks run for `6.24.4`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/paths-domain.test.ts`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/task-report.test.ts`, and targeted `npx eslint src/components/task-app/paths-workspace.tsx src/components/task-app/task-view-adapters.tsx src/lib/task-report.ts test/paths-domain.test.ts test/task-report.test.ts`.
+- Not tested for `6.24.4`: manual PATHS browser/touch QA, broader lint/build/typecheck passes, and automated UI-level assertions for the PATHS linked-task spacing polish.
+Warning: truncated output (original token count: 5522)
+Total output lines: 50
+
+- `6.24.2` is a PATHS-only QA cleanup pass after 6.24.1: PATHS now hides native scrollbars on the canvas/inspector/menu surfaces, replaces native select styling with the approved white dropdown shell, keeps the linked-task picker open for append-only multi-link selection, shrinks the in-map linked-task count chip to the compact task-chip scale, makes the right inspector white and collapsible, moves new-path creation to a top-right `Create new path` chip, removes the old top landmark chip, and persists endpoint-to-chip connections separately from normal steps so endpoint links survive reload without affecting PATH progress or linked ADHDice task status.
+- Checks run for `6.24.2`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/paths-domain.test.ts`, and targeted `npx eslint src/lib/paths-domain.ts src/components/task-app/paths-workspace.tsx test/paths-domain.test.ts`.
+- Not tested for `6.24.2`: manual browser QA and broader lint/build/typecheck passes.
+- `6.24.1` is the PATHS correction pass after 6.24.0 QA: PATHS linked-task picker search now matches task tags and notes in addition to titles, the right inspector scrolls independently while the map stays fixed, endpoint identity is now a draggable in-map landmark placed from a blank-canvas right-click action, and PATHS chips keep unlimited linked task ids without replacing earlier links. PATHS remains local-first and task-reference-only; Reports, Focus reporting, image upload, and Supabase persistence remain unchanged.
+- Checks run for `6.24.1`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/paths-domain.test.ts`, and targeted `npx eslint src/lib/paths-domain.ts src/components/task-app/paths-workspace.tsx test/paths-domain.test.ts`.
+- Not tested for `6.24.1`: manual browser QA, PATHS tag-search component automation, and broader lint/build/typecheck passes.
+- `6.24.0` is a targeted task priority, Home queue, and List View regression cleanup pass after the 6.22 priority migration and 6.23 Focus Goals work: numeric priority chips now behave as single-select in the Table inline metadata panel and full inspector, Home Today Queue now uses the unique derived queue count that includes open today/focus/priority 5 tasks, and List View row metadata restores a direct Focus Today toggle separate from numeric priority. Focus Goals math, counters, reports, table density, SQL, and unrelated task behavior remain unchanged.
+- `6.23.15` is a narrow Focus layout pass: the Recommend Now and Productive Totals headers now reuse the same Activity Summary label formatting, the Recommend Now tile and Productive Totals card still match the white shell background treatment, the Sleep excluded line sits flush left under the Productive Totals header, and the top Focus Timers section sits closer to the HUD. Focus Goals math, reallocation behavior, productive totals, session handling, persistence, SQL, Focus counters, task/table/report/Agent Plan surfaces, and Focus History chart logic remain unchanged.
+- Checks run for `6.23.15`: `git diff --check` and targeted `npx eslint src/components/focus-page.tsx src/components/focus-goals-panel.tsx`.
+- `6.23.11` is a narrow Focus page header layout pass: the focus timer search bar and Add Counter chip now sit in the same wrapping top control row as Edit Categories and Manual Entry. Focus Goals math, reallocation behavior, productive totals, session handling, persistence, SQL, Focus counters, task/table/report/Agent Plan surfaces, and Focus History chart logic remain unchanged.
+- Checks run for `6.23.11`: `git diff --check` and targeted `npx eslint src/components/focus-page.tsx`.
+- `6.23.10` is a targeted Focus Goals layout/readability pass after 6.23.9 QA: two-column category card mini-graphs now use contained full-width columns without horizontal scroll, left category text can wrap naturally, and the Master Goal Editor shows a compact live base goal summary from current draft values including productive daily/weekly totals, productive category…403 tokens truncated… time, and category mini-bars use uniform Focus Activity-style tracks filled by percent completion with subtle green success treatment and no orange over-target dot. Focus counters, Table density, task priority, Agent Plan, task reports, broad Focus History rewrites, graph filters, and unrelated task/list/table surfaces remain unchanged.
+- Checks run for `6.23.8`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/focus-goals.test.ts`, and targeted `npx eslint src/lib/focus-goals.ts src/components/focus-goals-panel.tsx src/components/focus-page.tsx src/hooks/useFocus.ts test/focus-goals.test.ts`.
+- `6.23.7` is a targeted Focus Goals layout simplification pass after 6.23.6 QA: category goal rows keep the Focus Activity-style Mon-Sun plus weekly bars, remove the noisy bottom status-chip strip, and move priority, type/subtype, today/week targets, incoming credit, next-week credit preview, and concise status metadata into the left text block with tighter vertically centered row/card alignment. Focus Goals math, date logic, surplus/carryover calculations, productive totals, session completion datetime, persistence, Focus counters, task/table/report/Agent Plan surfaces, and Focus History chart logic remain unchanged.
+- Checks run for `6.23.7`: `git diff --check` and targeted `npx eslint src/components/focus-goals-panel.tsx src/components/focus-page.tsx`.
+- `6.23.6` is a targeted Focus Goals QA correction pass after 6.23.5: Focus Goals category bars now closely mirror the existing Focus Activity vertical bar treatment, Reallocate Today decrease inputs stay contained in their rows, surplus prompts use only newly created over-target delta instead of total accumulated daily overage, Productive Today uses smart productive defaults for legacy/null category policy fields while excluding Sleep and unproductive categories, and Focus Goals keeps the same session date key convention used by Focus Activity/History with `ended_at` preserved for completion datetime editing. No SQL/schema migration was needed; Focus counters, Table density, task priority, Agent Plan, task reports, broad Focus History rewrites, graph filters, and unrelated task/list/table surfaces remain unchanged.
+- Checks run for `6.23.6`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/focus-goals.test.ts`, and targeted `npx eslint src/lib/focus-goals.ts src/components/focus-goals-panel.tsx src/components/focus-page.tsx src/hooks/useFocus.ts test/focus-goals.test.ts`.
+- `6.23.5` is a targeted Focus Goals correctness/design pass after 6.23.4 QA: total Productive Today and Productive Weekly stay fixed to base productive goals, category-only daily reallocations can be split across multiple targets, current-week surplus is shown only as next-week credit preview, previous completed-week surplus is the only incoming credit source, Focus Goals defaults to the same logical day convention as Focus sessions, completion date/time can be edited for timer/manual/history saves using existing `ended_at`, and the category bars now use a single compact vertical logged-vs-target treatment. Focus counters, Table density, task priority, Agent Plan, task reports, Focus History chart rewrites, graph filters, and unrelated task/list/table surfaces remain unchanged.
+- Checks run for `6.23.5`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/focus-goals.test.ts`, targeted `npx eslint src/lib/focus-goals.ts src/components/focus-goals-panel.tsx src/components/focus-page.tsx src/components/focus-modals.tsx src/components/focus-history.tsx src/hooks/useFocus.ts test/focus-goals.test.ts`, and `npm run typecheck` (blocked by existing unrelated repo-wide TypeScript debt).
+- `6.23.4` is a targeted Focus Goals correction/design pass after 6.23.3 QA: current-week surplus no longer reads as current-week carryover credit or lowers this week's adjusted weekly target, previous completed week carryover remains the only incoming credit source, category rows expose Mon-Sun logged-vs-goal bars plus a weekly logged-vs-goal bar, Productive totals show base daily/weekly targets when adjusted values differ, the unclear header chips were removed, and surplus reallocation suggestions now show weekly pace context while keeping override choices separate. Focus counters, Focus History rewrites, Table density, task priority, Agent Plan, reports/exports, graph filters, and split-across-multiple-categories reallocation remain unchanged.
+- Checks run for `6.23.4`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/focus-goals.test.ts`, and targeted `npx eslint src/lib/focus-goals.ts src/components/focus-goals-panel.tsx src/components/focus-page.tsx test/focus-goals.test.ts`.
+- `6.23.3` is a targeted Focus Goals correction/layout pass after 6.23.2 QA: daily surplus reallocations remain today-only and no longer look like they reduce weekly goals in the main display, carryover-active weekly rows show adjusted, base, and credit values compactly, the Focus Goals Bars presentation replaces the old duplicated category-card grid, Productive Today and Productive Weekly are combined into one Sleep-excluding bar summary card, the header week range uses spaced compact formatting, the surplus reallocation prompt is viewport-contained with a hidden-scrollbar inner body and reachable actions, and satisfied today rows get subtle success treatment while over/priority warnings remain visible. Focus counters, Focus History rewrites, Table density, task priority, Agent Plan, reports/exports, graph filters, and split-across-multiple-categories reallocation remain unchanged.
+- Checks run for `6.23.3`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/focus-goals.t…522 tokens truncated…rts, and Focus history charts remain unchanged.
+- Checks run for `6.23.1`: `git diff --check`, `node --import ./test/register-alias.mjs --experimental-strip-types --test test/focus-goals.test.ts`, and targeted `npx eslint src/lib/focus-goals.ts src/components/focus-goals-panel.tsx src/components/focus-page.tsx test/focus-goals.test.ts`.
+- `6.23.0` adds Focus Goals 2.0 on top of existing Focus categories without changing Focus counter/clocks rendering: categories now carry additive goal policy fields for Priority `1-5`, auto/manual weekday distribution, productive-goal inclusion, daily surplus flexibility, and weekly carryover mode; `supabase/add_focus_goals_2.sql` adds those category columns plus `adhdice_focus_daily_goal_adjustments` for today-only manual reallocations. `src/lib/focus-goals.ts` owns the pure Monday-Sunday goal math, productive totals excluding Sleep, surplus/carryover/recommendation/warning logic, and `test/focus-goals.test.ts` covers the requested helper cases. `src/components/focus-page.tsx` now attaches a compact Focus Goals panel below the existing clocks/counters container, extends the existing goal editor with the new policy controls, and prompts after timer/manual logs when a category exceeds today’s adjusted target so the user can reallocate to one eligible lower-priority flexible productive non-Sleep category or leave today over capacity. `src/components/focus-counters.tsx`, graph filters, Focus history chart rewrites, reports/exports, split reallocations, hard timer stops, and continue confirmations remain deferred.
+- Checks run for `6.23.0`: `node --import ./test/register-alias.mjs --experimental-strip-types --test test/focus-goals.test.ts`, targeted `npx eslint src/lib/focus-goals.ts src/hooks/useFocus.ts src/components/focus-page.tsx src/components/focus-goals-panel.tsx src/components/category-manager.tsx test/focus-goals.test.ts`, `npm run typecheck` (blocked by existing unrelated repo-wide TypeScript debt), and `git diff --check`.
+
+
+### 6.22 Checkpoint
+Warning: truncated output (original token count: 5063)
+Total output lines: 50
+
+- `6.22.17` cleans up the remaining priority-rollout regressions without expanding scope: Agent Plan priority controls now offer numeric `1-5` choices while keeping Focus separate, the Home dashboard Today Queue stat counts unique Today / Focus / Priority 5 tasks instead of overlapping memberships, and child preview rows again show Focus state separately from numeric priority. Focus counter layout, table density/layout, due-date status logic, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.16` aligns desktop Focus counter controls with the Focus clock/mobile counter below-circle control pattern: desktop counters now keep the ring face clear of `-` / `+` overlays and use the shared below-circle `-` / settings / `+` row with Focus-clock-sized settings treatment, while mobile counter centering, desktop counter face layout, counter behavior, Focus clock behavior, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.15` fixes the mobile Focus counter ring's horizontal centering so it matches the mobile Focus clock ring: the counter keeps the existing vertical scaled sandbox but removes the inner fixed-width mobile stack that was offsetting the ring to the right, while desktop counter layout, counter behavior, Focus clock behavior, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.14` makes the mobile Focus counter face use the same mobile centering layout contract as Focus clocks: the counter mobile wrapper keeps the shared `344x272` scaled sandbox contract and now uses the same full-height face-plus-controls stack shape so the counter circle sits in the same centered visual position as the clock circle, while desktop counter layout, counter behavior, Focus clock behavior, horizontal multi-counter scrolling, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.13` removes the remaining mobile Focus counter face/control split and makes the counter use the same mobile scaled sandbox stack as Focus clocks: the counter face plus `-` / settings / `+` controls now scale together inside the shared clock-sized mobile wrapper so the buttons stay directly aligned under the face, while desktop counter layout, counter behavior, horizontal multi-counter scrolling, Focus timer/session logic, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.12` replaces the remaining custom mobile Focus counter centering wrapper with the same mobile sandbox display format used by Focus clocks: mobile counter faces now sit inside the shared clock-sized scaled sandbox and are centered within that sandbox, while the mobile controls remain below the face and desktop counter layout, counter behavior, horizontal multi-counter scrolling, Focus timer/session logic, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.11` fixes the remaining mobile Focus counter ring-centering gap without redesigning the page: mobile counters now use a mobile-specific ring-centered structure where the scaled counter face is centered on its own and the mobile controls sit outside the ring-centering box, while desktop counter layout, counter behavior, horizontal multi-counter scrolling, Focus timer/session logic, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.10` fixes the remaining visual mobile Focus counter centering gap without redesigning the page: the counter ring stays centered on mobile while the `-`, settings, and `+` controls move into a balanced row below the ring, and desktop counter control placement, counter behavior, Focus timer/session logic, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.9` fixes the remaining single-counter mobile centering gap without redesigning the page: a single Focus counter on mobile now uses its own centered layout instead of the two-row carousel structure, while multi-counter rows keep the centered carousel/overflow behavior, and counter size/styling, counter actions, Focus timer/session logic, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.8` fixes the remaining Focus mobile counter centering gap without redesigning the page: the active mobile counter row now uses the same centered inner-group structure as the Focus clocks when content fits, and still recenters the overflow state at rest on mobile, while preserving the existing two-row layout, counter size/styling, counter actions, Focus timer/session logic, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.7` fixes the remaining Focus mobile counter centering gap without redesigning the page: the active mobile counter scroller now recenters overflowing counter rows at rest on mobile while preserving the existing two-row layout, counter size/styling, counter actions, Focus timer/session logic, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.6` centers Focus mobile counters inside the sandbox/card layout without redesigning the page: the active mobile counter row now uses a true shrink-wrapped centered inner group while preserving horizontal scrolling, counter size/styling, counter actions, Focus timer/session logic, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.5` tightens the remaining Table View density seams without expanding scope: parent rows drop to a more compact vertical padding and title-cell height floor, same-table child/source-step rows use matching tighter wrappers, and the Table title-row toolbar icons pack closer together with the local table seam only. Due-date status logic, Focus counters, priority `1-5` behavior, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.4` fixes the due-date status recalculation gap without expanding scope: when an open task's due date is edited through the shared update, Edit Task save, or batch-edit paths, the raw open status is recalculated with the shared due window rules so due today/overdue stays `Pending`, `1-7 days` becomes `Upcoming`, and `8+ days` becomes `Not Due`, while delayed semantics, recurrence, history, rewards, priority `1-5`, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.3` fixes the five narrow `6.22.2` QA misses without expanding scope: Table View parent/child rows are slightly denser, task-row title toolbar icons drop the hover circle in favor of tighter color-only hover feedback, Focus counter creation now uses mobile-safe client id generation, delayed and due-driven `Upcoming` / `Not Due` tasks normalize back to `Pending` when their due date arrives, and the shared upcoming window is corrected to `1-7 days` while `Not Due` now means `8+ days`. Priority `1-5`, dice/reward logic, History Delay behavior beyond due-status normalization, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.2` adds shared priority `1–5` chip/button color treatment across task surfaces, replaces the old Important/Urgent system lists with numeric priority system lists, lets non-deletable system/smart lists be hidden from List settings without deleting data, re-centers Focus counters inside the sandbox card, and tightens Table View row plus title-toolbar spacing. Focus timer/session logic, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.1` fixes the narrow `6.22.0` priority-rollout regressions without expanding scope: List View again shows Focus Today as a separate affordance from numeric `Priority 1–5`, Quick Capture keeps numeric priority while restoring a separate Focus Today creation path, and stale priority callers such as Agent Plan now normalize legacy values safely instead of producing invalid `priority_level` writes. Focus page/timers/sessions, dice/reward logic, History Delay, Routine behavior, Report internal workspace-tab behavior, and schema remain unchanged.
+- `6.22.0` adds `priority_level` as the new persisted task-priority source of truth, with user-facing numeric priority `1–5` across task editing plus list/table/report/import paths, while legacy `priority`, `is_urgent`, and `is_important` fields remain synced for rollout compatibility. Focus Today, Focus page/timers/sessions, dice/reward logic, History Delay, Routine behavior, and Report internal workspace-tab behavior remain separate and unchanged.
+
+
+### 6.21 Checkpoint
+- `6.21.4` fixes the `6.21.3` Report navigation regression by keeping the internal task workspace-tab strip visible while Report is active, treating Report as a focusable internal workspace tab from the existing `Tasks | Paths | Report` control, and preserving existing task tabs plus `Open in New Tab` behavior. Priority `1–5`, dice/reward logic, History Delay, schema changes, and unrelated UI behavior remain unchanged.
+- `6.21.3` fixes the List View `allTaskRows` runtime regression by reusing the existing full-row source in the live `TasksSimp…63 tokens truncated…havior. Priority `1–5`, dice/reward logic, History Delay, schema changes, and unrelated UI behavior remain unchanged.
+- `6.21.2` fixes three narrow QA regressions without expanding scope: context-menu `Open in new tab` now creates and focuses an internal Tasks workspace tab labeled for the chosen task instead of opening a browser tab, Routine row-toolbar icons now keep the same filled active treatment as Pinned when the task belongs to Routine, and the Move Into Parent chooser now uses the hidden-scrollbar menu scroller so parent chips stay fully visible and clickable. Priority `1–5`, dice/reward logic, History Delay, schema changes, and unrelated UI behavior remain unchanged.
+- `6.21.1` fixes the targeted `6.21.0` regressions without expanding scope: `?openTask=` deep links now force the Tasks page onto a task-rendering workspace instead of leaving the persisted Report tab active, shared filter helpers now treat Routine and Pinned as active resettable filters and clear those filter buckets back to the default task bucket on Reset, and Move Into Parent options are deduped by task id before rendering so duplicate parent rows stop triggering React key warnings. Priority `1–5`, dice/reward logic, schema changes, and unrelated UI behavior remain unchanged.
+
+
+### 6.20 Checkpoint
+- `6.20.11` removes the hard six-chip row grouping from the browser Table View inline saved-tags section so tag chips now keep flowing across the available width and only wrap when the next chip truly no longer fits; mobile tag-actions, search/add behavior, and unrelated List/Edit layouts remain unchanged.
+- `6.20.10` widens the browser Table View inline tag-actions panel so the always-open search plus saved-tags surface can stretch across the available row instead of staying trapped in the old narrow card; mobile tag-actions behavior, selected chip fills, and unrelated List/Edit layouts remain unchanged.
+- `6.20.9` removes the remaining table-only tag-action gate so both the inline Table action row and the Edit Task metadata tag panel now open directly into search plus saved tags without requiring the extra `Add Tag` / `New Tag` chip first. The wider table tag layout, selected chip fills, and unrelated List/Edit behavior remain unchanged.
+- `6.20.8` restores the shared table tag-action row to the wider list-style search/add saved-tags treatment instead of the squeezed narrow card, applies filled active selection to the inline table tag/note/status selectors, and returns the desktop List View step toolbar to the top-right header lane while keeping the mobile stacked toolbar layout. Edit-task state retention, report behavior, and unrelated table/list layout remain unchanged.
+- `6.20.7` repositions parent streak and missed-streak chips in List View to match the requested hierarchy, shrinks the edit-task status option chips back to the shared default chip sizing, keeps selected tag/list/note/status options on the filled active treatment in the shared edit-task UI, and clears stale per-step action/highlight state when switching between steps so old rows stop staying visually active. Report, Focus, and unrelated table layout behavior remain unchanged.
+- `6.20.6` completes the follow-up selection-state pass across List and Table task editing surfaces: List metadata chips now use filled inverted active styling instead of the old lavender ring, the inline edit-task step status trigger opens its picker from the step status circle, same-table step status selections now use inverted status icons instead of lavender outlines, and Table metadata/list/tag/note/status selection chips use the same filled active treatment rather than the earlier soft highlight. Report generation, Focus behavior, and unrelated layout work remain unchanged.
+- `6.20.5` changes List View status hover/active styling to status-colored inversion instead of the older lavender emphasis: hovering the List status circle now inverts the status icon to a filled status-color badge, and the selected status option in the List status action row now uses the same status-colored inverted treatment instead of the purple ring highlight. Table View status styling, tag actions, and search behavior remain unchanged.
+- `6.20.4` fixes mobile and desktop List View metadata-row chip clipping when a row chip is active, especially in the Tags lane: the horizontal list-row scrollers now include internal edge padding so the active ring/offset styling has room to render instead of being cut off by the overflow container. Search behavior, tag actions, chip styling, and Table View remain unchanged.
+- `6.20.3` removes active search-match highlighting from List View on both mobile and desktop: List parent cards and Step/Substep rows no longer tint purple when they are the active highlighted match, while the underlying search/filter results, reveal/navigation behavior, selection styling, and Table View highlighting remain unchanged.
+- `6.20.2` removes the extra `Add Tag` / `New Tag` gate from the shared tag action-row quick panel: on both mobile and browser List/Table tag action rows, the search field plus saved-tag picker now appear immediately when the Tags panel opens, while exact-match reuse, add-new, and idempotent saved-tag add behavior remain unchanged. Priority 1-5, Supabase schema changes, PATHS/Scratch Paper work, recurrence rewrites, Focus runtime behavior, and unrelated List card layout remain unchanged.
+- `6.20.1` fixes the active regression sweep without redesigning adjacent surfaces: the Report `All` range now uses the union of task-history and Focus-session dates, compact Focus duration labels stay carry-safe near hour boundaries, the shared table tag pickers keep `Use #tag` idempotent in both inline and metadata-panel flows, mobile List View metadata chips can wrap across the usable card width for parent tasks and Steps/Substeps, and Focus counters clear stale user data during account switches before the next user state loads. Priority 1-5, Supabase schema changes, PATHS/Scratch Paper work, recurrence rewrites, and Focus timer/category behavior otherwise remain unchanged.
+
+
+### 6.19 Checkpoint
+- `6.19.2` fixes two June 30 morning-brief correctness issues without redesigning Focus or Report UI: Focus counter +/- taps now compute the delta and persisted counter-history entry from the latest updater state so rapid taps cannot collapse into stale values, and the Report generator now derives status snapshots and per-task `Current Status` lines from the same selected-range history array passed into the export instead of mixing fetched range history with a narrower preloaded workspace slice. The report tests were also refreshed to assert the current shipped Markdown structure and the coherent history-source behavior.
+- `6.19.1` fixes the mobile List View status-change bridge used by the shared action-row overlay: the List adapter now forwards the full shared status-change payload, preserves the requested-open task as the expected save target when needed, and lets mobile action-row status updates persist and refresh without a manual reload. List card layout/styling, Table View behavior, recurrence logic, rewards, and history flows otherwise stay unchanged.
+
+
+### 6.18 Checkpoint
+- `6.18.10` is a docs-only UI system guardrails pass: `docs/FRONTEND_UI_RULES.md` now includes a short frontend checklist, a copy-paste required Codex prompt block, and a clear do-not-migrate list; `docs/UI_SOURCE_MAP.md` now includes a primitive readiness matrix for `AdhdChip`, `AdhdDropdownPanel`, `AdhdIconButton`, `AdhdPanel`, and `AdhdCard`; and no live UI behavior or styling changed.
+- `6.18.9` is a tiny Views-dropdown shell follow-up: the chip-only `Views` panel now shrink-wraps its chip content instead of keeping the earlier wide minimum width, its horizontal panel padding is tightened to a minimal compact edge, and only that `Views` dropdown width/padding path changed. `Columns`, `Shortcuts`, List View icons, Edit Task UI, and Table View remain unchanged, and the dropdown shell behavior/functionality otherwise stays the same.
+- `6.18.8` is a tiny follow-up on the Tasks header dropdown chips: `Views` option chips now stay left-aligned and content-width instead of stretching toward the menu edge, the selected dropdown-chip checkmark gap is tightened to about 3px after the label, `Columns` keeps the same clean wrapping behavior, and the dropdown shells, open/close behavior, outside-click handling, placement, width, and feature behavior remain unchanged.
+- `6.18.7` is a tiny follow-up on the new Tasks header dropdown chip treatment: the selected `Views` and `Columns` rows now keep their checkmarks inline about 5px after the chip label instead of pushing them to the far-right edge, while the dropdown shells, open/close behavior, outside-click handling, placement, width, and feature behavior remain unchanged.
+- `6.18.6` standardizes the inner typography and chip-like controls inside the Tasks header `Views`, `Columns`, and `Shortcuts` dropdowns against the UI-system chip/menu rules: selectable dropdown rows now reuse `AdhdChip`, plain shortcut rows use the tighter purple-gray menu text treatment, the approved opaque white dropdown shell and open/close behavior stay unchanged, and broader menu-system extraction plus other deferred UI migrations remain deferred.
+- `6.18.5` corrects the List View task-card action icons to match the approved Table View task-row toolbar source: the List pin, add-step, history, and more-actions icons now use the same compact bare lavender line-icon treatment, the earlier circular card-button direction is explicitly rejected for this surface, and dropdown-inner standardization remains deferred.
+- `6.18.4` is the first narrow live adoption of the new `AdhdIconButton` primitive: only the List View task card top-right action cluster now uses `AdhdIconButton` with a smaller compact size, while the existing List View card shell/layout stays unchanged and any future `AdhdCard` migration remains deferred.
+Warning: truncated output (original token count: 5579)
+Total output lines: 50
+
+- `6.18.3` extends the UI system foundation with reusable `AdhdPanel`, `AdhdCard`, and `AdhdIconButton` primitives under `src/components/ui-system/`, documents panel/card/icon-button reuse rules in `docs/FRONTEND_UI_RULES.md` and `docs/UI_SOURCE_MAP.md`, and keeps live Edit Task overlays, List View cards, the legacy task editor modal, and other deferred UI surfaces unchanged.
+- `6.18.2` is a narrow Table View column-reorder stabilization pass: Status and Task stay anchored, optional metadata columns now start drag from a dedicated grip instead of the whole header surface, and column menus plus resize handles no longer share the same native browser drag target that could glitch the public Tasks page during rearrangement. The UI system foundation work otherwise stays unchanged.
+- `6.18.1` starts the frontend UI system foundation from already-approved live ADHDice sources. The repo now includes `docs/FRONTEND_UI_RULES.md` and `docs/UI_SOURCE_MAP.md`, adds reusable `AdhdChip` and `AdhdDropdownPanel` primitives under `src/components/ui-system/`, adopts those primitives for the Tasks / Paths segmented toggle, the Tasks header dropdown shells (`Views`, `Columns`, and `Shortcuts`), and the mobile/list rail chip baseline in `tasks-page.tsx`, and explicitly defers `AdhdPanel`, `AdhdCard`, `AdhdIconButton`, Edit Task overlay extraction, and List View card extraction so unrelated tickets do not opportunistically restyle those surfaces.
+
+
+### 6.17 Checkpoint
+- `6.17.5` removes the Report workspace's reliance on the already-loaded task-history slice: changing a report range now triggers a paginated Supabase fetch for the full selected date range (or all available history), the compact report header shows the actual fetched record count plus `History Source: Full selected date range fetch`, the old 1000-record incompleteness warning disappears on successful fetches, and the Report tab now shows a loading state with a safe loaded-history fallback warning if the full fetch fails. The pass stays read-only and does not change schema, task mutation behavior, priority categories, recurrence logic, HUD, Focus, PATHS, rewards, Archive, Trash, or smart-list behavior.
+- `6.17.4` reshapes the Detailed report into a more compact, task-centered export for outside analysis: Overall Stats now collapse range, history-cap, active-vs-trashed, outcome-type totals, current status snapshot, best/missed day, repeated-miss count, and daily-zero-win count into a concise header; All Current Task History now emits one alphabetized compact line per active non-trashed non-test-like task with selected-range history; and Day-by-Day Breakdown now stays chronological with grouped Done / Did My Best / Complete / Missed rows and capped Missed lists. The pass stays read-only and does not change schema, task mutation behavior, priority categories, recurrence logic, HUD, Focus, PATHS, rewards, Archive, Trash, or smart-list behavior.
+- `6.17.3` is a report-generator cleanup pass for analysis-ready exports: the Detailed report now calls out loaded-history cap risk and active-vs-trashed counts near the top, keeps trashed tasks out of the main workload snapshot by default, adds parent/step/substep path context to detailed history rows, improves repeated miss and repeated win summaries by excluding trashed/test-like noise, and adds an Analysis-Ready Highlights block for high-completion days, high-miss days, recurrence pressure, and unresolved `Daily Until Complete` tasks. The pass stays read-only and does not change schema, task mutation behavior, priority categories, recurrence logic, HUD, Focus, PATHS, rewards, Archive, Trash, or smart-list behavior.
+- `6.17.2` expands the built-in `Report` Tasks workspace tab with a Summary/Detailed detail-level control while keeping the export read-only and source-derived. Detailed mode now adds per-day parent-vs-step completion totals, grouped completed and missed task title sections with cadence/list/priority context, task-level history pattern rows, and repeated miss/win callouts, all without changing schema, task mutation behavior, recurrence logic, priority categories, HUD, Focus, PATHS, rewards, Archive, Trash, or smart-list rules.
+- `6.17.1` adds a new built-in `Report` Tasks workspace tab that generates a read-only Markdown export from the existing loaded task and task-history data, offers Today / Last 7 / Last 30 / Last 90 / All Available range presets, includes current task snapshot counts plus selected-range history summaries and derived completion records, and keeps the output visible in a selectable full-panel preview with a compact Copy Report action. This pass does not change schema, task mutation behavior, recurrence logic, HUD, Focus, PATHS, rewards, Archive, Trash, or smart-list rules.
+
+
+### 6.16 Checkpoint
+- `6.16.1` adds the first Task Interaction focus bundle: tasks now support DB-backed Pin Mode through `pinned_at` / `pin_order` without changing status, history, rewards, recurrence, or ordering, Table and List both expose a compact pin toggle plus a shared `Pinned` filter chip, and mobile Table View now presents the existing full Edit Task inspector in a focused top-of-viewport overlay shell with background scroll lock, internal overlay scrolling, and a mobile-only close affordance instead of the cramped in-table treatment. Desktop/tablet Table edit behavior, List edit behavior, Focus/HUD/PATHS/Scratch Paper, delayed logic, task history persistence, search navigation, and broad table virtualization/scroll anchoring behavior otherwise stay unchanged.
+
+
+### 6.15 Checkpoint
+- `6.15.5` is a tiny stabilization hotfix before Pin Mode: Delayed validation in the task editor now uses the app-local day key instead of a UTC date boundary, and saved Delayed entries in Task History now render with the matching purple delayed calendar tone instead of the green completed tone. No recurrence, history persistence, rewards, search, Table/List scroll, virtualization, HUD, PATHS, Scratch Paper, Focus, or Pin Mode behavior changes.
+- `6.15.4` is a narrow follow-up on those same visual seams: the task search bar now sits inline to the left of the Focus/Momentum row instead of stacking above it, workspace tab utility controls are tightened again so the strip reads closer to the Tasks/Paths chip scale, `Add Counter` is forced onto a single matching chip line, and the counter icon chooser now dedupes icon names and uses a compact wrapped palette to avoid the broken single-column modal layout.
+- `6.15.3` is an exact visual matching pass on the same Focus counter and Task workspace seams: Focus counters now reuse the timer sandbox scaling footprint directly, `Add Counter` matches the existing strong Focus chip styling, the counter editor is shorter with a naturally scrolling body and a compact icon palette, workspace tabs reuse the Tasks/Paths chip group and active/inactive treatments directly, and the task search bar now sits on its own row above the Focus/Momentum row while the broader toolbar stays below.
+- `6.15.2` is a visual integration pass for the new Focus counters and Task workspace tabs: Focus counters now live inside the shared Focus sandbox with timer-matched scale, integrated in-face controls, a preview-based icon chooser, and responsive counter-activity cards, while the Task workspace tabs now sit inline with the Tasks/Paths toggle, use compact chip sizing, rename inline without browser prompts, and the table rail toggle copy collapses to the single `Hide Lists` / `Show Lists` toolbar chip.
+- `6.15.1` adds persistent Task workspace tabs with per-tab Tasks/Paths context and table-rail hide/show state, upgrades Focus Activity Lines with hover/click point inspection, and introduces separate local Focus counters plus counter-history tracking without mixing count events into Focus-minute analytics.
+
+
+### 6.14 Checkpoint
+- `6.14.1` is the one-pass stabilization pass for Delayed status consistency, tag-search highlight/navigation parity, Smart List `Handled` history correctness, multi-select `Daily Until Complete` cadence visibility, the new `Move into parent` hierarchy action, and lighter List selected-card styling. The committed `6.13.25` Table rendered-row cut-line preservation remains the protected baseline, so explicit Table sort/filter resets still behave as before while this pass avoids broad virtualization or derivation refactors.
+- `6.13.25` is a narrow Table View cut-line follow-up: normal full Table row data changes no longer reset the rendered row window back to the initial batch, so deeper scrolled Table views do not shrink/clamp during status or metadata reorder/removal before the raw scrollTop hold can preserve the viewport. Explicit Table sort/filter changes still reset the rendered window, and List View, overlay-only reveal behavior, selected-row freeze, Delayed, Smart Lists, repeat cadence, HUD, PATHS, Scratch Paper, rewards, auth, and styling otherwise stay unchanged.
+- `6.13.24` is a narrow Table View reorder-behavior correction: normal full Table status and metadata mutations no longer preserve same visible row ids or frozen row snapshots, and instead keep the raw Table scrollTop/cut-line steady for a short six-frame window while rows naturally reorder or disappear. Full Table status edits continue suppressing shared status-anchor restore, selected-row order freeze remains for selected rows, and List View, overlay-only reveal behavior, Delayed, Smart Lists, repeat cadence, HUD, PATHS, Scratch Paper, rewards, auth, and styling otherwise stay unchanged.
+- `6.13.23` is a narrow Table View rendered-row snapshot correction: normal full Table status and metadata mutations now freeze cloned rendered rows rather than only row ids, merge fresh current row data back into still-visible rows, and keep Today-filtered rows as inert visual snapshots until an explicit user boundary releases the freeze. The freeze no longer releases merely because the source row ids changed, while List View, overlay-only reveal behavior, Delayed…579 tokens truncated…tus = 'delayed'` while shifting `due_on` without writing task history, and shared display/status helpers keep future-due delayed tasks visibly `Delayed` until the due date arrives. On the due date the shared current-status path drops back to the normal pending/missed resolution instead of showing Upcoming/Not Due, while existing Done, Did My Best, Missed, and Complete behavior remains unchanged.
+- `6.13.8` is a narrow `6.13.7` follow-up: the Table View Edit Task UI child Step/Substep title control now preserves same-overlay rename handoff when switching directly from one active Step/Substep title input to another. The pending second title is captured on pointer-down and reopened immediately after the first rename input blurs, so title rename works repeatedly within the left Steps list while row metadata targeting outside the title, parent-task title editing, descriptions, Add Step, column controls, and Delayed status remain unchanged.
+- `6.13.7` is a narrow `6.13.6` correction pass: the Table View Edit Task UI child Step/Substep title control now matches the working List View edit overlay rename path by treating `pointerdown` as propagation-only and starting inline rename on the title button's `click`, so the in-place typing input mounts inside the current overlay instead of being preempted by the earlier pointer-down rename attempt. Step row metadata targeting outside the title, parent-task title editing, descriptions, Add Step, column controls, and Delayed status remain unchanged.
+- `6.13.6` is a narrow `6.13.5` hotfix: the Table Edit Task UI overlay now treats same-table Step/Substep title pointer interactions as local rename intent by preventing the title control's pointer-down/click default row-close path before inline rename mounts. Clicking directly on a Step/Substep title keeps the current overlay open and mounts the inline rename input in place, while step row metadata targeting, parent-task title editing, descriptions, Add Step, column controls, and Delayed status remain unchanged.
+- `6.13.5` is a narrow `6.13.4` hotfix: in the Table Edit Task UI overlay, same-table Step/Substep title rename now starts on the title control's pointer-down path instead of waiting for the later click alone, so the left-side Steps list enters inline rename before the surrounding row/editor retarget logic can win. This keeps rename in the current overlay, leaves parent-task title editing unchanged, and does not touch Delayed status, StepsCardPreview, schema, or migration work.
+- `6.13.4` is a narrow `6.13.3` correction pass: the actual failing Edit Task Steps List-preview surface now uses the shared same-table Step/Substep inline rename control so clicking a Step title stays in rename instead of opening a nested editor, and the Tasks toolbar replaces the misleading shrink-only `Fit columns` control with explicit `Expand columns` and `Shrink columns` actions that reuse existing visible-column width persistence without changing schema, selected-row order freeze, or search match ordering. Delayed status remains deferred, and this pass does not add schema or migration work.
+- `6.13.2` is a focused `6.13.1` correction pass: same-table Step/Substep descriptions now render in the Table title cell like parent task descriptions while parent description rendering stays unchanged, the Edit Task Steps section uses the compact circular shoeprints Add Step control, same-table Step rename inside the current inlay/editor stops routing through the row-open path and stays inline, and Table View exposes a visible `Fit columns` control near the existing table header controls. The delayed-status follow-up remains blocked because the current persisted `adhdice_clean_task_status` enum/type surface does not include `delayed`, and this pass does not add schema or migration work.
+- `6.13.1` adds the controlled grouped same-table child/table-actions pass: same-table Step/Substep metadata-target editing now exposes an in-shell description input through the shared notes path, same-table Step/Substep rows gain an Unlink action that clears `parent_task_id` without cloning tasks or dropping history, Table row actions now include Delay for eligible real tasks with `due_on` using a small day-count prompt that shifts the due date forward without writing task history and normalizes overdue/current raw `missed` rows back to `pending`, and the Table column menu now exposes a Fit visible columns control through the existing auto-shrink sizing path without changing manual resizing, selected-row order freeze, or visible search match ordering.
+- `6.12.35` is a narrow Table View stabilization pass: while one or more Table rows are selected, the table freezes the current top-level rendered row order by visible task id and keeps reading fresh row data for those ids so batch metadata, Repeat, and Status edits update in place without selected rows jumping. Normal sorting resumes when selection clears, hidden or filtered-out rows still disappear, List View order stays unchanged, and shared Tasks search now also matches task and same-table Step/Substep tag labels case-insensitively without changing one-shot reveal gating or Table visible-match navigation order.
+- `6.12.34` is a narrow Table View selected-row Repeat/Status batch-action pass: when a visible selected parent task, Step, or Substep changes Repeat or Status, the table now fans that action out only across the selected visible row task ids through the existing per-task app callbacks instead of local raw table patches, preserving single-row behavior for unselected clicks or single selection, leaving hidden/unexpanded children untouched, and keeping metadata retargeting, parent editor shell routing, and `metadataTargetTaskId` behavior unchanged.
+- `6.12.33` is a narrow Table View search-order correction: Enter and active-match navigation now consume an ordered visible match id list reported by the rendered table row path itself, so parent rows plus only currently visible expanded Step/Substep rows advance top-to-bottom without changing List View behavior, one-shot reveal gating, filter semantics, or metadata batch targeting.
+- `6.12.32` is a narrow `6.12.31` List View search crash fix: `StepsCardPreview` no longer reaches for an out-of-scope `rowContext` while rendering matched Step/Substep preview rows, and instead receives the needed task-history/today context explicitly from the List adapter so highlight/filter styling, one-shot reveal intent, and Table metadata batch behavior remain unchanged.
+- `6.12.31` gates Tasks `highlight:` auto-reveal behind explicit search navigation intent: debounced committed search text now gets one initial reveal after typing settles, Enter still advances and reveals the next match, clearing search cancels pending reveal, and ordinary table/list rerenders, scrolling, selection changes, and safe metadata batch edits no longer re-scroll to the highlighted result while existing highlight/filter/clear behavior stays unchanged.
+- `6.12.30` generalizes safe Table View metadata multi-edit targeting across selected visible parent tasks, Steps, and Substeps: when a selected visible row changes a safe metadata chip/control, the table now fans that update across the selected visible task ids for due date, energy, estimate, priority, lists, tags, link, and notes while preserving single-row behavior for unselected clicks or single selection, preserving child metadata retargeting/editor-shell behavior, and leaving status/repeat/context-menu semantics unchanged.
+- `6.12.29` is a narrow Table View Energy multi-select pass: when more than one top-level task is selected and a selected parent row's Energy chip is changed in Table View, that Energy value now fans out across the selected parent task ids through the existing table mutation path, while unselected clicks, single-selection edits, child Step/Substep metadata targeting, List View chip editing, and context-menu quick edit behavior remain unchanged.
+- `6.12.28` is a narrow derived-data performance follow-up: `computeTaskAppDerivedData` now records one per-task visible classification fact set during the earlier primary/visible aggregation pass and reuses those cached open/done/overdue/urgent/today/low-energy facts during later full-list smart-list membership/count collection, reducing duplicate predicate work in no-query full-list derives without changing smart-list semantics, count semantics, task history/recurrence behavior, or UI ordering.
+- `6.12.27` is a narrow Tasks search-input source-of-truth pass: while the Tasks search field is focused, the memoized SearchBox now keeps local draft text as the only input value source and ignores parent committed-query updates until focus leaves or a true external reset occurs, so debounced commits, Enter, and clear still update parent search/highlight behavior without letting stale parent search overwrite active typing.
+- `6.12.26` is a narrow Tasks search-input render-isolation pass: the Tasks search field now renders through its own memoized local-draft SearchBox with stable parent callbacks, so keystrokes and clear actions stay immediate while the committed query still debounces into the heavier derived-data path and existing highlight, clear, and Enter-to-next-match behavior remain unchanged.
+- `6.12.25` is a narrow Tasks search-input stability fix: the Tasks search field now keeps immediate local text separate from the committed query, cancels pending debounce work on clear and Enter, and clears highlight-mode state immediately when search is cleared without changing matching, filtering, or next-match semantics.
+- `6.12.23` is a narrow derived-data performance pass: `computeTaskAppDerivedData` now reuses one per-derive task-list lookup plus cached visible-status/current-occurrence facts during smart-list membership evaluation, and it folds visible list counts plus base bucket/list splitting into one ordered pass so manual dev timing comparisons stay intact while task behavior remains unchanged.
+- `6.12.22` is a narrow mobile Table resize correction pass: the header-edge resize handle now keeps touch/pointer ownership on the handle itself with pointer capture plus handle-local pointer listeners, so mobile drag-resize stays active without changing desktop mouse resize behavior, column order/visibility/sort, or persisted widths.
+- `6.12.21` is a narrow follow-up pass on List Settings rail reordering: the visible app version surfaces are synced again, the List Settings cards keep one consistent top-right action cluster, Inbox and Today stay pinned, and the remaining visible rail lists can use the shared reorder controls through the existing persisted `sortOrder` path while delete stays custom-list-only.
+- `6.12.14` is a narrow `6.12.13` QA correction pass: the Focus countdown control wiring is split again so the trash icon deletes the local countdown timer while the reverse-arrows control resets it back to the selected duration and restarts it. Tasks search highlight behavior stays unchanged.
+- `6.12.8` is a narrow `6.12.7` highlight-search correction pass: the Tasks-local `highlight:` search path now scans the flat legacy/source subtask rows by their real database shape instead of assuming a nested `children` tree, so highlight mode no longer crashes on source Steps/Substeps and still highlights matching legacy step titles.
+- `6.12.7` adds rail-order controls to List Settings so task lists can move earlier or later in the Tasks rail through the persisted `sortOrder` path, and it fixes mobile Table View column resizing by keeping the resize handle on the active pointer stream with touch-safe pointer capture instead of losing the drag during touch/pan interactions.
+- `6.12.6` adds a countdown-finished app alert for the local-only Focus countdown path: when the countdown reaches `0`, the app now plays an alarm tone, flashes a full-screen alert overlay, and exposes a clear `Stop Alarm` dismiss control that stops both the sound and flashing without creating fake task/category UUIDs or touching task/task-history state.
+- `6.12.5` adds a Tasks-local `highlight:` search mode on the shared search path. In highlight mode, Tasks search no longer filters the current visible bucket; it instead finds matching visible task, Step, and Substep rows by title/text, scrolls to the first match, highlights matching rows, advances to the next match on Enter, and clears the mode and highlights through the existing search clear action. Normal non-`highlight:` search behavior stays unchanged.
+
+
+### 6.11 Checkpoint
+- `6.11.15` is a narrow `6.11.14` History Calendar recurring-rollover parity pass: current-day History Calendar edits for active recurring occurrences now use the same next-due recurrence semantics as Table/List status completion, persisting the rolled-forward `due_on` and next active raw status without routing through reward/XP queuing, while older history edits do not roll the active task forward and future-due rows are not pulled back to `Done` or `Missed` by today's history facts.
+- `6.11.14` is a narrow `6.11.13` recurring visible-status occurrence-gating correction pass: Table View, List View, child-step previews, and normal Smart List `Status` rules now ignore today's `Done`, `Did My Best`, or `Missed` history once recurrence rollover has advanced `due_on` into a future active occurrence, while History Calendar, Last Done, and separate `History Status` rules can still report today's history.
+- `6.11.13` is a narrow `6.11.12` history-calendar status sync correction pass: Table View, List View, child-step previews, and normal Smart List `Status` rules now derive recurring current-row status from the same current-occurrence history seam used by the History Calendar instead of relying only on stale raw task status, so marking today's/current occurrence as `Done`, `Did My Best`, or `Missed` updates visible status immediately while older past-history edits still stay out of current-row status and the separate `History Status` rule family remains unchanged.
+- `6.11.12` is a narrow `6.11.11` Smart List status-rule correction pass: normal `Status` rules now evaluate against the task's visible/current status instead of stale raw recurring status, so `Due is Today` plus `Status is Pending` correctly includes recurring parent tasks that are visibly pending today, multi-value `Pending / In Progress` status rules continue to behave as OR, and the separate `History Status` rule family keeps using current-occurrence history logic without bringing Focus filter chips back.
+- `6.11.11` is a narrow `6.11.10` countdown control correction pass: completed countdown `Reset` now restarts immediately from the last chosen duration, and the non-running countdown control no longer behaves like a generic resume/play button. It now shows a clock icon and reopens the duration chooser instead of allowing the countdown path to drift into count-up-like behavior.
+- `6.11.10` is a narrow `6.11.9` countdown typography cleanup pass: the extra bold `Countdown` / `Time` state label is removed from the countdown clock face so the timer reads with just the duration and category title, including at the zero-state action view.
+- `6.11.9` is a narrow `6.11.8` countdown zero-state layout correction pass: when a countdown reaches `0`, its `Trash`, `Extend`, and `Reset` actions now render inside the clock itself as the replacement clock face instead of appearing as a floating overlay above the timer.
+- `6.11.8` is a narrow `6.11.7` countdown overlay correction pass: the countdown zero-state action menu now stays hidden until a real countdown target exists and the countdown has actually reached zero, so the duration picker no longer gets covered by the floating countdown action menu during setup.
+- `6.11.7` is a narrow `6.11.6` Focus countdown correction pass: countdown timers now behave as disposable timers instead of loggable focus sessions, so the countdown settings check action is replaced by a trash action, the countdown zero-state `Complete` action is replaced by `Trash`, and countdown is explicitly blocked from routing into the shared session-save flow while ordinary count-up focus timers keep their existing logging path unchanged.
+- `6.11.6` is the narrow `6.11.5` QA correction pass: countdown timers now stay out of UUID-bound focus-active-session writes by using a local-only countdown runtime while still saving completed countdown sessions with a null-safe category reference, the Add Focus Timer dropdown renders Countdown as a first-row peer that matches category-row typography, countdown duration selection now starts immediately from `10` / `20` / `30` / `60` presets or Enter on custom minutes without a separate Start button, Focus-specific filter chips are removed so Focus returns to its normal open-task list behavior, Smart List Rules now expose history-status predicates for `Done Today`, `Did My Best Today`, `Missed Today`, and `Handled`, and Step/Substep streak/missed chips now sit inline beside the Step/Substep layer chip instead of wrapping below the title.
+- `6.11.5` is the narrow `6.11.4` QA correction pass: Focus timer `Handled Today` / `Missed Today` and `Unfinished` filtering now uses history-based current-occurrence helpers instead of stale raw status so parent tasks handled as `Done`, `Did My Best`, or `Missed` on today/current occurrence land in the right Focus views without child-status rollup; Step/Substep footprint layer chips stay inline but now use a smaller lower-noise scale; the Add Focus Timer dropdown now creates Countdown as its own first-row timer type with a clock icon and no category-selection detour; and countdown clocks now open a simplified compact duration picker with `10`, `20`, `30`, `60`, custom input, and a small `Start` action. Milestones remain deferred, and smart-list UI exposure for broader history-date predicates beyond the current shared helper layer is still a follow-up.
+- `6.11.4` is the `6.11.3` QA correction pass: Focus list filtering now treats the current unresolved occurrence as authoritative so tasks marked missed for today or the active due occurrence land in `Missed Today` and `Handled Today` while staying out of `Unfinished`; the Table `Last Done` column now renders when enabled and remains distinct from `Date Completed`; repeat action rows no longer collapse immediately while cadence follow-up choices are still needed; the incorrect Home-local Milestones MVP is removed from normal use and Milestones are explicitly deferred until a safe task-child model exists; Step/Substep footprint layer chips now sit inline with titles instead of underneath; and countdown timers now arm from the Add Focus Timer dropdown without the old page-level Count Up / Countdown toggle, open duration selection from the countdown clock itself, and still preserve the zero-state `Complete` / `Extend` / `Reset` flow without auto-completing sessions. SQL/schema changes remain avoided. Weekly/monthly until-complete remains deferred until cadence and until-complete are separated cleanly in the recurrence model.
+- `6.11.2` keeps the PATHS canvas-first MVP architecture, but polishes the linked-task and progress surfaces from browser QA: progress now reads in compact `Steps` language, node circles use footprints instead of pointer glyphs, completed chips scatter subtle footprints along outgoing path lines, linked task pills match the app chip scale with right-side status controls, the selected-chip linked-task picker is now a white searchable dropdown with `No linked task`, and PATHS linked-task opens now route back into the current shared Tasks-page two-column editor instead of the older modal path.
+- `6.11.1` corrects the PATHS MVP visible direction from a list/form routine editor into a canvas-first mind-map workspace inside Tasks -> Paths. PATHS still uses the local adapter and `src/lib/paths-domain.ts`, but nodes now normalize and persist canvas positions, render as draggable rounded chips on a dotted board, connect through `nextNodeIds` with SVG curves, and expose compact right-inspector controls for title, note, linked-task reference, outgoing connection removal, duplicate/delete, and PATHS-only completion. Linked tasks remain read-only references that can open the shared editor without mutating task records, task history, recurrence, rewards, smart lists, Inbox, HUD, Focus Timer, or Scratch Paper state.
+- `6.11.0` turns the Tasks-local `Paths` surface into a usable local MVP without making Paths or Path nodes into tasks. PATHS now uses the adapter boundary with a user-scoped localStorage prototype adapter, supports Path list/create/select/edit/archive/delete, node add/edit/delete/reorder, PATHS-only progress toggle/reset, and daily-reset progress keyed to a local calendar date. Linked tasks are optional read-only references selected from existing task data and can open the shared task editor, but completing PATHS nodes does not mutate task status, task history, recurrence, rewards, smart lists, Inbox, HUD, or Focus Timer state. Supabase schema, migrations, and PATHS database types remain intentionally deferred.
+
+
+### 6.10 Checkpoint
+- `6.10.0` keeps Inbox as a built-in/default hybrid list, but saved Inbox smart rules now further constrain membership through the shared task-list evaluation path. Inbox without saved rules keeps the prior default behavior, `Due Date is empty` still means `!task.due_on`, manual list membership still excludes Inbox membership, and direct Inbox checks now agree with bulk membership generation without requiring a refresh after rule edits.
+- `6.10.1` keeps the collapsed HUD Focus and active-task timer chips on the existing timer source of truth, but now keeps the shared HUD runtime clock active for running Focus sessions and refreshes its current timestamp immediately when activation changes. The collapsed chip perimeter ring now renders in a padded overlay layer around the chip so the outline animation stays aligned and visibly on the chip without touching the separate Safari/public tab-return HUD repaint work.
+- `6.10.2` keeps the `6.10.1` timer behavior unchanged, but removes the collapsed HUD timer chip's double-pill look by dropping the padded outer wrapper and extra background border layer. The active accent now renders as one subtle animated perimeter stroke directly over the real chip frame.
+- `6.10.3` added a temporary dev-only diagnostic overlay to the collapsed HUD timer chip so the wrapper, SVG accent layer, and real chip span could be distinguished while investigating the remaining `Coding` chip background/layering issue.
+- `6.10.4` removes that temporary diagnostic and flattens the collapsed HUD timer chip into one real chip button with the animated accent rendered inside the same element. Timer behavior remains unchanged, but the active chip should now read as one unified pill instead of a nested button/span plus overlay stack.
+- `6.10.5` corrects the collapsed HUD timer trace geometry to the actual live chip height instead of the older taller overlay box, so the active perimeter stroke aligns with the real pill rather than appearing vertically distorted.
+- `6.10.6` removes the collapsed HUD timer chip's perimeter trace/SVG path entirely and replaces it with a quieter built-in chip accent using stronger native pill styling plus a subtle internal bottom highlight. Timer behavior, labels, and expanded Focus Timer cards remain unchanged.
+- `6.10.7` removes the remaining collapsed HUD timer chip accent treatment so the collapsed timer falls back to a plain live-counting pill with the existing pause/resume behavior and labels, while expanded Focus Timer cards remain unchanged.
+- `6.10.8` persists Table View column order plus the active sort column/direction across refreshes through the existing user-scoped UI settings path. Column visibility behavior stays unchanged, defaults remain valid for users without saved layout state, and malformed saved layout state falls back safely.
+- `6.10.9` adds a sortable Table View `Streak` column backed by existing `currentStreak` row data. Positive streaks render as compact chips, blank cells sort as `0`, new/default Table layouts include the column by default, and existing saved visible-column layouts keep their prior visibility while saved order and sort state continue to normalize safely.
+- `6.10.10` prevents Table View layout-persistence update loops by keeping overlay-only/secondary table instances out of the shared persisted-layout sync path. The primary Table View still owns saved column order and sort state, while inspector overlay tables no longer write back competing layout state.
+- `6.10.11` updates the Table View `Streak` column to match the existing streak chip language exactly: completed streaks show the fire chip, missed streaks also render in the same column with the skull chip, and blank cells still stay blank when neither streak is present.
+- `6.10.12` refines Table View `Streak` sorting so high-to-low orders by highest completed streak first, then for ties by lowest missed streak to highest missed streak. Ascending uses the inverse tie-break to stay predictable.
+- `6.10.13` keeps true no-streak rows pinned to the bottom of `Streak` sorting in both directions, while preserving the prior completed-streak and missed-streak ordering among rows that do have streak data.
+- `6.10.14` restores live Roll page spending: each board roll now costs 100 points when no free roll is banked, banked free rolls are always consumed first, and point spending routes through the shared economy path without double-deducting.
+- `6.10.15` removes the collapsed HUD `Overview`, `Today`, and `Urgent` chips from the collapsed render path only. The collapsed shell, expand/collapse behavior, Focus Timer/task timer chips, banked-roll chip, refresh control, and expanded HUD content remain unchanged.
+- `6.10.16` keeps the collapsed HUD chip set unchanged, but renders the collapsed `Scratch Paper` control as a direct chip button so its vertical alignment matches the surrounding collapsed HUD chips more closely.
+- `6.10.17` restores the collapsed HUD `Scratch Paper` control to the shared default chip-button primitive so its size and typography match the standard collapsed HUD chip treatment again.
+- `6.10.18` normalizes collapsed HUD chip sizing around the shared task-page chip primitive by making chip-button wrappers size to their visible pills and routing the collapsed timer chips through that same shared chip path. The collapsed HUD chip row should now read with one more uniform chip height and default chip typography treatment.
+- `6.10.19` adds a Tasks-local `Tasks | Paths` surface switch inside the existing Tasks page without changing app-level navigation, task view modes, table/list behavior, task filtering, or table layout persistence. The new `Paths` side currently renders a lightweight placeholder workspace for future guided reset/routine flows, while the `Tasks` side keeps the existing workspace behavior unchanged and the selected segment now persists through the existing user-scoped task UI state snapshot.
+- `6.10.20` adds a PATHS-only domain seam in `src/lib/paths-domain.ts`: independent `Path` and `PathNode` types, safe normalization helpers for malformed path/node payloads, and a clearly named storage adapter boundary with a local in-memory prototype implementation. The placeholder `Paths` workspace now reads mock data through that adapter boundary only, without reusing task rows, task history, recurrence, rewards, smart lists, Inbox, or linked-task mutations.
+
+
+### 6.9 Checkpoint
+- `6.9.3` failed browser QA.
+- Temporary visible diagnostics proved the active failing paths: the Table full editor in `src/components/ui/task-management-table-v2.tsx`, the Table inline custom cadence panel in `src/components/ui/task-management-table-v2.tsx`, and the banked reward modal/canvas dice path.
+- `6.9.4` improved the compact custom cadence layout and the banked dice spacing, but Step/Substep row clicks still opened a child-as-main-editor page with `Parent: ...` breadcrumb context instead of keeping the original parent editor active.
+- `6.9.5` changed Step row clicks in Table View and List View so they opened the original parent editor, but Substep row clicks could still open a nested child layer because the reveal path resolved only the immediate parent.
+- `6.9.6` resolves the top-level same-table parent for Substeps, opens that parent as the main editor, expands the ancestor Step path, and keeps the clicked Substep as the metadata target.
+- `6.9.6` restores List View parent streak/missed-streak chips, keeps Step/Substep repeat chips visible where repeat data exists, removes leftover visible debug cadence labels, and shares the compact custom cadence UI/input styling between Table and List cadence surfaces.
+- `6.9.6` keeps Every/Day custom cadence numeric inputs on the adjacent chip scale across Table inline, Table editor metadata/full sections, and List quick edit. Ordinal monthly recurrence remains intentionally untouched.
+- Browser QA confirmed `6.9.6` working for Substep editor behavior, child metadata save routing, List View chips, and custom cadence UI.
+- `6.9.7` restores Shift-click range selection across visible parent, Step, and Substep table rows; removes the Table View Step/Substep preview cap so expanded parents show all visible descendants; adds the existing History action to List View parent rows; and routes List View Edit Task overlay actions through the current inlay editor UI inside the overlay shell.
+- `6.9.7` was committed, and browser QA passed for the List View Edit Task overlay, Shift-click range selection, and full Table View Step/Substep rendering.
+- `6.9.8` tightens List View row click routing so status/history/metadata actions stay on their own quick-action paths, restores Step/Substep title rename entry inside the shared List overlay editor, defaults parent Step sections collapsed in List View to match Table View, adds a List View Add Step icon beside History, and adds a safe Weekdays repeat preset backed by the existing weekly weekday array model.
+- Browser QA for `6.9.8` passed general List click routing, List View Add Step, default-collapsed Steps in List View, the Weekdays preset behavior, and the shared overlay rename path where applicable.
+- `6.9.9` moves List View parent quick-action rows so they open directly under the clicked parent row above the Steps section, fixes shared repeat chip labeling so the exact Monday-Friday weekly preset displays `Weekdays`, and attempts a compact collapsed HUD timer chip using the existing active/paused timer state and controls.
+- `6.9.10` adds a small consistent gap above List View quick-action rows, routes List View Step/Substep status-circle clicks into the local status/action row instead of the Edit Task overlay, restores the collapsed HUD active timer chip to the live Focus-session timer path while keeping the existing pause/resume behavior, and starts ordinal monthly recurrence schema/model groundwork for rules like first Tuesday or last Monday.
+- After `6.9.10`, the ordinal monthly SQL fields were applied locally, so the runtime/UI follow-up can now use the real persistence columns instead of a schema-only placeholder.
+- `6.9.11` polishes the collapsed HUD timer chip with smaller live `mm:ss`/`h:mm:ss` text plus a subtle animated perimeter progress line, and wires ordinal monthly recurrence through the shared cadence UI, task save/load mappings, repeat labels, and monthly due-date/history helpers for rules like first Tuesday or last Monday.
+- `6.9.5` keeps Step/Substep streak and missed-streak row chips visible on child rows where those existing history values are already present.
+- `6.9.5` tightens the compact custom cadence Every/Day numeric inputs so they match the adjacent chip scale while keeping the three-row layout intact. Ordinal monthly recurrence remains intentionally untouched.
+- `6.9.4` replaces the confirmed banked reward dice overlap behavior with deterministic cell-based grid slots inside the modal canvas, keeping each die in its own non-overlapping position while spinning around its own axis. Existing batching, bank persistence, cancel/close behavior, and reward claim flow remain unchanged.
+- The `6.9.2` post-6.9.1 QA cleanup keeps banked task-reward rolls in the queue until a specific reward claim succeeds, using reward keys instead of queue position for consumption. Opening, closing, canceling, outside-clicking, Escape-dismissal, workspace refreshes, and HUD collapsed/expanded remounts should not consume banked rolls.
+- Table View inline action rows translate their content by the table scroll container's `scrollLeft`, so controls appear in the currently visible horizontal viewport when the table is scrolled far right.
+- The profile avatar's hard-coded `2` badge was removed because it had no state/data source; the real notification count remains in the notification inbox widget.
+- In `6.9.1`, Table View Step/Substep preview rows use their real task ids with the existing metadata update callbacks, open the shared Edit Task inspector on row/keyboard activation, and support the existing row context menu and additive selection behavior.
+- Existing Step/Substep streak and missed-streak chips remain display-only and render only for positive values already present in task data.
+- Repeat quick edit keeps the action row open when Custom cadence is selected so its existing cadence controls appear immediately.
+- The collapsed HUD now shows live Points and a clickable running/paused timer chip backed by the existing economy and timer state/actions.
+- Banked reward dice now mount in the shared centered modal shell, with outside-click, Escape, and close-button dismissal; the larger dice stage preserves the existing reward resolution and claim path.
+
+### Deferred or partial
+- Dice spacing/layout work remains deferred after the `6.9.4` improvement; `6.9.5` does not change dice behavior.
+- Mixed parent/Step/Substep bulk editing uses the existing selected-id callback path, but needs manual QA across every metadata type because automated browser testing was intentionally excluded from this work order.
+
+### Manual QA
+1. Parent row opens the first-level editor.
+2. Step row opens the parent editor while selecting/focusing the Step inside the Steps section.
+3. Substep row opens the parent editor while selecting/focusing the Substep inside the Steps section.
+4. No child-as-main-editor page or `Parent: ... | Step/Substep` breadcrumb page appears when switching between parent, Step, and Substep rows.
+5. Parent title/body edits still save to the parent, while selected Step/Substep metadata edits still save to the clicked child task.
+6. Confirm Step/Substep streak and missed-streak chips appear on child rows where those values already exist.
+7. Choose Repeat then Custom cadence and confirm the compact three-row cadence controls open immediately.
+8. Confirm Every and Day numeric inputs stay compact and visually match the adjacent chip scale.
+9. Open banked rolls; confirm dice stay separated, spin in place, close/cancel without consumption, and consume only intended dice on claim.
+
+
+### 6.8.16 Implementation Note
+
+Import Tasks now creates modern same-table Step and Substep task rows through `parent_task_id` instead of saving new imports into the legacy checklist table, so imported child rows land in the same Table/List/editor surfaces and carry the same task-row metadata fields that manually created Steps/Substeps use today. The shared child-preview derivation also now applies the same display-status normalization as parent tasks, which keeps weekly child rows due next week aligned with the parent's `Upcoming` virtual status while preserving the existing one-off, recurring, legacy-checklist coexistence, and `Daily Until Complete` behavior.
+
+### 6.8.15 Implementation Note
+
+Scratch Paper removes the stale focus-change callback plumbing that was crashing focus and blur in the current note editor, while leaving the 6.8.14 picker latch and focus handoff behavior intact. The dev readout still compiles, and inline chips, save/current-note behavior, note navigation, and the shared picker surface remain unchanged.
+
+
+### 6.8.14 Implementation Note
+
+Scratch Paper now latches the task picker open after typed `/`, focuses the picker search input, and keeps slash-driven query entry inside the picker instead of letting the editor immediately fall back closed. The development readout now reports picker source, open event, close reason, focus target, and query state; inline chips, save/current-note behavior, note navigation, and the shared picker surface remain unchanged.
+
+
+### 6.8.13 Implementation Note
+
+Scratch Paper restores the deterministic controlled-input behavior recorded in the known-good `6.8.3` textarea implementation at the current tokenized contenteditable boundary: typing `/` is intercepted on the focused editor, inserted directly into the serialized note model, and immediately routed through the existing picker-open function before later input/backspace updates the same anchored query. A development-only readout reports the typed event, serialized caret prefix, detected query, picker state/query, and result count for manual browser proof; inline chips, current-note saving, note navigation, and production UI remain unchanged.
+
+
+### 6.8.12 Implementation Note
+
+Scratch Paper now routes both the `/ Link Task` toolbar action and typed slash commands through the same picker-opening function and existing `TaskLinkPicker` state. The shared contenteditable path synchronizes slash queries on input with a keyup fallback, while inline chip insertion, compact chip rendering, current-note saving, note navigation, Escape dismissal, and outside-click dismissal remain unchanged.
+
+
+### 6.8.11 Implementation Note
+
+Scratch Paper typed slash linking now captures the contenteditable caret anchor from `beforeinput`, with a keyboard fallback, and tracks later input/backspace against that stable serialized range instead of trying to rediscover the command after each DOM mutation. Escape and outside clicks close the shared picker, while HUD and Notes-page editors retain the same inline task chips, current-note save behavior, and note navigation.
+
+
+### 6.8.10 Implementation Note
+
+Scratch Paper now treats its shared HUD and Notes-page typing surface as the current note editor. Slash task linking opens from serialized inline input, including directly after an inline task chip, and filters live; saving creates or updates the selected note without clearing it, compact arrows switch among active notes after safely saving dirty content, and the selected note is omitted from the card list to avoid a duplicate. Existing compact inline task chips, note status actions, Notes filters/search/restore, persistence schema, and unrelated task systems remain unchanged.
+
+
+### 6.8.9 Implementation Note
+
+Scratch Paper slash linking now reads the tokenized editor's serialized caret position, so `/` queries open and filter in place and selection replaces the active query without exposing storage tokens. The shared inline task chip is tightened to the surrounding note text rhythm while retaining title opening and the compact icon-only status action in composer, saved cards, HUD, and Notes page.
+
+
+### 6.8.8 Implementation Note
+
+Scratch Paper create and edit composers now use a lightweight tokenized inline editor so task chips sit among note text while safe task tokens remain storage-only. Slash selection inserts at the active query/caret range, existing link placement survives editing, and saved notes use the same inline rendering. Compact task chips show the task title plus status icon only while retaining shared task-editor opening and the existing status menu; persistence schema and unrelated task systems are unchanged.
+
+
+### 6.8.7 Implementation Note
+
+Scratch Paper create and edit composers now keep linked task pills inside the same bordered paper surface as the plain textarea, while saved cards retain their existing token-free task-pill rendering, shared task editor opening, and status controls. Scratch Paper alone can now resize vertically up to 640px in the HUD; other widget size limits, horizontal resizing, workspace drag/reorder, persistence, and internal overflow scrolling are unchanged.
+
+
+### 6.8.6 Implementation Note
+
+Scratch Paper slash-task search now opens as a constrained overlay from inside the active textarea/composer block instead of starting below that block. The picker keeps its own results scroll, so `/` and `/ Link Task` stay visible without pushing the composer actions down; task filtering, composer chips, saved pills, and persistence are unchanged.
+
+
+### 6.8.5 Implementation Note
+
+Scratch Paper task pickers now anchor directly beneath the active body field without expanding the HUD scroll layout. Selecting a task removes the slash query from normal textarea text and immediately shows the existing linked-task pill beside the composer, while saved notes retain task pills and older stored tokens are hidden when editing. Synchronous create locks prevent rapid Enter/click submissions from inserting two notes; refetch continues replacing local notes rather than merging copies. Persisted paper-card drag remains deferred because Scratch Paper notes do not have an ordering field.
+
+
+### 6.8.4 Implementation Note
+
+Scratch Paper HUD now keeps the same shared body-first composer and active-note cards as the Notes page, but moves them into one internal widget scroll viewport so the composer, `/ Link Task` picker, search, and active note cards all stay reachable inside compact HUD sizes. The HUD tile also stops clipping Scratch Paper overlays, while the Notes page remains the full management surface for filters, restore, and broader note browsing.
+
+
+### 6.8.3 Implementation Note
+
+Scratch Paper HUD note entry is now body-first and notepad-like, with title kept optional behind a secondary reveal. Typing `/` in the note body opens a live current-task picker, the same picker can be opened from a visible `/ Link Task` chip, selected tasks are stored as inline body tokens that render back as task pills in saved view, and no-match searches still route to the existing New Task modal with the title prefilled instead of creating silently. Linked task pills now open the shared task editor from the title area and expose the existing task-status model inline from Scratch Paper, while active HUD cards keep a clearer manual `Resolve` action and resolved notes continue moving into the Notes page `Resolved` filter without auto-resolving from task completion.
+
+
+### 6.8.2 Implementation Note
+
+HUD workspace layout math now keeps visible widgets at least 5px inside the sandbox edges. The inset is shared by default packing, persisted-layout normalization, widget add, drag/reorder, resize placement, and overflow sizing, while the existing 8px widget-to-widget gap and scrollable overflow behavior remain unchanged.
+
+
+### 6.8.1 Implementation Note
+
+HUD edit mode now includes a `New Layout` chip. It creates and switches to a new empty snapshot, preserves every existing snapshot unchanged, hides all widgets in the new layout, and opens the widget tray so the layout can be built from scratch. The existing cloned `Add Snapshot` action, reset behavior, drag/reorder, resize, and five-snapshot limit remain unchanged.
+
+
+### 6.8.0 Implementation Note
+
+Scratch Paper adds a medium resizable HUD widget and a Scratch Paper section on the existing Notes page. Supabase-backed notes support optional titles, bodies, active/resolved/trashed states, editing, search, manual resolve/trash/restore, and multiple current-task links whose pills show live task status and open the shared task editor. The HUD lists active notes only with internal scrolling, and its toolbar chip opens Notes. Task creation from a no-match link search opens the existing New Task modal with a prefilled title; it never creates silently. Apply `supabase/add_scratch_paper_notes.sql` manually before persistence is live. Rich text/markdown, inline status actions, realtime subscriptions, and advanced restore/delete workflows remain deferred.
+
+
+### 6.7.20 Implementation Note
+
+An unresolved overdue one-off task now remains a daily completion opportunity: focused reconciliation writes Missed history from its original due date through yesterday, while today renders as `Due` and future dates remain `Not Due`. This applies only while the task is unresolved (`Pending`, `In Progress`, `Missed`, `Upcoming`, or `Not Due`); completed, archived, and trashed tasks do not receive new overdue history.
+
+
+### 6.7.19 Implementation Note
+
+One-off task history no longer caps `Missed Streak` at one. No-repeat tasks now count all trailing saved Missed rows, including rows created through multi-date calendar edits, while their existing one-off completion-streak semantics remain unchanged. The Task History stats card and table-row missed-streak chip share this corrected calculation.
+
+
+### 6.7.18 Implementation Note
+
+Task History calendar now has an explicit `Select Multiple` mode for applying `Done`, `Did My Best`, `Missed`, or `Clear` to multiple past/current dates at once. Batch edits use one deduplicated history upsert/delete, one local history merge, and one live task/streak synchronization; future dates remain unavailable and permanent `Complete` stays on the existing single-task lifecycle path.
+
+
+### 6.7.17 Implementation Note
+
+Pending task reward rolls are now stored in a user-scoped browser bank instead of existing only in React state. Refreshing or moving between app pages preserves the queue, newly earned rolls append with task/day dedupe, and storage is reduced only after a successful claim or a confirmed already-claimed result; failed claims remain available for retry. Reward calculation, reward resolution, economy writes, and Roll UI behavior are unchanged.
+
+
+### 6.7.16 Implementation Note
+
+The collapsed HUD `Overview`, `Today`, and `Urgent` chips now use the exact shared task-table chip scale and border structure already used by the adjacent `Refresh` and `Open` controls. Their title-case copy and existing color roles remain unchanged.
+
+
+### 6.7.15 Implementation Note
+
+Focused app-side overdue reconciliation now backfills missing history for every task cadence instead of only Daily Until Complete: one-off tasks receive a Missed row on their overdue due date, recurring tasks receive Missed rows only on overdue scheduled occurrence dates, and existing saved history always wins. Reconciliation runs from editor saves, table quick edits, recurring completion, permanent Complete, and Task History opening so previously created QA rows repair without waiting for another logical day. Collapsed HUD chips now use title case (`Overview`, `Today`, `Urgent`) and reward readiness reads `1 Die Ready` or `2 Dice Ready`.
+
+
+### 6.7.14 Implementation Note
+
+Daily Until Complete missed-history reconciliation now also runs after table quick due/repeat edits, closing the path that could leave retroactive overdue dates as virtual Due cells. Task History now treats scheduled occurrence dates as `Due`, uses `Upcoming` only for the seven-day lead window before the next due date, and leaves earlier dates `Not Due`; saved history still overrides every virtual state. Table View also gains a sortable `Date Completed` metadata column backed by the existing task `completed_at` value, with incomplete rows kept below completed rows.
+
+
+### 6.7.13 Implementation Note
+
+The Filters status list now includes `Complete` and uses the approved smaller task action chip scale. Saving an overdue `Daily Until Complete` edit now immediately runs the existing focused missed-history reconciliation path, with per-date dedupe so same-day saves and reloads do not duplicate or skip rows; the anchored overdue due date is unchanged. Task History now renders display-only `Due`, `Upcoming`, and `Not Due` calendar states with orange, grey, and light-blue treatments respectively, keeps real history rows authoritative, and includes all three states in the legend.
+
+
+### 6.7.12 Implementation Note
+
+One-off tasks now expose `Missed` and permanent `Complete` while continuing to exclude occurrence-success actions, and Task History calendar actions follow that same model. Calendar dates without saved history use display-only `Not Due` / `Upcoming` states where applicable, never offer `Clear` without a real row, and preserve saved-history colors and precedence. The existing app-load/day-change `adhdice_reconcile_task_rollover` call remains the live Daily Until Complete rollover path; its SQL implementation still requires the manual `supabase/patch_daily_until_complete_rollover_rpc.sql` patch.
+
+Mobile List View now always shows the existing Repeat quick-edit chip beside Due Date, including `No Repeat`, and reuses the established repeat update path and bottom action panel. Edit Task remains one shared modal for List and Table; on mobile edit opens near the top with a blurred, outside-click-dismissable backdrop, while desktop modal placement and the mobile quick-action rows stay unchanged.
+
+
+### 6.7.11 Implementation Note
+
+The Task History calendar now matches the intended task action model instead of only exposing occurrence-style completion controls. One-off tasks now offer permanent `Complete` rather than occurrence-only `Done` / `Did My Best` / `Missed`, while recurring and `Daily Until Complete` tasks keep those occurrence actions and also gain separate permanent `Complete`, routed through the existing Complete confirmation/write path rather than a new lifecycle branch. The Task History calendar and pills also now render `Did My Best` in the approved gold tone, while `Done`, `Missed`, and dark-green `Marked Complete` remain unchanged.
+
+
+### 6.7.10 Implementation Note
+
+Permanent Complete history rendering now uses a dedicated display label instead of falling through to generic Done styling in the Task History modal. History/calendar entries with `status = "complete"` plus `event_type = "completed_permanently"` now render to the user as `Marked Complete` using the existing dark green Complete tone, while ordinary `Done`, `Did My Best`, `Missed`, and due-schedule rendering remain unchanged. This is a display-only follow-up; Complete action behavior, rewards, recurrence, archive logic, and SQL/manual rollover concerns are unchanged in `6.7.10`.
+
+
+### 6.7.9 Implementation Note
+
+The first `Complete` QA follow-up now fixes two regressions without broad archive redesign. Blocked parent `Complete` attempts no longer leave a stale local `Complete` chip/circle in the single-task status UI; the table/list status surface stops optimistic local patching for `Complete`, and the Edit Task modal receives a targeted status reset back to the row’s actual prior status when descendant validation fails. Child Steps/Substeps also no longer use archive-like hiding or archive wording on individual completion: they still confirm, stop recurring, write `completed_permanently` history, and bank one reward, but they stay visible under active parents and only hide/archive together through the existing derived parent-child visibility rule once the parent itself becomes completed/archive-like.
+
+Verification for `6.7.9` should stay narrow: run `git diff --check` plus focused Complete/helper/history/archive/derived-view tests only. If unrelated pre-existing failures appear outside that scope, report them and leave them untouched.
+
+Manual QA focus for `6.7.9`: attempt to mark a parent with unfinished Steps `Complete` from Table View, List View, and Edit Task, and confirm the blocked message appears without leaving the status UI on `Complete`. Then mark an individual Step/Substep `Complete`, confirm the child-specific confirmation copy appears, confirm the row stays visible under its active parent as `Complete`, and finally mark a fully completed top-level parent `Complete` to confirm the parent leaves active views while its completed descendants no longer appear independently.
+
+
+### 6.7.8 Implementation Note
+
+`Complete` now has a first real runtime action path for normal single-task status changes and existing-task editor saves. The action is blocked until all descendants recursively are already `complete`, then confirmed with the locked permanent-completion modal copy before writing one `completed_permanently` task-history row for today, clearing recurrence back to `none`, preserving due-date metadata, and banking rolls exactly once through the existing reward path. In derived task views, `status = 'complete'` is now treated as archive-like so completed rows move out of normal active views without introducing a broader archive-schema redesign in this phase.
+
+Verification for `6.7.8` should stay narrow: run `git diff --check` plus the focused helper/history/archive/reward tests. If `test/task-refactor-helpers.test.ts` still reports the known unrelated `matchesTaskListRules` memoization failure, treat it as pre-existing and do not fix it in this ticket.
+
+Manual QA focus for `6.7.8`: mark a one-off task `Complete` from List View, Table View, and the Edit Task modal; confirm the confirmation modal appears first, the task disappears from active views and appears under Archive, and only one reward bank event is created. Then mark a `Daily Until Complete` task `Complete` both when due today and when overdue, confirm skipped days backfill as `Missed`, confirm only one `Complete` history row exists for today, and confirm a parent task is blocked with `Complete all Steps before completing this task.` until every descendant is already `Complete`.
+
+
+### 6.7.7 Implementation Note
+
+`Daily Until Complete` now exists as a real repeat option in the normal repeat-selection surfaces, and the shared client recurrence helpers treat it like the existing daily engine for next-due-date calculation and live due classification. Overdue user-driven `Done` / `Did My Best` completion now backfills one `Missed` history row per skipped day before advancing to the next daily occurrence, while a new manual SQL patch file, `supabase/patch_daily_until_complete_rollover_rpc.sql`, updates the canonical `adhdice_reconcile_task_rollover` path so app-load/day-change rollover can do the same backfill and preserve anchored overdue `due_on` values after the SQL is run manually. `Complete` status action semantics, reward banking, archive cascade, undo/restore behavior, calendar rendering, and active-view filtering remain intentionally deferred to the next phase.
+
+Verification for `6.7.7` should stay narrow: run `git diff --check` plus the focused task recurrence/history tests only, and treat the known unrelated `matchesTaskListRules` memoization failure in `test/task-refactor-helpers.test.ts` as pre-existing if it still appears.
+
+Manual QA focus for `6.7.7`: create a `Daily Until Complete` task and a `Daily Until Complete` Step, confirm the repeat option appears in Table View, List View, and the editor, confirm overdue `Done` / `Did My Best` creates one missed history row per skipped day without duplicates, and confirm ordinary daily tasks still advance exactly as before.
+
+
+### 6.7.6 Implementation Note
+
+The `Daily Until Complete` / `Complete` feature work now has its manual data-contract foundation only. A new manual SQL migration adds the planned `complete` task status, `daily_until_complete` repeat value, and minimal `adhdice_task_history` metadata columns for `completed_permanently` plus `counted_as_due_occurrence`, while local TypeScript database types and the new `docs/daily-until-complete-plan.md` spec are aligned to that contract. Runtime status menus, recurrence rollover, missed backfill, rewards, archive behavior, confirmation, and calendar rendering remain intentionally unchanged in this release.
+
+
+### 6.7.5 Implementation Note
+
+Focus surfaces now replace their remaining native-looking category and label dropdowns with the shared ADHDice-styled Focus combobox/select controls. The Focus Goals editor sort control, Master Categories sort/type/subtype controls, and Focus History edit modal saved-category/title/type/subtype fields now use the same site-styled popover language already established in Focus modals, while timer behavior, recurrence/status logic, HUD, and non-Focus dropdowns remain unchanged.
+
+
+### 6.7.4 Implementation Note
+
+The full Edit Task UI no longer caps same-table Steps/Substeps to a short preview inside the left `Steps` section. All currently visible descendants now render inline there, the old `hidden in preview` overflow copy is removed, and the existing descendant chevrons remain the only row-hiding control inside that editor surface. Same-parent drag/drop, Move Up/Move Down, title rename, metadata targeting, sticky right Meta Data column behavior, `sort_order` logic, and `parent_task_id` rules are unchanged in this follow-up.
+
+
+### 6.7.3 Implementation Note
+
+List View no longer caps expanded same-table Steps/Substeps to a four-row preview. The parent card `Steps` section now shows every currently visible same-table descendant when expanded, while the existing parent-section collapse plus per-step chevrons remain the only height controls. The old overflow copy about extra steps being "shown in the inspector" is removed from normal List View, search-matched parents still auto-expand their Steps section, and no movement rules, `parent_task_id` behavior, Table View limits, or Edit Task hierarchy scope changed in this follow-up.
+
+
+### 6.7.2 Implementation Note
+
+The remaining same-parent drag delay was mainly in the drop persistence seam rather than in `dragover`. Reorder now applies the planned sibling `sort_order` updates to local task state immediately on drop, then persists only the changed siblings through the existing guarded task-row update path in parallel instead of awaiting one shared full update action per row in sequence. Table View, Edit Task, and List View all benefit because they share the same `reorderChildTask` persistence seam; `parent_task_id` still never changes, `src/lib/task-sibling-reorder.ts` still owns the reorder plan, and a guarded full workspace refresh is reserved only for rare save-error or conflict recovery.
+
+
+### 6.7.1 Implementation Note
+
+Same-parent Step/Substep drag now keeps high-frequency hover bookkeeping in refs and updates React drop-indicator state only when the target row or before/after placement actually changes. Table View and the shared Edit Task rows no longer rerender their large surface on every native `dragover`; List View uses the same synchronous bookkeeping and deduplication. Reorder planning still uses `src/lib/task-sibling-reorder.ts`, persistence still writes only `sort_order` through the guarded task update path, and Move Up/Move Down remains available.
+
+
+### 6.7.0 Implementation Note
+
+Table View, the full Edit Task Steps section, and List View now add dedicated grip-handle drag/drop reorder for same-parent Steps and same-parent Substeps. The existing shared sibling reorder helper in `src/lib/task-sibling-reorder.ts` now accepts drag-style before/after placement in addition to Move Up and Move Down, but it still only normalizes `sort_order` inside the affected sibling group and never edits `parent_task_id`. Drag starts only from the compact handle, invalid drops are ignored, the existing Move Up/Move Down controls remain as fallback, and cross-parent movement, promote/demote, parent-task drag, and live promotion remain deferred.
+
+
+### 6.6.3 Implementation Note
+
+The parent-level `Steps` control in List View now matches the Table View control structure instead of using a separate list-specific button treatment. Both surfaces render `Steps` as neutral label text with a separate chevron-only button, so the purple hover/focus highlight applies only to the chevron and not to the word `Steps`.
+
+
+### 6.6.2 Implementation Note
+
+The Table View parent-row `Steps` toggle now uses the same purple hover/focus circle treatment as the new step-level chevrons, so the parent affordance reads like the same control family. List View parent cards now also give the `Steps` section its own collapsible chevron header; the section defaults open, can be collapsed locally per card, and still force-opens during step-search expansion so matched parents continue to reveal their child rows.
+
+
+### 6.6.1 Implementation Note
+
+Table View and List View Step rows now show a compact chevron immediately beside the step title when that step has visible same-table substeps. The chevron toggles local collapse and expand for that step's descendants only, preserves the existing rename/open/action behavior on the title and row, and uses one shared preview-visibility helper so descendant hiding follows the same rule in both surfaces. Edit Task behavior, reorder safety, persistence, `parent_task_id`, and broader movement rules are unchanged in this follow-up.
+
+
+### 6.6.0 Implementation Note
+
+Table View, the full Edit Task Steps section, and List View now expose compact Move Up and Move Down controls for same-table Steps and Substeps. One shared pure reorder planner validates that the row is a valid child, keeps `parent_task_id` unchanged, limits movement to siblings at the same hierarchy depth, deterministically normalizes only that sibling group's `sort_order`, and returns only changed sibling writes. Persistence uses the existing guarded task update path. Cross-parent movement, drag/drop, promote/demote, schema changes, and live promotion remain deferred.
+
+
+### 6.5 Checkpoint
+- In `6.5.0`, the same-table Steps cleanup pass brings List View previews closer to Table View behavior: Step titles can be renamed in-row, Step metadata uses the shared chip quick-panel pattern for the List-supported status, due, priority, repeat, list, and tag fields, and List parent/Step titles use the shared table title typography.
+- Table View Step rows now preserve richer preview metadata for hidden child task rows, including Date Added and task-history streak stats, and the mini-row surface includes the Step icon, history access, delete access, date-added cells, and streak/missed-streak chips where applicable.
+- Table View Step due chips use the same concise due copy as parent rows (`Today`, not `Due Today`), expanded Step rows sit closer to the parent Steps toggle area, and clicking an already-open Step metadata chip follows the same close-on-repeat inline action behavior as parent chips.
+- The Edit Task Steps area keeps one user-facing Steps section, uses the circular Step icon on Add Step controls, removes the redundant status chip from same-table Step rows, and makes the desktop Meta Data column sticky so it stays available while scrolling the left Steps list.
+- In `6.5.1`, the follow-up parity pass restyles parent and Step row action icons as bare icons with hover/focus circles, moves Step shoeprints actions beside history/delete, and uses the shoeprints action to open inline substep drafts under the clicked Step.
+- In `6.5.2`, Focus timers become an active-session sandbox: a searchable category picker starts clocks, inactive categories stay out of the clock canvas, pause/play and gear remain as the primary controls, and the gear tray exposes submit, reset, and repeatable five/ten-minute adjustments. Clock-face adjustments use a wider input with external five-minute steppers, and running subtraction now adjusts the displayed elapsed total while clamping at zero.
+- In `6.5.3`, the Focus timer picker is reduced to half its prior desktop width, active clock rows center their visible clocks on mobile and desktop, and the timer gear plus quick-adjust numerals are enlarged for clearer recognition.
+- In `6.5.4`, Focus timer dropdown and sandbox scrollers hide their scrollbar chrome while preserving scrolling, centered clocks use an exact 10px gap, the timer picker height is tightened toward the chip scale, and the active sandbox moves to 10px below the picker.
+- In `6.5.5`, centered Focus clocks use a roomier 24px horizontal gap on mobile and desktop, and the sandbox sits 20px below the timer picker.
+- In `6.5.6`, the Session Complete modal hides its internal scrollbar chrome while preserving scrolling and replaces its four native datalist popups with the existing white, site-styled Focus suggestion dropdown.
+- In `6.5.7`, the shared hidden-scrollbar utility explicitly suppresses Safari WebKit scrollbar rendering, Master Categories and its nested option list use that utility, and Manual Entry applies it to the modal element that actually owns scrolling. This also removes the stray gray overlay thumb from the Focus clock sandbox.
+- In `6.5.8`, Escape closes the current Focus menu through the shared modal shell, including Session Complete, Manual Entry, Category Goals, Focus History editing, and Master Categories. Suggestion dropdowns consume the first Escape press, and category editing returns to the Master Categories list before the modal itself closes.
+- In `6.5.9`, the desktop Focus clock sandbox creates a vertical scroll layer only when more than one five-clock row exists. Single-row sandboxes use hidden vertical overflow, removing Safari's stray gray overlay scrollbar thumb at its source.
+- List View parent titles now rename inline, List parent/Step metadata rows expose the remaining editable metadata chips through horizontal scrollers, and Step history streak chips render from the same preview metadata used by Table/Edit.
+- Task search now keeps valid child rows hidden as standalone rows while allowing Step/Substep title, notes, tag, or link matches to surface the top-level parent and expand its sibling Steps.
+- Edit Task Step chip rows scroll horizontally so all Step metadata chips remain reachable, and Step title rename controls stop row-selection propagation more reliably.
+
+
+### 6.4 Checkpoint
+- In `6.4.2`, the architecture decision for children/substeps metadata was locked in `docs/task-hierarchy-plan.md`: same-table child tasks through `parent_task_id`, hybrid bridge/migration from legacy subtasks, and no expansion of `adhdice_task_subtasks` into a duplicate task model.
+- In `6.4.3`, `src/lib/task-hierarchy.ts` gains a read-only same-table hierarchy adapter that identifies top-level tasks, children, grandchildren, deeper descendants, orphans, cycles, depth, sibling order, and parent/child lookup maps without changing visible rendering, persistence, schema, rewards, recurrence, archive/trash, or editing UI.
+- In `6.4.5`, `computeTaskAppDerivedData` returns a hidden `taskHierarchyDiagnostics` object built from the current flat task array with `buildTaskHierarchyAdapter`, without changing task rendering, filters, counts, persistence, rewards, recurrence, archive/trash, or editing behavior.
+- In `6.4.7`, `computeTaskAppDerivedData` also returns a read-only `childTaskPreviewByParentTaskId` lookup from the full flat task array, and the shared `TaskManagementTableV2` full overlay renders a source-distinct `Child tasks` preview for the selected task without changing Table/List top-level rows, filters, counts, sorting, persistence, legacy Steps, rewards, recurrence, archive/trash, or schema.
+- In `6.4.8`, the `Child tasks` preview can create real same-table child task rows through the existing normal task creation path with `parent_task_id` set, and child preview rows can open through the existing shared full-overlay inspector path for normal task editing and grandchild creation without changing schema, rewards, recurrence, archive/trash, legacy Steps, or flat-view filtering rules.
+- In `6.4.9`, valid same-table child tasks and grandchildren are hidden from primary top-level Table/List row arrays, search results, list counts, and status counts, while orphans/cycles remain visible as ordinary rows and full task data still backs the `Child tasks` preview plus child open/edit flows.
+- In `6.4.10`, the root layout suppresses benign body-level hydration warnings caused by browser extensions injecting attributes before React hydrates, without changing app-rendered UI behavior.
+- In `6.4.11`, Focus clock category titles reuse the softer Focus Activity trend text treatment instead of the previous heavy uppercase label styling.
+- In `6.4.12`, Focus clock category titles keep that same body-font treatment but increase to a larger medium-weight size so they read closer to the Activity Summary text.
+- In `6.4.13`, Focus clock category titles increase two Tailwind text steps from `text-base` to `text-xl` while preserving the same body-font treatment.
+- In `6.4.14`, the full task overlay pivoted the same-table `parent_task_id` hierarchy preview to user-facing Steps language: Add Step created a real task row, nested rows were labeled Step/Substep by depth, and the old lightweight `adhdice_task_subtasks` editor remained in a separate transition-only surface while migration stayed gated. That split user-facing surface is superseded by `6.4.20`.
+- In `6.4.15`, the legacy Step promotion bridge gains a durable `adhdice_legacy_subtask_promotions` mapping type/schema record plus dry-run and manual promotion helpers. The dry run reports mapped, eligible, skipped, ambiguous, parent-missing, parent-archived/trashed, ordering, parent mapping, status mapping, and sample rows without creating task rows; live promotion remains an explicit manual action and is not wired to automatic UI execution.
+- In `6.4.16`, Settings gains a Legacy Step Promotion operator surface with an explicit dry-run report, reviewed/armed confirmation, and manual promotion action. Workspace loading now fetches `adhdice_legacy_subtask_promotions`, mapped migration-source rows are suppressed from Table/List render data to avoid duplicate Steps, and unmapped migration-source rows remain available during transition.
+- In `6.4.17`, Table View parent rows gain an expandable same-table Steps section and List View cards gain a compact Steps preview. Both use the existing `parent_task_id` hierarchy lookup, show Step/Substep depth plus status, due/scheduled date, priority, and estimate metadata where available, and open Steps through the normal task inspector/editor path.
+- In `6.4.18`, nested Table/List Step preview rows are directly clickable and keyboard-openable while preserving the normal inspector/editor path. The Step/Substep label helper is shared and covered by focused tests. Inline quick actions and move/reorder/promote/demote remain deferred because the safe path is the existing inspector and hierarchy movement needs explicit product rules.
+- In `6.4.19`, Table View corrects the same-table Steps visual architecture: expanded `parent_task_id` Steps render as compact child mini rows under the parent using the parent table column grid for status, schedule, estimate, actual time, tags, link, notes, priority, energy, repeat, and status metadata. The parent task keeps its own normal metadata row, valid same-table Steps remain hidden from top-level rows, and mapped migration-source rows stay suppressed.
+- In `6.4.20`, normal task UI returns to one user-facing Steps concept: the full Edit Task UI no longer renders a separate same-table explanation panel, same-table `parent_task_id` Step rows appear inside the unified Steps section with metadata and open the normal editor, Add Step uses the same-table child-task creation path, and unmapped migration-source rows can still appear under the same Steps section without a separate old-checklist label. Settings keeps migration/operator wording because that is the admin surface for dry-run and gated promotion.
+- In `6.4.21`, Table View removes the remaining title-cell-only Step tree that showed migration-source rows as a red status icon plus title without metadata. Expanded source-only rows now render under the parent as compact mini rows using the same table column grid with real status/title and honest empty metadata chips, while same-table Steps continue to render with their real task metadata.
+- In `6.4.22`, same-table Step rows are restyled to share the parent task row architecture instead of separate card/spreadsheet rows: Table View rows sit on the same white surface with parent-like row spacing, Edit Task/List Step previews remove the `Open` chip, row click selects the Step through the existing editor path, selected Steps get a parent/back affordance, and same-table Step rows expose a trash icon wired to the existing task delete/trash flow. Unmapped migration-source rows remain transitional with status/title only.
+- In `6.4.23`, the full Edit Task Steps interaction is corrected so clicking a same-table Step inside the parent editor keeps the parent editor shell open and retargets only the right-side Meta Data panel. The Meta Data helper line now names the active metadata target such as `Moisturize (AM) | Parent` or `Face | Step`, Step field edits continue through existing task update callbacks, and a `Parent metadata` chip returns the right panel to the parent without opening a separate Step editor.
+- In `6.4.24`, Step-targeted Meta Data mode restores the Step control row on the right panel: current status icon, all status icon choices, Add Step/Substep through the same-table creation control, and same-table Step delete through the existing task trash/delete flow. Parent metadata mode remains unchanged.
+- In `6.4.25`, those Step mode controls move to the selected Step row in the left Steps column instead of living in the right Meta Data panel. The selected same-table Step row now contains the status icon picker plus Add Step/Substep and delete controls, while the right panel remains metadata-only.
+- In `6.4.26`, the selected Step-row Add Step/Substep control changes from a text chip to a circular shoeprints icon button while preserving the same same-table child creation behavior.
+- In `6.4.27`, normal Table/List Steps labels no longer expose implementation count copy such as `direct steps` or `total step rows`; the UI just says `Steps`. The existing Steps smart-list rule now treats both visible migration-source rows and valid same-table `parent_task_id` children as Steps, so parents with new same-table Steps appear in Steps lists without hiding or mutating old source rows.
+- In `6.4.28`, Table View Step title cells fill the Task column like parent rows, use a smaller depth offset, and render Step titles with medium weight so rows sit closer to the parent task name without the bold title look.
+- In `6.4.29`, the Table View parent shoeprints Step button opens a focused inline same-table Step title draft row under that parent instead of opening the Edit Task UI or creating an old source Step. Same-table Step titles in the full Edit Task Steps list can also be clicked and renamed through the existing task title update path.
+- In `6.4.30`, Table View inline action rows now render directly under the row they edit: parent metadata actions appear before expanded Steps, and same-table Step row clicks/metadata chips open an inline action row under that Step instead of opening the full Edit Task UI.
+- In `6.4.31`, Table View Step inline action rows render from Step preview metadata even when the same-table Step is hidden from the top-level row array. Step metadata chips can open action rows directly under the Step, and Step title clicks switch to a compact in-row rename input that uses the existing task title update path.
+
+
+### 6.3 Checkpoint
+- In `6.3.1`, the Focus page history area gains a local client-side search for the existing “View all entries” list, matching existing session fields without changing scoped stats, timers, task search, or persistence.
+- In `6.3.2`, the lower Focus page area becomes the first Focus Insights architecture pass: scoped category goal scoreboard first, KPI overview second, and the searchable session log third, while preserving timers, Focus history records, and edit/delete flows.
+- In `6.3.3`, the Focus Insights lower page is visually tightened with a denser goal scoreboard, calmer KPI cards, softer empty states, reduced nested borders, and extra bottom-nav clearance without changing Focus data behavior.
+- In `6.3.4`, the Focus Dashboard shell widens on desktop and the Goal Scoreboard switches to a responsive two-column layout at wide breakpoints while preserving the mobile/tablet single-column flow and existing Focus session behavior.
+- In `6.3.5`, the Focus Dashboard Session Log gains a wide-desktop two-column layout and the Goal Scoreboard now sorts by active-scope logged focus time first, with zero-time categories grouped afterward alphabetically.
+- In `6.3.6`, the Focus Dashboard gets additional page-local bottom scroll clearance so lower goal rows and session cards can scroll above the floating bottom navigation without changing dashboard data behavior.
+- In `6.3.7`, the Focus Dashboard floating-nav overlap is addressed at the fixed dock render path: on desktop Focus, the default bottom dock renders as the existing right-side vertical rail, while mobile/tablet keep the bottom dock and Focus page padding is reduced from the large desktop spacer.
+- In `6.3.8`, the Focus Dashboard removes the desktop-only forced right-rail override so the dock again respects the user’s existing nav placement/collapse settings on Focus, while keeping the wider dashboard shell, two-column Goal Scoreboard, two-column Session Log, active-scope-first Goal Scoreboard sorting, and modest desktop bottom clearance for horizontal dock mode.
+- In `6.3.9`, the Focus Dashboard adds two more scoped analytics sections between the overview and Session Log: Time Distribution, which uses the existing in-memory session history to show daily totals across weekly/monthly scopes and individual session bars for daily scope, and Category Breakdown, which ranks scoped focus time with calm horizontal bars while preserving the earlier Goal Scoreboard layout/sorting and Session Log behavior.
+- In `6.3.10`, the Focus Dashboard keeps the same Category Breakdown analytics and section order, but gives that section the same responsive two-column desktop layout pattern already used by the Goal Scoreboard and Session Log while preserving mobile/tablet single-column behavior.
+- In `6.3.11`, the Focus Dashboard replaces the standalone Consistency View with an experimental Chart options section between Category Breakdown and Session Log: the grouped review area keeps multiple native CSS/SVG visualizations local to `focus-history.tsx`, including total bars, stacked category bars, ranked category bars, focus-type bars, session-length buckets, goal actual-vs-target bars, a cumulative line, and a compact consistency mini-grid, all derived from the existing scoped focus history/category data.
+- In `6.3.12`, the first Chart options card is re-skinned into a compact Activity summary inspired by the selected reference: it keeps the same scoped in-memory total-bar data, but presents the total, prior-period delta, and rounded monochrome bars in a tighter review card without changing the rest of the Focus Dashboard experiments.
+- In `6.3.13`, that first Chart options card is corrected to follow the provided Activity chart component structure more directly: a Card-style shell, dropdown trigger, large total, trend row with icon, and Framer Motion animated bars, all still kept local to `focus-history.tsx` because the repo does not currently ship the shadcn card/button/dropdown primitives the original snippet imports.
+- In `6.3.14`, the Activity summary card is promoted out of the Chart options experiment into the main Focus Dashboard chart position immediately after the overview. It now supports Overall and Categories modes using only scoped focus history/category data, while the remaining experimental chart options stay grouped below Category Breakdown without duplicating the promoted Activity card.
+- In `6.3.15`, the remaining chart experiment gallery is removed so the Focus Dashboard consolidates around one primary chart system: the Activity Summary card after the overview, followed by Category Breakdown and the Session Log. The Overall and Categories modes stay intact, while the duplicate ranked-category, goal, consistency, cumulative, type, and bucket experiments are deleted from `focus-history.tsx`.
+- In `6.3.16`, the Activity Summary chart lane scrolls horizontally inside the card shell and each bar shows a compact time value above it, so category-heavy scoped views stay readable on mobile without changing the existing Overall/Categories data derivations.
+- In `6.3.17`, the Activity Summary is pulled out of the lower Focus Insights shell and rendered as the primary summary card directly below the timer clocks, while the chart lane is tightened so labels and scroll affordance do not collide and Categories mode bars inherit their corresponding category colors with a neutral `Other` fallback.
+- In `6.3.18`, the Activity Summary becomes a full-width stacked hero with its own independent Daily/Weekly/Monthly scope and date controls, while the lower Focus Insights shell keeps its full separate header and controls; empty daily activity now stays on the selected day instead of hiding the scope controls, so weekly and monthly remain immediately available from the card.
+- In `6.3.19`, the lower Focus Dashboard resets around the Activity card language: the full-width Activity Summary remains directly under the timer clocks, the old mixed Focus Insights shell is replaced by stacked Goal Activity, Category Activity, and Scope Snapshot cards beneath it, and the Session Log stays intact below as the editable detailed source of truth.
+- In `6.3.20`, the Focus page hides the lower Focus Dashboard, Focus Insights analytics, converted Activity analytics cards, and Session Log from the rendered page while keeping the full-width Activity Summary directly below the timer clocks for a cleaner review pass.
+- In `6.3.21`, the single Focus Activity card is polished with readable wrapped axis labels, shared top-row segmented controls, human-readable date ranges, absolute previous-period duration deltas, goal tracks with actual fills, and restored goal-edit access from the card header.
+- In `6.3.22`, the Focus Activity card switches its scope/mode controls and history actions to the shared task-table chip language, moves date/range arrows beside the displayed range label, improves compact bar-value typography, and adds an in-card collapsible Focus History list with the existing edit/delete entry flow.
+- In `6.3.23`, the in-card Focus History area drops the muted purple panel fill, lays expanded entries out as responsive multi-column cards, and tightens the Activity range arrow chips while preserving the existing entry edit/delete flow.
+- In `6.3.24`, Focus Activity and in-card Focus History duration totals round to the nearest minute and stop rendering seconds, while the global timer duration formatter remains untouched for live timer surfaces.
+- In `6.3.25`, the Focus Activity Daily/Weekly/Monthly and Overall/Categories chip controls keep the shared task-table chip colors but connect into grouped segmented toggles with shared borders.
+- In `6.3.26`, the Focus Activity date/range label becomes a clickable scrollable range picker with entry-count and rounded-duration hints while preserving the existing arrow-step controls.
+- In `6.3.27`, Focus Activity date labels switch from dash dates to slash dates, and Daily picker rows append the weekday after the date.
+- In `6.3.28`, the Focus Activity date/range picker trigger is tightened to a smaller chip scale while keeping the existing scrollable picker behavior.
+- In `6.3.29`, Focus Activity utility and inactive controls switch to white/elevated outline fills so the chips read as outlines against the card surface.
+- In `6.3.30`, the Focus Activity date/range picker trigger is tightened again by reducing text size, padding, gap, and chevron size.
+- In `6.3.31`, the Focus Activity date/range picker trigger text is reduced to 10px for a smaller chip footprint.
+- In `6.3.32`, the Focus Activity date/range picker trigger gets an explicit compact height, tighter line box, and smaller chevron so the size reduction is visually apparent.
+- In `6.3.33`, the Focus Activity range arrow chips reduce horizontal padding, and the date/range picker trigger moves to 8px text with `px-2.5`.
+- In `6.3.34`, the Focus Activity range arrows receive explicit compact chip dimensions and smaller icons, while the date trigger wraps its 8px label in its own line box for clearer vertical spacing.
+- In `6.3.35`, Daily Overall Focus Activity session bars stop repeating the summed daily category goal and use richer session x-axis labels with category, subtype, note, and start-to-logged time.
+- In `6.3.36`, the Focus Activity range arrow chips keep compact explicit dimensions but restore readable chevron sizing so the arrows do not collapse into tiny marks.
+- In `6.3.37`, the Focus Activity date/range trigger label returns to a readable 10px text size while keeping the compact outline chip layout.
+- In `6.3.38`, the Focus Activity date/range trigger moves to the same normal text scale as the trend row and expands the chip height/padding so the larger label is not visually constrained.
+- In `6.3.39`, Focus Activity Daily Overall bars use each session category's daily goal, and Weekly Overall day bars derive goals only from categories logged on that day instead of repeating the full app-wide daily goal total.
+- In `6.3.40`, the Focus page adds a second Activity-style card below the main Focus Activity card with a native SVG line graph whose series colors come from the logged focus categories.
+
+
+### 6.2 Checkpoint
+- The existing dense task table experience is now explicitly `Table View`.
+- A true `List View` exists for desktop and mobile.
+- Table View and List View now share one stable task shell.
+- The shared shell puts search, actions, and view controls on row 1, with list chips on row 2.
+- List View metadata chips are back on the approved pill styling.
+- List View quick-edit panels use the approved task-table chip language.
+- In List View, status interaction opens an inline panel instead of instantly completing the task.
+- Tags, due date, priority, repeat, and list/category quick-edit panels exist where supported in List View.
+- In `6.2.7`, the desktop search width was widened to improve the shared shell layout.
+- In `6.2.8`, first-boot authenticated body render is gated behind the same boot readiness seam as the HUD so default theme/profile state does not flash during reload.
+- In `6.2.9`, the first-boot gate keeps the same behavior while moving its boot-complete effect back into the unconditional hook path, fixing the React hook-order crash during auth/session transitions.
+- In `6.2.10`, the full HUD loading shell is limited to first boot so later tab-return and resume sync states keep the live HUD mounted instead of swapping back to the placeholder shell.
+- In `6.2.11`, the live HUD brand tile and workspace glass surfaces keep subtle fallback fills so Safari tab-return resume is less likely to repaint them as black/glitched blocks while the live HUD remains mounted.
+- In `6.2.12`, those live HUD fallback fills are still present, but their light/dark opacity balance is softened so the HUD reads closer to the earlier glass treatment instead of a solid gray slab.
+- In `6.2.13`, List View task cards open the shared task row context menu on right-click so row actions stay aligned with Table View for the clicked task.
+- In `6.2.14`, the live fixed HUD/header wrappers use slightly stronger light-mode fallback fills so the full-width top region is less likely to reveal a black compositor/backdrop state after idle or tab return, without changing the first-boot-only loading-shell gate or the inner HUD widget layout.
+- In `6.2.15`, that wrapper-only hardening is rebalanced toward a cooler, lighter-tint glass and a softer inner blur so reload no longer washes the upper task body in a frosted-white slab while still avoiding the delayed black header seam.
+- In `6.2.16`, the confirmed failing outer fixed HUD/header wrapper now paints as a direct light surface without the broad full-width backdrop blur, so Safari is less likely to mis-compose that top shell after reload, idle, or tab return while the inner live HUD layout stays intact.
+- In `6.2.17`, the outer fixed HUD/header wrapper owns one solid direct-painted surface, while the accumulated brand-tile and widget fallback fills from the earlier hardening attempts are removed or returned to their pre-hardening treatment so the live HUD reads as one connected surface.
+- In `6.2.18`, the live HUD shell, logo/version wrapper, workspace, and widget tiles inherit one solid white surface token in light mode instead of stacking different translucent fills; the XP label is also protected from flex shrink so it cannot collapse into an unlabeled purple block.
+- In `6.2.19`, tab hide no longer writes visible resume-pending state, and silent resume refresh preserves existing task, subtask, economy, and profile identities when fetched values are unchanged; the rendered command-center avatar also receives the stable HUD fallback surface and priority loading.
+- In `6.2.20`, the initial workspace loading gate now clears in the same React transition that commits critical task, subtask, profile, and economy data, so the loading shell cannot disappear one render before the authenticated workspace is ready.
+- In `6.2.21`, the top HUD uses normal-flow sticky positioning instead of a separate full-width fixed compositor layer; the obsolete measured-height spacer and resize observer are removed while the HUD layout, controls, and first-boot shell remain unchanged.
+
+
+## Retired Source Snapshot
+
+### Current Product Shape
+- Tasks: primary dashboard with guarded cloud-backed task rows, shared shell controls, Table View, List View, cards, matrix, filters, buckets, same-table Steps mini rows/previews, and migration-source `adhdice_task_subtasks` rows surfaced under the unified Steps concept while promotion remains gated.
+- Archive vs Trash: fully split at runtime. Archive is a stable non-active bucket, Trash is the 30-day auto-delete bucket keyed by `trashed_at`, and active task views exclude both.
+- Focus: focus categories, timers, active sessions, history, and focus-day task selection.
+- Roll: reward/economy surface with boards, prize baskets, free-roll banking, point spending, and history.
+- Achievements: dice-face unlock tracking, set progress, and celebration overlays.
+- Health: check-ins, meals, weight logging, imported metrics, Apple Health import flow, and care-oriented achievements.
+- Notes: note CRUD and task linking.
+- Stats: task, focus, and economy aggregates from current workspace state.
+- Settings: profile and app-level configuration, including theme, calm-mode preferences, and economy reset.
+- Test: isolated sandbox for prototypes that must stay off the live Tasks surface.
+
+
+### Current Open Issue
+- Reload/boot can still briefly show a black or glitched HUD/UI state before loading settles.
+- The next recommended ticket should diagnose that seam separately before patching.
+- Do not mix that diagnosis with List View, Focus Timer, recurrence, or subtask work.
+
+
+### Fragile / High-Risk Areas
+- `src/components/task-app.tsx`
+- `src/hooks/useTaskCrudActions.ts`
+- `src/hooks/useTaskHistoryActions.ts`
+- `src/hooks/useTaskRewardController.ts`
+- `src/hooks/useWorkspaceData.ts`
+- `src/components/ui/task-management-table-v2.tsx`
+- task revision/conflict handling
+- same-table hierarchy rollout work beyond inspector-backed Table/List previews, especially inline quick actions, true nested table rows, movement/reorder rules, and live legacy promotion QA
+
+
+### Important Deferred Work
+- `scheduled_on` remains shadow-only and is not runtime-authoritative yet.
+- Legacy subtasks in `adhdice_task_subtasks` are unchanged.
+- Custom child-task metadata editors, cross-parent move/promote/demote behavior, nested Table/List row rendering beyond the current same-parent drag slice, child reward rules, and legacy-subtask migration remain deferred.
+- `6.4.2` locks the future task hierarchy architecture in `docs/task-hierarchy-plan.md`: user-facing Steps should become same-table `adhdice_clean_tasks` rows through `parent_task_id`, with a hybrid bridge/migration from legacy subtasks and no expansion of `adhdice_task_subtasks` into a duplicate task model.
+- Runtime adoption of `scheduled_on`, any `next_scheduled_on` behavior, nested same-table child-task row UI, and reward-economy redesign remain deferred.
+- Import update-existing-ID behavior remains deferred because the current live import path does not expose that branch yet.
+- Snapshot/restore UX, schema, and SQL-backed restore execution remain deferred to a later phase.
+
+
+### Historical Notes To Preserve
+
+### Guarded Writes / Archive-Trash Runtime
+- Guarded task mutation coverage already includes permanent delete, history-driven live-status sync, and recurring finalization on top of the existing guarded update paths.
+- Batch edit remains on the guarded task update helper; import remains insert-only with no live update-existing-ID branch.
+- Archive vs Trash is already split at runtime: archive uses `status: "archived"`, trash uses `status: "trashed"` plus `trashed_at`, and restore flows return tasks to `pending` with `trashed_at: null`.
+
+### Same-Table Hierarchy Runway
+- Same-table hierarchy helper groundwork exists in shared logic:
+  - `isTopLevelTask`
+  - `isChildTask`
+  - `groupTasksByParentId`
+  - `buildTaskTree`
+  - `buildTaskHierarchyAdapter`
+  - `sortTaskSiblings`
+  - `getTaskDescendants`
+  - `getTaskAncestors`
+  - `detectTaskHierarchyIssues`
+- This groundwork has shipped as hidden diagnostics, a same-table inspector preview, child creation, and opening through the existing shared inspector path; nested Table/List row rendering and migration behavior remain deferred.
+- `6.4.2` decision: same-table child tasks should render nested under their parent by default, completion should remain independent at first, child reward/XP behavior remains undecided, child recurrence UI should not ship until rules are approved, and parent archive/trash should later hide descendants while preserving rows unless a different cascade rule is explicitly approved.
+
+### HUD / Workspace History
+- The 6.1.x line was heavily HUD-focused: lane-preserving widget reorder, edit-mode chrome cleanup, workspace sizing/clipping fixes, snapshot-based HUD layout persistence, and reset-snapshot controls are all part of the current baseline.
+- HUD cloud-sync remains a planning/foundation seam rather than a finished broad rollout; local-first persistence is still the safe assumption unless a ticket explicitly proves otherwise.
+
+
+### Snapshot / Restore Planning Notes
+- Recommended snapshot scope for a future task-workspace restore is: `adhdice_clean_tasks`, `adhdice_task_history`, `adhdice_task_subtasks`, task-routing/manual list memberships, task-list definitions, task-note links, focused-task selections by logical day, task-grid/HUD layout state that affects task surfaces, and directly related user profile/settings rows that change task behavior.
+- Recommended snapshot task shape should preserve task rows as the primary source, include `parent_task_id` for same-table hierarchy, include legacy `adhdice_task_subtasks` alongside same-table tasks during the transition era, and keep task history separate from live task rows so restores can choose whether to restore live state only or live state plus history.
+- Recommended restore boundary for the future SQL/runtime phase is task workspace data only first. Focus sessions, economy ledgers/reward claims, health data, and broader app settings should stay outside the initial restore boundary unless product rules explicitly require a coupled restore.
+- Likely SQL-required future boundary: stable snapshot metadata/versioning tables, restore transaction semantics, and explicit overwrite/merge rules for shared keys such as task lists, manual memberships, and note links. No SQL was applied in `5.5.7`.
+
+
+### Next Recommended Tickets
+1. Diagnose the black/glitched HUD/UI reload seam as an isolated ticket before any other UI work in that area.
+2. Define the future snapshot payload contract and restore overwrite rules before adding any restore SQL or runtime restore entry points.
+3. Extend Step movement only after separate product approval; same-parent drag/drop now exists, but cross-parent movement and promote/demote remain deferred.
+4. Run the gated legacy Step promotion only after manual dry-run review, then verify duplicate suppression against real promoted rows.
+5. Implement the remaining `Complete` calendar/filter/UI polish phase for `Daily Until Complete` now that `6.7.9` has landed the first QA fixes for blocked rollback and child visibility.

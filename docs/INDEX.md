@@ -47,4 +47,5 @@ Archived docs live under `docs/archive/`.
 
 - Archived markdown is historical reference only.
 - Do not use archived docs as default current context unless the user explicitly asks.
+- [`docs/archive/2026-08-retired/current-state-release-history.md`](archive/2026-08-retired/current-state-release-history.md) - Preserved release chronology and retired Current State notes; historical reference only, not current product authority.
 - When a doc is retired, move it into `docs/archive/YYYY-MM-retired/` and add a short retirement note explaining what replaced it.
