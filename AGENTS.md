@@ -1,129 +1,279 @@
 <!-- BEGIN:nextjs-agent-rules -->
+
 # This is NOT the Next.js you know
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
+This repository uses Next.js 16.2.4. APIs, conventions, and file structure may differ from older versions. When editing Next-specific behavior, read the relevant guide under `node_modules/next/dist/docs/` before relying on prior knowledge.
+
 <!-- END:nextjs-agent-rules -->
 
-# Local Agent Rules
+# ADHDice Agent Rules
 
-Prioritize conserving usage and keeping context small.
-Optimize for safe work, low regression risk, clean organization, and design consistency by default so the user does not need to remember to request those guardrails explicitly.
+## Purpose
+
+Work safely, efficiently, and with the smallest context and code surface that can correctly complete the requested ADHDice task.
+
+Optimize for:
+
+* production-path correctness
+* low regression risk
+* preservation of existing work
+* compact context
+* consistent product behavior and design
+* clear reporting of uncertainty
+
+Do not optimize for the number of files inspected, tests written, or checks passed.
+
+## Documentation Read Order
+
+Use documentation selectively.
+
+1. Read this file.
+2. Read `docs/INDEX.md` to locate the relevant source of truth.
+3. Read `docs/CURRENT_STATE.md` only when current version, fragile areas, active work, or recent architecture matters.
+4. Read only the subsystem documents relevant to the task.
+5. Read archived or generated documentation only when explicitly requested or directly necessary.
+
+Do not load the entire documentation directory by default.
+
+Canonical documents describe implemented truth.
+
+Active working documents describe current plans, unresolved decisions, and future direction.
+
+Archived documents are historical reference and are not current product authority.
+
+## Declare the Work Mode
+
+Every task must operate in one primary mode.
+
+### Diagnose
+
+Inspect and report only.
+
+* Do not edit files.
+* Do not bump the version.
+* Identify the active production render, event, data, and persistence paths.
+* Return the most likely root cause and smallest safe implementation boundary.
+
+### Implement
+
+The behavior and implementation direction are already approved.
+
+* Implement only the approved outcome.
+* Do not reopen settled product decisions.
+* Do not broaden the architecture without reporting the need first.
+
+### Correct QA Failure
+
+Fix one observed QA failure.
+
+* Begin from the exact reported behavior, screenshot, error, or log.
+* Confirm the active failing path before editing.
+* Do not turn the correction into a feature or redesign pass.
+
+### Review
+
+Inspect an existing change without implementing new behavior.
+
+* Check scope adherence.
+* Look for production-path defects, missing bindings, incomplete prop forwarding, stale assumptions, and insufficient verification.
+* Distinguish confirmed defects from unverified risks.
+
+### Mechanical
+
+Perform an exact, low-judgment edit.
+
+Examples include copy changes, version synchronization, a known missing import, or a precisely identified one-file correction.
+
+Do not introduce new abstractions during mechanical work.
+
+## Preserve the Worktree
+
+Before editing:
+
+* inspect `git status`
+* inspect relevant existing diffs
+* identify files already modified
+* treat unrelated uncommitted work as protected
+
+Do not:
+
+* reset
+* stash
+* clean
+* revert unrelated work
+* reformat unrelated code
+* stage, commit, or push unless explicitly requested
+* claim pre-existing changes as part of the current task
+
+When a required file already contains uncommitted work, make the smallest compatible change and report that the file had protected baseline edits.
 
 ## Exploration
-- Minimize token usage.
-- Prefer quick edits when the request appears small and localized.
-- Start with the smallest relevant file section before expanding scope.
-- Inspect only the minimum necessary files.
-- Do not scan the whole repository unless truly necessary.
-- Do not read multiple large files unless necessary.
-- Prefer targeted `rg` searches and short `sed` ranges over broad exploration.
-- Keep intermediate reasoning compact.
-- If a likely quick fix may be wrong without surrounding context, try the smallest reasonable change first and expand only if needed.
-- Before doing work that is likely to consume a lot of tokens, summarize the reason and ask for approval first.
 
-## Skills
-- Do not use skills unless the user explicitly asks or the task clearly matches the skill description.
-- Before using a skill, suggest it briefly and ask for approval if using it will add significant context or token cost.
+Start from the narrowest likely production seam.
 
-## Documentation
-- Treat `docs/INDEX.md` as the documentation map for this repo.
-- Treat files listed there as either canonical, active working, tooling/generated, archived, or pointer-only according to their declared role.
-- Use canonical docs for current implemented truth.
-- Use active working docs for product direction and future-facing planning.
-- Do not treat `docs/archive/` as current project context unless the user explicitly asks.
-- Do not treat generated skill docs under `Skills/generated-skill-library/` as product truth.
+Prefer:
+
+* targeted repository searches
+* small file ranges
+* direct callers and consumers
+* current production components
+* existing focused tests
+
+Avoid:
+
+* scanning the entire repository
+* loading several large files speculatively
+* building generalized test infrastructure
+* reading every related historical document
+* investigating unrelated baseline failures
+
+Before editing a UI behavior, confirm:
+
+1. the active rendered component
+2. the active event handler
+3. the state or data owner
+4. the mutation or persistence path, when applicable
+5. whether another effect or adapter can overwrite the result
+
+## Scope Discipline
+
+One implementation task should normally target:
+
+* one bug
+* one feature slice
+* one component family
+* one data authority boundary
+* one performance bottleneck
+
+Do not combine product design, architecture, debugging, styling, refactoring, and performance work unless the ticket explicitly approves the combination.
+
+Do not create new documentation, abstractions, schema, infrastructure, or shared primitives unless the task requires them.
+
+When a schema change, new architectural layer, or additional subsystem becomes necessary but was not approved, stop and report the requirement before editing it.
 
 ## Editing
-- Before editing, state the file(s) you plan to inspect or modify.
-- For small edits, do not refactor unrelated code.
-- For styling or copy changes, modify no more than 1-2 files unless absolutely necessary.
-- Prefer preserving surrounding behavior over making broad “cleanups” during the same pass.
-- When changing shared state, routing, data loading, or reusable UI, look for nearby dependent code paths before editing so a local fix does not quietly break another surface.
-- For larger changes, prefer extracting or isolating code into clearly named files/modules instead of growing monolithic files further.
-- Keep folder structure organized by responsibility. Prefer app-specific surfaces under app-specific folders, shared reusable UI under shared UI folders, hooks in hooks folders, and pure logic in lib folders.
-- Avoid introducing duplicate helpers, duplicate constants, or copy-pasted logic when an existing local utility already covers the need.
-- If the codebase already has a pattern, component style, naming scheme, or module boundary for the thing being edited, follow it unless there is a strong reason not to.
 
-## Execution
-- Do not run dev servers, builds, package installs, or full test suites unless asked.
-- Do not open a local build or inspect the site in-browser unless the user explicitly asks for it. For this project, avoid using in-app browser/site inspection as a default verification step because it is token-heavy and the sandbox/browser path is unreliable.
+Before substantial edits, state the intended files or code paths.
+
+During implementation:
+
+* preserve existing behavior outside the approved seam
+* reuse existing helpers and primitives
+* avoid duplicate logic and constants
+* keep feature, presentation, and persistence responsibilities distinct
+* prefer a small local correction over opportunistic cleanup
+* remove only dead code directly made obsolete by the current change
+
+For every new identifier, prop, callback, or exported value:
+
+* confirm where it is declared
+* confirm every required caller supplies it
+* confirm every consumer receives or destructures it
+* confirm every reference is in scope
+* search all repository references before finalizing
+
+## Frontend Work
+
+Follow:
+
+* `docs/FRONTEND_UI_RULES.md`
+* `docs/UI_SOURCE_MAP.md`
+
+Reuse approved ADHDice primitives and live source surfaces.
+
+Do not invent a new chip, card, menu, panel, typography, or interaction family when an approved pattern already fits.
+
+Do not migrate deferred legacy surfaces during unrelated work.
+
+When asked to match an existing UI element, compare and reuse its actual rendered structure, not only approximate CSS values.
 
 ## Verification
-- After code changes, run `npm run lint` when the project provides a lint script, unless the user explicitly says not to.
-- After code changes, run `npm run typecheck` when the project provides a typecheck script and the change touches TypeScript, shared logic, imports/exports, hooks, state, or multi-file code paths.
-- Check `package.json` scripts before naming or running verification commands, and choose the smallest relevant available verification step for the change.
-- For small localized UI or copy edits, lint plus source-level sanity checks may be enough.
-- For logic changes, hooks, data loading, state management, reusable components, or multi-file refactors, run the relevant lightweight tests when available, such as `npm test`, and include `npm run typecheck` when TypeScript coverage matters.
-- For structural changes that may affect compilation, imports/exports, routing, rendering boundaries, or framework behavior, run `npm run build` when the user has not asked to avoid heavier verification.
-- If lint fails, fix issues that are directly related to the files changed in the current task and report any remaining unrelated lint findings clearly.
-- In the final response, explicitly say what verification was run, what failed, and what was intentionally not run.
-- If lint is unavailable or too expensive for a tiny source-only change, say that clearly in the final response.
 
-## Architecture
-- Prefer incremental refactors over rewrites. Stabilize first, then extract, then simplify.
-- When a file is large or tangled, reduce future spaghetti by extracting coherent surfaces, helper modules, or shared controls into dedicated files with narrow responsibilities.
-- Keep feature logic, presentation logic, and persistence logic from collapsing into the same place when a cleaner local boundary is available.
-- When adding a new feature or menu, place it where a future developer would naturally look for it first.
+Follow `docs/VERIFICATION.md`.
 
-## Design
-- Keep new UI in the spirit of the existing product: calm, cohesive, professional, and streamlined.
-- Reuse existing spacing, typography, radii, button styles, menu patterns, icon usage, and interaction patterns before inventing new ones.
-- Avoid random one-off styling decisions that make the product feel inconsistent.
-- Prefer clear visual hierarchy, restrained type scale, and tidy alignment over decorative or novelty-heavy UI.
-- When editing or adding menus, modals, panels, and controls, make them feel like part of the same design system rather than isolated inventions.
-- If the repo already has a design language for chips, cards, toggles, list controls, or headers, continue that language consistently.
-- When the user says a UI element should "match" another visible element, treat the target as visual/render-pattern matching, not just CSS-token matching.
-- Before editing a visual match request, identify the exact render path for the current element, the exact render path for the target element that already looks correct, the actual visible text element type (`button`, `span`, `p`, `input`, etc.), the inner text element/class pattern, and any wrapper, layout, padding, line-height, focus, or browser-control differences.
-- If the target element already looks correct, prefer reusing its exact inner markup/class pattern instead of approximating the same typography with separate classes.
-- Example: if step title text renders as `<p className="...">New step</p>` and a parent task title should match it, make the parent title button act as a neutral click wrapper and render the visible title inside the same kind of inner `<p>` with the same class pattern.
-- After one failed styling pass, stop adjusting typography tokens and compare the exact rendered structure of the current element versus the target element before editing again.
-- For new chips, pills, and text-labeled controls, consult `docs/ui-design-system.md` first and default to the task-table chip scale unless the feature has a documented reason to diverge.
-- If a control has visible text, default to a clickable chip using the shared task-table primitives in `src/components/ui/task-table-primitives.tsx` instead of introducing a conventional text button.
-- Treat non-chip text buttons as exception-only and use them only when the UI truly needs a larger documented action treatment.
-- Use `npm run audit:text-buttons` as the repo-level drift check for text-labeled `<button>` elements that have not been converted to approved chip patterns.
+Core requirements:
 
-## Next.js
-- This repo uses Next `16.2.4`. Do not assume older Next.js behavior is correct.
-- Consult `node_modules/next/dist/docs/` when touching Next-specific behavior such as routing, server/client boundaries, rendering behavior, config, metadata, asset handling, or framework APIs.
-- For small component-only edits that do not touch Next-specific behavior, do not expand scope by reading framework docs unnecessarily.
+* validate the exact production seam that changed
+* prefer relevant evidence over test volume
+* rerun affected checks after the final production edit
+* stop checks that hang or approach 90 seconds
+* run `git diff --check` after code or documentation edits
+* report browser behavior as unverified unless the user explicitly requested and authorized browser testing
 
-## Local Browser Access
-- Treat `localhost`, `127.0.0.1`, `::1`, LAN IPs like `192.168.x.x`, and VPN/private-network dev URLs as potentially unreachable from Browser Use navigation, even if the in-app browser UI can show them.
-- For this project, if the user confirms the LAN URL is working in the in-app browser, prefer `http://192.168.4.109:3000` as the known-good local preview URL.
-- If the user already has the local app open in the in-app browser, attach to the current selected tab and continue from there.
-- Do not repeatedly retry local URL navigation after one failed agent-side attempt.
-- After one failed agent-side navigation attempt, ask the user to open the local URL manually in the in-app browser, then continue from the current tab without trying to re-navigate.
-- Prefer using the current in-app browser tab over opening a new tab for local development work.
-- Do not treat switching from `localhost` to a LAN or VPN IP as a reliable fix; try at most one alternate local-network URL before falling back to the user-opened tab workflow.
-- If the user needs in-app browser annotation or review and local URLs are still blocked, create a temporary public tunnel to the local dev server and use that URL in the in-app browser instead of continuing to retry local navigation.
-- Prefer an HTTPS tunnel URL when one is available.
-- Browser skill/docs may claim local URLs are supported, but if agent-side navigation fails on both `localhost` and LAN IPs, assume Browser Use runtime session policy or network isolation is the problem rather than the app itself.
-- Do not patch the bundled browser plugin cache under `.codex/plugins/cache/...` as a permanent fix; those files are runtime artifacts and may be overwritten.
-- When asking Codex to inspect the local app in the in-app browser, open the app yourself first if agent-side navigation fails, then ask Codex to continue from the current tab.
+Do not create a custom DOM harness, browser simulator, generalized mock framework, or replacement test environment unless explicitly authorized.
 
-## Workflow Discipline
+Do not run the dev server, browser automation, Playwright, screenshots, full lint, full typecheck, full tests, or production build by default.
 
-- One implementation prompt should target one bug, one feature slice, one UI component family, or one performance bottleneck.
-- Do not combine product design, debugging, refactoring, styling, and performance work in one prompt unless explicitly approved.
-- For risky work, first inspect and return a plan. Do not edit until approved.
-- If two attempted fixes do not solve the same issue, stop patching and switch to diagnosis-only mode.
-- For performance complaints, identify the slow layer before refactoring.
-- Always confirm the active render path before claiming a UI fix is complete.
-- After each completed implementation prompt, bump the visible app version and return numbered manual checks.
-- Do not create new documentation files unless explicitly asked.
-- Do not add long historical thread summaries to active repo docs.
+Use those only when the task or `docs/VERIFICATION.md` specifically justifies them.
+
+## Browser QA
+
+Andrew performs normal browser QA.
+
+Source checks and automated tests do not prove that visible UI behavior works.
+
+The final response must distinguish:
+
+* statically verified behavior
+* test-covered behavior
+* browser-unverified behavior
+
+Do not use browser automation or local site inspection unless explicitly requested.
+
+## Failed-Fix Stop Rule
+
+After two unsuccessful implementation attempts on the same issue:
+
+* stop patching
+* switch to Diagnose mode
+* verify the active component, event path, state/data path, persistence path, build/cache path, and possible overwrite path
+
+Do not attempt a third speculative fix.
 
 ## Versioning
 
-- Use semantic-style app versions as `MAJOR.MINOR.PATCH`.
-- Treat `MAJOR` as a large app era or major architecture milestone.
-- Treat `MINOR` as a wishlist feature group or release theme.
-- Treat `PATCH` as one implementation step, bugfix, polish pass, or verification fix.
-- Use the current app version and active release group declared in `docs/CURRENT_STATE.md`; do not assume an older minor release group is still active.
-- Do not bump version for planning-only Codex threads.
-- Do not bump version for diagnosis-only Codex threads unless code changes are made.
-- For code-changing implementation tickets, bump package and visible app version to the next patch version within the current minor release.
-- Do not jump minor versions unless the user explicitly says a new release group is starting.
-- Do not jump major versions unless the user explicitly approves a major app-era change.
-- If version drift exists between package version and visible app version, report it before changing unless the task explicitly includes version sync.
-- Each implementation final response should confirm the new version or confirm no version bump was made because no code changed.
+Use `MAJOR.MINOR.PATCH`.
+
+For code-changing implementation work:
+
+* bump to the next patch within the current release group
+* keep all required version surfaces aligned
+* use the current release group documented in `docs/CURRENT_STATE.md`
+
+Do not bump the app version for:
+
+* planning
+* diagnosis-only work
+* review-only work
+* documentation-only changes
+
+unless Andrew explicitly requests a tracked release.
+
+Report existing version drift before changing it unless version synchronization is part of the task.
+
+## Checkpoints
+
+After user QA passes, do not automatically begin another architectural ticket in the same dirty worktree.
+
+Before the next substantial ticket, inspect:
+
+* `git status`
+* `git diff --stat`
+* `git diff --check`
+
+A local checkpoint commit should normally be made after authorization when the completed work is stable.
+
+## Final Response
+
+Keep implementation reports concise, normally under 200 words.
+
+Report:
+
+1. root cause or implementation summary
+2. files changed
+3. verification run
+4. verification not run
+5. remaining uncertainty
+6. version result
+
+Do not imply that unperformed browser, build, typecheck, lint, or full-suite validation passed.

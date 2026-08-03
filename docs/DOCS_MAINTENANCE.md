@@ -34,7 +34,8 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/MANUAL_QA_CHECKLIST.md` - `active working`
 - `docs/taskapp-behavior-contract.md` - `canonical`
 - `docs/taskapp-orchestrator-contract.md` - `canonical`
-- `docs/taskapp-quality-check-protocol.md` - `canonical`
+- `docs/AGENT_WORKFLOW.md` - `canonical`
+- `docs/VERIFICATION.md` - `canonical`
 - `docs/ui-design-system.md` - `canonical`
 - `Skills/generated-skill-library/**/SKILL.md` - `tooling/generated`
 

@@ -1,3 +1,5 @@
+> Retired 2026-08-03. Replaced by [`docs/VERIFICATION.md`](../../VERIFICATION.md), which is the current verification standard.
+
 # TaskApp Refactor Quality-Check Protocol
 
 Last reviewed: 2026-06-04
