@@ -311,14 +311,19 @@ export function sumMealNutritionForDate(entries: HealthMealEntry[], entryDate: s
         return accumulator;
       }
 
-      accumulator.calories += entry.calories;
-      accumulator.protein += entry.protein_g ?? 0;
-      accumulator.carbs += entry.carbs_g ?? 0;
-      accumulator.fat += entry.fat_g ?? 0;
+      const snapshot = entry.nutrition_snapshot;
+      accumulator.calories += finiteOrFallback(snapshot?.calories, entry.calories);
+      accumulator.protein += finiteOrFallback(snapshot?.protein_g, entry.protein_g ?? 0);
+      accumulator.carbs += finiteOrFallback(snapshot?.carbs_g, entry.carbs_g ?? 0);
+      accumulator.fat += finiteOrFallback(snapshot?.fat_g, entry.fat_g ?? 0);
       return accumulator;
     },
     { calories: 0, carbs: 0, fat: 0, protein: 0 },
   );
+}
+
+function finiteOrFallback(value: number | null | undefined, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 export function sumMetricValueForDate(

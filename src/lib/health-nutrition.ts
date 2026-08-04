@@ -1,5 +1,167 @@
 "use client";
 
+import type { HealthServingMeasureUnit } from "@/lib/database.types";
+
+export type HealthNutritionPerServing = {
+  calories: number;
+  protein_g?: number | null;
+  carbs_g?: number | null;
+  fat_g?: number | null;
+};
+
+export type HealthFoodNutritionCalculation = {
+  servingFraction: number;
+  consumed: {
+    quantity: number;
+    unit: string;
+  };
+  serving: {
+    quantity: number;
+    unit: string;
+    measureValue: number | null;
+    measureUnit: HealthServingMeasureUnit | null;
+  };
+  basis: {
+    quantity: number;
+    unit: string;
+    dimension: "servings" | "count" | "mass" | "volume";
+  };
+  nutrientTotals: {
+    calories: number;
+    protein_g: number | null;
+    carbs_g: number | null;
+    fat_g: number | null;
+  };
+};
+
+export type HealthFoodMeasurementOption = {
+  value: string;
+  label: string;
+};
+
+type MeasurementDimension = HealthFoodNutritionCalculation["basis"]["dimension"];
+
+const GRAMS_PER_OUNCE = 28.349523125;
+const MILLILITERS_PER_FLUID_OUNCE = 29.5735295625;
+
+export function calculateHealthFoodNutrition({
+  nutritionPerServing,
+  servingQuantity,
+  servingUnit,
+  servingMeasureValue = null,
+  servingMeasureUnit = null,
+  consumedQuantity,
+  consumedUnit,
+}: {
+  nutritionPerServing: HealthNutritionPerServing;
+  servingQuantity: number;
+  servingUnit: string;
+  servingMeasureValue?: number | null;
+  servingMeasureUnit?: HealthServingMeasureUnit | null;
+  consumedQuantity: number;
+  consumedUnit: string;
+}): HealthFoodNutritionCalculation {
+  assertPositiveFinite(servingQuantity, "Serving quantity");
+  assertPositiveFinite(consumedQuantity, "Consumed quantity");
+
+  const normalizedServingUnit = normalizeNutritionUnit(servingUnit);
+  const normalizedConsumedUnit = normalizeNutritionUnit(consumedUnit);
+  if (!normalizedServingUnit) {
+    throw new Error("Serving unit is required.");
+  }
+  if (!normalizedConsumedUnit) {
+    throw new Error("Consumed unit is required.");
+  }
+
+  const hasMeasureValue = servingMeasureValue !== null && servingMeasureValue !== undefined;
+  const hasMeasureUnit = servingMeasureUnit !== null && servingMeasureUnit !== undefined && Boolean(normalizeNutritionUnit(servingMeasureUnit));
+  if (hasMeasureValue !== hasMeasureUnit) {
+    throw new Error("Serving measure value and unit must be provided together.");
+  }
+  if (hasMeasureValue) {
+    assertPositiveFinite(servingMeasureValue, "Serving measure value");
+  }
+
+  const measureUnit = hasMeasureUnit ? normalizeNutritionUnit(servingMeasureUnit) : null;
+  const measureDimension = measureUnit ? getMeasurementDimension(measureUnit) : null;
+  const servingDimension = getMeasurementDimension(normalizedServingUnit);
+  const consumedDimension = getMeasurementDimension(normalizedConsumedUnit);
+  if (measureUnit && measureDimension === "count") {
+    throw new Error("Serving measure unit must be g, oz, ml, or fl oz.");
+  }
+
+  let basis: HealthFoodNutritionCalculation["basis"];
+  let servingBasisAmount: number;
+  let consumedBasisAmount: number;
+
+  if (normalizedConsumedUnit === "serving") {
+    basis = { dimension: "servings", quantity: 1, unit: "serving" };
+    servingBasisAmount = 1;
+    consumedBasisAmount = consumedQuantity;
+  } else if (servingDimension === consumedDimension && servingDimension !== "count" && servingDimension !== "servings") {
+    basis = { dimension: servingDimension, quantity: servingQuantity, unit: normalizedServingUnit };
+    servingBasisAmount = convertToBaseUnit(servingQuantity, normalizedServingUnit);
+    consumedBasisAmount = convertToBaseUnit(consumedQuantity, normalizedConsumedUnit);
+  } else if (servingDimension === "count" && consumedDimension === "count" && unitsMatch(normalizedServingUnit, normalizedConsumedUnit)) {
+    basis = { dimension: "count", quantity: servingQuantity, unit: normalizedServingUnit };
+    servingBasisAmount = servingQuantity;
+    consumedBasisAmount = consumedQuantity;
+  } else if (measureUnit && measureDimension === consumedDimension && measureDimension !== "count" && measureDimension !== "servings") {
+    basis = { dimension: measureDimension, quantity: servingMeasureValue as number, unit: measureUnit };
+    servingBasisAmount = convertToBaseUnit(servingMeasureValue as number, measureUnit);
+    consumedBasisAmount = convertToBaseUnit(consumedQuantity, normalizedConsumedUnit);
+  } else {
+    throw new Error("Consumed quantity is incompatible with this serving definition.");
+  }
+
+  if (!Number.isFinite(servingBasisAmount) || servingBasisAmount <= 0 || !Number.isFinite(consumedBasisAmount) || consumedBasisAmount <= 0) {
+    throw new Error("Serving quantities must be positive and finite.");
+  }
+
+  const servingFraction = consumedBasisAmount / servingBasisAmount;
+  return {
+    servingFraction,
+    consumed: { quantity: consumedQuantity, unit: consumedUnit.trim() },
+    serving: {
+      quantity: servingQuantity,
+      unit: servingUnit.trim(),
+      measureValue: hasMeasureValue ? servingMeasureValue as number : null,
+      measureUnit: measureUnit as HealthServingMeasureUnit | null,
+    },
+    basis,
+    nutrientTotals: {
+      calories: scaleNutritionValue(nutritionPerServing.calories, servingFraction, "Calories per serving"),
+      protein_g: scaleNullableNutritionValue(nutritionPerServing.protein_g, servingFraction, "Protein per serving"),
+      carbs_g: scaleNullableNutritionValue(nutritionPerServing.carbs_g, servingFraction, "Carbohydrates per serving"),
+      fat_g: scaleNullableNutritionValue(nutritionPerServing.fat_g, servingFraction, "Fat per serving"),
+    },
+  };
+}
+
+export function getHealthFoodMeasurementOptions({
+  servingUnit,
+  servingMeasureUnit,
+}: {
+  servingUnit?: string | null;
+  servingMeasureUnit?: HealthServingMeasureUnit | null;
+}): HealthFoodMeasurementOption[] {
+  const options: HealthFoodMeasurementOption[] = [{ value: "serving", label: "servings" }];
+  const normalizedServingUnit = normalizeNutritionUnit(servingUnit);
+  if (normalizedServingUnit && normalizedServingUnit !== "serving" && getMeasurementDimension(normalizedServingUnit) === "count") {
+    options.push({ value: servingUnit?.trim() ?? normalizedServingUnit, label: servingUnit?.trim() ?? normalizedServingUnit });
+  }
+  const normalizedMeasureUnit = normalizeNutritionUnit(servingMeasureUnit);
+  const equivalentUnits = normalizedMeasureUnit === "g" || normalizedMeasureUnit === "oz"
+    ? ["g", "oz"]
+    : normalizedMeasureUnit === "ml" || normalizedMeasureUnit === "fl_oz"
+      ? ["ml", "fl_oz"]
+      : [];
+  equivalentUnits.forEach((unit) => {
+    options.push({ value: unit, label: formatNutritionUnitLabel(unit) });
+  });
+  return options;
+}
+
 export type HealthFoodLookupProvider = "open_food_facts" | "usda";
 
 export type HealthFoodLookupResult = {
@@ -257,6 +419,78 @@ function resolveSupabaseFunctionUrl(functionName: string) {
     return null;
   }
   return `${baseUrl.replace(/\/$/, "")}/functions/v1/${functionName}`;
+}
+
+function assertPositiveFinite(value: number | null | undefined, label: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`${label} must be greater than zero.`);
+  }
+}
+
+function normalizeNutritionUnit(value: string | null | undefined) {
+  const normalized = value?.trim().toLowerCase().replace(/\s+/g, "_") ?? "";
+  switch (normalized) {
+    case "servings":
+      return "serving";
+    case "milliliter":
+    case "milliliters":
+    case "millilitre":
+    case "millilitres":
+      return "ml";
+    case "fluid_ounce":
+    case "fluid_ounces":
+    case "fl_ounce":
+    case "fl_ounces":
+      return "fl_oz";
+    default:
+      return normalized;
+  }
+}
+
+function formatNutritionUnitLabel(unit: string) {
+  if (unit === "ml") return "mL";
+  if (unit === "fl_oz") return "fl oz";
+  return unit;
+}
+
+function getMeasurementDimension(unit: string): MeasurementDimension {
+  if (unit === "serving") {
+    return "servings";
+  }
+  if (unit === "g" || unit === "oz") {
+    return "mass";
+  }
+  if (unit === "ml" || unit === "fl_oz") {
+    return "volume";
+  }
+  return "count";
+}
+
+function unitsMatch(left: string, right: string) {
+  return left === right;
+}
+
+function convertToBaseUnit(quantity: number, unit: string) {
+  if (unit === "oz") {
+    return quantity * GRAMS_PER_OUNCE;
+  }
+  if (unit === "fl_oz") {
+    return quantity * MILLILITERS_PER_FLUID_OUNCE;
+  }
+  return quantity;
+}
+
+function scaleNutritionValue(value: number, servingFraction: number, label: string) {
+  if (!Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number.`);
+  }
+  return value * servingFraction;
+}
+
+function scaleNullableNutritionValue(value: number | null | undefined, servingFraction: number, label: string) {
+  return value === null || value === undefined
+    ? null
+    : scaleNutritionValue(value, servingFraction, label);
 }
 
 function firstNonEmpty(...values: Array<string | null | undefined>) {

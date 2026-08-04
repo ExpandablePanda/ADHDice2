@@ -1,5 +1,7 @@
 import type {
   HealthFoodLibraryItem,
+  HealthFoodLibraryItemInsert,
+  HealthServingMeasureUnit,
   HealthServingWeightUnit,
   HealthRecipe,
   HealthRecipeIngredient,
@@ -163,8 +165,104 @@ export function getHealthFoodIdentityKey(food: HealthFoodIdentityInput) {
   ].join(":");
 }
 
+export function searchHealthFoodLibrary(items: HealthFoodLibraryItem[], query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return items;
+  }
+  return items.filter((food) => [
+    food.food_name,
+    food.brand_name,
+    food.food_category,
+    food.category,
+    food.serving_label,
+    food.provider,
+    food.barcode,
+  ].some((value) => value?.toLowerCase().includes(normalizedQuery)));
+}
+
 export function formatHealthServingWeightUnit(unit: HealthServingWeightUnit) {
   return unit === "fl_oz" ? "fl oz" : unit;
+}
+
+export function formatHealthServingMeasureUnit(unit: HealthServingMeasureUnit) {
+  if (unit === "fl_oz") {
+    return "fl oz";
+  }
+  if (unit === "ml") {
+    return "mL";
+  }
+  return unit;
+}
+
+function formatHealthFoodUnitPlural(unit: string) {
+  const trimmed = unit.trim();
+  if (!trimmed || /s$/i.test(trimmed)) {
+    return trimmed;
+  }
+  return trimmed === trimmed.toUpperCase() ? `${trimmed}S` : `${trimmed}s`;
+}
+
+function getHealthFoodMeasureLabel(unit: string) {
+  const normalized = unit.trim().toLowerCase();
+  if (normalized === "g" || normalized === "oz") {
+    return normalized;
+  }
+  if (normalized === "ml") {
+    return "mL";
+  }
+  if (normalized === "fl_oz" || normalized === "fl oz") {
+    return "fl oz";
+  }
+  return null;
+}
+
+export function formatHealthFoodQuantityUnit(quantity: number, unit: string) {
+  const formattedQuantity = formatQuantity(quantity);
+  const trimmedUnit = unit.trim();
+  if (!trimmedUnit) {
+    return formattedQuantity;
+  }
+  const measureLabel = getHealthFoodMeasureLabel(trimmedUnit);
+  if (measureLabel) {
+    return `${formattedQuantity} ${measureLabel}`;
+  }
+  return `${formattedQuantity} ${quantity === 1 ? trimmedUnit : formatHealthFoodUnitPlural(trimmedUnit)}`;
+}
+
+export function composeHealthFoodServingDefinition({
+  servingQuantity,
+  servingUnit,
+  servingMeasureValue,
+  servingMeasureUnit,
+  servingLabel,
+}: {
+  servingQuantity?: number | null;
+  servingUnit?: string | null;
+  servingMeasureValue?: number | null;
+  servingMeasureUnit?: HealthServingMeasureUnit | null;
+  servingLabel?: string | null;
+}) {
+  const trimmedUnit = servingUnit?.trim() ?? "";
+  const quantity = typeof servingQuantity === "number" && Number.isFinite(servingQuantity) && servingQuantity > 0
+    ? servingQuantity
+    : null;
+  const measure = typeof servingMeasureValue === "number"
+    && Number.isFinite(servingMeasureValue)
+    && servingMeasureValue > 0
+    && servingMeasureUnit
+    ? formatHealthFoodQuantityUnit(servingMeasureValue, servingMeasureUnit)
+    : null;
+  const quantityLabel = quantity !== null && trimmedUnit
+    ? formatHealthFoodQuantityUnit(quantity, trimmedUnit)
+    : null;
+  const isMeasureOnly = Boolean(getHealthFoodMeasureLabel(trimmedUnit));
+  const representation = isMeasureOnly
+    ? quantityLabel
+    : quantityLabel && trimmedUnit.toLowerCase() !== "serving"
+      ? measure ? `${quantityLabel} (${measure})` : quantityLabel
+      : measure ?? servingLabel?.trim() ?? quantityLabel ?? "1 serving";
+  return `1 serving = ${representation || "1 serving"}`;
 }
 
 export function composeHealthFoodServingLabel({
@@ -187,19 +285,116 @@ export function composeHealthFoodServingLabel({
   return [size, weight].filter(Boolean).join(" / ") || null;
 }
 
+export function composeHealthFoodStructuredServingLabel({
+  servingQuantity,
+  servingUnit,
+  servingMeasureValue,
+  servingMeasureUnit,
+}: {
+  servingQuantity: number;
+  servingUnit: string;
+  servingMeasureValue?: number | null;
+  servingMeasureUnit?: HealthServingMeasureUnit | null;
+}) {
+  const quantity = Number.isFinite(servingQuantity) && servingQuantity > 0 && servingUnit.trim()
+    ? formatHealthFoodQuantityUnit(servingQuantity, servingUnit)
+    : null;
+  const measure = typeof servingMeasureValue === "number"
+    && Number.isFinite(servingMeasureValue)
+    && servingMeasureValue > 0
+    && servingMeasureUnit
+    ? formatHealthFoodQuantityUnit(servingMeasureValue, servingMeasureUnit)
+    : null;
+  return [quantity, measure].filter(Boolean).join(" / ") || null;
+}
+
+export function normalizeHealthFoodLibraryInput(input: Omit<HealthFoodLibraryItemInsert, "user_id">) {
+  const foodCategory = input.food_category?.trim() || input.category?.trim() || "Uncategorized";
+  const servingQuantity = typeof input.serving_quantity === "number"
+    && Number.isFinite(input.serving_quantity)
+    && input.serving_quantity > 0
+    ? input.serving_quantity
+    : 1;
+  const servingUnit = input.serving_unit?.trim() || "serving";
+  const servingMeasureUnit = input.serving_measure_unit === "g"
+    || input.serving_measure_unit === "oz"
+    || input.serving_measure_unit === "ml"
+    || input.serving_measure_unit === "fl_oz"
+    ? input.serving_measure_unit
+    : null;
+  const servingMeasureValue = typeof input.serving_measure_value === "number"
+    && Number.isFinite(input.serving_measure_value)
+    && input.serving_measure_value > 0
+    && servingMeasureUnit
+    ? input.serving_measure_value
+    : null;
+  const servingLabel = input.serving_label
+    ?? composeHealthFoodStructuredServingLabel({
+      servingQuantity,
+      servingUnit,
+      servingMeasureValue,
+      servingMeasureUnit,
+    });
+  return {
+    ...input,
+    category: foodCategory,
+    food_category: foodCategory,
+    serving_label: servingLabel,
+    serving_size: input.serving_size ?? servingLabel,
+    serving_quantity: servingQuantity,
+    serving_unit: servingUnit,
+    serving_measure_value: servingMeasureValue,
+    serving_measure_unit: servingMeasureUnit,
+  };
+}
+
 export function normalizeHealthFoodLibraryItem(food: HealthFoodLibraryItem): HealthFoodLibraryItem {
-  const servingSize = food.serving_size ?? food.serving_label ?? null;
+  const rawFood = food as HealthFoodLibraryItem & {
+    food_category?: string | null;
+    serving_measure_unit?: HealthServingMeasureUnit | null;
+    serving_measure_value?: number | null;
+    serving_quantity?: number | null;
+    serving_unit?: string | null;
+  };
+  const foodCategory = rawFood.food_category?.trim() || rawFood.category?.trim() || "Uncategorized";
+  const servingSize = rawFood.serving_size ?? rawFood.serving_label ?? null;
+  const servingQuantity = typeof rawFood.serving_quantity === "number"
+    && Number.isFinite(rawFood.serving_quantity)
+    && rawFood.serving_quantity > 0
+    ? rawFood.serving_quantity
+    : 1;
+  const servingUnit = rawFood.serving_unit?.trim() || "serving";
+  const servingMeasureUnit = rawFood.serving_measure_unit === "g"
+    || rawFood.serving_measure_unit === "oz"
+    || rawFood.serving_measure_unit === "ml"
+    || rawFood.serving_measure_unit === "fl_oz"
+    ? rawFood.serving_measure_unit
+    : null;
+  const servingMeasureValue = typeof rawFood.serving_measure_value === "number"
+    && Number.isFinite(rawFood.serving_measure_value)
+    && rawFood.serving_measure_value > 0
+    && servingMeasureUnit
+    ? rawFood.serving_measure_value
+    : null;
   const servingWeightAmount = food.serving_weight_amount ?? null;
   const servingWeightUnit = food.serving_weight_unit ?? null;
   return {
     ...food,
-    category: food.category ?? null,
-    serving_label: food.serving_label ?? composeHealthFoodServingLabel({
-      servingSize,
-      servingWeightAmount,
-      servingWeightUnit,
-    }),
+    category: food.category?.trim() || foodCategory,
+    food_category: foodCategory,
+    serving_label: food.serving_label
+      ?? composeHealthFoodStructuredServingLabel({
+        servingQuantity,
+        servingUnit,
+        servingMeasureValue,
+        servingMeasureUnit,
+      })
+      ?? composeHealthFoodServingLabel({ servingSize, servingWeightAmount, servingWeightUnit }),
     serving_size: servingSize,
+    serving_quantity: servingQuantity,
+    serving_unit: servingUnit,
+    serving_measure_value: servingMeasureValue,
+    serving_measure_unit: servingMeasureUnit,
     serving_weight_amount: servingWeightAmount,
     serving_weight_unit: servingWeightUnit,
   };

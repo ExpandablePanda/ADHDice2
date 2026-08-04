@@ -1468,8 +1468,13 @@ export type HealthFoodLibraryItem = {
   food_name: string;
   brand_name: string | null;
   category: string | null;
+  food_category: string;
   serving_label: string | null;
   serving_size: string | null;
+  serving_quantity: number;
+  serving_unit: string;
+  serving_measure_value: number | null;
+  serving_measure_unit: HealthServingMeasureUnit | null;
   serving_weight_amount: number | null;
   serving_weight_unit: HealthServingWeightUnit | null;
   calories: number;
@@ -1491,8 +1496,13 @@ export type HealthFoodLibraryItemInsert = {
   food_name: string;
   brand_name?: string | null;
   category?: string | null;
+  food_category?: string | null;
   serving_label?: string | null;
   serving_size?: string | null;
+  serving_quantity?: number;
+  serving_unit?: string;
+  serving_measure_value?: number | null;
+  serving_measure_unit?: HealthServingMeasureUnit | null;
   serving_weight_amount?: number | null;
   serving_weight_unit?: HealthServingWeightUnit | null;
   calories: number;
@@ -1512,8 +1522,13 @@ export type HealthFoodLibraryItemUpdate = Partial<
     | "food_name"
     | "brand_name"
     | "category"
+    | "food_category"
     | "serving_label"
     | "serving_size"
+    | "serving_quantity"
+    | "serving_unit"
+    | "serving_measure_value"
+    | "serving_measure_unit"
     | "serving_weight_amount"
     | "serving_weight_unit"
     | "calories"
@@ -1598,6 +1613,7 @@ export type HealthSavedMealUpdate = Partial<
 >;
 
 export type HealthWaterUnit = "cup" | "fl_oz";
+export type HealthServingMeasureUnit = "g" | "oz" | "ml" | "fl_oz";
 export type HealthServingWeightUnit = "g" | "oz" | "fl_oz";
 
 export type HealthWaterEntry = {
@@ -1642,8 +1658,41 @@ export type HealthMealEntry = {
   provider: string;
   provider_item_id: string | null;
   attribution: string | null;
+  source_food_id?: string | null;
+  consumed_quantity?: number | null;
+  consumed_unit?: string | null;
+  serving_fraction?: number | null;
+  food_snapshot?: HealthMealFoodSnapshot | null;
+  nutrition_snapshot?: HealthMealNutritionSnapshot | null;
   created_at: string;
   updated_at: string;
+};
+
+export type HealthMealFoodSnapshot = {
+  source_food_id: string | null;
+  food_name: string;
+  brand_name: string | null;
+  food_category: string | null;
+  serving_label: string | null;
+  serving_quantity: number;
+  serving_unit: string;
+  serving_measure_value: number | null;
+  serving_measure_unit: HealthServingMeasureUnit | null;
+  calories: number;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  barcode: string | null;
+  provider: string;
+  provider_item_id: string | null;
+  attribution: string | null;
+};
+
+export type HealthMealNutritionSnapshot = {
+  calories: number;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
 };
 
 export type HealthMealEntryInsert = {
@@ -1663,6 +1712,12 @@ export type HealthMealEntryInsert = {
   provider?: string;
   provider_item_id?: string | null;
   attribution?: string | null;
+  source_food_id?: string | null;
+  consumed_quantity?: number | null;
+  consumed_unit?: string | null;
+  serving_fraction?: number | null;
+  food_snapshot?: HealthMealFoodSnapshot | null;
+  nutrition_snapshot?: HealthMealNutritionSnapshot | null;
 };
 
 export type HealthMealEntryUpdate = Partial<
@@ -1682,6 +1737,12 @@ export type HealthMealEntryUpdate = Partial<
     | "provider"
     | "provider_item_id"
     | "attribution"
+    | "source_food_id"
+    | "consumed_quantity"
+    | "consumed_unit"
+    | "serving_fraction"
+    | "food_snapshot"
+    | "nutrition_snapshot"
   >
 >;
 

@@ -9,7 +9,9 @@ import type {
   HealthFoodLibraryItem,
   HealthImportAudit,
   HealthMealEntry,
+  HealthMealEntryInsert,
   HealthMealEntryUpdate,
+  HealthMealFoodSnapshot,
   HealthMetricEntry,
   HealthProfile,
   HealthProfileUpdate,
@@ -17,6 +19,7 @@ import type {
   HealthRecipeIngredient,
   HealthSavedMeal,
   HealthSavedMealItem,
+  HealthServingMeasureUnit,
   HealthServingWeightUnit,
   HealthWaterEntry,
   HealthWaterUnit,
@@ -55,11 +58,15 @@ import {
 } from "@/lib/health-utils";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import {
+  calculateHealthFoodNutrition,
+  getHealthFoodMeasurementOptions,
   lookupOpenFoodFactsByBarcode,
   searchHealthFoods,
   type HealthFoodLookupResult,
 } from "@/lib/health-nutrition";
 import {
+  composeHealthFoodServingDefinition,
+  formatHealthFoodQuantityUnit,
   getHealthFoodIdentityKey,
 } from "@/lib/health-library";
 import {
@@ -106,6 +113,7 @@ type HealthPageProps = {
     barcode?: string | null;
     brand_name?: string | null;
     category?: string | null;
+    food_category?: string | null;
     calories: number;
     carbs_g?: number | null;
     fat_g?: number | null;
@@ -116,6 +124,10 @@ type HealthPageProps = {
     provider_item_id?: string | null;
     serving_label?: string | null;
     serving_size?: string | null;
+    serving_quantity?: number;
+    serving_unit?: string;
+    serving_measure_value?: number | null;
+    serving_measure_unit?: HealthServingMeasureUnit | null;
     serving_weight_amount?: number | null;
     serving_weight_unit?: HealthServingWeightUnit | null;
     is_favorite?: boolean;
@@ -136,23 +148,7 @@ type HealthPageProps = {
     items: HealthSavedMealItem[];
   }) => Promise<boolean>;
   saveProfile: (updates: HealthProfileUpdate) => Promise<boolean>;
-  addMealEntry: (input: {
-    attribution?: string | null;
-    barcode?: string | null;
-    brand_name?: string | null;
-    calories: number;
-    carbs_g?: number | null;
-    entry_date: string;
-    fat_g?: number | null;
-    food_name: string;
-    id?: string;
-    logged_at?: string;
-    meal_slot: HealthMealEntry["meal_slot"];
-    protein_g?: number | null;
-    provider?: string;
-    provider_item_id?: string | null;
-    serving_label?: string | null;
-  }) => Promise<boolean>;
+  addMealEntry: (input: Omit<HealthMealEntryInsert, "user_id">) => Promise<boolean>;
   addWeightEntry: (input: {
     entry_date: string;
     logged_at?: string;
@@ -194,10 +190,18 @@ type MealDraft = {
   provider: string | null;
   providerItemId: string | null;
   quantity: string;
+  measurement: string;
+  sourceFoodId: string | null;
+  foodCategory: string | null;
+  servingQuantity: number | null;
+  servingUnit: string;
+  servingMeasureValue: number | null;
+  servingMeasureUnit: HealthServingMeasureUnit | null;
   servingLabel: string;
 };
 
 type MealEditDraft = {
+  mode: "legacy" | "structured";
   calories: string;
   carbs: string;
   date: string;
@@ -205,8 +209,30 @@ type MealEditDraft = {
   mealSlot: HealthMealEntry["meal_slot"];
   protein: string;
   quantity: string;
+  measurement: string;
   servingLabel: string;
   time: string;
+};
+
+type MealFoodSelection = {
+  sourceFoodId: string | null;
+  foodName: string;
+  brandName: string;
+  foodCategory: string | null;
+  calories: number;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  attribution: string | null;
+  barcode: string | null;
+  provider: string | null;
+  providerItemId: string | null;
+  servingLabel: string | null;
+  servingQuantity: number;
+  servingUnit: string;
+  servingMeasureValue: number | null;
+  servingMeasureUnit: HealthServingMeasureUnit | null;
+  consumedUnit?: string;
 };
 
 const DEFAULT_MEAL_DRAFT: MealDraft = {
@@ -222,6 +248,13 @@ const DEFAULT_MEAL_DRAFT: MealDraft = {
   provider: null,
   providerItemId: null,
   quantity: "1",
+  measurement: "serving",
+  sourceFoodId: null,
+  foodCategory: null,
+  servingQuantity: null,
+  servingUnit: "serving",
+  servingMeasureValue: null,
+  servingMeasureUnit: null,
   servingLabel: "",
 };
 
@@ -285,6 +318,7 @@ export function HealthPage({
   const [foodLookupStatus, setFoodLookupStatus] = useState<"idle" | "searching" | "barcode">("idle");
   const [editingMealId, setEditingMealId] = useState<string | null>(null);
   const [mealEditDraft, setMealEditDraft] = useState<MealEditDraft>({
+    mode: "legacy",
     calories: "",
     carbs: "",
     date: todayHealthDate(),
@@ -292,6 +326,7 @@ export function HealthPage({
     mealSlot: "breakfast",
     protein: "",
     quantity: "1",
+    measurement: "serving",
     servingLabel: "",
     time: "12:00",
   });
@@ -436,6 +471,7 @@ export function HealthPage({
     return favorites.filter((item) => [
       item.brand_name,
       item.category,
+      item.food_category,
       item.food_name,
       item.serving_size,
       item.serving_label,
@@ -474,9 +510,11 @@ export function HealthPage({
     [existingImportFingerprints, importPreview],
   );
   const importNewMetricCount = importPreview ? Math.max(0, importPreview.metricEntries.length - importDuplicateCount) : 0;
-  const mealCaloriesValue = Number.parseInt(mealDraft.calories, 10);
-  const mealQuantityValue = parsePositiveQuantity(mealDraft.quantity);
-  const canSaveMeal = mealDraft.foodName.trim().length > 0 && Number.isFinite(mealCaloriesValue) && mealCaloriesValue >= 0 && mealQuantityValue !== null;
+  const mealCalculation = useMemo(
+    () => calculateMealDraft(mealDraft),
+    [mealDraft],
+  );
+  const canSaveMeal = mealDraft.foodName.trim().length > 0 && mealCalculation !== null;
   const weightValue = Number.parseFloat(weightDraft);
   const canSaveWeight = Number.isFinite(weightValue) && weightValue > 0;
 
@@ -629,9 +667,8 @@ export function HealthPage({
   }
 
   async function handleSaveMeal() {
-    const calories = Number.parseInt(mealDraft.calories, 10);
-    const quantity = parsePositiveQuantity(mealDraft.quantity);
-    if (!mealDraft.foodName.trim() || !Number.isFinite(calories) || calories < 0 || quantity === null) {
+    const calculation = mealCalculation;
+    if (!calculation) {
       return;
     }
 
@@ -639,16 +676,22 @@ export function HealthPage({
       attribution: mealDraft.attribution,
       barcode: mealDraft.barcode,
       brand_name: emptyToNull(mealDraft.brandName),
-      calories: Math.round(calories * quantity),
-      carbs_g: scaleNullableNumber(parseNullableNumber(mealDraft.carbs), quantity),
+      calories: Math.round(calculation.nutrientTotals.calories),
+      carbs_g: calculation.nutrientTotals.carbs_g,
       entry_date: today,
-      fat_g: scaleNullableNumber(parseNullableNumber(mealDraft.fat), quantity),
+      fat_g: calculation.nutrientTotals.fat_g,
       food_name: mealDraft.foodName.trim(),
       meal_slot: mealDraft.mealSlot,
-      protein_g: scaleNullableNumber(parseNullableNumber(mealDraft.protein), quantity),
+      protein_g: calculation.nutrientTotals.protein_g,
       provider: mealDraft.provider ?? "manual",
       provider_item_id: mealDraft.providerItemId,
-      serving_label: formatQuantityServingLabel(quantity, mealDraft.servingLabel),
+      serving_label: formatConsumedMealLabel(calculation, mealDraft.servingLabel),
+      source_food_id: mealDraft.sourceFoodId,
+      consumed_quantity: calculation.consumed.quantity,
+      consumed_unit: calculation.consumed.unit,
+      serving_fraction: calculation.servingFraction,
+      food_snapshot: buildMealFoodSnapshot(mealDraft),
+      nutrition_snapshot: calculation.nutrientTotals,
     });
     if (saved) {
       setMealDraft((current) => ({ ...DEFAULT_MEAL_DRAFT, mealSlot: current.mealSlot }));
@@ -657,23 +700,59 @@ export function HealthPage({
   }
 
   function startEditingMeal(entry: HealthMealEntry) {
+    const structuredMeal = getStructuredMealDefinition(entry);
     const parsedServing = parseQuantityServingLabel(entry.serving_label ?? "");
     const quantity = parsedServing.quantity;
     setEditingMealId(entry.id);
     setMealEditDraft({
-      calories: String(Math.round(entry.calories / quantity)),
+      mode: structuredMeal ? "structured" : "legacy",
+      calories: structuredMeal ? String(structuredMeal.calories) : String(Math.round(entry.calories / quantity)),
       carbs: entry.carbs_g === null ? "" : String(scaleNullableNumber(entry.carbs_g / quantity, 1)),
       date: entry.entry_date,
       fat: entry.fat_g === null ? "" : String(scaleNullableNumber(entry.fat_g / quantity, 1)),
       mealSlot: entry.meal_slot,
       protein: entry.protein_g === null ? "" : String(scaleNullableNumber(entry.protein_g / quantity, 1)),
-      quantity: String(quantity),
-      servingLabel: parsedServing.servingLabel,
+      quantity: structuredMeal ? String(entry.consumed_quantity) : String(quantity),
+      measurement: structuredMeal?.consumedUnit ?? "serving",
+      servingLabel: structuredMeal?.servingLabel ?? parsedServing.servingLabel,
       time: formatTimeInput(entry.logged_at),
     });
   }
 
   async function saveMealEdit(entryId: string) {
+    const currentEntry = mealEntries.find((entry) => entry.id === entryId);
+    const structuredMeal = currentEntry ? getStructuredMealDefinition(currentEntry) : null;
+    if (structuredMeal && mealEditDraft.mode === "structured") {
+      const calculation = calculateMealSelection(
+        structuredMeal,
+        parsePositiveQuantity(mealEditDraft.quantity),
+        mealEditDraft.measurement,
+      );
+      if (!calculation || !mealEditDraft.date || !mealEditDraft.time) {
+        return;
+      }
+      const saved = await updateMealEntry(entryId, {
+        calories: Math.round(calculation.nutrientTotals.calories),
+        carbs_g: calculation.nutrientTotals.carbs_g,
+        entry_date: mealEditDraft.date,
+        fat_g: calculation.nutrientTotals.fat_g,
+        logged_at: buildLoggedAt(mealEditDraft.date, mealEditDraft.time),
+        meal_slot: mealEditDraft.mealSlot,
+        protein_g: calculation.nutrientTotals.protein_g,
+        serving_label: formatConsumedMealLabel(calculation, structuredMeal.servingLabel),
+        source_food_id: currentEntry.source_food_id ?? structuredMeal.sourceFoodId,
+        consumed_quantity: calculation.consumed.quantity,
+        consumed_unit: calculation.consumed.unit,
+        serving_fraction: calculation.servingFraction,
+        food_snapshot: currentEntry.food_snapshot ?? buildMealFoodSnapshot(structuredMeal),
+        nutrition_snapshot: calculation.nutrientTotals,
+      });
+      if (saved) {
+        setEditingMealId(null);
+      }
+      return;
+    }
+
     const calories = Number.parseInt(mealEditDraft.calories, 10);
     const quantity = parsePositiveQuantity(mealEditDraft.quantity);
     if (!Number.isFinite(calories) || calories < 0 || quantity === null || !mealEditDraft.date || !mealEditDraft.time) {
@@ -717,20 +796,31 @@ export function HealthPage({
   }
 
   async function handleFavoriteReuse(item: HealthFoodLibraryItem) {
+    const selection = mealFoodSelectionFromLibraryItem(item);
+    const calculation = calculateMealSelection(selection, 1, "serving");
+    if (!calculation) {
+      return;
+    }
     await addMealEntry({
-      attribution: item.attribution,
-      barcode: item.barcode,
-      brand_name: item.brand_name,
-      calories: item.calories,
-      carbs_g: item.carbs_g,
+      attribution: selection.attribution,
+      barcode: selection.barcode,
+      brand_name: emptyToNull(selection.brandName),
+      calories: Math.round(calculation.nutrientTotals.calories),
+      carbs_g: calculation.nutrientTotals.carbs_g,
       entry_date: today,
-      fat_g: item.fat_g,
-      food_name: item.food_name,
+      fat_g: calculation.nutrientTotals.fat_g,
+      food_name: selection.foodName,
       meal_slot: mealDraft.mealSlot,
-      protein_g: item.protein_g,
-      provider: item.provider,
-      provider_item_id: item.provider_item_id,
-      serving_label: item.serving_label,
+      protein_g: calculation.nutrientTotals.protein_g,
+      provider: selection.provider ?? "manual",
+      provider_item_id: selection.providerItemId,
+      serving_label: formatConsumedMealLabel(calculation, selection.servingLabel),
+      source_food_id: selection.sourceFoodId,
+      consumed_quantity: calculation.consumed.quantity,
+      consumed_unit: calculation.consumed.unit,
+      serving_fraction: calculation.servingFraction,
+      food_snapshot: buildMealFoodSnapshot(selection),
+      nutrition_snapshot: calculation.nutrientTotals,
     });
   }
 
@@ -749,11 +839,16 @@ export function HealthPage({
       calories: entry.calories,
       carbs_g: entry.carbs_g,
       fat_g: entry.fat_g,
+      food_category: entry.food_snapshot?.food_category,
       food_name: entry.food_name,
       protein_g: entry.protein_g,
       provider: entry.provider,
       provider_item_id: entry.provider_item_id,
-      serving_label: entry.serving_label,
+      serving_label: entry.food_snapshot?.serving_label ?? entry.serving_label,
+      serving_quantity: entry.food_snapshot?.serving_quantity,
+      serving_unit: entry.food_snapshot?.serving_unit,
+      serving_measure_value: entry.food_snapshot?.serving_measure_value,
+      serving_measure_unit: entry.food_snapshot?.serving_measure_unit,
       is_favorite: true,
     });
   }
@@ -821,6 +916,7 @@ export function HealthPage({
     attribution?: string | null;
     barcode?: string | null;
     brandName: string | null;
+    foodCategory?: string | null;
     calories: number;
     carbs: number | null;
     fat: number | null;
@@ -829,7 +925,14 @@ export function HealthPage({
     provider?: string | null;
     providerItemId?: string | null;
     servingLabel: string | null;
+    sourceFoodId?: string | null;
+    servingQuantity?: number | null;
+    servingUnit?: string | null;
+    servingMeasureValue?: number | null;
+    servingMeasureUnit?: HealthServingMeasureUnit | null;
   }) {
+    const servingQuantity = positiveFiniteNumber(result.servingQuantity) ?? 1;
+    const servingUnit = result.servingUnit?.trim() || "serving";
     setCustomFoodSearchQuery(result.brandName ? `${result.brandName} · ${result.foodName}` : result.foodName);
     setMealDraft((current) => ({
       ...current,
@@ -843,7 +946,14 @@ export function HealthPage({
       protein: result.protein === null ? "" : String(result.protein),
       provider: result.provider ?? null,
       providerItemId: result.providerItemId ?? null,
+      sourceFoodId: result.sourceFoodId ?? null,
+      foodCategory: result.foodCategory ?? null,
+      servingQuantity,
+      servingUnit,
+      servingMeasureValue: positiveFiniteNumber(result.servingMeasureValue),
+      servingMeasureUnit: result.servingMeasureUnit ?? null,
       quantity: "1",
+      measurement: "serving",
       servingLabel: result.servingLabel ?? "",
     }));
   }
@@ -1154,7 +1264,7 @@ export function HealthPage({
               ) : null}
             </HealthCollapsiblePanel>
 
-            <div className="grid gap-3 lg:grid-cols-[0.7fr_1.5fr_0.45fr_auto]">
+            <div className="grid gap-3 lg:grid-cols-[0.65fr_1.35fr_0.7fr_0.55fr_auto]">
               <Field label="Meal">
                 <select
                   className="health-input"
@@ -1166,13 +1276,28 @@ export function HealthPage({
                   ))}
                 </select>
               </Field>
-              <Field label="Custom food">
+              <Field label="Food">
                 <input
                   className="health-input"
                   onChange={(event) => setCustomFoodSearchQuery(event.target.value)}
                   placeholder="Search custom foods"
                   value={customFoodSearchQuery}
                 />
+              </Field>
+              <Field label="Measurement">
+                <select
+                  className="health-input"
+                  disabled={!mealDraft.foodName}
+                  onChange={(event) => setMealDraft((current) => ({ ...current, measurement: event.target.value }))}
+                  value={mealDraft.measurement}
+                >
+                  {getHealthFoodMeasurementOptions({
+                    servingMeasureUnit: mealDraft.servingMeasureUnit,
+                    servingUnit: mealDraft.servingUnit,
+                  }).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
               </Field>
               <Field label="Amount">
                 <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, quantity: event.target.value }))} placeholder="1" value={mealDraft.quantity} />
@@ -1188,6 +1313,18 @@ export function HealthPage({
                 </button>
               </div>
             </div>
+            {mealDraft.foodName ? (
+              <div aria-live="polite" className="mt-3 rounded-[1rem] border border-[#e8e2f7] bg-[#fbf9ff] px-4 py-3 text-sm text-[#5d6783] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/65">
+                {mealCalculation ? (
+                  <>
+                    {mealDraft.measurement === "serving" ? (
+                      <div className="mb-1">{composeHealthFoodServingDefinition({ ...mealCalculation.serving, servingLabel: mealDraft.servingLabel })}</div>
+                    ) : null}
+                    <div>Nutrition preview: <strong className="text-[#3d4670] dark:text-white">{Math.round(mealCalculation.nutrientTotals.calories)} kcal</strong> / Protein {formatNutritionPreviewValue(mealCalculation.nutrientTotals.protein_g)}g / Carbs {formatNutritionPreviewValue(mealCalculation.nutrientTotals.carbs_g)}g / Fat {formatNutritionPreviewValue(mealCalculation.nutrientTotals.fat_g)}g</div>
+                  </>
+                ) : "Enter a positive amount using one of this food’s supported measurements."}
+              </div>
+            ) : null}
             <div className="mt-3 grid gap-3">
               {matchingCustomFoods.length === 0 ? (
                 <EmptyCopy text="No custom foods match this search." />
@@ -1205,6 +1342,7 @@ export function HealthPage({
                             attribution: item.attribution,
                             barcode: item.barcode,
                             brandName: item.brand_name,
+                            foodCategory: item.food_category ?? item.category,
                             calories: item.calories,
                             carbs: item.carbs_g,
                             fat: item.fat_g,
@@ -1213,6 +1351,11 @@ export function HealthPage({
                             provider: item.provider,
                             providerItemId: item.provider_item_id ?? item.id,
                             servingLabel: item.serving_label,
+                            sourceFoodId: item.id,
+                            servingQuantity: item.serving_quantity,
+                            servingUnit: item.serving_unit,
+                            servingMeasureValue: item.serving_measure_value,
+                            servingMeasureUnit: item.serving_measure_unit,
                           });
                         }}
                         type="button"
@@ -1235,7 +1378,7 @@ export function HealthPage({
               ) : (
                 HEALTH_MEAL_SLOTS.map((slot) => {
                   const slotMeals = selectedMeals.filter((entry) => entry.meal_slot === slot);
-                  const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + entry.calories, 0);
+                  const slotCaloriesTotal = slotMeals.reduce((total, entry) => total + mealNutritionValue(entry, "calories"), 0);
                   return (
                   <section className="grid gap-3" key={slot}>
                     <h4 className="text-sm font-semibold text-[#4f5872] dark:text-white/70">
@@ -1243,7 +1386,12 @@ export function HealthPage({
                     </h4>
                     {slotMeals.length === 0 ? (
                       <EmptyCopy text={`No ${getMealSlotLabel(slot).toLowerCase()} logged yet.`} />
-                    ) : slotMeals.map((entry) => (
+                    ) : slotMeals.map((entry) => {
+                  const structuredMeal = getStructuredMealDefinition(entry);
+                  const editCalculation = editingMealId === entry.id && mealEditDraft.mode === "structured" && structuredMeal
+                    ? calculateMealSelection(structuredMeal, parsePositiveQuantity(mealEditDraft.quantity), mealEditDraft.measurement)
+                    : null;
+                  return (
                   <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
@@ -1276,7 +1424,66 @@ export function HealthPage({
                         </button>
                       </div>
                     </div>
-                    {editingMealId === entry.id ? (
+                    {editingMealId === entry.id && structuredMeal ? (
+                      <div className="mt-4 grid gap-3 rounded-[1.25rem] border border-[#e8ecfb] bg-[#fbfcff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                        <div className="grid gap-3 sm:grid-cols-5">
+                          <Field label="Amount">
+                            <input className="health-input" inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, quantity: event.target.value }))} value={mealEditDraft.quantity} />
+                          </Field>
+                          <Field label="Measurement">
+                            <select
+                              className="health-input"
+                              onChange={(event) => setMealEditDraft((current) => ({ ...current, measurement: event.target.value }))}
+                              value={mealEditDraft.measurement}
+                            >
+                              {getHealthFoodMeasurementOptions({
+                                servingMeasureUnit: structuredMeal.servingMeasureUnit,
+                                servingUnit: structuredMeal.servingUnit,
+                              }).map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                          </Field>
+                          <Field label="Date">
+                            <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, date: event.target.value }))} type="date" value={mealEditDraft.date} />
+                          </Field>
+                          <Field label="Time">
+                            <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, time: event.target.value }))} type="time" value={mealEditDraft.time} />
+                          </Field>
+                          <Field label="Meal">
+                            <select
+                              className="health-input"
+                              onChange={(event) => setMealEditDraft((current) => ({ ...current, mealSlot: event.target.value as HealthMealEntry["meal_slot"] }))}
+                              value={mealEditDraft.mealSlot}
+                            >
+                              {HEALTH_MEAL_SLOTS.map((slot) => (
+                                <option key={slot} value={slot}>{getMealSlotLabel(slot)}</option>
+                              ))}
+                            </select>
+                          </Field>
+                        </div>
+                        <div aria-live="polite" className="text-sm text-[#5d6783] dark:text-white/65">
+                          {editCalculation ? (
+                            <>
+                              {mealEditDraft.measurement === "serving" ? (
+                                <div className="mb-1">{composeHealthFoodServingDefinition({ ...editCalculation.serving, servingLabel: structuredMeal?.servingLabel })}</div>
+                              ) : null}
+                              <div>Nutrition preview: <strong className="text-[#3d4670] dark:text-white">{Math.round(editCalculation.nutrientTotals.calories)} kcal</strong> / Protein {formatNutritionPreviewValue(editCalculation.nutrientTotals.protein_g)}g / Carbs {formatNutritionPreviewValue(editCalculation.nutrientTotals.carbs_g)}g / Fat {formatNutritionPreviewValue(editCalculation.nutrientTotals.fat_g)}g</div>
+                            </>
+                          ) : "Enter a positive amount using one of this food’s supported measurements."}
+                        </div>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" onClick={() => setEditingMealId(null)} type="button">
+                            <X aria-hidden="true" className="h-3.5 w-3.5" />
+                            Cancel
+                          </button>
+                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60" disabled={!editCalculation} onClick={() => { void saveMealEdit(entry.id); }} type="button">
+                            <Check aria-hidden="true" className="h-3.5 w-3.5" />
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : editingMealId === entry.id ? (
                       <div className="mt-4 grid gap-3 rounded-[1.25rem] border border-[#e8ecfb] bg-[#fbfcff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         <div className="grid gap-3 sm:grid-cols-4">
                           <Field label="Amount">
@@ -1330,7 +1537,8 @@ export function HealthPage({
                       </div>
                     ) : null}
                   </div>
-                    ))}
+                  );
+                    })}
                   </section>
                   );
                 })
@@ -1400,6 +1608,7 @@ export function HealthPage({
                               attribution: item.attribution,
                               barcode: item.barcode,
                               brandName: item.brand_name,
+                              foodCategory: item.food_snapshot?.food_category,
                               calories: item.calories,
                               carbs: item.carbs_g,
                               fat: item.fat_g,
@@ -1408,6 +1617,11 @@ export function HealthPage({
                               provider: item.provider,
                               providerItemId: item.provider_item_id ?? item.id,
                               servingLabel: item.serving_label,
+                              sourceFoodId: item.source_food_id ?? item.food_snapshot?.source_food_id,
+                              servingQuantity: item.food_snapshot?.serving_quantity,
+                              servingUnit: item.food_snapshot?.serving_unit,
+                              servingMeasureValue: item.food_snapshot?.serving_measure_value,
+                              servingMeasureUnit: item.food_snapshot?.serving_measure_unit,
                             })
                           }
                           type="button"
@@ -1949,6 +2163,176 @@ function InlineNotice({ text }: { text: string }) {
   return <p aria-live="polite" className="rounded-[1rem] bg-[#eef3ff] px-4 py-3 text-sm text-[#4e5ec8] dark:bg-[#1d2342] dark:text-[#c4d1ff]" role="status">{text}</p>;
 }
 
+function calculateMealDraft(draft: MealDraft) {
+  const selection = mealFoodSelectionFromDraft(draft);
+  return selection ? calculateMealSelection(selection, parsePositiveQuantity(draft.quantity), draft.measurement) : null;
+}
+
+function calculateMealSelection(selection: MealFoodSelection, quantity: number | null, unit: string) {
+  if (quantity === null) {
+    return null;
+  }
+  try {
+    return calculateHealthFoodNutrition({
+      consumedQuantity: quantity,
+      consumedUnit: unit,
+      nutritionPerServing: {
+        calories: selection.calories,
+        carbs_g: selection.carbs,
+        fat_g: selection.fat,
+        protein_g: selection.protein,
+      },
+      servingMeasureUnit: selection.servingMeasureUnit,
+      servingMeasureValue: selection.servingMeasureValue,
+      servingQuantity: selection.servingQuantity,
+      servingUnit: selection.servingUnit,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function mealFoodSelectionFromDraft(draft: MealDraft): MealFoodSelection | null {
+  const calories = finiteNumber(draft.calories);
+  const servingQuantity = positiveFiniteNumber(draft.servingQuantity);
+  if (!draft.foodName.trim() || calories === null || calories < 0 || servingQuantity === null || !draft.servingUnit.trim()) {
+    return null;
+  }
+  return {
+    attribution: draft.attribution,
+    barcode: draft.barcode,
+    brandName: draft.brandName,
+    calories,
+    carbs: nullableFiniteNumber(draft.carbs),
+    fat: nullableFiniteNumber(draft.fat),
+    foodCategory: draft.foodCategory,
+    foodName: draft.foodName.trim(),
+    provider: draft.provider,
+    providerItemId: draft.providerItemId,
+    protein: nullableFiniteNumber(draft.protein),
+    servingLabel: emptyToNull(draft.servingLabel),
+    servingMeasureUnit: validServingMeasureUnit(draft.servingMeasureUnit),
+    servingMeasureValue: positiveFiniteNumber(draft.servingMeasureValue),
+    servingQuantity,
+    servingUnit: draft.servingUnit.trim(),
+    sourceFoodId: draft.sourceFoodId,
+  };
+}
+
+function mealFoodSelectionFromLibraryItem(item: HealthFoodLibraryItem): MealFoodSelection {
+  return {
+    attribution: item.attribution,
+    barcode: item.barcode,
+    brandName: item.brand_name ?? "",
+    calories: item.calories,
+    carbs: item.carbs_g,
+    fat: item.fat_g,
+    foodCategory: item.food_category ?? item.category,
+    foodName: item.food_name,
+    provider: item.provider,
+    providerItemId: item.provider_item_id ?? item.id,
+    protein: item.protein_g,
+    servingLabel: item.serving_label,
+    servingMeasureUnit: validServingMeasureUnit(item.serving_measure_unit),
+    servingMeasureValue: positiveFiniteNumber(item.serving_measure_value),
+    servingQuantity: positiveFiniteNumber(item.serving_quantity) ?? 1,
+    servingUnit: item.serving_unit?.trim() || "serving",
+    sourceFoodId: item.id,
+  };
+}
+
+function getStructuredMealDefinition(entry: HealthMealEntry): MealFoodSelection | null {
+  const snapshot = entry.food_snapshot;
+  const consumedQuantity = positiveFiniteNumber(entry.consumed_quantity);
+  const consumedUnit = entry.consumed_unit?.trim();
+  const servingQuantity = positiveFiniteNumber(snapshot?.serving_quantity);
+  const calories = finiteNumber(snapshot?.calories);
+  if (!snapshot || consumedQuantity === null || !consumedUnit || servingQuantity === null || calories === null || calories < 0 || !snapshot.serving_unit?.trim()) {
+    return null;
+  }
+  return {
+    attribution: snapshot.attribution ?? entry.attribution,
+    barcode: snapshot.barcode ?? entry.barcode,
+    brandName: snapshot.brand_name ?? entry.brand_name ?? "",
+    calories,
+    carbs: nullableFiniteNumber(snapshot.carbs_g),
+    consumedUnit,
+    fat: nullableFiniteNumber(snapshot.fat_g),
+    foodCategory: snapshot.food_category,
+    foodName: snapshot.food_name || entry.food_name,
+    provider: snapshot.provider || entry.provider,
+    providerItemId: snapshot.provider_item_id ?? entry.provider_item_id,
+    protein: nullableFiniteNumber(snapshot.protein_g),
+    servingLabel: snapshot.serving_label ?? entry.serving_label,
+    servingMeasureUnit: validServingMeasureUnit(snapshot.serving_measure_unit),
+    servingMeasureValue: positiveFiniteNumber(snapshot.serving_measure_value),
+    servingQuantity,
+    servingUnit: snapshot.serving_unit.trim(),
+    sourceFoodId: entry.source_food_id ?? snapshot.source_food_id,
+  };
+}
+
+function buildMealFoodSnapshot(source: MealDraft | MealFoodSelection): HealthMealFoodSnapshot {
+  return {
+    attribution: source.attribution,
+    barcode: source.barcode,
+    brand_name: source.brandName || null,
+    calories: finiteNumber(source.calories) ?? 0,
+    carbs_g: nullableFiniteNumber(source.carbs),
+    food_category: source.foodCategory,
+    food_name: source.foodName.trim(),
+    fat_g: nullableFiniteNumber(source.fat),
+    provider: source.provider ?? "manual",
+    provider_item_id: source.providerItemId,
+    serving_label: source.servingLabel,
+    serving_measure_unit: validServingMeasureUnit(source.servingMeasureUnit),
+    serving_measure_value: positiveFiniteNumber(source.servingMeasureValue),
+    serving_quantity: positiveFiniteNumber(source.servingQuantity) ?? 1,
+    serving_unit: source.servingUnit.trim() || "serving",
+    source_food_id: source.sourceFoodId,
+    protein_g: nullableFiniteNumber(source.protein),
+  };
+}
+
+function formatConsumedMealLabel(
+  calculation: ReturnType<typeof calculateHealthFoodNutrition>,
+  servingLabel: string | null | undefined,
+) {
+  const consumedLabel = formatHealthFoodQuantityUnit(calculation.consumed.quantity, calculation.consumed.unit);
+  const serving = emptyToNull(servingLabel ?? "");
+  return serving ? `${consumedLabel} / ${serving}` : consumedLabel;
+}
+
+function formatNutritionPreviewValue(value: number | null) {
+  return value === null ? "—" : String(Number(value.toFixed(1)));
+}
+
+function validServingMeasureUnit(value: unknown): HealthServingMeasureUnit | null {
+  return value === "g" || value === "oz" || value === "ml" || value === "fl_oz" ? value : null;
+}
+
+function finiteNumber(value: unknown) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nullableFiniteNumber(value: unknown) {
+  return value === null || value === undefined || value === "" ? null : finiteNumber(value);
+}
+
+function positiveFiniteNumber(value: unknown) {
+  const parsed = finiteNumber(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+function mealNutritionValue(entry: HealthMealEntry, key: "calories" | "protein_g" | "carbs_g" | "fat_g") {
+  const snapshotValue = entry.nutrition_snapshot?.[key];
+  if (typeof snapshotValue === "number" && Number.isFinite(snapshotValue)) {
+    return snapshotValue;
+  }
+  return entry[key] ?? 0;
+}
+
 function parseNullableInteger(value: unknown) {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : null;
@@ -1972,7 +2356,7 @@ function parseNullableNumber(value: unknown) {
 }
 
 function parsePositiveQuantity(value: unknown) {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number.parseFloat(value) : NaN;
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 

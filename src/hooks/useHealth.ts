@@ -36,7 +36,12 @@ import {
   getEligibleHealthAchievements,
   type HealthAchievementCode,
 } from "@/lib/health-utils";
-import { getHealthFoodIdentityKey, normalizeHealthFoodLibraryItem, setHealthFoodFavoriteStatus } from "@/lib/health-library";
+import {
+  getHealthFoodIdentityKey,
+  normalizeHealthFoodLibraryInput,
+  normalizeHealthFoodLibraryItem,
+  setHealthFoodFavoriteStatus,
+} from "@/lib/health-library";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -441,7 +446,7 @@ export function useHealth(
         if (firstError && isMissingHealthPersistence(firstError.message)) {
           setStorageMode("local");
           setMessage({
-            text: "Health is running in local mode until its Supabase tables are migrated. Apply the base Health migration, then `supabase/add_health_food_library_recipes_water_7_5_22.sql`.",
+            text: "Health is running in local mode until its Supabase tables are migrated. Apply the base Health migration, then the 7.5.22, 7.7.0, and 7.7.1 Health migrations.",
             tone: "neutral",
           });
         } else if (firstError) {
@@ -597,6 +602,12 @@ export function useHealth(
       provider: input.provider ?? "manual",
       provider_item_id: input.provider_item_id ?? null,
       serving_label: input.serving_label ?? null,
+      source_food_id: input.source_food_id ?? null,
+      consumed_quantity: input.consumed_quantity ?? null,
+      consumed_unit: input.consumed_unit ?? null,
+      serving_fraction: input.serving_fraction ?? null,
+      food_snapshot: input.food_snapshot ?? null,
+      nutrition_snapshot: input.nutrition_snapshot ?? null,
       updated_at: now,
       user_id: userId,
     };
@@ -744,7 +755,7 @@ export function useHealth(
       ? favorites.find((item) => item.id === normalizedInput.id)
       : null;
     normalizedInput = {
-      ...normalizedInput,
+      ...normalizeHealthFoodLibraryInput(normalizedInput),
       is_favorite: normalizedInput.is_favorite ?? existingFood?.is_favorite ?? false,
     };
 
@@ -754,18 +765,23 @@ export function useHealth(
       barcode: normalizedInput.barcode ?? null,
       brand_name: normalizedInput.brand_name ?? null,
       calories: normalizedInput.calories,
-      category: normalizedInput.category ?? null,
+      category: normalizedInput.category ?? normalizedInput.food_category ?? "Uncategorized",
       carbs_g: normalizedInput.carbs_g ?? null,
       created_at: now,
       fat_g: normalizedInput.fat_g ?? null,
       food_name: normalizedInput.food_name,
       id: normalizedInput.id ?? createLocalId("health-food"),
       is_favorite: normalizedInput.is_favorite ?? false,
+      food_category: normalizedInput.food_category ?? normalizedInput.category ?? "Uncategorized",
       protein_g: normalizedInput.protein_g ?? null,
       provider: normalizedInput.provider ?? "manual",
       provider_item_id: normalizedInput.provider_item_id ?? null,
       serving_label: normalizedInput.serving_label ?? null,
       serving_size: normalizedInput.serving_size ?? normalizedInput.serving_label ?? null,
+      serving_quantity: normalizedInput.serving_quantity ?? 1,
+      serving_unit: normalizedInput.serving_unit ?? "serving",
+      serving_measure_value: normalizedInput.serving_measure_value ?? null,
+      serving_measure_unit: normalizedInput.serving_measure_unit ?? null,
       serving_weight_amount: normalizedInput.serving_weight_amount ?? null,
       serving_weight_unit: normalizedInput.serving_weight_unit ?? null,
       updated_at: now,

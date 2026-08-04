@@ -13,6 +13,7 @@ import {
   getHealthSleepDayTotal,
   getSleepFocusSessions,
   kilogramsToDisplayValue,
+  sumMealNutritionForDate,
 } from "../src/lib/health-utils.ts";
 
 test("health weight conversion helpers round-trip between pounds and kilograms", () => {
@@ -30,6 +31,59 @@ test("target-weight draft display removes conversion noise", () => {
 test("meal logged time formats valid timestamps and omits invalid values", () => {
   assert.equal(formatMealLoggedTime("invalid", "en-US"), null);
   assert.match(formatMealLoggedTime("2026-07-28T12:30:00.000Z", "en-US") ?? "", /\d{1,2}:30/);
+});
+
+test("daily meal totals prefer immutable calculated snapshots and fall back for legacy meals", () => {
+  const total = sumMealNutritionForDate([
+    {
+      attribution: null,
+      barcode: null,
+      brand_name: null,
+      calories: 51,
+      carbs_g: 7,
+      created_at: "2026-08-04T12:00:00.000Z",
+      entry_date: "2026-08-04",
+      fat_g: 1,
+      food_name: "Goldfish",
+      id: "meal-structured",
+      logged_at: "2026-08-04T12:00:00.000Z",
+      meal_slot: "snack",
+      nutrition_snapshot: { calories: 50.90909090909091, carbs_g: 7.2727272727272725, fat_g: 1.8181818181818181, protein_g: 0.7272727272727273 },
+      protein_g: 1,
+      provider: "manual",
+      provider_item_id: null,
+      serving_label: "20 crackers",
+      updated_at: "2026-08-04T12:00:00.000Z",
+      user_id: "user-1",
+    },
+    {
+      attribution: null,
+      barcode: null,
+      brand_name: null,
+      calories: 100,
+      carbs_g: 20,
+      created_at: "2026-08-04T13:00:00.000Z",
+      entry_date: "2026-08-04",
+      fat_g: 3,
+      food_name: "Legacy food",
+      id: "meal-legacy",
+      logged_at: "2026-08-04T13:00:00.000Z",
+      meal_slot: "lunch",
+      protein_g: 4,
+      provider: "manual",
+      provider_item_id: null,
+      serving_label: "1 bowl",
+      updated_at: "2026-08-04T13:00:00.000Z",
+      user_id: "user-1",
+    },
+  ], "2026-08-04");
+
+  assert.deepEqual(total, {
+    calories: 150.9090909090909,
+    carbs: 27.272727272727273,
+    fat: 4.818181818181818,
+    protein: 4.7272727272727275,
+  });
 });
 
 function weight(date: string, weightKg: number, loggedAt = `${date}T08:00:00.000Z`) {

@@ -13,16 +13,18 @@ import type {
   HealthRecipeIngredient,
   HealthSavedMeal,
   HealthSavedMealItem,
+  HealthServingMeasureUnit,
   HealthServingWeightUnit,
 } from "@/lib/database.types";
 import {
   buildRecipeIngredient,
   buildSavedMealFoodItem,
   buildSavedMealRecipeItem,
-  composeHealthFoodServingLabel,
+  composeHealthFoodStructuredServingLabel,
   formatQuantity,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
+  searchHealthFoodLibrary,
 } from "@/lib/health-library";
 import { getMealSlotLabel, HEALTH_MEAL_SLOTS } from "@/lib/health-utils";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
@@ -33,10 +35,11 @@ type FoodDraft = {
   id?: string;
   foodName: string;
   brandName: string;
-  category: string;
-  servingSize: string;
-  servingWeightAmount: string;
-  servingWeightUnit: HealthServingWeightUnit;
+  foodCategory: string;
+  servingQuantity: string;
+  servingUnit: string;
+  servingMeasureValue: string;
+  servingMeasureUnit: HealthServingMeasureUnit | "";
   calories: string;
   protein: string;
   carbs: string;
@@ -46,10 +49,11 @@ type FoodDraft = {
 const EMPTY_FOOD_DRAFT: FoodDraft = {
   foodName: "",
   brandName: "",
-  category: "",
-  servingSize: "",
-  servingWeightAmount: "",
-  servingWeightUnit: "g",
+  foodCategory: "",
+  servingQuantity: "1",
+  servingUnit: "serving",
+  servingMeasureValue: "",
+  servingMeasureUnit: "",
   calories: "",
   protein: "",
   carbs: "",
@@ -98,8 +102,13 @@ type HealthLibraryPanelProps = {
     food_name: string;
     brand_name?: string | null;
     category?: string | null;
+    food_category?: string | null;
     serving_label?: string | null;
     serving_size?: string | null;
+    serving_quantity?: number;
+    serving_unit?: string;
+    serving_measure_value?: number | null;
+    serving_measure_unit?: HealthServingMeasureUnit | null;
     serving_weight_amount?: number | null;
     serving_weight_unit?: HealthServingWeightUnit | null;
     calories: number;
@@ -142,22 +151,12 @@ export function HealthLibraryPanel({
   const [recipeDraft, setRecipeDraft] = useState<RecipeDraft>(EMPTY_RECIPE_DRAFT);
   const [mealDraft, setMealDraft] = useState<MealDraft>(EMPTY_MEAL_DRAFT);
 
-  const filteredFoods = useMemo(() => {
-    const query = foodSearchQuery.trim().toLowerCase();
-    if (!query) {
-      return favorites;
-    }
-    return favorites.filter((food) => [
-      food.food_name,
-      food.brand_name,
-      food.category,
-      food.serving_label,
-      food.provider,
-      food.barcode,
-    ].some((value) => value?.toLowerCase().includes(query)));
-  }, [favorites, foodSearchQuery]);
+  const filteredFoods = useMemo(
+    () => searchHealthFoodLibrary(favorites, foodSearchQuery),
+    [favorites, foodSearchQuery],
+  );
   const categorySuggestions = useMemo(
-    () => [...new Set(favorites.map((food) => food.category?.trim()).filter((category): category is string => Boolean(category)))]
+    () => [...new Set(favorites.map((food) => food.food_category?.trim() || food.category?.trim()).filter((category): category is string => Boolean(category)))]
       .sort((left, right) => left.localeCompare(right)),
     [favorites],
   );
@@ -186,33 +185,46 @@ export function HealthLibraryPanel({
 
   async function handleSaveFood() {
     const calories = Number.parseInt(foodDraft.calories, 10);
-    const servingWeightAmount = nullablePositiveNumber(foodDraft.servingWeightAmount);
+    const servingQuantity = nullablePositiveNumber(foodDraft.servingQuantity);
+    const servingMeasureValue = nullablePositiveNumber(foodDraft.servingMeasureValue);
+    const hasMeasureValue = foodDraft.servingMeasureValue.trim().length > 0;
+    const hasMeasureUnit = Boolean(foodDraft.servingMeasureUnit);
     if (
       !foodDraft.foodName.trim()
       || !Number.isFinite(calories)
       || calories < 0
-      || (foodDraft.servingWeightAmount.trim() && servingWeightAmount === null)
+      || servingQuantity === null
+      || !foodDraft.servingUnit.trim()
+      || (hasMeasureValue && (servingMeasureValue === null || !hasMeasureUnit))
+      || (!hasMeasureValue && hasMeasureUnit)
     ) {
       return;
     }
+    const servingLabel = composeHealthFoodStructuredServingLabel({
+      servingQuantity,
+      servingUnit: foodDraft.servingUnit,
+      servingMeasureValue,
+      servingMeasureUnit: foodDraft.servingMeasureUnit || null,
+    });
     const saved = await saveFood({
       id: foodDraft.id,
       brand_name: emptyToNull(foodDraft.brandName),
       calories,
-      category: emptyToNull(foodDraft.category),
+      category: emptyToNull(foodDraft.foodCategory) ?? "Uncategorized",
+      food_category: emptyToNull(foodDraft.foodCategory) ?? "Uncategorized",
       carbs_g: nullableNumber(foodDraft.carbs),
       fat_g: nullableNumber(foodDraft.fat),
       food_name: foodDraft.foodName.trim(),
       protein_g: nullableNumber(foodDraft.protein),
       provider: "manual",
-      serving_label: composeHealthFoodServingLabel({
-        servingSize: foodDraft.servingSize,
-        servingWeightAmount,
-        servingWeightUnit: foodDraft.servingWeightUnit,
-      }),
-      serving_size: emptyToNull(foodDraft.servingSize),
-      serving_weight_amount: servingWeightAmount,
-      serving_weight_unit: foodDraft.servingWeightAmount.trim() ? foodDraft.servingWeightUnit : null,
+      serving_label: servingLabel,
+      serving_size: servingLabel,
+      serving_quantity: servingQuantity,
+      serving_unit: foodDraft.servingUnit.trim(),
+      serving_measure_value: servingMeasureValue,
+      serving_measure_unit: foodDraft.servingMeasureUnit || null,
+      serving_weight_amount: foodDraft.servingMeasureUnit === "g" || foodDraft.servingMeasureUnit === "oz" || foodDraft.servingMeasureUnit === "fl_oz" ? servingMeasureValue : null,
+      serving_weight_unit: foodDraft.servingMeasureUnit === "g" || foodDraft.servingMeasureUnit === "oz" || foodDraft.servingMeasureUnit === "fl_oz" ? foodDraft.servingMeasureUnit : null,
     });
     if (saved) {
       setFoodDraft(EMPTY_FOOD_DRAFT);
@@ -299,28 +311,37 @@ export function HealthLibraryPanel({
                 <LibraryField label="Brand">
                   <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, brandName: event.target.value }))} value={foodDraft.brandName} />
                 </LibraryField>
-                <LibraryField label="Category">
+                <LibraryField label="Food category">
                   <input
                     className="health-input"
-                    onChange={(event) => setFoodDraft((current) => ({ ...current, category: event.target.value }))}
+                    onChange={(event) => setFoodDraft((current) => ({ ...current, foodCategory: event.target.value }))}
                     placeholder="Protein, Produce, Snack"
-                    value={foodDraft.category}
+                    value={foodDraft.foodCategory}
                   />
                 </LibraryField>
-                <LibraryField label="Serving size">
-                  <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, servingSize: event.target.value }))} placeholder="1 serving or 1 cup" value={foodDraft.servingSize} />
+                <LibraryField label="Serving quantity">
+                  <input className="health-input" inputMode="decimal" min="0" onChange={(event) => setFoodDraft((current) => ({ ...current, servingQuantity: event.target.value }))} placeholder="55" value={foodDraft.servingQuantity} />
                 </LibraryField>
-                <LibraryField label="Serving weight">
+                <LibraryField label="Serving unit">
+                  <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, servingUnit: event.target.value }))} placeholder="cracker, slice, serving" value={foodDraft.servingUnit} />
+                </LibraryField>
+                <LibraryField label="Serving measure (optional)">
                   <span className="grid grid-cols-[1fr_auto] gap-2">
-                    <input className="health-input" inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, servingWeightAmount: event.target.value }))} placeholder="28" value={foodDraft.servingWeightAmount} />
-                    <select className="health-input min-w-24" onChange={(event) => setFoodDraft((current) => ({ ...current, servingWeightUnit: event.target.value as HealthServingWeightUnit }))} value={foodDraft.servingWeightUnit}>
-                      <option value="g">g</option>
-                      <option value="oz">oz</option>
-                      <option value="fl_oz">fl oz</option>
+                    <input className="health-input" inputMode="decimal" min="0" onChange={(event) => setFoodDraft((current) => ({ ...current, servingMeasureValue: event.target.value }))} placeholder="30" value={foodDraft.servingMeasureValue} />
+                    <select className="health-input min-w-28" onChange={(event) => setFoodDraft((current) => ({ ...current, servingMeasureUnit: event.target.value as HealthServingMeasureUnit | "" }))} value={foodDraft.servingMeasureUnit}>
+                      <option value="">No measure</option>
+                      <optgroup label="Mass">
+                        <option value="g">g</option>
+                        <option value="oz">oz</option>
+                      </optgroup>
+                      <optgroup label="Volume">
+                        <option value="ml">mL</option>
+                        <option value="fl_oz">fl oz</option>
+                      </optgroup>
                     </select>
                   </span>
                 </LibraryField>
-                <LibraryField label="Calories">
+                <LibraryField label="Calories per serving">
                   <input className="health-input" inputMode="numeric" onChange={(event) => setFoodDraft((current) => ({ ...current, calories: event.target.value }))} value={foodDraft.calories} />
                 </LibraryField>
                 <LibraryField label="Protein (g)">
@@ -336,7 +357,7 @@ export function HealthLibraryPanel({
               {categorySuggestions.length ? (
                 <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Previously used food categories">
                   {categorySuggestions.slice(0, 8).map((category) => (
-                    <AdhdChip key={category} onClick={() => setFoodDraft((current) => ({ ...current, category }))}>
+                    <AdhdChip key={category} onClick={() => setFoodDraft((current) => ({ ...current, foodCategory: category }))}>
                       {category}
                     </AdhdChip>
                   ))}
@@ -353,7 +374,7 @@ export function HealthLibraryPanel({
           <LibraryCards empty={foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."} items={filteredFoods.map((food) => (
             <AdhdCard key={food.id}>
               <LibraryCardHeader
-                detail={`${food.category ? `${food.category} / ` : ""}${food.serving_label || "1 serving"} / ${food.calories} kcal`}
+                detail={`${food.food_category || food.category || "Uncategorized"} / ${food.serving_label || "1 serving"} / ${food.calories} kcal`}
                 title={formatBrandedFoodName(food)}
               />
               <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
@@ -592,18 +613,20 @@ function NutritionLine({ calories, protein, carbs, fat }: { calories: number; pr
 }
 
 function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
+  const servingMeasureUnit = food.serving_measure_unit ?? "";
   return {
     id: food.id,
     brandName: food.brand_name ?? "",
     calories: String(food.calories),
-    category: food.category ?? "",
+    foodCategory: food.food_category ?? food.category ?? "Uncategorized",
     carbs: food.carbs_g === null ? "" : String(food.carbs_g),
     fat: food.fat_g === null ? "" : String(food.fat_g),
     foodName: food.food_name,
     protein: food.protein_g === null ? "" : String(food.protein_g),
-    servingSize: food.serving_size ?? food.serving_label ?? "",
-    servingWeightAmount: food.serving_weight_amount == null ? "" : String(food.serving_weight_amount),
-    servingWeightUnit: food.serving_weight_unit ?? "g",
+    servingQuantity: String(food.serving_quantity > 0 ? food.serving_quantity : 1),
+    servingUnit: food.serving_unit || "serving",
+    servingMeasureValue: food.serving_measure_value == null ? "" : String(food.serving_measure_value),
+    servingMeasureUnit: servingMeasureUnit,
   };
 }
 

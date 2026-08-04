@@ -6,11 +6,17 @@ import {
   buildRecipeIngredient,
   buildSavedMealFoodItem,
   buildSavedMealRecipeItem,
+  composeHealthFoodServingDefinition,
   composeHealthFoodServingLabel,
+  composeHealthFoodStructuredServingLabel,
+  formatHealthFoodQuantityUnit,
   getRecipeNutrition,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
   getHealthFoodIdentityKey,
+  normalizeHealthFoodLibraryInput,
+  normalizeHealthFoodLibraryItem,
+  searchHealthFoodLibrary,
   setHealthFoodFavoriteStatus,
   sumWaterForDate,
   waterAmountToMilliliters,
@@ -22,6 +28,7 @@ const food = {
   brand_name: null,
   calories: 200,
   category: "Lunch",
+  food_category: "Lunch",
   carbs_g: 24,
   created_at: "2026-07-27T12:00:00.000Z",
   fat_g: 8,
@@ -33,6 +40,10 @@ const food = {
   provider_item_id: null,
   serving_label: "1 cup",
   serving_size: "1 cup",
+  serving_quantity: 1,
+  serving_unit: "serving",
+  serving_measure_value: null,
+  serving_measure_unit: null,
   serving_weight_amount: null,
   serving_weight_unit: null,
   updated_at: "2026-07-27T12:00:00.000Z",
@@ -70,6 +81,56 @@ test("custom food serving fields compose a backward-compatible label", () => {
     servingWeightAmount: 12,
     servingWeightUnit: "fl_oz",
   }), "1 bottle / 12 fl oz");
+  assert.equal(composeHealthFoodStructuredServingLabel({
+    servingQuantity: 55,
+    servingUnit: "cracker",
+    servingMeasureValue: 30,
+    servingMeasureUnit: "g",
+  }), "55 crackers / 30 g");
+});
+
+test("stored plural units do not gain a duplicate suffix", () => {
+  const label = formatHealthFoodQuantityUnit(10, "Crackers");
+  assert.equal(label, "10 Crackers");
+  assert.doesNotMatch(label, /crackerss/i);
+});
+
+test("singular quantities preserve singular units", () => {
+  assert.equal(formatHealthFoodQuantityUnit(1, "cracker"), "1 cracker");
+});
+
+test("plural quantities add one suffix to singular units", () => {
+  assert.equal(formatHealthFoodQuantityUnit(10, "cracker"), "10 crackers");
+});
+
+test("serving definition previews cover count and measure shapes", () => {
+  assert.equal(composeHealthFoodServingDefinition({
+    servingQuantity: 55,
+    servingUnit: "cracker",
+    servingMeasureValue: 30,
+    servingMeasureUnit: "g",
+  }), "1 serving = 55 crackers (30 g)");
+  assert.equal(composeHealthFoodServingDefinition({
+    servingQuantity: 2,
+    servingUnit: "slice",
+  }), "1 serving = 2 slices");
+  assert.equal(composeHealthFoodServingDefinition({
+    servingQuantity: 30,
+    servingUnit: "g",
+  }), "1 serving = 30 g");
+  assert.equal(composeHealthFoodServingDefinition({
+    servingQuantity: 1,
+    servingUnit: "serving",
+    servingLabel: "1 serving",
+  }), "1 serving = 1 serving");
+});
+
+test("missing optional serving fields remain safe", () => {
+  assert.equal(composeHealthFoodServingDefinition({
+    servingQuantity: 55,
+    servingUnit: "cracker",
+  }), "1 serving = 55 crackers");
+  assert.equal(composeHealthFoodServingDefinition({}), "1 serving = 1 serving");
 });
 
 test("saved meals can combine food and recipe servings", () => {
@@ -167,7 +228,12 @@ test("unfavoriting a custom food preserves its stored metadata", () => {
   const customFood = {
     ...food,
     category: "Breakfast",
+    food_category: "Breakfast",
     is_favorite: true,
+    serving_quantity: 1,
+    serving_unit: "packet",
+    serving_measure_value: 42,
+    serving_measure_unit: "g" as const,
     serving_size: "1 packet",
     serving_weight_amount: 42,
     serving_weight_unit: "g" as const,
@@ -179,6 +245,59 @@ test("unfavoriting a custom food preserves its stored metadata", () => {
   });
 });
 
+test("legacy custom foods receive safe structured serving defaults", () => {
+  const legacyFood = { ...food } as Record<string, unknown>;
+  delete legacyFood.food_category;
+  delete legacyFood.serving_quantity;
+  delete legacyFood.serving_unit;
+  delete legacyFood.serving_measure_value;
+  delete legacyFood.serving_measure_unit;
+  const normalized = normalizeHealthFoodLibraryItem(legacyFood as typeof food);
+
+  assert.equal(normalized.food_category, "Lunch");
+  assert.equal(normalized.serving_quantity, 1);
+  assert.equal(normalized.serving_unit, "serving");
+  assert.equal(normalized.serving_measure_value, null);
+  assert.equal(normalized.serving_measure_unit, null);
+});
+
+test("editing a legacy food normalizes the new structured fields without changing identity inputs", () => {
+  const input = normalizeHealthFoodLibraryInput({
+    id: food.id,
+    calories: food.calories,
+    food_name: food.food_name,
+    category: "Snacks",
+    serving_quantity: 55,
+    serving_unit: "cracker",
+    serving_measure_value: 30,
+    serving_measure_unit: "g",
+    provider: "manual",
+  });
+
+  assert.deepEqual({
+    food_category: input.food_category,
+    serving_quantity: input.serving_quantity,
+    serving_unit: input.serving_unit,
+    serving_measure_value: input.serving_measure_value,
+    serving_measure_unit: input.serving_measure_unit,
+  }, {
+    food_category: "Snacks",
+    serving_quantity: 55,
+    serving_unit: "cracker",
+    serving_measure_value: 30,
+    serving_measure_unit: "g",
+  });
+  assert.equal(getHealthFoodIdentityKey({ ...food, serving_label: "1 cup" }), getHealthFoodIdentityKey({ ...food, serving_label: "1 cup" }));
+});
+
+test("custom-food search keeps the existing name, brand, category, serving, provider, and barcode matching", () => {
+  assert.deepEqual(searchHealthFoodLibrary([
+    food,
+    { ...food, id: "food-2", food_name: "Other food", food_category: "Snacks", category: "Snacks" },
+  ], "snacks").map((item) => item.id), ["food-2"]);
+  assert.deepEqual(searchHealthFoodLibrary([food], ""), [food]);
+});
+
 test("Health Food renders grouped foods, calorie totals, favorite sorting, and goal progress", () => {
   const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
   assert.match(source, /matchingCustomFoodGroups/);
@@ -188,6 +307,13 @@ test("Health Food renders grouped foods, calorie totals, favorite sorting, and g
   assert.match(source, /Math\.round\(slotCaloriesTotal\)\} kcal/);
   assert.match(source, /progressPercent=\{profile\.calorie_goal/);
   assert.match(source, /setFavoriteFoodStatus\(item\.id, false\)/);
+  assert.match(source, /getHealthFoodMeasurementOptions/);
+  assert.match(source, /calculateHealthFoodNutrition/);
+  assert.match(source, /formatHealthFoodQuantityUnit/);
+  assert.match(source, /composeHealthFoodServingDefinition/);
+  assert.match(source, /mealDraft\.measurement === "serving"/);
+  assert.match(source, /nutrition_snapshot: calculation\.nutrientTotals/);
+  assert.match(source, /mode: "legacy"/);
 });
 
 test("Task History selected actions use semantic inverted status fills", () => {
@@ -230,4 +356,34 @@ test("7.5.39 Health food migration carries category and structured serving field
   }
   assert.match(migration, /set serving_size = serving_label/);
   assert.match(migration, /'g', 'oz', 'fl_oz'/);
+});
+
+test("7.7.0 custom-food migration preserves meal history and adds safe serving defaults", () => {
+  const migration = readFileSync(
+    new URL("../supabase/add_health_custom_food_measurements_7_7_0.sql", import.meta.url),
+    "utf8",
+  );
+  for (const column of ["food_category", "serving_quantity", "serving_unit", "serving_measure_value", "serving_measure_unit"]) {
+    assert.match(migration, new RegExp(column));
+  }
+  assert.match(migration, /serving_quantity = 1/);
+  assert.match(migration, /serving_unit = 'serving'/);
+  assert.doesNotMatch(migration, /adhdice_health_meal_entries/);
+  assert.doesNotMatch(migration, /delete\s+from/i);
+});
+
+test("7.7.1 meal migration adds structured consumption and immutable snapshots without rewriting history", () => {
+  const migration = readFileSync(
+    new URL("../supabase/add_health_meal_structured_logging_7_7_1.sql", import.meta.url),
+    "utf8",
+  );
+  const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+  for (const column of ["source_food_id", "consumed_quantity", "consumed_unit", "serving_fraction", "food_snapshot", "nutrition_snapshot"]) {
+    assert.match(migration, new RegExp(column));
+    assert.match(schema, new RegExp(column));
+  }
+  assert.match(migration, /add column if not exists/);
+  assert.match(migration, /notify pgrst, 'reload schema'/);
+  assert.doesNotMatch(migration, /delete\s+from/i);
+  assert.doesNotMatch(migration, /update\s+public\.adhdice_health_meal_entries/i);
 });

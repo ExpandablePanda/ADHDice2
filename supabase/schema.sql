@@ -428,8 +428,18 @@ create table public.adhdice_health_food_library (
   food_name text not null check (char_length(trim(food_name)) > 0),
   brand_name text,
   category text,
+  food_category text not null default 'Uncategorized'
+    check (char_length(trim(food_category)) > 0),
   serving_label text,
   serving_size text,
+  serving_quantity numeric not null default 1
+    check (serving_quantity > 0),
+  serving_unit text not null default 'serving'
+    check (char_length(trim(serving_unit)) > 0),
+  serving_measure_value numeric
+    check (serving_measure_value is null or serving_measure_value > 0),
+  serving_measure_unit text
+    check (serving_measure_unit is null or serving_measure_unit in ('g', 'oz', 'ml', 'fl_oz')),
   serving_weight_amount numeric(9,2)
     check (serving_weight_amount is null or serving_weight_amount > 0),
   serving_weight_unit text
@@ -497,6 +507,15 @@ create table public.adhdice_health_meal_entries (
   provider text not null default 'manual',
   provider_item_id text,
   attribution text,
+  source_food_id text,
+  consumed_quantity numeric
+    check (consumed_quantity is null or consumed_quantity > 0),
+  consumed_unit text
+    check (consumed_unit is null or char_length(trim(consumed_unit)) > 0),
+  serving_fraction numeric
+    check (serving_fraction is null or serving_fraction > 0),
+  food_snapshot jsonb,
+  nutrition_snapshot jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
