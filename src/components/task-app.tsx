@@ -572,7 +572,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.6.39";
+const APP_VERSION = "7.6.41";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3236,11 +3236,20 @@ export function TaskApp() {
   }, momentumView);
   const selectedBucketTasks = taskSearchSelection?.visibleTasks ?? canonicalVisibleRootTasksSorted;
   const searchMatchedChildTaskIds = taskSearchSelection
-    ? Array.from(taskSearchSelection.matchingStepIds)
+    ? Array.from(taskSearchSelection.matchingDescendantIdsByRootParentId.values())
+      .flatMap((descendantIds) => Array.from(descendantIds))
     : derivedSearchMatchedChildTaskIds;
   const searchMatchedStepParentTaskIds = taskSearchSelection
     ? taskSearchSelection.visibleRootTaskIds
     : derivedSearchMatchedStepParentTaskIds;
+  const hierarchyStatusFilterActive = effectiveSearchQuery.length === 0 && (
+    taskUiState.statusFilters.length > 0
+    || taskUiState.energyFilters.length > 0
+    || taskUiState.quickFilters.length > 0
+    || taskUiState.tableColumnFilters.priority.length > 0
+    || taskUiState.tableColumnFilters.repeat.length > 0
+    || Object.values(taskUiState.tableColumnFilters.text).some((value) => Boolean(value?.trim()))
+  );
   const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const visiblePinnedTaskCount = taskSearchSelection
     ? activeListFacetCounts.pinned ?? 0
@@ -6095,7 +6104,7 @@ export function TaskApp() {
         taskHistoryModalTaskId,
         status === "clear" ? "pending" : status,
         entryDates,
-        { syncLiveTask: true },
+        { historySnapshot: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [], syncLiveTask: true },
       );
     },
     onSetDelayedStatus: async (entryDate: string, nextDueOn: string) => {
@@ -6112,7 +6121,7 @@ export function TaskApp() {
         taskHistoryModalTaskId,
         "delayed",
         [entryDate],
-        { syncLiveTask: true },
+        { historySnapshot: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [], syncLiveTask: true },
       );
     },
     task: taskHistoryModalTask,
@@ -6920,7 +6929,7 @@ export function TaskApp() {
                   searchMatchedChildTaskIds,
                   statusMatchedChildTaskIds,
                   statusMatchedStepParentTaskIds,
-                  statusFilterActive: true,
+                  statusFilterActive: hierarchyStatusFilterActive,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
@@ -7089,7 +7098,7 @@ export function TaskApp() {
                   searchMatchedChildTaskIds,
                   statusMatchedChildTaskIds,
                   statusMatchedStepParentTaskIds,
-                  statusFilterActive: true,
+                  statusFilterActive: hierarchyStatusFilterActive,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,

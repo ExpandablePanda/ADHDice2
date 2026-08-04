@@ -24,6 +24,12 @@ test("search rows and rail totals share one committed selection result", () => {
   assert.match(appSource, /activePrimaryFacetVisibleEntityIds,\n    \),/);
 });
 
+test("search hierarchy IDs take precedence over status-only hierarchy IDs", () => {
+  assert.match(appSource, /const hierarchyStatusFilterActive = effectiveSearchQuery\.length === 0/);
+  assert.match(appSource, /statusFilterActive: hierarchyStatusFilterActive/);
+  assert.match(appSource, /matchingDescendantIdsByRootParentId\.values\(\)/);
+});
+
 test("search does not invalidate the stable complete-derivation revision", () => {
   const revisionBlock = appSource.slice(appSource.indexOf("const taskDerivationRevision"), appSource.indexOf("const derivedData"));
   assert.doesNotMatch(revisionBlock, /search|effectiveSearchQuery|taskUiState\.search/);

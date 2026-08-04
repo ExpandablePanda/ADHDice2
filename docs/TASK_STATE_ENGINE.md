@@ -51,6 +51,8 @@ Calendar presentation may differ from task-row presentation, but its state decis
 
 The Calendar adapter may expose both state facts and action authority for the requested occurrence. It is not a separate persistence authority and must use the same projection rules when a Calendar action changes task state.
 
+For an existing editable logical date, Calendar action availability evaluates each candidate against normalized History with the current date outcome replaced. The owning History path then upserts the same user/task/date identity, retaining known occurrence metadata and keeping past reward/economy handling outside the correction path.
+
 ## History Authority
 
 History is an explicit input to state evaluation and an explicit output of action or rollover planning. History identity records the occurrence and status facts needed to distinguish recurring instances and preserve chronological meaning.

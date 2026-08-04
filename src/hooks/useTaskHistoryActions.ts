@@ -6,7 +6,7 @@ import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus,
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
-import { buildMissingScheduledMissedHistoryDateKeys, resolveLiveTaskStatusFromHistory, TASK_HISTORY_COLUMNS } from "@/lib/task-history";
+import { buildMissingScheduledMissedHistoryDateKeys, deduplicateTaskHistoryByLogicalDate, resolveLiveTaskStatusFromHistory, TASK_HISTORY_COLUMNS } from "@/lib/task-history";
 import { evaluateTaskActionAuthority } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 
@@ -256,12 +256,16 @@ export function useTaskHistoryActions({
     taskId: string,
     status: TaskStatus,
     entryDates: string[],
-    options?: { syncLiveTask?: boolean },
+    options?: { historySnapshot?: DbTaskHistory[]; syncLiveTask?: boolean },
   ) {
     const uniqueEntryDates = Array.from(new Set(entryDates)).sort();
     if (uniqueEntryDates.length === 0) {
       return true;
     }
+
+    const historyForSync = deduplicateTaskHistoryByLogicalDate(
+      (options?.historySnapshot ?? taskHistory).filter((entry) => entry.task_id === taskId),
+    );
 
     const shouldKeepEntries = isTaskHistoryStatus(status);
     if (!shouldKeepEntries) {
@@ -278,9 +282,7 @@ export function useTaskHistoryActions({
       }
 
       const selectedDateSet = new Set(uniqueEntryDates);
-      const nextTaskHistory = taskHistory.filter((entry) => (
-        entry.task_id === taskId && !selectedDateSet.has(entry.entry_date)
-      ));
+      const nextTaskHistory = historyForSync.filter((entry) => !selectedDateSet.has(entry.entry_date));
       setTaskHistory((current) => {
         const filtered = current.filter((entry) => (
           entry.task_id !== taskId || !selectedDateSet.has(entry.entry_date)
@@ -296,7 +298,7 @@ export function useTaskHistoryActions({
     }
 
     const task = tasks.find((candidate) => candidate.id === taskId);
-    const existingTaskHistory = taskHistory.filter((entry) => entry.task_id === taskId);
+    const existingTaskHistory = historyForSync;
     const missingMissedDates = !TASK_STATE_ENGINE_INTEGRATION_ENABLED && status === "missed" && task
       ? uniqueEntryDates.flatMap((entryDate) => buildMissingScheduledMissedHistoryDateKeys(
         task,
@@ -306,17 +308,27 @@ export function useTaskHistoryActions({
       ))
       : [];
     const entryDatesToUpsert = Array.from(new Set([...uniqueEntryDates, ...missingMissedDates])).sort();
-    const payloads: TaskHistoryInsert[] = entryDatesToUpsert.map((entryDate) => ({
-      entry_date: entryDate,
-      ...buildTaskHistoryOccurrenceMetadata(
-        getCalendarOccurrenceTask(task, status, entryDate, existingTaskHistory),
+    const existingHistoryByDate = new Map(existingTaskHistory.map((entry) => [entry.entry_date, entry]));
+    const payloads: TaskHistoryInsert[] = entryDatesToUpsert.map((entryDate) => {
+      const existingEntry = existingHistoryByDate.get(entryDate);
+      const occurrenceMetadata = existingEntry && (existingEntry.occurrence_due_on || existingEntry.occurrence_key)
+        ? {
+          occurrence_due_on: existingEntry.occurrence_due_on,
+          occurrence_key: existingEntry.occurrence_key,
+        }
+        : buildTaskHistoryOccurrenceMetadata(
+          getCalendarOccurrenceTask(task, status, entryDate, existingTaskHistory),
+          status,
+        );
+      return {
+        entry_date: entryDate,
+        ...occurrenceMetadata,
         status,
-      ),
-      status,
-      task_id: taskId,
-      user_id: currentUserId,
-      was_completed: isTaskCompletedForHistory(status),
-    }));
+        task_id: taskId,
+        user_id: currentUserId,
+        was_completed: isTaskCompletedForHistory(status),
+      };
+    });
     const { data, error } = await client
       .from("adhdice_task_history")
       .upsert(payloads, { onConflict: "user_id,task_id,entry_date" })
@@ -331,9 +343,7 @@ export function useTaskHistoryActions({
     const updatedDateSet = new Set(mappedEntries.map((entry) => entry.entry_date));
     const nextTaskHistory = [
       ...mappedEntries,
-      ...taskHistory.filter((entry) => (
-        entry.task_id !== taskId || !updatedDateSet.has(entry.entry_date)
-      )),
+      ...historyForSync.filter((entry) => !updatedDateSet.has(entry.entry_date)),
     ].filter((entry) => entry.task_id === taskId);
     setTaskHistory((current) => {
       const merged = [

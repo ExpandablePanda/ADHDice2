@@ -719,6 +719,7 @@ export function queryCanonicalTaskEntityProjection({
   const searchExpandedDescendantIds = new Set<string>();
   const hierarchyScopedEntityIds = new Set<string>();
   const selectedScopeCandidateIds = new Set<string>();
+  const selectedScopeRootIds = new Set<string>();
   const primaryFacetCandidateIds = new Set<string>();
   for (const fact of entityFactsById.values()) {
     if (isInSelectedBaseScope(fact.task)) {
@@ -729,10 +730,22 @@ export function queryCanonicalTaskEntityProjection({
     }
     if (isInSelectedBaseScope(fact.task) && matchesSelectedList(fact) && matchesSharedNonSearchFilters(fact)) {
       selectedScopeCandidateIds.add(fact.id);
-      if (searchIsActive && fact.searchDocument.includes(normalizedSearchQuery)) directSearchMatchedEntityIds.add(fact.id);
+      if (fact.id === fact.rootParentId) selectedScopeRootIds.add(fact.id);
     }
     if (isInPrimaryFacetBaseScope(fact.task) && matchesSharedNonSearchFilters(fact)) {
       primaryFacetCandidateIds.add(fact.id);
+    }
+  }
+  for (const fact of entityFactsById.values()) {
+    if (
+      isInSelectedBaseScope(fact.task)
+      && selectedScopeRootIds.has(fact.rootParentId)
+      && matchesSharedNonSearchFilters(fact)
+    ) {
+      selectedScopeCandidateIds.add(fact.id);
+    }
+    if (searchIsActive && selectedScopeCandidateIds.has(fact.id) && fact.searchDocument.includes(normalizedSearchQuery)) {
+      directSearchMatchedEntityIds.add(fact.id);
     }
   }
 

@@ -627,7 +627,7 @@ export function TaskHistoryModal({
     todayDateKey: today,
   });
   const engineCalendarActionStatuses = stateEngineContext
-    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: taskHistory, logicalDate: selectedDate, task })
+    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, logicalDate: selectedDate, task })
     : null;
   const calendarActionStatuses = getTaskHistoryCalendarVisibleActionStatuses({
     engineStatuses: engineCalendarActionStatuses,
@@ -898,16 +898,6 @@ export function TaskHistoryModal({
                   <span>{formatTaskStatusLabel(status)}</span>
                 </TaskTableChipButton>
               ))}
-              {selectedEntries.some(Boolean) ? (
-                <TaskTableChipButton
-                  className="gap-2"
-                  disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && selectedIsFuture)}
-                  onClick={() => { void handleSetStatus("clear"); }}
-                  toneClassName={`${TASK_TABLE_INACTIVE_CHIP_CLASS} opacity-78 hover:opacity-100 disabled:opacity-50`}
-                >
-                  <span>Clear</span>
-                </TaskTableChipButton>
-              ) : null}
             </div>
             {showDelayEditor && canDelaySelectedDate && task.due_on ? (
               <div className="mt-4 rounded-[1.25rem] border border-[#efe9ff] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">

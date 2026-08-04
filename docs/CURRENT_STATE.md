@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.6.39`.
+- Current working app version: `7.6.41`.
 - Current release group: `7.6.x` Task State Engine.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`

@@ -1,4 +1,5 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
+import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import { adaptLegacyTaskState } from "./legacy-adapter.ts";
 import { evaluateTaskState } from "./engine.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
@@ -23,7 +24,8 @@ export function resolveTaskHistoryCalendarStates(input: {
   timezone: string;
 }) {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
-  const adapted = adaptLegacyTaskState(input.task, input.history, input);
+  const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.history);
+  const adapted = adaptLegacyTaskState(input.task, normalizedHistory, input);
   const result = evaluateTaskState(adapted.engineInput);
   return Object.fromEntries(Object.entries(result.calendar).map(([date, state]) => [
     date,
@@ -42,9 +44,15 @@ export function resolveTaskHistoryCalendarActionStatuses(input: {
   timezone: string;
 }) {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
+  const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.history);
+  const existingEntry = normalizedHistory.some((entry) => entry.entry_date === input.logicalDate);
+  const historyForReplacement = existingEntry
+    ? normalizedHistory.filter((entry) => entry.entry_date !== input.logicalDate)
+    : normalizedHistory;
   const candidates: TaskHistoryCalendarActionStatus[] = ["done", "did_my_best", "delayed", "missed", "complete"];
   return candidates.filter((outcome) => !evaluateTaskActionAuthority({
     ...input,
+    history: historyForReplacement,
     ...(outcome === "delayed" ? { delayDays: 1 } : {}),
     outcome,
     outcomeDate: input.logicalDate,

@@ -71,6 +71,119 @@ test("task history batch action upserts selected dates together and merges local
   assert.deepEqual(localHistory.map((entry) => entry.entry_date).sort(), ["2026-06-18", "2026-06-19"]);
 });
 
+for (const [previousStatus, nextStatus] of [
+  ["missed", "done"],
+  ["missed", "did_my_best"],
+  ["did_my_best", "done"],
+  ["done", "missed"],
+] as const) {
+  test(`History Calendar replaces ${previousStatus} directly with ${nextStatus} on one logical row`, async () => {
+    const task = createTask({
+      created_at: "2026-08-01T09:00:00.000Z",
+      due_on: "2026-08-02",
+      id: `task-calendar-replace-${previousStatus}-${nextStatus}`,
+      repeat_frequency: "daily",
+      repeat_interval: 1,
+      sort_order: 1,
+      status: "missed",
+      title: "Calendar replacement",
+    });
+    const existing: TaskHistory = {
+      counted_as_due_occurrence: true,
+      created_at: "2026-08-02T09:00:00.000Z",
+      entry_date: "2026-08-02",
+      event_type: "status",
+      id: `history-replace-${previousStatus}-${nextStatus}`,
+      occurrence_due_on: "2026-08-02",
+      occurrence_key: "occurrence:2026-08-02",
+      status: previousStatus,
+      task_id: task.id,
+      updated_at: "2026-08-02T09:00:00.000Z",
+      user_id: "user-1",
+      was_completed: previousStatus === "done" || previousStatus === "did_my_best",
+    };
+    let capturedPayload: TaskHistoryInsert | null = null;
+    let capturedTaskUpdate: TaskUpdate | null = null;
+    let localHistory: TaskHistory[] = [];
+    let mutationSnapshot: TaskHistory[] = [];
+    const client = {
+      from: () => ({
+        upsert: (payloads: TaskHistoryInsert[]) => {
+          capturedPayload = payloads[0] ?? null;
+          return {
+            select: async () => ({
+              data: payloads.map((payload) => ({
+                ...existing,
+                ...payload,
+                id: existing.id,
+                updated_at: "2026-08-03T12:00:00.000Z",
+              })),
+              error: null,
+            }),
+          };
+        },
+      }),
+    };
+    const actions = useTaskHistoryActions({
+      client: client as never,
+      currentDayKey: "2026-08-03",
+      currentUserId: "user-1",
+      dayStartTime: "06:00",
+      isTaskCompletedForHistory: (status) => status === "done" || status === "did_my_best" || status === "complete",
+      isTaskHistoryStatus: (status) => status === "done" || status === "did_my_best" || status === "missed" || status === "complete",
+      mapTaskHistoryRow: (row) => row,
+      now: new Date("2026-08-03T12:00:00.000Z"),
+      onHistoryMutation: (_taskId, history) => { mutationSnapshot = history ?? []; },
+      setMessage: () => {},
+      setTaskHistory: (updater) => {
+        localHistory = typeof updater === "function" ? updater(localHistory) : updater;
+      },
+      setTasks: () => {},
+      sortTasksForUi: (tasks) => tasks,
+      taskHistory: [],
+      tasks: [task],
+      timezone: "America/New_York",
+      updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+        capturedTaskUpdate = values;
+        return {
+          conflict: null,
+          data: { ...task, ...values },
+          error: null,
+          reappliedOnLatestRevision: false,
+          usedActualSecondsFallback: false,
+          usedEnergyFallback: false,
+        };
+      },
+    });
+
+    assert.equal(await actions.syncTaskHistoryEntries(task.id, nextStatus, [existing.entry_date], {
+      historySnapshot: [existing],
+      syncLiveTask: true,
+    }), true);
+    assert.deepEqual(capturedPayload && {
+      entry_date: capturedPayload.entry_date,
+      occurrence_due_on: capturedPayload.occurrence_due_on,
+      occurrence_key: capturedPayload.occurrence_key,
+      status: capturedPayload.status,
+    }, {
+      entry_date: existing.entry_date,
+      occurrence_due_on: existing.occurrence_due_on,
+      occurrence_key: existing.occurrence_key,
+      status: nextStatus,
+    });
+    assert.equal(localHistory.length, 1);
+    assert.equal(localHistory[0]?.status, nextStatus);
+    assert.equal(new Set(mutationSnapshot.map((entry) => `${entry.task_id}:${entry.entry_date}`)).size, 1);
+    assert.equal(mutationSnapshot[0]?.status, nextStatus);
+    assert.equal(
+      previousStatus === "done" && nextStatus === "missed"
+        ? capturedTaskUpdate === null
+        : Boolean(capturedTaskUpdate),
+      true,
+    );
+  });
+}
+
 test("History Calendar manual Missed saves one deduplicated outcome without advancing recurrence", async () => {
   const task = createTask({
     created_at: "2026-07-01T09:00:00.000Z",

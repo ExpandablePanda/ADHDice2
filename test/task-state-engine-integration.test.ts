@@ -37,6 +37,41 @@ test("Calendar authority gives explicit History precedence over virtual states",
   assert.equal(states?.["2026-07-31"], "open");
 });
 
+test("Calendar authority allows direct replacement of an existing recurring outcome", () => {
+  const existingMissed = history("missed");
+  const statuses = resolveTaskHistoryCalendarActionStatuses({
+    ...context,
+    history: [existingMissed],
+    logicalDate: existingMissed.entry_date,
+    task: task({ status: "missed" }),
+  });
+
+  assert.deepEqual(statuses, ["done", "did_my_best", "delayed", "missed", "complete"]);
+});
+
+test("Calendar action availability uses one normalized logical-date History result", () => {
+  const olderMissed = history("missed");
+  const newerDone = {
+    ...history("done"),
+    id: "history-newer",
+    updated_at: "2026-07-30T13:00:00.000Z",
+  };
+  const expected = resolveTaskHistoryCalendarActionStatuses({
+    ...context,
+    history: [newerDone],
+    logicalDate: "2026-07-30",
+    task: task({ status: "pending" }),
+  });
+  const actual = resolveTaskHistoryCalendarActionStatuses({
+    ...context,
+    history: [olderMissed, newerDone],
+    logicalDate: "2026-07-30",
+    task: task({ status: "pending" }),
+  });
+
+  assert.deepEqual(actual, expected);
+});
+
 test("action authority projects only supported fields and preserves legacy fallback", () => {
   const rolling = evaluateTaskActionAuthority({ ...context, history: [], outcome: "done", task: task() });
   assert.equal(rolling?.persistableTaskPatch.dueOn, "2026-08-01");

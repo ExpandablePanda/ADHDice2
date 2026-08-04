@@ -189,6 +189,9 @@ test("modal calendar and statistics normalize saved Done, Did My Best, and Misse
   assert.match(modalSource, /const normalizedTaskHistory = deduplicateTaskHistoryByLogicalDate\(taskHistory\)/);
   assert.match(modalSource, /const historyByDate = new Map\(normalizedTaskHistory\.map/);
   assert.match(modalSource, /computeTaskSpecificHistoryStats\(task, normalizedTaskHistory/);
+  assert.match(modalSource, /resolveTaskHistoryCalendarActionStatuses\(\{\s*\.\.\.stateEngineContext, history: normalizedTaskHistory/);
+  assert.match(modalSource, /selectedEntry\?\.status === status/);
+  assert.doesNotMatch(modalSource, /<span>Clear<\/span>/);
   assert.match(modalSource, /entry\.status === "missed"/);
   assert.match(modalSource, /entry\.status === "did_my_best"/);
 });
