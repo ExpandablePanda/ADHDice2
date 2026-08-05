@@ -204,13 +204,3 @@ export function StatsPage({
     </section>
   );
 }
-
-function shiftDateKey(dateKey: string, days: number) {
-  const [year, month, day] = dateKey.split("-").map((part) => Number.parseInt(part ?? "", 10));
-  const date = new Date(year, (month ?? 1) - 1, day ?? 1);
-  date.setDate(date.getDate() + days);
-  const nextYear = date.getFullYear();
-  const nextMonth = String(date.getMonth() + 1).padStart(2, "0");
-  const nextDay = String(date.getDate()).padStart(2, "0");
-  return `${nextYear}-${nextMonth}-${nextDay}`;
-}
