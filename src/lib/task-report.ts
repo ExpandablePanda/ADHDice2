@@ -2,7 +2,6 @@ import type { Milestone, MilestoneEvent, Task, TaskHistory, TaskStatus } from "@
 import { buildFocusGoalPlan } from "@/lib/focus-goals";
 import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
-import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { hasTaskListMembership, type TaskListDefinition, type TaskListMembership } from "@/lib/task-lists";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, inferLegacyTaskPriorityLevel, type TaskPriorityLevel } from "@/lib/task-priority";
@@ -563,11 +562,7 @@ function buildTaskMetadata(
     const priorityLevel = getTaskPriorityLevel(task);
     metadataByTaskId.set(task.id, {
       cadenceLabel: formatRepeatSummary(task) ?? null,
-      currentStatusLabel: STATUS_LABELS[getTaskDisplayStatusWithHistory(
-        task,
-        taskHistoryByTaskId[task.id] ?? [],
-        todayDateKey,
-      )] ?? task.status,
+      currentStatusLabel: STATUS_LABELS[task.status] ?? task.status,
       isImportant: priorityLevel === 4,
       isPinned: Boolean(task.pinned_at),
       isRoutine: hasTaskListMembership(listMembershipsByTaskId[task.id] ?? [], "routine") || hasInheritedManualRoutineMembership,

@@ -245,6 +245,7 @@ export function useTaskRewardController({
     return candidates
       .filter((candidate) =>
         !candidate.claimRef?.subtaskId
+        && !candidate.engineManaged
         && candidate.task.repeat_frequency !== "none"
         && (
           isNewRewardCompletion(candidate.previousStatus, candidate.task.status)
@@ -284,6 +285,14 @@ export function useTaskRewardController({
       counted_as_due_occurrence: false,
       entry_date: entryDate,
       event_type: "status" as const,
+      occurrence_due_on: task.repeat_frequency === "none"
+        ? null
+        : task.active_occurrence_due_on ?? task.due_on,
+      occurrence_key: task.repeat_frequency === "none"
+        ? null
+        : (task.active_occurrence_due_on ?? task.due_on)
+          ? `occurrence:${task.active_occurrence_due_on ?? task.due_on}`
+          : null,
       status: "missed" as const,
       task_id: task.id,
       user_id: currentUserId,
@@ -509,7 +518,7 @@ export function useTaskRewardController({
     const newlyCompleted = candidates.filter((candidate) =>
       candidate.claimRef?.subtaskId
         ? true
-        : isNewRewardCompletion(candidate.previousStatus, candidate.task.status),
+        : candidate.rewardEligible ?? isNewRewardCompletion(candidate.previousStatus, candidate.task.status),
     );
     if (newlyCompleted.length === 0) {
       return;

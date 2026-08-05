@@ -265,6 +265,7 @@ export function TaskEditorModal({
   statusResetSignal,
   subtasks,
   task,
+  todayDateKey,
 }: {
   allTags: string[];
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
@@ -281,6 +282,7 @@ export function TaskEditorModal({
   statusResetSignal?: { status: TaskStatus; taskId: string; token: number } | null;
   subtasks: DbTaskSubtask[];
   task: Task | null;
+  todayDateKey?: string;
 }) {
   const [draft, setDraft] = useState<TaskEditorDraft>(() => applyTaskEditorDraftOverrides(
     createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks),
@@ -469,8 +471,8 @@ export function TaskEditorModal({
     : parsePositiveInteger(draft.estimatedMinutes);
   const customEstimatedHoursValue = customEstimatedMinutes === null ? "" : String(Math.floor(customEstimatedMinutes / 60));
   const customEstimatedMinuteValue = customEstimatedMinutes === null ? "" : String(customEstimatedMinutes % 60);
-  const todayDateKey = todayISO();
-  const delayAnchorDateKey = task?.due_on && task.due_on > todayDateKey ? task.due_on : todayDateKey;
+  const logicalTodayDateKey = todayDateKey ?? todayISO();
+  const delayAnchorDateKey = task?.due_on && task.due_on > logicalTodayDateKey ? task.due_on : logicalTodayDateKey;
   const requiresDelayedDueDate = draft.status === "delayed" && Boolean(task?.due_on);
 
   function updateEstimatedTimeParts(hoursPart: string, minutesPart: string) {

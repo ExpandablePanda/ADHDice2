@@ -309,6 +309,7 @@ export function FocusPlannerModalAdapter({
   onStepChange,
   step,
   tasks,
+  todayDateKey,
 }: {
   draftIds: string[];
   onClose: () => void;
@@ -317,6 +318,7 @@ export function FocusPlannerModalAdapter({
   onStepChange: (step: FocusPlannerStep) => void;
   step: FocusPlannerStep;
   tasks: Task[];
+  todayDateKey: string;
 }) {
   return (
     <FocusPlannerModalComponent
@@ -327,6 +329,7 @@ export function FocusPlannerModalAdapter({
       onStepChange={onStepChange}
       step={step}
       tasks={tasks}
+      todayDateKey={todayDateKey}
     />
   );
 }
@@ -604,7 +607,13 @@ export function TaskHistoryModal({
   const weeks: string[][] = [];
   const dueDates = buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, normalizedTaskHistory);
   const engineCalendarStates = stateEngineContext
-    ? resolveTaskHistoryCalendarStates({ ...stateEngineContext, history: normalizedTaskHistory, task })
+    ? resolveTaskHistoryCalendarStates({
+      ...stateEngineContext,
+      calendarEnd: days.at(-1) ?? today,
+      calendarStart: days[0] ?? today,
+      history: normalizedTaskHistory,
+      task,
+    })
     : null;
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
@@ -639,7 +648,19 @@ export function TaskHistoryModal({
     && Boolean(task.due_on)
     && Boolean(onSetDelayedStatus)
     && (selectedDate === today || selectedIsMissed || selectedVirtualState === "due");
-  const visibleCalendarActionStatuses = calendarActionStatuses;
+  const canClearSelectedDate = !isMultiSelect
+    && !selectedIsFuture
+    && Boolean(selectedEntry)
+    && task.status !== "complete"
+    && task.status !== "archived"
+    && task.status !== "trashed"
+    && selectedEntry?.status !== "complete"
+    && selectedEntry?.status !== "delayed"
+    && (selectedEntry?.status === "done" || selectedEntry?.status === "did_my_best" || selectedEntry?.status === "missed");
+  type CalendarActionStatus = "clear" | "complete" | "delayed" | "did_my_best" | "done" | "missed";
+  const visibleCalendarActionStatuses: CalendarActionStatus[] = canClearSelectedDate
+    ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
+    : calendarActionStatuses as CalendarActionStatus[];
 
   for (let weekIndex = 0; weekIndex < Math.ceil(totalDays / 7); weekIndex += 1) {
     weeks.push(days.slice(weekIndex * 7, weekIndex * 7 + 7));
@@ -892,10 +913,12 @@ export function TaskHistoryModal({
                     setShowDelayEditor(false);
                     void handleSetStatus(status);
                   }}
-                  toneClassName={`${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
+                  toneClassName={status === "clear"
+                    ? `${TASK_TABLE_INACTIVE_CHIP_CLASS} disabled:opacity-50`
+                    : `${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
                 >
-                  {renderTaskStatusCircle(status, "sm")}
-                  <span>{formatTaskStatusLabel(status)}</span>
+                  {status === "clear" ? null : renderTaskStatusCircle(status, "sm")}
+                  <span>{status === "clear" ? "Clear" : formatTaskStatusLabel(status)}</span>
                 </TaskTableChipButton>
               ))}
             </div>

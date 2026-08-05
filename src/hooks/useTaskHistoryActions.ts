@@ -6,13 +6,35 @@ import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus,
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
-import { buildMissingScheduledMissedHistoryDateKeys, deduplicateTaskHistoryByLogicalDate, resolveLiveTaskStatusFromHistory, TASK_HISTORY_COLUMNS } from "@/lib/task-history";
+import {
+  buildMissingScheduledMissedHistoryDateKeys,
+  deduplicateTaskHistoryByLogicalDate,
+  resolveLiveTaskStatusFromHistory,
+  resolveTaskHistoryOccurrenceDueOn,
+  TASK_HISTORY_COLUMNS,
+} from "@/lib/task-history";
+import { calcNextDueDateFromDate as calculateNextDueDateFromDate } from "@/lib/task-repeat";
 import { evaluateTaskActionAuthority } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 
 type Message = {
   text: string;
   tone: "neutral" | "good" | "warn";
+};
+
+type HistoryOutcome = Extract<TaskStatus, "done" | "did_my_best" | "delayed" | "missed" | "complete">;
+
+type HistoryReplacement = {
+  logicalDate: string;
+  nextOutcome: HistoryOutcome;
+  previousOutcome: HistoryOutcome;
+  occurrenceDueOn: string | null;
+  occurrenceIdentity: string | null;
+};
+
+type HistoryRemoval = {
+  clearCompletedAt: boolean;
+  restoreDueOn: string | null;
 };
 
 type UseTaskHistoryActionsOptions = {
@@ -31,6 +53,7 @@ type UseTaskHistoryActionsOptions = {
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
   taskHistory?: DbTaskHistory[];
+  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<Record<string, DbTaskHistory[]>>;
   tasks: Task[];
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
@@ -52,6 +75,7 @@ export function useTaskHistoryActions({
   setTasks,
   sortTasksForUi,
   taskHistory = [],
+  loadTaskHistoryForTasks,
   tasks,
   timezone,
   updateTaskRowWithLegacyEnergyFallback,
@@ -77,45 +101,154 @@ export function useTaskHistoryActions({
       .sort()
       .at(0);
     const occurrenceDueOn = resolvedOccurrenceDueOn
-      ?? (task.due_on && task.due_on >= entryDate ? task.due_on : null);
+      ?? resolveTaskHistoryOccurrenceDueOn(task, entryDate);
 
     return occurrenceDueOn
       ? { ...task, active_occurrence_due_on: occurrenceDueOn }
       : task;
   }
 
-  async function syncLiveTaskStatus(taskId: string, nextHistory: DbTaskHistory[], editedHistoryDateKeys?: string[]) {
+  function getOccurrenceDate(entry: Pick<DbTaskHistory, "occurrence_due_on" | "occurrence_key">) {
+    if (entry.occurrence_due_on) {
+      return entry.occurrence_due_on;
+    }
+    const match = entry.occurrence_key?.match(/(\d{4}-\d{2}-\d{2})$/);
+    return match?.[1] ?? null;
+  }
+
+  function getWeeklyAutomaticMissedDateKeys(task: Task | undefined, history: DbTaskHistory[], entryDates: string[], status: TaskStatus) {
+    if (!task || task.repeat_frequency !== "weekly" || (status !== "done" && status !== "did_my_best")) {
+      return [] as string[];
+    }
+
+    const selectedDateSet = new Set(entryDates);
+    const datesToClear = new Set<string>();
+    for (const entryDate of entryDates) {
+      const occurrenceDueOn = resolveTaskHistoryOccurrenceDueOn(task, entryDate);
+      if (!occurrenceDueOn) continue;
+      for (const entry of history) {
+        if (
+          entry.status === "missed"
+          && entry.counted_as_due_occurrence
+          && !selectedDateSet.has(entry.entry_date)
+          && getOccurrenceDate(entry) === occurrenceDueOn
+        ) {
+          datesToClear.add(entry.entry_date);
+        }
+      }
+    }
+    return [...datesToClear].sort();
+  }
+
+  function buildHistoryRemoval(task: Task | undefined, removedEntries: DbTaskHistory[]): HistoryRemoval {
+    const hasSuccessfulEntry = removedEntries.some((entry) => (
+      entry.status === "done" || entry.status === "did_my_best" || entry.status === "complete"
+    ));
+    if (!task || !hasSuccessfulEntry) {
+      return { clearCompletedAt: hasSuccessfulEntry, restoreDueOn: null };
+    }
+
+    const occurrenceDate = removedEntries
+      .map((entry) => getOccurrenceDate(entry))
+      .find((date): date is string => Boolean(date));
+    const nextDue = occurrenceDate && task.repeat_frequency !== "none"
+      ? (calcNextDueDateFromDate ?? calculateNextDueDateFromDate)(task, occurrenceDate)
+      : null;
+    const restoreDueOn = occurrenceDate
+      && task.due_on
+      && nextDue === task.due_on
+      && occurrenceDate < task.due_on
+      ? occurrenceDate
+      : null;
+    return { clearCompletedAt: hasSuccessfulEntry, restoreDueOn };
+  }
+
+  async function deleteHistoryDates(taskId: string, dates: string[]) {
+    if (dates.length === 0) return true;
+    const { error } = await client
+      .from("adhdice_task_history")
+      .delete()
+      .eq("task_id", taskId)
+      .eq("user_id", currentUserId)
+      .in("entry_date", dates);
+    if (error) {
+      setMessage({ tone: "warn", text: error.message });
+      return false;
+    }
+    return true;
+  }
+
+  async function syncLiveTaskStatus(
+    taskId: string,
+    nextHistory: DbTaskHistory[],
+    editedHistoryDateKeys?: string[],
+    options?: { historyRemoval?: HistoryRemoval; historyReplacement?: HistoryReplacement },
+  ) {
     const task = tasks.find((candidate) => candidate.id === taskId);
     if (!task) {
       return true;
     }
 
+    const historyReplacement = options?.historyReplacement;
+    const historyRemoval = options?.historyRemoval;
+    const taskForEvaluation = historyRemoval?.restoreDueOn
+      ? {
+        ...task,
+        active_occurrence_due_on: null,
+        active_status_logical_date: null,
+        due_on: historyRemoval.restoreDueOn,
+        status: "pending" as const,
+      }
+      : task;
     const engineState = evaluateTaskActionAuthority({
       history: nextHistory,
       logicalDayRollover: dayStartTime,
       now,
-      task,
+      ...(historyReplacement ? {
+        outcome: historyReplacement.nextOutcome,
+        outcomeDate: historyReplacement.logicalDate,
+        occurrenceDueOn: historyReplacement.occurrenceDueOn,
+        occurrenceIdentity: historyReplacement.occurrenceIdentity,
+        previousOutcome: historyReplacement.previousOutcome,
+        replaceExisting: true,
+      } : {}),
+      task: taskForEvaluation,
       timezone,
     });
     const nextTaskState = engineState
       ? {
-        completedAt: engineState.persistableTaskPatch.completedAt ?? task.completed_at,
-        dueOn: Object.hasOwn(engineState.persistableTaskPatch, "dueOn") ? engineState.persistableTaskPatch.dueOn : undefined,
+        completedAt: historyRemoval?.clearCompletedAt
+          ? null
+          : engineState.persistableTaskPatch.completedAt ?? task.completed_at,
+        dueOn: historyRemoval?.restoreDueOn
+          ?? (Object.hasOwn(engineState.persistableTaskPatch, "dueOn") ? engineState.persistableTaskPatch.dueOn : undefined),
+        activeOccurrenceDueOn: Object.hasOwn(engineState.persistableTaskPatch, "activeOccurrenceDueOn")
+          ? engineState.persistableTaskPatch.activeOccurrenceDueOn
+          : historyRemoval?.restoreDueOn ? null : undefined,
+        activeStatusLogicalDate: Object.hasOwn(engineState.persistableTaskPatch, "activeStatusLogicalDate")
+          ? engineState.persistableTaskPatch.activeStatusLogicalDate
+          : historyRemoval?.restoreDueOn ? null : undefined,
         // `activeStatus` may be the engine-only derived `unscheduled` state.
         // Writes must retain the stored canonical status when no safe patch exists.
-        status: engineState.persistableTaskPatch.status ?? task.status,
+        status: engineState.persistableTaskPatch.status ?? taskForEvaluation.status,
       }
-      : resolveLiveTaskStatusFromHistory(task, nextHistory, {
-      currentDayKey,
-      dayStartTime,
-      now,
-      timezone,
-    }, { calcNextDueDateFromDate, editedHistoryDateKeys });
+      : {
+        ...resolveLiveTaskStatusFromHistory(task, nextHistory, {
+          currentDayKey,
+          dayStartTime,
+          now,
+          timezone,
+        }, { calcNextDueDateFromDate, editedHistoryDateKeys }),
+        activeOccurrenceDueOn: undefined,
+        activeStatusLogicalDate: undefined,
+      };
 
     if (
       task.status === nextTaskState.status
       && task.completed_at === nextTaskState.completedAt
       && (nextTaskState.dueOn === undefined || task.due_on === nextTaskState.dueOn)
+      && (nextTaskState.activeOccurrenceDueOn === undefined || task.active_occurrence_due_on === nextTaskState.activeOccurrenceDueOn)
+      && (nextTaskState.activeStatusLogicalDate === undefined || task.active_status_logical_date === nextTaskState.activeStatusLogicalDate)
     ) {
       return true;
     }
@@ -126,6 +259,12 @@ export function useTaskHistoryActions({
     };
     if (nextTaskState.dueOn !== undefined) {
       updateValues.due_on = nextTaskState.dueOn;
+    }
+    if (nextTaskState.activeOccurrenceDueOn !== undefined) {
+      updateValues.active_occurrence_due_on = nextTaskState.activeOccurrenceDueOn;
+    }
+    if (nextTaskState.activeStatusLogicalDate !== undefined) {
+      updateValues.active_status_logical_date = nextTaskState.activeStatusLogicalDate;
     }
 
     const { conflict, data, error } = await updateTaskRowWithLegacyEnergyFallback(
@@ -163,26 +302,31 @@ export function useTaskHistoryActions({
     taskId: string,
     status: TaskStatus,
     entryDate: string,
-    options?: { occurrenceTask?: Task | null; syncLiveTask?: boolean },
+    options?: { occurrenceTask?: Task | null; syncLiveTask?: boolean; historyEntry?: TaskHistoryInsert },
   ) {
     const shouldKeepEntry = isTaskHistoryStatus(status);
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    const scopedHistory = loadTaskHistoryForTasks
+      ? (await loadTaskHistoryForTasks([taskId]))[taskId] ?? []
+      : taskHistory.filter((entry) => entry.task_id === taskId);
+    const historyForSync = deduplicateTaskHistoryByLogicalDate(scopedHistory);
+    const existingEntry = historyForSync.find((entry) => entry.entry_date === entryDate);
+    const historyReplacement = existingEntry && shouldKeepEntry && isTaskHistoryStatus(existingEntry.status)
+      ? {
+        logicalDate: entryDate,
+        nextOutcome: status as HistoryOutcome,
+        previousOutcome: existingEntry.status as HistoryOutcome,
+        occurrenceDueOn: existingEntry.occurrence_due_on ?? entryDate,
+        occurrenceIdentity: existingEntry.occurrence_key,
+      } satisfies HistoryReplacement
+      : undefined;
 
     if (!shouldKeepEntry) {
-      const { error } = await client
-        .from("adhdice_task_history")
-        .delete()
-        .eq("task_id", taskId)
-        .eq("user_id", currentUserId)
-        .eq("entry_date", entryDate);
+      const removedEntries = existingEntry ? [existingEntry] : [];
+      if (!await deleteHistoryDates(taskId, [entryDate])) return false;
+      const historyRemoval = buildHistoryRemoval(task, removedEntries);
 
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
-        return false;
-      }
-
-      const nextHistory = taskHistory.filter((entry) =>
-        entry.task_id === taskId && entry.entry_date !== entryDate,
-      );
+      const nextHistory = historyForSync.filter((entry) => entry.entry_date !== entryDate);
       setTaskHistory((current) => {
         const filtered = current.filter((entry) =>
           !(entry.task_id === taskId && entry.entry_date === entryDate),
@@ -191,7 +335,7 @@ export function useTaskHistoryActions({
       });
 
       if (options?.syncLiveTask) {
-        const result = await syncLiveTaskStatus(taskId, nextHistory, [entryDate]);
+        const result = await syncLiveTaskStatus(taskId, nextHistory, [entryDate], { historyRemoval });
         notifyHistoryMutation(taskId, nextHistory);
         return result;
       }
@@ -200,17 +344,36 @@ export function useTaskHistoryActions({
       return true;
     }
 
-    const payload: TaskHistoryInsert = {
-      entry_date: entryDate,
-      ...buildTaskHistoryOccurrenceMetadata(
-        options?.occurrenceTask ?? tasks.find((task) => task.id === taskId),
+    const automaticMissedDatesToClear = getWeeklyAutomaticMissedDateKeys(task, historyForSync, [entryDate], status);
+    if (!await deleteHistoryDates(taskId, automaticMissedDatesToClear)) return false;
+    const automaticMissedDateSet = new Set(automaticMissedDatesToClear);
+    const historyAfterWeeklyReconciliation = historyForSync.filter((entry) => !automaticMissedDateSet.has(entry.entry_date));
+
+    const replacementOccurrenceMetadata = existingEntry && (existingEntry.occurrence_due_on || existingEntry.occurrence_key)
+      ? {
+        occurrence_due_on: existingEntry.occurrence_due_on,
+        occurrence_key: existingEntry.occurrence_key,
+      }
+      : null;
+    const payload: TaskHistoryInsert = options?.historyEntry
+      ? {
+        ...options.historyEntry,
+        entry_date: entryDate,
         status,
-      ),
-      status,
-      task_id: taskId,
-      user_id: currentUserId,
-      was_completed: isTaskCompletedForHistory(status),
-    };
+        task_id: taskId,
+        user_id: currentUserId,
+      }
+      : {
+        entry_date: entryDate,
+        ...(replacementOccurrenceMetadata ?? buildTaskHistoryOccurrenceMetadata(
+          options?.occurrenceTask ?? getCalendarOccurrenceTask(task, status, entryDate, historyAfterWeeklyReconciliation),
+          status,
+        )),
+        status,
+        task_id: taskId,
+        user_id: currentUserId,
+        was_completed: isTaskCompletedForHistory(status),
+      };
     const { data, error } = await client
       .from("adhdice_task_history")
       .upsert(payload, { onConflict: "user_id,task_id,entry_date" })
@@ -222,12 +385,12 @@ export function useTaskHistoryActions({
       return false;
     }
 
-    let nextHistory = taskHistory.filter((entry) => entry.task_id === taskId);
+    let nextHistory = historyAfterWeeklyReconciliation;
     if (data) {
       const mappedEntry = mapTaskHistoryRow(data);
       nextHistory = [
         mappedEntry,
-        ...taskHistory.filter((entry) =>
+        ...historyAfterWeeklyReconciliation.filter((entry) =>
           !(entry.task_id === mappedEntry.task_id && entry.entry_date === mappedEntry.entry_date),
         ),
       ].filter((entry) => entry.task_id === taskId);
@@ -235,14 +398,15 @@ export function useTaskHistoryActions({
         const merged = [
           mappedEntry,
           ...current.filter((entry) =>
-            !(entry.task_id === mappedEntry.task_id && entry.entry_date === mappedEntry.entry_date),
+            !(entry.task_id === mappedEntry.task_id
+              && (entry.entry_date === mappedEntry.entry_date || automaticMissedDateSet.has(entry.entry_date))),
           ),
         ];
         return merged;
       });
 
       if (options?.syncLiveTask) {
-        const result = await syncLiveTaskStatus(taskId, nextHistory, [entryDate]);
+        const result = await syncLiveTaskStatus(taskId, nextHistory, [entryDate], { historyReplacement });
         notifyHistoryMutation(taskId, nextHistory);
         return result;
       }
@@ -256,32 +420,23 @@ export function useTaskHistoryActions({
     taskId: string,
     status: TaskStatus,
     entryDates: string[],
-    options?: { historySnapshot?: DbTaskHistory[]; syncLiveTask?: boolean },
+    options?: { historyEntries?: TaskHistoryInsert[]; historySnapshot?: DbTaskHistory[]; syncLiveTask?: boolean },
   ) {
     const uniqueEntryDates = Array.from(new Set(entryDates)).sort();
     if (uniqueEntryDates.length === 0) {
       return true;
     }
 
-    const historyForSync = deduplicateTaskHistoryByLogicalDate(
-      (options?.historySnapshot ?? taskHistory).filter((entry) => entry.task_id === taskId),
-    );
+    const scopedHistory = options?.historySnapshot
+      ?? (loadTaskHistoryForTasks ? (await loadTaskHistoryForTasks([taskId]))[taskId] ?? [] : taskHistory);
+    const historyForSync = deduplicateTaskHistoryByLogicalDate(scopedHistory.filter((entry) => entry.task_id === taskId));
 
     const shouldKeepEntries = isTaskHistoryStatus(status);
     if (!shouldKeepEntries) {
-      const { error } = await client
-        .from("adhdice_task_history")
-        .delete()
-        .eq("task_id", taskId)
-        .eq("user_id", currentUserId)
-        .in("entry_date", uniqueEntryDates);
-
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
-        return false;
-      }
-
       const selectedDateSet = new Set(uniqueEntryDates);
+      const removedEntries = historyForSync.filter((entry) => selectedDateSet.has(entry.entry_date));
+      const historyRemoval = buildHistoryRemoval(tasks.find((candidate) => candidate.id === taskId), removedEntries);
+      if (!await deleteHistoryDates(taskId, uniqueEntryDates)) return false;
       const nextTaskHistory = historyForSync.filter((entry) => !selectedDateSet.has(entry.entry_date));
       setTaskHistory((current) => {
         const filtered = current.filter((entry) => (
@@ -291,7 +446,7 @@ export function useTaskHistoryActions({
       });
 
       const result = options?.syncLiveTask
-        ? await syncLiveTaskStatus(taskId, nextTaskHistory, uniqueEntryDates)
+        ? await syncLiveTaskStatus(taskId, nextTaskHistory, uniqueEntryDates, { historyRemoval })
         : true;
       notifyHistoryMutation(taskId, nextTaskHistory);
       return result;
@@ -299,17 +454,42 @@ export function useTaskHistoryActions({
 
     const task = tasks.find((candidate) => candidate.id === taskId);
     const existingTaskHistory = historyForSync;
-    const missingMissedDates = !TASK_STATE_ENGINE_INTEGRATION_ENABLED && status === "missed" && task
+    const automaticMissedDatesToClear = getWeeklyAutomaticMissedDateKeys(task, existingTaskHistory, uniqueEntryDates, status);
+    if (!await deleteHistoryDates(taskId, automaticMissedDatesToClear)) return false;
+    const automaticMissedDateSet = new Set(automaticMissedDatesToClear);
+    const historyAfterWeeklyReconciliation = existingTaskHistory.filter((entry) => !automaticMissedDateSet.has(entry.entry_date));
+    const missingMissedDates = !options?.historyEntries
+      && !TASK_STATE_ENGINE_INTEGRATION_ENABLED && status === "missed" && task
       ? uniqueEntryDates.flatMap((entryDate) => buildMissingScheduledMissedHistoryDateKeys(
         task,
-        existingTaskHistory,
+        historyAfterWeeklyReconciliation,
         entryDate,
         currentDayKey,
       ))
       : [];
     const entryDatesToUpsert = Array.from(new Set([...uniqueEntryDates, ...missingMissedDates])).sort();
-    const existingHistoryByDate = new Map(existingTaskHistory.map((entry) => [entry.entry_date, entry]));
-    const payloads: TaskHistoryInsert[] = entryDatesToUpsert.map((entryDate) => {
+    const existingHistoryByDate = new Map(historyAfterWeeklyReconciliation.map((entry) => [entry.entry_date, entry]));
+    const historyReplacement = uniqueEntryDates.length === 1
+      ? (() => {
+        const existingEntry = existingHistoryByDate.get(uniqueEntryDates[0]!);
+        return existingEntry && isTaskHistoryStatus(existingEntry.status)
+          ? {
+            logicalDate: uniqueEntryDates[0]!,
+            nextOutcome: status as HistoryOutcome,
+            previousOutcome: existingEntry.status as HistoryOutcome,
+            occurrenceDueOn: existingEntry.occurrence_due_on ?? uniqueEntryDates[0]!,
+            occurrenceIdentity: existingEntry.occurrence_key,
+          } satisfies HistoryReplacement
+          : undefined;
+      })()
+      : undefined;
+    const payloads: TaskHistoryInsert[] = options?.historyEntries
+      ? options.historyEntries.map((entry) => ({
+        ...entry,
+        task_id: taskId,
+        user_id: currentUserId,
+      }))
+      : entryDatesToUpsert.map((entryDate) => {
       const existingEntry = existingHistoryByDate.get(entryDate);
       const occurrenceMetadata = existingEntry && (existingEntry.occurrence_due_on || existingEntry.occurrence_key)
         ? {
@@ -328,7 +508,7 @@ export function useTaskHistoryActions({
         user_id: currentUserId,
         was_completed: isTaskCompletedForHistory(status),
       };
-    });
+      });
     const { data, error } = await client
       .from("adhdice_task_history")
       .upsert(payloads, { onConflict: "user_id,task_id,entry_date" })
@@ -343,13 +523,13 @@ export function useTaskHistoryActions({
     const updatedDateSet = new Set(mappedEntries.map((entry) => entry.entry_date));
     const nextTaskHistory = [
       ...mappedEntries,
-      ...historyForSync.filter((entry) => !updatedDateSet.has(entry.entry_date)),
+      ...historyAfterWeeklyReconciliation.filter((entry) => !updatedDateSet.has(entry.entry_date)),
     ].filter((entry) => entry.task_id === taskId);
     setTaskHistory((current) => {
       const merged = [
         ...mappedEntries,
         ...current.filter((entry) => (
-          entry.task_id !== taskId || !updatedDateSet.has(entry.entry_date)
+          entry.task_id !== taskId || (!updatedDateSet.has(entry.entry_date) && !automaticMissedDateSet.has(entry.entry_date))
         )),
       ];
       return merged;
@@ -370,7 +550,7 @@ export function useTaskHistoryActions({
       ? await syncLiveTaskStatus(taskId, nextTaskHistory, [
         ...uniqueEntryDates,
         ...(laterCompletionDateKey ? [laterCompletionDateKey] : []),
-      ])
+      ], { historyReplacement })
       : true;
     notifyHistoryMutation(taskId, nextTaskHistory);
     return result;

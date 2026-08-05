@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Copy, FileUp, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
@@ -22,10 +22,20 @@ import {
   buildSavedMealRecipeItem,
   composeHealthFoodStructuredServingLabel,
   formatQuantity,
+  getHealthFoodIdentityKey,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
   searchHealthFoodLibrary,
 } from "@/lib/health-library";
+import {
+  buildHealthCustomFoodImportTemplate,
+  getHealthCustomFoodImportIdentityKey,
+  HEALTH_CUSTOM_FOOD_IMPORT_FIELDS,
+  parseHealthCustomFoodImport,
+  validateHealthCustomFoodImportDraft,
+  type HealthCustomFoodImportDraft,
+  type HealthCustomFoodImportFieldKey,
+} from "@/lib/health-food-import";
 import { getMealSlotLabel, HEALTH_MEAL_SLOTS } from "@/lib/health-utils";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 
@@ -58,6 +68,21 @@ const EMPTY_FOOD_DRAFT: FoodDraft = {
   protein: "",
   carbs: "",
   fat: "",
+};
+
+type FoodImportRow = {
+  draft: HealthCustomFoodImportDraft;
+  id: string;
+  lineStart: number;
+  selected: boolean;
+  unknownFields: string[];
+  warnings: string[];
+};
+
+type FoodImportReview = FoodImportRow & {
+  duplicate: boolean;
+  errors: string[];
+  input: ReturnType<typeof validateHealthCustomFoodImportDraft>["input"];
 };
 
 type RecipeDraft = {
@@ -147,6 +172,11 @@ export function HealthLibraryPanel({
   const [section, setSection] = useState<LibrarySection>("foods");
   const [foodDraft, setFoodDraft] = useState<FoodDraft>(EMPTY_FOOD_DRAFT);
   const [foodSearchQuery, setFoodSearchQuery] = useState("");
+  const [foodImportText, setFoodImportText] = useState("");
+  const [foodImportRows, setFoodImportRows] = useState<FoodImportRow[]>([]);
+  const [foodImportStatus, setFoodImportStatus] = useState("");
+  const [isFoodImportOpen, setIsFoodImportOpen] = useState(false);
+  const [isSavingFoodImport, setIsSavingFoodImport] = useState(false);
   const [ingredientSearchQuery, setIngredientSearchQuery] = useState("");
   const [recipeDraft, setRecipeDraft] = useState<RecipeDraft>(EMPTY_RECIPE_DRAFT);
   const [mealDraft, setMealDraft] = useState<MealDraft>(EMPTY_MEAL_DRAFT);
@@ -181,6 +211,10 @@ export function HealthLibraryPanel({
   const mealPreview = useMemo(
     () => getSavedMealNutrition({ items: mealDraft.items }),
     [mealDraft.items],
+  );
+  const foodImportReviews = useMemo(
+    () => reviewFoodImportRows(foodImportRows, favorites),
+    [favorites, foodImportRows],
   );
 
   async function handleSaveFood() {
@@ -229,6 +263,75 @@ export function HealthLibraryPanel({
     if (saved) {
       setFoodDraft(EMPTY_FOOD_DRAFT);
     }
+  }
+
+  function openFoodImport() {
+    setSection("foods");
+    setIsFoodImportOpen(true);
+    setFoodImportStatus("");
+  }
+
+  async function handleCopyFoodImportTemplate() {
+    const template = buildHealthCustomFoodImportTemplate();
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(template);
+        setFoodImportStatus("Template copied to the clipboard.");
+        return;
+      } catch {
+        // Fall back to inserting the template so the action remains useful.
+      }
+    }
+    setFoodImportText((current) => current.trim() ? current : template);
+    setFoodImportStatus("Template inserted into the empty import box.");
+  }
+
+  function handleParseFoodImport() {
+    const blocks = parseHealthCustomFoodImport(foodImportText);
+    const rows = blocks.map((block, index) => ({
+      draft: block.draft,
+      id: `health-food-import-${index + 1}`,
+      lineStart: block.lineStart,
+      selected: true,
+      unknownFields: block.unknownFields,
+      warnings: block.warnings,
+    }));
+    setFoodImportRows(rows);
+    setFoodImportStatus(rows.length ? `Preview ready for ${rows.length} proposed food${rows.length === 1 ? "" : "s"}.` : "No food blocks were found.");
+  }
+
+  function updateFoodImportField(id: string, key: HealthCustomFoodImportFieldKey, value: string) {
+    setFoodImportRows((current) => current.map((row) => row.id === id
+      ? { ...row, draft: { ...row.draft, [key]: value }, selected: true }
+      : row));
+  }
+
+  function toggleFoodImportRow(id: string) {
+    setFoodImportRows((current) => current.map((row) => row.id === id ? { ...row, selected: !row.selected } : row));
+  }
+
+  async function handleSaveFoodImport() {
+    if (foodImportReviews.length === 0) {
+      return;
+    }
+    setIsSavingFoodImport(true);
+    let imported = 0;
+    let failed = 0;
+    for (const review of foodImportReviews) {
+      if (!review.selected || review.duplicate || review.errors.length > 0 || !review.input) {
+        continue;
+      }
+      if (await saveFood(review.input)) {
+        imported += 1;
+      } else {
+        failed += 1;
+      }
+    }
+    const duplicateCount = foodImportReviews.filter((review) => review.duplicate).length;
+    const invalidCount = foodImportReviews.filter((review) => review.errors.length > 0).length;
+    const skippedCount = foodImportReviews.filter((review) => !review.selected && !review.duplicate && review.errors.length === 0).length;
+    setFoodImportStatus(`Imported ${imported}; skipped ${skippedCount}; duplicates ${duplicateCount}; invalid ${invalidCount}; failed ${failed}.`);
+    setIsSavingFoodImport(false);
   }
 
   async function handleSaveRecipe() {
@@ -280,7 +383,92 @@ export function HealthLibraryPanel({
         </AdhdChip>
       </div>
       {section === "foods" ? (
-        <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+        <>
+          <div className="mb-4 flex flex-wrap gap-2">
+            <AdhdChip contentClassName="gap-1.5" icon={<FileUp aria-hidden="true" className="h-3 w-3" />} onClick={openFoodImport} selected={isFoodImportOpen}>
+              Import Foods
+            </AdhdChip>
+          </div>
+          {isFoodImportOpen ? (
+            <HealthCollapsiblePanel
+              className="mb-5"
+              subtitle="Paste one or more quoted food blocks, review every field, then confirm the import."
+              title="Import custom foods"
+              variant="subpanel"
+            >
+              <div className="grid gap-3">
+                <textarea
+                  className="health-input min-h-64 resize-y font-mono text-xs leading-5"
+                  onChange={(event) => setFoodImportText(event.target.value)}
+                  placeholder={buildHealthCustomFoodImportTemplate()}
+                  value={foodImportText}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <AdhdChip contentClassName="gap-1.5" icon={<Copy aria-hidden="true" className="h-3 w-3" />} onClick={() => { void handleCopyFoodImportTemplate(); }}>
+                    Copy Template
+                  </AdhdChip>
+                  <AdhdChip onClick={handleParseFoodImport} selected>
+                    Preview Foods
+                  </AdhdChip>
+                  <AdhdChip onClick={() => { setFoodImportRows([]); setFoodImportText(""); setFoodImportStatus(""); }}>
+                    Clear Import
+                  </AdhdChip>
+                </div>
+                {foodImportStatus ? <p aria-live="polite" className="text-xs text-[#6d7894] dark:text-white/55">{foodImportStatus}</p> : null}
+              </div>
+              {foodImportReviews.length > 0 ? (
+                <div className="mt-5 grid gap-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-[#6d7894] dark:text-white/55">
+                    <span>
+                      Ready {foodImportReviews.filter((review) => review.selected && !review.duplicate && review.errors.length === 0).length} / {foodImportReviews.length}
+                      {" · "}Duplicates {foodImportReviews.filter((review) => review.duplicate).length}
+                      {" · "}Invalid {foodImportReviews.filter((review) => review.errors.length > 0).length}
+                    </span>
+                    <AdhdChip disabled={isSavingFoodImport} onClick={() => { void handleSaveFoodImport(); }} selected>
+                      {isSavingFoodImport ? "Importing..." : "Confirm Import"}
+                    </AdhdChip>
+                  </div>
+                  {foodImportReviews.map((review, index) => (
+                    <div className="grid gap-3 rounded-[1rem] border border-[#e8e2f7] bg-white/80 p-3 dark:border-white/10 dark:bg-white/[0.04]" key={review.id}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#26324f] dark:text-white">Food {index + 1}</p>
+                          <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">Source line {review.lineStart}</p>
+                        </div>
+                        <label className="flex items-center gap-2 text-xs text-[#66718f] dark:text-white/60">
+                          <input
+                            checked={review.selected && !review.duplicate}
+                            disabled={review.duplicate}
+                            onChange={() => toggleFoodImportRow(review.id)}
+                            type="checkbox"
+                          />
+                          Include
+                        </label>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {HEALTH_CUSTOM_FOOD_IMPORT_FIELDS.map((field) => (
+                          <label className="grid gap-1.5" key={field.key}>
+                            <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">{field.label}</span>
+                            <input
+                              className="health-input"
+                              inputMode={field.inputMode}
+                              onChange={(event) => updateFoodImportField(review.id, field.key, event.target.value)}
+                              value={review.draft[field.key]}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      {review.unknownFields.length > 0 ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">Unknown fields were not mapped: {review.unknownFields.join(", ")}.</p> : null}
+                      {review.warnings.length > 0 ? <p className="text-xs text-[#8a6a31] dark:text-[#e8c878]">{review.warnings.join(" ")}</p> : null}
+                      {review.errors.length > 0 ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">Invalid: {review.errors.join(" ")}</p> : null}
+                      {review.duplicate ? <p className="text-xs text-[#8a6a31] dark:text-[#e8c878]">Likely duplicate. Change the editable fields to make a distinct food before including it.</p> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </HealthCollapsiblePanel>
+          ) : null}
+          <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-4">
             <HealthCollapsiblePanel subtitle="Filter saved custom foods in this library." title="Search custom foods" variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
@@ -385,6 +573,7 @@ export function HealthLibraryPanel({
             </AdhdCard>
           ))} />
         </div>
+        </>
       ) : null}
 
       {section === "recipes" ? (
@@ -536,6 +725,28 @@ export function HealthLibraryPanel({
       ) : null}
     </HealthCollapsiblePanel>
   );
+}
+
+function reviewFoodImportRows(rows: FoodImportRow[], favorites: HealthFoodLibraryItem[]): FoodImportReview[] {
+  const existingIdentities = new Set(
+    favorites.map((food) => getHealthFoodIdentityKey(food)).filter((identity): identity is string => Boolean(identity)),
+  );
+  const selectedIdentities = new Set<string>();
+
+  return rows.map((row) => {
+    const validation = validateHealthCustomFoodImportDraft(row.draft);
+    const identity = getHealthCustomFoodImportIdentityKey(row.draft);
+    const duplicate = Boolean(identity && (existingIdentities.has(identity) || selectedIdentities.has(identity)));
+    if (row.selected && !duplicate && validation.input && identity) {
+      selectedIdentities.add(identity);
+    }
+    return {
+      ...row,
+      duplicate,
+      errors: validation.errors,
+      input: validation.input,
+    };
+  });
 }
 
 function SourcePicker({ empty, items, title }: { empty: string; items: Array<{ id: string; label: string; onAdd: () => void }>; title?: string }) {

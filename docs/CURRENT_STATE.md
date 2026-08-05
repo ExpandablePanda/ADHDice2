@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-03
+Last reviewed: 2026-08-05
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.7.2`.
+- Current working app version: `7.7.10`.
 - Current release group: `7.7.x` Flexible Meal Logging and Editing.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -36,6 +36,7 @@ Role: active working
 - Critical startup History remains narrow to current logical-day/live-occurrence facts; full per-task History is loaded through authenticated, readiness-aware cached consumers.
 - History consumers must expose loading and retry states until the requested task's data is ready.
 - History readiness must not widen unrelated startup work or replace canonical current-state facts with partial detail payloads.
+- Existing task/History contradictions are not repaired by this runtime correction; they require a separate preview-first data-repair ticket after runtime QA.
 
 ### Task Hierarchy and Orchestration
 

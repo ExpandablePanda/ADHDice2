@@ -10,6 +10,7 @@ import type {
   HealthWeightEntry,
 } from "@/lib/database.types";
 import { isSleepCategory } from "@/lib/focus-goals";
+import { formatHealthFoodQuantityUnit } from "@/lib/health-library";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
 
 export type HealthTab = "Today" | "Food" | "Water" | "Journal" | "Weight" | "Sleep" | "Insights" | "Awards";
@@ -235,6 +236,39 @@ export function todayHealthDate() {
   return `${year}-${month}-${day}`;
 }
 
+export function getCurrentHealthDateTimeInputs(now = new Date()) {
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  return { date, time };
+}
+
+export function buildHealthMealLoggedAt(date: string, time: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+    return null;
+  }
+  const localDate = new Date(`${date}T${time}:00`);
+  if (Number.isNaN(localDate.getTime())) {
+    return null;
+  }
+  const [year, month, day] = date.split("-").map((part) => Number.parseInt(part, 10));
+  const [hours, minutes] = time.split(":").map((part) => Number.parseInt(part, 10));
+  if (
+    localDate.getFullYear() !== year
+    || localDate.getMonth() + 1 !== month
+    || localDate.getDate() !== day
+    || localDate.getHours() !== hours
+    || localDate.getMinutes() !== minutes
+  ) {
+    return null;
+  }
+  return localDate.toISOString();
+}
+
+export function isHealthMealTimestampFuture(date: string, time: string, now = new Date()) {
+  const loggedAt = buildHealthMealLoggedAt(date, time);
+  return loggedAt === null || Date.parse(loggedAt) > now.getTime();
+}
+
 export function shiftHealthDate(dateKey: string, days: number) {
   const [year, month, day] = dateKey.split("-").map((part) => Number.parseInt(part ?? "", 10));
   const date = new Date(year, (month ?? 1) - 1, day ?? 1);
@@ -289,6 +323,34 @@ export function formatMealLoggedTime(value: string, locale?: string) {
   return new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }).format(timestamp);
 }
 
+export function formatHealthNutritionNumber(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "—";
+  }
+  return String(Number(value.toFixed(2)));
+}
+
+export function formatHealthMealSummary(entry: HealthMealEntry, locale?: string) {
+  const loggedQuantity = typeof entry.consumed_quantity === "number"
+    && Number.isFinite(entry.consumed_quantity)
+    && entry.consumed_quantity > 0
+    && entry.consumed_unit?.trim()
+    ? formatHealthFoodQuantityUnit(entry.consumed_quantity, entry.consumed_unit)
+    : null;
+  const serving = loggedQuantity ?? (entry.serving_label?.trim() || "No serving");
+  const loggedTime = formatMealLoggedTime(entry.logged_at, locale);
+  const parts = [
+    getMealSlotLabel(entry.meal_slot),
+    serving,
+    `${formatHealthNutritionNumber(entry.calories)} kcal`,
+    `Protein ${formatHealthNutritionNumber(mealNutritionValue(entry, "protein_g"))}g`,
+    `Carbs ${formatHealthNutritionNumber(mealNutritionValue(entry, "carbs_g"))}g`,
+    `Fat ${formatHealthNutritionNumber(mealNutritionValue(entry, "fat_g"))}g`,
+    loggedTime,
+  ];
+  return parts.filter((part): part is string => Boolean(part)).join(" / ");
+}
+
 export function formatWeight(weightKg: number | null, unit: WeightUnit) {
   if (weightKg === null || !Number.isFinite(weightKg)) {
     return `No ${unit === "kg" ? "kg" : "lb"} target`;
@@ -324,6 +386,14 @@ export function sumMealNutritionForDate(entries: HealthMealEntry[], entryDate: s
 
 function finiteOrFallback(value: number | null | undefined, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function mealNutritionValue(entry: HealthMealEntry, key: "calories" | "protein_g" | "carbs_g" | "fat_g") {
+  const snapshotValue = entry.nutrition_snapshot?.[key];
+  if (typeof snapshotValue === "number" && Number.isFinite(snapshotValue)) {
+    return snapshotValue;
+  }
+  return entry[key] ?? 0;
 }
 
 export function sumMetricValueForDate(

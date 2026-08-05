@@ -1,5 +1,6 @@
 import type { Task, TaskHistory, TaskStatus } from "@/lib/database.types";
 import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
+import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
 import { logicalDateForTimestamp } from "./calendar.ts";
 import { adaptLegacyTaskState } from "./legacy-adapter.ts";
 import { evaluateTaskState } from "./engine.ts";
@@ -30,10 +31,11 @@ export function resolveActiveTaskStatuses(input: {
   const enabled = input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED;
   const statusesByTaskId: Record<string, TaskStatus> = {};
   for (const task of input.tasks) {
+    const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.historyByTaskId[task.id] ?? []);
     if (!enabled) {
       statusesByTaskId[task.id] = getTaskDisplayStatusWithHistory(
         task,
-        input.historyByTaskId[task.id] ?? [],
+        normalizedHistory,
         logicalDayKey(input.now, input.timezone, input.logicalDayRollover),
       );
       continue;
@@ -42,7 +44,7 @@ export function resolveActiveTaskStatuses(input: {
       statusesByTaskId[task.id] = task.status;
       continue;
     }
-    const adapted = adaptLegacyTaskState(task, input.historyByTaskId[task.id] ?? [], {
+    const adapted = adaptLegacyTaskState(task, normalizedHistory, {
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,

@@ -229,6 +229,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const taskHistoryByTaskIdRef = useRef<Record<string, DbTaskHistory[]>>({});
   const taskHistoryLoadStateByTaskIdRef = useRef<Record<string, TaskHistoryTaskLoadState>>({});
   const taskHistoryTaskLoadPromisesRef = useRef(new Map<string, OwnedWorkspacePromise<boolean>>());
+  const loadTaskHistoryForTasksRef = useRef<((taskIds: string[]) => Promise<Record<string, DbTaskHistory[]>>) | null>(null);
   const taskHistoryStreakSummaryLoadPromiseRef = useRef<OwnedWorkspacePromise<boolean> | null>(null);
   const taskHistoryStreakSummaryTaskReloadsRef = useRef(new Map<string, OwnedWorkspacePromise<boolean>>());
   const taskReloadInFlightRef = useRef(false);
@@ -683,6 +684,15 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       return await taskLoadPromise;
     }
 
+    async function loadTaskHistoryForTasks(taskIds: string[]) {
+      const uniqueTaskIds = [...new Set(taskIds)].filter(Boolean);
+      await Promise.all(uniqueTaskIds.map((taskId) => loadTaskHistoryForTask(taskId, { force: true, silent: true })));
+      return Object.fromEntries(uniqueTaskIds.map((taskId) => [
+        taskId,
+        [...(taskHistoryByTaskIdRef.current[taskId] ?? [])],
+      ]));
+    }
+
     async function loadTaskHistoryStreakSummaries(nextTasks: Task[] = tasksRef.current) {
       if (!isActive || !canApplyCoreWorkspaceResult()) {
         return false;
@@ -849,6 +859,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     loadFullTaskHistoryRef.current = () => loadTaskHistory({ silent: true, source: "secondary" });
     loadNotesRef.current = () => loadNotes({ silent: true });
     loadTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { silent: true });
+    loadTaskHistoryForTasksRef.current = loadTaskHistoryForTasks;
     refreshTaskHistoryStreakSummaryRef.current = reloadTaskHistoryStreakSummaryForTask;
     retryTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { force: true });
 
@@ -1592,6 +1603,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     async (taskId: string) => await loadTaskHistoryForTaskRef.current?.(taskId) ?? false,
     [],
   );
+  const loadTaskHistoryForTasks = useCallback(
+    async (taskIds: string[]) => await loadTaskHistoryForTasksRef.current?.(taskIds) ?? {},
+    [],
+  );
   const retryTaskHistoryForTask = useCallback(
     async (taskId: string) => await retryTaskHistoryForTaskRef.current?.(taskId) ?? false,
     [],
@@ -1619,6 +1634,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     softRefreshWorkspace,
     loadTaskActualTimeDetails,
     loadTaskHistoryForTask,
+    loadTaskHistoryForTasks,
     retryTaskHistoryForTask,
     loadTaskNotes,
     refreshTaskHistoryStreakSummary,

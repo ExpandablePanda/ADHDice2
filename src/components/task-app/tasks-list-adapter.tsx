@@ -29,7 +29,7 @@ import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-perfor
 import { Fragment, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
 import { TaskDelayPicker } from "./task-delay-picker";
-import { getTaskDisplayStatusWithHistory, formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
+import { formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
 import { TaskStatusCircleRail, formatTaskStatusLabel } from "./task-status-ui";
 import {
@@ -42,7 +42,7 @@ import {
 } from "@/lib/task-repeat";
 import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, groupChildTaskPreviewItemsByStoredCompletion } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
-import { formatLocalDate, todayISO } from "@/lib/utils";
+import { formatLocalDate } from "@/lib/utils";
 import { formatTaskPriorityLevel, getSelectedTaskPriorityToneClass, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
@@ -361,6 +361,7 @@ type TasksTableSourceProps = {
     listDefinitions: TaskListDefinition[];
     listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
     subtasksByTaskId: Record<string, TaskSubtask[]>;
+    taskDisplayStatusByTaskId: Record<string, TaskStatus>;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
     taskHistoryStreakSummaryByTaskId: Record<string, TaskHistoryStreakSummary>;
     todayDateKey: string;
@@ -1260,13 +1261,7 @@ function StepsCardPreview({
             const scheduleLabel = formatStepPreviewSchedule(item);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
             const activePanelMode = activeQuickPanel?.taskId === item.id ? activeQuickPanel.mode : null;
-            const displayStatus = childTask
-              ? getTaskDisplayStatusWithHistory(
-                childTask,
-                taskHistoryByTaskId[childTask.id] ?? [],
-                todayDateKey,
-              )
-              : item.status;
+            const displayStatus = childTask?.status ?? item.status;
             const activePriorities = childTask ? buildTaskPrioritySelection(childTask) : item.priorityFlags;
             const categoryLabel = resolveTaskCategoryLabel({
               currentListLabel: currentListLabel ?? "All tasks",
@@ -1691,6 +1686,7 @@ function StepsCardPreview({
                       onSetDue?.(item.id, schedule);
                       closeQuickPanel();
                     }}
+                    todayDateKey={todayDateKey}
                   />
                 ) : null}
                 {activePanelMode === "priority" ? (
@@ -1962,15 +1958,17 @@ function DueQuickPanel({
   dueTime,
   onClose,
   onSave,
+  todayDateKey,
 }: {
   dueOn: string | null;
   dueTime: string | null;
   onClose: () => void;
   onSave: (next: { dueOn: string; dueTime: string }) => void;
+  todayDateKey: string;
 }) {
   const [dateDraft, setDateDraft] = useState(dueOn ?? "");
   const [timeDraft, setTimeDraft] = useState(dueTime ?? "");
-  const today = todayISO();
+  const today = todayDateKey;
 
   return (
     <QuickPanelShell onClose={onClose} title="Due Date">
@@ -2484,10 +2482,11 @@ function TasksSimpleList({
   const getShowAllSearchStepsKey = (taskId: string) => `${tableProps.hierarchyScopeKey ?? ""}:${taskId}`;
   const tasks = useMemo(
     () => sortListParentTasks(tableProps.tasks, listSortPreference, {
+      taskDisplayStatusByTaskId: tableProps.rowContext.taskDisplayStatusByTaskId,
       taskHistoryByTaskId: tableProps.rowContext.taskHistoryByTaskId,
       todayDateKey: tableProps.rowContext.todayDateKey,
     }),
-    [listSortPreference, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.todayDateKey, tableProps.tasks],
+    [listSortPreference, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.rowContext.taskHistoryByTaskId, tableProps.rowContext.todayDateKey, tableProps.tasks],
   );
   const committedResultRevision = useMemo(
     () => tasks.map((task) => `${task.id}:${task.revision}`).join("|"),
@@ -2977,11 +2976,7 @@ function TasksSimpleList({
             />
           ) : null}
           {windowedTasks.map((task) => {
-        const displayStatus = getTaskDisplayStatusWithHistory(
-          task,
-          rowContext.taskHistoryByTaskId[task.id] ?? [],
-          rowContext.todayDateKey,
-        );
+        const displayStatus = task.status;
         const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
         const dueMeta = dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;
@@ -3384,6 +3379,7 @@ function TasksSimpleList({
                   tableProps.onSetDue?.(task.id, schedule);
                   closeQuickPanel();
                 }}
+                todayDateKey={rowContext.todayDateKey}
               />
             ) : null}
             {activePanelMode === "priority" ? (

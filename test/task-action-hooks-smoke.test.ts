@@ -70,7 +70,10 @@ test("action hooks expose expected callable actions", async () => {
     setMessage: () => {},
     setTasks: () => {},
     sortTasksForUi: (tasks) => tasks,
-    syncTaskHistoryEntry: async () => true,
+    syncTaskHistoryEntry: async () => {
+      dueOnlyHistorySyncCalls += 1;
+      return true;
+    },
     tasks: [],
     updateTaskRowWithLegacyEnergyFallback: async () => ({
       conflict: null,
@@ -105,7 +108,10 @@ test("action hooks expose expected callable actions", async () => {
     setMessage: () => {},
     setTasks: () => {},
     sortTasksForUi: (tasks) => tasks,
-    syncTaskHistoryEntry: async () => true,
+    syncTaskHistoryEntry: async () => {
+      dueOnlyHistorySyncCalls += 1;
+      return true;
+    },
     syncTaskNoteLinks: async () => true,
     tasks: [],
     updateTaskRowWithLegacyEnergyFallback: async () => ({
@@ -644,7 +650,9 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
   });
   let updateValues: Record<string, unknown> | null = null;
   let editorValues: Record<string, unknown> | null = null;
+  let editorForceRecurringFinalization: boolean | null = null;
   let batchValues: Record<string, unknown> | null = null;
+  let dueOnlyHistorySyncCalls = 0;
 
   const update = useTaskUpdateAction({
     currentDayKey: "2026-06-21",
@@ -671,12 +679,54 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
   await update.updateTask(baseTask.id, { due_on: "2026-06-29" });
   assert.equal(updateValues?.status, "not_due");
 
+  const doneTodayTask = createTask({
+    ...baseTask,
+    due_on: "2026-06-21",
+    id: "task-due-preserves-history",
+    status: "done",
+    title: "Keep today's Done History",
+  });
+  const dueOnlyUpdate = useTaskUpdateAction({
+    currentDayKey: "2026-06-21",
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => {
+      dueOnlyHistorySyncCalls += 1;
+      return true;
+    },
+    tasks: [doneTodayTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => ({
+      conflict: null,
+      data: { ...doneTodayTask, ...values, status: doneTodayTask.status },
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+  await dueOnlyUpdate.updateTask(doneTodayTask.id, { due_on: "2026-06-29" });
+  assert.equal(dueOnlyHistorySyncCalls, 0);
+
+  const editorTask = createTask({
+    ...baseTask,
+    due_on: "2026-06-21",
+    id: "task-due-recurring-anchor",
+    repeat_frequency: "daily",
+    status: "done",
+    title: "Keep the manual anchor",
+  });
   const editor = useTaskEditorSaveAction({
     currentDayKey: "2026-06-21",
     focusedTaskIds: [],
     currentUserId: "u1",
     insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
-    onTasksCompleted: async () => {},
+    onTasksCompleted: async (candidates) => {
+      editorForceRecurringFinalization = candidates[0]?.forceRecurringFinalization ?? null;
+    },
     replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
     reconcileOverdueTaskMisses: async () => true,
     saveFocusSelection: async () => {},
@@ -685,12 +735,13 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
     sortTasksForUi: (tasks) => tasks,
     syncTaskHistoryEntry: async () => true,
     syncTaskNoteLinks: async () => true,
-    tasks: [baseTask],
-    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+    tasks: [baseTask, editorTask],
+    updateTaskRowWithLegacyEnergyFallback: async (taskId, values) => {
       editorValues = values as Record<string, unknown>;
+      const savedTask = taskId === editorTask.id ? editorTask : baseTask;
       return {
         conflict: null,
-        data: { ...baseTask, ...values, status: values.status as typeof baseTask.status },
+        data: { ...savedTask, ...values, status: values.status as typeof savedTask.status },
         error: null,
         reappliedOnLatestRevision: false,
         usedActualSecondsFallback: false,
@@ -700,6 +751,11 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
   });
   await editor.saveTaskEditor({ ...baseTask, due_on: "2026-06-24" }, { taskId: baseTask.id });
   assert.equal(editorValues?.status, "upcoming");
+
+  await editor.saveTaskEditor({ ...editorTask, due_on: "2026-06-24" }, { taskId: editorTask.id });
+  assert.equal(editorValues?.status, "done");
+  assert.equal(editorForceRecurringFinalization, null);
+  assert.equal(dueOnlyHistorySyncCalls, 0);
 
   const delayedTask = { ...baseTask, status: "delayed" as const };
   const batch = useTaskBatchEditAction({
@@ -719,7 +775,10 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
     setMessage: () => {},
     setTasks: () => {},
     sortTasksForUi: (tasks) => tasks,
-    syncTaskHistoryEntry: async () => true,
+    syncTaskHistoryEntry: async () => {
+      dueOnlyHistorySyncCalls += 1;
+      return true;
+    },
     tasks: [delayedTask],
     updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
       batchValues = values as Record<string, unknown>;
@@ -751,6 +810,245 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
     tagsMode: "unchanged",
   });
   assert.equal(batchValues?.status, "pending");
+  assert.equal(dueOnlyHistorySyncCalls, 0);
+});
+
+test("manual due-date edits preserve unresolved History and skip reconciliation, rewards, and recurrence callbacks", async () => {
+  const taskId = "task-manual-due-history";
+  const sourceTask = createTask({
+    created_at: "2026-08-01T12:00:00.000Z",
+    due_on: "2026-08-08",
+    id: taskId,
+    repeat_frequency: "daily",
+    status: "upcoming",
+    title: "Manual due anchor",
+  });
+  const missedHistory = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-08-03T12:00:00.000Z",
+    entry_date: "2026-08-03",
+    event_type: "status" as const,
+    id: "history-manual-due-missed",
+    occurrence_due_on: "2026-08-03",
+    occurrence_key: "occurrence:2026-08-03",
+    status: "missed" as const,
+    task_id: taskId,
+    updated_at: "2026-08-03T12:00:00.000Z",
+    user_id: "u1",
+    was_completed: false,
+  };
+  const historySnapshot = JSON.stringify([missedHistory]);
+  let historyWrites = 0;
+  let rewardCallbacks = 0;
+  let overdueReconciliations = 0;
+  let savedUpdate: Record<string, unknown> | null = null;
+
+  const update = useTaskUpdateAction({
+    currentDayKey: "2026-08-08",
+    onTasksCompleted: async () => { rewardCallbacks += 1; },
+    reconcileOverdueTaskMisses: async () => {
+      overdueReconciliations += 1;
+      return true;
+    },
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => {
+      historyWrites += 1;
+      return true;
+    },
+    taskHistory: [missedHistory],
+    tasks: [sourceTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      savedUpdate = values as Record<string, unknown>;
+      return {
+        conflict: null,
+        data: { ...sourceTask, ...values, status: values.status as typeof sourceTask.status },
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+  await update.updateTask(taskId, { due_on: "2026-08-04" });
+  assert.equal(savedUpdate?.due_on, "2026-08-04");
+  assert.equal(savedUpdate?.status, "missed");
+  assert.equal(savedUpdate?.active_occurrence_due_on, undefined);
+  assert.equal(savedUpdate?.active_status_logical_date, undefined);
+  assert.equal(historyWrites, 0);
+  assert.equal(rewardCallbacks, 0);
+  assert.equal(overdueReconciliations, 0);
+  assert.equal(JSON.stringify([missedHistory]), historySnapshot);
+
+  let editorSavedUpdate: Record<string, unknown> | null = null;
+  const editor = useTaskEditorSaveAction({
+    currentDayKey: "2026-08-08",
+    currentUserId: "u1",
+    focusedTaskIds: [],
+    insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
+    onTasksCompleted: async () => { rewardCallbacks += 1; },
+    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    reconcileOverdueTaskMisses: async () => {
+      overdueReconciliations += 1;
+      return true;
+    },
+    saveFocusSelection: async () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => {
+      historyWrites += 1;
+      return true;
+    },
+    syncTaskNoteLinks: async () => true,
+    taskHistory: [missedHistory],
+    tasks: [sourceTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      editorSavedUpdate = values as Record<string, unknown>;
+      return {
+        conflict: null,
+        data: { ...sourceTask, ...values, status: values.status as typeof sourceTask.status },
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+  await editor.saveTaskEditor({ ...sourceTask, due_on: "2026-08-04" }, { taskId });
+  assert.equal(editorSavedUpdate?.status, "missed");
+  assert.equal(editorSavedUpdate?.active_occurrence_due_on, undefined);
+
+  let batchSavedUpdate: Record<string, unknown> | null = null;
+  const batch = useTaskBatchEditAction({
+    clearListTaskSelection: () => {},
+    currentDayKey: "2026-08-08",
+    focusedTaskIds: [],
+    onTasksCompleted: async () => { rewardCallbacks += 1; },
+    parseDayOfMonth: () => null,
+    parsePositiveInteger: (value) => Number.parseInt(value, 10),
+    routeTask: () => {},
+    saveFocusSelection: async () => {},
+    selectedListTasks: [sourceTask],
+    setIsBatchEditModalOpen: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => {
+      historyWrites += 1;
+      return true;
+    },
+    taskHistory: [missedHistory],
+    tasks: [sourceTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      batchSavedUpdate = values as Record<string, unknown>;
+      return {
+        data: { ...sourceTask, ...values, status: values.status as typeof sourceTask.status },
+        error: null,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+  await batch.applyBatchTaskEdit({
+    dueOn: "2026-08-04",
+    dueOnMode: "set",
+    energy: "unchanged",
+    estimatedMinutes: "",
+    estimatedMinutesMode: "unchanged",
+    focusToday: "unchanged",
+    oneStepAtATime: "unchanged",
+    priority: "unchanged",
+    repeatDayOfMonth: "",
+    repeatDaysOfWeek: [],
+    repeatFrequency: "unchanged",
+    repeatInterval: "",
+    route: "unchanged",
+    status: "unchanged",
+    subtasksAutoReset: "unchanged",
+    tags: [],
+    tagsMode: "unchanged",
+  });
+  assert.equal(batchSavedUpdate?.status, "missed");
+  assert.equal(batchSavedUpdate?.active_occurrence_due_on, undefined);
+  assert.equal(historyWrites, 0);
+  assert.equal(rewardCallbacks, 0);
+  assert.equal(overdueReconciliations, 0);
+  assert.equal(JSON.stringify([missedHistory]), historySnapshot);
+});
+
+test("Test D keeps an identity-bearing Missed occurrence through the full due edit chain", async () => {
+  const taskId = "task-test-d";
+  const missedHistory = {
+    counted_as_due_occurrence: false,
+    created_at: "2026-08-03T12:00:00.000Z",
+    entry_date: "2026-08-03",
+    event_type: "status" as const,
+    id: "history-test-d-missed",
+    occurrence_due_on: "2026-08-03",
+    occurrence_key: "occurrence:2026-08-03",
+    status: "missed" as const,
+    task_id: taskId,
+    updated_at: "2026-08-03T12:00:00.000Z",
+    user_id: "u1",
+    was_completed: false,
+  };
+  let committedTask = createTask({
+    created_at: "2026-08-03T12:00:00.000Z",
+    due_on: "2026-08-03",
+    id: taskId,
+    repeat_frequency: "daily",
+    status: "pending",
+    title: "Test D",
+  });
+  let optimisticTasks = [committedTask];
+  let historyWrites = 0;
+  let rewardCallbacks = 0;
+  const saveDueDate = async (dueOn: string) => {
+    const action = useTaskUpdateAction({
+      currentDayKey: "2026-08-04",
+      dayStartTime: "06:00",
+      loadTaskHistoryForTasks: async () => ({ [taskId]: [missedHistory] }),
+      logicalDayNow: "2026-08-04T12:00:00.000Z",
+      onTasksCompleted: async () => { rewardCallbacks += 1; },
+      reconcileOverdueTaskMisses: async () => true,
+      routeTask: () => {},
+      setMessage: () => {},
+      setTasks: (updater) => {
+        optimisticTasks = typeof updater === "function" ? updater(optimisticTasks) : updater;
+      },
+      sortTasksForUi: (tasks) => tasks,
+      syncTaskHistoryEntry: async () => { historyWrites += 1; return true; },
+      tasks: [committedTask],
+      timezone: "America/New_York",
+      updateTaskRowWithLegacyEnergyFallback: async (_taskId, values, options) => {
+        assert.equal(options?.expectedTask?.revision, committedTask.revision);
+        committedTask = { ...committedTask, ...values, revision: committedTask.revision + 1 };
+        return {
+          conflict: null,
+          data: committedTask,
+          error: null,
+          reappliedOnLatestRevision: false,
+          usedActualSecondsFallback: false,
+          usedEnergyFallback: false,
+        };
+      },
+    });
+    await action.updateTask(taskId, { due_on: dueOn });
+    assert.equal(committedTask.status, "missed");
+    assert.equal(optimisticTasks[0]?.status, "missed");
+  };
+
+  await saveDueDate("2026-08-05");
+  await saveDueDate("2026-08-04");
+  assert.equal(committedTask.due_on, "2026-08-04");
+  assert.equal(committedTask.active_occurrence_due_on ?? null, null);
+  assert.equal(committedTask.active_status_logical_date ?? null, null);
+  assert.equal(historyWrites, 0);
+  assert.equal(rewardCallbacks, 0);
+  assert.equal(missedHistory.status, "missed");
 });
 
 test("deleteTasks forwards explicit expected snapshots to guarded trash writes", async () => {

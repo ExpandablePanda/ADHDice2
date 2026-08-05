@@ -175,9 +175,9 @@ test("history saves build the merged occurrence snapshot before syncing the live
   const source = readFileSync("src/hooks/useTaskHistoryActions.ts", "utf8");
   const singleEntrySync = source.slice(source.indexOf("async function syncTaskHistoryEntry"), source.indexOf("async function syncTaskHistoryEntries"));
   const multipleEntrySync = source.slice(source.indexOf("async function syncTaskHistoryEntries"), source.indexOf("return { syncTaskHistoryEntries"));
-  assert.match(singleEntrySync, /const nextHistory = \[\s*mappedEntry,[\s\S]*taskHistory\.filter/);
-  assert.match(singleEntrySync, /syncLiveTaskStatus\(taskId, nextHistory, \[entryDate\]\)/);
-  assert.match(multipleEntrySync, /const nextTaskHistory = \[\s*\.\.\.mappedEntries,[\s\S]*taskHistory\.filter/);
+  assert.match(singleEntrySync, /nextHistory = \[\s*mappedEntry,[\s\S]*historyAfterWeeklyReconciliation\.filter/);
+  assert.match(singleEntrySync, /syncLiveTaskStatus\(taskId, nextHistory, \[entryDate\](?:, \{ historyReplacement \})?\)/);
+  assert.match(multipleEntrySync, /const nextTaskHistory = \[\s*\.\.\.mappedEntries,[\s\S]*historyAfterWeeklyReconciliation\.filter/);
   assert.match(multipleEntrySync, /syncLiveTaskStatus\(taskId, nextTaskHistory/);
 });
 
@@ -236,7 +236,7 @@ test("engine rollover waits for loaded Tasks and History, then reads current inp
   const lifecycle = source.slice(start, end);
   assert.match(lifecycle, /const inputs = rolloverInputsRef\.current/);
   assert.match(lifecycle, /TASK_STATE_ENGINE_INTEGRATION_ENABLED && \(!inputs\.isTasksReady \|\| !inputs\.isTaskHistoryLoaded\)\) return/);
-  assert.match(lifecycle, /history: inputs\.taskHistory[\s\S]*tasks: inputs\.tasks/);
+  assert.match(lifecycle, /history: rolloverHistory[\s\S]*tasks: inputs\.tasks/);
   assert.match(lifecycle, /\}, \[isTaskHistoryLoaded, runDayReset, session\?\.user\?\.id, supabase\]\);/);
   assert.match(lifecycle, /if \(!engineRolloverPlanHasMutations\(plan\)\) return \{ error: null \}/);
   assert.match(lifecycle, /plannedTaskPatches = plan\.tasks\.filter/);

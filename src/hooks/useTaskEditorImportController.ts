@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskEnergy } from "@/lib/database.types";
+import { shiftDateKey } from "@/lib/task-grid-layout";
 import type { TaskUiState } from "@/lib/task-ui-state";
 
 type UseTaskEditorImportControllerInput = {
@@ -18,7 +19,7 @@ type UseTaskEditorImportControllerInput = {
   taskGridLayout: Array<{ id: string; type: string }>;
   taskUiView: TaskUiState["view"];
   tasks: Task[];
-  todayIso: () => string;
+  todayDateKey: string;
   updateTask: (taskId: string, updates: Partial<Task>) => Promise<void>;
 };
 
@@ -38,7 +39,7 @@ export function useTaskEditorImportController({
   taskGridLayout,
   taskUiView,
   tasks,
-  todayIso,
+  todayDateKey,
   updateTask,
 }: UseTaskEditorImportControllerInput) {
   function openNewTaskEditor() {
@@ -61,19 +62,11 @@ export function useTaskEditorImportController({
   }
 
   function setTaskDuePreset(taskId: string, preset: "next_week" | "none" | "today" | "tomorrow") {
-    const baseDate = new Date(`${todayIso()}T12:00:00`);
-    const nextDate = new Date(baseDate);
-    if (preset === "tomorrow") {
-      nextDate.setDate(baseDate.getDate() + 1);
-    } else if (preset === "next_week") {
-      nextDate.setDate(baseDate.getDate() + 7);
-    }
-
     const nextDueOn = preset === "none"
       ? null
       : preset === "today"
-        ? todayIso()
-        : nextDate.toISOString().slice(0, 10);
+        ? todayDateKey
+        : shiftDateKey(todayDateKey, preset === "tomorrow" ? 1 : 7);
     void updateTask(taskId, { due_on: nextDueOn });
   }
 
@@ -87,7 +80,7 @@ export function useTaskEditorImportController({
       return;
     }
 
-    const baseToday = todayIso();
+    const baseToday = todayDateKey;
     const anchorDate = task.due_on ? new Date(`${task.due_on}T12:00:00`) : new Date(`${baseToday}T12:00:00`);
     void updateTask(taskId, {
       repeat_frequency: preset,

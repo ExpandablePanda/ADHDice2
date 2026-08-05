@@ -806,6 +806,14 @@ test("normal status smart lists use visible current status and keep history-stat
       [rolledForwardDoneTodayTask.id]: buildTaskHistoryFacts(taskHistoryByTaskId[rolledForwardDoneTodayTask.id], "2026-06-24"),
       [rolledForwardMissedTodayTask.id]: buildTaskHistoryFacts(taskHistoryByTaskId[rolledForwardMissedTodayTask.id], "2026-06-24"),
     },
+    taskDisplayStatusByTaskId: {
+      [recurringPendingTask.id]: "pending",
+      [recurringDoneTodayTask.id]: "upcoming",
+      [recurringOlderDoneTask.id]: "pending",
+      [inProgressTask.id]: "in_progress",
+      [rolledForwardDoneTodayTask.id]: "upcoming",
+      [rolledForwardMissedTodayTask.id]: "missed",
+    },
     taskHistoryByTaskId,
   });
 
@@ -829,7 +837,7 @@ test("normal status smart lists use visible current status and keep history-stat
   assert.equal(inProgressMemberships.some((membership) => membership.id === "list:due-not-pending"), true);
   assert.equal(rolledForwardDoneTodayMemberships.some((membership) => membership.id === "list:status-done-only"), false);
   assert.equal(rolledForwardDoneTodayMemberships.some((membership) => membership.id === "list:history-done-today-only"), true);
-  assert.equal(rolledForwardMissedTodayMemberships.some((membership) => membership.id === "missed"), false);
+  assert.equal(rolledForwardMissedTodayMemberships.some((membership) => membership.id === "missed"), true);
   assert.equal(rolledForwardMissedTodayMemberships.some((membership) => membership.id === "list:history-missed-today-only"), true);
 });
 

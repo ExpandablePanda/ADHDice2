@@ -1,6 +1,8 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
-import { calcNextDueDateFromDate, getMonthlyOccurrenceDateKey, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import { isScheduledOccurrence, scheduledOccurrences } from "@/lib/task-state-engine/recurrence";
+import type { TaskRecurrence } from "@/lib/task-state-engine/types";
 
 export function isTaskCompletedForHistory(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "complete";
@@ -643,14 +645,56 @@ function isWithinLastWindow(dateKey: string, todayDateKey: string, dayCount: num
   return distance >= 0 && distance < dayCount;
 }
 
-function monthsBetween(startDateKey: string, endDateKey: string) {
-  const start = toDate(startDateKey);
-  const end = toDate(endDateKey);
-  return (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+function fixedRecurrenceForTask(task: Task): Extract<TaskRecurrence, { kind: "weekly" | "monthly" }> | null {
+  const interval = Math.max(1, task.repeat_interval ?? 1);
+  if (task.repeat_frequency === "weekly") {
+    return {
+      kind: "weekly",
+      intervalWeeks: interval,
+      weekdays: task.repeat_days_of_week ?? [],
+      anchorDate: task.due_on,
+    };
+  }
+  if (task.repeat_frequency === "monthly") {
+    return {
+      kind: "monthly",
+      intervalMonths: interval,
+      mode: task.repeat_monthly_mode === "ordinal_weekday" ? "ordinal_weekday" : "day_of_month",
+      dayOfMonth: task.repeat_day_of_month,
+      ordinal: task.repeat_monthly_ordinal,
+      weekday: task.repeat_monthly_weekday,
+      anchorDate: task.due_on,
+    };
+  }
+  return null;
 }
 
-function isAlignedToInterval(distance: number, interval: number) {
-  return ((distance % interval) + interval) % interval === 0;
+function isFixedTaskDueOnDate(task: Task, dateKey: string, includeBeforeDueOn: boolean) {
+  if (!task.due_on) return false;
+  const recurrence = fixedRecurrenceForTask(task);
+  return recurrence
+    ? isScheduledOccurrence(recurrence, task.due_on, dateKey, { includeBeforeDueOn })
+    : false;
+}
+
+/** Resolves a History action to the fixed or rolling occurrence it can satisfy. */
+export function resolveTaskHistoryOccurrenceDueOn(task: Task, dateKey: string) {
+  if (!task.due_on || task.repeat_frequency === "none") {
+    return null;
+  }
+
+  const recurrence = fixedRecurrenceForTask(task);
+  if (!recurrence) {
+    return task.due_on;
+  }
+
+  return scheduledOccurrences(
+    recurrence,
+    task.due_on,
+    dateKey,
+    shiftDateKey(dateKey, 800),
+    { includeBeforeDueOn: true },
+  ).find((candidate) => candidate >= dateKey) ?? null;
 }
 
 export function isTaskDueOnDate(task: Task, dateKey: string) {
@@ -670,32 +714,16 @@ export function isTaskDueOnDate(task: Task, dateKey: string) {
   const interval = Math.max(1, task.repeat_interval ?? 1);
 
   if (isDailyCadenceRepeatFrequency(task.repeat_frequency)) {
-    return isAlignedToInterval(daysBetween(anchorDateKey, dateKey), interval);
+    const distance = daysBetween(anchorDateKey, dateKey);
+    return ((distance % interval) + interval) % interval === 0;
   }
 
   if (task.repeat_frequency === "weekly") {
-    const anchor = toDate(anchorDateKey);
-    const current = toDate(dateKey);
-    const scheduledDays = task.repeat_days_of_week?.length
-      ? task.repeat_days_of_week
-      : [anchor.getDay()];
-    if (!scheduledDays.includes(current.getDay())) {
-      return false;
-    }
-    const anchorWeekStart = new Date(anchor);
-    anchorWeekStart.setDate(anchor.getDate() - anchor.getDay());
-    const currentWeekStart = new Date(current);
-    currentWeekStart.setDate(current.getDate() - current.getDay());
-    const weekDiff = Math.round((currentWeekStart.getTime() - anchorWeekStart.getTime()) / (7 * 86_400_000));
-    return weekDiff >= 0 && isAlignedToInterval(weekDiff, interval);
+    return isFixedTaskDueOnDate(task, dateKey, false);
   }
 
   if (task.repeat_frequency === "monthly") {
-    const monthDiff = monthsBetween(anchorDateKey, dateKey);
-    if (monthDiff < 0 || !isAlignedToInterval(monthDiff, interval)) {
-      return false;
-    }
-    return dateKey === getMonthlyOccurrenceDateKey(task, dateKey);
+    return isFixedTaskDueOnDate(task, dateKey, false);
   }
 
   return false;
@@ -710,35 +738,11 @@ function isHistoricalRecurringDueDate(task: Task, dateKey: string) {
   const interval = Math.max(1, task.repeat_interval ?? 1);
 
   if (isDailyCadenceRepeatFrequency(task.repeat_frequency)) {
-    return isAlignedToInterval(daysBetween(anchorDateKey, dateKey), interval);
+    const distance = daysBetween(anchorDateKey, dateKey);
+    return ((distance % interval) + interval) % interval === 0;
   }
 
-  if (task.repeat_frequency === "weekly") {
-    const anchor = toDate(anchorDateKey);
-    const current = toDate(dateKey);
-    const scheduledDays = task.repeat_days_of_week?.length
-      ? task.repeat_days_of_week
-      : [anchor.getDay()];
-    if (!scheduledDays.includes(current.getDay())) {
-      return false;
-    }
-    const anchorWeekStart = new Date(anchor);
-    anchorWeekStart.setDate(anchor.getDate() - anchor.getDay());
-    const currentWeekStart = new Date(current);
-    currentWeekStart.setDate(current.getDate() - current.getDay());
-    const weekDiff = Math.round((currentWeekStart.getTime() - anchorWeekStart.getTime()) / (7 * 86_400_000));
-    return isAlignedToInterval(weekDiff, interval);
-  }
-
-  if (task.repeat_frequency === "monthly") {
-    const monthDiff = monthsBetween(anchorDateKey, dateKey);
-    if (!isAlignedToInterval(monthDiff, interval)) {
-      return false;
-    }
-    return dateKey === getMonthlyOccurrenceDateKey(task, dateKey);
-  }
-
-  return false;
+  return isFixedTaskDueOnDate(task, dateKey, true);
 }
 
 function isResolvingRecurringHistoryEntry(entry: DbTaskHistory | undefined) {
@@ -786,7 +790,9 @@ export function buildTaskDueDateSet(task: Task, startDateKey: string, endDateKey
 
   let cursor = startDateKey;
   while (compareDateKeys(cursor, endDateKey) <= 0) {
-    if (isTaskDueOnDate(task, cursor)) {
+    const isHistoricalFixedDueDate = (task.repeat_frequency === "weekly" || task.repeat_frequency === "monthly")
+      && isHistoricalRecurringDueDate(task, cursor);
+    if (isTaskDueOnDate(task, cursor) || isHistoricalFixedDueDate) {
       dueDates.add(cursor);
     }
     cursor = shiftDateKey(cursor, 1);

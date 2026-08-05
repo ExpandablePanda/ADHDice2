@@ -266,6 +266,12 @@ function mapHistory(
         ? occurredAt
         : `${logicalDate}T12:00:00.000Z`,
       occurrenceIdentity: occurrenceKey ?? (occurrenceDueOn ? occurrenceIdentity(taskId, occurrenceDueOn) : null),
+      occurrenceDueOn,
+      countedAsDueOccurrence: typeof row.counted_as_due_occurrence === "boolean"
+        ? row.counted_as_due_occurrence
+        : undefined,
+      wasCompleted: typeof row.was_completed === "boolean" ? row.was_completed : undefined,
+      eventType: row.event_type === "completed_permanently" ? "completed_permanently" : "status",
     });
   });
   return mapped;

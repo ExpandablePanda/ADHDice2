@@ -432,6 +432,52 @@ test("weekly recurring history only marks scheduled prior occurrences as due opp
   assert.equal(stats.missedStreak, 1);
 });
 
+test("Weekdays keeps historical Monday-Friday dates due after due_on advances and rejects weekends", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-08-05",
+    id: "weekdays-history-calendar",
+    repeat_days_of_week: [1, 2, 3, 4, 5],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "upcoming",
+    title: "Weekdays history calendar",
+  });
+
+  const dueDates = buildTaskHistoryCalendarDueDateSet(task, "2026-08-01", "2026-08-09", "2026-08-04");
+
+  for (const dateKey of ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"]) {
+    assert.equal(dueDates.has(dateKey), true, dateKey);
+  }
+  for (const dateKey of ["2026-08-01", "2026-08-02", "2026-08-08", "2026-08-09"]) {
+    assert.equal(dueDates.has(dateKey), false, dateKey);
+  }
+});
+
+test("custom weekday arrays remain independent of the advanced fixed cursor", () => {
+  const task = createTask({
+    created_at: "2026-06-01T08:00:00.000Z",
+    due_on: "2026-08-05",
+    id: "custom-weekdays-history-calendar",
+    repeat_days_of_week: [1, 3, 5],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "upcoming",
+    title: "Custom weekdays history calendar",
+  });
+
+  const dueDates = buildTaskHistoryCalendarDueDateSet(task, "2026-08-01", "2026-08-09", "2026-08-04");
+
+  assert.equal(dueDates.has("2026-08-03"), true);
+  assert.equal(dueDates.has("2026-08-04"), false);
+  assert.equal(dueDates.has("2026-08-05"), true);
+  assert.equal(dueDates.has("2026-08-06"), false);
+  assert.equal(dueDates.has("2026-08-07"), true);
+  assert.equal(dueDates.has("2026-08-08"), false);
+});
+
 test("did_my_best still counts as completed for streak calculations", () => {
   const task = createTask({
     created_at: "2026-06-01T08:00:00.000Z",

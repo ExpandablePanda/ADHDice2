@@ -215,6 +215,18 @@ test("count-only foods work without a serving measure", () => {
   assert.equal(result.serving.measureValue, null);
 });
 
+test("one-serving quick entries preserve optional macro totals without a library serving definition", () => {
+  const result = calculateHealthFoodNutrition({
+    nutritionPerServing: { calories: 275, protein_g: 18.5, carbs_g: 22, fat_g: 9.25 },
+    servingQuantity: 1,
+    servingUnit: "serving",
+    consumedQuantity: 1,
+    consumedUnit: "serving",
+  });
+  assert.equal(result.servingFraction, 1);
+  assert.deepEqual(result.nutrientTotals, { calories: 275, protein_g: 18.5, carbs_g: 22, fat_g: 9.25 });
+});
+
 test("supported measurement options always include servings and only expose the food dimension", () => {
   assert.deepEqual(getHealthFoodMeasurementOptions({
     servingMeasureUnit: "g",

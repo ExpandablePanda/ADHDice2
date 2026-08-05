@@ -56,6 +56,140 @@ test("logical day changes exactly at the configured 06:00 rollover", () => {
   assert.equal(logicalDateForTimestamp("2026-07-30T10:00:00Z", "America/New_York", "06:00"), "2026-07-30");
 });
 
+test("fixed Weekdays schedule agrees for historical, current, and future dates", () => {
+  const result = evaluateTaskState(input({
+    calendarEnd: "2026-08-09",
+    calendarStart: "2026-08-01",
+    now: "2026-08-04T14:00:00.000Z",
+    task: task({
+      dueOn: "2026-08-05",
+      recurrence: { kind: "weekly", weekdays: [1, 2, 3, 4, 5], anchorDate: "2026-08-05" },
+    }),
+  }));
+
+  for (const dateKey of ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"]) {
+    assert.equal(result.calendar[dateKey], "scheduled", dateKey);
+  }
+  for (const dateKey of ["2026-08-01", "2026-08-02", "2026-08-08", "2026-08-09"]) {
+    assert.equal(result.calendar[dateKey], "no_entry", dateKey);
+  }
+});
+
+test("a historical Weekdays Missed action remains canonical after due_on advances", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00.000Z",
+    task: task({
+      activeStatus: "upcoming",
+      dueOn: "2026-08-05",
+      recurrence: { kind: "weekly", weekdays: [1, 2, 3, 4, 5], anchorDate: "2026-08-05" },
+    }),
+    action: { type: "record_outcome", logicalDate: "2026-08-03", outcome: "missed" },
+  }));
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.deepEqual(result.proposedHistoryChanges.map((change) => change.type === "insert"
+    ? [change.row.logicalDate, change.row.outcome]
+    : [change.logicalDate, "rejected"]), [["2026-08-03", "missed"]]);
+  assert.equal(result.nextDueDate, "2026-08-05");
+});
+
+test("schedule changes preserve an unresolved identity-bearing Missed occurrence", () => {
+  const missed = history("2026-08-03", "missed", {
+    countedAsDueOccurrence: false,
+    occurrenceIdentity: "task:task-1:occurrence:2026-08-03",
+    occurrenceDueOn: "2026-08-03",
+  });
+  const first = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00.000Z",
+    task: task({ activeStatus: "pending", dueOn: "2026-08-05" }),
+    history: [missed],
+    action: { type: "change_schedule" },
+  }));
+  assert.equal(first.activeStatus, "missed");
+  assert.equal(first.unresolvedOccurrenceIdentity, "task:task-1:occurrence:2026-08-03");
+  assert.equal(first.proposedHistoryChanges.length, 0);
+
+  const second = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00.000Z",
+    task: task({ activeStatus: "missed", dueOn: "2026-08-04" }),
+    history: [missed],
+    action: { type: "change_schedule" },
+  }));
+  assert.equal(second.activeStatus, "missed");
+  assert.equal(second.nextDueDate, "2026-08-04");
+  assert.equal(second.proposedTaskPatch.activeOccurrenceDueOn, undefined);
+  assert.equal(second.proposedTaskPatch.activeStatusLogicalDate, undefined);
+});
+
+test("a schedule change without unresolved Missed derives the new Pending or Upcoming state", () => {
+  const pending = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00.000Z",
+    task: task({ activeStatus: "upcoming", dueOn: "2026-08-05" }),
+    action: { type: "change_schedule" },
+  }));
+  assert.equal(pending.activeStatus, "upcoming");
+
+  const today = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00.000Z",
+    task: task({ activeStatus: "pending", dueOn: "2026-08-04" }),
+    action: { type: "change_schedule" },
+  }));
+  assert.equal(today.activeStatus, "pending");
+});
+
+test("ambiguous identity-less legacy Missed History fails closed", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00.000Z",
+    task: task({
+      activeStatus: "pending",
+      dueOn: "2026-08-05",
+      recurrence: { kind: "weekly", weekdays: [1, 2, 3, 4, 5], anchorDate: "2026-08-05" },
+    }),
+    history: [history("2026-08-03", "missed"), history("2026-08-04", "missed")],
+    action: { type: "change_schedule" },
+  }));
+  assert.equal(result.activeStatus, "missed");
+  assert.equal(result.unresolvedOccurrenceIdentity, null);
+  assert.equal(result.unresolvedOccurrenceDueOn, null);
+  assert.deepEqual(result.proposedHistoryChanges, []);
+});
+
+test("Done and Did My Best consume the unresolved Missed occurrence exactly once", () => {
+  const missed = history("2026-08-03", "missed", {
+    occurrenceIdentity: "task:task-1:occurrence:2026-08-03",
+    occurrenceDueOn: "2026-08-03",
+  });
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const result = evaluateTaskState(input({
+      now: "2026-08-04T14:00:00.000Z",
+      task: task({ activeStatus: "missed", dueOn: "2026-08-04" }),
+      history: [missed],
+      action: { type: "record_outcome", logicalDate: "2026-08-04", outcome },
+    }));
+    const inserted = result.proposedHistoryChanges.find((change) => change.type === "insert");
+    assert.equal(result.unresolvedOccurrenceIdentity, null);
+    assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, missed.occurrenceIdentity);
+    assert.equal(result.proposedHistoryChanges.filter((change) => change.type === "insert").length, 1);
+  }
+});
+
+test("Delayed resolves the occurrence through one coherent engine plan", () => {
+  const missed = history("2026-08-03", "missed", {
+    occurrenceIdentity: "task:task-1:occurrence:2026-08-03",
+    occurrenceDueOn: "2026-08-03",
+  });
+  const result = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00.000Z",
+    task: task({ activeStatus: "missed", dueOn: "2026-08-04" }),
+    history: [missed],
+    action: { type: "record_outcome", logicalDate: "2026-08-04", outcome: "delayed", delayUntilDate: "2026-08-06" },
+  }));
+  const inserted = result.proposedHistoryChanges.find((change) => change.type === "insert");
+  assert.equal(result.unresolvedOccurrenceIdentity, null);
+  assert.equal(result.nextDueDate, "2026-08-06");
+  assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, missed.occurrenceIdentity);
+});
+
 test("open scheduled tasks roll to continuous Missed without advancing due_on", () => {
   const result = evaluateTaskState(input({
     task: task({ dueOn: "2026-07-28", recurrence: { kind: "rolling", intervalDays: 5 } }),
@@ -323,7 +457,102 @@ test("fixed weekly early completion preserves cadence", () => {
   assert.equal(result.nextDueDate, "2026-08-09");
 });
 
-test("late fixed-calendar success satisfies the outstanding occurrence without cadence drift", () => {
+test("an active occurrence finalizes in place and advances the weekly cursor once", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00Z",
+    task: task({
+      activeStatus: "in_progress",
+      activeStatusLogicalDate: "2026-08-04",
+      activeOccurrenceDueOn: "2026-08-04",
+      dueOn: "2026-08-11",
+      recurrence: { kind: "weekly", weekdays: [2], anchorDate: "2026-08-11" },
+    }),
+    action: { type: "record_outcome", outcome: "done" },
+  }));
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.proposedHistoryChanges[0]?.type, "insert");
+  assert.equal(result.proposedHistoryChanges[0]?.type === "insert" ? result.proposedHistoryChanges[0].row.occurrenceIdentity : null, "task:task-1:occurrence:2026-08-04");
+  assert.equal(result.nextDueDate, "2026-08-11");
+  assert.equal(result.activeStatus, "upcoming");
+  assert.equal(result.proposedTaskPatch.activeStatusLogicalDate, null);
+  assert.equal(result.proposedTaskPatch.activeOccurrenceDueOn, null);
+});
+
+test("replacing an existing successful occurrence does not advance the fixed cursor twice", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00Z",
+    task: task({
+      activeStatus: "upcoming",
+      dueOn: "2026-08-11",
+      recurrence: { kind: "weekly", weekdays: [2], anchorDate: "2026-08-11" },
+    }),
+    history: [history("2026-08-04", "done", { occurrenceIdentity: "task:task-1:occurrence:2026-08-04" })],
+    action: {
+      type: "record_outcome",
+      outcome: "done",
+      logicalDate: "2026-08-04",
+      occurrenceDueOn: "2026-08-04",
+      previousOutcome: "done",
+      replaceExisting: true,
+    },
+  }));
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.nextDueDate, "2026-08-11");
+  assert.equal(result.proposedHistoryChanges.filter((change) => change.type === "insert").length, 1);
+});
+
+test("Missed to Done advances from the replaced occurrence and Done to Missed restores automatic state", () => {
+  const recurrence = { kind: "weekly", weekdays: [1, 2, 3, 4, 5], anchorDate: "2026-08-04" } as const;
+  const completed = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00Z",
+    task: task({ activeStatus: "missed", dueOn: "2026-08-03", recurrence }),
+    history: [history("2026-08-03", "missed", { occurrenceIdentity: "task:task-1:occurrence:2026-08-03" })],
+    action: {
+      type: "record_outcome", outcome: "done", logicalDate: "2026-08-03",
+      occurrenceDueOn: "2026-08-03", previousOutcome: "missed", replaceExisting: true,
+    },
+  }));
+  assert.equal(completed.nextDueDate, "2026-08-04");
+  assert.equal(completed.activeStatus, "pending");
+
+  const restored = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00Z",
+    task: task({ activeStatus: "pending", dueOn: "2026-08-04", recurrence }),
+    history: [history("2026-08-03", "done", { occurrenceIdentity: "task:task-1:occurrence:2026-08-03" })],
+    action: {
+      type: "record_outcome", outcome: "missed", logicalDate: "2026-08-03",
+      occurrenceDueOn: "2026-08-03", previousOutcome: "done", replaceExisting: true,
+    },
+  }));
+  assert.equal(restored.nextDueDate, "2026-08-03");
+  assert.equal(restored.activeStatus, "missed");
+  assert.equal(restored.proposedTaskPatch.activeOccurrenceDueOn, undefined);
+  assert.equal(restored.proposedTaskPatch.activeStatusLogicalDate, undefined);
+});
+
+test("Done to Missed preserves a manual future cursor instead of rewinding it", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-04T14:00:00Z",
+    task: task({
+      activeStatus: "upcoming",
+      dueOn: "2026-08-10",
+      recurrence: { kind: "weekly", weekdays: [1, 2, 3, 4, 5], anchorDate: "2026-08-10" },
+    }),
+    history: [history("2026-08-03", "done", { occurrenceIdentity: "task:task-1:occurrence:2026-08-03" })],
+    action: {
+      type: "record_outcome", outcome: "missed", logicalDate: "2026-08-03",
+      occurrenceDueOn: "2026-08-03", previousOutcome: "done", replaceExisting: true,
+    },
+  }));
+
+  assert.equal(result.nextDueDate, "2026-08-10");
+  assert.equal(result.proposedTaskPatch.dueOn, undefined);
+  assert.equal(result.activeStatus, "upcoming");
+});
+
+test("fixed weekly success after the occurrence window belongs to the next occurrence", () => {
   const result = evaluateTaskState(input({
     now: "2026-08-03T14:00:00Z",
     task: task({
@@ -332,8 +561,8 @@ test("late fixed-calendar success satisfies the outstanding occurrence without c
     }),
     action: { type: "record_outcome", outcome: "done", logicalDate: "2026-08-03" },
   }));
-  assert.equal(result.satisfiedOccurrenceIdentity, "task:task-1:occurrence:2026-08-02");
-  assert.equal(result.nextDueDate, "2026-08-09");
+  assert.equal(result.satisfiedOccurrenceIdentity, "task:task-1:occurrence:2026-08-09");
+  assert.equal(result.nextDueDate, "2026-08-16");
 });
 
 test("fixed monthly date and ordinal schedules preserve their configured pattern", () => {
@@ -554,6 +783,17 @@ test("one outcome and one reward identity are allowed per task/logical day", () 
   }));
   assert.equal(result.proposedHistoryChanges[0]?.type, "reject");
   assert.equal(result.rewardEligibility.identity, "task-reward:task-1:2026-07-30:done");
+});
+
+test("a recurring occurrence rejects a second successful resolution", () => {
+  const occurrenceIdentity = "task:task-1:occurrence:2026-07-30";
+  const result = evaluateTaskState(input({
+    task: task({ dueOn: "2026-07-30", recurrence: { kind: "rolling", intervalDays: 1 } }),
+    history: [history("2026-07-30", "done", { occurrenceIdentity, occurrenceDueOn: "2026-07-30" })],
+    action: { type: "record_outcome", outcome: "done", logicalDate: "2026-07-31", occurrenceIdentity },
+  }));
+  assert.match(result.validationErrors[0] ?? "", /already has a successful resolution/);
+  assert.equal(result.proposedHistoryChanges[0]?.type, "reject");
 });
 
 test("repeated engine evaluation is idempotent", () => {

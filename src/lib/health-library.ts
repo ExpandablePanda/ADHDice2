@@ -260,7 +260,7 @@ export function composeHealthFoodServingDefinition({
   const representation = isMeasureOnly
     ? quantityLabel
     : quantityLabel && trimmedUnit.toLowerCase() !== "serving"
-      ? measure ? `${quantityLabel} (${measure})` : quantityLabel
+      ? measure ? `${quantityLabel} / ${measure}` : quantityLabel
       : measure ?? servingLabel?.trim() ?? quantityLabel ?? "1 serving";
   return `1 serving = ${representation || "1 serving"}`;
 }

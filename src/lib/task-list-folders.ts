@@ -1,7 +1,7 @@
 import type { TaskListContainer, TaskListFolder, TaskListRailItem } from "@/lib/database.types";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { TaskListDefinition, TaskListMembership } from "@/lib/task-lists";
-import { isDueToday, isOverdue } from "@/lib/task-cockpit";
+import { todayISO } from "@/lib/utils";
 
 export type TaskListFolderClient = NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
 
@@ -261,6 +261,7 @@ export function buildTaskListFolderCounts(
   tree: Pick<TaskListFolderTree, "descendantListIdsByFolderId" | "folderById">,
   facts: readonly FolderCountTaskFact[],
   visibleTaskIds: ReadonlySet<string>,
+  todayDateKey: string = todayISO(),
 ) {
   const counts = new Map<string, TaskListFolderCounts>();
   for (const folderId of tree.folderById.keys()) {
@@ -271,8 +272,8 @@ export function buildTaskListFolderCounts(
     ));
     counts.set(folderId, {
       containedListCount: listIds.size,
-      dueTodayCount: tasks.filter((fact) => isDueToday(fact.task.due_on)).length,
-      overdueCount: tasks.filter((fact) => isOverdue(fact.task.due_on)).length,
+      dueTodayCount: tasks.filter((fact) => fact.task.due_on === todayDateKey).length,
+      overdueCount: tasks.filter((fact) => Boolean(fact.task.due_on && fact.task.due_on < todayDateKey)).length,
       visibleTaskCount: tasks.length,
     });
   }

@@ -10,7 +10,7 @@ import { useTaskRoutingActions } from "@/hooks/useTaskRoutingActions";
 import { useTaskSubtaskActions } from "@/hooks/useTaskSubtaskActions";
 import { useTaskUpdateAction } from "@/hooks/useTaskUpdateAction";
 import { useTaskListActions } from "@/hooks/useTaskListActions";
-import type { Task, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistoryInsert, TaskStatus } from "@/lib/database.types";
 
 type UseTaskActionsOptions = {
   crud: Omit<Parameters<typeof useTaskCrudActions>[0], "replaceTaskSubtasks">;
@@ -41,8 +41,23 @@ export function useTaskActions({
 }: UseTaskActionsOptions) {
   const routingActions = useTaskRoutingActions(routing);
   const historyActions = useTaskHistoryActions(history);
-  const syncTaskHistoryEntry = (taskId: string, status: TaskStatus, occurrenceTask?: Task | null) =>
-    historyActions.syncTaskHistoryEntry(taskId, status, currentDayKey, { occurrenceTask });
+  const syncTaskHistoryEntry = (
+    taskId: string,
+    status: TaskStatus,
+    occurrenceTask?: Task | null,
+    options?: { historyEntry?: TaskHistoryInsert },
+  ) => historyActions.syncTaskHistoryEntry(taskId, status, options?.historyEntry?.entry_date ?? currentDayKey, {
+    occurrenceTask,
+    historyEntry: options?.historyEntry,
+  });
+  const syncTaskHistoryEntries = (
+    taskId: string,
+    status: TaskStatus,
+    entryDates: string[],
+    options?: { historyEntries?: TaskHistoryInsert[] },
+  ) => historyActions.syncTaskHistoryEntries(taskId, status, entryDates, {
+    historyEntries: options?.historyEntries,
+  });
   const noteLinkActions = useTaskNoteLinkActions(noteLinks);
   const subtaskActions = useTaskSubtaskActions(subtask);
   const crudActions = useTaskCrudActions({
@@ -58,12 +73,14 @@ export function useTaskActions({
     currentDayKey,
     routeTask: routingActions.routeTask,
     syncTaskHistoryEntry,
+    syncTaskHistoryEntries,
   });
   const editorSaveAction = useTaskEditorSaveAction({
     ...editorSave,
     currentDayKey,
     replaceTaskSubtasks: subtaskActions.replaceTaskSubtasks,
     syncTaskHistoryEntry,
+    syncTaskHistoryEntries,
     syncTaskNoteLinks: noteLinkActions.syncTaskNoteLinks,
   });
   const batchEditAction = useTaskBatchEditAction({
@@ -72,6 +89,7 @@ export function useTaskActions({
     routeTask: routingActions.routeTask,
     saveFocusSelection: editorSave.saveFocusSelection,
     syncTaskHistoryEntry,
+    syncTaskHistoryEntries,
   });
   const listActions = useTaskListActions(list);
 

@@ -109,7 +109,7 @@ test("serving definition previews cover count and measure shapes", () => {
     servingUnit: "cracker",
     servingMeasureValue: 30,
     servingMeasureUnit: "g",
-  }), "1 serving = 55 crackers (30 g)");
+  }), "1 serving = 55 crackers / 30 g");
   assert.equal(composeHealthFoodServingDefinition({
     servingQuantity: 2,
     servingUnit: "slice",
@@ -118,6 +118,22 @@ test("serving definition previews cover count and measure shapes", () => {
     servingQuantity: 30,
     servingUnit: "g",
   }), "1 serving = 30 g");
+  assert.equal(composeHealthFoodServingDefinition({
+    servingQuantity: 1,
+    servingUnit: "oz",
+  }), "1 serving = 1 oz");
+  assert.equal(composeHealthFoodServingDefinition({
+    servingQuantity: 1,
+    servingUnit: "bottle",
+    servingMeasureValue: 250,
+    servingMeasureUnit: "ml",
+  }), "1 serving = 1 bottle / 250 mL");
+  assert.equal(composeHealthFoodServingDefinition({
+    servingQuantity: 1,
+    servingUnit: "bottle",
+    servingMeasureValue: 8,
+    servingMeasureUnit: "fl_oz",
+  }), "1 serving = 1 bottle / 8 fl oz");
   assert.equal(composeHealthFoodServingDefinition({
     servingQuantity: 1,
     servingUnit: "serving",
@@ -303,15 +319,16 @@ test("Health Food renders grouped foods, calorie totals, favorite sorting, and g
   assert.match(source, /matchingCustomFoodGroups/);
   assert.match(source, /item\.category\?\.trim\(\) \|\| "Uncategorized"/);
   assert.match(source, /loggedCountByIdentity/);
-  assert.match(source, /Math\.round\(selectedNutrition\.calories\)\} kcal/);
-  assert.match(source, /Math\.round\(slotCaloriesTotal\)\} kcal/);
+  assert.match(source, /formatHealthNutritionNumber\(selectedNutrition\.calories\)/);
+  assert.match(source, /formatHealthNutritionNumber\(slotCaloriesTotal\)/);
   assert.match(source, /progressPercent=\{profile\.calorie_goal/);
   assert.match(source, /setFavoriteFoodStatus\(item\.id, false\)/);
   assert.match(source, /getHealthFoodMeasurementOptions/);
   assert.match(source, /calculateHealthFoodNutrition/);
   assert.match(source, /formatHealthFoodQuantityUnit/);
   assert.match(source, /composeHealthFoodServingDefinition/);
-  assert.match(source, /mealDraft\.measurement === "serving"/);
+  assert.match(source, /formatHealthMealSummary\(entry\)/);
+  assert.doesNotMatch(source, /mealDraft\.measurement === "serving"/);
   assert.match(source, /nutrition_snapshot: calculation\.nutrientTotals/);
   assert.match(source, /mode: "legacy"/);
 });

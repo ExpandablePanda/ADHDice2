@@ -23,7 +23,6 @@ import type {
 } from "@/lib/task-lists";
 import { buildTaskListLookup, evaluateTaskListMemberships, isManualTaskListDestination } from "@/lib/task-lists";
 import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
-import { isDueToday, isOverdue } from "@/lib/task-cockpit";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { isTaskInRecentTrash } from "@/lib/task-trash";
 import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
@@ -162,6 +161,7 @@ export type StableCanonicalTaskIndex = {
   listNameById: ReadonlyMap<string, string>;
   taskById: ReadonlyMap<string, Task>;
   taskListMembershipsByTaskId: Record<string, TaskListMembership[]>;
+  todayDateKey: string;
   validChildTaskIdSet: ReadonlySet<string>;
 };
 
@@ -253,13 +253,13 @@ function matchesNormalizedSearchValues(values: readonly string[] | null | undefi
 const EMPTY_TASKS: Task[] = [];
 const isDevelopment = process.env.NODE_ENV !== "production";
 
-function buildVisibleTaskBaseFacts(task: Task): VisibleTaskBaseFacts {
+function buildVisibleTaskBaseFacts(task: Task, todayDateKey: string): VisibleTaskBaseFacts {
   const isOpenTask = isTaskOpen(task);
   const isDoneTask = isTaskFinished(task);
-  const isOverdueTask = isOpenTask && isOverdue(task.due_on);
+  const isOverdueTask = isOpenTask && Boolean(task.due_on && task.due_on < todayDateKey);
   const isUrgentTask = isOpenTask && isTaskUrgent(task);
   const isLowEnergyTask = isOpenTask && task.energy === "low";
-  const isTodayTask = isOpenTask && task.status !== "missed" && isDueToday(task.due_on);
+  const isTodayTask = isOpenTask && task.status !== "missed" && task.due_on === todayDateKey;
 
   return {
     isDoneTask,
@@ -648,6 +648,7 @@ export function buildStableCanonicalTaskIndex({
     listNameById,
     taskById,
     taskListMembershipsByTaskId,
+    todayDateKey,
     validChildTaskIdSet,
   };
   if (diagnosticDetails) logDevelopmentComputation(diagnosticDetails, performance.now() - startedAt);
@@ -689,7 +690,7 @@ export function queryCanonicalTaskEntityProjection({
   );
 
   const matchesSharedNonSearchFilters = (fact: CanonicalTaskEntityFact) => {
-    const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(fact.task, filter, focusedTaskIds));
+    const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(fact.task, filter, focusedTaskIds, index.todayDateKey));
     const matchesQuick = quickChecks.length === 0
       || (taskUiState.matchAny ? quickChecks.some(Boolean) : quickChecks.every(Boolean));
     const matchesEnergy = taskUiState.energyFilters.length === 0
@@ -924,7 +925,7 @@ export function buildTaskAppWorkspaceFacts({
     counts[task.status] += 1;
     if (!isTaskVisibleInPrimaryViews(task)) return counts;
     visibleTasks.push(task);
-    const facts = buildVisibleTaskBaseFacts(task);
+    const facts = buildVisibleTaskBaseFacts(task, bucketContext.todayDateKey ?? todayISO());
     visibleTaskBaseFactsByTaskId[task.id] = facts;
     for (const tag of task.tags ?? []) tags.add(tag);
     if (facts.isOpenTask) {
@@ -1210,7 +1211,7 @@ export function computeTaskAppDerivedData({
   const matchesTaskFilters = (task: Task, options: { ignoreStatus?: boolean } = {}) => {
     const ignoreStatus = options.ignoreStatus ?? false;
     const includeStepsInStatus = taskUiState.includeStepsByView?.[taskUiState.view] === true;
-    const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(task, filter, focusedTaskIds));
+    const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(task, filter, focusedTaskIds, todayDateKey));
     const matchesQuickFilters = quickChecks.length === 0
       ? true
       : taskUiState.matchAny
@@ -1254,7 +1255,7 @@ export function computeTaskAppDerivedData({
   };
 
   const matchesTaskStructuredFilters = (task: Task) => {
-    const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(task, filter, focusedTaskIds));
+    const quickChecks = taskUiState.quickFilters.map((filter) => matchesTaskQuickFilter(task, filter, focusedTaskIds, todayDateKey));
     const matchesQuickFilters = quickChecks.length === 0
       ? true
       : taskUiState.matchAny
@@ -1378,7 +1379,7 @@ export function computeTaskAppDerivedData({
   if (activePage === "Tasks" && !canReuseMembershipScanForVisibleCounts) {
     for (const task of filteredTasksSorted) {
       const memberships = taskListMembershipsByTaskId[task.id] ?? [];
-      const baseFacts = visibleTaskBaseFactsByTaskId[task.id] ?? buildVisibleTaskBaseFacts(task);
+      const baseFacts = visibleTaskBaseFactsByTaskId[task.id] ?? buildVisibleTaskBaseFacts(task, todayDateKey);
 
       if (baseFacts.isOpenTask) {
         filteredActiveTasks.push(task);

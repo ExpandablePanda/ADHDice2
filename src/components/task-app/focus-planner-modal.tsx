@@ -4,7 +4,6 @@ import { Search } from "lucide-react";
 import { useState } from "react";
 import { ModalShell } from "../modal-shell";
 import { isTaskUrgent } from "@/lib/task-buckets";
-import { isDueToday } from "@/lib/task-cockpit";
 import type { Task } from "@/lib/database.types";
 import { formatTaskMetaLine } from "@/lib/task-formatting";
 
@@ -26,6 +25,7 @@ type FocusPlannerModalProps = {
   onStepChange: (step: FocusPlannerStep) => void;
   step: FocusPlannerStep;
   tasks: Task[];
+  todayDateKey: string;
 };
 
 export function FocusPlannerModalComponent({
@@ -36,6 +36,7 @@ export function FocusPlannerModalComponent({
   onStepChange,
   step,
   tasks,
+  todayDateKey,
 }: FocusPlannerModalProps) {
   const [search, setSearch] = useState("");
   const prompts = [
@@ -46,7 +47,7 @@ export function FocusPlannerModalComponent({
   const filtered = tasks.filter((task) => {
     const matchesSearch = search.trim().length === 0 || task.title.toLowerCase().includes(search.trim().toLowerCase());
     const matchesStep = step === 0
-      ? isDueToday(task.due_on) || isTaskUrgent(task)
+      ? task.due_on === todayDateKey || isTaskUrgent(task)
       : step === 1
         ? isTaskUrgent(task) || task.energy === "high"
         : true;

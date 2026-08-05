@@ -1,6 +1,5 @@
 import type { Task, TaskEnergy, TaskHistory, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
 import { buildEmptyTaskHistoryFacts, getTaskFocusFilterFacts, type TaskHistoryFacts, type TaskHistoryStreakPreset, type TaskHistoryWindowPreset } from "@/lib/task-history";
-import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 
 export type BuiltInTaskListId =
@@ -170,11 +169,10 @@ function getTaskRuleDisplayStatus(task: Task, context: TaskListEvaluationContext
     return cachedStatus;
   }
 
-  return getTaskDisplayStatusWithHistory(
-    task,
-    context.taskHistoryByTaskId[task.id] ?? [],
-    context.todayDateKey,
-  );
+  // Live status belongs to the canonical Task State projection. Isolated
+  // callers without that projection may use the persisted snapshot, but this
+  // list domain must not create a second History-based status authority.
+  return task.status;
 }
 
 function getTaskRuleFocusFacts(task: Task, context: TaskListEvaluationContext) {

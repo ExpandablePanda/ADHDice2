@@ -2,17 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildHealthMealLoggedAt,
   buildDefaultHealthProfile,
   buildWeightGoalForecast,
   buildHealthCoachMessage,
   buildHealthReminderTemplate,
   displayWeightToKilograms,
   formatEditableWeight,
+  formatHealthMealSummary,
+  formatHealthNutritionNumber,
   formatMealLoggedTime,
+  getCurrentHealthDateTimeInputs,
   getEligibleHealthAchievements,
   getHealthSleepDayTotal,
   getSleepFocusSessions,
   kilogramsToDisplayValue,
+  isHealthMealTimestampFuture,
   sumMealNutritionForDate,
 } from "../src/lib/health-utils.ts";
 
@@ -31,6 +36,99 @@ test("target-weight draft display removes conversion noise", () => {
 test("meal logged time formats valid timestamps and omits invalid values", () => {
   assert.equal(formatMealLoggedTime("invalid", "en-US"), null);
   assert.match(formatMealLoggedTime("2026-07-28T12:30:00.000Z", "en-US") ?? "", /\d{1,2}:30/);
+});
+
+test("meal logger defaults and validates local date/time inputs", () => {
+  const now = new Date(2026, 7, 4, 15, 26, 45);
+  assert.deepEqual(getCurrentHealthDateTimeInputs(now), { date: "2026-08-04", time: "15:26" });
+  const loggedAt = buildHealthMealLoggedAt("2026-08-03", "09:12");
+  assert.ok(loggedAt);
+  assert.equal(isHealthMealTimestampFuture("2026-08-03", "09:12", now), false);
+  assert.equal(isHealthMealTimestampFuture("2026-08-04", "15:27", now), true);
+  assert.equal(buildHealthMealLoggedAt("not-a-date", "09:12"), null);
+});
+
+test("health nutrition display numbers round to two decimals without forced zeroes", () => {
+  assert.equal(formatHealthNutritionNumber(152.72727272727272), "152.73");
+  assert.equal(formatHealthNutritionNumber(3), "3");
+  assert.equal(formatHealthNutritionNumber(3.5), "3.5");
+  assert.equal(formatHealthNutritionNumber(null), "—");
+});
+
+test("structured meal summaries use logged quantity and calculated nutrition", () => {
+  const summary = formatHealthMealSummary({
+    attribution: null,
+    barcode: null,
+    brand_name: null,
+    calories: 153,
+    carbs_g: 21.82,
+    consumed_quantity: 60,
+    consumed_unit: "Crackers",
+    created_at: "2026-08-04T06:10:00.000Z",
+    entry_date: "2026-08-04",
+    fat_g: 5.45,
+    food_name: "Goldfish",
+    food_snapshot: {
+      attribution: null,
+      barcode: null,
+      brand_name: null,
+      calories: 140,
+      carbs_g: 20,
+      fat_g: 5,
+      food_category: "Snacks",
+      food_name: "Goldfish",
+      provider: "manual",
+      provider_item_id: null,
+      serving_label: "55 Crackers / 30 g",
+      serving_measure_unit: "g",
+      serving_measure_value: 30,
+      serving_quantity: 55,
+      serving_unit: "Crackers",
+      source_food_id: "food-1",
+      protein_g: 2,
+    },
+    id: "meal-structured",
+    logged_at: "2026-08-04T06:10:00.000Z",
+    meal_slot: "breakfast",
+    nutrition_snapshot: {
+      calories: 152.72727272727272,
+      carbs_g: 21.818181818181817,
+      fat_g: 5.454545454545454,
+      protein_g: 3.272727272727273,
+    },
+    protein_g: 3.27,
+    provider: "manual",
+    provider_item_id: null,
+    serving_label: "60 Crackers / 55 Crackers / 30 g",
+    updated_at: "2026-08-04T06:10:00.000Z",
+    user_id: "user-1",
+  }, "en-US");
+
+  assert.match(summary, /^Breakfast \/ 60 Crackers \/ 153 kcal \/ Protein 3\.27g \/ Carbs 21\.82g \/ Fat 5\.45g \/ \d{1,2}:10/);
+  assert.doesNotMatch(summary, /55 Crackers|30 g/);
+});
+
+test("legacy meal summaries fall back safely when structured quantity data is absent", () => {
+  assert.equal(formatHealthMealSummary({
+    attribution: null,
+    barcode: null,
+    brand_name: null,
+    calories: 3,
+    carbs_g: 4,
+    created_at: "2026-08-04T06:10:00.000Z",
+    entry_date: "2026-08-04",
+    fat_g: 1.5,
+    food_name: "Legacy food",
+    id: "meal-legacy",
+    logged_at: "invalid",
+    meal_slot: "lunch",
+    protein_g: 2,
+    provider: "manual",
+    provider_item_id: null,
+    serving_label: "1 bowl",
+    updated_at: "2026-08-04T06:10:00.000Z",
+    user_id: "user-1",
+  }), "Lunch / 1 bowl / 3 kcal / Protein 2g / Carbs 4g / Fat 1.5g");
 });
 
 test("daily meal totals prefer immutable calculated snapshots and fall back for legacy meals", () => {

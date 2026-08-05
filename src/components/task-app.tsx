@@ -181,6 +181,7 @@ import {
   createEngineRolloverPlan,
   engineRolloverPlanHasMutations,
   evaluateTaskActionAuthority,
+  taskStateHistoryRowToInsert,
   projectTasksForActiveStatusRead,
   resolveActiveTaskStatuses,
   TASK_STATE_ENGINE_INTEGRATION_ENABLED,
@@ -266,6 +267,7 @@ import {
   buildTaskHistoryFacts,
   computeTaskHistoryStats,
   computeTaskSpecificHistoryStats,
+  deduplicateTaskHistoryByLogicalDate,
   isTaskCompletedForHistory,
   isTaskHistoryStatus,
   mapTaskHistoryRow,
@@ -572,7 +574,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.2";
+const APP_VERSION = "7.7.10";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1677,6 +1679,7 @@ export function TaskApp() {
     isWorkspaceLoading,
     loadTaskActualTimeDetails,
     loadTaskHistoryForTask,
+    loadTaskHistoryForTasks,
     loadTaskNotes,
     prepareTaskMutation,
     reconcileRolloverWorkspace,
@@ -2313,7 +2316,7 @@ export function TaskApp() {
     taskRolloverCoordinator.setOwner(supabase, session?.user?.id ?? null);
   }, [session?.user?.id, supabase]);
 
-  const runDayReset = useCallback(async (source: "initial_load" | "visibility" | "pageshow") => {
+  const runDayReset = useCallback(async (source: "initial_load" | "visibility" | "pageshow" | "timer") => {
     if (source !== "initial_load") await prepareTaskMutation();
     const inputs = rolloverInputsRef.current;
     const client = supabase;
@@ -2355,8 +2358,16 @@ export function TaskApp() {
           error: { message: string } | null;
         }> };
         if (TASK_STATE_ENGINE_INTEGRATION_ENABLED) {
+          const rolloverTaskIds = inputs.tasks
+            .filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed")
+            .map((candidate) => candidate.id);
+          const scopedRolloverHistory = await loadTaskHistoryForTasks(rolloverTaskIds);
+          const rolloverHistory = deduplicateTaskHistoryByLogicalDate([
+            ...inputs.taskHistory,
+            ...Object.values(scopedRolloverHistory).flat(),
+          ]);
           const plan = createEngineRolloverPlan({
-            history: inputs.taskHistory,
+            history: rolloverHistory,
             includeDiagnostics: diagnosticsEnabled,
             now: new Date(),
             rolloverTime: inputs.dayStartTime,
@@ -2423,7 +2434,7 @@ export function TaskApp() {
         await reconcileRolloverWorkspace();
       },
     });
-  }, [prepareTaskMutation, reconcileRolloverWorkspace, session?.user?.id, supabase]);
+  }, [loadTaskHistoryForTasks, prepareTaskMutation, reconcileRolloverWorkspace, session?.user?.id, supabase]);
 
   useEffect(() => {
     const client = supabase;
@@ -2444,9 +2455,11 @@ export function TaskApp() {
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("pageshow", handlePageShow);
+    const intervalId = window.setInterval(() => { void runDayReset("timer"); }, 60_000);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pageshow", handlePageShow);
+      window.clearInterval(intervalId);
     };
   }, [isTaskHistoryLoaded, runDayReset, session?.user?.id, supabase]);
   const visibleTaskSubtasks = useMemo(
@@ -2578,14 +2591,20 @@ export function TaskApp() {
     [compatibilityRoutingMemberships, taskListManualMemberships],
   );
   const taskHistoryByTaskId = useMemo(
-    () => taskStateHistory.reduce<Record<string, typeof taskStateHistory>>((accumulator, entry) => {
-      if (!accumulator[entry.task_id]) {
-        accumulator[entry.task_id] = [];
-      }
-      accumulator[entry.task_id].push(entry);
-      return accumulator;
-    }, {}),
-    [taskStateHistory],
+    () => {
+      const taskIds = new Set([
+        ...taskStateHistory.map((entry) => entry.task_id),
+        ...Object.keys(taskHistoryModalHistoryByTaskId),
+      ]);
+      return Object.fromEntries([...taskIds].map((taskId) => [
+        taskId,
+        deduplicateTaskHistoryByLogicalDate([
+          ...taskStateHistory.filter((entry) => entry.task_id === taskId),
+          ...(taskHistoryModalHistoryByTaskId[taskId] ?? []),
+        ]),
+      ]));
+    },
+    [taskHistoryModalHistoryByTaskId, taskStateHistory],
   );
   const taskHistoryFactsByTaskId = useMemo(
     () => Object.fromEntries(
@@ -2730,16 +2749,17 @@ export function TaskApp() {
     currentStreakByTaskId,
     focusedTaskIds: focusedTaskIdSet,
     hasStepsByTaskId,
-    isDueToday,
+    isDueToday: (date) => date === todayKey,
     isDueTomorrow: (date) => date === shiftDateKey(todayKey, 1),
-    isLater,
+    isLater: (date) => Boolean(date && date > shiftDateKey(todayKey, 1)),
     isOpen: isTaskOpen,
-    isOverdue,
+    isOverdue: (date) => Boolean(date && date < todayKey),
     historyFactsByTaskId: taskHistoryFactsByTaskId,
     manualMembershipsByTaskId,
+    taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     todayDateKey: todayKey,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -2770,7 +2790,8 @@ export function TaskApp() {
   const bucketContext = useMemo(() => ({
     focusedTaskIds: focusedTaskIdSet,
     routing: taskRouting,
-  }), [focusedTaskIdSet, taskRouting]);
+    todayDateKey: todayKey,
+  }), [focusedTaskIdSet, taskRouting, todayKey]);
   const listMembershipRevision = useMemo(
     () => createProjectionDomainRevision("lists-memberships", {
       lists: availableTaskLists,
@@ -3118,8 +3139,9 @@ export function TaskApp() {
           task: fact.task,
         })),
       activePrimaryFacetVisibleEntityIds,
+      todayKey,
     ),
-    [activePrimaryFacetVisibleEntityIds, canonicalEntityProjection.entityFactsById, canonicalTaskListRailTree],
+    [activePrimaryFacetVisibleEntityIds, canonicalEntityProjection.entityFactsById, canonicalTaskListRailTree, todayKey],
   );
   const taskListRailStructureOptions = useMemo(() => {
     const rootContainerRevision = getTaskListContainerRevision(taskListContainers, null);
@@ -3231,6 +3253,7 @@ export function TaskApp() {
     doneTasks,
     focusedTaskIds,
     tasks,
+    todayDateKey: todayKey,
     todayTasks,
     urgentTasks,
   }, momentumView);
@@ -3282,6 +3305,7 @@ export function TaskApp() {
     listDefinitions: availableTaskLists,
     listMembershipsByTaskId: taskListMembershipsByTaskId,
     subtasksByTaskId: taskSubtasksByTaskId,
+    taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
     todayDateKey: todayKey,
@@ -3293,6 +3317,7 @@ export function TaskApp() {
     taskLinkedNotesByTaskId,
     taskListMembershipsByTaskId,
     taskSubtasksByTaskId,
+    taskDisplayStatusByTaskId,
     todayKey,
   ]);
   const taskHighlightMatches = useMemo(
@@ -3607,7 +3632,10 @@ export function TaskApp() {
     },
     batchEdit: {
       clearListTaskSelection,
+      dayStartTime,
       focusedTaskIds,
+      loadTaskHistoryForTasks,
+      logicalDayNow: new Date(logicalDayNow),
       onTasksCompleted: queueTaskRewards,
       parseDayOfMonth,
       parsePositiveInteger,
@@ -3616,7 +3644,9 @@ export function TaskApp() {
       setMessage,
       setTasks,
       sortTasksForUi,
+      taskHistory,
       tasks,
+      timezone: userTimeZone,
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     list: {
@@ -3635,6 +3665,7 @@ export function TaskApp() {
     },
     editorSave: {
       currentUserId: currentUserIdText,
+      dayStartTime,
       focusedTaskIds,
       insertTaskRowWithLegacyEnergyFallback: (payload) => insertTaskRowWithLegacyEnergyFallback(
         client,
@@ -3642,12 +3673,16 @@ export function TaskApp() {
         isMissingTaskEnergyNoneEnumError,
       ),
       onTasksCompleted: queueTaskRewards,
+      loadTaskHistoryForTasks,
+      logicalDayNow: new Date(logicalDayNow),
       reconcileOverdueTaskMisses,
       saveFocusSelection,
       setMessage,
       setTasks,
       sortTasksForUi,
+      taskHistory,
       tasks,
+      timezone: userTimeZone,
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
     history: {
@@ -3656,6 +3691,7 @@ export function TaskApp() {
       currentUserId: currentUserIdText,
       currentDayKey: todayKey,
       dayStartTime,
+      loadTaskHistoryForTasks,
       isTaskCompletedForHistory,
       isTaskHistoryStatus,
       mapTaskHistoryRow,
@@ -3735,11 +3771,16 @@ export function TaskApp() {
         return true;
       },
       onTasksCompleted: queueTaskRewards,
+      dayStartTime,
+      logicalDayNow: new Date(logicalDayNow),
+      loadTaskHistoryForTasks,
       reconcileOverdueTaskMisses,
       setMessage: setTaskUpdateMessage,
       setTasks,
       sortTasksForUi,
+      taskHistory,
       tasks,
+      timezone: userTimeZone,
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
@@ -3860,7 +3901,7 @@ export function TaskApp() {
     taskGridLayout,
     taskUiView: taskUiState.view,
     tasks,
-    todayIso: todayISO,
+    todayDateKey: todayKey,
     updateTask: async (taskId, updates) => {
       await updateTask(taskId, updates);
     },
@@ -4446,25 +4487,37 @@ export function TaskApp() {
     const delayDays = nextDueOn
       ? Math.round((Date.parse(`${nextDueOn}T00:00:00.000Z`) - Date.parse(`${todayKey}T00:00:00.000Z`)) / 86_400_000)
       : null;
-    const delayAuthority = delayDays && delayDays > 0
+    const scopedHistory = (await loadTaskHistoryForTasks([task.id]))[task.id] ?? [];
+    const delayAuthority = (delayDays && delayDays > 0) || nextDueOn === null
       ? evaluateTaskActionAuthority({
-        history: taskHistory.filter((entry) => entry.task_id === task.id),
+        history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: new Date(logicalDayNow),
-        delayDays,
+        ...(delayDays && delayDays > 0 ? { delayDays } : { delayUntilDate: null }),
         outcome: "delayed",
         outcomeDate: todayKey,
         task,
         timezone: userTimeZone,
       })
       : null;
-    const didDelay = await applyTaskMutationWithoutHistory(
+    if (!delayAuthority || delayAuthority.validationErrors.length > 0) {
+      setMessage({ tone: "warn", text: delayAuthority?.validationErrors[0] ?? "This task cannot be delayed." });
+      return false;
+    }
+    const didDelay = await updateTask(
       taskId,
       {
         due_on: nextDueOn,
-        ...(delayAuthority?.persistableTaskPatch.status ? { status: delayAuthority.persistableTaskPatch.status } : { status: "delayed" }),
+        ...delayAuthority.mutationPlan.taskUpdate,
       },
-      { expectedTask: task },
+      {
+        expectedTask: task,
+        engineManaged: true,
+        historyStatus: "delayed",
+        historyEntry: delayAuthority.mutationPlan.historyInserts.find((entry) => entry.status === "delayed"),
+        historyEntries: delayAuthority.mutationPlan.historyInserts,
+        rewardEligible: delayAuthority.rewardEligibility.eligible,
+      },
     );
     if (!didDelay) {
       return false;
@@ -4475,7 +4528,7 @@ export function TaskApp() {
       text: nextDueOn ? `"${task.title}" was delayed until ${nextDueOn}.` : `"${task.title}" was benched without a date.`,
     });
     return true;
-  }, [applyTaskMutationWithoutHistory, dayStartTime, getTaskDelayAnchorDate, logicalDayNow, setMessage, taskHistory, tasks, todayKey, userTimeZone]);
+  }, [dayStartTime, getTaskDelayAnchorDate, loadTaskHistoryForTasks, logicalDayNow, setMessage, tasks, todayKey, updateTask, userTimeZone]);
 
   const delaySameTableTask = useCallback(async (taskId: string, days: number) => {
     const task = tasks.find((entry) => entry.id === taskId);
@@ -5378,7 +5431,7 @@ export function TaskApp() {
       }
     }
 
-    if (shouldReconcileOverdueTaskMisses(task, todayKey)) {
+    if (!TASK_STATE_ENGINE_INTEGRATION_ENABLED && shouldReconcileOverdueTaskMisses(task, todayKey)) {
       const historyReconciled = await reconcileOverdueTaskMisses(task);
       if (!historyReconciled) {
         return false;
@@ -5423,8 +5476,9 @@ export function TaskApp() {
       return true;
     }
 
+    const scopedHistory = (await loadTaskHistoryForTasks([task.id]))[task.id] ?? [];
     const completeAuthority = evaluateTaskActionAuthority({
-      history: taskHistory.filter((entry) => entry.task_id === task.id),
+      history: scopedHistory,
       logicalDayRollover: dayStartTime,
       now: new Date(logicalDayNow),
       outcome: "complete",
@@ -5461,17 +5515,21 @@ export function TaskApp() {
 
     const linkedNoteIds = completeAction.linkedNoteIds ?? [];
     const subtasks = completeAction.subtasks ?? [];
-    const historyPayload = buildCompleteHistoryPayload({
-      due_on: completeUpdateValues.due_on ?? task.due_on,
-      id: task.id,
-      repeat_frequency: task.repeat_frequency,
-    }, todayKey, session.user.id);
-    const { data: historyRows, error: historyError } = await client
-      .from("adhdice_task_history")
-      .upsert([historyPayload], { onConflict: "user_id,task_id,entry_date" })
-      .select("*");
+    const historyEntries = completeAuthority?.mutationPlan.historyInserts.length
+      ? completeAuthority.mutationPlan.historyInserts
+      : [buildCompleteHistoryPayload({
+        due_on: completeUpdateValues.due_on ?? task.due_on,
+        id: task.id,
+        repeat_frequency: task.repeat_frequency,
+      }, todayKey, session.user.id)];
+    const historySaved = await syncTaskHistoryEntries(
+      task.id,
+      "complete",
+      historyEntries.map((entry) => entry.entry_date),
+      { historyEntries },
+    );
 
-    if (historyError) {
+    if (!historySaved) {
       await runGuardedTaskRowUpdate(task.id, {
         completed_at: task.completed_at,
         repeat_day_of_month: task.repeat_day_of_month,
@@ -5481,7 +5539,7 @@ export function TaskApp() {
         status: task.status,
         trashed_at: task.trashed_at,
       }, { expectedTask: data });
-      return fail(historyError.message);
+      return fail("Task was updated, but its History could not be saved.");
     }
 
     if (subtasks.length > 0) {
@@ -5499,29 +5557,17 @@ export function TaskApp() {
     }
 
     setTasks((current) => sortTasksForUi(current.map((currentTask) => currentTask.id === task.id ? data : currentTask)));
-    if ((historyRows ?? []).length > 0) {
-      setTaskHistory((current) => {
-        const byKey = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
-        for (const row of historyRows ?? []) {
-          byKey.set(`${row.task_id}:${row.entry_date}`, row);
-        }
-        return [...byKey.values()];
-      });
-      updateTaskHistoryForTask(task.id, (current) => {
-        const byKey = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
-        for (const row of historyRows ?? []) {
-          byKey.set(`${row.task_id}:${row.entry_date}`, row);
-        }
-        return [...byKey.values()];
-      });
-    }
-
     routeTask(task.id, null);
     if (focusedTaskIds.includes(task.id)) {
       void saveFocusSelection(focusedTaskIds.filter((id) => id !== task.id));
     }
 
-    await queueTaskRewards([{ previousStatus: task.status, task: data }]);
+    await queueTaskRewards([{
+      engineManaged: Boolean(completeAuthority),
+      previousStatus: task.status,
+      rewardEligible: completeAuthority?.rewardEligibility.eligible,
+      task: data,
+    }]);
 
     if (completeAction.source === "editor") {
       closeTaskEditorWithReset();
@@ -5630,9 +5676,10 @@ export function TaskApp() {
       }
     }
 
-    const action = status === "done" || status === "did_my_best" || status === "missed"
+    const scopedHistory = (await loadTaskHistoryForTasks([task.id]))[task.id] ?? [];
+    const action = status === "done" || status === "did_my_best" || status === "missed" || status === "delayed"
       ? evaluateTaskActionAuthority({
-        history: taskHistory.filter((entry) => entry.task_id === task.id),
+        history: scopedHistory,
         logicalDayRollover: dayStartTime,
         now: new Date(logicalDayNow),
         outcome: status,
@@ -5658,20 +5705,13 @@ export function TaskApp() {
         setTaskHistory((current) => {
           const next = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
           for (const row of optimisticActionHistoryRows) {
-            const occurrenceDueOn = row.occurrenceIdentity?.split(":").at(-1) ?? null;
+            const historyInsert = taskStateHistoryRowToInsert(row, currentUserIdText);
             next.set(`${row.taskId}:${row.logicalDate}`, {
-              counted_as_due_occurrence: Boolean(occurrenceDueOn),
+              ...historyInsert,
               created_at: row.occurredAt,
               entry_date: row.logicalDate,
-              event_type: "status",
               id: row.id,
-              occurrence_due_on: occurrenceDueOn,
-              occurrence_key: occurrenceDueOn ? `occurrence:${occurrenceDueOn}` : null,
-              status: row.outcome,
-              task_id: row.taskId,
               updated_at: row.occurredAt,
-              user_id: currentUserIdText,
-              was_completed: row.outcome === "done" || row.outcome === "did_my_best" || row.outcome === "complete",
             });
           }
           return [...next.values()];
@@ -5679,20 +5719,13 @@ export function TaskApp() {
         updateTaskHistoryForTask(task.id, (current) => {
           const next = new Map(current.map((entry) => [`${entry.task_id}:${entry.entry_date}`, entry] as const));
           for (const row of optimisticActionHistoryRows) {
-            const occurrenceDueOn = row.occurrenceIdentity?.split(":").at(-1) ?? null;
+            const historyInsert = taskStateHistoryRowToInsert(row, currentUserIdText);
             next.set(`${row.taskId}:${row.logicalDate}`, {
-              counted_as_due_occurrence: Boolean(occurrenceDueOn),
+              ...historyInsert,
               created_at: row.occurredAt,
               entry_date: row.logicalDate,
-              event_type: "status",
               id: row.id,
-              occurrence_due_on: occurrenceDueOn,
-              occurrence_key: occurrenceDueOn ? `occurrence:${occurrenceDueOn}` : null,
-              status: row.outcome,
-              task_id: row.taskId,
               updated_at: row.occurredAt,
-              user_id: currentUserIdText,
-              was_completed: row.outcome === "done" || row.outcome === "did_my_best" || row.outcome === "complete",
             });
           }
           return [...next.values()];
@@ -5703,7 +5736,16 @@ export function TaskApp() {
       task.id,
       values,
       action || bypassTimedCompletion || status === "archived" || status === "trashed"
-        ? { expectedTask: task, ...(action ? { historyStatus: actionHistoryStatus } : {}) }
+        ? {
+          expectedTask: task,
+          ...(action ? {
+            engineManaged: true,
+            historyStatus: actionHistoryStatus,
+            historyEntry: action.mutationPlan.historyInserts.find((entry) => entry.status === status),
+            historyEntries: action.mutationPlan.historyInserts,
+            rewardEligible: action.rewardEligibility.eligible,
+          } : {}),
+        }
         : undefined,
     );
     if (action && updated !== true) {
@@ -6059,6 +6101,7 @@ export function TaskApp() {
     onStepChange: setFocusPlannerStep,
     step: focusPlannerStep,
     tasks: focusPlannerTasks.length > 0 ? focusPlannerTasks : activeTasks,
+    todayDateKey: todayKey,
   } : null;
 
   const momentumFlow = isMomentumListOpen ? {
@@ -6084,6 +6127,7 @@ export function TaskApp() {
     statusResetSignal: taskEditorStatusResetSignal,
     subtasks: selectedTaskForEditor ? rawTaskSubtasksByTaskId[selectedTaskForEditor.id] ?? [] : [],
     task: selectedTaskForEditor,
+    todayDateKey: todayKey,
   } : null;
 
   const taskHistoryModalTask = taskHistoryModalTaskId
@@ -6879,7 +6923,7 @@ export function TaskApp() {
                 listMembershipsByTaskId={taskListMembershipsByTaskId}
                 milestones={milestoneData.milestones}
                 taskHistory={taskHistory}
-                tasks={tasks}
+                tasks={tasksForActiveStatusRead}
                 todayDateKey={todayKey}
                 userId={currentUserId}
               />
@@ -7338,7 +7382,8 @@ export function TaskApp() {
             focusHistory={focusHistory}
             taskHistory={taskHistory}
             taskHistoryStats={taskHistoryStats}
-            tasks={tasks}
+            tasks={tasksForActiveStatusRead}
+            todayDateKey={todayKey}
           />
         ) : activePage === "Notes" ? (
           <NotesPage

@@ -31,11 +31,12 @@ export function getMomentumMetric(
     tasks: Task[];
     todayTasks: Task[];
     urgentTasks: Task[];
+    todayDateKey?: string;
   },
   view: MomentumView,
 ) {
   if (view === "today") {
-    const doneTasks = data.doneTasks.filter((task) => isDueToday(task.due_on));
+    const doneTasks = data.doneTasks.filter((task) => isDueToday(task.due_on, data.todayDateKey));
     const remainingTasks = data.todayTasks;
     const totalCount = doneTasks.length + remainingTasks.length;
     const percent = totalCount === 0 ? 0 : Math.round((doneTasks.length / totalCount) * 100);

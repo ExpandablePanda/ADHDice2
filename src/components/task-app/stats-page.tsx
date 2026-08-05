@@ -7,7 +7,7 @@ import type { AchievementSummaryPresentation } from "@/lib/achievement-progress"
 import type { Task, TaskEnergy, TaskHistory as DbTaskHistory } from "@/lib/database.types";
 import { getLevelProgress } from "@/lib/economy-levels";
 import type { HistoricalFocusSession } from "@/lib/types";
-import { todayISO } from "@/lib/utils";
+import { shiftDateKey } from "@/lib/task-grid-layout";
 
 import { PageShellHeader } from "./page-shell-header";
 
@@ -24,6 +24,7 @@ type StatsPageProps = {
   taskHistory: DbTaskHistory[];
   taskHistoryStats: TaskHistoryStats;
   tasks: Task[];
+  todayDateKey: string;
 };
 
 export function StatsPage({
@@ -33,8 +34,9 @@ export function StatsPage({
   taskHistory,
   taskHistoryStats,
   tasks,
+  todayDateKey,
 }: StatsPageProps) {
-  const today = todayISO();
+  const today = todayDateKey;
   const todayDone = taskHistory.filter((entry) => entry.entry_date === today && entry.was_completed).length;
   const weekDates = Array.from({ length: 7 }, (_, index) => shiftDateKey(today, -index));
   const weekDone = taskHistory.filter((entry) => weekDates.includes(entry.entry_date) && entry.was_completed).length;

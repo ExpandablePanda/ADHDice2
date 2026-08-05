@@ -70,6 +70,10 @@ export type TaskStateHistoryRow = {
   provenance: TaskHistoryProvenance;
   occurredAt: string;
   occurrenceIdentity?: string | null;
+  occurrenceDueOn?: string | null;
+  countedAsDueOccurrence?: boolean;
+  wasCompleted?: boolean;
+  eventType?: "status" | "completed_permanently";
   rewardClaimed?: boolean;
 };
 
@@ -80,8 +84,14 @@ export type TaskStateAction =
       logicalDate?: string;
       occurredAt?: string;
       delayDays?: number;
+      delayUntilDate?: string | null;
       provenance?: Extract<TaskHistoryProvenance, "manual" | "import">;
+      replaceExisting?: boolean;
+      previousOutcome?: TaskHistoryOutcome | null;
+      occurrenceDueOn?: string | null;
+      occurrenceIdentity?: string | null;
     }
+  | { type: "change_schedule" }
   | { type: "recompute"; fromLogicalDate: string };
 
 export type TaskStateEngineInput = {
@@ -90,6 +100,9 @@ export type TaskStateEngineInput = {
   now: string | Date;
   timezone: string;
   logicalDayRollover: string;
+  /** Optional Calendar window; state evaluation otherwise uses today + the next 40 days. */
+  calendarStart?: string;
+  calendarEnd?: string;
   action?: TaskStateAction;
 };
 
@@ -149,6 +162,8 @@ export type TaskStateEngineResult = {
   recurrenceAnchor: string | null;
   nextDueDate: string | null;
   satisfiedOccurrenceIdentity: string | null;
+  unresolvedOccurrenceIdentity: string | null;
+  unresolvedOccurrenceDueOn: string | null;
   proposedHistoryChanges: TaskHistoryChange[];
   proposedTaskPatch: ProposedTaskStatePatch;
   streakDisposition: StreakDisposition;

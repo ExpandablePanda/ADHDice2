@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { EconomyState } from "@/hooks/useEconomy";
 import type { AppendEconomyEventOpts } from "@/hooks/useEconomy";
@@ -216,8 +216,11 @@ export function useHealth(
   const [awards, setAwards] = useState<HealthAchievementAward[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [storageMode, setStorageMode] = useState<"local" | "remote">("local");
+  const healthSnapshotRef = useRef<HealthStateSnapshot | null>(null);
+  const healthFoodMutationRevisionRef = useRef(0);
 
   function applySnapshot(snapshot: HealthStateSnapshot) {
+    healthSnapshotRef.current = snapshot;
     setProfile(snapshot.profile);
     setCheckIns(snapshot.checkIns);
     setMealEntries(snapshot.mealEntries);
@@ -368,6 +371,7 @@ export function useHealth(
 
   useEffect(() => {
     if (!userId) {
+      healthSnapshotRef.current = null;
       setProfile(null);
       setCheckIns([]);
       setMealEntries([]);
@@ -395,6 +399,7 @@ export function useHealth(
 
     let isActive = true;
     setIsLoading(true);
+    const foodMutationRevisionAtFetchStart = healthFoodMutationRevisionRef.current;
 
     void (async () => {
       const [
@@ -469,9 +474,20 @@ export function useHealth(
         waterEntries: waterEntriesResult.data ?? [],
         weightEntries: weightEntriesResult.data ?? [],
       });
+      const currentSnapshot = healthSnapshotRef.current;
+      const hydratedFavorites = currentSnapshot
+        && healthFoodMutationRevisionRef.current !== foodMutationRevisionAtFetchStart
+        ? [...new Map([
+          ...remoteSnapshot.favorites.map((food) => [food.id, food] as const),
+          ...currentSnapshot.favorites.map((food) => [food.id, food] as const),
+        ]).values()]
+        : remoteSnapshot.favorites;
+      const snapshotToApply = hydratedFavorites === remoteSnapshot.favorites
+        ? remoteSnapshot
+        : buildHealthSnapshot({ ...remoteSnapshot, favorites: hydratedFavorites });
       setStorageMode("remote");
-      applySnapshot(remoteSnapshot);
-      await claimEligibleAwards(remoteSnapshot, { persistRemotely: true, silent: true });
+      applySnapshot(snapshotToApply);
+      await claimEligibleAwards(snapshotToApply, { persistRemotely: true, silent: true });
       setIsLoading(false);
     })();
 
@@ -739,10 +755,11 @@ export function useHealth(
       return false;
     }
 
+    const currentFavorites = healthSnapshotRef.current?.favorites ?? favorites;
     let normalizedInput = input;
     const incomingIdentityKey = getHealthFoodIdentityKey(normalizedInput);
     const duplicateFavorite = incomingIdentityKey
-      ? favorites.find((item) => item.id !== normalizedInput.id && getHealthFoodIdentityKey(item) === incomingIdentityKey)
+      ? currentFavorites.find((item) => item.id !== normalizedInput.id && getHealthFoodIdentityKey(item) === incomingIdentityKey)
       : null;
     if (duplicateFavorite) {
       if (!normalizedInput.is_favorite || duplicateFavorite.is_favorite) {
@@ -752,7 +769,7 @@ export function useHealth(
       normalizedInput = { ...normalizedInput, id: duplicateFavorite.id };
     }
     const existingFood = normalizedInput.id
-      ? favorites.find((item) => item.id === normalizedInput.id)
+      ? currentFavorites.find((item) => item.id === normalizedInput.id)
       : null;
     normalizedInput = {
       ...normalizeHealthFoodLibraryInput(normalizedInput),
@@ -760,6 +777,7 @@ export function useHealth(
     };
 
     const now = new Date().toISOString();
+    healthFoodMutationRevisionRef.current += 1;
     const localRow: HealthFoodLibraryItem = {
       attribution: normalizedInput.attribution ?? null,
       barcode: normalizedInput.barcode ?? null,
@@ -805,14 +823,10 @@ export function useHealth(
       nextRow = data ? normalizeHealthFoodLibraryItem(data) : localRow;
     }
 
-    const nextFavorites = [
-      ...favorites.filter((item) => item.id !== nextRow.id),
-      nextRow,
-    ].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
-    applySnapshot(buildHealthSnapshot({
+    const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
       checkIns,
-      favorites: nextFavorites,
+      favorites: currentFavorites,
       importAudits,
       mealEntries,
       metricEntries,
@@ -821,7 +835,12 @@ export function useHealth(
       savedMeals,
       waterEntries,
       weightEntries,
-    }));
+    });
+    const nextFavorites = [
+      ...currentSnapshot.favorites.filter((item) => item.id !== nextRow.id),
+      nextRow,
+    ].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+    applySnapshot(buildHealthSnapshot({ ...currentSnapshot, favorites: nextFavorites }));
     setMessage({
       tone: "good",
       text: nextRow.is_favorite ? "Saved to favorites." : "Custom food saved.",

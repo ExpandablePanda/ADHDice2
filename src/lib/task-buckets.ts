@@ -23,6 +23,7 @@ export type TaskRoutingBucket = "inbox" | "today" | "quick_wins" | "waiting" | "
 export type TaskBucketContext = {
   focusedTaskIds: Set<string>;
   routing: Record<string, TaskRoutingBucket>;
+  todayDateKey?: string;
 };
 
 const OPEN_TASK_STATUSES: TaskStatus[] = ["pending", "in_progress", "delayed", "upcoming", "not_due", "missed"];
@@ -72,7 +73,7 @@ export function isTaskQuickWin(task: Task) {
 }
 
 export function getTaskBucket(task: Task, context: TaskBucketContext): TaskBucket {
-  const todayKey = todayISO();
+  const todayKey = context.todayDateKey ?? todayISO();
 
   if (isArchiveLikeTask(task)) {
     return "archive";

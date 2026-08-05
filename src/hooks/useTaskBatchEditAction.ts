@@ -2,12 +2,14 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import type { BatchTaskEditDraft } from "@/components/task-app/task-batch-edit-modal";
-import type { Task, TaskStatus, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskHistoryInsert, TaskStatus, TaskUpdate } from "@/lib/database.types";
+import type { TaskRowUpdateOptions } from "@/lib/task-db-mutations";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
-import { normalizeOpenTaskStatusForDueDate } from "@/lib/task-cockpit";
 import { buildTaskPriorityUpdate } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
+import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority } from "@/lib/task-state-engine/action-authority";
+import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 
 type Message = {
   text: string;
@@ -24,6 +26,7 @@ type UpdateTaskRowResult = {
 type UseTaskBatchEditActionOptions = {
   clearListTaskSelection: () => void;
   currentDayKey: string;
+  dayStartTime: string;
   focusedTaskIds: string[];
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   parseDayOfMonth: (value: string) => number | null;
@@ -35,14 +38,20 @@ type UseTaskBatchEditActionOptions = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
-  syncTaskHistoryEntry: (taskId: string, status: TaskStatus) => Promise<boolean>;
+  syncTaskHistoryEntry: (taskId: string, status: TaskStatus, occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryInsert }) => Promise<boolean>;
+  syncTaskHistoryEntries?: (taskId: string, status: TaskStatus, entryDates: string[], options?: { historyEntries?: TaskHistoryInsert[] }) => Promise<boolean>;
+  taskHistory?: TaskHistory[];
   tasks: Task[];
-  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate) => Promise<UpdateTaskRowResult>;
+  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<Record<string, TaskHistory[]>>;
+  logicalDayNow?: Date | string;
+  timezone: string;
+  updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
 };
 
 export function useTaskBatchEditAction({
   clearListTaskSelection,
   currentDayKey,
+  dayStartTime = "00:00",
   focusedTaskIds,
   onTasksCompleted,
   parseDayOfMonth,
@@ -55,7 +64,12 @@ export function useTaskBatchEditAction({
   setTasks,
   sortTasksForUi,
   syncTaskHistoryEntry,
+  syncTaskHistoryEntries,
+  taskHistory = [],
   tasks,
+  loadTaskHistoryForTasks,
+  logicalDayNow = `${currentDayKey}T12:00:00.000Z`,
+  timezone = "UTC",
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskBatchEditActionOptions) {
   async function applyBatchTaskEdit(draft: BatchTaskEditDraft) {
@@ -94,12 +108,11 @@ export function useTaskBatchEditAction({
         updateValues.due_on = null;
       }
 
-      if (draft.dueOnMode !== "unchanged") {
-        updateValues.status = normalizeOpenTaskStatusForDueDate({
-          due_on: updateValues.due_on ?? task.due_on,
-          status: (updateValues.status ?? task.status) as TaskStatus,
-        }, currentDayKey);
-      }
+      const dueDateChanged = draft.dueOnMode !== "unchanged"
+        && Object.hasOwn(updateValues, "due_on")
+        && updateValues.due_on !== task.due_on;
+      const scheduleChanged = dueDateChanged || draft.dueOnMode !== "unchanged" || draft.repeatFrequency !== "unchanged";
+      const dueDateOnlyEdit = scheduleChanged && draft.status === "unchanged";
 
       if (draft.estimatedMinutesMode === "set") {
         updateValues.estimated_minutes = parsePositiveInteger(draft.estimatedMinutes);
@@ -134,6 +147,37 @@ export function useTaskBatchEditAction({
           : null;
       }
 
+      const scopedHistory = loadTaskHistoryForTasks
+        ? (await loadTaskHistoryForTasks([task.id]))[task.id] ?? []
+        : taskHistory.filter((entry) => entry.task_id === task.id);
+      const outcome = draft.status !== "unchanged" && ["done", "did_my_best", "missed", "delayed", "complete"].includes(draft.status)
+        ? draft.status as "done" | "did_my_best" | "missed" | "delayed" | "complete"
+        : null;
+      const actionAuthority = outcome
+        ? evaluateTaskActionAuthority({
+          history: scopedHistory,
+          logicalDayRollover: dayStartTime,
+          now: logicalDayNow,
+          outcome,
+          task: { ...task, ...updateValues } as Task,
+          timezone,
+        })
+        : null;
+      const scheduleAuthority = !actionAuthority && dueDateOnlyEdit
+        ? evaluateTaskScheduleAuthority({
+          history: scopedHistory,
+          logicalDayRollover: dayStartTime,
+          now: logicalDayNow,
+          proposedTask: { ...task, ...updateValues } as Task,
+          task,
+          timezone,
+        })
+        : null;
+      const authorityUpdate = actionAuthority?.mutationPlan.taskUpdate ?? scheduleAuthority?.mutationPlan.taskUpdate;
+      const trackedUpdateValues = authorityUpdate
+        ? { ...updateValues, ...authorityUpdate }
+        : applyTaskActiveStatusTracking(task, updateValues, currentDayKey);
+
       if (Object.keys(updateValues).length === 0) {
         successfulCount += 1;
         if (draft.route === "clear") {
@@ -154,8 +198,7 @@ export function useTaskBatchEditAction({
         continue;
       }
 
-      const trackedUpdateValues = applyTaskActiveStatusTracking(task, updateValues, currentDayKey);
-      const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues);
+      const { data, error, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
 
       if (error) {
         firstErrorMessage ??= error.message;
@@ -177,16 +220,28 @@ export function useTaskBatchEditAction({
         routeTask(task.id, null);
       }
 
-      const historySaved = await syncTaskHistoryEntry(task.id, data.status);
-      if (!historySaved) {
-        firstErrorMessage ??= `Task "${data.title}" was updated, but its history entry could not be saved.`;
-        continue;
+      if (!dueDateOnlyEdit && draft.status !== "unchanged") {
+        const historyEntries = actionAuthority?.mutationPlan.historyInserts;
+        const historySaved = historyEntries?.length && syncTaskHistoryEntries
+          ? await syncTaskHistoryEntries(task.id, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries })
+          : await syncTaskHistoryEntry(task.id, data.status, task, historyEntries?.[0]
+            ? { historyEntry: historyEntries[0] }
+            : undefined);
+        if (!historySaved) {
+          firstErrorMessage ??= `Task "${data.title}" was updated, but its history entry could not be saved.`;
+          continue;
+        }
       }
-      completedCandidates.push({
-        forceRecurringFinalization: draft.status === "done" || draft.status === "did_my_best",
-        previousStatus: task.status,
-        task: data,
-      });
+      if (!dueDateOnlyEdit) {
+        completedCandidates.push({
+          engineManaged: Boolean(actionAuthority),
+          forceRecurringFinalization: !TASK_STATE_ENGINE_INTEGRATION_ENABLED
+            && (draft.status === "done" || draft.status === "did_my_best"),
+          previousStatus: task.status,
+          rewardEligible: actionAuthority?.rewardEligibility.eligible,
+          task: data,
+        });
+      }
 
       if (draft.route !== "unchanged" && draft.status !== "done" && draft.status !== "did_my_best") {
         if (draft.route === "clear") {
@@ -213,7 +268,9 @@ export function useTaskBatchEditAction({
     }
 
     setTasks(sortTasksForUi(nextTasks));
-    await onTasksCompleted(completedCandidates);
+    if (completedCandidates.length > 0) {
+      await onTasksCompleted(completedCandidates);
+    }
     if (draft.route === "focus" || draft.focusToday !== "unchanged") {
       await saveFocusSelection([...nextFocusedTaskIds], new Set(nextTasks.map((task) => task.id)));
     }

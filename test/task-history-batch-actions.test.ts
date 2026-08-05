@@ -184,6 +184,84 @@ for (const [previousStatus, nextStatus] of [
   });
 }
 
+test("Calendar Done to Missed restores the automatically advanced occurrence", async () => {
+  const task = createTask({
+    active_occurrence_due_on: null,
+    active_status_logical_date: null,
+    created_at: "2026-08-01T09:00:00.000Z",
+    due_on: "2026-08-04",
+    id: "task-calendar-rollback",
+    repeat_days_of_week: [1, 2, 3, 4, 5],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "upcoming",
+    title: "Calendar rollback",
+  });
+  const existing: TaskHistory = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-08-03T09:00:00.000Z",
+    entry_date: "2026-08-03",
+    event_type: "status",
+    id: "history-calendar-rollback",
+    occurrence_due_on: "2026-08-03",
+    occurrence_key: "occurrence:2026-08-03",
+    status: "done",
+    task_id: task.id,
+    updated_at: "2026-08-03T09:00:00.000Z",
+    user_id: "user-1",
+    was_completed: true,
+  };
+  let capturedTaskUpdate: TaskUpdate | null = null;
+  const client = {
+    from: () => ({
+      upsert: (payloads: TaskHistoryInsert[]) => ({
+        select: async () => ({
+          data: payloads.map((payload) => ({ ...existing, ...payload, id: existing.id })),
+          error: null,
+        }),
+      }),
+    }),
+  };
+  const actions = useTaskHistoryActions({
+    client: client as never,
+    currentDayKey: "2026-08-04",
+    currentUserId: "user-1",
+    dayStartTime: "06:00",
+    isTaskCompletedForHistory: (status) => status === "done" || status === "did_my_best" || status === "complete",
+    isTaskHistoryStatus: (status) => status === "done" || status === "did_my_best" || status === "missed" || status === "complete",
+    mapTaskHistoryRow: (row) => row,
+    now: new Date("2026-08-04T12:00:00.000Z"),
+    setMessage: () => {},
+    setTaskHistory: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    taskHistory: [existing],
+    tasks: [task],
+    timezone: "America/New_York",
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      capturedTaskUpdate = values;
+      return {
+        conflict: null,
+        data: { ...task, ...values },
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+
+  assert.equal(await actions.syncTaskHistoryEntries(task.id, "missed", [existing.entry_date], {
+    historySnapshot: [existing],
+    syncLiveTask: true,
+  }), true);
+  assert.equal(capturedTaskUpdate?.status, "missed");
+  assert.equal(capturedTaskUpdate?.due_on, "2026-08-03");
+  assert.equal(capturedTaskUpdate?.active_occurrence_due_on, undefined);
+  assert.equal(capturedTaskUpdate?.active_status_logical_date, undefined);
+});
+
 test("History Calendar manual Missed saves one deduplicated outcome without advancing recurrence", async () => {
   const task = createTask({
     created_at: "2026-07-01T09:00:00.000Z",
@@ -258,6 +336,176 @@ test("History Calendar manual Missed saves one deduplicated outcome without adva
   await actions.syncTaskHistoryEntries(task.id, "missed", ["2026-07-08"], { syncLiveTask: true });
   assert.equal(localHistory.length, 1);
   assert.equal(new Set(localHistory.map((entry) => entry.entry_date)).size, 1);
+});
+
+test("backdated weekly success removes the automatic Missed rows for the same occurrence", async () => {
+  const task = createTask({
+    created_at: "2026-07-01T09:00:00.000Z",
+    due_on: "2026-08-02",
+    id: "task-weekly-window-reconcile",
+    repeat_days_of_week: [0],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "missed",
+    title: "Weekly window",
+  });
+  const automaticMissed: TaskHistory = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-08-02T09:00:00.000Z",
+    entry_date: "2026-08-02",
+    event_type: "status",
+    id: "automatic-missed-weekly",
+    occurrence_due_on: "2026-08-02",
+    occurrence_key: "occurrence:2026-08-02",
+    status: "missed",
+    task_id: task.id,
+    updated_at: "2026-08-02T09:00:00.000Z",
+    user_id: "user-1",
+    was_completed: false,
+  };
+  let deletedDates: string[] = [];
+  let localHistory: TaskHistory[] = [automaticMissed];
+  let capturedTaskUpdate: TaskUpdate | null = null;
+  const deleteQuery = {
+    eq: () => deleteQuery,
+    in: async (_column: string, values: string[]) => {
+      deletedDates = values;
+      return { error: null };
+    },
+  };
+  const client = {
+    from: () => ({
+      delete: () => deleteQuery,
+      upsert: (payloads: TaskHistoryInsert[]) => ({
+        select: async () => ({
+          data: payloads.map((payload) => ({
+            ...automaticMissed,
+            ...payload,
+            id: "backdated-weekly-success",
+            updated_at: "2026-08-03T09:00:00.000Z",
+          })),
+          error: null,
+        }),
+      }),
+    }),
+  };
+  const actions = useTaskHistoryActions({
+    client: client as never,
+    currentDayKey: "2026-08-03",
+    currentUserId: "user-1",
+    dayStartTime: "06:00",
+    isTaskCompletedForHistory: (status) => status === "done" || status === "did_my_best" || status === "complete",
+    isTaskHistoryStatus: (status) => status === "done" || status === "did_my_best" || status === "missed" || status === "complete",
+    mapTaskHistoryRow: (row) => row,
+    now: new Date("2026-08-03T12:00:00.000Z"),
+    setMessage: () => {},
+    setTaskHistory: (updater) => {
+      localHistory = typeof updater === "function" ? updater(localHistory) : updater;
+    },
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    taskHistory: [automaticMissed],
+    tasks: [task],
+    timezone: "America/New_York",
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      capturedTaskUpdate = values;
+      return {
+        conflict: null,
+        data: { ...task, ...values },
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+
+  assert.equal(await actions.syncTaskHistoryEntries(task.id, "done", ["2026-08-01"], {
+    historySnapshot: [automaticMissed],
+    syncLiveTask: true,
+  }), true);
+  assert.deepEqual(deletedDates, ["2026-08-02"]);
+  assert.deepEqual(localHistory.map((entry) => [entry.entry_date, entry.status]), [["2026-08-01", "done"]]);
+  assert.equal(capturedTaskUpdate?.due_on, "2026-08-09");
+});
+
+test("Clear removes a successful logical result and restores the active occurrence cursor", async () => {
+  const task = createTask({
+    created_at: "2026-07-01T09:00:00.000Z",
+    due_on: "2026-08-09",
+    id: "task-clear-weekly",
+    repeat_days_of_week: [0],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "upcoming",
+    title: "Clear weekly",
+  });
+  const success: TaskHistory = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-08-01T09:00:00.000Z",
+    entry_date: "2026-08-01",
+    event_type: "status",
+    id: "clear-success",
+    occurrence_due_on: "2026-08-02",
+    occurrence_key: "occurrence:2026-08-02",
+    status: "done",
+    task_id: task.id,
+    updated_at: "2026-08-01T09:00:00.000Z",
+    user_id: "user-1",
+    was_completed: true,
+  };
+  let deletedDates: string[] = [];
+  let capturedTaskUpdate: TaskUpdate | null = null;
+  let localHistory: TaskHistory[] = [success];
+  const deleteQuery = {
+    eq: () => deleteQuery,
+    in: async (_column: string, values: string[]) => {
+      deletedDates = values;
+      return { error: null };
+    },
+  };
+  const actions = useTaskHistoryActions({
+    client: { from: () => ({ delete: () => deleteQuery }) } as never,
+    currentDayKey: "2026-08-05",
+    currentUserId: "user-1",
+    dayStartTime: "06:00",
+    isTaskCompletedForHistory: (status) => status === "done" || status === "did_my_best" || status === "complete",
+    isTaskHistoryStatus: (status) => status === "done" || status === "did_my_best" || status === "missed" || status === "complete",
+    mapTaskHistoryRow: (row) => row,
+    now: new Date("2026-08-05T12:00:00.000Z"),
+    setMessage: () => {},
+    setTaskHistory: (updater) => {
+      localHistory = typeof updater === "function" ? updater(localHistory) : updater;
+    },
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    taskHistory: [success],
+    tasks: [task],
+    timezone: "America/New_York",
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      capturedTaskUpdate = values;
+      return {
+        conflict: null,
+        data: { ...task, ...values },
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      };
+    },
+  });
+
+  assert.equal(await actions.syncTaskHistoryEntries(task.id, "pending", ["2026-08-01"], {
+    historySnapshot: [success],
+    syncLiveTask: true,
+  }), true);
+  assert.deepEqual(deletedDates, ["2026-08-01"]);
+  assert.deepEqual(localHistory, []);
+  assert.equal(capturedTaskUpdate?.due_on, "2026-08-02");
+  assert.equal(capturedTaskUpdate?.status, "missed");
+  assert.equal(capturedTaskUpdate?.completed_at, null);
 });
 
 test("task history batch action rolls current recurring occurrence to the next live due date", async () => {

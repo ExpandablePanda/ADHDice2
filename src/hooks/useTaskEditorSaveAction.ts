@@ -1,15 +1,16 @@
 "use client";
 
 import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskHistoryInsert, TaskUpdate } from "@/lib/database.types";
 import type { TaskDraft, TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
 import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
-import { normalizeOpenTaskStatusForDueDate } from "@/lib/task-cockpit";
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
+import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority } from "@/lib/task-state-engine/action-authority";
+import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 
 type Message = {
   text: string;
@@ -32,6 +33,7 @@ type InsertTaskRowResult = {
 
 type UseTaskEditorSaveActionOptions = {
   currentDayKey: string;
+  dayStartTime: string;
   focusedTaskIds: string[];
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   replaceTaskSubtasks: (taskId: string, subtasks: TaskSubtaskDraft[]) => Promise<{ saved: boolean; usedNestedFallback: boolean }>;
@@ -40,9 +42,14 @@ type UseTaskEditorSaveActionOptions = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
-  syncTaskHistoryEntry: (taskId: string, status: Task["status"], occurrenceTask?: Task | null) => Promise<boolean>;
+  syncTaskHistoryEntry: (taskId: string, status: Task["status"], occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryInsert }) => Promise<boolean>;
+  syncTaskHistoryEntries?: (taskId: string, status: Task["status"], entryDates: string[], options?: { historyEntries?: TaskHistoryInsert[] }) => Promise<boolean>;
   syncTaskNoteLinks: (taskId: string, linkedNoteIds: string[]) => Promise<boolean>;
+  taskHistory?: TaskHistory[];
   tasks: Task[];
+  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<Record<string, TaskHistory[]>>;
+  logicalDayNow?: Date | string;
+  timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
   insertTaskRowWithLegacyEnergyFallback: (payload: TaskDraft & { user_id: string; sort_order: number }) => Promise<InsertTaskRowResult>;
   currentUserId: string;
@@ -50,6 +57,7 @@ type UseTaskEditorSaveActionOptions = {
 
 export function useTaskEditorSaveAction({
   currentDayKey,
+  dayStartTime = "00:00",
   focusedTaskIds,
   insertTaskRowWithLegacyEnergyFallback,
   currentUserId,
@@ -61,8 +69,13 @@ export function useTaskEditorSaveAction({
   setTasks,
   sortTasksForUi,
   syncTaskHistoryEntry,
+  syncTaskHistoryEntries,
   syncTaskNoteLinks,
+  taskHistory = [],
   tasks,
+  loadTaskHistoryForTasks,
+  logicalDayNow = `${currentDayKey}T12:00:00.000Z`,
+  timezone = "UTC",
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskEditorSaveActionOptions) {
   async function saveTaskEditor(values: TaskDraft, options?: SaveTaskEditorOptions) {
@@ -79,17 +92,54 @@ export function useTaskEditorSaveAction({
         ...values,
         id: undefined,
       });
-      const dueNormalizedValues = previousTask && normalizedUpdateValues.due_on !== previousTask.due_on
-        ? {
-          ...normalizedUpdateValues,
-          status: normalizeOpenTaskStatusForDueDate({
-            due_on: normalizedUpdateValues.due_on ?? null,
-            status: normalizedUpdateValues.status,
-          }, currentDayKey),
-        }
+      const dueDateChanged = Boolean(
+        previousTask
+        && normalizedUpdateValues.due_on !== previousTask.due_on,
+      );
+      const statusChanged = Boolean(
+        previousTask
+        && normalizedUpdateValues.status !== undefined
+        && normalizedUpdateValues.status !== previousTask.status,
+      );
+      const scheduleChanged = Boolean(previousTask && (
+        dueDateChanged
+        || Object.hasOwn(normalizedUpdateValues, "due_time") && normalizedUpdateValues.due_time !== previousTask.due_time
+        || ["repeat_frequency", "repeat_interval", "repeat_days_of_week", "repeat_day_of_month", "repeat_monthly_mode", "repeat_monthly_ordinal", "repeat_monthly_weekday"]
+          .some((field) => Object.hasOwn(normalizedUpdateValues, field) && normalizedUpdateValues[field as keyof TaskUpdate] !== previousTask[field as keyof Task])
+      ));
+      const scheduleOnlyEdit = scheduleChanged && !statusChanged;
+      const scopedHistory = loadTaskHistoryForTasks
+        ? (await loadTaskHistoryForTasks([taskId]))[taskId] ?? []
+        : taskHistory.filter((entry) => entry.task_id === taskId);
+      const outcome = statusChanged && ["done", "did_my_best", "missed", "delayed", "complete"].includes(String(normalizedUpdateValues.status))
+        ? normalizedUpdateValues.status as "done" | "did_my_best" | "missed" | "delayed" | "complete"
+        : null;
+      const actionAuthority = previousTask && outcome
+        ? evaluateTaskActionAuthority({
+          history: scopedHistory,
+          logicalDayRollover: dayStartTime,
+          now: logicalDayNow,
+          outcome,
+          task: previousTask,
+          timezone,
+        })
+        : null;
+      const scheduleAuthority = previousTask && scheduleOnlyEdit
+        ? evaluateTaskScheduleAuthority({
+          history: scopedHistory,
+          logicalDayRollover: dayStartTime,
+          now: logicalDayNow,
+          proposedTask: { ...previousTask, ...normalizedUpdateValues } as Task,
+          task: previousTask,
+          timezone,
+        })
+        : null;
+      const authorityUpdate = actionAuthority?.mutationPlan.taskUpdate ?? scheduleAuthority?.mutationPlan.taskUpdate;
+      const dueNormalizedValues = authorityUpdate
+        ? { ...normalizedUpdateValues, ...authorityUpdate }
         : normalizedUpdateValues;
       const updateValues = previousTask
-        ? applyTaskActiveStatusTracking(previousTask, dueNormalizedValues, currentDayKey)
+        ? (scheduleOnlyEdit || actionAuthority) ? dueNormalizedValues : applyTaskActiveStatusTracking(previousTask, dueNormalizedValues, currentDayKey)
         : dueNormalizedValues;
       const {
         conflict,
@@ -123,16 +173,25 @@ export function useTaskEditorSaveAction({
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
 
-      if (shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
+      if (!scheduleOnlyEdit && !actionAuthority && shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
         const historyReconciled = await reconcileOverdueTaskMisses(nextData);
         if (!historyReconciled) {
           return false;
         }
       }
 
-      const historySaved = await syncTaskHistoryEntry(taskId, data.status, previousTask ?? nextData);
-      if (!historySaved) {
-        return false;
+      // A due-date edit changes only the next scheduling cursor. It must not
+      // turn the normalized open status into a History delete or replacement.
+      if (!scheduleOnlyEdit && statusChanged) {
+        const historyEntries = actionAuthority?.mutationPlan.historyInserts;
+        const historySaved = historyEntries?.length && syncTaskHistoryEntries
+          ? await syncTaskHistoryEntries(taskId, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries })
+          : await syncTaskHistoryEntry(taskId, data.status, previousTask ?? nextData, historyEntries?.[0]
+            ? { historyEntry: historyEntries[0] }
+            : undefined);
+        if (!historySaved) {
+          return false;
+        }
       }
 
       const subtasksResult = await replaceTaskSubtasks(taskId, subtasks);
@@ -145,11 +204,19 @@ export function useTaskEditorSaveAction({
         return false;
       }
 
-      await onTasksCompleted([{
-        forceRecurringFinalization: updateValues.status === "done" || updateValues.status === "did_my_best",
-        previousStatus: previousTask?.status ?? null,
-        task: nextData,
-      }]);
+      if (!scheduleOnlyEdit) {
+        await onTasksCompleted([{
+          // A future due-date edit on an already successful recurring task is a
+          // manual anchor, not another completion to finalize.
+          engineManaged: Boolean(actionAuthority),
+          forceRecurringFinalization: !TASK_STATE_ENGINE_INTEGRATION_ENABLED
+            && (values.status === "done" || values.status === "did_my_best")
+            && values.status !== previousTask?.status,
+          previousStatus: previousTask?.status ?? null,
+          rewardEligible: actionAuthority?.rewardEligibility.eligible,
+          task: nextData,
+        }]);
+      }
 
       const nextFocusIds = focusToday
         ? Array.from(new Set([...focusedTaskIds, taskId]))

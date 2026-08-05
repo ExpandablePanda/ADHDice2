@@ -13,7 +13,7 @@ import type { TaskQuickFilter } from "@/lib/task-ui-state";
 import { formatTaskPriorityLabel, getTaskPriorityLevel } from "@/lib/task-priority";
 import { todayISO } from "@/lib/utils";
 import { formatOptionLabel } from "@/lib/task-label-format";
-import { getLatestTaskHistoryEntryOnDate, isTaskHistoryStatus } from "@/lib/task-history";
+import { deduplicateTaskHistoryByLogicalDate, getLatestTaskHistoryEntryOnDate, isTaskHistoryStatus } from "@/lib/task-history";
 
 export type TaskDueDateBucket = "none" | "overdue" | "today" | "upcoming" | "not_due";
 
@@ -81,8 +81,8 @@ export function normalizeOpenTaskStatusForDueDate(
   return "pending";
 }
 
-export function isDueToday(date: string | null) {
-  return date === todayISO();
+export function isDueToday(date: string | null, todayDateKey = todayISO()) {
+  return date === todayDateKey;
 }
 
 export function isOverdue(date: string | null) {
@@ -184,12 +184,34 @@ export function getTaskDisplayStatusWithHistory(
     return "in_progress";
   }
 
-  if (task.repeat_frequency === "none" || history.length === 0) {
+  const normalizedHistory = deduplicateTaskHistoryByLogicalDate(history);
+  if (task.repeat_frequency === "none" || normalizedHistory.length === 0) {
     return getTaskDisplayStatusForDate(task, todayDateKey);
   }
 
+  const resolvedOccurrenceKeys = new Set(
+    normalizedHistory
+      .filter((entry) => entry.status !== "missed")
+      .flatMap((entry) => [
+        entry.occurrence_key,
+        entry.occurrence_due_on,
+      ].filter((value): value is string => Boolean(value))),
+  );
+  const unresolvedIdentityBearingMissed = normalizedHistory.some((entry) => {
+    if (entry.status !== "missed") return false;
+    const occurrenceDate = entry.occurrence_due_on
+      ?? entry.occurrence_key?.match(/(\d{4}-\d{2}-\d{2})$/)?.[1];
+    const occurrenceKey = entry.occurrence_key ?? occurrenceDate;
+    return Boolean(occurrenceKey && occurrenceDate
+      && !resolvedOccurrenceKeys.has(occurrenceKey)
+      && !resolvedOccurrenceKeys.has(occurrenceDate));
+  });
+  if (unresolvedIdentityBearingMissed) {
+    return "missed";
+  }
+
   const todayHistoryStatus = (!task.due_on || task.due_on <= todayDateKey)
-    ? getLatestTaskHistoryEntryOnDate(history, todayDateKey)?.status
+    ? getLatestTaskHistoryEntryOnDate(normalizedHistory, todayDateKey)?.status
     : null;
   if (todayHistoryStatus && isTaskHistoryStatus(todayHistoryStatus)) {
     return todayHistoryStatus;
@@ -200,9 +222,17 @@ export function getTaskDisplayStatusWithHistory(
     return getTaskDisplayStatusForDate(task, todayDateKey);
   }
 
-  const currentOccurrenceStatus = getLatestTaskHistoryEntryOnDate(history, currentOccurrenceDateKey)?.status;
+  const currentOccurrenceStatus = getLatestTaskHistoryEntryOnDate(normalizedHistory, currentOccurrenceDateKey)?.status;
   if (currentOccurrenceStatus && isTaskHistoryStatus(currentOccurrenceStatus)) {
     return currentOccurrenceStatus;
+  }
+
+  const latestHistoryStatus = normalizedHistory
+    .filter((entry) => entry.entry_date <= todayDateKey)
+    .sort((left, right) => left.entry_date.localeCompare(right.entry_date))
+    .at(-1)?.status;
+  if (latestHistoryStatus === "missed" && task.due_on && task.due_on <= todayDateKey) {
+    return "missed";
   }
 
   return getTaskDisplayStatusForDate(task, todayDateKey);
@@ -258,7 +288,7 @@ export function buildTaskBucketCounts(tasks: Task[], context: TaskBucketContext)
 }
 
 export function sortTasksForCockpit(tasks: Task[], context: TaskBucketContext) {
-  const todayKey = todayISO();
+  const todayKey = context.todayDateKey ?? todayISO();
   return tasks
     .map((task) => buildTaskCockpitSortKey(task, context, todayKey))
     .sort((left, right) => {
@@ -478,7 +508,12 @@ export function getListPriorityLabel(task: Task, focusedTaskIdSet: Set<string>) 
   return formatTaskPriorityLabel(getTaskPriorityLevel(task));
 }
 
-export function matchesTaskQuickFilter(task: Task, filter: TaskQuickFilter, focusedTaskIds: string[]) {
+export function matchesTaskQuickFilter(
+  task: Task,
+  filter: TaskQuickFilter,
+  focusedTaskIds: string[],
+  todayDateKey: string = todayISO(),
+) {
   switch (filter) {
     case "active":
       return isTaskOpen(task);
@@ -487,7 +522,7 @@ export function matchesTaskQuickFilter(task: Task, filter: TaskQuickFilter, focu
     case "urgent":
       return isTaskUrgent(task);
     case "today":
-      return isTaskOpen(task) && isDueToday(task.due_on);
+      return isTaskOpen(task) && task.due_on === todayDateKey;
     case "focused":
       return isTaskOpen(task) && focusedTaskIds.includes(task.id);
     default:

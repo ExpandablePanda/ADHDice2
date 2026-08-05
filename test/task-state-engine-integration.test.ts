@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
+import { getTaskDisplayStatusWithHistory } from "../src/lib/task-cockpit.ts";
 import { evaluateTaskActionAuthority } from "../src/lib/task-state-engine/action-authority.ts";
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
+import { buildManualDueDateTaskUpdate } from "../src/lib/task-state-engine/due-date-authority.ts";
 import { createEngineRolloverPlan } from "../src/lib/task-state-engine/rollover-authority.ts";
+import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 
 function task(overrides: Partial<Task> = {}): Task {
   return {
@@ -37,6 +40,218 @@ test("Calendar authority gives explicit History precedence over virtual states",
   assert.equal(states?.["2026-07-31"], "open");
 });
 
+test("Weekdays future preview, historical due state, and Calendar Missed eligibility agree", () => {
+  const weekdays = task({
+    due_on: "2026-08-05",
+    repeat_days_of_week: [1, 2, 3, 4, 5],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    status: "upcoming",
+  });
+  const weekdaysContext = {
+    calendarEnd: "2026-08-09",
+    calendarStart: "2026-08-01",
+    logicalDayRollover: "06:00",
+    now: "2026-08-04T14:00:00.000Z",
+    timezone: "America/New_York",
+  };
+  const states = resolveTaskHistoryCalendarStates({ ...weekdaysContext, history: [], task: weekdays });
+
+  for (const dateKey of ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"]) {
+    assert.equal(states?.[dateKey], "due", dateKey);
+  }
+  for (const dateKey of ["2026-08-01", "2026-08-02", "2026-08-08", "2026-08-09"]) {
+    assert.equal(states?.[dateKey], "not_due", dateKey);
+  }
+
+  const statuses = resolveTaskHistoryCalendarActionStatuses({
+    ...weekdaysContext,
+    history: [],
+    logicalDate: "2026-08-03",
+    task: weekdays,
+  });
+  assert.deepEqual(statuses, ["done", "did_my_best", "delayed", "missed", "complete"]);
+  assert.equal(statuses.includes("missed"), true);
+  const missedAction = evaluateTaskActionAuthority({
+    ...weekdaysContext,
+    history: [],
+    outcome: "missed",
+    outcomeDate: "2026-08-03",
+    task: weekdays,
+  });
+  assert.deepEqual(missedAction?.validationErrors, []);
+  assert.deepEqual(missedAction?.mutationPlan.history.map((row) => [row.logicalDate, row.outcome]), [["2026-08-03", "missed"]]);
+});
+
+test("manual future anchors project rolling, weekly, monthly, and custom cadences from the selected date", () => {
+  const dailyHistory = [history("did_my_best", "2026-08-01")];
+  const daily = task({ due_on: "2026-08-08", repeat_frequency: "daily", status: "upcoming" });
+  const dailyStates = resolveTaskHistoryCalendarStates({
+    calendarEnd: "2026-08-11",
+    calendarStart: "2026-08-01",
+    ...context,
+    history: dailyHistory,
+    now: "2026-08-05T14:00:00.000Z",
+    task: daily,
+  });
+  assert.equal(dailyStates?.["2026-08-01"], "did_my_best");
+  for (const dateKey of ["2026-08-05", "2026-08-06", "2026-08-07"]) {
+    assert.equal(dailyStates?.[dateKey], "not_due", dateKey);
+  }
+  for (const dateKey of ["2026-08-08", "2026-08-09", "2026-08-10", "2026-08-11"]) {
+    assert.equal(dailyStates?.[dateKey], "due", dateKey);
+  }
+  assert.equal(dailyHistory[0]?.status, "did_my_best");
+
+  const weeklyStates = resolveTaskHistoryCalendarStates({
+    calendarEnd: "2026-08-16",
+    calendarStart: "2026-08-05",
+    ...context,
+    history: [],
+    now: "2026-08-05T14:00:00.000Z",
+    task: task({ due_on: "2026-08-09", repeat_days_of_week: [0], repeat_frequency: "weekly", status: "upcoming" }),
+  });
+  assert.equal(weeklyStates?.["2026-08-08"], "not_due");
+  assert.equal(weeklyStates?.["2026-08-09"], "due");
+  assert.equal(weeklyStates?.["2026-08-16"], "due");
+
+  const monthlyStates = resolveTaskHistoryCalendarStates({
+    calendarEnd: "2026-09-16",
+    calendarStart: "2026-08-05",
+    ...context,
+    history: [],
+    now: "2026-08-05T14:00:00.000Z",
+    task: task({ due_on: "2026-08-15", repeat_day_of_month: 15, repeat_frequency: "monthly", status: "upcoming" }),
+  });
+  assert.equal(monthlyStates?.["2026-08-14"], "not_due");
+  assert.equal(monthlyStates?.["2026-08-15"], "due");
+  assert.equal(monthlyStates?.["2026-09-15"], "due");
+
+  const customStates = resolveTaskHistoryCalendarStates({
+    calendarEnd: "2026-08-14",
+    calendarStart: "2026-08-05",
+    ...context,
+    history: [],
+    now: "2026-08-05T14:00:00.000Z",
+    task: task({ due_on: "2026-08-08", repeat_frequency: "custom", repeat_interval: 3, status: "upcoming" }),
+  });
+  assert.equal(customStates?.["2026-08-08"], "due");
+  assert.equal(customStates?.["2026-08-09"], "not_due");
+  assert.equal(customStates?.["2026-08-11"], "due");
+});
+
+test("manual due-date reconciliation preserves History while aligning live, visible, and Calendar state", () => {
+  const missed = history("missed", "2026-08-03");
+  const originalTask = task({ due_on: "2026-08-08", status: "upcoming" });
+  const historySnapshot = JSON.stringify([missed]);
+  const dueEdit = buildManualDueDateTaskUpdate(originalTask, "2026-08-04", [missed], "2026-08-08");
+  const savedTask = { ...originalTask, ...dueEdit };
+
+  assert.equal(dueEdit.due_on, "2026-08-04");
+  assert.equal(dueEdit.status, "missed");
+  assert.equal(dueEdit.active_occurrence_due_on, undefined);
+  assert.equal(dueEdit.active_status_logical_date, undefined);
+  assert.equal(JSON.stringify([missed]), historySnapshot);
+
+  const activeRead = resolveActiveTaskStatuses({
+    historyByTaskId: { [savedTask.id]: [missed] },
+    logicalDayRollover: "06:00",
+    now: "2026-08-08T14:00:00.000Z",
+    tasks: [savedTask],
+    timezone: "America/New_York",
+  });
+  assert.equal(activeRead.statusesByTaskId[savedTask.id], "missed");
+  assert.equal(getTaskDisplayStatusWithHistory(savedTask, [missed], "2026-08-08"), "missed");
+
+  const calendarStates = resolveTaskHistoryCalendarStates({
+    calendarEnd: "2026-08-08",
+    calendarStart: "2026-08-03",
+    logicalDayRollover: "06:00",
+    history: [missed],
+    now: "2026-08-08T14:00:00.000Z",
+    task: savedTask,
+    timezone: "America/New_York",
+  });
+  assert.equal(calendarStates?.["2026-08-03"], "missed");
+
+  const noUnresolvedHistory = buildManualDueDateTaskUpdate(
+    { ...originalTask, due_on: "2026-08-08", status: "upcoming" },
+    "2026-08-08",
+    [],
+    "2026-08-08",
+  );
+  assert.equal(noUnresolvedHistory.status, "pending");
+  assert.equal(noUnresolvedHistory.active_occurrence_due_on ?? null, null);
+
+  const futureAnchor = buildManualDueDateTaskUpdate(
+    { ...originalTask, due_on: "2026-08-04", status: "pending" },
+    "2026-08-08",
+    [],
+    "2026-08-05",
+  );
+  assert.equal(futureAnchor.status, "upcoming");
+  const futureCalendarStates = resolveTaskHistoryCalendarStates({
+    calendarEnd: "2026-08-08",
+    calendarStart: "2026-08-04",
+    logicalDayRollover: "06:00",
+    history: [],
+    now: "2026-08-05T14:00:00.000Z",
+    task: { ...originalTask, ...futureAnchor },
+    timezone: "America/New_York",
+  });
+  for (const dateKey of ["2026-08-05", "2026-08-06", "2026-08-07"]) {
+    assert.equal(futureCalendarStates?.[dateKey], "not_due", dateKey);
+  }
+  assert.equal(futureCalendarStates?.["2026-08-08"], "due");
+});
+
+test("custom weekday arrays reject non-due dates while retaining manual History actions", () => {
+  const taskWithCustomWeekdays = task({
+    due_on: "2026-08-05",
+    repeat_days_of_week: [1, 3, 5],
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    status: "upcoming",
+  });
+  const customContext = {
+    logicalDayRollover: "06:00",
+    now: "2026-08-10T14:00:00.000Z",
+    timezone: "America/New_York",
+  };
+  const statuses = resolveTaskHistoryCalendarActionStatuses({
+    ...customContext,
+    history: [],
+    logicalDate: "2026-08-08",
+    task: taskWithCustomWeekdays,
+  });
+
+  assert.equal(statuses.includes("done"), true);
+  assert.equal(statuses.includes("did_my_best"), true);
+  assert.equal(statuses.includes("missed"), false);
+});
+
+test("configured logical-day rollover remains the Calendar authority boundary", () => {
+  const beforeBoundary = evaluateTaskActionAuthority({
+    history: [],
+    logicalDayRollover: "18:00",
+    now: "2026-08-04T21:59:00.000Z",
+    outcome: "missed",
+    task: task({ due_on: "2026-08-03" }),
+    timezone: "America/New_York",
+  });
+  const afterBoundary = evaluateTaskActionAuthority({
+    history: [],
+    logicalDayRollover: "18:00",
+    now: "2026-08-04T22:00:00.000Z",
+    outcome: "missed",
+    task: task({ due_on: "2026-08-03" }),
+    timezone: "America/New_York",
+  });
+
+  assert.equal(beforeBoundary?.logicalDate, "2026-08-03");
+  assert.equal(afterBoundary?.logicalDate, "2026-08-04");
+});
+
 test("Calendar authority allows direct replacement of an existing recurring outcome", () => {
   const existingMissed = history("missed");
   const statuses = resolveTaskHistoryCalendarActionStatuses({
@@ -47,6 +262,20 @@ test("Calendar authority allows direct replacement of an existing recurring outc
   });
 
   assert.deepEqual(statuses, ["done", "did_my_best", "delayed", "missed", "complete"]);
+
+  const replacement = evaluateTaskActionAuthority({
+    ...context,
+    history: [existingMissed],
+    occurrenceDueOn: existingMissed.occurrence_due_on,
+    occurrenceIdentity: existingMissed.occurrence_key,
+    outcome: "done",
+    outcomeDate: existingMissed.entry_date,
+    previousOutcome: "missed",
+    replaceExisting: true,
+    task: task({ status: "missed" }),
+  });
+  assert.deepEqual(replacement?.validationErrors, []);
+  assert.equal(replacement?.mutationPlan.history.filter((row) => row.logicalDate === existingMissed.entry_date).length, 1);
 });
 
 test("Calendar action availability uses one normalized logical-date History result", () => {
@@ -254,7 +483,7 @@ test("status actions resolve canonical task state and single-flight the complete
   assert.match(actionPath, /taskStatusMutationInFlightRef\.current\.get\(canonicalTask\.id\)/);
   assert.match(actionPath, /taskStatusMutationInFlightRef\.current\.delete\(canonicalTask\.id\)/);
   assert.match(actionPath, /runTaskStatusMutation\(\s*canonicalTask/);
-  assert.match(actionPath, /history: taskHistory\.filter\(\(entry\) => entry\.task_id === task\.id\)/);
+  assert.match(actionPath, /loadTaskHistoryForTasks\(\[task\.id\]\)/);
 });
 
 test("History failure uses revision-aware compensation and refreshes on rollback conflict", async () => {

@@ -1,5 +1,4 @@
 import type { Task, TaskHistory, TaskStatus } from "@/lib/database.types";
-import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
 import { getTaskPriorityLevel } from "@/lib/task-priority";
 
@@ -78,13 +77,15 @@ function compareNullable<T>(left: T | null | undefined, right: T | null | undefi
 export function sortListParentTasks(
   tasks: readonly Task[],
   preference: ListSortPreference,
-  context: { taskHistoryByTaskId?: Record<string, TaskHistory[]>; todayDateKey?: string } = {},
+  context: {
+    taskDisplayStatusByTaskId?: Record<string, TaskStatus>;
+    taskHistoryByTaskId?: Record<string, TaskHistory[]>;
+    todayDateKey?: string;
+  } = {},
 ) {
   const normalized = normalizeListSortPreference(preference);
   if (normalized.field === "manual") return [...tasks];
 
-  const historyByTaskId = context.taskHistoryByTaskId ?? {};
-  const todayDateKey = context.todayDateKey ?? "";
   const direction = normalized.direction === "asc" ? 1 : -1;
   const originalIndex = new Map(tasks.map((task, index) => [task.id, index] as const));
 
@@ -97,8 +98,8 @@ export function sortListParentTasks(
           || compareNullable(left.due_time, right.due_time, (a, b) => a.localeCompare(b));
         break;
       case "status":
-        result = LIST_STATUS_ORDER[getTaskDisplayStatusWithHistory(left, historyByTaskId[left.id] ?? [], todayDateKey)]
-          - LIST_STATUS_ORDER[getTaskDisplayStatusWithHistory(right, historyByTaskId[right.id] ?? [], todayDateKey)];
+        result = LIST_STATUS_ORDER[context.taskDisplayStatusByTaskId?.[left.id] ?? left.status]
+          - LIST_STATUS_ORDER[context.taskDisplayStatusByTaskId?.[right.id] ?? right.status];
         break;
       case "priority":
         result = getTaskPriorityLevel(left) - getTaskPriorityLevel(right);
