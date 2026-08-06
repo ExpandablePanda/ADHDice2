@@ -73,6 +73,46 @@ test("backdated daily task calculates Missed through yesterday and overdue Open 
   assert.equal(result.unresolvedDueOn, "2026-08-01");
 });
 
+test("current facts ignore a window-truncated missed streak", () => {
+  const result = timeline({
+    calendarStart: "2026-08-07",
+    calendarEnd: "2026-08-10",
+  });
+
+  assert.deepEqual(Object.keys(result.days), [
+    "2026-08-07",
+    "2026-08-08",
+    "2026-08-09",
+    "2026-08-10",
+  ]);
+  for (const date of ["2026-08-07", "2026-08-08", "2026-08-09"]) {
+    assert.equal(result.days[date]?.state, "missed", date);
+  }
+  assert.equal(result.days["2026-08-10"]?.state, "open");
+  assert.equal(result.days["2026-08-10"]?.obligation, "overdue");
+  assert.equal(result.currentMissedStreak, 9);
+  assert.equal(result.unresolvedDueOn, "2026-08-01");
+  assert.equal(result.currentObligation, "overdue");
+});
+
+test("current facts remain available when the window excludes the logical date", () => {
+  const result = timeline({
+    calendarStart: "2026-08-11",
+    calendarEnd: "2026-08-15",
+  });
+
+  assert.deepEqual(Object.keys(result.days), [
+    "2026-08-11",
+    "2026-08-12",
+    "2026-08-13",
+    "2026-08-14",
+    "2026-08-15",
+  ]);
+  assert.equal(result.currentMissedStreak, 9);
+  assert.equal(result.unresolvedDueOn, "2026-08-01");
+  assert.equal(result.currentObligation, "overdue");
+});
+
 test("Done splits the calculated missed streak and keeps explicit metadata", () => {
   const done = history("2026-08-05", "done", {
     occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
@@ -94,6 +134,32 @@ test("Done splits the calculated missed streak and keeps explicit metadata", () 
   assert.equal(result.days["2026-08-10"]?.obligation, "overdue");
   assert.equal(result.currentMissedStreak, 4);
   assert.equal(result.unresolvedDueOn, "2026-08-06");
+});
+
+test("History Done before the visible window rebases current facts", () => {
+  const done = history("2026-08-05", "done", {
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
+    occurrenceDueOn: "2026-08-01",
+  });
+  const result = timeline({
+    history: [done],
+    calendarStart: "2026-08-08",
+    calendarEnd: "2026-08-10",
+  });
+
+  assert.deepEqual(Object.keys(result.days), [
+    "2026-08-08",
+    "2026-08-09",
+    "2026-08-10",
+  ]);
+  for (const date of ["2026-08-08", "2026-08-09"]) {
+    assert.equal(result.days[date]?.state, "missed", date);
+  }
+  assert.equal(result.days["2026-08-10"]?.state, "open");
+  assert.equal(result.days["2026-08-10"]?.obligation, "overdue");
+  assert.equal(result.currentMissedStreak, 4);
+  assert.equal(result.unresolvedDueOn, "2026-08-06");
+  assert.equal(result.currentObligation, "overdue");
 });
 
 test("every three days rebases from Done and leaves the next occurrence overdue", () => {

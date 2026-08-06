@@ -97,10 +97,25 @@ export function buildTaskEffectiveTimeline(
     .map((row) => ({ ...row }));
   const explicitByDate = authoritativeRowsByDate(rows);
   const explicitRows = [...explicitByDate.values()];
-  const dates = dateRange(input.calendarStart, input.calendarEnd);
+  const initialDueOn = initialOccurrenceDueOn(input.task, explicitRows);
+  const simulationStart = earliestDate([
+    input.calendarStart,
+    input.logicalDate,
+    initialDueOn,
+    ...explicitRows.flatMap((row) => [
+      row.logicalDate,
+      row.occurrenceDueOn,
+      occurrenceDateFromIdentity(row.occurrenceIdentity),
+    ]),
+  ]) ?? input.calendarStart;
+  const simulationEnd = input.calendarEnd >= input.logicalDate
+    ? input.calendarEnd
+    : input.logicalDate;
+  const simulationDates = dateRange(simulationStart, simulationEnd);
   const days: Record<string, TaskEffectiveTimelineDay> = {};
+  const effectiveDays: Record<string, TaskEffectiveTimelineDay> = {};
 
-  let activeDueOn = initialOccurrenceDueOn(input.task, explicitRows);
+  let activeDueOn = initialDueOn;
   let unresolvedDueOn: string | null = null;
   let completed = input.task.lifecycle === "complete";
   const consumed = new Set<string>();
@@ -149,13 +164,6 @@ export function buildTaskEffectiveTimeline(
     }
   };
 
-  // History before the requested window still establishes the current cursor,
-  // while only dates in the requested window are emitted.
-  for (const row of explicitRows) {
-    if (row.logicalDate >= input.calendarStart) break;
-    applyExplicitRow(row);
-  }
-
   const fixedFutureOccurrence = (date: string) => (
     activeDueOn
     && date > input.logicalDate
@@ -164,7 +172,7 @@ export function buildTaskEffectiveTimeline(
   );
 
   let currentUnresolvedDueOn: string | null = null;
-  for (const date of dates) {
+  for (const date of simulationDates) {
     const row = explicitByDate.get(date);
     let day: TaskEffectiveTimelineDay;
 
@@ -195,17 +203,22 @@ export function buildTaskEffectiveTimeline(
       day = calculatedDay(input.task.id, date, "not_due", "none");
     }
 
-    days[date] = day;
+    effectiveDays[date] = day;
     if (date === input.logicalDate) currentUnresolvedDueOn = unresolvedDueOn;
   }
 
-  const currentDay = days[input.logicalDate];
+  for (const date of dateRange(input.calendarStart, input.calendarEnd)) {
+    const day = effectiveDays[date];
+    if (day) days[date] = day;
+  }
+
+  const currentDay = effectiveDays[input.logicalDate];
   const currentObligation = currentDay?.state === "open" ? currentDay.obligation : "none";
   let streakStart = currentDay?.state === "missed"
     ? input.logicalDate
     : shiftDateKey(input.logicalDate, -1);
   let currentMissedStreak = 0;
-  while (days[streakStart]?.state === "missed") {
+  while (effectiveDays[streakStart]?.state === "missed") {
     currentMissedStreak += 1;
     streakStart = shiftDateKey(streakStart, -1);
   }
