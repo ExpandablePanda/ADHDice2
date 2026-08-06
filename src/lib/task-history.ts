@@ -59,7 +59,17 @@ export const TASK_HISTORY_COLUMNS = "id,task_id,user_id,entry_date,occurrence_ke
 
 export type TaskHistoryStreakEntry = Pick<
   DbTaskHistory,
-  "id" | "task_id" | "entry_date" | "status" | "was_completed" | "created_at" | "updated_at"
+  "id"
+  | "task_id"
+  | "entry_date"
+  | "occurrence_key"
+  | "occurrence_due_on"
+  | "status"
+  | "event_type"
+  | "counted_as_due_occurrence"
+  | "was_completed"
+  | "created_at"
+  | "updated_at"
 >;
 
 type TaskHistoryIdentityEntry = Pick<DbTaskHistory, "id" | "task_id" | "entry_date" | "created_at" | "updated_at">;

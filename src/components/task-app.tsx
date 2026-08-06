@@ -1774,9 +1774,9 @@ export function TaskApp() {
   });
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
-  const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[]) => {
+  const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
     updateTaskHistoryForTask(taskId, nextTaskHistory);
-    return refreshTaskHistoryStreakSummary(taskId, nextTaskHistory);
+    return refreshTaskHistoryStreakSummary(taskId, nextTaskHistory, nextTask);
   }, [refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
 
   useEffect(() => {

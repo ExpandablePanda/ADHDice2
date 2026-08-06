@@ -40,7 +40,7 @@ type UseTaskUpdateActionOptions = {
   dayStartTime: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
   onTaskHistoryFailure?: TaskHistoryFailureCompensation;
-  onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[]) => void | Promise<void>;
+  onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[], nextTask?: Task) => void | Promise<void>;
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
   routeTask: (taskId: string, bucket: TaskRoutingBucket | null) => void;
@@ -191,7 +191,7 @@ export function useTaskUpdateAction({
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
       if (scheduleOnlyEdit) {
-        void onTaskHistoryMutation?.(taskId, scopedHistory);
+        void onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
       }
       if (data.status === "done" || data.status === "did_my_best" || data.status === "complete" || data.status === "archived" || data.status === "trashed") {
         routeTask(taskId, null);

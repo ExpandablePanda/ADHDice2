@@ -29,7 +29,7 @@ type UseTaskBatchEditActionOptions = {
   currentDayKey: string;
   dayStartTime: string;
   focusedTaskIds: string[];
-  onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[]) => void | Promise<void>;
+  onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[], nextTask?: Task) => void | Promise<void>;
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   parseDayOfMonth: (value: string) => number | null;
   parsePositiveInteger: (value: string) => number | null;
@@ -247,7 +247,7 @@ export function useTaskBatchEditAction({
       nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? data : currentTask);
       successfulCount += 1;
       if (dueDateOnlyEdit) {
-        void onTaskHistoryMutation?.(task.id, scopedHistory);
+        void onTaskHistoryMutation?.(task.id, scopedHistory, data);
       }
       if (usedEnergyFallback) {
         fallbackCount += 1;

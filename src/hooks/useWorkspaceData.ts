@@ -267,7 +267,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const loadFullTaskHistoryRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadNotesRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadTaskHistoryForTaskRef = useRef<((taskId: string) => Promise<boolean>) | null>(null);
-  const refreshTaskHistoryStreakSummaryRef = useRef<((taskId: string, nextTaskHistory?: DbTaskHistory[]) => Promise<boolean>) | null>(null);
+  const refreshTaskHistoryStreakSummaryRef = useRef<((taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task) => Promise<boolean>) | null>(null);
   const retryTaskHistoryForTaskRef = useRef<((taskId: string) => Promise<boolean>) | null>(null);
   const tasksRef = useRef(tasks);
 
@@ -761,7 +761,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       return await summaryLoadPromise;
     }
 
-    async function reloadTaskHistoryStreakSummaryForTask(taskId: string, nextTaskHistory?: DbTaskHistory[]) {
+    async function reloadTaskHistoryStreakSummaryForTask(taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task) {
       if (!isActive || !canApplyCoreWorkspaceResult()) {
         return false;
       }
@@ -783,7 +783,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             return false;
           }
 
-          const task = tasksRef.current.find((candidate) => candidate.id === taskId);
+          const task = nextTask ?? tasksRef.current.find((candidate) => candidate.id === taskId);
           if (!task) return false;
           const hasPrivateTaskHistory = Object.hasOwn(taskHistoryByTaskIdRef.current, taskId);
           if (nextTaskHistory) {
@@ -1630,8 +1630,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     [],
   );
   const refreshTaskHistoryStreakSummary = useCallback(
-    async (taskId: string, nextTaskHistory?: DbTaskHistory[]) => (
-      await refreshTaskHistoryStreakSummaryRef.current?.(taskId, nextTaskHistory) ?? false
+    async (taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task) => (
+      await refreshTaskHistoryStreakSummaryRef.current?.(taskId, nextTaskHistory, nextTask) ?? false
     ),
     [],
   );

@@ -37,7 +37,7 @@ type UseTaskEditorSaveActionOptions = {
   dayStartTime: string;
   focusedTaskIds: string[];
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
-  onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[]) => void | Promise<void>;
+  onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[], nextTask?: Task) => void | Promise<void>;
   replaceTaskSubtasks: (taskId: string, subtasks: TaskSubtaskDraft[]) => Promise<{ saved: boolean; usedNestedFallback: boolean }>;
   reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
   saveFocusSelection: (nextTaskIds: string[], validTaskIds?: Set<string> | Task[]) => Promise<void>;
@@ -183,7 +183,7 @@ export function useTaskEditorSaveAction({
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
       if (scheduleOnlyEdit) {
-        void onTaskHistoryMutation?.(taskId, scopedHistory);
+        void onTaskHistoryMutation?.(taskId, scopedHistory, nextData);
       }
 
       if (occurrenceSensitive && !scheduleOnlyEdit && !actionAuthority && shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {

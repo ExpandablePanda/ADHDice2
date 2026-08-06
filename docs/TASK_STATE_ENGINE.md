@@ -23,7 +23,7 @@ The engine owns domain calculations, while TaskApp and its adapters own invocati
 
 The pure `buildTaskEffectiveTimeline` helper combines explicit History with calculated dates, emits only the bounded Calendar window, and calculates current-state facts over an internal range that is independent of that window. Explicit History wins for its logical date, retains its row and occurrence metadata, and is marked handled. Calculated Missed and Open dates describe an unresolved obligation without creating permanent History; they may recalculate after a schedule change.
 
-Phase 1 does not connect this helper to production consumers, so current engine behavior remains unchanged. No Repeat conversion, Delayed priority, UI convergence, or History/rollover persistence changes are included; those remain deferred.
+Task History Calendar now consumes the Effective Timeline for active and complete tasks. Calculated Missed dates appear in Calendar without becoming History rows, and current missed-streak summaries use the Effective Timeline. Positive streaks and completion statistics remain saved-History based. Archived and trashed Calendar and streak behavior remains on the existing fallback. Status-circle convergence, No Repeat conversion, and Delayed display priority remain deferred. Persistence and rollover behavior remain unchanged.
 
 ## Logical Date and Occurrence Identity
 

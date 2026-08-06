@@ -40,7 +40,7 @@ import {
 import type { AppPage } from "@/lib/task-ui-state";
 import type { ImportTasksResult } from "@/hooks/useTaskCrudActions";
 import { getTaskHistoryCalendarVisibleActionStatuses } from "@/lib/task-complete";
-import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates } from "@/lib/task-state-engine";
+import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import type {
   Task,
   TaskHistory as DbTaskHistory,
@@ -606,8 +606,8 @@ export function TaskHistoryModal({
   const mobileScrollRef = useRef<HTMLDivElement>(null);
   const weeks: string[][] = [];
   const dueDates = buildTaskHistoryCalendarDueDateSet(task, days[0] ?? today, days.at(-1) ?? today, today, normalizedTaskHistory);
-  const engineCalendarStates = stateEngineContext
-    ? resolveTaskHistoryCalendarStates({
+  const calendarRead = stateEngineContext
+    ? resolveTaskHistoryCalendarRead({
       ...stateEngineContext,
       calendarEnd: days.at(-1) ?? today,
       calendarStart: days[0] ?? today,
@@ -617,16 +617,22 @@ export function TaskHistoryModal({
     : null;
   const sortedDueDates = [...dueDates].sort();
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
-  const stats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
+  const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
+  const stats = calendarRead?.timeline
+    ? { ...savedHistoryStats, missedStreak: calendarRead.timeline.currentMissedStreak }
+    : savedHistoryStats;
   const lastDone = getTaskHistoryLastDone(normalizedTaskHistory);
   const sortedHistory = [...normalizedTaskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));
   const selectedEntry = historyByDate.get(selectedDate) ?? null;
   const selectedDateSet = new Set(selectedDates);
   const selectedEntries = selectedDates.map((dateKey) => historyByDate.get(dateKey) ?? null);
   const selectedIsFuture = selectedDate > today;
-  const selectedIsDue = dueDates.has(selectedDate);
-  const selectedIsMissed = selectedEntry?.status === "missed";
-  const selectedVirtualState = engineCalendarStates?.[selectedDate] ?? getTaskHistoryCalendarVirtualState({
+  const selectedTimelineDay = calendarRead?.timeline?.days[selectedDate] ?? null;
+  const selectedIsDue = selectedTimelineDay
+    ? selectedTimelineDay.obligation === "due" || selectedTimelineDay.obligation === "overdue"
+    : dueDates.has(selectedDate);
+  const selectedIsMissed = selectedEntry?.status === "missed" || selectedTimelineDay?.state === "missed";
+  const selectedVirtualState = calendarRead?.states[selectedDate] ?? (!calendarRead ? getTaskHistoryCalendarVirtualState({
     dateKey: selectedDate,
     delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
     hasHistoryEntry: selectedEntry !== null,
@@ -634,7 +640,7 @@ export function TaskHistoryModal({
     nextDueDateKey: getNextDueDateKey(selectedDate),
     projectsUndatedDelayed: task.status === "delayed" && task.due_on === null,
     todayDateKey: today,
-  });
+  }) : null);
   const engineCalendarActionStatuses = stateEngineContext
     ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, logicalDate: selectedDate, task })
     : null;
@@ -669,7 +675,7 @@ export function TaskHistoryModal({
   function cellTone(dateKey: string) {
     const entry = historyByDate.get(dateKey);
     if (!entry) {
-      const virtualState = engineCalendarStates?.[dateKey] ?? getTaskHistoryCalendarVirtualState({
+      const virtualState = calendarRead?.states[dateKey] ?? (!calendarRead ? getTaskHistoryCalendarVirtualState({
         dateKey,
         delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
         hasHistoryEntry: false,
@@ -677,7 +683,7 @@ export function TaskHistoryModal({
         nextDueDateKey: getNextDueDateKey(dateKey),
         projectsUndatedDelayed: task.status === "delayed" && task.due_on === null,
         todayDateKey: today,
-      });
+      }) : null);
       if (virtualState === "delayed") {
         return "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]";
       }
@@ -689,6 +695,9 @@ export function TaskHistoryModal({
       }
       if (virtualState === "open" || virtualState === "in_progress") {
         return "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]";
+      }
+      if (virtualState === "missed") {
+        return "border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]";
       }
       return "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]";
     }
@@ -780,6 +789,9 @@ export function TaskHistoryModal({
       }
       if (virtualState === "open" || virtualState === "in_progress") {
         return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]`}>{virtualState === "in_progress" ? "In Progress" : "Open"}</span>;
+      }
+      if (virtualState === "missed") {
+        return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]`}>Missed</span>;
       }
       if (virtualState === "upcoming") {
         return <span className={`${HISTORY_STATUS_CHIP_BASE} border-[#cfd6e4] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60`}>Upcoming</span>;

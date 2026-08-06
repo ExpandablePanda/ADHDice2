@@ -9,7 +9,8 @@ export { createEngineRolloverPlan, engineRolloverPlanHasMutations } from "./roll
 export type { EngineRolloverPlan, EngineRolloverTaskPlan } from "./rollover-authority.ts";
 export { buildRecurringDateRepairReport, RECURRING_DATE_REPAIR_TASK_IDS } from "./recurring-date-repair-report.ts";
 export type { RecurringDateRepairReport, RecurringDateRepairTaskReport } from "./recurring-date-repair-report.ts";
-export { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates } from "./calendar-authority.ts";
+export { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead, resolveTaskHistoryCalendarStates } from "./calendar-authority.ts";
+export type { TaskHistoryCalendarReadResult } from "./calendar-authority.ts";
 export { buildManualDueDateTaskUpdate, reconcileManualDueDateChange } from "./due-date-authority.ts";
 export { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 export type { BuildTaskEffectiveTimelineInput } from "./effective-timeline.ts";

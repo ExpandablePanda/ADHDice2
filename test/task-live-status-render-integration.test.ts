@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { createJiti } from "jiti";
+import { useTaskBatchEditAction } from "../src/hooks/useTaskBatchEditAction.ts";
+import { useTaskEditorSaveAction } from "../src/hooks/useTaskEditorSaveAction.ts";
 import { useTaskHistoryActions } from "../src/hooks/useTaskHistoryActions.ts";
 import { useTaskUpdateAction } from "../src/hooks/useTaskUpdateAction.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { buildTaskHistoryByTaskId } from "../src/lib/task-history.ts";
+import { buildTaskHistoryStreakSummary } from "../src/lib/task-history-streak-summaries.ts";
 import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 
 const jiti = createJiti(import.meta.url, {
@@ -234,4 +237,165 @@ test("live due-date and History mutations reach the shared Table/List row status
   const historyRow = rowFor(createStableTaskRowModelCache(), historyTasks[0]!, historyRows);
   assert.equal(historyRow.displayStatus, "upcoming");
   assert.equal(historyRow.row.status, "upcoming");
+});
+
+test("schedule-only callbacks pass the returned task for immediate Effective Timeline streak refresh", async () => {
+  const todayDateKey = "2026-08-10";
+  const backdatedDueOn = "2026-08-01";
+
+  function explicitDone(taskId: string): TaskHistory {
+    return {
+      counted_as_due_occurrence: true,
+      created_at: "2026-08-05T12:00:00.000Z",
+      entry_date: "2026-08-05",
+      event_type: "status",
+      id: `${taskId}-done`,
+      occurrence_due_on: backdatedDueOn,
+      occurrence_key: `task:${taskId}:occurrence:${backdatedDueOn}`,
+      status: "done",
+      task_id: taskId,
+      updated_at: "2026-08-05T12:00:00.000Z",
+      user_id: "u1",
+      was_completed: true,
+    };
+  }
+
+  function sourceTask(id: string): Task {
+    return createTask({
+      created_at: "2026-08-10T12:00:00.000Z",
+      due_on: todayDateKey,
+      id,
+      repeat_frequency: "daily",
+      revision: 1,
+      sort_order: 0,
+      status: "pending",
+      title: "Immediate streak refresh",
+    });
+  }
+
+  type MutationCall = { taskId: string; history: TaskHistory[]; task: Task };
+  function assertMutation(call: MutationCall | null, expectedTaskId: string, expectedHistory: TaskHistory[]) {
+    assert.equal(call?.taskId, expectedTaskId);
+    assert.deepEqual(call?.history, expectedHistory);
+    assert.equal(call?.task.due_on, backdatedDueOn);
+    assert.equal(call?.task.revision, 2);
+    assert.equal(buildTaskHistoryStreakSummary(call!.task, call!.history, todayDateKey).missedStreak, 4);
+    assert.equal(call!.history.length, 1);
+    assert.equal(call!.history[0]?.id, expectedHistory[0]?.id);
+  }
+
+  const genericTask = sourceTask("task-live-generic-callback");
+  const genericHistory = [explicitDone(genericTask.id)];
+  let genericCall: MutationCall | null = null;
+  const genericAction = useTaskUpdateAction({
+    currentDayKey: todayDateKey,
+    dayStartTime: "00:00",
+    onTaskHistoryMutation: (taskId, history, nextTask) => {
+      if (nextTask) genericCall = { history, task: nextTask, taskId };
+    },
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    taskHistory: genericHistory,
+    tasks: [genericTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => ({
+      conflict: null,
+      data: { ...genericTask, ...values, revision: 2, status: "pending" },
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+  assert.equal(await genericAction.updateTask(genericTask.id, { due_on: backdatedDueOn }), true);
+  assertMutation(genericCall, genericTask.id, genericHistory);
+
+  const editorTask = sourceTask("task-live-editor-callback");
+  const editorHistory = [explicitDone(editorTask.id)];
+  let editorCall: MutationCall | null = null;
+  const editorAction = useTaskEditorSaveAction({
+    currentDayKey: todayDateKey,
+    currentUserId: "u1",
+    focusedTaskIds: [],
+    insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
+    onTaskHistoryMutation: (taskId, history, nextTask) => {
+      if (nextTask) editorCall = { history, task: nextTask, taskId };
+    },
+    onTasksCompleted: async () => {},
+    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    reconcileOverdueTaskMisses: async () => true,
+    saveFocusSelection: async () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    syncTaskNoteLinks: async () => true,
+    taskHistory: editorHistory,
+    tasks: [editorTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => ({
+      conflict: null,
+      data: { ...editorTask, ...values, id: editorTask.id, revision: 2, status: "pending" },
+      error: null,
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+  assert.ok(await editorAction.saveTaskEditor({ ...editorTask, due_on: backdatedDueOn }, { taskId: editorTask.id }));
+  assertMutation(editorCall, editorTask.id, editorHistory);
+
+  const batchTask = sourceTask("task-live-batch-callback");
+  const batchHistory = [explicitDone(batchTask.id)];
+  let batchCall: MutationCall | null = null;
+  const batchAction = useTaskBatchEditAction({
+    clearListTaskSelection: () => {},
+    currentDayKey: todayDateKey,
+    focusedTaskIds: [],
+    onTaskHistoryMutation: (taskId, history, nextTask) => {
+      if (nextTask) batchCall = { history, task: nextTask, taskId };
+    },
+    onTasksCompleted: async () => {},
+    parseDayOfMonth: () => null,
+    parsePositiveInteger: (value) => Number.parseInt(value, 10),
+    routeTask: () => {},
+    saveFocusSelection: async () => {},
+    selectedListTasks: [batchTask],
+    setIsBatchEditModalOpen: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    taskHistory: batchHistory,
+    tasks: [batchTask],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => ({
+      data: { ...batchTask, ...values, revision: 2, status: "pending" },
+      error: null,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+  await batchAction.applyBatchTaskEdit({
+    dueOn: backdatedDueOn,
+    dueOnMode: "set",
+    energy: "unchanged",
+    estimatedMinutes: "",
+    estimatedMinutesMode: "unchanged",
+    focusToday: "unchanged",
+    oneStepAtATime: "unchanged",
+    priority: "unchanged",
+    repeatDayOfMonth: "",
+    repeatDaysOfWeek: [],
+    repeatFrequency: "unchanged",
+    repeatInterval: "",
+    route: "unchanged",
+    status: "unchanged",
+    subtasksAutoReset: "unchanged",
+    tags: [],
+    tagsMode: "unchanged",
+  });
+  assertMutation(batchCall, batchTask.id, batchHistory);
 });
