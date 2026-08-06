@@ -4,6 +4,12 @@ import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurrin
 import { isScheduledOccurrence, scheduledOccurrences } from "@/lib/task-state-engine/recurrence";
 import type { TaskRecurrence } from "@/lib/task-state-engine/types";
 
+export type TaskHistoryLoadResult =
+  | { status: "ready"; history: DbTaskHistory[]; error: null }
+  | { status: "error"; history: null; error: string };
+
+export type TaskHistoryLoadMap = Record<string, TaskHistoryLoadResult>;
+
 export function isTaskCompletedForHistory(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "complete";
 }
@@ -83,6 +89,30 @@ export function deduplicateTaskHistoryByLogicalDate<T extends TaskHistoryIdentit
     }
   }
   return [...byLogicalDate.values()];
+}
+
+/**
+ * Build the History read model used by active status and task surfaces.
+ *
+ * Once a task-scoped load exists, it is authoritative for that task. The
+ * workspace-wide snapshot may still be an older critical-facts payload while
+ * the scoped mutation reconciliation is already current; concatenating both
+ * lets a stale row win the active-status evaluation after deduplication.
+ */
+export function buildTaskHistoryByTaskId(
+  workspaceHistory: readonly DbTaskHistory[],
+  taskScopedHistoryByTaskId: Record<string, DbTaskHistory[]>,
+) {
+  const taskIds = new Set([
+    ...workspaceHistory.map((entry) => entry.task_id),
+    ...Object.keys(taskScopedHistoryByTaskId),
+  ]);
+  return Object.fromEntries([...taskIds].map((taskId) => [
+    taskId,
+    Object.hasOwn(taskScopedHistoryByTaskId, taskId)
+      ? deduplicateTaskHistoryByLogicalDate(taskScopedHistoryByTaskId[taskId] ?? [])
+      : deduplicateTaskHistoryByLogicalDate(workspaceHistory.filter((entry) => entry.task_id === taskId)),
+  ]));
 }
 
 export function mapTaskHistoryRow(row: DbTaskHistory) {

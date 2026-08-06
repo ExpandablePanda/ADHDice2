@@ -16,6 +16,7 @@ import {
 import { calcNextDueDateFromDate as calculateNextDueDateFromDate } from "@/lib/task-repeat";
 import { evaluateTaskActionAuthority } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
+import type { TaskHistoryLoadMap } from "@/lib/task-history";
 
 type Message = {
   text: string;
@@ -53,7 +54,7 @@ type UseTaskHistoryActionsOptions = {
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
   taskHistory?: DbTaskHistory[];
-  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<Record<string, DbTaskHistory[]>>;
+  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
   tasks: Task[];
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
@@ -302,13 +303,19 @@ export function useTaskHistoryActions({
     taskId: string,
     status: TaskStatus,
     entryDate: string,
-    options?: { occurrenceTask?: Task | null; syncLiveTask?: boolean; historyEntry?: TaskHistoryInsert },
+    options?: { occurrenceTask?: Task | null; syncLiveTask?: boolean; historyEntry?: TaskHistoryInsert; historySnapshot?: DbTaskHistory[] },
   ) {
     const shouldKeepEntry = isTaskHistoryStatus(status);
     const task = tasks.find((candidate) => candidate.id === taskId);
-    const scopedHistory = loadTaskHistoryForTasks
-      ? (await loadTaskHistoryForTasks([taskId]))[taskId] ?? []
-      : taskHistory.filter((entry) => entry.task_id === taskId);
+    let scopedHistory = options?.historySnapshot ?? taskHistory.filter((entry) => entry.task_id === taskId);
+    if (!options?.historySnapshot && loadTaskHistoryForTasks) {
+      const historyLoad = (await loadTaskHistoryForTasks([taskId]))[taskId];
+      if (!historyLoad || historyLoad.status !== "ready") {
+        setMessage({ tone: "warn", text: historyLoad?.error ?? "Could not load task history." });
+        return false;
+      }
+      scopedHistory = historyLoad.history;
+    }
     const historyForSync = deduplicateTaskHistoryByLogicalDate(scopedHistory);
     const existingEntry = historyForSync.find((entry) => entry.entry_date === entryDate);
     const historyReplacement = existingEntry && shouldKeepEntry && isTaskHistoryStatus(existingEntry.status)
@@ -427,8 +434,15 @@ export function useTaskHistoryActions({
       return true;
     }
 
-    const scopedHistory = options?.historySnapshot
-      ?? (loadTaskHistoryForTasks ? (await loadTaskHistoryForTasks([taskId]))[taskId] ?? [] : taskHistory);
+    let scopedHistory = options?.historySnapshot ?? taskHistory;
+    if (!options?.historySnapshot && loadTaskHistoryForTasks) {
+      const historyLoad = (await loadTaskHistoryForTasks([taskId]))[taskId];
+      if (!historyLoad || historyLoad.status !== "ready") {
+        setMessage({ tone: "warn", text: historyLoad?.error ?? "Could not load task history." });
+        return false;
+      }
+      scopedHistory = historyLoad.history;
+    }
     const historyForSync = deduplicateTaskHistoryByLogicalDate(scopedHistory.filter((entry) => entry.task_id === taskId));
 
     const shouldKeepEntries = isTaskHistoryStatus(status);

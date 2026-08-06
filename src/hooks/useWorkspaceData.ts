@@ -25,6 +25,8 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import {
   deduplicateTaskHistoryByLogicalDate,
   TASK_HISTORY_COLUMNS,
+  type TaskHistoryLoadMap,
+  type TaskHistoryLoadResult,
   type TaskHistoryStreakEntry,
 } from "@/lib/task-history";
 import { reconcileTaskListRows } from "@/lib/task-list-mappers";
@@ -228,8 +230,8 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const taskHistoryLoadPromiseRef = useRef<OwnedWorkspacePromise<boolean> | null>(null);
   const taskHistoryByTaskIdRef = useRef<Record<string, DbTaskHistory[]>>({});
   const taskHistoryLoadStateByTaskIdRef = useRef<Record<string, TaskHistoryTaskLoadState>>({});
-  const taskHistoryTaskLoadPromisesRef = useRef(new Map<string, OwnedWorkspacePromise<boolean>>());
-  const loadTaskHistoryForTasksRef = useRef<((taskIds: string[]) => Promise<Record<string, DbTaskHistory[]>>) | null>(null);
+  const taskHistoryTaskLoadPromisesRef = useRef(new Map<string, OwnedWorkspacePromise<TaskHistoryLoadResult>>());
+  const loadTaskHistoryForTasksRef = useRef<((taskIds: string[]) => Promise<TaskHistoryLoadMap>) | null>(null);
   const taskHistoryStreakSummaryLoadPromiseRef = useRef<OwnedWorkspacePromise<boolean> | null>(null);
   const taskHistoryStreakSummaryTaskReloadsRef = useRef(new Map<string, OwnedWorkspacePromise<boolean>>());
   const taskReloadInFlightRef = useRef(false);
@@ -636,10 +638,14 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
     async function loadTaskHistoryForTask(taskId: string, { force = false, silent = false }: { force?: boolean; silent?: boolean } = {}) {
       if (!isActive || !canApplyCoreWorkspaceResult()) {
-        return false;
+        return { status: "error", history: null, error: "Task History is not available for this workspace." } satisfies TaskHistoryLoadResult;
       }
       if (!force && taskHistoryLoadStateByTaskIdRef.current[taskId]?.status === "ready") {
-        return true;
+        return {
+          error: null,
+          history: [...(taskHistoryByTaskIdRef.current[taskId] ?? [])],
+          status: "ready",
+        } satisfies TaskHistoryLoadResult;
       }
       const existingLoad = taskHistoryTaskLoadPromisesRef.current.get(taskId);
       if (existingLoad?.generation === workspaceGeneration) {
@@ -663,17 +669,18 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             .order("id", { ascending: true })
             .range(from, to));
           if (!isActive || !canApplyCoreWorkspaceResult()) {
-            return false;
+            return { status: "error", history: null, error: "Task History is not available for this workspace." } satisfies TaskHistoryLoadResult;
           }
           if (result.error) {
-            setTaskHistoryTaskLoadState(taskId, { error: result.error.message ?? "Could not load task history.", status: "error" });
-            if (!silent) setMessage({ tone: "warn", text: result.error.message ?? "Could not load task history." });
-            return false;
+            const error = result.error.message ?? "Could not load task history.";
+            setTaskHistoryTaskLoadState(taskId, { error, status: "error" });
+            if (!silent) setMessage({ tone: "warn", text: error });
+            return { status: "error", history: null, error } satisfies TaskHistoryLoadResult;
           }
           const rows = deduplicateTaskHistoryByLogicalDate((result.data ?? []).map(mapTaskHistoryRow));
           setTaskHistoryCacheForTask(taskId, rows);
           setTaskHistoryTaskLoadState(taskId, { error: null, status: "ready" });
-          return true;
+          return { error: null, history: [...rows], status: "ready" } satisfies TaskHistoryLoadResult;
         } finally {
           if (taskHistoryTaskLoadPromisesRef.current.get(taskId)?.promise === taskLoadPromise) {
             taskHistoryTaskLoadPromisesRef.current.delete(taskId);
@@ -686,11 +693,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
     async function loadTaskHistoryForTasks(taskIds: string[]) {
       const uniqueTaskIds = [...new Set(taskIds)].filter(Boolean);
-      await Promise.all(uniqueTaskIds.map((taskId) => loadTaskHistoryForTask(taskId, { force: true, silent: true })));
-      return Object.fromEntries(uniqueTaskIds.map((taskId) => [
+      const results = await Promise.all(uniqueTaskIds.map(async (taskId) => [
         taskId,
-        [...(taskHistoryByTaskIdRef.current[taskId] ?? [])],
-      ]));
+        await loadTaskHistoryForTask(taskId, { force: true, silent: true }),
+      ] as const));
+      return Object.fromEntries(results) as TaskHistoryLoadMap;
     }
 
     async function loadTaskHistoryStreakSummaries(nextTasks: Task[] = tasksRef.current) {
@@ -778,10 +785,21 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
           const task = tasksRef.current.find((candidate) => candidate.id === taskId);
           if (!task) return false;
-          // The mutation snapshot is bounded shared History. A ready modal
-          // cache must be refreshed from the complete task query instead.
-          void nextTaskHistory;
           const hasPrivateTaskHistory = Object.hasOwn(taskHistoryByTaskIdRef.current, taskId);
+          if (nextTaskHistory) {
+            const taskHistory = deduplicateTaskHistoryByLogicalDate(nextTaskHistory);
+            if (hasPrivateTaskHistory) {
+              setTaskHistoryCacheForTask(taskId, taskHistory);
+            }
+            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current);
+            setTaskHistoryStreakSummaries((current) => (
+              JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
+                ? current
+                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current)
+            ));
+            return true;
+          }
+
           if (hasPrivateTaskHistory) {
             const didReloadPrivateHistory = await loadTaskHistoryForTask(taskId, { force: true, silent: true });
             if (!didReloadPrivateHistory) return false;
@@ -858,10 +876,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     loadActualTimeRef.current = () => loadActualTime({ silent: true });
     loadFullTaskHistoryRef.current = () => loadTaskHistory({ silent: true, source: "secondary" });
     loadNotesRef.current = () => loadNotes({ silent: true });
-    loadTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { silent: true });
+    loadTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { silent: true }).then((result) => result.status === "ready");
     loadTaskHistoryForTasksRef.current = loadTaskHistoryForTasks;
     refreshTaskHistoryStreakSummaryRef.current = reloadTaskHistoryStreakSummaryForTask;
-    retryTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { force: true });
+    retryTaskHistoryForTaskRef.current = (taskId) => loadTaskHistoryForTask(taskId, { force: true }).then((result) => result.status === "ready");
 
     function canApplyCoreWorkspaceResult() {
       return (

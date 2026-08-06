@@ -265,6 +265,7 @@ import { buildMilestoneLifecycleArgs, canDetachAndPromoteTaskToMilestone, canPro
 import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
 import {
   buildTaskHistoryFacts,
+  buildTaskHistoryByTaskId,
   computeTaskHistoryStats,
   computeTaskSpecificHistoryStats,
   deduplicateTaskHistoryByLogicalDate,
@@ -574,7 +575,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.10";
+const APP_VERSION = "7.7.13";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1773,6 +1774,11 @@ export function TaskApp() {
   });
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
+  const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[]) => {
+    updateTaskHistoryForTask(taskId, nextTaskHistory);
+    return refreshTaskHistoryStreakSummary(taskId, nextTaskHistory);
+  }, [refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
+
   useEffect(() => {
     if (isTaskEditorOpen) void loadTaskNotes();
   }, [isTaskEditorOpen, loadTaskNotes]);
@@ -2362,9 +2368,17 @@ export function TaskApp() {
             .filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed")
             .map((candidate) => candidate.id);
           const scopedRolloverHistory = await loadTaskHistoryForTasks(rolloverTaskIds);
+          const historyLoadFailureTaskId = rolloverTaskIds.find((taskId) => {
+            const result = scopedRolloverHistory[taskId];
+            return !result || result.status !== "ready";
+          });
+          if (historyLoadFailureTaskId) {
+            const historyLoadFailure = scopedRolloverHistory[historyLoadFailureTaskId];
+            return { error: { message: historyLoadFailure?.status === "error" ? historyLoadFailure.error : "Could not load task history." } };
+          }
           const rolloverHistory = deduplicateTaskHistoryByLogicalDate([
             ...inputs.taskHistory,
-            ...Object.values(scopedRolloverHistory).flat(),
+            ...Object.values(scopedRolloverHistory).flatMap((result) => result.status === "ready" ? result.history : []),
           ]);
           const plan = createEngineRolloverPlan({
             history: rolloverHistory,
@@ -2591,19 +2605,7 @@ export function TaskApp() {
     [compatibilityRoutingMemberships, taskListManualMemberships],
   );
   const taskHistoryByTaskId = useMemo(
-    () => {
-      const taskIds = new Set([
-        ...taskStateHistory.map((entry) => entry.task_id),
-        ...Object.keys(taskHistoryModalHistoryByTaskId),
-      ]);
-      return Object.fromEntries([...taskIds].map((taskId) => [
-        taskId,
-        deduplicateTaskHistoryByLogicalDate([
-          ...taskStateHistory.filter((entry) => entry.task_id === taskId),
-          ...(taskHistoryModalHistoryByTaskId[taskId] ?? []),
-        ]),
-      ]));
-    },
+    () => buildTaskHistoryByTaskId(taskStateHistory, taskHistoryModalHistoryByTaskId),
     [taskHistoryModalHistoryByTaskId, taskStateHistory],
   );
   const taskHistoryFactsByTaskId = useMemo(
@@ -3101,6 +3103,7 @@ export function TaskApp() {
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
       ? tasksForActiveStatusRead.map((task) => sharedEditorRowModelCache.getOrCreate(task, {
+        displayStatus: taskDisplayStatusByTaskId[task.id],
         focusedTaskIdSet,
         linkedNotes: taskLinkedNotesByTaskId[task.id] ?? [],
         listDefinitions: availableTaskLists,
@@ -3118,6 +3121,7 @@ export function TaskApp() {
       sharedTaskEditorOverlayTaskId,
       taskHistoryByTaskId,
       taskHistoryStreakSummaries,
+      taskDisplayStatusByTaskId,
       taskLinkedNotesByTaskId,
       taskListMembershipsByTaskId,
       taskSubtasksByTaskId,
@@ -3636,6 +3640,7 @@ export function TaskApp() {
       focusedTaskIds,
       loadTaskHistoryForTasks,
       logicalDayNow: new Date(logicalDayNow),
+      onTaskHistoryMutation: reconcileTaskHistoryMutation,
       onTasksCompleted: queueTaskRewards,
       parseDayOfMonth,
       parsePositiveInteger,
@@ -3675,6 +3680,7 @@ export function TaskApp() {
       onTasksCompleted: queueTaskRewards,
       loadTaskHistoryForTasks,
       logicalDayNow: new Date(logicalDayNow),
+      onTaskHistoryMutation: reconcileTaskHistoryMutation,
       reconcileOverdueTaskMisses,
       saveFocusSelection,
       setMessage,
@@ -3696,7 +3702,7 @@ export function TaskApp() {
       isTaskHistoryStatus,
       mapTaskHistoryRow,
       now: new Date(logicalDayNow),
-      onHistoryMutation: refreshTaskHistoryStreakSummary,
+      onHistoryMutation: reconcileTaskHistoryMutation,
       setMessage,
       setTaskHistory,
       setTasks,
@@ -3774,6 +3780,7 @@ export function TaskApp() {
       dayStartTime,
       logicalDayNow: new Date(logicalDayNow),
       loadTaskHistoryForTasks,
+      onTaskHistoryMutation: reconcileTaskHistoryMutation,
       reconcileOverdueTaskMisses,
       setMessage: setTaskUpdateMessage,
       setTasks,
@@ -4487,7 +4494,12 @@ export function TaskApp() {
     const delayDays = nextDueOn
       ? Math.round((Date.parse(`${nextDueOn}T00:00:00.000Z`) - Date.parse(`${todayKey}T00:00:00.000Z`)) / 86_400_000)
       : null;
-    const scopedHistory = (await loadTaskHistoryForTasks([task.id]))[task.id] ?? [];
+    const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
+    if (!historyLoad || historyLoad.status !== "ready") {
+      setMessage({ tone: "warn", text: historyLoad?.error ?? "Could not load task history. The task was not delayed." });
+      return false;
+    }
+    const scopedHistory = historyLoad.history;
     const delayAuthority = (delayDays && delayDays > 0) || nextDueOn === null
       ? evaluateTaskActionAuthority({
         history: scopedHistory,
@@ -4516,6 +4528,7 @@ export function TaskApp() {
         historyStatus: "delayed",
         historyEntry: delayAuthority.mutationPlan.historyInserts.find((entry) => entry.status === "delayed"),
         historyEntries: delayAuthority.mutationPlan.historyInserts,
+        historySnapshot: scopedHistory,
         rewardEligible: delayAuthority.rewardEligibility.eligible,
       },
     );
@@ -5476,7 +5489,11 @@ export function TaskApp() {
       return true;
     }
 
-    const scopedHistory = (await loadTaskHistoryForTasks([task.id]))[task.id] ?? [];
+    const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
+    if (!historyLoad || historyLoad.status !== "ready") {
+      return fail(historyLoad?.error ?? "Could not load task history. The task was not completed.");
+    }
+    const scopedHistory = historyLoad.history;
     const completeAuthority = evaluateTaskActionAuthority({
       history: scopedHistory,
       logicalDayRollover: dayStartTime,
@@ -5526,7 +5543,7 @@ export function TaskApp() {
       task.id,
       "complete",
       historyEntries.map((entry) => entry.entry_date),
-      { historyEntries },
+      { historyEntries, historySnapshot: scopedHistory },
     );
 
     if (!historySaved) {
@@ -5676,7 +5693,12 @@ export function TaskApp() {
       }
     }
 
-    const scopedHistory = (await loadTaskHistoryForTasks([task.id]))[task.id] ?? [];
+    const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
+    if (!historyLoad || historyLoad.status !== "ready") {
+      setMessage({ tone: "warn", text: historyLoad?.error ?? "Could not load task history. The task action was not saved." });
+      return false;
+    }
+    const scopedHistory = historyLoad.history;
     const action = status === "done" || status === "did_my_best" || status === "missed" || status === "delayed"
       ? evaluateTaskActionAuthority({
         history: scopedHistory,
@@ -5743,6 +5765,7 @@ export function TaskApp() {
             historyStatus: actionHistoryStatus,
             historyEntry: action.mutationPlan.historyInserts.find((entry) => entry.status === status),
             historyEntries: action.mutationPlan.historyInserts,
+            historySnapshot: scopedHistory,
             rewardEligible: action.rewardEligibility.eligible,
           } : {}),
         }

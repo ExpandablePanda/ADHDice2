@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { getTaskDisplayStatusWithHistory } from "../src/lib/task-cockpit.ts";
-import { evaluateTaskActionAuthority } from "../src/lib/task-state-engine/action-authority.ts";
+import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, stripStatusFromScheduleIntent } from "../src/lib/task-state-engine/action-authority.ts";
 import { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
 import { buildManualDueDateTaskUpdate } from "../src/lib/task-state-engine/due-date-authority.ts";
 import { createEngineRolloverPlan } from "../src/lib/task-state-engine/rollover-authority.ts";
@@ -33,6 +33,104 @@ function history(status: TaskHistory["status"], entry_date = "2026-07-30"): Task
 }
 
 const context = { logicalDayRollover: "06:00", now: "2026-07-31T14:00:00.000Z", timezone: "America/New_York" };
+
+test("due-date-only change derives future status without promoting ambiguous old Missed History", () => {
+  const originalTask = task({
+    active_status_logical_date: null,
+    active_occurrence_due_on: null,
+    due_on: "2026-08-06",
+    id: "task-1",
+    repeat_frequency: "daily",
+    status: "missed",
+  });
+  const historyRows = [
+    history("missed", "2026-08-03"),
+    { ...history("missed", "2026-08-04"), id: "history-2026-08-04" },
+    { ...history("done", "2026-08-05"), id: "history-2026-08-05" },
+  ];
+  const historySnapshot = JSON.stringify(historyRows);
+  const dueDateOnlyIntent = stripStatusFromScheduleIntent({ due_on: "2026-08-30", status: "missed" });
+  assert.equal(Object.hasOwn(dueDateOnlyIntent, "status"), false);
+
+  const authority = evaluateTaskScheduleAuthority({
+    history: historyRows,
+    logicalDayRollover: "06:00",
+    now: "2026-08-05T14:00:00.000Z",
+    proposedTask: { ...originalTask, ...dueDateOnlyIntent },
+    task: originalTask,
+    timezone: "America/New_York",
+  });
+
+  assert.equal(authority?.activeStatus, "not_due");
+  assert.equal(authority?.unresolvedOccurrenceIdentity, null);
+  assert.equal(authority?.unresolvedOccurrenceDueOn, null);
+  assert.equal(authority?.mutationPlan.taskUpdate.due_on, "2026-08-30");
+  assert.notEqual(authority?.mutationPlan.taskUpdate.status, "missed");
+  assert.equal(authority?.mutationPlan.taskUpdate.status, "not_due");
+  assert.deepEqual(authority?.mutationPlan.historyInserts, []);
+  assert.deepEqual(authority?.proposedHistoryChanges, []);
+  assert.equal(JSON.stringify(historyRows), historySnapshot);
+  assert.deepEqual(historyRows.map((row) => [row.entry_date, row.status]), [
+    ["2026-08-03", "missed"],
+    ["2026-08-04", "missed"],
+    ["2026-08-05", "done"],
+  ]);
+});
+
+test("moving a future task back to today uses Pending when no current active Missed exists", () => {
+  const futureTask = task({
+    due_on: "2026-08-30",
+    status: "not_due",
+  });
+  const authority = evaluateTaskScheduleAuthority({
+    history: [history("missed", "2026-08-03")],
+    logicalDayRollover: "06:00",
+    now: "2026-08-05T14:00:00.000Z",
+    proposedTask: { ...futureTask, due_on: "2026-08-05" },
+    task: futureTask,
+    timezone: "America/New_York",
+  });
+
+  assert.equal(authority?.activeStatus, "pending");
+  assert.equal(authority?.mutationPlan.taskUpdate.status, "pending");
+  assert.equal(authority?.mutationPlan.historyInserts.length, 0);
+});
+
+test("a concrete active Missed occurrence remains Missed through a schedule edit", () => {
+  const activeTask = task({
+    active_occurrence_due_on: "2026-08-04",
+    active_status_logical_date: "2026-08-04",
+    due_on: "2026-08-04",
+    status: "missed",
+  });
+  const authority = evaluateTaskScheduleAuthority({
+    history: [{ ...history("missed", "2026-08-04"), id: "history-active-missed" }],
+    logicalDayRollover: "06:00",
+    now: "2026-08-05T14:00:00.000Z",
+    proposedTask: { ...activeTask, due_on: "2026-08-06" },
+    task: activeTask,
+    timezone: "America/New_York",
+  });
+
+  assert.equal(authority?.activeStatus, "missed");
+  assert.equal(authority?.mutationPlan.taskUpdate.status, "missed");
+  assert.equal(authority?.mutationPlan.historyInserts.length, 0);
+});
+
+test("explicit Missed status actions still carry status intent and History", () => {
+  const action = evaluateTaskActionAuthority({
+    history: [],
+    logicalDayRollover: "06:00",
+    now: "2026-08-05T14:00:00.000Z",
+    outcome: "missed",
+    outcomeDate: "2026-08-05",
+    task: task({ due_on: "2026-08-05", status: "pending" }),
+    timezone: "America/New_York",
+  });
+
+  assert.equal(action?.mutationPlan.taskUpdate.status, "missed");
+  assert.deepEqual(action?.mutationPlan.historyInserts.map((row) => [row.entry_date, row.status]), [["2026-08-05", "missed"]]);
+});
 
 test("Calendar authority gives explicit History precedence over virtual states", () => {
   const states = resolveTaskHistoryCalendarStates({ ...context, history: [history("did_my_best")], task: task() });

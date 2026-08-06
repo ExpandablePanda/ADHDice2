@@ -4,6 +4,7 @@ import test from "node:test";
 import { useTaskHistoryActions } from "../src/hooks/useTaskHistoryActions.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { TaskHistory, TaskHistoryInsert, TaskUpdate } from "../src/lib/database.types.ts";
+import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 
 test("task history batch action upserts selected dates together and merges local history", async () => {
   let capturedPayloads: TaskHistoryInsert[] = [];
@@ -105,6 +106,7 @@ for (const [previousStatus, nextStatus] of [
     let capturedPayload: TaskHistoryInsert | null = null;
     let capturedTaskUpdate: TaskUpdate | null = null;
     let localHistory: TaskHistory[] = [];
+    let taskState = task;
     let mutationSnapshot: TaskHistory[] = [];
     const client = {
       from: () => ({
@@ -133,12 +135,17 @@ for (const [previousStatus, nextStatus] of [
       isTaskHistoryStatus: (status) => status === "done" || status === "did_my_best" || status === "missed" || status === "complete",
       mapTaskHistoryRow: (row) => row,
       now: new Date("2026-08-03T12:00:00.000Z"),
-      onHistoryMutation: (_taskId, history) => { mutationSnapshot = history ?? []; },
+      onHistoryMutation: (_taskId, history) => {
+        mutationSnapshot = history ?? [];
+        localHistory = history ?? [];
+      },
       setMessage: () => {},
       setTaskHistory: (updater) => {
         localHistory = typeof updater === "function" ? updater(localHistory) : updater;
       },
-      setTasks: () => {},
+      setTasks: (updater) => {
+        taskState = typeof updater === "function" ? updater([taskState])[0] ?? taskState : updater[0] ?? taskState;
+      },
       sortTasksForUi: (tasks) => tasks,
       taskHistory: [],
       tasks: [task],
@@ -181,6 +188,14 @@ for (const [previousStatus, nextStatus] of [
         : Boolean(capturedTaskUpdate),
       true,
     );
+    const activeRead = resolveActiveTaskStatuses({
+      historyByTaskId: { [task.id]: localHistory },
+      logicalDayRollover: "06:00",
+      now: "2026-08-03T12:00:00.000Z",
+      tasks: [taskState],
+      timezone: "America/New_York",
+    });
+    assert.equal(activeRead.statusesByTaskId[task.id], taskState.status);
   });
 }
 

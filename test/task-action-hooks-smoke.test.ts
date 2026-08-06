@@ -10,6 +10,8 @@ import { useTaskNoteLinkActions } from "../src/hooks/useTaskNoteLinkActions.ts";
 import { useTaskSubtaskActions } from "../src/hooks/useTaskSubtaskActions.ts";
 import { useTaskActions } from "../src/hooks/useTaskActions.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
+import type { TaskHistory } from "../src/lib/database.types.ts";
+import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 import type { TaskListManualMembership as DbTaskListManualMembership } from "../src/lib/database.types.ts";
 import type { TaskListManualMembership } from "../src/lib/task-lists.ts";
 
@@ -813,6 +815,131 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
   assert.equal(dueOnlyHistorySyncCalls, 0);
 });
 
+test("successful due-date edits reconcile the task-scoped History input before the next active-status read", async () => {
+  const taskId = "task-live-due-reconciliation";
+  const history: TaskHistory = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-08-04T12:00:00.000Z",
+    entry_date: "2026-08-04",
+    event_type: "status",
+    id: "history-live-due-reconciliation",
+    occurrence_due_on: "2026-08-04",
+    occurrence_key: "occurrence:2026-08-04",
+    status: "done",
+    task_id: taskId,
+    updated_at: "2026-08-04T12:00:00.000Z",
+    user_id: "u1",
+    was_completed: true,
+  };
+  let localTask = createTask({
+    due_on: "2026-08-05",
+    id: taskId,
+    repeat_frequency: "daily",
+    status: "missed",
+    title: "Breakfast",
+    user_id: "u1",
+  });
+  let localHistory = [history];
+  let historyReconciliations = 0;
+
+  const useDueDate = (dueOn: string) => {
+    const action = useTaskUpdateAction({
+      currentDayKey: "2026-08-05",
+      dayStartTime: "06:00",
+      loadTaskHistoryForTasks: async () => ({
+        [taskId]: { error: null, history: localHistory, status: "ready" as const },
+      }),
+      logicalDayNow: "2026-08-05T12:00:00.000Z",
+      onTaskHistoryMutation: (_taskId, nextHistory) => {
+        historyReconciliations += 1;
+        localHistory = nextHistory;
+      },
+      onTasksCompleted: async () => {},
+      reconcileOverdueTaskMisses: async () => true,
+      routeTask: () => {},
+      setMessage: () => {},
+      setTasks: (updater) => {
+        localTask = typeof updater === "function" ? updater([localTask])[0] ?? localTask : updater[0] ?? localTask;
+      },
+      sortTasksForUi: (tasks) => tasks,
+      syncTaskHistoryEntry: async () => true,
+      tasks: [localTask],
+      timezone: "America/New_York",
+      updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => ({
+        conflict: null,
+        data: { ...localTask, ...values, revision: localTask.revision + 1 },
+        error: null,
+        reappliedOnLatestRevision: false,
+        usedActualSecondsFallback: false,
+        usedEnergyFallback: false,
+      }),
+    });
+
+    return action.updateTask(taskId, { due_on: dueOn }).then((result) => {
+      assert.equal(result, true);
+      return resolveActiveTaskStatuses({
+      historyByTaskId: { [taskId]: localHistory },
+      logicalDayRollover: "06:00",
+      now: "2026-08-05T12:00:00.000Z",
+      tasks: [localTask],
+      timezone: "America/New_York",
+      }).statusesByTaskId[taskId];
+    });
+  };
+
+  assert.equal(await useDueDate("2026-08-13"), "not_due");
+  assert.equal(await useDueDate("2026-08-05"), "pending");
+  assert.equal(historyReconciliations, 2);
+  assert.equal(localTask.status, "pending");
+});
+
+test("failed due-date persistence leaves the local Task and History reconciliation untouched", async () => {
+  const task = createTask({
+    due_on: "2026-08-05",
+    id: "task-live-due-failure",
+    repeat_frequency: "daily",
+    status: "missed",
+    title: "Breakfast failure",
+    user_id: "u1",
+  });
+  let setTasksCalls = 0;
+  let reconciliationCalls = 0;
+  const action = useTaskUpdateAction({
+    currentDayKey: "2026-08-05",
+    dayStartTime: "06:00",
+    loadTaskHistoryForTasks: async () => ({
+      [task.id]: { error: null, history: [], status: "ready" as const },
+    }),
+    onTaskHistoryMutation: () => {
+      reconciliationCalls += 1;
+    },
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {
+      setTasksCalls += 1;
+    },
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async () => ({
+      conflict: null,
+      data: null,
+      error: { message: "Persistence failed." },
+      reappliedOnLatestRevision: false,
+      usedActualSecondsFallback: false,
+      usedEnergyFallback: false,
+    }),
+  });
+
+  assert.equal(await action.updateTask(task.id, { due_on: "2026-08-20" }), false);
+  assert.equal(setTasksCalls, 0);
+  assert.equal(reconciliationCalls, 0);
+  assert.equal(task.status, "missed");
+  assert.equal(task.due_on, "2026-08-05");
+});
+
 test("manual due-date edits preserve unresolved History and skip reconciliation, rewards, and recurrence callbacks", async () => {
   const taskId = "task-manual-due-history";
   const sourceTask = createTask({
@@ -1006,11 +1133,11 @@ test("Test D keeps an identity-bearing Missed occurrence through the full due ed
   let optimisticTasks = [committedTask];
   let historyWrites = 0;
   let rewardCallbacks = 0;
-  const saveDueDate = async (dueOn: string) => {
+  const useDueDate = (dueOn: string) => {
     const action = useTaskUpdateAction({
       currentDayKey: "2026-08-04",
       dayStartTime: "06:00",
-      loadTaskHistoryForTasks: async () => ({ [taskId]: [missedHistory] }),
+      loadTaskHistoryForTasks: async () => ({ [taskId]: { error: null, history: [missedHistory], status: "ready" as const } }),
       logicalDayNow: "2026-08-04T12:00:00.000Z",
       onTasksCompleted: async () => { rewardCallbacks += 1; },
       reconcileOverdueTaskMisses: async () => true,
@@ -1036,13 +1163,14 @@ test("Test D keeps an identity-bearing Missed occurrence through the full due ed
         };
       },
     });
-    await action.updateTask(taskId, { due_on: dueOn });
-    assert.equal(committedTask.status, "missed");
-    assert.equal(optimisticTasks[0]?.status, "missed");
+    return action.updateTask(taskId, { due_on: dueOn }).then(() => {
+      assert.equal(committedTask.status, "missed");
+      assert.equal(optimisticTasks[0]?.status, "missed");
+    });
   };
 
-  await saveDueDate("2026-08-05");
-  await saveDueDate("2026-08-04");
+  await useDueDate("2026-08-05");
+  await useDueDate("2026-08-04");
   assert.equal(committedTask.due_on, "2026-08-04");
   assert.equal(committedTask.active_occurrence_due_on ?? null, null);
   assert.equal(committedTask.active_status_logical_date ?? null, null);
@@ -1164,4 +1292,255 @@ test("permanent parent deletion immediately removes database-cascaded descendant
   assert.equal(deleted, true);
   assert.deepEqual(taskState.map((task) => task.id), [unrelated.id]);
   assert.deepEqual(Object.keys(routingState), [unrelated.id]);
+});
+
+function failedTaskHistoryLoad(taskId: string) {
+  return async () => ({
+    [taskId]: {
+      error: "History is unavailable.",
+      history: null,
+      status: "error" as const,
+    },
+  });
+}
+
+function readyTaskHistoryLoad(taskId: string) {
+  return async () => ({
+    [taskId]: {
+      error: null,
+      history: [],
+      status: "ready" as const,
+    },
+  });
+}
+
+test("generic due-date edits fail closed when authoritative History loading fails", async () => {
+  const task = createTask({ id: "task-history-failure-due", status: "pending", title: "Due" });
+  let taskWrites = 0;
+  const update = useTaskUpdateAction({
+    currentDayKey: "2026-08-05",
+    loadTaskHistoryForTasks: failedTaskHistoryLoad(task.id),
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      taskWrites += 1;
+      return { conflict: null, data: task, error: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(task.id, { due_on: "2026-08-10" }), false);
+  assert.equal(taskWrites, 0);
+});
+
+test("generic status edits fail closed when authoritative History loading fails", async () => {
+  const task = createTask({ id: "task-history-failure-status", status: "pending", title: "Status" });
+  let taskWrites = 0;
+  let historyWrites = 0;
+  const update = useTaskUpdateAction({
+    currentDayKey: "2026-08-05",
+    loadTaskHistoryForTasks: failedTaskHistoryLoad(task.id),
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => { historyWrites += 1; return true; },
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      taskWrites += 1;
+      return { conflict: null, data: task, error: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(task.id, { status: "done" }), false);
+  assert.equal(taskWrites, 0);
+  assert.equal(historyWrites, 0);
+});
+
+test("generic recurrence edits fail closed when authoritative History loading fails", async () => {
+  const task = createTask({ id: "task-history-failure-repeat", repeat_frequency: "none", status: "pending", title: "Repeat" });
+  let taskWrites = 0;
+  const update = useTaskUpdateAction({
+    currentDayKey: "2026-08-05",
+    loadTaskHistoryForTasks: failedTaskHistoryLoad(task.id),
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      taskWrites += 1;
+      return { conflict: null, data: task, error: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(task.id, { repeat_frequency: "daily", repeat_interval: 1 }), false);
+  assert.equal(taskWrites, 0);
+});
+
+test("generic metadata-only title and priority edits skip History loading", async () => {
+  const task = createTask({ id: "task-metadata-no-history", priority: 1, status: "pending", title: "Metadata" });
+  let historyLoads = 0;
+  let taskWrites = 0;
+  const update = useTaskUpdateAction({
+    currentDayKey: "2026-08-05",
+    loadTaskHistoryForTasks: async () => {
+      historyLoads += 1;
+      return failedTaskHistoryLoad(task.id)();
+    },
+    onTasksCompleted: async () => {},
+    reconcileOverdueTaskMisses: async () => true,
+    routeTask: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async (_taskId, values) => {
+      taskWrites += 1;
+      return { conflict: null, data: { ...task, ...values }, error: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(task.id, { title: "Renamed" }), true);
+  assert.equal(await update.updateTask(task.id, { priority: 4 }), true);
+  assert.equal(historyLoads, 0);
+  assert.equal(taskWrites, 2);
+});
+
+test("full editor metadata-only title and priority edits skip History loading", async () => {
+  const task = createTask({
+    id: "task-editor-metadata-no-history",
+    priority: 1,
+    repeat_days_of_week: [1, 3],
+    repeat_frequency: "weekly",
+    status: "pending",
+    title: "Editor metadata",
+  });
+  let historyLoads = 0;
+  let taskWrites = 0;
+  const editor = useTaskEditorSaveAction({
+    currentDayKey: "2026-08-05",
+    currentUserId: "u1",
+    focusedTaskIds: [],
+    insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
+    loadTaskHistoryForTasks: async () => {
+      historyLoads += 1;
+      return failedTaskHistoryLoad(task.id)();
+    },
+    onTasksCompleted: async () => {},
+    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    reconcileOverdueTaskMisses: async () => true,
+    saveFocusSelection: async () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => true,
+    syncTaskNoteLinks: async () => true,
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      taskWrites += 1;
+      return { conflict: null, data: task, error: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.ok(await editor.saveTaskEditor({ ...task, title: "Renamed" }, { taskId: task.id }));
+  assert.ok(await editor.saveTaskEditor({ ...task, priority: 4 }, { taskId: task.id }));
+  assert.equal(historyLoads, 0);
+  assert.equal(taskWrites, 2);
+});
+
+test("full editor save rejects Task State validation before task or History writes", async () => {
+  const task = createTask({ due_on: null, id: "task-editor-validation", repeat_frequency: "none", status: "pending", title: "Editor" });
+  let taskWrites = 0;
+  let historyWrites = 0;
+  let rewardCalls = 0;
+  const editor = useTaskEditorSaveAction({
+    currentDayKey: "2026-08-05",
+    currentUserId: "u1",
+    focusedTaskIds: [],
+    insertTaskRowWithLegacyEnergyFallback: async () => ({ data: null, error: null, usedEnergyFallback: false }),
+    loadTaskHistoryForTasks: readyTaskHistoryLoad(task.id),
+    onTasksCompleted: async () => { rewardCalls += 1; },
+    replaceTaskSubtasks: async () => ({ saved: true, usedNestedFallback: false }),
+    reconcileOverdueTaskMisses: async () => true,
+    saveFocusSelection: async () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => { historyWrites += 1; return true; },
+    syncTaskNoteLinks: async () => true,
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      taskWrites += 1;
+      return { conflict: null, data: task, error: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await editor.saveTaskEditor({ ...task, status: "missed" }, { taskId: task.id }), null);
+  assert.equal(taskWrites, 0);
+  assert.equal(historyWrites, 0);
+  assert.equal(rewardCalls, 0);
+});
+
+test("batch edit rejects Task State validation before any task or History writes", async () => {
+  const task = createTask({ due_on: null, id: "task-batch-validation", repeat_frequency: "none", status: "pending", title: "Batch" });
+  let taskWrites = 0;
+  let historyWrites = 0;
+  let rewardCalls = 0;
+  const batch = useTaskBatchEditAction({
+    clearListTaskSelection: () => {},
+    currentDayKey: "2026-08-05",
+    focusedTaskIds: [],
+    loadTaskHistoryForTasks: readyTaskHistoryLoad(task.id),
+    onTasksCompleted: async () => { rewardCalls += 1; },
+    parseDayOfMonth: () => null,
+    parsePositiveInteger: (value) => Number.parseInt(value, 10),
+    routeTask: () => {},
+    saveFocusSelection: async () => {},
+    selectedListTasks: [task],
+    setIsBatchEditModalOpen: () => {},
+    setMessage: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    syncTaskHistoryEntry: async () => { historyWrites += 1; return true; },
+    tasks: [task],
+    updateTaskRowWithLegacyEnergyFallback: async () => {
+      taskWrites += 1;
+      return { data: task, error: null, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  await batch.applyBatchTaskEdit({
+    dueOn: "",
+    dueOnMode: "unchanged",
+    energy: "unchanged",
+    estimatedMinutes: "",
+    estimatedMinutesMode: "unchanged",
+    focusToday: "unchanged",
+    oneStepAtATime: "unchanged",
+    priority: "unchanged",
+    repeatDayOfMonth: "",
+    repeatDaysOfWeek: [],
+    repeatFrequency: "unchanged",
+    repeatInterval: "",
+    route: "unchanged",
+    status: "missed",
+    subtasksAutoReset: "unchanged",
+    tags: [],
+    tagsMode: "unchanged",
+  });
+  assert.equal(taskWrites, 0);
+  assert.equal(historyWrites, 0);
+  assert.equal(rewardCalls, 0);
 });

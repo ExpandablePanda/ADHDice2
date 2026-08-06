@@ -8,8 +8,9 @@ import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import { buildTaskPriorityUpdate } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
-import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority } from "@/lib/task-state-engine/action-authority";
+import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, isOccurrenceSensitiveTaskMutation } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
+import type { TaskHistoryLoadMap } from "@/lib/task-history";
 
 type Message = {
   text: string;
@@ -28,6 +29,7 @@ type UseTaskBatchEditActionOptions = {
   currentDayKey: string;
   dayStartTime: string;
   focusedTaskIds: string[];
+  onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[]) => void | Promise<void>;
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
   parseDayOfMonth: (value: string) => number | null;
   parsePositiveInteger: (value: string) => number | null;
@@ -38,11 +40,11 @@ type UseTaskBatchEditActionOptions = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
-  syncTaskHistoryEntry: (taskId: string, status: TaskStatus, occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryInsert }) => Promise<boolean>;
-  syncTaskHistoryEntries?: (taskId: string, status: TaskStatus, entryDates: string[], options?: { historyEntries?: TaskHistoryInsert[] }) => Promise<boolean>;
+  syncTaskHistoryEntry: (taskId: string, status: TaskStatus, occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryInsert; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
+  syncTaskHistoryEntries?: (taskId: string, status: TaskStatus, entryDates: string[], options?: { historyEntries?: TaskHistoryInsert[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
   taskHistory?: TaskHistory[];
   tasks: Task[];
-  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<Record<string, TaskHistory[]>>;
+  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
   logicalDayNow?: Date | string;
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
@@ -53,6 +55,7 @@ export function useTaskBatchEditAction({
   currentDayKey,
   dayStartTime = "00:00",
   focusedTaskIds,
+  onTaskHistoryMutation,
   onTasksCompleted,
   parseDayOfMonth,
   parsePositiveInteger,
@@ -77,13 +80,23 @@ export function useTaskBatchEditAction({
       return;
     }
 
+    type BatchTaskPlan = {
+      actionAuthority: ReturnType<typeof evaluateTaskActionAuthority>;
+      dueDateOnlyEdit: boolean;
+      scopedHistory: TaskHistory[];
+      task: Task;
+      trackedUpdateValues: TaskUpdate;
+    };
+
     let nextTasks = tasks;
     let successfulCount = 0;
     let fallbackCount = 0;
     let firstErrorMessage: string | null = null;
     const nextFocusedTaskIds = new Set(focusedTaskIds);
     const completedCandidates: TaskRewardCandidate[] = [];
+    const taskPlans: BatchTaskPlan[] = [];
 
+    // Preflight every selected task before persisting any part of the batch.
     for (const task of selectedListTasks) {
       const updateValues: TaskUpdate = {};
 
@@ -147,9 +160,20 @@ export function useTaskBatchEditAction({
           : null;
       }
 
-      const scopedHistory = loadTaskHistoryForTasks
-        ? (await loadTaskHistoryForTasks([task.id]))[task.id] ?? []
-        : taskHistory.filter((entry) => entry.task_id === task.id);
+      const occurrenceSensitive = isOccurrenceSensitiveTaskMutation({
+        forceOccurrenceSensitive: draft.dueOnMode !== "unchanged" || draft.repeatFrequency !== "unchanged",
+        task,
+        values: updateValues,
+      });
+      let scopedHistory = taskHistory.filter((entry) => entry.task_id === task.id);
+      if (occurrenceSensitive && loadTaskHistoryForTasks) {
+        const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
+        if (!historyLoad || historyLoad.status !== "ready") {
+          setMessage({ tone: "warn", text: historyLoad?.error ?? "Could not load task history. The batch was not saved." });
+          return;
+        }
+        scopedHistory = historyLoad.history;
+      }
       const outcome = draft.status !== "unchanged" && ["done", "did_my_best", "missed", "delayed", "complete"].includes(draft.status)
         ? draft.status as "done" | "did_my_best" | "missed" | "delayed" | "complete"
         : null;
@@ -173,11 +197,21 @@ export function useTaskBatchEditAction({
           timezone,
         })
         : null;
+      const validationError = actionAuthority?.validationErrors[0] ?? scheduleAuthority?.validationErrors[0];
+      if (validationError) {
+        setMessage({ tone: "warn", text: validationError });
+        return;
+      }
       const authorityUpdate = actionAuthority?.mutationPlan.taskUpdate ?? scheduleAuthority?.mutationPlan.taskUpdate;
       const trackedUpdateValues = authorityUpdate
         ? { ...updateValues, ...authorityUpdate }
         : applyTaskActiveStatusTracking(task, updateValues, currentDayKey);
 
+      taskPlans.push({ actionAuthority, dueDateOnlyEdit, scopedHistory, task, trackedUpdateValues });
+    }
+
+    for (const { actionAuthority, dueDateOnlyEdit, scopedHistory, task, trackedUpdateValues } of taskPlans) {
+      const updateValues = trackedUpdateValues;
       if (Object.keys(updateValues).length === 0) {
         successfulCount += 1;
         if (draft.route === "clear") {
@@ -212,6 +246,9 @@ export function useTaskBatchEditAction({
 
       nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? data : currentTask);
       successfulCount += 1;
+      if (dueDateOnlyEdit) {
+        void onTaskHistoryMutation?.(task.id, scopedHistory);
+      }
       if (usedEnergyFallback) {
         fallbackCount += 1;
       }
@@ -223,10 +260,10 @@ export function useTaskBatchEditAction({
       if (!dueDateOnlyEdit && draft.status !== "unchanged") {
         const historyEntries = actionAuthority?.mutationPlan.historyInserts;
         const historySaved = historyEntries?.length && syncTaskHistoryEntries
-          ? await syncTaskHistoryEntries(task.id, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries })
+          ? await syncTaskHistoryEntries(task.id, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries, historySnapshot: scopedHistory })
           : await syncTaskHistoryEntry(task.id, data.status, task, historyEntries?.[0]
-            ? { historyEntry: historyEntries[0] }
-            : undefined);
+            ? { historyEntry: historyEntries[0], historySnapshot: scopedHistory }
+            : { historySnapshot: scopedHistory });
         if (!historySaved) {
           firstErrorMessage ??= `Task "${data.title}" was updated, but its history entry could not be saved.`;
           continue;

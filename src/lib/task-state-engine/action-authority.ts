@@ -6,6 +6,78 @@ import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
 import type { TaskHistoryOutcome } from "./types.ts";
 import type { TaskStateHistoryRow } from "./types.ts";
 
+const OCCURRENCE_SENSITIVE_TASK_UPDATE_FIELDS = [
+  "status",
+  "due_on",
+  "due_time",
+  "repeat_frequency",
+  "repeat_interval",
+  "repeat_days_of_week",
+  "repeat_day_of_month",
+  "repeat_monthly_mode",
+  "repeat_monthly_ordinal",
+  "repeat_monthly_weekday",
+  "completed_at",
+  "active_status_logical_date",
+  "active_occurrence_due_on",
+] as const;
+
+const TASK_SCHEDULE_FIELDS = [
+  "due_on",
+  "due_time",
+  "repeat_frequency",
+  "repeat_interval",
+  "repeat_days_of_week",
+  "repeat_day_of_month",
+  "repeat_monthly_mode",
+  "repeat_monthly_ordinal",
+  "repeat_monthly_weekday",
+] as const;
+
+function areTaskUpdateValuesEqual(left: unknown, right: unknown) {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+  return left === right;
+}
+
+export function hasTaskScheduleChange(task: Task, values: TaskUpdate) {
+  return TASK_SCHEDULE_FIELDS.some((field) => (
+    Object.hasOwn(values, field)
+    && !areTaskUpdateValuesEqual(values[field], task[field])
+  ));
+}
+
+export function stripStatusFromScheduleIntent(values: TaskUpdate) {
+  if (!Object.hasOwn(values, "status")) return values;
+  return Object.fromEntries(Object.entries(values).filter(([field]) => field !== "status")) as TaskUpdate;
+}
+
+export function isOccurrenceSensitiveTaskMutation(input: {
+  engineManaged?: boolean;
+  forceOccurrenceSensitive?: boolean;
+  historyEntries?: TaskHistoryInsert[];
+  historyEntry?: TaskHistoryInsert;
+  historyStatus?: Task["status"];
+  task?: Task | null;
+  values: TaskUpdate;
+}) {
+  if (
+    input.engineManaged
+    || input.forceOccurrenceSensitive
+    || input.historyStatus !== undefined
+    || input.historyEntry
+    || input.historyEntries?.length
+  ) {
+    return true;
+  }
+
+  return OCCURRENCE_SENSITIVE_TASK_UPDATE_FIELDS.some((field) => (
+    Object.hasOwn(input.values, field)
+    && (!input.task || !areTaskUpdateValuesEqual(input.values[field], input.task[field]))
+  ));
+}
+
 function storedStatusForActiveStatus(status: ReturnType<typeof evaluateTaskState>["activeStatus"]): Task["status"] {
   return status === "unscheduled" ? "pending" : status;
 }

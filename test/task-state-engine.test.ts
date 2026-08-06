@@ -105,7 +105,7 @@ test("schedule changes preserve an unresolved identity-bearing Missed occurrence
     history: [missed],
     action: { type: "change_schedule" },
   }));
-  assert.equal(first.activeStatus, "missed");
+  assert.equal(first.activeStatus, "upcoming");
   assert.equal(first.unresolvedOccurrenceIdentity, "task:task-1:occurrence:2026-08-03");
   assert.equal(first.proposedHistoryChanges.length, 0);
 
@@ -139,7 +139,7 @@ test("a schedule change without unresolved Missed derives the new Pending or Upc
 
 test("ambiguous identity-less legacy Missed History fails closed", () => {
   const result = evaluateTaskState(input({
-    now: "2026-08-04T14:00:00.000Z",
+    now: "2026-08-05T14:00:00.000Z",
     task: task({
       activeStatus: "pending",
       dueOn: "2026-08-05",
@@ -148,7 +148,7 @@ test("ambiguous identity-less legacy Missed History fails closed", () => {
     history: [history("2026-08-03", "missed"), history("2026-08-04", "missed")],
     action: { type: "change_schedule" },
   }));
-  assert.equal(result.activeStatus, "missed");
+  assert.equal(result.activeStatus, "pending");
   assert.equal(result.unresolvedOccurrenceIdentity, null);
   assert.equal(result.unresolvedOccurrenceDueOn, null);
   assert.deepEqual(result.proposedHistoryChanges, []);

@@ -9,8 +9,9 @@ import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
-import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority } from "@/lib/task-state-engine/action-authority";
+import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
+import type { TaskHistoryLoadMap } from "@/lib/task-history";
 
 type Message = {
   text: string;
@@ -36,18 +37,19 @@ type UseTaskEditorSaveActionOptions = {
   dayStartTime: string;
   focusedTaskIds: string[];
   onTasksCompleted: (candidates: TaskRewardCandidate[]) => Promise<void>;
+  onTaskHistoryMutation?: (taskId: string, taskHistory: TaskHistory[]) => void | Promise<void>;
   replaceTaskSubtasks: (taskId: string, subtasks: TaskSubtaskDraft[]) => Promise<{ saved: boolean; usedNestedFallback: boolean }>;
   reconcileOverdueTaskMisses: (task: Task) => Promise<boolean>;
   saveFocusSelection: (nextTaskIds: string[], validTaskIds?: Set<string> | Task[]) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
-  syncTaskHistoryEntry: (taskId: string, status: Task["status"], occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryInsert }) => Promise<boolean>;
-  syncTaskHistoryEntries?: (taskId: string, status: Task["status"], entryDates: string[], options?: { historyEntries?: TaskHistoryInsert[] }) => Promise<boolean>;
+  syncTaskHistoryEntry: (taskId: string, status: Task["status"], occurrenceTask?: Task | null, options?: { historyEntry?: TaskHistoryInsert; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
+  syncTaskHistoryEntries?: (taskId: string, status: Task["status"], entryDates: string[], options?: { historyEntries?: TaskHistoryInsert[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
   syncTaskNoteLinks: (taskId: string, linkedNoteIds: string[]) => Promise<boolean>;
   taskHistory?: TaskHistory[];
   tasks: Task[];
-  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<Record<string, TaskHistory[]>>;
+  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
   logicalDayNow?: Date | string;
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
@@ -62,6 +64,7 @@ export function useTaskEditorSaveAction({
   insertTaskRowWithLegacyEnergyFallback,
   currentUserId,
   onTasksCompleted,
+  onTaskHistoryMutation,
   replaceTaskSubtasks,
   reconcileOverdueTaskMisses,
   saveFocusSelection,
@@ -92,25 +95,27 @@ export function useTaskEditorSaveAction({
         ...values,
         id: undefined,
       });
-      const dueDateChanged = Boolean(
-        previousTask
-        && normalizedUpdateValues.due_on !== previousTask.due_on,
-      );
       const statusChanged = Boolean(
         previousTask
         && normalizedUpdateValues.status !== undefined
         && normalizedUpdateValues.status !== previousTask.status,
       );
-      const scheduleChanged = Boolean(previousTask && (
-        dueDateChanged
-        || Object.hasOwn(normalizedUpdateValues, "due_time") && normalizedUpdateValues.due_time !== previousTask.due_time
-        || ["repeat_frequency", "repeat_interval", "repeat_days_of_week", "repeat_day_of_month", "repeat_monthly_mode", "repeat_monthly_ordinal", "repeat_monthly_weekday"]
-          .some((field) => Object.hasOwn(normalizedUpdateValues, field) && normalizedUpdateValues[field as keyof TaskUpdate] !== previousTask[field as keyof Task])
-      ));
+      const scheduleChanged = Boolean(previousTask && hasTaskScheduleChange(previousTask, normalizedUpdateValues));
       const scheduleOnlyEdit = scheduleChanged && !statusChanged;
-      const scopedHistory = loadTaskHistoryForTasks
-        ? (await loadTaskHistoryForTasks([taskId]))[taskId] ?? []
-        : taskHistory.filter((entry) => entry.task_id === taskId);
+      const scheduleIntentValues = scheduleOnlyEdit ? stripStatusFromScheduleIntent(normalizedUpdateValues) : normalizedUpdateValues;
+      const occurrenceSensitive = isOccurrenceSensitiveTaskMutation({
+        task: previousTask,
+        values: normalizedUpdateValues,
+      });
+      let scopedHistory = taskHistory.filter((entry) => entry.task_id === taskId);
+      if (occurrenceSensitive && loadTaskHistoryForTasks) {
+        const historyLoad = (await loadTaskHistoryForTasks([taskId]))[taskId];
+        if (!historyLoad || historyLoad.status !== "ready") {
+          setMessage({ tone: "warn", text: historyLoad?.error ?? "Could not load task history. The task was not saved." });
+          return null;
+        }
+        scopedHistory = historyLoad.history;
+      }
       const outcome = statusChanged && ["done", "did_my_best", "missed", "delayed", "complete"].includes(String(normalizedUpdateValues.status))
         ? normalizedUpdateValues.status as "done" | "did_my_best" | "missed" | "delayed" | "complete"
         : null;
@@ -129,15 +134,20 @@ export function useTaskEditorSaveAction({
           history: scopedHistory,
           logicalDayRollover: dayStartTime,
           now: logicalDayNow,
-          proposedTask: { ...previousTask, ...normalizedUpdateValues } as Task,
+          proposedTask: { ...previousTask, ...scheduleIntentValues } as Task,
           task: previousTask,
           timezone,
         })
         : null;
+      const validationError = actionAuthority?.validationErrors[0] ?? scheduleAuthority?.validationErrors[0];
+      if (validationError) {
+        setMessage({ tone: "warn", text: validationError });
+        return null;
+      }
       const authorityUpdate = actionAuthority?.mutationPlan.taskUpdate ?? scheduleAuthority?.mutationPlan.taskUpdate;
       const dueNormalizedValues = authorityUpdate
-        ? { ...normalizedUpdateValues, ...authorityUpdate }
-        : normalizedUpdateValues;
+        ? { ...scheduleIntentValues, ...authorityUpdate }
+        : scheduleIntentValues;
       const updateValues = previousTask
         ? (scheduleOnlyEdit || actionAuthority) ? dueNormalizedValues : applyTaskActiveStatusTracking(previousTask, dueNormalizedValues, currentDayKey)
         : dueNormalizedValues;
@@ -172,8 +182,11 @@ export function useTaskEditorSaveAction({
         : data;
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
+      if (scheduleOnlyEdit) {
+        void onTaskHistoryMutation?.(taskId, scopedHistory);
+      }
 
-      if (!scheduleOnlyEdit && !actionAuthority && shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
+      if (occurrenceSensitive && !scheduleOnlyEdit && !actionAuthority && shouldReconcileOverdueTaskMisses(nextData, currentDayKey)) {
         const historyReconciled = await reconcileOverdueTaskMisses(nextData);
         if (!historyReconciled) {
           return false;
@@ -185,10 +198,11 @@ export function useTaskEditorSaveAction({
       if (!scheduleOnlyEdit && statusChanged) {
         const historyEntries = actionAuthority?.mutationPlan.historyInserts;
         const historySaved = historyEntries?.length && syncTaskHistoryEntries
-          ? await syncTaskHistoryEntries(taskId, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries })
-          : await syncTaskHistoryEntry(taskId, data.status, previousTask ?? nextData, historyEntries?.[0]
-            ? { historyEntry: historyEntries[0] }
-            : undefined);
+          ? await syncTaskHistoryEntries(taskId, data.status, historyEntries.map((entry) => entry.entry_date), { historyEntries, historySnapshot: scopedHistory })
+          : await syncTaskHistoryEntry(taskId, data.status, previousTask ?? nextData, {
+            ...(historyEntries?.[0] ? { historyEntry: historyEntries[0] } : {}),
+            historySnapshot: scopedHistory,
+          });
         if (!historySaved) {
           return false;
         }

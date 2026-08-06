@@ -381,7 +381,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   // A persisted active Missed is an unresolved obligation. Fixed recurrence may
   // expose a new Calendar occurrence, but that must not replace the frozen
   // overdue occurrence until an explicit handled outcome resolves it.
-  const activeMissedDueOn = !unresolvedMissed.identity && task.lifecycle === "active"
+  const activeMissedDueOn = task.lifecycle === "active"
     && task.activeStatus === "missed"
     && task.dueOn
     && task.dueOn < today
@@ -397,6 +397,26 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     recurrenceAnchor = null;
     satisfied = null;
   }
+
+  const activeOccurrenceIdentity = task.activeOccurrenceDueOn
+    ? occurrenceIdentity(task.id, task.activeOccurrenceDueOn)
+    : null;
+  const concreteActiveMissedOccurrence = unresolvedMissed.hasUnresolved
+    && !unresolvedMissed.ambiguous
+    && (
+      unresolvedMissed.identity === activeOccurrenceIdentity
+      || unresolvedMissed.dueOn === task.activeOccurrenceDueOn
+      || (Boolean(task.dueOn && task.dueOn <= today) && unresolvedMissed.dueOn === task.dueOn)
+    );
+  const explicitActiveMissedOccurrence = task.activeStatus === "missed"
+    && (!action || action.outcome === "missed")
+    && (
+      Boolean(activeMissedDueOn)
+      || Boolean(task.activeStatusLogicalDate && task.activeStatusLogicalDate <= today)
+      || Boolean(task.activeOccurrenceDueOn && task.activeOccurrenceDueOn <= today)
+      || Boolean(task.dueOn && task.dueOn <= today)
+    );
+  const activeMissedOccurrence = concreteActiveMissedOccurrence || explicitActiveMissedOccurrence;
 
   const staleInProgress = task.lifecycle === "active"
     && task.activeStatus === "in_progress"
@@ -443,7 +463,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const oneOffHandled = task.recurrence.kind === "none"
     && latestHandledRow
     && (latestHandledRow.outcome === "done" || latestHandledRow.outcome === "complete");
-  const overdueAnchor = !unresolvedMissed.hasUnresolved
+  const overdueAnchor = !activeMissedOccurrence
     && task.lifecycle === "active" && !completed && !oneOffHandled && !unscheduled && nextDue && nextDue < today ? nextDue : null;
   if (overdueAnchor) {
     const continuousStart = latestHandledRow && latestHandledRow.logicalDate >= overdueAnchor
@@ -480,17 +500,29 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     .filter((row) => row.outcome === "delayed")
     .sort((a, b) => b.logicalDate.localeCompare(a.logicalDate))[0] ?? null;
   let activeStatus: TaskActiveStatus;
-  if (task.lifecycle === "archived" || task.lifecycle === "trashed") activeStatus = task.activeStatus;
-  else if (completed) activeStatus = "complete";
-  else if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRow) activeStatus = "in_progress";
-  else if (currentOutcome === "missed" || unresolvedMissed.hasUnresolved || overdueAnchor) activeStatus = "missed";
-  else if (scheduleChange && (task.activeStatus === "done" || task.activeStatus === "did_my_best")) activeStatus = task.activeStatus;
-  else if (currentOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) activeStatus = nextDue ? statusForFutureDate(today, nextDue) : "delayed";
-  else if (unscheduled) activeStatus = "unscheduled";
-  else if (nextDue && nextDue > today) activeStatus = statusForFutureDate(today, nextDue);
-  else if (oneOffHandled || currentOutcome === "done") activeStatus = "done";
-  else if (currentOutcome === "did_my_best") activeStatus = "did_my_best";
-  else activeStatus = "pending";
+  if (task.lifecycle === "archived" || task.lifecycle === "trashed") {
+    activeStatus = task.activeStatus;
+  } else if (completed) {
+    activeStatus = "complete";
+  } else if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRow) {
+    activeStatus = "in_progress";
+  } else if (currentOutcome === "missed" || activeMissedOccurrence || overdueAnchor) {
+    activeStatus = "missed";
+  } else if (scheduleChange && (task.activeStatus === "done" || task.activeStatus === "did_my_best")) {
+    activeStatus = task.activeStatus;
+  } else if (currentOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) {
+    activeStatus = nextDue ? statusForFutureDate(today, nextDue) : "delayed";
+  } else if (unscheduled) {
+    activeStatus = "unscheduled";
+  } else if (nextDue && nextDue > today) {
+    activeStatus = statusForFutureDate(today, nextDue);
+  } else if (oneOffHandled || currentOutcome === "done") {
+    activeStatus = "done";
+  } else if (currentOutcome === "did_my_best") {
+    activeStatus = "did_my_best";
+  } else {
+    activeStatus = "pending";
+  }
 
   const calendar: Record<string, ReturnType<typeof calendarStateForOutcome>> = {};
   for (const [date, row] of byDate) calendar[date] = calendarStateForOutcome(row.outcome);

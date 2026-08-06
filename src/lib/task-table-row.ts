@@ -15,6 +15,7 @@ const isDevelopment = process.env.NODE_ENV !== "production";
 let buildTaskTableRowDebugCount = 0;
 
 export type TaskTableRowContext = {
+  displayStatus?: Task["status"];
   focusedTaskIdSet: Set<string>;
   linkedNotes: TaskEditorLinkedNote[];
   listDefinitions: TaskListDefinition[];
@@ -30,6 +31,7 @@ export function createStableTaskRowModelCache() {
   return {
     getOrCreate(task: Task, context: TaskTableRowContext) {
       const revision = createProjectionDomainRevision(`task-row:${task.id}`, {
+        displayStatus: context.displayStatus,
         focused: context.focusedTaskIdSet.has(task.id),
         history: context.taskHistory,
         linkedNotes: context.linkedNotes,
@@ -122,7 +124,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     repeatMonthlyOrdinal: task.repeat_monthly_ordinal,
     repeatMonthlyWeekday: task.repeat_monthly_weekday,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
-    status: task.status,
+    status: context.displayStatus ?? task.status,
     subtasks: buildTaskTableSubtasks(context.subtasks),
     tags: task.tags ?? [],
     title: task.title,

@@ -494,6 +494,7 @@ export function TasksTableAdapter({
   const rows = useMemo(
     () => {
       return windowedTasks.map((task) => rowModelCache.getOrCreate(task, {
+        displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[task.id],
         focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
         linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
         listDefinitions: tableProps.rowContext.listDefinitions,
@@ -524,6 +525,7 @@ export function TasksTableAdapter({
   const requestedOpenTaskRow = useMemo(
     () => tableProps.requestedOpenTask
       ? rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
+        displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[tableProps.requestedOpenTask.id],
         focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
         linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
         listDefinitions: tableProps.rowContext.listDefinitions,
@@ -559,6 +561,7 @@ export function TasksTableAdapter({
           getAllRows={() => (tableProps.allTasks ?? tableProps.tasks)
             .filter(isTaskVisibleInPrimaryViews)
             .map((task) => rowModelCache.getOrCreate(task, {
+              displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[task.id],
               focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
               linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
               listDefinitions: tableProps.rowContext.listDefinitions,
@@ -2602,6 +2605,7 @@ function TasksSimpleList({
   );
   const overlayRows = useMemo(
     () => tableProps.requestedOpenTask ? [rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
+      displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[tableProps.requestedOpenTask.id],
       focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
       linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
       listDefinitions: tableProps.rowContext.listDefinitions,
@@ -2616,6 +2620,7 @@ function TasksSimpleList({
   const requestedOpenTaskRow = useMemo(
     () => tableProps.requestedOpenTask
       ? rowModelCache.getOrCreate(tableProps.requestedOpenTask, {
+        displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[tableProps.requestedOpenTask.id],
         focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
         linkedNotes: tableProps.rowContext.linkedNotesByTaskId[tableProps.requestedOpenTask.id] ?? [],
         listDefinitions: tableProps.rowContext.listDefinitions,
@@ -2658,6 +2663,7 @@ function TasksSimpleList({
         childTaskPreviewByParentTaskId: tableProps.childTaskPreviewByParentTaskId ?? {},
         sourceTaskId: rowContextMenuTask.id,
         tasks: (allRows?.length ?? 0) > 0 ? allRows ?? [] : tasks.map((task) => rowModelCache.getOrCreate(task, {
+          displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[task.id],
           focusedTaskIdSet: tableProps.rowContext.focusedTaskIdSet,
           linkedNotes: tableProps.rowContext.linkedNotesByTaskId[task.id] ?? [],
           listDefinitions: tableProps.rowContext.listDefinitions,
@@ -2976,13 +2982,14 @@ function TasksSimpleList({
             />
           ) : null}
           {windowedTasks.map((task) => {
-        const displayStatus = task.status;
+        const displayStatus = rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status;
         const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
         const dueMeta = dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;
         const isMetadataVisible = visibleMetadataTaskIds.has(task.id);
         const repeatSummary = formatRepeatSummary(task);
         const taskRow = rowModelCache.getOrCreate(task, {
+          displayStatus,
           focusedTaskIdSet: rowContext.focusedTaskIdSet,
           linkedNotes: rowContext.linkedNotesByTaskId[task.id] ?? [],
           listDefinitions: rowContext.listDefinitions,

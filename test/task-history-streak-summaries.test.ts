@@ -178,7 +178,8 @@ test("normal Tasks startup uses a paged compact query and never starts full Hist
 test("History mutation callbacks refresh one task summary", () => {
   assert.match(historyActionSource, /onHistoryMutation\?:/);
   assert.match(historyActionSource, /notifyHistoryMutation\(taskId, nextTaskHistory\)/);
-  assert.match(appSource, /onHistoryMutation: refreshTaskHistoryStreakSummary/);
+  assert.match(appSource, /onHistoryMutation: reconcileTaskHistoryMutation/);
+  assert.match(appSource, /updateTaskHistoryForTask\(taskId, nextTaskHistory\)/);
   assert.match(workspaceSource, /refreshTaskHistoryStreakSummaryRef\.current = reloadTaskHistoryStreakSummaryForTask/);
   assert.doesNotMatch(historyActionSource, /loadTaskHistoryStreakSummaries/);
 });

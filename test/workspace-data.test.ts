@@ -205,7 +205,7 @@ test("a ready modal History cache remains available when the modal reopens", asy
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const modalLoader = source.slice(source.indexOf("async function loadTaskHistoryForTask"), source.indexOf("async function loadTaskHistoryStreakSummaries"));
 
-  assert.match(modalLoader, /if \(!force && taskHistoryLoadStateByTaskIdRef\.current\[taskId\]\?\.status === "ready"\) \{\s*return true;/);
+  assert.match(modalLoader, /if \(!force && taskHistoryLoadStateByTaskIdRef\.current\[taskId\]\?\.status === "ready"\) \{[\s\S]*?status: "ready"/);
   assert.match(source, /taskHistoryByTaskId,/);
 });
 
@@ -215,8 +215,18 @@ test("modal retry resets loading state and preserves error handling without touc
 
   assert.match(source, /retryTaskHistoryForTaskRef\.current = \(taskId\) => loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
   assert.match(modalLoader, /setTaskHistoryTaskLoadState\(taskId, \{ error: null, status: "loading" \}\)/);
-  assert.match(modalLoader, /setTaskHistoryTaskLoadState\(taskId, \{ error: result\.error\.message/);
+  assert.match(modalLoader, /setTaskHistoryTaskLoadState\(taskId, \{ error, status: "error" \}\)/);
   assert.doesNotMatch(modalLoader, /setTaskHistory\s*\(/);
+});
+
+test("task-scoped History loading returns an explicit failure instead of cached or empty rows", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const modalLoader = source.slice(source.indexOf("async function loadTaskHistoryForTask"), source.indexOf("async function loadTaskHistoryStreakSummaries"));
+
+  assert.match(modalLoader, /return \{ status: "error", history: null, error/);
+  assert.match(modalLoader, /return \{ status: "error", history: null, error \} satisfies TaskHistoryLoadResult/);
+  assert.match(source, /return Object\.fromEntries\(results\) as TaskHistoryLoadMap/);
+  assert.doesNotMatch(modalLoader, /return Object\.fromEntries\(uniqueTaskIds\.map/);
 });
 
 test("History mutations update the isolated modal cache and summary ownership", async () => {
@@ -224,9 +234,9 @@ test("History mutations update the isolated modal cache and summary ownership", 
 
   assert.match(source, /const updateTaskHistoryForTask = useCallback/);
   assert.match(source, /refreshTaskHistoryStreakSummaryRef\.current = reloadTaskHistoryStreakSummaryForTask/);
+  assert.match(source, /if \(nextTaskHistory\) \{[\s\S]*?setTaskHistoryCacheForTask\(taskId, taskHistory\)/);
   assert.match(source, /const hasPrivateTaskHistory = Object\.hasOwn\(taskHistoryByTaskIdRef\.current, taskId\)/);
   assert.match(source, /await loadTaskHistoryForTask\(taskId, \{ force: true, silent: true \}\)/);
-  assert.doesNotMatch(source, /setTaskHistoryCacheForTask\(taskId, nextTaskHistory\)/);
 });
 
 test("History query pages have a stable logical row order and compact summaries deduplicate task dates", async () => {
