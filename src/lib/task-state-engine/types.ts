@@ -77,6 +77,34 @@ export type TaskStateHistoryRow = {
   rewardClaimed?: boolean;
 };
 
+export type TaskEffectiveTimelineOrigin =
+  | "explicit_history"
+  | "calculated";
+
+export type TaskEffectiveTimelineObligation =
+  | "none"
+  | "due"
+  | "overdue";
+
+export type TaskEffectiveTimelineDay = {
+  logicalDate: string;
+  state: TaskCalendarState;
+  origin: TaskEffectiveTimelineOrigin;
+  handled: boolean;
+  outcome: TaskHistoryOutcome | null;
+  historyRowId: string | null;
+  occurrenceIdentity: string | null;
+  occurrenceDueOn: string | null;
+  obligation: TaskEffectiveTimelineObligation;
+};
+
+export type TaskEffectiveTimeline = {
+  days: Record<string, TaskEffectiveTimelineDay>;
+  currentMissedStreak: number;
+  currentObligation: TaskEffectiveTimelineObligation;
+  unresolvedDueOn: string | null;
+};
+
 export type TaskStateAction =
   | {
       type: "record_outcome";

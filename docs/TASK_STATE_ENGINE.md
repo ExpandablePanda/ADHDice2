@@ -19,6 +19,12 @@ The engine is the shared domain boundary for current task-state decisions. TaskA
 
 The engine owns domain calculations, while TaskApp and its adapters own invocation timing, presentation, optimistic state, and persistence calls. A caller may project engine facts for a surface, but it must not create a second recurrence or History interpretation for that surface.
 
+## Effective Timeline foundation
+
+The pure `buildTaskEffectiveTimeline` helper combines explicit History with calculated dates in a bounded logical-date window. Explicit History wins for its logical date, retains its row and occurrence metadata, and is marked handled. Calculated Missed and Open dates describe an unresolved obligation without creating permanent History; they may recalculate after a schedule change.
+
+Phase 1 does not connect this helper to production consumers, so current engine behavior remains unchanged. No Repeat conversion, Delayed priority, UI convergence, or History/rollover persistence changes are included; those remain deferred.
+
 ## Logical Date and Occurrence Identity
 
 Logical date is derived from the user-scoped timezone and rollover context, not from an arbitrary browser render timestamp. Recurrence evaluation uses that logical date together with schedule facts and the active occurrence.

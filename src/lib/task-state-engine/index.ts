@@ -11,6 +11,8 @@ export { buildRecurringDateRepairReport, RECURRING_DATE_REPAIR_TASK_IDS } from "
 export type { RecurringDateRepairReport, RecurringDateRepairTaskReport } from "./recurring-date-repair-report.ts";
 export { resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates } from "./calendar-authority.ts";
 export { buildManualDueDateTaskUpdate, reconcileManualDueDateChange } from "./due-date-authority.ts";
+export { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
+export type { BuildTaskEffectiveTimelineInput } from "./effective-timeline.ts";
 export {
   projectTasksForActiveStatusRead,
   resolveActiveTaskStatuses,
