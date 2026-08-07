@@ -94,6 +94,32 @@ test("Calendar explicit Done splits calculated Missed", () => {
   assert.equal(result?.timeline?.currentMissedStreak, 4);
 });
 
+test("Calendar read preserves stale Done metadata while using the current schedule anchor", () => {
+  const nextTask = task({ active_occurrence_due_on: "2026-08-01" });
+  const done = history("2026-08-06", "done", {
+    occurrence_due_on: "2026-08-10",
+    occurrence_key: `task:${TASK_ID}:occurrence:2026-08-10`,
+  });
+  const nextHistory = [done];
+  const historyBefore = structuredClone(nextHistory);
+  const result = resolveTaskHistoryCalendarRead({
+    ...calendarInput(nextTask, nextHistory),
+    now: "2026-08-06T12:00:00.000Z",
+    calendarEnd: "2026-08-08",
+  });
+
+  assert.equal(result?.authority, "effective_timeline");
+  for (const date of ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05"]) {
+    assert.equal(result?.states[date], "missed", date);
+    assert.equal(result?.timeline?.days[date]?.occurrenceDueOn, "2026-08-01", date);
+  }
+  assert.equal(result?.states["2026-08-06"], "done");
+  assert.equal(result?.states["2026-08-07"], "due");
+  assert.equal(result?.timeline?.days["2026-08-06"]?.occurrenceDueOn, "2026-08-10");
+  assert.equal(result?.timeline?.days["2026-08-06"]?.occurrenceIdentity, done.occurrence_key);
+  assert.deepEqual(nextHistory, historyBefore);
+});
+
 test("Calendar state compatibility wrapper uses the Calendar read result", () => {
   const nextTask = task();
   const nextHistory = [history("2026-08-05", "done")];

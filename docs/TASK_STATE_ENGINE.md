@@ -25,6 +25,10 @@ The pure `buildTaskEffectiveTimeline` helper combines explicit History with calc
 
 Task History Calendar now consumes the Effective Timeline for active and complete tasks. Calculated Missed dates appear in Calendar without becoming History rows, and current missed-streak summaries use the Effective Timeline. Positive streaks and completion statistics remain saved-History based. Archived and trashed Calendar and streak behavior remains on the existing fallback. Status-circle convergence, No Repeat conversion, and Delayed display priority remain deferred. Persistence and rollover behavior remain unchanged.
 
+### Effective Timeline schedule-anchor precedence
+
+The task's current `dueOn` is the authoritative active calculation cursor, followed by `activeOccurrenceDueOn` and only then explicit History occurrence metadata or a successful repeating History logical date. Explicit History retains its original occurrence identity and due date for historical display. Rows before a manually updated current cursor remain historical display facts and do not rewind the active schedule. A backdated current due date may therefore calculate Missed dates before a later explicit success; no History rows are rewritten or automatically inserted.
+
 ## Logical Date and Occurrence Identity
 
 Logical date is derived from the user-scoped timezone and rollover context, not from an arbitrary browser render timestamp. Recurrence evaluation uses that logical date together with schedule facts and the active occurrence.

@@ -79,9 +79,10 @@ function initialOccurrenceDueOn(
   task: TaskStateSnapshot,
   explicitRows: TaskStateHistoryRow[],
 ) {
-  return earliestDate(explicitRows.map((row) => row.occurrenceDueOn))
+  return task.dueOn
+    ?? task.activeOccurrenceDueOn
+    ?? earliestDate(explicitRows.map((row) => row.occurrenceDueOn))
     ?? earliestDate(explicitRows.map((row) => occurrenceDateFromIdentity(row.occurrenceIdentity)))
-    ?? task.dueOn
     ?? (task.recurrence.kind !== "none"
       ? earliestDate(explicitRows
         .filter((row) => SUCCESSFUL_OUTCOMES.has(row.outcome))
@@ -122,9 +123,10 @@ export function buildTaskEffectiveTimeline(
 
   const advanceAfterSuccess = (row: TaskStateHistoryRow) => {
     if (completed) return;
-    const successDueOn = row.occurrenceDueOn
+    const successDueOn = activeDueOn
+      ?? row.occurrenceDueOn
       ?? occurrenceDateFromIdentity(row.occurrenceIdentity)
-      ?? activeDueOn;
+      ?? row.logicalDate;
     const result = recurrenceAfterSuccess(input.task.recurrence, successDueOn, row.logicalDate, consumed);
     unresolvedDueOn = null;
     if (input.task.recurrence.kind === "none") {
@@ -143,14 +145,19 @@ export function buildTaskEffectiveTimeline(
       unresolvedDueOn = null;
       return;
     }
+    const predatesActiveCursor = Boolean(
+      activeDueOn
+      && row.logicalDate < activeDueOn,
+    );
+    if (predatesActiveCursor) return;
     if (row.outcome === "done" || row.outcome === "did_my_best") {
       advanceAfterSuccess(row);
       return;
     }
     if (row.outcome === "missed") {
-      const missedDueOn = row.occurrenceDueOn
+      const missedDueOn = activeDueOn
+        ?? row.occurrenceDueOn
         ?? occurrenceDateFromIdentity(row.occurrenceIdentity)
-        ?? activeDueOn
         ?? row.logicalDate;
       unresolvedDueOn = missedDueOn;
       activeDueOn = missedDueOn;
