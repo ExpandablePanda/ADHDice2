@@ -274,8 +274,51 @@ export function buildTaskEffectiveTimeline(
     streakStart = shiftDateKey(streakStart, -1);
   }
 
+  let currentCompletedStreak = 0;
+  let completedCursor: string | null = input.logicalDate;
+
+  while (completedCursor) {
+    const day = effectiveDays[completedCursor];
+
+    if (!day) {
+      break;
+    }
+
+    const isCurrentLogicalDate = completedCursor === input.logicalDate;
+
+    if (
+      day.state === "not_due"
+      || day.state === "no_entry"
+      || day.state === "scheduled"
+    ) {
+      completedCursor = shiftDateKey(completedCursor, -1);
+      continue;
+    }
+
+    if (
+      isCurrentLogicalDate
+      && (day.state === "open" || day.state === "in_progress")
+    ) {
+      completedCursor = shiftDateKey(completedCursor, -1);
+      continue;
+    }
+
+    if (
+      day.state === "done"
+      || day.state === "did_my_best"
+      || day.state === "complete"
+    ) {
+      currentCompletedStreak += 1;
+      completedCursor = shiftDateKey(completedCursor, -1);
+      continue;
+    }
+
+    break;
+  }
+
   return {
     days,
+    currentCompletedStreak,
     currentMissedStreak,
     currentObligation,
     unresolvedDueOn: currentUnresolvedDueOn,

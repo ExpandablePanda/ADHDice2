@@ -346,6 +346,191 @@ test("Due-today Open does not inherit a historical Missed streak", () => {
   assert.equal(result.currentMissedStreak, 0);
 });
 
+test("Test V5 counts only the current Effective Timeline completion streak", () => {
+  const doneBefore = history("2026-08-03", "done", {
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
+    occurrenceDueOn: "2026-08-01",
+  });
+  const doneToday = history("2026-08-06", "done", {
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-04`,
+    occurrenceDueOn: "2026-08-04",
+  });
+  const result = timeline({
+    history: [doneBefore, doneToday],
+    logicalDate: "2026-08-06",
+    calendarStart: "2026-08-03",
+    calendarEnd: "2026-08-06",
+  });
+
+  for (const date of ["2026-08-04", "2026-08-05"]) {
+    assert.equal(result.days[date]?.state, "missed", date);
+    assert.equal(result.days[date]?.origin, "calculated", date);
+  }
+  assert.equal(result.days["2026-08-06"]?.state, "done");
+  assert.equal(result.currentCompletedStreak, 1);
+  assert.equal(result.currentMissedStreak, 0);
+});
+
+test("consecutive Daily successes produce a three-day completion streak", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-04", activeOccurrenceDueOn: "2026-08-04" },
+    history: [
+      history("2026-08-04", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-04`,
+        occurrenceDueOn: "2026-08-04",
+      }),
+      history("2026-08-05", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-05`,
+        occurrenceDueOn: "2026-08-05",
+      }),
+      history("2026-08-06", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-06`,
+        occurrenceDueOn: "2026-08-06",
+      }),
+    ],
+    logicalDate: "2026-08-06",
+    calendarStart: "2026-08-04",
+    calendarEnd: "2026-08-06",
+  });
+
+  assert.equal(result.currentCompletedStreak, 3);
+  assert.equal(result.currentMissedStreak, 0);
+});
+
+test("Not Due dates do not break an interval completion streak", () => {
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-01",
+      activeOccurrenceDueOn: "2026-08-01",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    },
+    history: [
+      history("2026-08-01", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
+        occurrenceDueOn: "2026-08-01",
+      }),
+      history("2026-08-04", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-04`,
+        occurrenceDueOn: "2026-08-04",
+      }),
+      history("2026-08-07", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-07`,
+        occurrenceDueOn: "2026-08-07",
+      }),
+    ],
+    logicalDate: "2026-08-07",
+    calendarStart: "2026-08-01",
+    calendarEnd: "2026-08-07",
+  });
+
+  for (const date of ["2026-08-02", "2026-08-03", "2026-08-05", "2026-08-06"]) {
+    assert.equal(result.days[date]?.state, "not_due", date);
+  }
+  assert.equal(result.currentCompletedStreak, 3);
+});
+
+test("a Missed interval occurrence breaks the completion streak", () => {
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-01",
+      activeOccurrenceDueOn: "2026-08-01",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    },
+    history: [
+      history("2026-08-01", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
+        occurrenceDueOn: "2026-08-01",
+      }),
+      history("2026-08-04", "missed", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-04`,
+        occurrenceDueOn: "2026-08-04",
+      }),
+      history("2026-08-07", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-04`,
+        occurrenceDueOn: "2026-08-04",
+      }),
+    ],
+    logicalDate: "2026-08-07",
+    calendarStart: "2026-08-01",
+    calendarEnd: "2026-08-07",
+  });
+
+  assert.equal(result.days["2026-08-04"]?.state, "missed");
+  assert.equal(result.days["2026-08-07"]?.state, "done");
+  assert.equal(result.currentCompletedStreak, 1);
+});
+
+test("current Due Open preserves the previous positive completion streak", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-04", activeOccurrenceDueOn: "2026-08-04" },
+    history: [
+      history("2026-08-04", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-04`,
+        occurrenceDueOn: "2026-08-04",
+      }),
+      history("2026-08-05", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-05`,
+        occurrenceDueOn: "2026-08-05",
+      }),
+    ],
+    logicalDate: "2026-08-06",
+    calendarStart: "2026-08-04",
+    calendarEnd: "2026-08-06",
+  });
+
+  assert.equal(result.days["2026-08-06"]?.state, "open");
+  assert.equal(result.days["2026-08-06"]?.obligation, "due");
+  assert.equal(result.currentCompletedStreak, 2);
+  assert.equal(result.currentMissedStreak, 0);
+});
+
+test("overdue Open does not preserve positive streak through Missed dates", () => {
+  const done = history("2026-08-03", "done", {
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-03`,
+    occurrenceDueOn: "2026-08-03",
+  });
+  const result = timeline({
+    task: { dueOn: "2026-08-03", activeOccurrenceDueOn: "2026-08-03" },
+    history: [done],
+    logicalDate: "2026-08-06",
+    calendarStart: "2026-08-03",
+    calendarEnd: "2026-08-06",
+  });
+
+  assert.equal(result.days["2026-08-04"]?.state, "missed");
+  assert.equal(result.days["2026-08-05"]?.state, "missed");
+  assert.equal(result.days["2026-08-06"]?.state, "open");
+  assert.equal(result.days["2026-08-06"]?.obligation, "overdue");
+  assert.equal(result.currentCompletedStreak, 0);
+  assert.equal(result.currentMissedStreak, 2);
+});
+
+test("current Did My Best counts as a successful completion", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-04", activeOccurrenceDueOn: "2026-08-04" },
+    history: [
+      history("2026-08-04", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-04`,
+        occurrenceDueOn: "2026-08-04",
+      }),
+      history("2026-08-05", "done", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-05`,
+        occurrenceDueOn: "2026-08-05",
+      }),
+      history("2026-08-06", "did_my_best", {
+        occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-06`,
+        occurrenceDueOn: "2026-08-06",
+      }),
+    ],
+    logicalDate: "2026-08-06",
+    calendarStart: "2026-08-04",
+    calendarEnd: "2026-08-06",
+  });
+
+  assert.equal(result.currentCompletedStreak, 3);
+  assert.equal(result.currentMissedStreak, 0);
+});
+
 test("explicit History overrides a reconstructed Missed date", () => {
   const done = history("2026-08-04", "done", {
     occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,

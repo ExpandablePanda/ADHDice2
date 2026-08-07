@@ -621,9 +621,10 @@ export function TaskHistoryModal({
   const stats = calendarRead?.timeline
     ? (() => {
       const effectiveMissedStreak = calendarRead.timeline.currentMissedStreak;
+      const effectiveCompletedStreak = calendarRead.timeline.currentCompletedStreak;
       return {
         ...savedHistoryStats,
-        currentStreak: effectiveMissedStreak > 0 ? 0 : savedHistoryStats.currentStreak,
+        currentStreak: effectiveMissedStreak > 0 ? 0 : effectiveCompletedStreak,
         missedStreak: effectiveMissedStreak,
       };
     })()

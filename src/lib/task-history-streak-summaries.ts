@@ -44,8 +44,9 @@ export function buildTaskHistoryStreakSummary(
     })
     : null;
   const effectiveMissedStreak = timeline?.currentMissedStreak ?? stats.missedStreak;
+  const effectiveCompletedStreak = timeline?.currentCompletedStreak ?? stats.currentStreak;
   return {
-    currentStreak: effectiveMissedStreak > 0 ? 0 : stats.currentStreak,
+    currentStreak: effectiveMissedStreak > 0 ? 0 : effectiveCompletedStreak,
     lastDoneAt: lastDone?.timestamp ?? null,
     lastDoneDate: lastDone?.dateKey ?? null,
     missedStreak: effectiveMissedStreak,

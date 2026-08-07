@@ -200,6 +200,53 @@ test("summary resets the current Missed streak after Done today", () => {
   assert.equal(summary.missedStreak, 0);
 });
 
+test("Test V5 shared summary uses the Effective Timeline completion streak", () => {
+  const doneBefore = history("2026-08-03", "done");
+  const doneToday = history("2026-08-06", "done", {
+    occurrence_due_on: "2026-08-04",
+    occurrence_key: `task:${TASK_ID}:occurrence:2026-08-04`,
+  });
+  const historyRows = [doneBefore, doneToday];
+  const historyBefore = structuredClone(historyRows);
+  const summary = buildTaskHistoryStreakSummary(task(), historyRows, "2026-08-06");
+
+  assert.equal(summary.currentStreak, 1);
+  assert.equal(summary.missedStreak, 0);
+  assert.equal(summary.lastDoneDate, "2026-08-06");
+  assert.equal(summary.lastDoneAt, doneToday.updated_at);
+  assert.deepEqual(historyRows, historyBefore);
+});
+
+test("interval shared summary preserves completion streak across Not Due gaps", () => {
+  const nextTask = task({
+    due_on: "2026-08-01",
+    active_occurrence_due_on: "2026-08-01",
+    repeat_interval: 3,
+  });
+  const historyRows = [
+    history("2026-08-01", "done"),
+    history("2026-08-04", "done", {
+      occurrence_due_on: "2026-08-04",
+      occurrence_key: `task:${TASK_ID}:occurrence:2026-08-04`,
+    }),
+    history("2026-08-07", "done", {
+      occurrence_due_on: "2026-08-07",
+      occurrence_key: `task:${TASK_ID}:occurrence:2026-08-07`,
+    }),
+  ];
+  const summary = buildTaskHistoryStreakSummary(nextTask, historyRows, "2026-08-07");
+
+  assert.equal(summary.currentStreak, 3);
+  assert.equal(summary.missedStreak, 0);
+});
+
+test("shared summary keeps current positive and Missed streaks mutually exclusive", () => {
+  const summary = buildTaskHistoryStreakSummary(task(), [], "2026-08-06");
+
+  assert.equal(summary.currentStreak, 0);
+  assert.ok(summary.missedStreak > 0);
+});
+
 test("summary restores the saved positive streak when Effective Timeline has no misses", () => {
   const done = history("2026-08-10", "done", {
     occurrence_due_on: "2026-08-10",

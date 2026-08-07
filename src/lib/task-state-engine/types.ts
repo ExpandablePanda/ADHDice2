@@ -100,6 +100,7 @@ export type TaskEffectiveTimelineDay = {
 
 export type TaskEffectiveTimeline = {
   days: Record<string, TaskEffectiveTimelineDay>;
+  currentCompletedStreak: number;
   currentMissedStreak: number;
   currentObligation: TaskEffectiveTimelineObligation;
   unresolvedDueOn: string | null;
