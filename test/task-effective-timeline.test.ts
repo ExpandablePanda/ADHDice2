@@ -90,6 +90,41 @@ test("current schedule anchor wins over stale Done History metadata", () => {
   assert.deepEqual(historyRows, historyBefore);
 });
 
+test("a handled overdue occurrence preserves earlier calculated Missed dates", () => {
+  const done = history("2026-08-03", "done", {
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
+    occurrenceDueOn: "2026-08-01",
+  });
+  const result = timeline({
+    task: { dueOn: "2026-08-04", activeOccurrenceDueOn: "2026-08-04" },
+    history: [done],
+    logicalDate: "2026-08-07",
+    calendarStart: "2026-08-01",
+    calendarEnd: "2026-08-07",
+  });
+
+  for (const date of ["2026-08-01", "2026-08-02", "2026-08-04", "2026-08-05", "2026-08-06"]) {
+    assert.equal(result.days[date]?.state, "missed", date);
+    assert.equal(result.days[date]?.origin, "calculated", date);
+    assert.equal(result.days[date]?.handled, false, date);
+    assert.equal(result.days[date]?.historyRowId, null, date);
+    assert.equal(result.days[date]?.outcome, null, date);
+  }
+  assert.equal(result.days["2026-08-01"]?.occurrenceDueOn, "2026-08-01");
+  assert.equal(result.days["2026-08-02"]?.occurrenceDueOn, "2026-08-01");
+  assert.equal(result.days["2026-08-03"]?.state, "done");
+  assert.equal(result.days["2026-08-03"]?.origin, "explicit_history");
+  assert.equal(result.days["2026-08-03"]?.handled, true);
+  assert.equal(result.days["2026-08-03"]?.historyRowId, done.id);
+  assert.equal(result.days["2026-08-03"]?.outcome, done.outcome);
+  assert.equal(result.days["2026-08-03"]?.occurrenceDueOn, done.occurrenceDueOn);
+  assert.equal(result.days["2026-08-03"]?.occurrenceIdentity, done.occurrenceIdentity);
+  assert.equal(result.days["2026-08-07"]?.state, "open");
+  assert.equal(result.days["2026-08-07"]?.obligation, "overdue");
+  assert.equal(result.currentMissedStreak, 3);
+  assert.equal(result.unresolvedDueOn, "2026-08-04");
+});
+
 test("the current due date is the initial inferred occurrence", () => {
   const result = timeline({
     task: { dueOn: "2026-08-01" },
@@ -108,7 +143,7 @@ test("the current due date is the initial inferred occurrence", () => {
   assert.equal(result.days["2026-08-07"]?.occurrenceDueOn, "2026-08-07");
 });
 
-test("a historical Done before a future cursor cannot rewind it", () => {
+test("historical reconstruction cannot rewind a future cursor", () => {
   const done = history("2026-08-05", "done", {
     occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
     occurrenceDueOn: "2026-08-01",
@@ -124,6 +159,13 @@ test("a historical Done before a future cursor cannot rewind it", () => {
   assert.equal(result.days["2026-08-05"]?.state, "done");
   assert.equal(result.days["2026-08-05"]?.historyRowId, done.id);
   assert.equal(result.days["2026-08-05"]?.occurrenceDueOn, "2026-08-01");
+  for (const date of ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"]) {
+    assert.equal(result.days[date]?.state, "missed", date);
+    assert.equal(result.days[date]?.origin, "calculated", date);
+    assert.equal(result.days[date]?.handled, false, date);
+    assert.equal(result.days[date]?.historyRowId, null, date);
+    assert.equal(result.days[date]?.outcome, null, date);
+  }
   for (const date of ["2026-08-06", "2026-08-07", "2026-08-08", "2026-08-09", "2026-08-10", "2026-08-29"]) {
     assert.equal(result.days[date]?.state, "not_due", date);
   }
@@ -131,6 +173,61 @@ test("a historical Done before a future cursor cannot rewind it", () => {
   assert.equal(result.currentObligation, "none");
   assert.equal(result.unresolvedDueOn, null);
   assert.equal(result.days["2026-08-30"]?.state, "scheduled");
+});
+
+test("early completion does not infer historical Missed dates", () => {
+  const done = history("2026-08-06", "done", {
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-10`,
+    occurrenceDueOn: "2026-08-10",
+  });
+  const result = timeline({
+    task: { dueOn: "2026-08-10", activeOccurrenceDueOn: "2026-08-10" },
+    history: [done],
+    logicalDate: "2026-08-10",
+    calendarStart: "2026-08-01",
+    calendarEnd: "2026-08-10",
+  });
+
+  for (const date of ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05", "2026-08-07", "2026-08-08", "2026-08-09"]) {
+    assert.equal(result.days[date]?.state, "not_due", date);
+    assert.equal(result.days[date]?.origin, "calculated", date);
+  }
+  assert.equal(result.days["2026-08-06"]?.state, "done");
+  assert.equal(result.days["2026-08-06"]?.origin, "explicit_history");
+  assert.equal(result.days["2026-08-06"]?.historyRowId, done.id);
+  assert.equal(result.days["2026-08-06"]?.occurrenceDueOn, done.occurrenceDueOn);
+  assert.equal(result.days["2026-08-06"]?.occurrenceIdentity, done.occurrenceIdentity);
+  assert.equal(result.currentMissedStreak, 0);
+});
+
+test("explicit History overrides a reconstructed Missed date", () => {
+  const done = history("2026-08-04", "done", {
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
+    occurrenceDueOn: "2026-08-01",
+  });
+  const didMyBest = history("2026-08-02", "did_my_best", {
+    occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
+    occurrenceDueOn: "2026-08-01",
+  });
+  const result = timeline({
+    task: { dueOn: "2026-08-30", activeOccurrenceDueOn: "2026-08-30" },
+    history: [done, didMyBest],
+    logicalDate: "2026-08-07",
+    calendarStart: "2026-08-01",
+    calendarEnd: "2026-08-07",
+  });
+
+  assert.equal(result.days["2026-08-01"]?.state, "missed");
+  assert.equal(result.days["2026-08-01"]?.origin, "calculated");
+  assert.equal(result.days["2026-08-02"]?.state, "did_my_best");
+  assert.equal(result.days["2026-08-02"]?.origin, "explicit_history");
+  assert.equal(result.days["2026-08-02"]?.historyRowId, didMyBest.id);
+  assert.equal(result.days["2026-08-02"]?.outcome, "did_my_best");
+  assert.equal(result.days["2026-08-03"]?.state, "missed");
+  assert.equal(result.days["2026-08-03"]?.origin, "calculated");
+  assert.equal(result.days["2026-08-04"]?.state, "done");
+  assert.equal(result.days["2026-08-04"]?.origin, "explicit_history");
+  assert.equal(result.days["2026-08-04"]?.historyRowId, done.id);
 });
 
 test("an old explicit Missed row does not rewind a future cursor", () => {

@@ -23,11 +23,11 @@ The engine owns domain calculations, while TaskApp and its adapters own invocati
 
 The pure `buildTaskEffectiveTimeline` helper combines explicit History with calculated dates, emits only the bounded Calendar window, and calculates current-state facts over an internal range that is independent of that window. Explicit History wins for its logical date, retains its row and occurrence metadata, and is marked handled. Calculated Missed and Open dates describe an unresolved obligation without creating permanent History; they may recalculate after a schedule change.
 
-Task History Calendar now consumes the Effective Timeline for active and complete tasks. Calculated Missed dates appear in Calendar without becoming History rows, and current missed-streak summaries use the Effective Timeline. Positive streaks and completion statistics remain saved-History based. Archived and trashed Calendar and streak behavior remains on the existing fallback. Status-circle convergence, No Repeat conversion, and Delayed display priority remain deferred. Persistence and rollover behavior remain unchanged.
+Task History Calendar now consumes the Effective Timeline for active and complete tasks. Calculated Missed dates appear in Calendar without becoming History rows, and current missed-streak summaries use the Effective Timeline. Positive current streaks and current Missed streaks are mutually exclusive, while historical/best streaks and completion statistics remain saved-History based. Archived and trashed Calendar and streak behavior remains on the existing fallback. Status-circle convergence, No Repeat conversion, and Delayed display priority remain deferred. Persistence and rollover behavior remain unchanged.
 
 ### Effective Timeline schedule-anchor precedence
 
-The task's current `dueOn` is the authoritative active calculation cursor, followed by `activeOccurrenceDueOn` and only then explicit History occurrence metadata or a successful repeating History logical date. Explicit History retains its original occurrence identity and due date for historical display. Rows before a manually updated current cursor remain historical display facts and do not rewind the active schedule. A backdated current due date may therefore calculate Missed dates before a later explicit success; no History rows are rewritten or automatically inserted.
+The task's current `dueOn` is the authoritative active calculation cursor, followed by `activeOccurrenceDueOn` and only then explicit History occurrence metadata or a successful repeating History logical date. Explicit History retains its original occurrence identity and due date for historical display. Rows before a manually updated current cursor remain historical display facts and do not rewind the active schedule. A backdated current due date may therefore calculate Missed dates before a later explicit success; no History rows are rewritten or automatically inserted. When an explicit handled Done, Did My Best, or Complete row identifies an older occurrence, the timeline may separately reconstruct calculated historical Missed days from that occurrence through the day before the handled row. This reconstruction does not persist History rows, explicit History still wins within the interval, and old History cannot rewind a newer live cursor.
 
 ## Logical Date and Occurrence Identity
 
@@ -55,7 +55,7 @@ Action planning is also the compatibility boundary for recurring actions: caller
 
 ## Calendar Projection
 
-Calendar state and action adapters use the same engine-derived facts and explicit History identity as the task-state path. Calendar projection is a fact projection for the requested logical date and occurrence; it should not independently reconstruct recurrence or status rules.
+Calendar state and action adapters use the same engine-derived facts and explicit History identity as the task-state path. Calendar projection is a fact projection for the requested logical date and occurrence; it should not independently reconstruct recurrence or status rules. Historical Missed inference uses the handled row's occurrence due date or occurrence identity, remains calculated and non-persistent, and does not replace the current live cursor.
 
 Calendar presentation may differ from task-row presentation, but its state decisions remain inside the shared authority boundary. Browser rendering and deployed RPC behavior are outside this document's evidence.
 
@@ -65,7 +65,7 @@ For an existing editable logical date, Calendar action availability evaluates ea
 
 ## History Authority
 
-History is an explicit input to state evaluation and an explicit output of action or rollover planning. History identity records the occurrence and status facts needed to distinguish recurring instances and preserve chronological meaning.
+History is an explicit input to state evaluation and an explicit output of action or rollover planning. History identity records the occurrence and status facts needed to distinguish recurring instances and preserve chronological meaning. A current effective Missed streak suppresses the positive current streak in shared summaries and rows; historical/best streak data remains saved-History based.
 
 A proposed History mutation is separate from the proposed task patch. Callers must preserve guarded revisions, avoid zero-effective writes, and use the owning persistence path. This document does not claim a universal transaction or deployed-database guarantee.
 

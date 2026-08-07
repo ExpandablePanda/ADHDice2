@@ -115,6 +115,19 @@ export function buildTaskEffectiveTimeline(
   const simulationDates = dateRange(simulationStart, simulationEnd);
   const days: Record<string, TaskEffectiveTimelineDay> = {};
   const effectiveDays: Record<string, TaskEffectiveTimelineDay> = {};
+  const historicalMissedDueOnByDate = new Map<string, string>();
+  for (const row of explicitRows) {
+    if (!SUCCESSFUL_OUTCOMES.has(row.outcome)) continue;
+    const historicalOccurrenceDueOn = row.occurrenceDueOn
+      ?? occurrenceDateFromIdentity(row.occurrenceIdentity);
+    if (!historicalOccurrenceDueOn || historicalOccurrenceDueOn >= row.logicalDate) continue;
+    for (const date of dateRange(historicalOccurrenceDueOn, shiftDateKey(row.logicalDate, -1))) {
+      const existingDueOn = historicalMissedDueOnByDate.get(date);
+      if (!existingDueOn || historicalOccurrenceDueOn < existingDueOn) {
+        historicalMissedDueOnByDate.set(date, historicalOccurrenceDueOn);
+      }
+    }
+  }
 
   let activeDueOn = initialDueOn;
   let unresolvedDueOn: string | null = null;
@@ -186,6 +199,14 @@ export function buildTaskEffectiveTimeline(
     if (row) {
       day = explicitDay(row);
       applyExplicitRow(row);
+    } else if (historicalMissedDueOnByDate.has(date)) {
+      day = calculatedDay(
+        input.task.id,
+        date,
+        "missed",
+        "overdue",
+        historicalMissedDueOnByDate.get(date) ?? null,
+      );
     } else if (completed) {
       day = calculatedDay(input.task.id, date, "no_entry", "none");
     } else if (!activeDueOn) {

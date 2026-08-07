@@ -43,11 +43,12 @@ export function buildTaskHistoryStreakSummary(
       calendarEnd: todayDateKey,
     })
     : null;
+  const effectiveMissedStreak = timeline?.currentMissedStreak ?? stats.missedStreak;
   return {
-    currentStreak: stats.currentStreak,
+    currentStreak: effectiveMissedStreak > 0 ? 0 : stats.currentStreak,
     lastDoneAt: lastDone?.timestamp ?? null,
     lastDoneDate: lastDone?.dateKey ?? null,
-    missedStreak: timeline?.currentMissedStreak ?? stats.missedStreak,
+    missedStreak: effectiveMissedStreak,
   };
 }
 

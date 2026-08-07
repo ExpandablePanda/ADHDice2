@@ -169,7 +169,19 @@ test("summary Done keeps saved-History metadata while splitting missed streak", 
   assert.equal(summary.missedStreak, 4);
   assert.equal(summary.lastDoneDate, "2026-08-05");
   assert.equal(summary.lastDoneAt, done.updated_at);
+  assert.equal(summary.currentStreak, 0);
+});
+
+test("summary restores the saved positive streak when Effective Timeline has no misses", () => {
+  const done = history("2026-08-10", "done", {
+    occurrence_due_on: "2026-08-10",
+    occurrence_key: `task:${TASK_ID}:occurrence:2026-08-10`,
+  });
+  const summary = buildTaskHistoryStreakSummary(task({ due_on: "2026-08-10" }), [done], "2026-08-10");
+
   assert.equal(summary.currentStreak, 1);
+  assert.equal(summary.missedStreak, 0);
+  assert.equal(summary.lastDoneDate, "2026-08-10");
 });
 
 test("summary uses Effective Timeline cadence for every-three-days tasks", () => {

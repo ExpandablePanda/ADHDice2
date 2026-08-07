@@ -619,7 +619,14 @@ export function TaskHistoryModal({
   const getNextDueDateKey = (dateKey: string) => sortedDueDates.find((dueDateKey) => dueDateKey >= dateKey) ?? null;
   const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
   const stats = calendarRead?.timeline
-    ? { ...savedHistoryStats, missedStreak: calendarRead.timeline.currentMissedStreak }
+    ? (() => {
+      const effectiveMissedStreak = calendarRead.timeline.currentMissedStreak;
+      return {
+        ...savedHistoryStats,
+        currentStreak: effectiveMissedStreak > 0 ? 0 : savedHistoryStats.currentStreak,
+        missedStreak: effectiveMissedStreak,
+      };
+    })()
     : savedHistoryStats;
   const lastDone = getTaskHistoryLastDone(normalizedTaskHistory);
   const sortedHistory = [...normalizedTaskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));

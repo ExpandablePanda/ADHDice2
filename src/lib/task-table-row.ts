@@ -79,6 +79,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
   }
   const historyStats = context.taskHistoryStreakSummary
     ?? computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
+  const missedStreak = historyStats.missedStreak;
+  const currentStreak = missedStreak > 0 ? 0 : historyStats.currentStreak;
   const lastDone = context.taskHistoryStreakSummary
     ? {
       dateKey: context.taskHistoryStreakSummary.lastDoneDate,
@@ -114,8 +116,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     pinOrder: task.pin_order ?? null,
     pinnedAt: task.pinned_at,
     priorities,
-    currentStreak: historyStats.currentStreak,
-    missedStreak: historyStats.missedStreak,
+    currentStreak,
+    missedStreak,
     repeat: task.repeat_frequency,
     repeatInterval: Math.max(1, task.repeat_interval ?? 1),
     repeatDaysOfWeek: task.repeat_days_of_week ?? [],
