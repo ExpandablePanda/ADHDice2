@@ -66,6 +66,23 @@ function calendarInput(nextTask: Task, nextHistory: TaskHistory[] = [], range = 
   };
 }
 
+test("Daily Calendar projection preserves future Effective Timeline Due dates", () => {
+  const result = resolveTaskHistoryCalendarRead({
+    ...calendarInput(task({
+      due_on: "2026-08-10",
+      active_occurrence_due_on: "2026-08-10",
+    })),
+    now: "2026-08-07T12:00:00.000Z",
+    calendarStart: "2026-08-10",
+    calendarEnd: "2026-08-14",
+  });
+
+  assert.equal(result?.authority, "effective_timeline");
+  for (const date of ["2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14"]) {
+    assert.equal(result?.states[date], "due", date);
+  }
+});
+
 test("Calendar read shows calculated Missed without History mutation", () => {
   const nextTask = task();
   const nextHistory: TaskHistory[] = [];
@@ -170,6 +187,17 @@ test("summary Done keeps saved-History metadata while splitting missed streak", 
   assert.equal(summary.lastDoneDate, "2026-08-05");
   assert.equal(summary.lastDoneAt, done.updated_at);
   assert.equal(summary.currentStreak, 0);
+});
+
+test("summary resets the current Missed streak after Done today", () => {
+  const doneBefore = history("2026-08-03", "done");
+  const doneToday = history("2026-08-06", "done", {
+    occurrence_due_on: "2026-08-04",
+    occurrence_key: `task:${TASK_ID}:occurrence:2026-08-04`,
+  });
+  const summary = buildTaskHistoryStreakSummary(task(), [doneBefore, doneToday], "2026-08-06");
+
+  assert.equal(summary.missedStreak, 0);
 });
 
 test("summary restores the saved positive streak when Effective Timeline has no misses", () => {

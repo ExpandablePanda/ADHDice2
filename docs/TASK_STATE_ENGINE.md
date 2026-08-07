@@ -59,6 +59,8 @@ Calendar state and action adapters use the same engine-derived facts and explici
 
 Calendar presentation may differ from task-row presentation, but its state decisions remain inside the shared authority boundary. Browser rendering and deployed RPC behavior are outside this document's evidence.
 
+Future Calendar recurrence projection uses the shared recurrence schedule for rolling/daily, interval, weekly, and monthly recurrence. Future projected Due dates are informational Calendar facts only: they do not create additional active obligations, resolve an occurrence, or create History.
+
 The Calendar adapter may expose both state facts and action authority for the requested occurrence. It is not a separate persistence authority and must use the same projection rules when a Calendar action changes task state.
 
 For an existing editable logical date, Calendar action availability evaluates each candidate against normalized History with the current date outcome replaced. The owning History path then upserts the same user/task/date identity, retaining known occurrence metadata and keeping past reward/economy handling outside the correction path.
@@ -66,6 +68,8 @@ For an existing editable logical date, Calendar action availability evaluates ea
 ## History Authority
 
 History is an explicit input to state evaluation and an explicit output of action or rollover planning. History identity records the occurrence and status facts needed to distinguish recurring instances and preserve chronological meaning. A current effective Missed streak suppresses the positive current streak in shared summaries and rows; historical/best streak data remains saved-History based.
+
+A current Missed streak exists only when the current logical day is Missed or is Open with an overdue unresolved occurrence. Done, Did My Best, Complete, Delayed, Not Due, normal Due/Open, and No Entry reset the current Missed streak even when older historical Missed dates remain visible.
 
 A proposed History mutation is separate from the proposed task patch. Callers must preserve guarded revisions, avoid zero-effective writes, and use the owning persistence path. This document does not claim a universal transaction or deployed-database guarantee.
 

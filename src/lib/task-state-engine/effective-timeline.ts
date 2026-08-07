@@ -5,9 +5,9 @@ import {
   shiftDateKey,
 } from "./calendar.ts";
 import {
-  isScheduledOccurrence,
   occurrenceIdentity,
   recurrenceAfterSuccess,
+  scheduledOccurrences,
 } from "./recurrence.ts";
 import type {
   TaskEffectiveTimeline,
@@ -184,12 +184,18 @@ export function buildTaskEffectiveTimeline(
     }
   };
 
-  const fixedFutureOccurrence = (date: string) => (
-    activeDueOn
-    && date > input.logicalDate
-    && (input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly")
-    && isScheduledOccurrence(input.task.recurrence, activeDueOn, date)
-  );
+  const isProjectedFutureOccurrence = (date: string) => {
+    if (!activeDueOn || date <= input.logicalDate) {
+      return false;
+    }
+
+    return scheduledOccurrences(
+      input.task.recurrence,
+      activeDueOn,
+      date,
+      date,
+    ).includes(date);
+  };
 
   let currentUnresolvedDueOn: string | null = null;
   for (const date of simulationDates) {
@@ -225,8 +231,14 @@ export function buildTaskEffectiveTimeline(
       } else {
         day = calculatedDay(input.task.id, date, "not_due", "none");
       }
-    } else if (date === activeDueOn || fixedFutureOccurrence(date)) {
-      day = calculatedDay(input.task.id, date, "scheduled", "due", date);
+    } else if (date === activeDueOn || isProjectedFutureOccurrence(date)) {
+      day = calculatedDay(
+        input.task.id,
+        date,
+        "scheduled",
+        "due",
+        date,
+      );
     } else {
       day = calculatedDay(input.task.id, date, "not_due", "none");
     }
@@ -242,11 +254,22 @@ export function buildTaskEffectiveTimeline(
 
   const currentDay = effectiveDays[input.logicalDate];
   const currentObligation = currentDay?.state === "open" ? currentDay.obligation : "none";
-  let streakStart = currentDay?.state === "missed"
-    ? input.logicalDate
-    : shiftDateKey(input.logicalDate, -1);
+  let streakStart: string | null = null;
+
+  if (currentDay?.state === "missed") {
+    streakStart = input.logicalDate;
+  } else if (
+    currentDay?.state === "open"
+    && currentDay.obligation === "overdue"
+  ) {
+    streakStart = shiftDateKey(input.logicalDate, -1);
+  }
+
   let currentMissedStreak = 0;
-  while (effectiveDays[streakStart]?.state === "missed") {
+  while (
+    streakStart
+    && effectiveDays[streakStart]?.state === "missed"
+  ) {
     currentMissedStreak += 1;
     streakStart = shiftDateKey(streakStart, -1);
   }
