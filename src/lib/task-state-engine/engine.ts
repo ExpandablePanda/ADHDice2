@@ -161,6 +161,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const unscheduled = isUnscheduled(task.recurrence, task.dueOn);
   const scheduleChange = input.action?.type === "change_schedule";
   const action = input.action?.type === "record_outcome" ? input.action : null;
+  const historicalOverride = action?.historicalOverride === true;
   const actionDate = action?.logicalDate ?? today;
   const existingActionRow = action ? byDate.get(actionDate) ?? null : null;
   const activeActionOccurrenceDueOn = action
@@ -186,13 +187,13 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     let reason: string | null = null;
     if (task.lifecycle !== "active") reason = `Cannot record outcomes for ${task.lifecycle} tasks.`;
     else if (existingActionRow && !action.replaceExisting) reason = "Only one outcome is allowed per task per logical day.";
-    else if (SUCCESS.has(action.outcome) && actionOccurrenceIdentity && rows.some((row) => (
+    else if (!historicalOverride && SUCCESS.has(action.outcome) && actionOccurrenceIdentity && rows.some((row) => (
       row.outcome !== "missed"
       && SUCCESS.has(row.outcome)
       && row.occurrenceIdentity === actionOccurrenceIdentity
       && row.logicalDate !== actionDate
     ))) reason = "This recurring occurrence already has a successful resolution.";
-    else if (action.outcome === "missed") {
+    else if (!historicalOverride && action.outcome === "missed") {
       const activeOccurrence = task.dueOn !== null && task.dueOn <= actionDate;
       const fixedOccurrence = task.dueOn !== null
         && (task.recurrence.kind === "weekly" || task.recurrence.kind === "monthly")
@@ -203,7 +204,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
         reason = "Missed requires an active due occurrence or scheduled continuation.";
       }
     }
-    else if (!allowed.has(action.outcome as never)) reason = `${action.outcome} is not allowed for this task type.`;
+    else if (!historicalOverride && !allowed.has(action.outcome as never)) reason = `${action.outcome} is not allowed for this task type.`;
     if (action.outcome === "delayed" && action.delayUntilDate === undefined
       && (!Number.isInteger(action.delayDays) || (action.delayDays ?? 0) <= 0)) {
       reason = "Delay requires a positive whole number of days.";

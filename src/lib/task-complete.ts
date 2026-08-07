@@ -31,6 +31,14 @@ const RECURRING_SELECTABLE_STATUSES: TaskStatus[] = [
   "archived",
 ];
 
+const HISTORY_OVERRIDE_ACTION_STATUSES = [
+  "done",
+  "did_my_best",
+  "delayed",
+  "missed",
+  "complete",
+] as const;
+
 export function getSelectableTaskStatusesForRepeatFrequency(repeatFrequency: TaskRepeatFrequency) {
   return repeatFrequency === "none"
     ? [...ONE_OFF_SELECTABLE_STATUSES]
@@ -53,14 +61,18 @@ export function getTaskHistoryCalendarActionStatuses(task: Pick<Task, "repeat_fr
 
 export function getTaskHistoryCalendarVisibleActionStatuses({
   engineStatuses,
+  historicalOverride = false,
   isMultiSelect,
   task,
 }: {
   engineStatuses: readonly TaskStatus[] | null;
+  historicalOverride?: boolean;
   isMultiSelect: boolean;
   task: Pick<Task, "repeat_frequency">;
 }) {
-  const configuredStatuses = getTaskHistoryCalendarActionStatuses(task);
+  const configuredStatuses = historicalOverride
+    ? [...HISTORY_OVERRIDE_ACTION_STATUSES]
+    : getTaskHistoryCalendarActionStatuses(task);
   if (isMultiSelect) {
     return configuredStatuses.filter((status) => status !== "complete" && status !== "delayed");
   }

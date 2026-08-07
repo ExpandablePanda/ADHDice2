@@ -97,6 +97,7 @@ export function resolveTaskHistoryCalendarActionStatuses(input: {
   history: TaskHistory[];
   logicalDate: string;
   logicalDayRollover: string;
+  historicalOverride?: boolean;
   now: Date | string;
   task: Task;
   timezone: string;
@@ -104,18 +105,26 @@ export function resolveTaskHistoryCalendarActionStatuses(input: {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
   const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.history);
   const existingEntry = normalizedHistory.find((entry) => entry.entry_date === input.logicalDate) ?? null;
+  const historicalOverrideOccurrenceDueOn = input.historicalOverride
+    && !existingEntry
+    && input.task.repeat_frequency !== "none"
+    ? input.logicalDate
+    : undefined;
   const candidates: TaskHistoryCalendarActionStatus[] = ["done", "did_my_best", "delayed", "missed", "complete"];
   return candidates.filter((outcome) => !evaluateTaskActionAuthority({
     ...input,
     history: normalizedHistory,
     ...(outcome === "delayed" ? { delayDays: 1 } : {}),
+    ...(input.historicalOverride ? { historicalOverride: true } : {}),
     outcome,
     outcomeDate: input.logicalDate,
     ...(existingEntry ? {
       occurrenceDueOn: existingEntry.occurrence_due_on ?? input.logicalDate,
-      occurrenceIdentity: existingEntry.occurrence_key ?? null,
+      occurrenceIdentity: existingEntry.occurrence_key ?? undefined,
       previousOutcome: existingEntry.status as TaskHistoryOutcome,
       replaceExisting: true,
-    } : {}),
+    } : {
+      occurrenceDueOn: historicalOverrideOccurrenceDueOn,
+    }),
   })?.validationErrors.length);
 }

@@ -93,6 +93,59 @@ test("a historical Weekdays Missed action remains canonical after due_on advance
   assert.equal(result.nextDueDate, "2026-08-05");
 });
 
+test("normal Missed still rejects a Daily date before the live due cursor", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-06T14:00:00.000Z",
+    task: task({ dueOn: "2026-08-10" }),
+    action: { type: "record_outcome", logicalDate: "2026-08-03", outcome: "missed" },
+  }));
+
+  assert.ok(result.validationErrors.some((error) => error.includes("Missed requires")));
+  assert.equal(result.proposedHistoryChanges.length, 1);
+  assert.equal(result.proposedHistoryChanges[0]?.type, "reject");
+});
+
+test("historical Missed override accepts a Daily date before the live due cursor", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-08-06T14:00:00.000Z",
+    task: task({ dueOn: "2026-08-10" }),
+    action: {
+      type: "record_outcome",
+      historicalOverride: true,
+      logicalDate: "2026-08-03",
+      occurrenceDueOn: "2026-08-03",
+      outcome: "missed",
+    },
+  }));
+  const inserted = result.proposedHistoryChanges.find((change) => change.type === "insert");
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.proposedHistoryChanges.filter((change) => change.type === "insert").length, 1);
+  assert.equal(inserted?.type === "insert" ? inserted.row.logicalDate : null, "2026-08-03");
+  assert.equal(inserted?.type === "insert" ? inserted.row.outcome : null, "missed");
+  assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceDueOn : null, "2026-08-03");
+});
+
+test("No Repeat Done is allowed only in historical override mode", () => {
+  const normal = evaluateTaskState(input({
+    task: task({ dueOn: null, recurrence: { kind: "none" } }),
+    action: { type: "record_outcome", logicalDate: "2026-08-03", outcome: "done" },
+  }));
+  const override = evaluateTaskState(input({
+    task: task({ dueOn: null, recurrence: { kind: "none" } }),
+    action: {
+      type: "record_outcome",
+      historicalOverride: true,
+      logicalDate: "2026-08-03",
+      outcome: "done",
+    },
+  }));
+
+  assert.ok(normal.validationErrors.length > 0);
+  assert.deepEqual(override.validationErrors, []);
+  assert.equal(override.proposedHistoryChanges.filter((change) => change.type === "insert").length, 1);
+});
+
 test("schedule changes preserve an unresolved identity-bearing Missed occurrence", () => {
   const missed = history("2026-08-03", "missed", {
     countedAsDueOccurrence: false,

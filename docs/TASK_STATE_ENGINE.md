@@ -63,6 +63,10 @@ Calendar presentation may differ from task-row presentation, but its state decis
 
 Future Calendar recurrence projection uses the shared recurrence schedule for rolling/daily, interval, weekly, and monthly recurrence. Future projected Due dates are informational Calendar facts only: they do not create additional active obligations, resolve an occurrence, or create History.
 
+The History Calendar is a manual correction ledger. Its `historicalOverride` intent is distinct from normal task actions: normal actions retain schedule validation, while editable past and current calculated or explicit dates may be corrected into Done, Did My Best, Missed, Delayed, or Complete. Explicit History always wins over calculation. Future dates remain read-only, Complete keeps its existing permanent-completion workflow, and rewards/economy remain outside historical correction.
+
+A new recurring override uses the selected logical date as its occurrence identity. Replacing an existing explicit row preserves its occurrence metadata exactly. Clear removes only an explicit History row and returns authority to the Effective Timeline; calculated dates have nothing to clear. Calculated Missed dates remain non-persistent.
+
 The Calendar adapter may expose both state facts and action authority for the requested occurrence. It is not a separate persistence authority and must use the same projection rules when a Calendar action changes task state.
 
 For an existing editable logical date, Calendar action availability evaluates each candidate against normalized History with the current date outcome replaced. The owning History path then upserts the same user/task/date identity, retaining known occurrence metadata and keeping past reward/economy handling outside the correction path.

@@ -129,6 +129,31 @@ export function mapTaskHistoryRow(row: DbTaskHistory) {
   return row;
 }
 
+export function buildManualTaskHistoryOverrideOccurrenceMetadata(
+  task: Pick<Task, "id" | "repeat_frequency"> | null | undefined,
+  entryDate: string,
+  existingEntry?: Pick<DbTaskHistory, "occurrence_due_on" | "occurrence_key"> | null,
+) {
+  if (existingEntry) {
+    return {
+      occurrence_due_on: existingEntry.occurrence_due_on,
+      occurrence_key: existingEntry.occurrence_key,
+    };
+  }
+
+  if (!task || task.repeat_frequency === "none") {
+    return {
+      occurrence_due_on: null,
+      occurrence_key: null,
+    };
+  }
+
+  return {
+    occurrence_due_on: entryDate,
+    occurrence_key: `task:${task.id}:occurrence:${entryDate}`,
+  };
+}
+
 export function isPermanentCompleteHistoryEntry(entry: Pick<DbTaskHistory, "event_type" | "status">) {
   return entry.status === "complete" && entry.event_type === "completed_permanently";
 }

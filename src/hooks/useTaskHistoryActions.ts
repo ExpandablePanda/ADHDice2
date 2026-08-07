@@ -8,6 +8,7 @@ import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
 import {
   buildMissingScheduledMissedHistoryDateKeys,
+  buildManualTaskHistoryOverrideOccurrenceMetadata,
   deduplicateTaskHistoryByLogicalDate,
   resolveLiveTaskStatusFromHistory,
   resolveTaskHistoryOccurrenceDueOn,
@@ -31,6 +32,15 @@ type HistoryReplacement = {
   previousOutcome: HistoryOutcome;
   occurrenceDueOn: string | null;
   occurrenceIdentity: string | null;
+};
+
+type HistoryManualOverride = {
+  logicalDate: string;
+  nextOutcome: HistoryOutcome;
+  previousOutcome: HistoryOutcome | null;
+  occurrenceDueOn: string | null;
+  occurrenceIdentity: string | null;
+  delayUntilDate?: string | null;
 };
 
 type HistoryRemoval = {
@@ -183,7 +193,7 @@ export function useTaskHistoryActions({
     taskId: string,
     nextHistory: DbTaskHistory[],
     editedHistoryDateKeys?: string[],
-    options?: { historyRemoval?: HistoryRemoval; historyReplacement?: HistoryReplacement },
+    options?: { historicalOverride?: HistoryManualOverride; historyRemoval?: HistoryRemoval; historyReplacement?: HistoryReplacement },
   ) {
     const task = tasks.find((candidate) => candidate.id === taskId);
     if (!task) {
@@ -191,6 +201,7 @@ export function useTaskHistoryActions({
     }
 
     const historyReplacement = options?.historyReplacement;
+    const historicalOverride = options?.historicalOverride;
     const historyRemoval = options?.historyRemoval;
     const taskForEvaluation = historyRemoval?.restoreDueOn
       ? {
@@ -201,18 +212,35 @@ export function useTaskHistoryActions({
         status: "pending" as const,
       }
       : task;
+    const historyForAuthority = historicalOverride
+      ? nextHistory.filter((entry) => entry.entry_date !== historicalOverride.logicalDate)
+      : nextHistory;
     const engineState = evaluateTaskActionAuthority({
-      history: nextHistory,
+      history: historyForAuthority,
       logicalDayRollover: dayStartTime,
       now,
-      ...(historyReplacement ? {
-        outcome: historyReplacement.nextOutcome,
-        outcomeDate: historyReplacement.logicalDate,
-        occurrenceDueOn: historyReplacement.occurrenceDueOn,
-        occurrenceIdentity: historyReplacement.occurrenceIdentity,
-        previousOutcome: historyReplacement.previousOutcome,
-        replaceExisting: true,
-      } : {}),
+      ...(historicalOverride
+        ? {
+          historicalOverride: true,
+          outcome: historicalOverride.nextOutcome,
+          outcomeDate: historicalOverride.logicalDate,
+          occurrenceDueOn: historicalOverride.occurrenceDueOn,
+          occurrenceIdentity: historicalOverride.occurrenceIdentity,
+          previousOutcome: historicalOverride.previousOutcome,
+          ...(historicalOverride.nextOutcome === "delayed"
+            ? { delayUntilDate: historicalOverride.delayUntilDate }
+            : {}),
+        }
+        : historyReplacement
+          ? {
+            outcome: historyReplacement.nextOutcome,
+            outcomeDate: historyReplacement.logicalDate,
+            occurrenceDueOn: historyReplacement.occurrenceDueOn,
+            occurrenceIdentity: historyReplacement.occurrenceIdentity,
+            previousOutcome: historyReplacement.previousOutcome,
+            replaceExisting: true,
+          }
+          : {}),
       task: taskForEvaluation,
       timezone,
     });
@@ -427,7 +455,13 @@ export function useTaskHistoryActions({
     taskId: string,
     status: TaskStatus,
     entryDates: string[],
-    options?: { historyEntries?: TaskHistoryInsert[]; historySnapshot?: DbTaskHistory[]; syncLiveTask?: boolean },
+    options?: {
+      historicalOverride?: boolean;
+      historicalOverrideDelayUntilDate?: string | null;
+      historyEntries?: TaskHistoryInsert[];
+      historySnapshot?: DbTaskHistory[];
+      syncLiveTask?: boolean;
+    },
   ) {
     const uniqueEntryDates = Array.from(new Set(entryDates)).sort();
     if (uniqueEntryDates.length === 0) {
@@ -472,7 +506,8 @@ export function useTaskHistoryActions({
     if (!await deleteHistoryDates(taskId, automaticMissedDatesToClear)) return false;
     const automaticMissedDateSet = new Set(automaticMissedDatesToClear);
     const historyAfterWeeklyReconciliation = existingTaskHistory.filter((entry) => !automaticMissedDateSet.has(entry.entry_date));
-    const missingMissedDates = !options?.historyEntries
+    const missingMissedDates = !options?.historicalOverride
+      && !options?.historyEntries
       && !TASK_STATE_ENGINE_INTEGRATION_ENABLED && status === "missed" && task
       ? uniqueEntryDates.flatMap((entryDate) => buildMissingScheduledMissedHistoryDateKeys(
         task,
@@ -505,15 +540,17 @@ export function useTaskHistoryActions({
       }))
       : entryDatesToUpsert.map((entryDate) => {
       const existingEntry = existingHistoryByDate.get(entryDate);
-      const occurrenceMetadata = existingEntry && (existingEntry.occurrence_due_on || existingEntry.occurrence_key)
-        ? {
-          occurrence_due_on: existingEntry.occurrence_due_on,
-          occurrence_key: existingEntry.occurrence_key,
-        }
-        : buildTaskHistoryOccurrenceMetadata(
-          getCalendarOccurrenceTask(task, status, entryDate, existingTaskHistory),
-          status,
-        );
+      const occurrenceMetadata = options?.historicalOverride
+        ? buildManualTaskHistoryOverrideOccurrenceMetadata(task, entryDate, existingEntry ?? null)
+        : existingEntry && (existingEntry.occurrence_due_on || existingEntry.occurrence_key)
+          ? {
+            occurrence_due_on: existingEntry.occurrence_due_on,
+            occurrence_key: existingEntry.occurrence_key,
+          }
+          : buildTaskHistoryOccurrenceMetadata(
+            getCalendarOccurrenceTask(task, status, entryDate, existingTaskHistory),
+            status,
+          );
       return {
         entry_date: entryDate,
         ...occurrenceMetadata,
@@ -549,6 +586,22 @@ export function useTaskHistoryActions({
       return merged;
     });
 
+    const overrideEntry = options?.historicalOverride && uniqueEntryDates.length === 1
+      ? mappedEntries.find((entry) => entry.entry_date === uniqueEntryDates[0]) ?? null
+      : null;
+    const historicalOverride = overrideEntry
+      ? {
+        logicalDate: overrideEntry.entry_date,
+        nextOutcome: overrideEntry.status as HistoryOutcome,
+        previousOutcome: existingHistoryByDate.get(overrideEntry.entry_date)?.status as HistoryOutcome | undefined ?? null,
+        occurrenceDueOn: overrideEntry.occurrence_due_on,
+        occurrenceIdentity: overrideEntry.occurrence_key,
+        ...(overrideEntry.status === "delayed"
+          ? { delayUntilDate: options?.historicalOverrideDelayUntilDate }
+          : {}),
+      } satisfies HistoryManualOverride
+      : undefined;
+
     const laterCompletionDateKey = status === "missed"
       ? nextTaskHistory
         .filter((entry) => (
@@ -564,7 +617,7 @@ export function useTaskHistoryActions({
       ? await syncLiveTaskStatus(taskId, nextTaskHistory, [
         ...uniqueEntryDates,
         ...(laterCompletionDateKey ? [laterCompletionDateKey] : []),
-      ], { historyReplacement })
+      ], { historicalOverride, historyReplacement })
       : true;
     notifyHistoryMutation(taskId, nextTaskHistory);
     return result;

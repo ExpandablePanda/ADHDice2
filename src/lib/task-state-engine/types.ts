@@ -119,6 +119,7 @@ export type TaskStateAction =
       previousOutcome?: TaskHistoryOutcome | null;
       occurrenceDueOn?: string | null;
       occurrenceIdentity?: string | null;
+      historicalOverride?: boolean;
     }
   | { type: "change_schedule" }
   | { type: "recompute"; fromLogicalDate: string };

@@ -639,7 +639,6 @@ export function TaskHistoryModal({
   const selectedIsDue = selectedTimelineDay
     ? selectedTimelineDay.obligation === "due" || selectedTimelineDay.obligation === "overdue"
     : dueDates.has(selectedDate);
-  const selectedIsMissed = selectedEntry?.status === "missed" || selectedTimelineDay?.state === "missed";
   const selectedVirtualState = calendarRead?.states[selectedDate] ?? (!calendarRead ? getTaskHistoryCalendarVirtualState({
     dateKey: selectedDate,
     delayedUntilDateKey: task.status === "delayed" ? task.due_on : null,
@@ -650,18 +649,20 @@ export function TaskHistoryModal({
     todayDateKey: today,
   }) : null);
   const engineCalendarActionStatuses = stateEngineContext
-    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, logicalDate: selectedDate, task })
+    ? resolveTaskHistoryCalendarActionStatuses({ ...stateEngineContext, history: normalizedTaskHistory, historicalOverride: true, logicalDate: selectedDate, task })
     : null;
   const calendarActionStatuses = getTaskHistoryCalendarVisibleActionStatuses({
     engineStatuses: engineCalendarActionStatuses,
+    historicalOverride: true,
     isMultiSelect,
     task,
   });
   const canDelaySelectedDate = !isMultiSelect
     && !selectedIsFuture
-    && Boolean(task.due_on)
     && Boolean(onSetDelayedStatus)
-    && (selectedDate === today || selectedIsMissed || selectedVirtualState === "due");
+    && task.status !== "complete"
+    && task.status !== "archived"
+    && task.status !== "trashed";
   const canClearSelectedDate = !isMultiSelect
     && !selectedIsFuture
     && Boolean(selectedEntry)
@@ -942,7 +943,7 @@ export function TaskHistoryModal({
                 </TaskTableChipButton>
               ))}
             </div>
-            {showDelayEditor && canDelaySelectedDate && task.due_on ? (
+            {showDelayEditor && canDelaySelectedDate ? (
               <div className="mt-4 rounded-[1.25rem] border border-[#efe9ff] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.04]">
                 <TaskDelayPicker
                   anchorDateKey={selectedDate === today ? today : selectedDate}

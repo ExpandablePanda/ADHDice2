@@ -6171,7 +6171,11 @@ export function TaskApp() {
         taskHistoryModalTaskId,
         status === "clear" ? "pending" : status,
         entryDates,
-        { historySnapshot: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [], syncLiveTask: true },
+        {
+          historicalOverride: status !== "clear",
+          historySnapshot: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+          syncLiveTask: true,
+        },
       );
     },
     onSetDelayedStatus: async (entryDate: string, nextDueOn: string) => {
@@ -6188,7 +6192,12 @@ export function TaskApp() {
         taskHistoryModalTaskId,
         "delayed",
         [entryDate],
-        { historySnapshot: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [], syncLiveTask: true },
+        {
+          historicalOverride: true,
+          historicalOverrideDelayUntilDate: nextDueOn,
+          historySnapshot: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+          syncLiveTask: true,
+        },
       );
     },
     task: taskHistoryModalTask,

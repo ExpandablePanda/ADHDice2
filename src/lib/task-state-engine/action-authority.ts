@@ -116,6 +116,7 @@ export function evaluateTaskActionAuthority(input: {
   previousOutcome?: TaskHistoryOutcome | null;
   occurrenceDueOn?: string | null;
   occurrenceIdentity?: string | null;
+  historicalOverride?: boolean;
   task: Task;
   timezone: string;
 }) {
@@ -135,6 +136,7 @@ export function evaluateTaskActionAuthority(input: {
         ...(input.previousOutcome !== undefined ? { previousOutcome: input.previousOutcome } : {}),
         ...(input.occurrenceDueOn !== undefined ? { occurrenceDueOn: input.occurrenceDueOn } : {}),
         ...(input.occurrenceIdentity !== undefined ? { occurrenceIdentity: input.occurrenceIdentity } : {}),
+        ...(input.historicalOverride ? { historicalOverride: true } : {}),
       },
     } : {}),
   });

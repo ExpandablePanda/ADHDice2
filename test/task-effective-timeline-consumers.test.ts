@@ -6,6 +6,7 @@ import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import {
   adaptLegacyTaskState,
   evaluateTaskState,
+  resolveTaskHistoryCalendarActionStatuses,
   resolveTaskHistoryCalendarRead,
   resolveTaskHistoryCalendarStates,
 } from "../src/lib/task-state-engine/index.ts";
@@ -81,6 +82,45 @@ test("Daily Calendar projection preserves future Effective Timeline Due dates", 
   for (const date of ["2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14"]) {
     assert.equal(result?.states[date], "due", date);
   }
+});
+
+test("History override mode exposes Missed for a calculated Not Due date", () => {
+  const nextTask = task({
+    due_on: "2026-08-10",
+    active_occurrence_due_on: "2026-08-10",
+  });
+  const input = {
+    ...calendarInput(nextTask),
+    logicalDate: "2026-08-03",
+    now: "2026-08-06T12:00:00.000Z",
+  };
+  const overrideStatuses = resolveTaskHistoryCalendarActionStatuses({
+    ...input,
+    historicalOverride: true,
+  });
+  const normalStatuses = resolveTaskHistoryCalendarActionStatuses(input);
+
+  for (const status of ["done", "did_my_best", "missed", "delayed", "complete"] as const) {
+    assert.ok(overrideStatuses?.includes(status), status);
+  }
+  assert.equal(normalStatuses?.includes("missed"), false);
+});
+
+test("manual History Missed overrides the calculated Calendar state", () => {
+  const missed = history("2026-08-03", "missed", {
+    occurrence_due_on: "2026-08-03",
+    occurrence_key: `task:${TASK_ID}:occurrence:2026-08-03`,
+  });
+  const result = resolveTaskHistoryCalendarRead({
+    ...calendarInput(task({ due_on: "2026-08-10" }), [missed]),
+    calendarEnd: "2026-08-06",
+    now: "2026-08-06T12:00:00.000Z",
+  });
+
+  assert.equal(result?.timeline?.days["2026-08-03"]?.state, "missed");
+  assert.equal(result?.timeline?.days["2026-08-03"]?.origin, "explicit_history");
+  assert.equal(result?.timeline?.days["2026-08-03"]?.handled, true);
+  assert.equal(result?.timeline?.days["2026-08-03"]?.historyRowId, missed.id);
 });
 
 test("Calendar read shows calculated Missed without History mutation", () => {
