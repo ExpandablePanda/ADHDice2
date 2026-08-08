@@ -1,0 +1,1374 @@
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { createClient } from "@supabase/supabase-js";
+
+export const REPORT_VERSION = "task-state-migration-dry-run-v1" as const;
+export const MIGRATION_VERSION = "task-state-migration-v1" as const;
+export const CLASSIFIER_VERSION = "task-state-classifier-v1" as const;
+export const SCHEMA_CONTRACT_VERSION = "task-state-schema-v1" as const;
+export const DEFAULT_BATCH_SIZE = 100;
+export const MAX_BATCH_SIZE = 1000;
+
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const MONTHLY_ORDINALS = new Set(["first", "second", "third", "fourth", "last"]);
+const HISTORY_STATUSES = new Set(["done", "did_my_best", "missed", "delayed", "complete"]);
+const ACTIVE_HISTORY_STATUSES = new Set(["done", "did_my_best", "delayed", "complete"]);
+const SOURCE_NAMES = [
+  "tasks",
+  "history",
+  "subtasks",
+  "promotions",
+  "profile",
+  "taskEvents",
+  "pointLedger",
+  "rewardRolls",
+  "rewardClaims",
+  "pendingRewardAccount",
+  "pendingRewardOperations",
+  "pendingRewardItems",
+  "rolloverEvidence",
+] as const;
+
+export type SourceName = (typeof SOURCE_NAMES)[number];
+export type SourceStatus = {
+  available: boolean;
+  code?: string;
+};
+export type SourceAvailability = Record<SourceName, SourceStatus>;
+
+export type LegacyRow = Record<string, unknown>;
+
+export type MigrationSourceEvidence = {
+  tasks: readonly LegacyRow[];
+  history: readonly LegacyRow[];
+  subtasks: readonly LegacyRow[];
+  promotions: readonly LegacyRow[];
+  profile: LegacyRow | null;
+  taskEvents: readonly LegacyRow[];
+  pointLedger: readonly LegacyRow[];
+  rewardRolls: readonly LegacyRow[];
+  rewardClaims: readonly LegacyRow[];
+  pendingRewardAccount: readonly LegacyRow[];
+  pendingRewardOperations: readonly LegacyRow[];
+  pendingRewardItems: readonly LegacyRow[];
+  rolloverEvidence: readonly LegacyRow[];
+  availability?: Partial<SourceAvailability>;
+};
+
+export type ClassifierOptions = {
+  userId: string;
+  logicalDate?: string;
+  classifierVersion?: string;
+  schemaContractVersion?: string;
+};
+
+export type ScheduleModel = "unscheduled" | "one_time" | "rolling" | "fixed" | "ambiguous";
+export type AnchorClassification = "proven" | "reconstructable" | "prospective" | "ambiguous";
+export type MigrationEligibility = "safe" | "partial" | "needs_attention" | "blocked";
+
+export type MigrationCounts = {
+  taskEntities: number;
+  hierarchy: { parent: number; step: number; substep: number; orphan: number; cycle: number };
+  scheduleModels: Record<ScheduleModel, number>;
+  anchors: Record<AnchorClassification, number>;
+  history: { explicit: number; automaticMissed: number; ambiguous: number; contradictory: number };
+  occurrences: { proven: number; reconstructable: number; ambiguous: number };
+  delay: { safe: number; ambiguous: number };
+  completeContradictions: number;
+  archiveTrash: { proven: number; priorUnknown: number; contradictory: number };
+  inProgress: { valid: number; stale: number; contradictory: number };
+  rewards: { mapped: number; consumed: number; pending: number; ambiguous: number };
+  legacySubtasks: { promoted: number; unpromoted: number; nested: number; orphan: number; duplicate: number };
+  orphanReferences: number;
+  projectionMismatches: number;
+  needsAttention: number;
+};
+
+export type HistoryClassification = {
+  historyId: string;
+  entryDate: string | null;
+  status: string | null;
+  classification: "explicit" | "automatic_missed" | "ambiguous" | "contradictory";
+  confidence: "proven" | "high_confidence" | "not_promotable";
+  canonicalEligible: boolean;
+  evidence: string[];
+  blockingIssueCodes: string[];
+};
+
+export type OccurrenceClassification = {
+  historyId: string;
+  scheduledDueOn: string | null;
+  classification: "proven" | "reconstructable" | "ambiguous";
+  confidence: "proven" | "high_confidence" | "not_promotable";
+  evidence: string[];
+  blockingIssueCodes: string[];
+};
+
+export type EntityClassification = {
+  userId: string;
+  entityId: string;
+  entityKind: "parent" | "step" | "substep";
+  parentEntityId: string | null;
+  scheduleModel: ScheduleModel;
+  anchor: {
+    classification: AnchorClassification;
+    confidence: "proven" | "high_confidence" | "ambiguous" | "unavailable";
+    date: string | null;
+    evidence: string[];
+  };
+  historyClassifications: HistoryClassification[];
+  occurrenceClassifications: OccurrenceClassification[];
+  delayState: "none" | "safe" | "ambiguous";
+  lifecycleState: {
+    terminal: string;
+    container: string;
+    priorContainer: "proven" | "unknown" | "contradictory";
+  };
+  workflowState: "none" | "valid_in_progress" | "stale" | "contradictory";
+  rewardBootstrapState: "none" | "consumed_proven" | "pending_proven" | "safe" | "ambiguous";
+  migrationEligibility: MigrationEligibility;
+  blockingIssueCodes: string[];
+  sourceFingerprints: Record<string, string>;
+};
+
+export type UserMigrationReport = {
+  reportVersion: typeof REPORT_VERSION;
+  migrationVersion: typeof MIGRATION_VERSION;
+  classifierVersion: string;
+  schemaContractVersion: typeof SCHEMA_CONTRACT_VERSION;
+  generatedAt: string;
+  userId: string;
+  logicalDate: string;
+  sourceFingerprints: { tasks: string; history: string; rewards: string };
+  sourceAvailability: SourceAvailability;
+  counts: MigrationCounts;
+  eligibility: { safePercent: number; blockedEntityCount: number; commandCutoverEligible: boolean };
+  entities: EntityClassification[];
+};
+
+export type GlobalMigrationReport = {
+  reportVersion: typeof REPORT_VERSION;
+  migrationVersion: typeof MIGRATION_VERSION;
+  classifierVersion: string;
+  schemaContractVersion: typeof SCHEMA_CONTRACT_VERSION;
+  generatedAt: string;
+  sourceFingerprints: { tasks: string; history: string; rewards: string };
+  sourceAvailability: SourceAvailability;
+  counts: MigrationCounts;
+  eligibility: { safePercent: number; blockedEntityCount: number; commandCutoverEligible: boolean };
+  userCount: number;
+  classifiedUserCount: number;
+  commandCutoverEligibleUserCount: number;
+  blockedUserCount: number;
+  users: Array<{ userId: string; counts: MigrationCounts; eligibility: UserMigrationReport["eligibility"] }>;
+};
+
+export type MigrationRunReport = {
+  reportVersion: typeof REPORT_VERSION;
+  migrationVersion: typeof MIGRATION_VERSION;
+  classifierVersion: string;
+  schemaContractVersion: typeof SCHEMA_CONTRACT_VERSION;
+  generatedAt: string;
+  userReports: UserMigrationReport[];
+  entityRecords: EntityClassification[];
+  global: GlobalMigrationReport;
+};
+
+export class MigrationClassifierDiagnostic extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(`${code}: ${message}`);
+    this.name = "MigrationClassifierDiagnostic";
+    this.code = code;
+  }
+}
+
+function emptyAvailability(): SourceAvailability {
+  return Object.fromEntries(SOURCE_NAMES.map((name) => [name, { available: true }])) as SourceAvailability;
+}
+
+export function emptySourceEvidence(): MigrationSourceEvidence {
+  return {
+    tasks: [],
+    history: [],
+    subtasks: [],
+    promotions: [],
+    profile: null,
+    taskEvents: [],
+    pointLedger: [],
+    rewardRolls: [],
+    rewardClaims: [],
+    pendingRewardAccount: [],
+    pendingRewardOperations: [],
+    pendingRewardItems: [],
+    rolloverEvidence: [],
+    availability: emptyAvailability(),
+  };
+}
+
+function value(row: LegacyRow | null | undefined, ...keys: string[]): unknown {
+  if (!row) return undefined;
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(row, key)) return row[key];
+  }
+  return undefined;
+}
+
+function stringValue(row: LegacyRow | null | undefined, ...keys: string[]): string | null {
+  const candidate = value(row, ...keys);
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+}
+
+function dateValue(row: LegacyRow | null | undefined, ...keys: string[]): string | null {
+  const candidate = stringValue(row, ...keys);
+  return candidate && DATE_KEY.test(candidate) ? candidate : null;
+}
+
+function numberValue(row: LegacyRow | null | undefined, ...keys: string[]): number | null {
+  const candidate = value(row, ...keys);
+  return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : null;
+}
+
+function arrayValue(row: LegacyRow | null | undefined, ...keys: string[]): unknown[] {
+  const candidate = value(row, ...keys);
+  return Array.isArray(candidate) ? candidate : [];
+}
+
+function nestedValue(row: LegacyRow | null | undefined, path: string[]): unknown {
+  let current: unknown = row;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || !Object.prototype.hasOwnProperty.call(current, key)) return undefined;
+    current = (current as LegacyRow)[key];
+  }
+  return current;
+}
+
+function asDate(valueToCheck: unknown): string | null {
+  return typeof valueToCheck === "string" && DATE_KEY.test(valueToCheck) ? valueToCheck : null;
+}
+
+function compareStrings(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function stableValue(valueToSerialize: unknown): unknown {
+  if (valueToSerialize === null || typeof valueToSerialize === "string" || typeof valueToSerialize === "boolean") return valueToSerialize;
+  if (typeof valueToSerialize === "number") return Number.isFinite(valueToSerialize) ? valueToSerialize : String(valueToSerialize);
+  if (typeof valueToSerialize === "bigint") return valueToSerialize.toString();
+  if (Array.isArray(valueToSerialize)) return valueToSerialize.map(stableValue);
+  if (typeof valueToSerialize === "object") {
+    return Object.fromEntries(
+      Object.entries(valueToSerialize as LegacyRow)
+        .filter(([, item]) => item !== undefined)
+        .sort(([left], [right]) => compareStrings(left, right))
+        .map(([key, item]) => [key, stableValue(item)]),
+    );
+  }
+  return String(valueToSerialize);
+}
+
+export function stableStringify(valueToSerialize: unknown): string {
+  return JSON.stringify(stableValue(valueToSerialize));
+}
+
+export function fingerprintEvidence(valueToFingerprint: unknown): string {
+  const rows = Array.isArray(valueToFingerprint)
+    ? valueToFingerprint.map(stableValue).sort((left, right) => compareStrings(JSON.stringify(left), JSON.stringify(right)))
+    : stableValue(valueToFingerprint);
+  return createHash("sha256").update(stableStringify(rows)).digest("hex");
+}
+
+function rowId(row: LegacyRow, fallback: string) {
+  return stringValue(row, "id", "legacy_subtask_id", "operation_id", "source_operation_id") ?? fallback;
+}
+
+function validDate(valueToCheck: string | null): valueToCheck is string {
+  return valueToCheck !== null && DATE_KEY.test(valueToCheck);
+}
+
+function dateDifferenceInDays(start: string, end: string): number {
+  return Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000);
+}
+
+function addDays(date: string, days: number): string {
+  const valueToShift = new Date(`${date}T00:00:00Z`);
+  valueToShift.setUTCDate(valueToShift.getUTCDate() + days);
+  return valueToShift.toISOString().slice(0, 10);
+}
+
+function daysInMonth(year: number, monthIndex: number) {
+  return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+}
+
+function nthWeekdayOfMonth(year: number, monthIndex: number, weekday: number, ordinal: string): string | null {
+  const lastDay = daysInMonth(year, monthIndex);
+  const candidates: string[] = [];
+  for (let day = 1; day <= lastDay; day += 1) {
+    const date = new Date(Date.UTC(year, monthIndex, day));
+    if (date.getUTCDay() === weekday) candidates.push(date.toISOString().slice(0, 10));
+  }
+  if (ordinal === "last") return candidates.at(-1) ?? null;
+  const index = ["first", "second", "third", "fourth"].indexOf(ordinal);
+  return index >= 0 ? candidates[index] ?? null : null;
+}
+
+type ScheduleConfiguration = {
+  frequency: string | null;
+  interval: number | null;
+  weekdays: number[];
+  dayOfMonth: number | null;
+  monthlyMode: string | null;
+  monthlyOrdinal: string | null;
+  monthlyWeekday: number | null;
+};
+
+function scheduleConfiguration(task: LegacyRow): ScheduleConfiguration {
+  const weekdays = arrayValue(task, "repeat_days_of_week").map((item) => typeof item === "number" ? item : Number(item));
+  return {
+    frequency: stringValue(task, "repeat_frequency"),
+    interval: numberValue(task, "repeat_interval"),
+    weekdays,
+    dayOfMonth: numberValue(task, "repeat_day_of_month"),
+    monthlyMode: stringValue(task, "repeat_monthly_mode"),
+    monthlyOrdinal: stringValue(task, "repeat_monthly_ordinal"),
+    monthlyWeekday: numberValue(task, "repeat_monthly_weekday"),
+  };
+}
+
+function isValidSchedule(task: LegacyRow, model: ScheduleModel): boolean {
+  const configuration = scheduleConfiguration(task);
+  if (model === "unscheduled" || model === "one_time") return configuration.frequency === "none";
+  if (!configuration.interval || configuration.interval < 1) return false;
+  if (model === "rolling") return ["daily", "custom", "daily_until_complete"].includes(configuration.frequency ?? "");
+  if (model === "fixed" && configuration.frequency === "weekly") {
+    return configuration.weekdays.length > 0
+      && configuration.weekdays.every((weekday) => Number.isInteger(weekday) && weekday >= 0 && weekday <= 6)
+      && new Set(configuration.weekdays).size === configuration.weekdays.length;
+  }
+  if (model === "fixed" && configuration.frequency === "monthly") {
+    if (configuration.monthlyMode === "day_of_month") {
+      return configuration.dayOfMonth !== null
+        && Number.isInteger(configuration.dayOfMonth)
+        && configuration.dayOfMonth >= 1
+        && configuration.dayOfMonth <= 31
+        && configuration.monthlyOrdinal === null
+        && configuration.monthlyWeekday === null;
+    }
+    return configuration.monthlyMode === "ordinal_weekday"
+      && configuration.monthlyOrdinal !== null
+      && MONTHLY_ORDINALS.has(configuration.monthlyOrdinal)
+      && configuration.monthlyWeekday !== null
+      && Number.isInteger(configuration.monthlyWeekday)
+      && configuration.monthlyWeekday >= 0
+      && configuration.monthlyWeekday <= 6
+      && configuration.dayOfMonth === null;
+  }
+  return false;
+}
+
+export function classifyScheduleModel(task: LegacyRow): { model: ScheduleModel; issueCodes: string[] } {
+  const frequency = stringValue(task, "repeat_frequency");
+  const rawDueOn = stringValue(task, "due_on");
+  const dueOn = dateValue(task, "due_on");
+  if (rawDueOn !== null && dueOn === null) return { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"] };
+  if (frequency === "none" && dueOn === null) return { model: "unscheduled", issueCodes: [] };
+  if (frequency === "none" && dueOn !== null) return { model: "one_time", issueCodes: [] };
+  if (frequency === "daily" || frequency === "custom" || frequency === "daily_until_complete") {
+    return isValidSchedule(task, "rolling")
+      ? { model: "rolling", issueCodes: [] }
+      : { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"] };
+  }
+  if (frequency === "weekly" || frequency === "monthly") {
+    return isValidSchedule(task, "fixed")
+      ? { model: "fixed", issueCodes: [] }
+      : { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"] };
+  }
+  return { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"] };
+}
+
+function scheduledOnDate(task: LegacyRow, model: ScheduleModel, date: string, anchorDate: string | null = null): boolean {
+  if (!validDate(date) || model === "ambiguous" || model === "unscheduled") return false;
+  const configuration = scheduleConfiguration(task);
+  if (model === "one_time") return dateValue(task, "due_on") === date;
+  if (configuration.frequency === "daily" || configuration.frequency === "custom" || configuration.frequency === "daily_until_complete") {
+    if (!anchorDate || !validDate(anchorDate)) return false;
+    const delta = dateDifferenceInDays(anchorDate, date);
+    return delta >= 0 && delta % (configuration.interval ?? 1) === 0;
+  }
+  if (configuration.frequency === "weekly") {
+    const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+    if (!configuration.weekdays.includes(weekday)) return false;
+    if (!anchorDate || (configuration.interval ?? 1) <= 1) return true;
+    const delta = dateDifferenceInDays(anchorDate, date);
+    return delta >= 0 && Math.floor(delta / 7) % (configuration.interval ?? 1) === 0;
+  }
+  if (configuration.frequency === "monthly") {
+    const dateObject = new Date(`${date}T00:00:00Z`);
+    if (configuration.monthlyMode === "ordinal_weekday") {
+      return nthWeekdayOfMonth(
+        dateObject.getUTCFullYear(),
+        dateObject.getUTCMonth(),
+        configuration.monthlyWeekday ?? -1,
+        configuration.monthlyOrdinal ?? "",
+      ) === date;
+    }
+    return dateObject.getUTCDate() === Math.min(configuration.dayOfMonth ?? 0, daysInMonth(dateObject.getUTCFullYear(), dateObject.getUTCMonth()));
+  }
+  return false;
+}
+
+function nextScheduledDate(task: LegacyRow, model: ScheduleModel, date: string, anchorDate: string | null): string | null {
+  const configuration = scheduleConfiguration(task);
+  if (!validDate(date) || model === "ambiguous" || model === "unscheduled") return null;
+  if (model === "one_time") return null;
+  if (configuration.frequency === "daily" || configuration.frequency === "custom" || configuration.frequency === "daily_until_complete") {
+    return addDays(date, configuration.interval ?? 1);
+  }
+  if (configuration.frequency === "weekly") {
+    for (let offset = 1; offset <= 7 * Math.max(configuration.interval ?? 1, 1) + 7; offset += 1) {
+      const candidate = addDays(date, offset);
+      if (scheduledOnDate(task, model, candidate, anchorDate)) return candidate;
+    }
+    return null;
+  }
+  if (configuration.frequency === "monthly") {
+    const dateObject = new Date(`${date}T00:00:00Z`);
+    for (let monthOffset = 1; monthOffset <= 24 * Math.max(configuration.interval ?? 1, 1); monthOffset += 1) {
+      const month = new Date(Date.UTC(dateObject.getUTCFullYear(), dateObject.getUTCMonth() + monthOffset, 1));
+      let candidate: string | null = null;
+      if (configuration.monthlyMode === "ordinal_weekday") {
+        candidate = nthWeekdayOfMonth(month.getUTCFullYear(), month.getUTCMonth(), configuration.monthlyWeekday ?? -1, configuration.monthlyOrdinal ?? "");
+      } else {
+        candidate = `${month.getUTCFullYear().toString().padStart(4, "0")}-${(month.getUTCMonth() + 1).toString().padStart(2, "0")}-${Math.min(configuration.dayOfMonth ?? 0, daysInMonth(month.getUTCFullYear(), month.getUTCMonth())).toString().padStart(2, "0")}`;
+      }
+      if (candidate && scheduledOnDate(task, model, candidate, anchorDate)) return candidate;
+    }
+  }
+  return null;
+}
+
+function sourceStatus(sources: MigrationSourceEvidence, name: SourceName): SourceStatus {
+  return sources.availability?.[name] ?? { available: true };
+}
+
+function sourceFingerprintForEntity(sources: MigrationSourceEvidence, taskId: string): Record<string, string> {
+  const history = sources.history.filter((row) => stringValue(row, "task_id") === taskId);
+  const rewardClaims = sources.rewardClaims.filter((row) => stringValue(row, "task_id") === taskId);
+  const taskEvents = sources.taskEvents.filter((row) => stringValue(row, "task_id") === taskId);
+  const pendingItems = sources.pendingRewardItems.filter((row) => {
+    const payload = value(row, "reward_payload", "payload");
+    return JSON.stringify(payload ?? {}).includes(taskId);
+  });
+  return {
+    tasks: fingerprintEvidence(sources.tasks.filter((row) => stringValue(row, "id") === taskId)),
+    history: fingerprintEvidence(history),
+    rewards: fingerprintEvidence({
+      claims: rewardClaims,
+      taskEvents,
+      pendingItems,
+      rolls: sources.rewardRolls.filter((row) => rewardClaims.some((claim) => stringValue(claim, "reward_roll_id") === stringValue(row, "id"))),
+      pointLedger: sources.pointLedger.filter((row) => stringValue(row, "ref_id") === taskId),
+    }),
+  };
+}
+
+function classifyAnchor(
+  task: LegacyRow,
+  model: ScheduleModel,
+  history: readonly LegacyRow[],
+  historyClassifications: readonly HistoryClassification[],
+  occurrenceClassifications: readonly OccurrenceClassification[],
+  delayState: "none" | "safe" | "ambiguous",
+  profileAvailable: boolean,
+): EntityClassification["anchor"] {
+  if (model === "unscheduled") return { classification: "proven", confidence: "proven", date: null, evidence: ["repeat_frequency=none", "due_on=null"] };
+  if (model === "one_time") {
+    const dueOn = dateValue(task, "due_on");
+    return dueOn
+      ? { classification: "proven", confidence: "proven", date: dueOn, evidence: ["one_time_due_on"] }
+      : { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["one_time_due_on_missing"] };
+  }
+  if (model === "ambiguous") return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["invalid_recurrence_configuration"] };
+
+  const exactOccurrenceDates = occurrenceClassifications
+    .filter((item) => item.classification === "proven" && item.scheduledDueOn !== null)
+    .map((item) => item.scheduledDueOn as string)
+    .sort(compareStrings);
+  const explicitDates = historyClassifications
+    .filter((item) => item.classification === "explicit" && item.entryDate !== null && ACTIVE_HISTORY_STATUSES.has(item.status ?? ""))
+    .map((item) => item.entryDate as string)
+    .filter((date) => scheduledOnDate(task, model, date, date))
+    .sort(compareStrings);
+  if (exactOccurrenceDates.length > 0) {
+    const first = exactOccurrenceDates[0];
+    let contiguous = true;
+    for (let index = 1; index < exactOccurrenceDates.length; index += 1) {
+      const expected = nextScheduledDate(task, model, exactOccurrenceDates[index - 1], first);
+      if (expected !== exactOccurrenceDates[index]) contiguous = false;
+    }
+    if (contiguous) {
+      return {
+        classification: "reconstructable",
+        confidence: "high_confidence",
+        date: first,
+        evidence: ["exact_occurrence_identity", "contiguous_occurrence_sequence"],
+      };
+    }
+    return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["multiple_noncontiguous_occurrence_candidates"] };
+  }
+  if (explicitDates.length > 0 && occurrenceClassifications.every((item) => item.classification !== "ambiguous")) {
+    return {
+      classification: "reconstructable",
+      confidence: "high_confidence",
+      date: explicitDates[0],
+      evidence: ["explicit_history", "schedule_rule_reconstruction"],
+    };
+  }
+  if (delayState === "ambiguous") {
+    return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["unresolved_delay_origin_or_target"] };
+  }
+  if (profileAvailable && dateValue(task, "due_on") !== null && historyClassifications.every((item) => item.classification !== "contradictory")) {
+    return {
+      classification: "prospective",
+      confidence: "high_confidence",
+      date: null,
+      evidence: ["valid_forward_configuration", "current_due_cursor_only", "historical_scope_unknown"],
+    };
+  }
+  return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["recurrence_anchor_unavailable"] };
+}
+
+function hasValidProfileContext(profile: LegacyRow | null): boolean {
+  if (!profile) return false;
+  const timezone = stringValue(profile, "timezone");
+  const dayStart = stringValue(profile, "day_start_time", "logical_day_start");
+  if (timezone === null || dayStart === null || !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?$/.test(dayStart)) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasExplicitActor(row: LegacyRow): boolean {
+  const actor = stringValue(row, "actor_kind", "writer_kind", "source", "provenance", "origin");
+  return actor !== null && ["user", "manual", "command", "authorized_automation", "explicit"].some((candidate) => actor.toLowerCase().includes(candidate));
+}
+
+function hasAutomaticActor(row: LegacyRow): boolean {
+  const actor = stringValue(row, "actor_kind", "writer_kind", "source", "provenance", "origin", "event_type");
+  return actor !== null && ["rollover", "automatic", "reconcile", "derived"].some((candidate) => actor.toLowerCase().includes(candidate));
+}
+
+function hasMatchingRolloverEvidence(
+  taskId: string,
+  entryDate: string | null,
+  rolloverEvidence: readonly LegacyRow[],
+): boolean {
+  if (!entryDate) return false;
+  return rolloverEvidence.some((row) => {
+    const evidenceTaskId = stringValue(row, "task_id", "entity_id");
+    const evidenceDate = dateValue(row, "logical_date", "entry_date", "occurred_on");
+    const taskIds = arrayValue(row, "task_ids", "entity_ids").map((item) => typeof item === "string" ? item : null).filter((item): item is string => item !== null);
+    return evidenceDate === entryDate && (evidenceTaskId === taskId || taskIds.includes(taskId));
+  });
+}
+
+function classifyHistory(
+  taskId: string,
+  history: readonly LegacyRow[],
+  sources: MigrationSourceEvidence,
+): HistoryClassification[] {
+  const relevant = history.filter((row) => stringValue(row, "task_id") === taskId);
+  const byDate = new Map<string, LegacyRow[]>();
+  for (const row of relevant) {
+    const date = dateValue(row, "entry_date");
+    if (date) byDate.set(date, [...(byDate.get(date) ?? []), row]);
+  }
+  return [...relevant]
+    .sort((left, right) => compareStrings(rowId(left, ""), rowId(right, "")))
+    .map((row, index) => {
+      const id = rowId(row, `${taskId}:history:${index}`);
+      const entryDate = dateValue(row, "entry_date");
+      const status = stringValue(row, "status");
+      const issues: string[] = [];
+      const evidence: string[] = [];
+      const duplicateDate = entryDate !== null && (byDate.get(entryDate)?.length ?? 0) > 1;
+      if (stringValue(row, "user_id") !== null && stringValue(row, "user_id") !== stringValue(sources.tasks.find((task) => stringValue(task, "id") === taskId), "user_id")) {
+        return {
+          historyId: id,
+          entryDate,
+          status,
+          classification: "ambiguous",
+          confidence: "not_promotable",
+          canonicalEligible: false,
+          evidence: ["history_owner_mismatch"],
+          blockingIssueCodes: ["ORPHAN_HISTORY_REFERENCE"],
+        };
+      }
+      if (duplicateDate) {
+        issues.push("CONTRADICTORY_HISTORY_SAME_ENTITY_DATE");
+        return {
+          historyId: id,
+          entryDate,
+          status,
+          classification: "contradictory",
+          confidence: "not_promotable",
+          canonicalEligible: false,
+          evidence: ["multiple_assertions_without_replacement_proof"],
+          blockingIssueCodes: issues,
+        };
+      }
+      if (!status || !HISTORY_STATUSES.has(status)) {
+        return {
+          historyId: id,
+          entryDate,
+          status,
+          classification: "ambiguous",
+          confidence: "not_promotable",
+          canonicalEligible: false,
+          evidence: ["unsupported_history_status"],
+          blockingIssueCodes: ["INVALID_HISTORY_STATUS"],
+        };
+      }
+      if (status === "missed") {
+        if (hasExplicitActor(row) || stringValue(row, "command_id") !== null) {
+          evidence.push("explicit_manual_missed");
+          return { historyId: id, entryDate, status, classification: "explicit", confidence: "high_confidence", canonicalEligible: true, evidence, blockingIssueCodes: [] };
+        }
+        if (hasAutomaticActor(row) || hasMatchingRolloverEvidence(taskId, entryDate, sources.rolloverEvidence)) {
+          evidence.push("rollover_evidence");
+          return { historyId: id, entryDate, status, classification: "automatic_missed", confidence: "not_promotable", canonicalEligible: false, evidence, blockingIssueCodes: ["AUTOMATIC_MISSED_NOT_CANONICAL"] };
+        }
+        return { historyId: id, entryDate, status, classification: "ambiguous", confidence: "not_promotable", canonicalEligible: false, evidence: ["manual_and_automatic_writers_not_distinguished"], blockingIssueCodes: ["AMBIGUOUS_MISSED_PROVENANCE"] };
+      }
+      if (status === "complete") {
+        if (stringValue(row, "event_type") === "completed_permanently") {
+          return { historyId: id, entryDate, status, classification: "explicit", confidence: "proven", canonicalEligible: true, evidence: ["completed_permanently_event"], blockingIssueCodes: [] };
+        }
+        return { historyId: id, entryDate, status, classification: "ambiguous", confidence: "not_promotable", canonicalEligible: false, evidence: ["complete_status_without_terminal_event"], blockingIssueCodes: ["COMPLETE_PROJECTION_ONLY"] };
+      }
+      evidence.push(stringValue(row, "command_id") ? "command_identity" : "explicit_writer_context_not_available");
+      return { historyId: id, entryDate, status, classification: "explicit", confidence: stringValue(row, "command_id") ? "proven" : "high_confidence", canonicalEligible: true, evidence, blockingIssueCodes: issues };
+    });
+}
+
+function occurrenceDateFromKey(row: LegacyRow, taskId: string): string | null {
+  const key = stringValue(row, "occurrence_key");
+  if (!key) return null;
+  const match = key.match(new RegExp(`^task:${taskId.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}:occurrence:(\\d{4}-\\d{2}-\\d{2})$`));
+  return match?.[1] ?? null;
+}
+
+function classifyOccurrences(taskId: string, task: LegacyRow, model: ScheduleModel, history: readonly LegacyRow[], historyClassifications: readonly HistoryClassification[]): OccurrenceClassification[] {
+  return history
+    .filter((row) => stringValue(row, "task_id") === taskId)
+    .sort((left, right) => compareStrings(rowId(left, ""), rowId(right, "")))
+    .flatMap((row, index): OccurrenceClassification[] => {
+      const historyId = rowId(row, `${taskId}:history:${index}`);
+      const historyClassification = historyClassifications.find((item) => item.historyId === historyId);
+      if (historyClassification?.classification === "automatic_missed") return [];
+      const rawDue = dateValue(row, "occurrence_due_on");
+      const keyDue = occurrenceDateFromKey(row, taskId);
+      const due = rawDue ?? keyDue;
+      if (rawDue && keyDue && rawDue !== keyDue) {
+        return [{ historyId, scheduledDueOn: null, classification: "ambiguous", confidence: "not_promotable", evidence: ["occurrence_key_date_mismatch"], blockingIssueCodes: ["AMBIGUOUS_OCCURRENCE_IDENTITY"] }];
+      }
+      if (!due) {
+        if (historyClassification?.classification === "explicit" && model === "one_time" && dateValue(task, "due_on") === dateValue(row, "entry_date")) {
+          return [{ historyId, scheduledDueOn: dateValue(task, "due_on"), classification: "reconstructable", confidence: "high_confidence", evidence: ["one_time_due_date_reconstruction"], blockingIssueCodes: [] }];
+        }
+        return [];
+      }
+      if (!scheduledOnDate(task, model, due, due)) {
+        return [{ historyId, scheduledDueOn: due, classification: "ambiguous", confidence: "not_promotable", evidence: ["occurrence_not_valid_for_current_rule"], blockingIssueCodes: ["AMBIGUOUS_OCCURRENCE_IDENTITY"] }];
+      }
+      if (rawDue && keyDue) {
+        return [{ historyId, scheduledDueOn: due, classification: "proven", confidence: "high_confidence", evidence: ["matching_occurrence_key_and_due_date"], blockingIssueCodes: [] }];
+      }
+      return [{ historyId, scheduledDueOn: due, classification: "reconstructable", confidence: "high_confidence", evidence: ["single_occurrence_date_evidence"], blockingIssueCodes: [] }];
+    });
+}
+
+function delayTarget(row: LegacyRow): string | null {
+  return dateValue(row, "delay_target_on", "target_due_on", "new_due_on")
+    ?? asDate(nestedValue(row, ["metadata", "delayTargetOn"]));
+}
+
+function classifyDelay(task: LegacyRow, history: readonly LegacyRow[], model: ScheduleModel, occurrenceClassifications: readonly OccurrenceClassification[]): { state: "none" | "safe" | "ambiguous"; issueCodes: string[] } {
+  const delayed = history.filter((row) => stringValue(row, "status") === "delayed");
+  if (delayed.length === 0) return { state: "none", issueCodes: [] };
+  const issues: string[] = [];
+  for (const row of delayed) {
+    const historyId = rowId(row, "");
+    const origin = dateValue(row, "occurrence_due_on") ?? occurrenceClassifications.find((item) => item.historyId === historyId)?.scheduledDueOn;
+    const actionDate = dateValue(row, "entry_date");
+    const target = delayTarget(row);
+    if (!origin || !actionDate || !target || !scheduledOnDate(task, model, origin, origin) || dateDifferenceInDays(actionDate, target) <= 0) {
+      issues.push("DELAY_ORIGIN_OR_TARGET_UNPROVEN");
+    }
+  }
+  return issues.length > 0 ? { state: "ambiguous", issueCodes: [...new Set(issues)] } : { state: "safe", issueCodes: [] };
+}
+
+function analyzeHierarchy(tasks: readonly LegacyRow[], userId: string): Map<string, { kind: EntityClassification["entityKind"]; issues: string[]; cycle: boolean; orphan: boolean }> {
+  const byId = new Map<string, LegacyRow>();
+  const issuesById = new Map<string, string[]>();
+  for (const task of tasks) {
+    const id = stringValue(task, "id");
+    if (!id) continue;
+    if (byId.has(id)) issuesById.set(id, ["DUPLICATE_TASK_ID"]);
+    else byId.set(id, task);
+  }
+  const cycleNodes = new Set<string>();
+  const orphanNodes = new Set<string>();
+  const state = new Map<string, "visiting" | "done">();
+  const stack: string[] = [];
+  const visit = (id: string) => {
+    if (state.get(id) === "done") return;
+    if (state.get(id) === "visiting") {
+      const start = stack.indexOf(id);
+      for (const cycleId of stack.slice(start)) cycleNodes.add(cycleId);
+      return;
+    }
+    state.set(id, "visiting");
+    stack.push(id);
+    const task = byId.get(id);
+    const parentId = stringValue(task, "parent_task_id");
+    if (parentId) {
+      const parent = byId.get(parentId);
+      if (!parent) orphanNodes.add(id);
+      else if (stringValue(parent, "user_id") !== userId) orphanNodes.add(id);
+      else visit(parentId);
+    }
+    stack.pop();
+    state.set(id, "done");
+  };
+  for (const id of byId.keys()) visit(id);
+  const result = new Map<string, { kind: EntityClassification["entityKind"]; issues: string[]; cycle: boolean; orphan: boolean }>();
+  for (const [id, task] of byId) {
+    const parentId = stringValue(task, "parent_task_id");
+    const issues = [...(issuesById.get(id) ?? [])];
+    if (cycleNodes.has(id)) issues.push("HIERARCHY_CYCLE");
+    if (orphanNodes.has(id)) issues.push(byId.has(parentId ?? "") ? "CROSS_USER_PARENT" : "ORPHAN_PARENT_REFERENCE");
+    let depth = 0;
+    let current = parentId;
+    const seen = new Set<string>();
+    while (current && byId.has(current) && !seen.has(current)) {
+      seen.add(current);
+      depth += 1;
+      current = stringValue(byId.get(current), "parent_task_id");
+    }
+    result.set(id, {
+      kind: depth === 0 ? "parent" : depth === 1 ? "step" : "substep",
+      issues: [...new Set(issues)],
+      cycle: cycleNodes.has(id),
+      orphan: orphanNodes.has(id),
+    });
+  }
+  return result;
+}
+
+function classifyLegacySubtasks(sources: MigrationSourceEvidence, userId: string, tasksById: Map<string, LegacyRow>): { byTask: Map<string, string[]>; counts: MigrationCounts["legacySubtasks"] } {
+  const counts = { promoted: 0, unpromoted: 0, nested: 0, orphan: 0, duplicate: 0 };
+  const byTask = new Map<string, string[]>();
+  const ownerSubtaskIds = new Set(sources.subtasks.filter((subtask) => stringValue(subtask, "user_id") === userId).map((subtask) => stringValue(subtask, "id")).filter((id): id is string => id !== null));
+  const promotionsByLegacy = new Map<string, LegacyRow[]>();
+  const promotionsByTask = new Map<string, LegacyRow[]>();
+  for (const promotion of sources.promotions) {
+    const legacyId = stringValue(promotion, "legacy_subtask_id");
+    const taskId = stringValue(promotion, "task_id");
+    if (legacyId) promotionsByLegacy.set(legacyId, [...(promotionsByLegacy.get(legacyId) ?? []), promotion]);
+    if (taskId) promotionsByTask.set(taskId, [...(promotionsByTask.get(taskId) ?? []), promotion]);
+  }
+  for (const subtask of sources.subtasks) {
+    const subtaskId = stringValue(subtask, "id");
+    if (!subtaskId || stringValue(subtask, "user_id") !== userId) continue;
+    const parentSubtaskId = stringValue(subtask, "parent_subtask_id");
+    const taskId = stringValue(subtask, "task_id");
+    const promotions = promotionsByLegacy.get(subtaskId) ?? [];
+    if (parentSubtaskId) counts.nested += 1;
+    if (!taskId || !tasksById.has(taskId)) {
+      counts.orphan += 1;
+      if (taskId) byTask.set(taskId, [...(byTask.get(taskId) ?? []), "ORPHAN_LEGACY_SUBTASK_REFERENCE"]);
+      continue;
+    }
+    const promotedTaskId = promotions.length === 1 ? stringValue(promotions[0], "task_id") : null;
+    const validPromotion = promotions.length === 1
+      && promotedTaskId !== null
+      && tasksById.has(promotedTaskId)
+      && stringValue(promotions[0], "user_id") === userId
+      && (promotionsByTask.get(promotedTaskId)?.length ?? 0) === 1;
+    if (validPromotion) {
+      counts.promoted += 1;
+      byTask.set(promotedTaskId as string, [...(byTask.get(promotedTaskId as string) ?? []), "LEGACY_SUBTASK_PROMOTED"]);
+    } else if (promotions.length === 0) {
+      counts.unpromoted += 1;
+      byTask.set(taskId, [...(byTask.get(taskId) ?? []), "LEGACY_SUBTASK_UNPROMOTED"]);
+    } else {
+      counts.duplicate += 1;
+      byTask.set(taskId, [...(byTask.get(taskId) ?? []), "DUPLICATE_LEGACY_SUBTASK_PROMOTION"]);
+    }
+  }
+  for (const promotion of sources.promotions) {
+    const legacyId = stringValue(promotion, "legacy_subtask_id");
+    if (stringValue(promotion, "user_id") === userId && legacyId !== null && !ownerSubtaskIds.has(legacyId)) counts.orphan += 1;
+  }
+  return { byTask, counts };
+}
+
+function classifyLifecycle(task: LegacyRow, historyClassifications: readonly HistoryClassification[], history: readonly LegacyRow[]): { state: EntityClassification["lifecycleState"]; issueCodes: string[] } {
+  const issues: string[] = [];
+  const completeHistory = historyClassifications.filter((item) => item.status === "complete" && item.classification === "explicit");
+  const completeDate = completeHistory.map((item) => item.entryDate).filter((date): date is string => date !== null).sort(compareStrings)[0] ?? null;
+  const laterActive = completeDate !== null && history.some((row) => {
+    const date = dateValue(row, "entry_date");
+    return date !== null && date > completeDate && ACTIVE_HISTORY_STATUSES.has(stringValue(row, "status") ?? "") && stringValue(row, "status") !== "complete";
+  });
+  if (laterActive) issues.push("COMPLETE_FOLLOWED_BY_ACTIVE_HISTORY");
+  const terminal = completeHistory.length > 0 ? "permanently_complete" : stringValue(task, "status") === "complete" || stringValue(task, "completed_at") !== null ? "ambiguous" : "active";
+  if (terminal === "ambiguous") issues.push("COMPLETE_PROJECTION_ONLY");
+  if (laterActive) issues.push("COMPLETE_TERMINAL_CONTRADICTION");
+
+  const status = stringValue(task, "status");
+  const container = status === "archived" ? "archived" : status === "trashed" ? "trashed" : "active";
+  const rawPrior = stringValue(task, "prior_container_state", "previous_container_state");
+  const priorContainer = container !== "trashed" ? "proven" : rawPrior === "active" || rawPrior === "archived" ? "proven" : "unknown";
+  if (container === "trashed" && rawPrior !== null && !["active", "archived"].includes(rawPrior)) {
+    issues.push("CONTRADICTORY_TRASH_PRIOR_CONTAINER");
+  }
+  return { state: { terminal, container, priorContainer }, issueCodes: [...new Set(issues)] };
+}
+
+function classifyWorkflow(
+  task: LegacyRow,
+  logicalDate: string,
+  lifecycle: EntityClassification["lifecycleState"],
+  occurrenceClassifications: readonly OccurrenceClassification[],
+): { state: EntityClassification["workflowState"]; issueCodes: string[] } {
+  const status = stringValue(task, "status");
+  const activeDate = dateValue(task, "active_status_logical_date");
+  const claimedOccurrence = dateValue(task, "active_occurrence_due_on");
+  if (status !== "in_progress" && activeDate === null && claimedOccurrence === null) return { state: "none", issueCodes: [] };
+  if (lifecycle.terminal === "permanently_complete" || lifecycle.container !== "active") return { state: "contradictory", issueCodes: ["IN_PROGRESS_LIFECYCLE_CONTRADICTION"] };
+  if (status !== "in_progress" || activeDate === null) return { state: "contradictory", issueCodes: ["IN_PROGRESS_FIELDS_CONTRADICTORY"] };
+  if (activeDate < logicalDate) return { state: "stale", issueCodes: ["STALE_IN_PROGRESS_NOT_DID_MY_BEST"] };
+  if (claimedOccurrence !== null && !occurrenceClassifications.some((item) => item.classification === "proven" && item.scheduledDueOn === claimedOccurrence)) {
+    return { state: "contradictory", issueCodes: ["IN_PROGRESS_OCCURRENCE_UNPROVEN"] };
+  }
+  return { state: "valid_in_progress", issueCodes: [] };
+}
+
+function rewardPayloadMatchesTask(payload: unknown, taskId: string): { task: boolean; date: string | null } {
+  if (!payload || typeof payload !== "object") return { task: false, date: null };
+  const object = payload as LegacyRow;
+  const serialized = JSON.stringify(payload);
+  const task = serialized.includes(taskId);
+  const date = asDate(object.rewardDate) ?? asDate(object.reward_date);
+  return { task, date };
+}
+
+function classifyRewards(taskId: string, historyClassifications: readonly HistoryClassification[], sources: MigrationSourceEvidence): { state: EntityClassification["rewardBootstrapState"]; counts: MigrationCounts["rewards"]; issueCodes: string[] } {
+  const counts = { mapped: 0, consumed: 0, pending: 0, ambiguous: 0 };
+  const issues: string[] = [];
+  const successDates = new Set(historyClassifications.filter((item) => item.classification === "explicit" && ["done", "did_my_best", "complete"].includes(item.status ?? "") && item.entryDate).map((item) => item.entryDate as string));
+  const claims = sources.rewardClaims.filter((row) => stringValue(row, "task_id") === taskId);
+  const rollsById = new Map(sources.rewardRolls.map((row) => [stringValue(row, "id"), row]));
+  let consumed = 0;
+  for (const claim of claims) {
+    const rewardDate = dateValue(claim, "reward_date");
+    const rollId = stringValue(claim, "reward_roll_id");
+    const roll = rollId ? rollsById.get(rollId) : undefined;
+    const rollDate = dateValue(roll, "reward_date");
+    const subtaskId = stringValue(claim, "subtask_id");
+    const subtaskMappingProven = subtaskId === null || (
+      sources.subtasks.filter((row) => stringValue(row, "id") === subtaskId && stringValue(row, "user_id") === stringValue(claim, "user_id")).length === 1
+      && sources.promotions.filter((row) => stringValue(row, "legacy_subtask_id") === subtaskId && stringValue(row, "user_id") === stringValue(claim, "user_id")).length === 1
+    );
+    if (!subtaskMappingProven) issues.push("AMBIGUOUS_REWARD_SUBTASK_MAPPING");
+    if (rewardDate && roll && rollDate === rewardDate && successDates.has(rewardDate) && subtaskMappingProven) {
+      counts.mapped += 1;
+      counts.consumed += 1;
+      consumed += 1;
+    } else {
+      counts.ambiguous += 1;
+      issues.push("AMBIGUOUS_REWARD_CLAIM");
+    }
+  }
+  const pending = sources.pendingRewardItems.filter((row) => {
+    const match = rewardPayloadMatchesTask(value(row, "reward_payload", "payload"), taskId);
+    const operationId = stringValue(row, "source_operation_id");
+    const operationExists = operationId === null || sources.pendingRewardOperations.some((operation) => stringValue(operation, "operation_id") === operationId);
+    return match.task && operationExists && (match.date === null || successDates.has(match.date));
+  });
+  if (pending.length > 0) {
+    counts.mapped += pending.length;
+    counts.pending += pending.length;
+  }
+  if (!sourceStatus(sources, "rewardClaims").available && successDates.size > 0) issues.push("REWARD_SOURCE_UNAVAILABLE");
+  if (successDates.size > 0 && consumed === 0 && pending.length === 0) issues.push("REWARD_ENTITLEMENT_UNPROVEN");
+  if (issues.some((issue) => issue === "AMBIGUOUS_REWARD_CLAIM" || issue === "AMBIGUOUS_REWARD_SUBTASK_MAPPING" || issue === "REWARD_SOURCE_UNAVAILABLE")) {
+    return { state: "ambiguous", counts, issueCodes: [...new Set(issues)] };
+  }
+  if (counts.consumed > 0) return { state: "consumed_proven", counts, issueCodes: [] };
+  if (counts.pending > 0) return { state: "pending_proven", counts, issueCodes: [] };
+  return { state: "none", counts, issueCodes: [...new Set(issues)] };
+}
+
+function issueSeverity(issue: string): "blocked" | "attention" {
+  if ([
+    "HIERARCHY_CYCLE",
+    "CROSS_USER_PARENT",
+    "ORPHAN_PARENT_REFERENCE",
+    "ORPHAN_HISTORY_REFERENCE",
+    "INVALID_RECURRENCE_CONFIGURATION",
+    "CONTRADICTORY_HISTORY_SAME_ENTITY_DATE",
+    "COMPLETE_TERMINAL_CONTRADICTION",
+    "IN_PROGRESS_LIFECYCLE_CONTRADICTION",
+    "IN_PROGRESS_FIELDS_CONTRADICTORY",
+    "CONTRADICTORY_TRASH_PRIOR_CONTAINER",
+    "DUPLICATE_LEGACY_SUBTASK_PROMOTION",
+    "SOURCE_QUERY_FAILED",
+  ].includes(issue)) return "blocked";
+  if (issue.startsWith("SOURCE_UNAVAILABLE")) return "blocked";
+  return "attention";
+}
+
+function classifyEligibility(
+  model: ScheduleModel,
+  anchor: EntityClassification["anchor"],
+  lifecycle: EntityClassification["lifecycleState"],
+  workflow: EntityClassification["workflowState"],
+  issueCodes: readonly string[],
+): MigrationEligibility {
+  if (issueCodes.some((issue) => issueSeverity(issue) === "blocked")) return "blocked";
+  if (model === "ambiguous" || anchor.classification === "ambiguous" || lifecycle.terminal === "ambiguous" || workflow === "contradictory") return "blocked";
+  if (anchor.classification === "prospective" || lifecycle.priorContainer === "unknown" || workflow === "stale" || issueCodes.length > 0) return "partial";
+  return "safe";
+}
+
+function zeroCounts(): MigrationCounts {
+  return {
+    taskEntities: 0,
+    hierarchy: { parent: 0, step: 0, substep: 0, orphan: 0, cycle: 0 },
+    scheduleModels: { unscheduled: 0, one_time: 0, rolling: 0, fixed: 0, ambiguous: 0 },
+    anchors: { proven: 0, reconstructable: 0, prospective: 0, ambiguous: 0 },
+    history: { explicit: 0, automaticMissed: 0, ambiguous: 0, contradictory: 0 },
+    occurrences: { proven: 0, reconstructable: 0, ambiguous: 0 },
+    delay: { safe: 0, ambiguous: 0 },
+    completeContradictions: 0,
+    archiveTrash: { proven: 0, priorUnknown: 0, contradictory: 0 },
+    inProgress: { valid: 0, stale: 0, contradictory: 0 },
+    rewards: { mapped: 0, consumed: 0, pending: 0, ambiguous: 0 },
+    legacySubtasks: { promoted: 0, unpromoted: 0, nested: 0, orphan: 0, duplicate: 0 },
+    orphanReferences: 0,
+    projectionMismatches: 0,
+    needsAttention: 0,
+  };
+}
+
+function addCounts(target: MigrationCounts, source: MigrationCounts) {
+  target.taskEntities += source.taskEntities;
+  for (const key of ["parent", "step", "substep", "orphan", "cycle"] as const) target.hierarchy[key] += source.hierarchy[key];
+  for (const key of ["unscheduled", "one_time", "rolling", "fixed", "ambiguous"] as const) target.scheduleModels[key] += source.scheduleModels[key];
+  for (const key of ["proven", "reconstructable", "prospective", "ambiguous"] as const) target.anchors[key] += source.anchors[key];
+  for (const key of ["explicit", "automaticMissed", "ambiguous", "contradictory"] as const) target.history[key] += source.history[key];
+  for (const key of ["proven", "reconstructable", "ambiguous"] as const) target.occurrences[key] += source.occurrences[key];
+  for (const key of ["safe", "ambiguous"] as const) target.delay[key] += source.delay[key];
+  target.completeContradictions += source.completeContradictions;
+  for (const key of ["proven", "priorUnknown", "contradictory"] as const) target.archiveTrash[key] += source.archiveTrash[key];
+  for (const key of ["valid", "stale", "contradictory"] as const) target.inProgress[key] += source.inProgress[key];
+  for (const key of ["mapped", "consumed", "pending", "ambiguous"] as const) target.rewards[key] += source.rewards[key];
+  for (const key of ["promoted", "unpromoted", "nested", "orphan", "duplicate"] as const) target.legacySubtasks[key] += source.legacySubtasks[key];
+  target.orphanReferences += source.orphanReferences;
+  target.projectionMismatches += source.projectionMismatches;
+  target.needsAttention += source.needsAttention;
+}
+
+function assertCountsEqual(left: MigrationCounts, right: MigrationCounts) {
+  if (stableStringify(left) !== stableStringify(right)) throw new MigrationClassifierDiagnostic("INTERNAL_COUNT_RECONCILIATION", "report counts do not reconcile");
+}
+
+export function classifyUser(sourcesInput: MigrationSourceEvidence, options: ClassifierOptions): UserMigrationReport {
+  const sources = { ...emptySourceEvidence(), ...sourcesInput, availability: { ...emptyAvailability(), ...(sourcesInput.availability ?? {}) } };
+  const classifierVersion = options.classifierVersion ?? CLASSIFIER_VERSION;
+  if (classifierVersion !== CLASSIFIER_VERSION) throw new MigrationClassifierDiagnostic("UNSUPPORTED_CLASSIFIER_VERSION", `expected ${CLASSIFIER_VERSION}, received ${classifierVersion}`);
+  if ((options.schemaContractVersion ?? SCHEMA_CONTRACT_VERSION) !== SCHEMA_CONTRACT_VERSION) throw new MigrationClassifierDiagnostic("UNSUPPORTED_SCHEMA_CONTRACT_VERSION", `expected ${SCHEMA_CONTRACT_VERSION}`);
+  if (!options.userId.trim()) throw new MigrationClassifierDiagnostic("INVALID_USER_ID", "userId is required");
+  const logicalDate = options.logicalDate && validDate(options.logicalDate) ? options.logicalDate : "1970-01-01";
+  const tasks = sources.tasks.filter((task) => stringValue(task, "user_id") === options.userId);
+  const tasksById = new Map(tasks.map((task) => [stringValue(task, "id"), task] as const).filter(([id]) => id !== null) as Array<[string, LegacyRow]>);
+  // The normal reader is owner-scoped. Test/diagnostic fixtures may still carry
+  // a parent row from another owner; retaining it for this in-memory traversal
+  // lets the classifier distinguish a cross-owner reference from a missing one.
+  const hierarchy = analyzeHierarchy(sources.tasks, options.userId);
+  const legacySubtasks = classifyLegacySubtasks(sources, options.userId, tasksById);
+  const counts = zeroCounts();
+  const entities: EntityClassification[] = [];
+  for (const task of [...tasks].sort((left, right) => compareStrings(stringValue(left, "id") ?? "", stringValue(right, "id") ?? ""))) {
+    const taskId = stringValue(task, "id");
+    if (!taskId) continue;
+    const hierarchyResult = hierarchy.get(taskId);
+    if (!hierarchyResult) throw new MigrationClassifierDiagnostic("INTERNAL_HIERARCHY_MISSING", `no hierarchy result for task ${taskId}`);
+    const schedule = classifyScheduleModel(task);
+    const taskHistory = sources.history.filter((row) => stringValue(row, "task_id") === taskId);
+    const historyClassifications = classifyHistory(taskId, taskHistory, sources);
+    const occurrenceClassifications = classifyOccurrences(taskId, task, schedule.model, taskHistory, historyClassifications);
+    const delay = classifyDelay(task, taskHistory, schedule.model, occurrenceClassifications);
+    const anchor = classifyAnchor(task, schedule.model, taskHistory, historyClassifications, occurrenceClassifications, delay.state, sourceStatus(sources, "profile").available && hasValidProfileContext(sources.profile));
+    const lifecycle = classifyLifecycle(task, historyClassifications, taskHistory);
+    const workflow = classifyWorkflow(task, logicalDate, lifecycle.state, occurrenceClassifications);
+    const rewards = classifyRewards(taskId, historyClassifications, sources);
+    const issues = new Set<string>([
+      ...hierarchyResult.issues,
+      ...schedule.issueCodes,
+      ...anchor.classification === "prospective" ? ["PROSPECTIVE_ONLY"] : [],
+      ...anchor.classification === "ambiguous" ? ["RECURRENCE_ANCHOR_UNPROVEN"] : [],
+      ...historyClassifications.flatMap((item) => item.blockingIssueCodes),
+      ...occurrenceClassifications.flatMap((item) => item.blockingIssueCodes),
+      ...delay.issueCodes,
+      ...lifecycle.issueCodes,
+      ...workflow.issueCodes,
+      ...rewards.issueCodes,
+      ...legacySubtasks.byTask.get(taskId) ?? [],
+    ]);
+    if (!sourceStatus(sources, "history").available) issues.add("SOURCE_UNAVAILABLE_HISTORY");
+    if (!sourceStatus(sources, "profile").available) issues.add("SOURCE_UNAVAILABLE_PROFILE");
+    else if (!hasValidProfileContext(sources.profile)) issues.add("INVALID_LOGICAL_DAY_SETTINGS");
+    if (!sourceStatus(sources, "subtasks").available && sources.subtasks.length === 0) issues.add("SOURCE_UNAVAILABLE_SUBTASKS");
+    if (dateValue(task, "active_occurrence_due_on") !== null && occurrenceClassifications.length === 0) {
+      issues.add("PROJECTION_MISMATCH_ACTIVE_OCCURRENCE");
+    }
+    const hasProjectionMismatch = [...issues].some((issue) => issue.startsWith("PROJECTION_MISMATCH") || issue === "COMPLETE_PROJECTION_ONLY");
+    const eligibility = classifyEligibility(schedule.model, anchor, lifecycle.state, workflow.state, [...issues]);
+    const entity: EntityClassification = {
+      userId: options.userId,
+      entityId: taskId,
+      entityKind: hierarchyResult.kind,
+      parentEntityId: stringValue(task, "parent_task_id"),
+      scheduleModel: schedule.model,
+      anchor,
+      historyClassifications,
+      occurrenceClassifications,
+      delayState: delay.state,
+      lifecycleState: lifecycle.state,
+      workflowState: workflow.state,
+      rewardBootstrapState: rewards.state,
+      migrationEligibility: eligibility,
+      blockingIssueCodes: [...issues].sort(compareStrings),
+      sourceFingerprints: sourceFingerprintForEntity(sources, taskId),
+    };
+    entities.push(entity);
+    counts.taskEntities += 1;
+    counts.hierarchy[hierarchyResult.kind] += 1;
+    if (hierarchyResult.orphan) counts.hierarchy.orphan += 1;
+    if (hierarchyResult.cycle) counts.hierarchy.cycle += 1;
+    counts.scheduleModels[schedule.model] += 1;
+    counts.anchors[anchor.classification] += 1;
+    for (const classification of historyClassifications) counts.history[classification.classification === "automatic_missed" ? "automaticMissed" : classification.classification] += 1;
+    for (const classification of occurrenceClassifications) counts.occurrences[classification.classification] += 1;
+    counts.delay[delay.state === "safe" ? "safe" : delay.state === "ambiguous" ? "ambiguous" : "safe"] += delay.state === "none" ? 0 : 1;
+    if (lifecycle.issueCodes.includes("COMPLETE_TERMINAL_CONTRADICTION")) counts.completeContradictions += 1;
+    if (lifecycle.state.priorContainer === "proven") counts.archiveTrash.proven += 1;
+    else if (lifecycle.state.priorContainer === "unknown") counts.archiveTrash.priorUnknown += 1;
+    else if (lifecycle.issueCodes.some((issue) => issue.includes("TRASH"))) counts.archiveTrash.contradictory += 1;
+    if (workflow.state === "valid_in_progress") counts.inProgress.valid += 1;
+    if (workflow.state === "stale") counts.inProgress.stale += 1;
+    if (workflow.state === "contradictory") counts.inProgress.contradictory += 1;
+    addCounts(counts, { ...zeroCounts(), rewards: rewards.counts });
+    if (hasProjectionMismatch) counts.projectionMismatches += 1;
+    if (eligibility !== "safe") counts.needsAttention += 1;
+  }
+  counts.legacySubtasks = legacySubtasks.counts;
+  counts.orphanReferences += entities.reduce((total, entity) => total + entity.blockingIssueCodes.filter((issue) => issue.includes("ORPHAN") || issue.includes("CROSS_USER")).length, 0);
+  counts.orphanReferences += sources.history.filter((row) => {
+    const taskId = stringValue(row, "task_id");
+    return taskId !== null && !tasksById.has(taskId);
+  }).length;
+  counts.orphanReferences += sources.rewardClaims.filter((row) => {
+    const taskId = stringValue(row, "task_id");
+    return taskId !== null && !tasksById.has(taskId);
+  }).length;
+  const safeCount = entities.filter((entity) => entity.migrationEligibility === "safe").length;
+  const blockedEntityCount = entities.filter((entity) => entity.migrationEligibility === "blocked").length;
+  if (!sourceStatus(sources, "tasks").available) counts.needsAttention += 1;
+  const commandCutoverEligible = entities.length > 0 && safeCount === entities.length && counts.needsAttention === 0;
+  const sourceFingerprints = {
+    tasks: fingerprintEvidence(sources.tasks),
+    history: fingerprintEvidence(sources.history),
+    rewards: fingerprintEvidence({
+      taskEvents: sources.taskEvents,
+      pointLedger: sources.pointLedger,
+      rewardRolls: sources.rewardRolls,
+      rewardClaims: sources.rewardClaims,
+      pendingRewardAccount: sources.pendingRewardAccount,
+      pendingRewardOperations: sources.pendingRewardOperations,
+      pendingRewardItems: sources.pendingRewardItems,
+      rolloverEvidence: sources.rolloverEvidence,
+    }),
+  };
+  return {
+    reportVersion: REPORT_VERSION,
+    migrationVersion: MIGRATION_VERSION,
+    classifierVersion,
+    schemaContractVersion: SCHEMA_CONTRACT_VERSION,
+    generatedAt: new Date().toISOString(),
+    userId: options.userId,
+    logicalDate,
+    sourceFingerprints,
+    sourceAvailability: sources.availability as SourceAvailability,
+    counts,
+    eligibility: {
+      safePercent: entities.length === 0 ? 0 : Math.round((safeCount / entities.length) * 100),
+      blockedEntityCount,
+      commandCutoverEligible,
+    },
+    entities,
+  };
+}
+
+function sourceDerivedLogicalDate(sources: MigrationSourceEvidence): string {
+  const dates = [
+    ...sources.tasks.flatMap((row) => [dateValue(row, "due_on"), dateValue(row, "active_status_logical_date"), dateValue(row, "scheduled_on")]),
+    ...sources.history.map((row) => dateValue(row, "entry_date")),
+    ...sources.rewardClaims.map((row) => dateValue(row, "reward_date")),
+    ...sources.rewardRolls.map((row) => dateValue(row, "reward_date")),
+    ...sources.rolloverEvidence.map((row) => dateValue(row, "logical_date")),
+  ].filter((date): date is string => date !== null);
+  return dates.sort(compareStrings).at(-1) ?? "1970-01-01";
+}
+
+export function buildMigrationRunReport(
+  users: readonly { sources: MigrationSourceEvidence; userId: string; logicalDate?: string }[],
+  options: { generatedAt?: string; classifierVersion?: string; schemaContractVersion?: string } = {},
+): MigrationRunReport {
+  const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const userReports = [...users]
+    .sort((left, right) => compareStrings(left.userId, right.userId))
+    .map(({ sources, userId, logicalDate }) => classifyUser(sources, {
+      userId,
+      logicalDate: logicalDate ?? sourceDerivedLogicalDate(sources),
+      classifierVersion: options.classifierVersion,
+      schemaContractVersion: options.schemaContractVersion,
+    }))
+    .map((report) => ({ ...report, generatedAt }));
+  const globalCounts = zeroCounts();
+  for (const report of userReports) addCounts(globalCounts, report.counts);
+  const entityCount = userReports.reduce((total, report) => total + report.counts.taskEntities, 0);
+  const safeEntityCount = userReports.reduce((total, report) => total + report.entities.filter((entity) => entity.migrationEligibility === "safe").length, 0);
+  const blockedEntityCount = userReports.reduce((total, report) => total + report.eligibility.blockedEntityCount, 0);
+  const global: GlobalMigrationReport = {
+    reportVersion: REPORT_VERSION,
+    migrationVersion: MIGRATION_VERSION,
+    classifierVersion: options.classifierVersion ?? CLASSIFIER_VERSION,
+    schemaContractVersion: SCHEMA_CONTRACT_VERSION,
+    generatedAt,
+    sourceFingerprints: {
+      tasks: fingerprintEvidence(userReports.map((report) => report.sourceFingerprints.tasks)),
+      history: fingerprintEvidence(userReports.map((report) => report.sourceFingerprints.history)),
+      rewards: fingerprintEvidence(userReports.map((report) => report.sourceFingerprints.rewards)),
+    },
+    sourceAvailability: Object.fromEntries(SOURCE_NAMES.map((name) => [
+      name,
+      userReports.every((report) => report.sourceAvailability[name].available)
+        ? { available: true }
+        : userReports.find((report) => !report.sourceAvailability[name].available)?.sourceAvailability[name] ?? { available: false, code: "SOURCE_UNAVAILABLE" },
+    ])) as SourceAvailability,
+    counts: globalCounts,
+    eligibility: {
+      safePercent: entityCount === 0 ? 0 : Math.round((safeEntityCount / entityCount) * 100),
+      blockedEntityCount,
+      commandCutoverEligible: userReports.length > 0 && userReports.every((report) => report.eligibility.commandCutoverEligible),
+    },
+    userCount: userReports.length,
+    classifiedUserCount: userReports.filter((report) => report.counts.taskEntities > 0).length,
+    commandCutoverEligibleUserCount: userReports.filter((report) => report.eligibility.commandCutoverEligible).length,
+    blockedUserCount: userReports.filter((report) => report.eligibility.blockedEntityCount > 0 || report.counts.needsAttention > 0).length,
+    users: userReports.map((report) => ({ userId: report.userId, counts: report.counts, eligibility: report.eligibility })),
+  };
+  const entityRecords = userReports.flatMap((report) => report.entities);
+  const perUserTotals = zeroCounts();
+  for (const report of userReports) addCounts(perUserTotals, report.counts);
+  assertCountsEqual(globalCounts, perUserTotals);
+  return {
+    reportVersion: REPORT_VERSION,
+    migrationVersion: MIGRATION_VERSION,
+    classifierVersion: options.classifierVersion ?? CLASSIFIER_VERSION,
+    schemaContractVersion: SCHEMA_CONTRACT_VERSION,
+    generatedAt,
+    userReports,
+    entityRecords,
+    global,
+  };
+}
+
+export function serializeMigrationReport(report: MigrationRunReport, format: "json" | "jsonl" = "json"): string {
+  if (format === "json") return `${JSON.stringify(report, null, 2)}\n`;
+  const lines = [
+    ...report.userReports.map((item) => JSON.stringify({ scope: "user", ...item })),
+    ...report.entityRecords.map((item) => JSON.stringify({ scope: "entity", ...item })),
+    JSON.stringify({ scope: "global", ...report.global }),
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+type ReadTableName =
+  | "adhdice_clean_tasks"
+  | "adhdice_task_history"
+  | "adhdice_task_subtasks"
+  | "adhdice_legacy_subtask_promotions"
+  | "adhdice_user_profiles"
+  | "adhdice_task_events"
+  | "adhdice_point_ledger"
+  | "adhdice_task_reward_rolls"
+  | "adhdice_task_reward_claims"
+  | "adhdice_pending_reward_dice"
+  | "adhdice_pending_reward_dice_operations"
+  | "adhdice_pending_reward_dice_items"
+  | "adhdice_task_rollover_ledger";
+
+const TABLE_SPECS: Record<SourceName, { table: ReadTableName; order: string; single?: boolean }> = {
+  tasks: { table: "adhdice_clean_tasks", order: "id" },
+  history: { table: "adhdice_task_history", order: "id" },
+  subtasks: { table: "adhdice_task_subtasks", order: "id" },
+  promotions: { table: "adhdice_legacy_subtask_promotions", order: "legacy_subtask_id" },
+  profile: { table: "adhdice_user_profiles", order: "user_id", single: true },
+  taskEvents: { table: "adhdice_task_events", order: "id" },
+  pointLedger: { table: "adhdice_point_ledger", order: "id" },
+  rewardRolls: { table: "adhdice_task_reward_rolls", order: "id" },
+  rewardClaims: { table: "adhdice_task_reward_claims", order: "id" },
+  pendingRewardAccount: { table: "adhdice_pending_reward_dice", order: "user_id", single: true },
+  pendingRewardOperations: { table: "adhdice_pending_reward_dice_operations", order: "id" },
+  pendingRewardItems: { table: "adhdice_pending_reward_dice_items", order: "id" },
+  rolloverEvidence: { table: "adhdice_task_rollover_ledger", order: "logical_date" },
+};
+
+type ReadOnlyQueryClient = {
+  from(table: ReadTableName): {
+    select(columns: string): {
+      eq(column: string, value: string): {
+        order(column: string, options?: { ascending?: boolean }): {
+          range(from: number, to: number): Promise<{ data: LegacyRow[] | null; error: { code?: string; message: string } | null }>;
+        };
+      };
+    };
+  };
+};
+
+async function readBoundedTable(client: ReadOnlyQueryClient, sourceName: SourceName, userId: string, batchSize: number): Promise<LegacyRow[]> {
+  const specification = TABLE_SPECS[sourceName];
+  const rows: LegacyRow[] = [];
+  for (let offset = 0; ; offset += batchSize) {
+    const result = await client
+      .from(specification.table)
+      .select("*")
+      .eq("user_id", userId)
+      .order(specification.order, { ascending: true })
+      .range(offset, offset + batchSize - 1);
+    if (result.error) throw new MigrationClassifierDiagnostic(result.error.code ?? "SOURCE_QUERY_FAILED", `${sourceName}: ${result.error.message}`);
+    const page = result.data ?? [];
+    rows.push(...page);
+    if (specification.single || page.length < batchSize) break;
+  }
+  return rows;
+}
+
+export async function loadOwnerScopedEvidence(client: ReadOnlyQueryClient, userId: string, batchSize: number): Promise<MigrationSourceEvidence> {
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > MAX_BATCH_SIZE) throw new MigrationClassifierDiagnostic("INVALID_BATCH_SIZE", `batch size must be between 1 and ${MAX_BATCH_SIZE}`);
+  const result = emptySourceEvidence();
+  const availability = result.availability as SourceAvailability;
+  for (const sourceName of SOURCE_NAMES) {
+    try {
+      const rows = await readBoundedTable(client, sourceName, userId, batchSize);
+      if (sourceName === "profile") result.profile = rows[0] ?? null;
+      else (result[sourceName] as LegacyRow[]) = rows;
+    } catch (error) {
+      const diagnostic = error instanceof MigrationClassifierDiagnostic ? error : new MigrationClassifierDiagnostic("SOURCE_QUERY_FAILED", String(error));
+      availability[sourceName] = { available: false, code: diagnostic.code };
+      if (sourceName === "profile") result.profile = null;
+      else (result[sourceName] as LegacyRow[]) = [];
+    }
+  }
+  return result;
+}
+
+type CliOptions = {
+  userId: string;
+  batchSize: number;
+  classifierVersion: string;
+  schemaContractVersion: string;
+  outputPath: string | null;
+  format: "json" | "jsonl";
+  logicalDate: string | null;
+};
+
+function parseCliArgs(argv: readonly string[]): CliOptions {
+  const values = new Map<string, string>();
+  const forbidden = new Set(["--write", "--allow-writes", "--repair", "--backfill", "--execute"]);
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (forbidden.has(argument)) throw new MigrationClassifierDiagnostic("WRITE_MODE_REJECTED", "the migration classifier is read-only");
+    if (!argument.startsWith("--")) throw new MigrationClassifierDiagnostic("INVALID_ARGUMENT", `unexpected argument ${argument}`);
+    const [key, inlineValue] = argument.split("=", 2);
+    if (inlineValue !== undefined) values.set(key, inlineValue);
+    else if (["--user-id", "--batch-size", "--classifier-version", "--schema-contract-version", "--output", "--output-path", "--format", "--logical-date", "--mode"].includes(key)) {
+      const next = argv[index + 1];
+      if (!next || next.startsWith("--")) throw new MigrationClassifierDiagnostic("MISSING_ARGUMENT_VALUE", `${key} requires a value`);
+      if (key === "--mode" && next === "write") throw new MigrationClassifierDiagnostic("WRITE_MODE_REJECTED", "the migration classifier is read-only");
+      values.set(key, next);
+      index += 1;
+    } else throw new MigrationClassifierDiagnostic("INVALID_ARGUMENT", `unknown argument ${key}`);
+  }
+  const userId = values.get("--user-id");
+  if (!userId || !userId.trim()) throw new MigrationClassifierDiagnostic("INVALID_USER_ID", "--user-id is required for owner-scoped reads");
+  const batchSize = Number(values.get("--batch-size") ?? DEFAULT_BATCH_SIZE);
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > MAX_BATCH_SIZE) throw new MigrationClassifierDiagnostic("INVALID_BATCH_SIZE", `batch size must be between 1 and ${MAX_BATCH_SIZE}`);
+  const classifierVersion = values.get("--classifier-version") ?? CLASSIFIER_VERSION;
+  const schemaContractVersion = values.get("--schema-contract-version") ?? SCHEMA_CONTRACT_VERSION;
+  const mode = values.get("--mode");
+  if (mode !== undefined && mode !== "read" && mode !== "read-only") throw new MigrationClassifierDiagnostic("WRITE_MODE_REJECTED", "the migration classifier is read-only");
+  if (classifierVersion !== CLASSIFIER_VERSION) throw new MigrationClassifierDiagnostic("UNSUPPORTED_CLASSIFIER_VERSION", `expected ${CLASSIFIER_VERSION}`);
+  if (schemaContractVersion !== SCHEMA_CONTRACT_VERSION) throw new MigrationClassifierDiagnostic("UNSUPPORTED_SCHEMA_CONTRACT_VERSION", `expected ${SCHEMA_CONTRACT_VERSION}`);
+  const format = values.get("--format") ?? "json";
+  if (format !== "json" && format !== "jsonl") throw new MigrationClassifierDiagnostic("INVALID_FORMAT", "format must be json or jsonl");
+  const logicalDate = values.get("--logical-date") ?? null;
+  if (logicalDate !== null && !validDate(logicalDate)) throw new MigrationClassifierDiagnostic("INVALID_LOGICAL_DATE", "logical date must be YYYY-MM-DD");
+  return {
+    userId,
+    batchSize,
+    classifierVersion,
+    schemaContractVersion,
+    outputPath: values.get("--output") ?? values.get("--output-path") ?? null,
+    format,
+    logicalDate,
+  };
+}
+
+async function main(argv: readonly string[]) {
+  const options = parseCliArgs(argv);
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) throw new MigrationClassifierDiagnostic("SUPABASE_CONFIG_MISSING", "NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required");
+  const client = createClient(url, anonKey, { auth: { autoRefreshToken: false, persistSession: false } }) as unknown as ReadOnlyQueryClient;
+  const sources = await loadOwnerScopedEvidence(client, options.userId, options.batchSize);
+  const report = buildMigrationRunReport([{ userId: options.userId, sources, logicalDate: options.logicalDate ?? sourceDerivedLogicalDate(sources) }], {
+    classifierVersion: options.classifierVersion,
+    schemaContractVersion: options.schemaContractVersion,
+  });
+  const serialized = serializeMigrationReport(report, options.format);
+  if (options.outputPath) await writeFile(resolve(options.outputPath), serialized, "utf8");
+  else process.stdout.write(serialized);
+}
+
+const scriptPath = fileURLToPath(import.meta.url);
+if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
+  main(process.argv.slice(2)).catch((error: unknown) => {
+    const diagnostic = error instanceof MigrationClassifierDiagnostic ? error : new MigrationClassifierDiagnostic("CLASSIFIER_FAILED", String(error));
+    process.stderr.write(`${diagnostic.message}\n`);
+    process.exitCode = 1;
+  });
+}
