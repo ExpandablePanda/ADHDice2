@@ -1,28 +1,31 @@
 # Phase 1B-1: Canonical Recurrence and Occurrence Transition Semantics
 
 Status: active working architecture specification
-Scope: recurrence, occurrence creation, resolution, advancement, early/late success, overdue chronology, No Repeat activation, and fixed-calendar behavior
+Scope: recurrence, occurrence creation, resolution, advancement, early/late success, overdue chronology, No Repeat scheduling, fixed-calendar behavior, and historical schedule boundaries
 Required sources: [Phase 0 inventory](task-state-phase-0-inventory.md), [Phase 1A core model](task-state-phase-1a-core-model.md)
 Implementation status: specification only; not implemented
 
 ## Purpose and boundaries
 
-Phase 1A defined what the canonical Task domain contains. Phase 1B-1 defines how recurrence occurrences move through time and how recurrence transitions are derived.
+Phase 1A defined the canonical Task domain. Phase 1B-1 defines how recurrence membership, successful outcomes, missed chronology, streaks, and schedule boundaries are interpreted over logical dates.
 
 This phase covers:
 
-- recurrence families and schedule membership;
-- occurrence creation and identity use;
+- genuinely unscheduled Tasks and schedule activation;
+- rolling and fixed-calendar recurrence families;
+- occurrence creation and identity;
 - Done and Did My Best resolution;
-- recurrence advancement;
-- early and late resolution;
-- overdue and calculated Missed chronology;
-- No Repeat activation; and
-- fixed-calendar alignment.
+- rolling rebasing and rolling Missed chains;
+- fixed-calendar date-by-date occurrences;
+- Not Due and streak semantics;
+- calculated Missed Calendar representation;
+- historical corrections;
+- manual due-date boundaries; and
+- Repeat/schedule-change boundaries.
 
-This phase does not define Delay behavior, Complete lifecycle semantics, Archive, Trash, In Progress workflow, rollover execution, or rewards/economy. Those are Phase 1B-2 topics.
+This phase does not define exact Delay behavior, Complete lifecycle semantics, Archive, Trash, In Progress workflow, rollover execution, or rewards/economy. Those remain Phase 1B-2 topics.
 
-`CURRENT` statements describe inspected source and cite Phase 0, Phase 1A, or specific source functions/files. `TARGET` statements define the future semantic contract and are not claims about implemented behavior.
+`CURRENT` statements describe inspected source and cite Phase 0, Phase 1A, or specific source functions/files. `TARGET` statements define the locked product contract and are not claims about implemented behavior. This correction replaces any earlier target rule in this document that conflicts with the contract below.
 
 ## Locked inputs from Phase 1A
 
@@ -33,529 +36,587 @@ TaskConfiguration + RecurrenceAnchor + TaskLifecycle
                          +
               ExplicitHistoryEvent[]
                          +
+              ScheduleBoundaryEvent[]
+                         +
                  LogicalDayContext
                          ↓
-              canonical occurrence chronology
+          boundary-constrained chronology
                          ↓
-                    TaskOccurrence
+              recurrence-family projection
                          ↓
                  EffectiveTaskState
 ```
 
-The following Phase 1A rules are not reopened:
+The following rules remain in force:
 
-- For an active scheduled Task, `due_on` is the current or next unresolved occurrence date. It is a cursor/projection, not the recurrence anchor.
-- The recurrence anchor is the stable schedule basis and does not move merely because an occurrence is completed.
-- Current ADHDice supports at most one obligation per Task per due date. The canonical identity is `task:{taskId}:occurrence:{occurrenceDueOn}`.
-- `logicalDate` is the History event date; `occurrenceDueOn` is the occurrence’s scheduled date. They may differ.
-- One explicit outcome exists per Task/logical date. Explicit History wins for that date, and recurrence changes never rewrite it.
-- Calculated Missed can affect Calendar, current status, overdue chronology, and current Missed streak without becoming ordinary explicit History merely because time passed.
+- `logicalDate` is the History event date. A scheduled occurrence date is a separate fact.
+- One explicit outcome exists per Task/logical date. Explicit History is authoritative for that date.
+- Calculated Missed is derived Calendar/status chronology. Time passing alone does not create an ordinary explicit History row.
+- A canonical occurrence identity includes the Task and its scheduled date: `task:{taskId}:occurrence:{occurrenceDueOn}`. Fixed-calendar dates are separate occurrence identities; a rolling overdue chain may reuse one identity across several calculated Missed logical dates.
+- `due_on` is a current schedule cursor/projection, not a permission to reinterpret explicit History or a later schedule boundary.
+- Recurrence family semantics must remain distinct. Rolling and fixed-calendar schedules do not share one unresolved-occurrence rule.
 
-`CURRENT` — Phase 0 found competing recurrence calculators, status authorities, mutation paths, and automatic-Missed persistence paths. The Task State Engine and Effective Timeline are active boundaries but are not yet the only reachable behavior. See [Phase 0 § Executive findings](task-state-phase-0-inventory.md#executive-findings), [§ 3](task-state-phase-0-inventory.md#3-recurrence-implementations-and-authority-graph), [§ 5](task-state-phase-0-inventory.md#5-history-authority-map), and [§ 14](task-state-phase-0-inventory.md#14-dependency-map).
+## Part 1: Recurrence families and schedule activation
 
-## Part 1: Recurrence families
+### Genuinely unscheduled Tasks
 
-`TARGET` — The model defines ten recurrence/scheduling modes: one genuinely unscheduled state and nine scheduled family variants. Selected weekdays and every N weeks are parameterizations of the fixed weekly family in the current engine model, but they are listed separately because their product semantics must be explicit.
+`TARGET` — A Task is genuinely unscheduled exactly when both conditions hold:
 
-### Rolling versus fixed-calendar
+```text
+no due date
+and
+no repeat frequency selected
+```
 
-`TARGET` — A **ROLLING** schedule uses the active occurrence and its resolution chronology to determine the next cursor. A late success can move the next date relative to the actual success date. The stable recurrence anchor remains provenance/schedule-start information and is not rewritten as a side effect of each success.
+History does not activate a live schedule. Historical Done, Did My Best, Missed, Delayed, Complete, or any other History entry remains historical evidence only when the Task has no due date and no selected repeat frequency.
 
-`TARGET` — A **FIXED CALENDAR** schedule has membership determined by a stable anchor plus a calendar rule. Early or late resolution consumes one already-established scheduled occurrence; the next occurrence remains the first valid calendar occurrence after the consumed occurrence. Completion date does not drift the calendar schedule.
+An unscheduled Task becomes scheduled only when:
 
-| Mode | Classification | Target recurrence meaning |
+- a due date is assigned; or
+- a repeat frequency is explicitly selected.
+
+If a No Repeat Task receives a due date while no repeat frequency is selected, it is an actually scheduled implicit rolling-daily Task with interval one. If a repeat frequency is selected, the selected recurrence begins at its schedule-change boundary. Neither behavior is inferred from History alone.
+
+Unscheduled positive streaks are historical and consecutive-date based, not recurrence based:
+
+```text
+8/7 Done
+8/8 no success
+```
+
+Result:
+
+- 8/7 creates positive streak = 1;
+- inactivity on 8/8 ends that positive streak;
+- no Missed streak begins;
+- no calculated Missed is created; and
+- the Task remains unscheduled.
+
+Done and Did My Best on an unscheduled Task are historical successes. They do not create a due date, choose a repeat frequency, or activate implicit rolling-daily behavior.
+
+### Rolling and fixed-calendar families
+
+`TARGET` — The recurrence families are:
+
+| Family | Members | Schedule meaning |
 |---|---|---|
-| Genuinely unscheduled | Neither; no recurrence | No due date and no meaningful History means no active occurrence, no schedule membership, no calculated Missed, and no recurrence advancement. |
-| Activated implicit rolling-daily / No Repeat | ROLLING | A No Repeat Task that receives a meaningful due date or qualifying History activation enters an effective rolling-daily mode until the user explicitly selects another cadence. Stored `repeat_frequency = none` does not distinguish this mode from genuinely unscheduled. |
-| Daily | ROLLING | Interval of one logical day. The next cursor follows the rolling success rule: on-time success advances one day; late success advances one day from the success date; early success cannot create a next cursor before the consumed occurrence plus one day. |
-| Daily Until Complete | ROLLING | Daily rolling cadence with an until-complete configuration marker. This phase defines only recurrence/occurrence movement; terminal Complete lifecycle behavior remains Phase 1B-2. |
-| Rolling every N days | ROLLING | Interval of N logical days. It is relative to the active occurrence and success chronology, with the early-completion lower bound defined in Part 4. |
-| Weekly | FIXED CALENDAR | One or more configured weekdays in a stable weekly calendar, with an interval in weeks. A single weekday is the ordinary weekly case. |
-| Selected weekdays | FIXED CALENDAR | The configured weekday set is the membership rule. Monday/Wednesday/Friday is one fixed weekly schedule with three calendar occurrences per eligible week, while only one occurrence can be the current unresolved obligation. |
-| Every N weeks | FIXED CALENDAR | The configured weekday set repeats every N calendar weeks from the stable anchor. Early or late success does not change the week phase. |
-| Monthly day-of-month | FIXED CALENDAR | The configured day-of-month repeats every N months from the stable anchor. The current engine’s monthly normalization uses the last valid day when a configured day exceeds a month’s length; this is retained as the target baseline unless product confirmation changes it. |
-| Monthly ordinal weekday | FIXED CALENDAR | The first, second, third, fourth, or last configured weekday repeats every N months from the stable anchor. |
+| ROLLING | Daily | Interval of one logical day. |
+| ROLLING | Daily Until Complete | Daily rolling interval while the Task remains in its active recurrence lifecycle; Complete remains Phase 1B-2. |
+| ROLLING | Every X Days | Explicit rolling interval of X logical days. |
+| ROLLING | Other explicitly rolling intervals | Any recurrence whose next date is based on the success logical date. |
+| ROLLING | Scheduled No Repeat | A No Repeat Task with an assigned due date uses implicit rolling interval one. |
+| FIXED CALENDAR | Weekly | Configured weekly calendar membership. |
+| FIXED CALENDAR | Selected weekdays | The selected weekday set is the membership rule. |
+| FIXED CALENDAR | Every N Weeks | The selected weekday set repeats in a fixed week phase. |
+| FIXED CALENDAR | Monthly day-of-month | The configured month date, normalized to the last valid day when necessary. |
+| FIXED CALENDAR | Monthly ordinal weekday | The configured ordinal weekday in each eligible month. |
 
-`CURRENT` — The engine snapshot has `none`, `rolling`, `weekly`, and `monthly` recurrence variants; the legacy adapter maps daily, custom, and Daily Until Complete to rolling, weekly fields to the weekly variant, and monthly fields to the monthly variant. See [`TaskRecurrence`](../../src/lib/task-state-engine/types.ts#L31-L51) and [`recurrenceFromLegacy()`](../../src/lib/task-state-engine/legacy-adapter.ts#L128-L208). The current legacy `task-repeat.ts` helper also formats daily, Daily Until Complete, weekly, monthly, and custom cadences. See [`calcNextDueDateFromDate()`](../../src/lib/task-repeat.ts#L113-L146) and [`formatRepeatSummary()`](../../src/lib/task-repeat.ts#L223-L262).
+For ROLLING, success date is the cadence anchor for the next due date. For FIXED CALENDAR, the configured calendar rule remains the schedule; success on an extra Not Due day does not move it.
 
-## Part 2: Occurrence generation
+### Schedule membership is not occurrence resolution
 
-### One current unresolved occurrence
+`TARGET` — A schedule can say that a logical date is Not Due without creating a successful or missed outcome for that date. A scheduled date can be an occurrence even when a prior fixed-calendar date was Missed. An explicit History event can exist on a Not Due date without consuming or moving a future fixed occurrence.
 
-`TARGET` — ADHDice models **A: one current unresolved obligation at a time**.
+The product therefore uses two different occurrence models:
 
-The engine may project future fixed-calendar dates as informational Calendar schedule members, but those dates are not additional active unresolved obligations. They cannot be resolved by an unrelated History row while an older occurrence remains unresolved. Once the current occurrence is resolved, the engine advances to the next occurrence according to the family’s rules.
+- ROLLING has one current rolling obligation. When it becomes overdue, the obligation freezes and forms a Missed chain until handled.
+- FIXED CALENDAR has an independent occurrence for each scheduled calendar date. A missed date does not queue-block, consume, or erase later scheduled dates.
 
-This model prevents an overdue chain from creating one new unresolved occurrence identity per elapsed day. Multiple Calendar Missed days can refer to the same occurrence identity.
+## Part 2: ROLLING transitions
 
-`CURRENT` — Effective Timeline calculates historical Missed days from one occurrence due date through the day before a later successful History event, and calculated days carry the same occurrence due date/identity. The engine also explicitly protects an unresolved active Missed occurrence from being replaced by a fixed-calendar projection. See [`buildTaskEffectiveTimeline()`](../../src/lib/task-state-engine/effective-timeline.ts#L118-L177), [`buildTaskEffectiveTimeline()` overdue projection](../../src/lib/task-state-engine/effective-timeline.ts#L200-L248), and [`evaluateTaskState()` unresolved-Missed handling](../../src/lib/task-state-engine/engine.ts#L382-L420).
+### Rolling success always rebases the due date
 
-### Generation rules by family
+`TARGET` — For a rolling recurrence, Done or Did My Best on any logical date rebases the next due date from the success date:
 
-| Mode | What generates an occurrence? | Due date and identity | Before first scheduled occurrence | Next occurrence after current one | Missed behavior | Older unresolved occurrence and future dates |
-|---|---|---|---|---|---|---|
-| Genuinely unscheduled | Nothing. | No occurrence; no identity; `due_on = null`. | The Task remains unscheduled. | None until a due date or qualifying History activates it. | No calculated Missed because there is no obligation. | No future occurrences. |
-| Activated implicit rolling-daily | First meaningful due date or qualifying History activation creates the first rolling occurrence. | Activation date or imported/explicit occurrence due date; identity uses that due date. | No occurrence before activation. | One logical day after the successful rolling base. | Current occurrence remains unresolved; later closed days are calculated Missed with the same identity. | Future dates are not active until the current occurrence resolves. |
-| Daily | The active cursor, initially the configured due/anchor date and thereafter the rolling result. | Cursor date; `task:{taskId}:occurrence:{date}`. | Dates before the first cursor are Not Due/No Entry, not obligations. | `max(successLogicalDate, consumedDueDate) + 1 day`. | Same occurrence remains current; no new daily identity per missed day. | No additional active occurrences; future daily projection is informational only. |
-| Daily Until Complete | Same as Daily, while the Task remains in its active recurrence lifecycle. | Cursor date and canonical identity. | Same as Daily. | Same rolling daily rule; terminal completion is Phase 1B-2. | Same single unresolved occurrence/overdue chain. | No additional active occurrences. |
-| Rolling every N days | Active cursor plus interval N. | Cursor date; canonical identity. | No obligation before the first cursor. | `max(successLogicalDate, consumedDueDate) + N days`. | Current cursor freezes; elapsed closed days are calculated Missed for that identity. | No additional active occurrences. |
-| Weekly | Stable anchor plus configured weekday set and week interval. | First valid calendar date; canonical identity. | Dates before anchor or outside membership are Not Due. | First valid fixed occurrence strictly after consumed due date. | Current fixed occurrence remains unresolved; later schedule members may be projected but cannot replace it. | Future fixed dates may be shown as scheduled, but only the older occurrence is active/unresolved. |
-| Selected weekdays | Weekly calendar membership for the configured weekday set. | Each valid weekday date; canonical identity. | Non-selected dates are Not Due. | First selected date strictly after consumed due date. | Same as Weekly; no additional active identity per elapsed day. | Future selected dates are informational until the current occurrence resolves. |
-| Every N weeks | Stable anchor + selected weekdays + week interval N. | First valid selected weekday in an eligible week; canonical identity. | Before the first eligible week, no occurrence. | First valid selected weekday in a later eligible week. | Same fixed-calendar overdue rule. | Future dates may be projected but not independently resolved. |
-| Monthly day-of-month | Stable anchor + month interval + day-of-month rule. | Normalized monthly date; canonical identity. | Before the first eligible month, no occurrence. | First normalized monthly date strictly after consumed due date. | Same fixed-calendar overdue rule. | Future monthly dates are informational while an older occurrence is unresolved. |
-| Monthly ordinal weekday | Stable anchor + month interval + ordinal/weekday rule. | Calculated ordinal weekday date; canonical identity. | Before the first eligible month, no occurrence. | First matching ordinal weekday strictly after consumed due date. | Same fixed-calendar overdue rule. | Future monthly dates are informational while an older occurrence is unresolved. |
+```text
+nextDue = successLogicalDate + interval
+```
 
-`TARGET` — A future fixed-calendar date can therefore exist in the Calendar projection while the Task still has one older current unresolved occurrence. It is not a second simultaneously consumable obligation.
+This applies when the success is early, on time, late, or voluntary on a Not Due day. Voluntary success on a Not Due day is extra positive progress and also rebases the rolling cadence.
 
-## Part 3: Successful resolution
+Examples:
 
-### Resolution outcomes in this phase
+```text
+Every 3 Days
+due 8/10
+Done 8/8
+→ next due 8/11
 
-`TARGET` — Only `Done` and `Did My Best` are successful occurrence outcomes in Phase 1B-1. Permanent Complete is excluded.
+Done again 8/9
+→ next due 8/12
+```
 
-For either successful outcome:
+```text
+Every 3 Days
+due 8/10
+Done 8/10
+→ next due 8/13
 
-- the event resolves the associated current occurrence exactly once;
-- the consumed occurrence is identified by explicit `occurrenceIdentity`, validated `occurrenceDueOn`, or safe current chronology;
-- recurrence advances exactly once;
-- the event contributes one positive effective-chronology success on its `logicalDate`;
-- the event ends the current overdue/Missed state for the consumed occurrence, but does not erase earlier calculated Missed days; and
-- a second successful event claiming the same occurrence is a duplicate-resolution anomaly and cannot advance recurrence again.
+Done again 8/12
+→ next due 8/15
+```
 
-`TARGET` — An early success contributes positive streak chronology on the action logical date, not again on the occurrence due date. A late success contributes positive chronology on its late action date, while the earlier calculated Missed days remain visible and continue to explain the chronology.
+Do not apply a lower-bound adjustment based on the prior occurrence due date. The actual success logical date is always the rolling rebase date. The stable recurrence configuration and provenance may remain unchanged, but the active rolling due cursor moves from the success date.
 
-`CURRENT` — The engine’s successful-outcome set contains Done, Did My Best, and Complete, while the current engine action and History paths distinguish occurrence identity and reject a successful row that repeats an already successful occurrence identity. Phase 1B-1 narrows the transition contract to Done and Did My Best and leaves Complete to Phase 1B-2. See [`evaluateTaskState()`](../../src/lib/task-state-engine/engine.ts#L184-L239) and [`TaskHistoryOutcome`](../../src/lib/task-state-engine/types.ts#L23-L26).
+### Rolling occurrence identity
 
-## Part 4: Early completion
+`TARGET` — A scheduled rolling Task has one current obligation at a time. Its current due date supplies the occurrence identity. If the due date closes without a successful or later-defined handled outcome, the same obligation remains current; elapsed logical dates do not create a new rolling occurrence for each day.
 
-### Fixed-calendar early completion
+After Done or Did My Best, the current rolling obligation is handled and the next due date is calculated from the success logical date plus the interval. The next due date becomes the next rolling occurrence identity.
 
-`TARGET` — Completing early consumes the already-established fixed-calendar occurrence. The next occurrence remains aligned to the fixed schedule and is the first valid occurrence strictly after the consumed occurrence due date, not after the early action date.
+### Rolling Missed chain
+
+`TARGET` — When a rolling due date passes without Done, Did My Best, or another later-defined handling action:
+
+- the Task becomes actively Missed;
+- `due_on` freezes at the missed due date;
+- recurrence does not advance automatically; and
+- the Task remains in the Missed chain until the chain is broken.
+
+For a logical date whose day has closed, calculated Missed chronology may represent the overdue chain. The chain starts from the missed due date and increases for each later completed logical day without a successful or handled outcome.
 
 Example:
 
 ```text
-Weekly Sunday occurrence due 2026-08-10
-Done entered on logical 2026-08-08
+Every 3 Days
+due Monday
 
-logicalDate       = 2026-08-08
-occurrenceDueOn   = 2026-08-10
-occurrenceIdentity= task:{taskId}:occurrence:2026-08-10
-next occurrence   = 2026-08-17
+Monday no success
+→ active status Missed
+→ due_on remains Monday
+→ Missed streak begins
+
+Tuesday no success
+→ still active Missed
+→ due_on still Monday
+→ Missed streak increases
+
+Wednesday no success
+→ still active Missed
+→ due_on still Monday
+→ Missed streak increases
+
+Thursday Done
+→ Missed chain ends
+→ positive streak = 1
+→ next due = Sunday
 ```
 
-Calendar semantics:
+A rolling Missed chain may be broken by:
 
-- 8/8 shows the explicit Done event with `occurrenceDueOn = 8/10`.
-- 8/10 is covered/resolved by that same occurrence and must not become a second explicit History row or a new unresolved obligation.
-- 8/17 is the next fixed scheduled occurrence.
+- Done;
+- Did My Best; or
+- Delay, with exact Delay behavior deferred to Phase 1B-2.
 
-The Calendar may choose the final presentation label in a later read-model phase, but the semantic result is “8/10 satisfied by the 8/8 resolution,” not “8/10 is still due.”
+Done and Did My Best are always successful/handled outcomes. They do not leave the rolling due date frozen after the chain ends.
 
-### Rolling early completion
+### Rolling Calendar representation
 
-`TARGET` — Rolling recurrence uses the actual success date for late drift but has an early lower bound so that advancing an occurrence never creates a next cursor before the consumed occurrence’s own cadence boundary.
-
-For interval `N`:
+`TARGET` — A rolling overdue chain may display each completed overdue logical day as calculated Missed:
 
 ```text
-rollingNextDue = max(successLogicalDate, consumedOccurrenceDueOn) + N days
+Every 3 Days
+due Monday
+Done Thursday
+
+Monday   = calculated Missed
+Tuesday  = calculated Missed
+Wednesday= calculated Missed
+Thursday = explicit Done
 ```
 
-Therefore:
+The Monday, Tuesday, and Wednesday entries reference the same underlying overdue obligation. They are not separate scheduled occurrences, do not create separate explicit Missed History rows, and do not advance recurrence by themselves.
 
-- on-time success uses either equal date;
-- late success advances from the actual success date; and
-- early success advances from the consumed due date, preventing the next occurrence from moving backward before the occurrence just consumed.
+### Rolling historical correction butterfly effect
 
-This gives rolling schedules action-date drift for late completion without making early completion produce an impossible earlier current cursor.
+`TARGET` — Explicit History remains authoritative for its logical date. When a rolling historical success is added or changed, later derived chronology is recalculated from that success date. This intentional butterfly effect can change the rolling next due date, later calculated Missed days, active status, and current streaks.
 
-`CURRENT` — The current pure recurrence helper advances rolling recurrence from `actionDate`, while the engine carries separate fixed-cursor protections and occurrence metadata. See [`recurrenceAfterSuccess()`](../../src/lib/task-state-engine/recurrence.ts#L170-L193) and [`evaluateTaskState()` rolling replay](../../src/lib/task-state-engine/engine.ts#L261-L278). This specification is the target contract, not a claim that every current caller already follows it.
+Example: an Every 3 Days Task was originally due Monday and Monday through Friday are currently calculated Missed. On Saturday, the user changes Wednesday to Done:
 
-## Part 5: Late completion
+```text
+Monday    Missed
+Tuesday   Missed
+Wednesday Done
+next due  Saturday
+Saturday  current status Pending
+positive streak = 1
+```
 
-`TARGET` — A late success resolves the original occurrence, not each elapsed calendar day.
+If instead Tuesday is changed to Done:
+
+```text
+Monday   Missed
+Tuesday  Done
+next due Friday
+Friday    Missed if unresolved
+Saturday  active status Missed
+```
+
+The recalculation is intentional. It must preserve explicit History while recalculating only the derived chronology after the historical success.
+
+## Part 3: FIXED CALENDAR transitions
+
+### Each scheduled date is its own occurrence
+
+`TARGET` — Fixed-calendar membership continues independently across scheduled dates. Each scheduled date has its own occurrence identity:
+
+```text
+task:{taskId}:occurrence:{scheduledCalendarDate}
+```
+
+One unresolved or missed fixed occurrence does not block a later calendar date. Do not use one globally unresolved occurrence to queue fixed dates behind an earlier missed date.
 
 Example:
 
 ```text
-Occurrence due: 2026-08-05
-No resolution on 8/5 or 8/6
-Done entered on logical 2026-08-07
+Monday / Wednesday / Friday Task
 
-logicalDate       = 2026-08-07
-occurrenceDueOn   = 2026-08-05
-occurrenceIdentity= task:{taskId}:occurrence:2026-08-05
+Monday  missed
+Wednesday Done
+Friday   Done
 ```
 
-Expected chronology:
+Target chronology:
 
-- 8/5 is a calculated Missed day tied to the 8/5 occurrence.
-- 8/6 is a calculated Missed day tied to the same 8/5 occurrence.
-- 8/7 is the explicit Done event and resolves the 8/5 occurrence.
-- The 8/5 and 8/6 calculated Missed days remain visible; the success does not delete or rewrite them.
-- The current Missed streak ends at the successful 8/7 event. A positive current streak may begin at 8/7.
+- Monday = Missed;
+- Wednesday = Done; and
+- Friday = Done.
 
-Advancement depends on family:
+Monday does not prevent Wednesday or Friday from becoming their own scheduled occurrences. The fixed schedule continues regardless of whether an earlier fixed date was Missed.
 
-- fixed calendar: next occurrence is the first valid fixed date strictly after 8/5, even if it is on or before 8/7; a newly selected date is not consumed by the late 8/7 success;
-- rolling interval N: next occurrence is `8/7 + N days` because late rolling success drifts from the actual action date.
+### Fixed-calendar success on a Not Due day
 
-If the next fixed occurrence is already past on the action date, it becomes the next current unresolved occurrence rather than being silently skipped. This preserves one occurrence identity per obligation and prevents a late success from consuming two occurrences.
+`TARGET` — Done or Did My Best on a fixed-calendar Not Due day:
 
-## Part 6: Rolling recurrence advancement
-
-### Daily
-
-`TARGET` — Daily is rolling interval one.
-
-```text
-Due 8/1, Done 8/1 → next due 8/2
-Due 8/4, Done 8/6 → next due 8/7
-Due 8/5, Done early 8/3 → next due 8/6
-```
-
-The early example consumes the 8/5 occurrence and uses the lower-bound rule; it does not create a due date on 8/4. If the due occurrence remains unresolved through 8/6, `due_on` remains 8/4, 8/4 and 8/5 become calculated Missed chronology days tied to the same occurrence, and 8/6 is the current overdue/open representation. A Done on 8/6 resolves 8/4 and advances to 8/7.
-
-### Every N days
-
-`TARGET` — Every N days uses the same rolling rule with interval N.
-
-Example with anchor 8/1 and N=3:
-
-```text
-Initial membership/cursor: 8/1, 8/4, 8/7, 8/10
-Done on 8/1 → due_on 8/4
-Done on 8/4 → due_on 8/7
-8/4 unresolved through 8/6 → due_on remains 8/4
-Done recorded on 8/6 for 8/4 → due_on 8/9
-```
-
-In the overdue case, 8/4 and 8/5 are calculated Missed days for the same occurrence; 8/6 is the current overdue/open day. The model does not create separate unresolved identities for 8/5 and 8/6.
-
-### Daily Until Complete
-
-`TARGET` — Daily Until Complete uses the same daily rolling occurrence contract. It does not create an independent obligation for every day that passes. Done and Did My Best resolve one current occurrence and advance by one day using the rolling early/late rule. The “until complete” termination and Complete outcome belong to Phase 1B-2 and are intentionally not specified here.
-
-## Part 7: Fixed-calendar advancement
-
-`TARGET` — Fixed-calendar advancement always uses the stable anchor and recurrence rule. It consumes the identified scheduled occurrence and selects the first valid scheduled occurrence strictly after the consumed occurrence due date.
-
-### Weekly and every N weeks
-
-For a Monday schedule with occurrence due 8/10:
-
-```text
-Done early on 8/8 → consume 8/10 → next due 8/17
-Done late on 8/12 → consume 8/10 → next due 8/17
-```
-
-For every N weeks, the same week phase remains in force. Completion date does not become the new week anchor.
-
-### Selected weekdays
-
-For Monday/Wednesday/Friday with Monday occurrence due 8/10:
-
-```text
-Done on Monday 8/10 → next due Wednesday 8/12
-Done early Sunday 8/9 → consume Monday 8/10 → next due Wednesday 8/12
-Done late Tuesday 8/11 → consume Monday 8/10 → next due Wednesday 8/12
-```
-
-If a late success occurs after Wednesday as well, Wednesday becomes the next current occurrence because it is the first fixed occurrence after the consumed Monday occurrence. It is not silently skipped merely because the action was late.
-
-### Monthly day-of-month
-
-For the 15th of every month:
-
-```text
-August 15 completed August 12 → next due September 15
-August 15 completed August 20 → next due September 15
-```
-
-The month phase remains anchored to the schedule. A late success does not move the next occurrence to September 20.
-
-### Monthly ordinal weekday
-
-For the second Tuesday of each month:
-
-```text
-Second Tuesday in August completed early → next due second Tuesday in September
-Second Tuesday in August completed late → next due second Tuesday in September
-```
-
-The same rule applies to first, third, fourth, and last weekday modes. The ordinal/month phase is not rebased from action date.
-
-## Part 8: Unresolved overdue occurrence model
-
-`TARGET` — An occurrence becomes overdue without becoming resolved or being replaced. The current occurrence remains the same identity until Done or Did My Best resolves it, or a later Phase 1B-2 workflow action changes its state.
+- creates explicit success for that logical date;
+- contributes to positive streak;
+- may end an active Missed state;
+- does not consume a future scheduled occurrence; and
+- does not move the fixed recurrence schedule.
 
 Example:
 
 ```text
-Occurrence due 8/4
-Logical days pass: 8/4, 8/5, 8/6, 8/7
-No explicit outcome
+Weekly Friday Task
+next scheduled occurrence = Friday 8/10
+
+Wednesday 8/8 Done
 ```
 
-The result is:
+Result:
 
-- `due_on` remains 8/4;
-- the current unresolved occurrence remains `task:{taskId}:occurrence:8/4`;
-- 8/4, 8/5, and 8/6 are calculated Missed chronology days, all tied to the same occurrence;
-- 8/7, if it is the current logical day, is an Open/Pending day with an overdue unresolved obligation rather than a new occurrence;
-- completed overdue days contribute to current Missed streak chronology, and the current overdue/open day activates the current Missed-streak condition according to the Effective Timeline contract;
-- future fixed-calendar dates may remain visible as informational schedule members, but they cannot replace 8/4 as the active unresolved occurrence; and
-- no automatic explicit History row is created merely because 8/4, 8/5, or 8/6 passed.
+- 8/8 is explicit Done;
+- positive streak increases by 1; and
+- Friday 8/10 remains the scheduled occurrence.
 
-`CURRENT` — Effective Timeline treats a past unresolved occurrence as calculated Missed and the current overdue day as Open with an overdue obligation; current Missed streak calculation walks the closed calculated Missed days while recognizing current overdue Open. See [`buildTaskEffectiveTimeline()`](../../src/lib/task-state-engine/effective-timeline.ts#L220-L275) and [Phase 1A Part 8](task-state-phase-1a-core-model.md#part-8-calculated-state-versus-persisted-projection).
+If Friday is later completed, that Friday event consumes Friday’s occurrence. The Wednesday success did not consume it early.
 
-## Part 9: Explicit Missed versus calculated Missed
+### Fixed-calendar active Missed state
 
-### Calculated Missed
-
-`TARGET` — Calculated Missed means that time passed while the current occurrence remained unresolved.
-
-- It creates no explicit History row.
-- It does not resolve or advance the occurrence.
-- It uses the same occurrence identity across the overdue chronology.
-- It can affect Calendar, current active overdue status, and current Missed streak.
-- A later Done or Did My Best resolves the original occurrence and leaves the calculated Missed days visible.
-
-### Explicit Missed
-
-`TARGET` — Explicit Missed is a user-recorded outcome for one logical date. It overrides that date’s Calendar state and becomes explicit History, but it does **not** count as a successful resolution in Phase 1B-1.
-
-The target recurrence effect is:
-
-- it does not consume the occurrence;
-- it does not advance `due_on`;
-- it leaves the current occurrence unresolved/frozen;
-- it may replace a calculated Missed representation on that exact logical date with an explicit Missed row;
-- it contributes Missed chronology rather than positive chronology; and
-- it does not create additional occurrence identities for later days.
-
-This deliberately distinguishes explicit Missed from calculated Missed: explicit Missed records user intent and wins for its date, while calculated Missed records elapsed unresolved time. Both leave the recurrence occurrence unresolved, but only the explicit form creates a History fact.
-
-`CURRENT` — The current engine can propose or accept Missed History in some action/reconciliation paths while Effective Timeline also calculates non-persistent Missed. Phase 0 documents that these paths coexist; this target contract prevents either form from advancing a successful occurrence. See [Phase 0 § 5](task-state-phase-0-inventory.md#5-history-authority-map) and [`evaluateTaskState()` Missed validation](../../src/lib/task-state-engine/engine.ts#L198-L207).
-
-## Part 10: No Repeat activation model
-
-### Activation rule
-
-`TARGET` — A current `repeat_frequency = none` value is not sufficient to determine whether a Task is genuinely unscheduled or has entered the implicit rolling-daily behavior.
-
-The target distinction is:
-
-```text
-No due date + no meaningful History
-    → genuinely unscheduled
-
-First meaningful due date or qualifying History activation
-    → effective rolling-daily schedule, interval 1
-```
-
-### Qualifying activation events
-
-| Event | Activates implicit rolling-daily mode? | Target effect |
-|---|---:|---|
-| Assigning a first due date | Yes | Establishes the first occurrence/cursor at that due date, even if it is future-dated. |
-| Manual Done | Yes | If no occurrence due date exists, the History logical date becomes the first occurrence due date; the success resolves it and next due is the following logical day. |
-| Manual Did My Best | Yes | Same activation and resolution rule as Done. |
-| Manual Missed | Yes, if it has a meaningful logical date | Establishes the first occurrence at that date but leaves it unresolved; `due_on` remains that date and later days follow overdue chronology. |
-| Manual Delayed | Activation signal only | It establishes that the Task is no longer genuinely unscheduled, but due movement and delayed workflow behavior are Phase 1B-2. |
-| Imported Done/Did My Best/Missed/Delayed with meaningful dates | Yes, when provenance and dates are trustworthy | Imported History can establish the first effective occurrence; ambiguous imported identity or anchor is marked for data quality. |
-| Legacy automatic/reconciliation Missed with no user activation | No by itself | Inferred legacy artifacts must not silently activate a genuinely unscheduled Task. |
-| Complete-only History | Not an active recurrence activation in this phase | Complete lifecycle semantics are Phase 1B-2; it must not be used to invent an active daily schedule. |
-
-### Behavior after activation
+`TARGET` — A missed fixed-calendar occurrence may keep the Task’s active status as Missed until a later success or handling action clears that active state. The active Missed state does not remove or delay the next fixed scheduled occurrence.
 
 Example:
 
 ```text
-No Repeat Task
-First due date: 8/1
-8/1 Done
+Weekly Monday Task
 
-Effective recurrence: rolling daily
-Consumed occurrence: task:{taskId}:occurrence:8/1
-Next active occurrence: 8/2
-due_on projection: 8/2
+Monday Missed
+Tuesday no success
 ```
 
-If 8/2 remains unresolved and the logical day becomes 8/3, 8/2 is a calculated Missed day tied to the 8/2 occurrence and 8/3 is the current overdue/open representation. No additional 8/3 occurrence is created.
+Result:
 
-### Recommended later representation
+- Monday remains historical/calculated Missed;
+- active Task status remains Missed; and
+- the next fixed scheduled occurrence still exists according to the calendar.
 
-`TARGET` — Recommend **C: derived effective mode from canonical schedule/History facts**, with an optional future projection/cache. Do not automatically rewrite stored `repeat_frequency = none` merely to encode activation. The canonical engine should derive:
+If Tuesday is Done:
 
-- genuinely unscheduled when no due date and no meaningful History exist;
-- effective rolling-daily when the activation evidence exists; and
-- the explicitly selected recurrence family after the user selects another cadence.
+- Monday remains historical Missed;
+- Tuesday becomes explicit Done;
+- active Missed state ends;
+- positive streak starts at 1; and
+- active status becomes whatever the next schedule implies, such as Upcoming or Not Due.
 
-This preserves the user’s stored configuration history while allowing the target product behavior. No schema change is defined here.
+If the user edits Monday itself from Missed to Done, Monday is corrected historically. That correction changes Monday’s outcome; it does not turn Tuesday’s event into Monday’s occurrence or move the fixed schedule.
 
-## Part 11: Recurrence configuration change
+### Fixed-calendar historical correction
 
-`TARGET` — A recurrence configuration change creates a forward schedule boundary. It never rewrites Explicit History.
-
-### Boundary and anchor behavior
-
-- The edit logical date is the effective boundary for the new recurrence rule.
-- A known stable anchor for the new schedule is retained or explicitly established by the schedule command; the old anchor is not rewritten as historical fact.
-- If a current unresolved occurrence exists, its identity and due date remain current through the configuration change unless the new schedule explicitly invalidates that date. The new rule controls the next occurrence after that unresolved occurrence is resolved.
-- If no current unresolved occurrence exists, the new rule’s first valid occurrence on or after the edit boundary becomes the cursor.
-- `due_on` is projected from the resulting current/next unresolved occurrence, not copied from a stale stored status or moving legacy anchor.
-
-### Historical and future Calendar behavior
-
-- Explicit rows remain exactly as they were.
-- Calculated dates before the boundary are not rewritten into explicit History.
-- Calculated dates on or after the boundary use the new recurrence rule.
-- A calculated historical date may change when the schedule boundary/rule changes, but only where the new chronology can prove the result; uncertain legacy dates remain neutral/data-quality-limited rather than becoming asserted Missed facts.
-- Future Calendar dates recalculate from the new rule and anchor.
+`TARGET` — Historical corrections on fixed-calendar Tasks update History, the Calendar outcome, streaks, and current interpretation where appropriate. They do not move the underlying fixed recurrence schedule.
 
 Example:
 
 ```text
-Old recurrence: Daily, anchor 8/1
-Explicit History: 8/1 Missed, 8/2 Done, 8/3 Did My Best
-Schedule change on 8/4: Every 3 Days
+Monday Missed
+Wednesday Done
+Friday Done
+
+Saturday: change Monday to Done
 ```
 
-The 8/1, 8/2, and 8/3 explicit rows remain unchanged. The new schedule begins at the 8/4 boundary; the current/next occurrence is calculated from the unresolved chronology and new cadence, and `due_on` is only the resulting cursor projection. No old explicit row is rebased or deleted.
+Result:
 
-`CURRENT` — Phase 0 and Phase 1A identify recurrence configuration as stored input, explicit History as authoritative, and calculated state as recomputable. They also identify `due_on` as overloaded and schedule changes as a competing mutation path. See [Phase 0 § 7](task-state-phase-0-inventory.md#7-stored-versus-derived-task-state), [Phase 0 § 16](task-state-phase-0-inventory.md#16-phase-1-inputs), and [Phase 1A Part 11](task-state-phase-1a-core-model.md#part-11-core-invariants).
+```text
+Monday  Done
+Wednesday Done
+Friday   Done
+next fixed due remains Monday
+```
 
-## Part 12: Anchor uncertainty
+The fixed calendar is still determined by its configured weekday/month rule and stable schedule boundary. A historical edit does not rebase that rule.
 
-`TARGET` — Anchor uncertainty affects how far backward the engine may assert schedule facts. It must not cause a speculative historical anchor to be presented as truth.
+## Part 4: Not Due and streak semantics
 
-### Known anchor
+### Scheduled Not Due days
 
-Use the stable anchor normally. Fixed-calendar membership and future occurrence generation may be calculated across the supported range.
+`TARGET` — For a scheduled Task, a Not Due day with no success is neutral for positive streak continuity:
 
-### Safely reconstructable anchor
+- it does not increase the positive streak;
+- it does not break the positive streak; and
+- it does not start or increase a Missed streak unless the Task is already in an active Missed chain.
 
-Use the reconstructed anchor only when recurrence configuration and chronology make it deterministic or high-confidence. Attach a data-quality/provenance marker to the engine result and retain the distinction between “stored/known” and “reconstructed.”
+Not Due outcomes are:
 
-### Ambiguous anchor
+| Logical date | Result |
+|---|---|
+| Not Due + no success | Positive streak unchanged; no new Missed chain. |
+| Not Due + Done | Positive streak +1; rolling schedules rebase; fixed schedules do not move. |
+| Not Due + Did My Best | Positive streak +1; rolling schedules rebase; fixed schedules do not move. |
+| Not Due + no success while active Missed | Active Missed state continues; the active Missed chronology may increase according to the family’s chain rules. |
 
-Do not invent an anchor. Until later migration resolves it:
+Example:
 
-- preserve a safe current/future schedule boundary from a valid current `due_on`, explicit occurrence metadata, or another directly supported fact;
-- do not claim historical calculated Missed dates before the safe boundary;
-- do not replay old identity-less History as though it proved a schedule anchor;
-- do not advance or repair the cursor solely from stale display status; and
-- surface an anchor data-quality issue to diagnostics.
+```text
+Scheduled Task due 8/10
 
-The conservative result may have a valid current/future cursor while historical Calendar chronology is incomplete. That is preferable to asserting unproven historical obligations.
+8/5 Done → positive streak 1
+8/6 no entry → streak remains 1
+8/7 no entry → streak remains 1
+8/8 Done → positive streak 2
+```
 
-`CURRENT` — The legacy adapter uses `due_on` as the weekly/monthly `anchorDate`, maps rolling recurrence without a separate stable anchor, and reports unavailable persisted recurrence-cursor metadata. See [`recurrenceFromLegacy()`](../../src/lib/task-state-engine/legacy-adapter.ts#L128-L208), [`adaptLegacyTaskState()`](../../src/lib/task-state-engine/legacy-adapter.ts#L285-L310), and [Phase 1A Part 4](task-state-phase-1a-core-model.md#part-4-recurrence-cursor-versus-recurrence-anchor).
+This differs from a genuinely unscheduled Task. For the unscheduled example `8/7 Done`, followed by no success on `8/8`, inactivity ends the positive streak and creates no Missed state because there is no live schedule.
 
-## Part 13: Transition invariants
+### Explicit versus calculated Missed
+
+`TARGET` — Explicit Missed History is authoritative for its logical date. Calculated Missed is a derived representation of a schedule obligation that passed without success. Neither is a successful outcome. Their recurrence effects are family-specific:
+
+- rolling Missed freezes one due date and forms one overdue chain;
+- fixed-calendar Missed marks that scheduled date while later fixed dates continue independently; and
+- neither form activates a genuinely unscheduled Task merely because History exists.
+
+No automatic explicit Missed History row is created merely because time passed.
+
+## Part 5: Successful outcomes
+
+### Done and Did My Best
+
+`TARGET` — Done and Did My Best are always successful handled outcomes.
+
+Both outcomes:
+
+- contribute to positive streak;
+- end an active Missed chain or active Missed state;
+- resolve the relevant current rolling obligation when applicable;
+- rebase a rolling next due date from the logical success date;
+- consume a fixed-calendar occurrence only when the success is for that scheduled date; and
+- behave like Done for recurrence handling except where future reward or statistics rules explicitly distinguish them.
+
+For a fixed-calendar Not Due success, “relevant occurrence” is no future scheduled occurrence: the event is explicit positive History on its own logical date, can clear active Missed status, and leaves calendar membership unchanged.
+
+Example:
+
+```text
+Every 3 Days
+due Monday
+
+Monday Missed
+Tuesday Missed
+Wednesday Did My Best
+```
+
+Result:
+
+- the rolling Missed chain ends Wednesday;
+- positive streak = 1; and
+- next due = Saturday.
+
+### Missed and Delay boundary
+
+Missed is not a successful resolution. A calculated Missed day is non-mutating. Delay may break or transform an active chain, but exact Delay date movement, persistence, and lifecycle semantics are deferred to Phase 1B-2.
+
+## Part 6: Historical chronology and schedule boundaries
+
+### Event/boundary-based model
+
+`TARGET` — Historical chronology is constrained by intentional historical facts and schedule decisions:
+
+- explicit History outcomes;
+- manual due-date changes; and
+- Repeat or other schedule changes.
+
+Derived calculation may occur between those boundaries. It must not cross a later explicit schedule boundary and overwrite the user’s later scheduling decision.
+
+Conceptually:
+
+```text
+historical facts + schedule-change boundaries
+                    ↓
+       derive timeline between boundaries
+```
+
+No schema implementation is defined by this phase. The boundary concept is semantic: a later intentional schedule decision is part of the chronology input even if its storage representation is decided later.
+
+### Manual due-date changes
+
+`TARGET` — A manual due-date change is an authoritative schedule boundary from its logical date forward.
+
+Example:
+
+```text
+Daily Task
+8/8: user manually moves due date to 8/10
+```
+
+Result:
+
+- 8/8 = Not Due unless explicit History says otherwise;
+- 8/9 = Not Due unless explicit History says otherwise; and
+- 8/10 = Due.
+
+The fact that Repeat remains Daily must not cause 8/8 or 8/9 to later become Missed. Later historical recalculation must not overwrite the subsequent manual due-date decision. Manual schedule decisions act as boundaries in derived chronology.
+
+### Repeat changes
+
+`TARGET` — A Repeat change applies from its change logical date forward:
+
+- earlier Calendar dates are not reinterpreted under the new recurrence;
+- earlier established chronology is preserved;
+- explicit History is preserved; and
+- the new recurrence begins at the change-date schedule boundary.
+
+Example:
+
+```text
+Every 3 Days through 8/8
+
+8/9: change Repeat to Daily
+```
+
+Dates through 8/8 retain their prior established Calendar meaning. Daily recurrence begins from the 8/9 schedule boundary. Opening History later must not reinterpret 8/1–8/8 as though the Task had always been Daily.
+
+This phase does not add a user-facing warning or a recalculate-history choice.
+
+### Rolling correction across boundaries
+
+For ROLLING recurrence, replay can recalculate derived chronology between boundaries. A historical success may rebase later rolling dates, but replay stops at a later manual due-date or Repeat boundary and must preserve that later scheduling decision.
+
+For FIXED CALENDAR recurrence, replay may update date outcomes and active interpretation, but the fixed schedule rule and its boundaries remain unchanged. Historical corrections cannot turn a fixed schedule into a rolling schedule or move its next calendar date.
+
+## Part 7: Monthly normalization
+
+`TARGET` — A monthly day-of-month recurrence targeting a date that does not exist in a month uses the last valid day of that month.
+
+Examples:
+
+- Monthly 31st → April 30;
+- Monthly 31st → February 28 in a non-leap year; and
+- Monthly 31st → February 29 in a leap year.
+
+The normalization changes the occurrence date for that month only; it does not convert monthly recurrence into rolling behavior.
+
+## Part 8: Transition invariants
 
 `TARGET` — The recurrence transition layer must preserve these invariants:
 
-**TRANSITION INVARIANT 1 — One success consumes at most one occurrence.** Done or Did My Best resolves no more than one canonical occurrence.
+**TRANSITION INVARIANT 1 — Unscheduled means no due date and no selected repeat.** History alone cannot activate a live schedule.
 
-**TRANSITION INVARIANT 2 — One occurrence advances at most once.** Replaying the same successful occurrence cannot produce a second next cursor.
+**TRANSITION INVARIANT 2 — Unscheduled history is historical only.** Done and Did My Best can create historical positive streak facts without creating a due date, Missed state, or calculated Missed.
 
-**TRANSITION INVARIANT 3 — Fixed calendars do not drift.** Early or late success does not move a fixed-calendar schedule off its anchor/rule.
+**TRANSITION INVARIANT 3 — Rolling success rebases from success date.** For every rolling interval, `nextDue = successLogicalDate + interval`, including early and Not Due success.
 
-**TRANSITION INVARIANT 4 — Event and occurrence dates remain distinct.** `logicalDate` never silently replaces `occurrenceDueOn`.
+**TRANSITION INVARIANT 4 — Rolling Missed freezes the due date.** An unresolved rolling due date does not auto-advance after it becomes Missed.
 
-**TRANSITION INVARIANT 5 — Calculated Missed is non-mutating.** A calculated Missed day does not create explicit History, consume an occurrence, or advance recurrence.
+**TRANSITION INVARIANT 5 — One rolling overdue chain uses one obligation.** Calculated Missed days in a rolling chain may share one occurrence identity and cannot create new rolling obligations by passage of time.
 
-**TRANSITION INVARIANT 6 — Recurrence changes preserve History.** Configuration changes never rewrite, delete, or re-date explicit History rows.
+**TRANSITION INVARIANT 6 — Fixed schedules do not drift from extra success.** A fixed-calendar success on a Not Due day does not consume a future occurrence or move the calendar rule.
 
-**TRANSITION INVARIANT 7 — The cursor follows unresolved chronology.** `due_on` is derived from the current/next unresolved occurrence, not from stale status or an unrelated Calendar date.
+**TRANSITION INVARIANT 7 — Fixed dates do not queue-block.** A missed fixed-calendar date does not prevent later scheduled dates from becoming and resolving their own occurrences.
 
-**TRANSITION INVARIANT 8 — Duplicate metadata cannot double-advance.** Repeated/stale occurrence identity claims are data-quality anomalies and cannot advance recurrence repeatedly.
+**TRANSITION INVARIANT 8 — Active fixed Missed state is separate from schedule membership.** Active Missed status may persist while the next fixed occurrence continues to exist.
 
-**TRANSITION INVARIANT 9 — Historical rows cannot consume future occurrences accidentally.** An identity-less or stale historical success must not claim a future occurrence without schedule and temporal proof.
+**TRANSITION INVARIANT 9 — Not Due is positive-streak neutral without success.** A scheduled Not Due day with no success neither increases nor breaks positive streak, and it starts no Missed chain unless an active Missed chain already exists.
 
-**TRANSITION INVARIANT 10 — One canonical transition engine.** Recurrence advancement is defined once and all callers consume the same result; UI, Calendar, rewards, and rollover must not independently advance the cursor.
+**TRANSITION INVARIANT 10 — Done and Did My Best are handled successes.** Both contribute positive streak, end active Missed state, and follow the same recurrence handling except for explicitly future reward/statistics distinctions.
 
-**TRANSITION INVARIANT 11 — One active unresolved occurrence.** Elapsed days and future fixed projections do not create multiple simultaneously consumable unresolved occurrences.
+**TRANSITION INVARIANT 11 — Calculated Missed is non-mutating.** Time passing may produce calculated Calendar/status Missed but does not create explicit History or advance recurrence.
 
-**TRANSITION INVARIANT 12 — No Repeat mode is derived.** `repeat_frequency = none` alone cannot override the distinction between genuinely unscheduled and activated implicit rolling-daily behavior.
+**TRANSITION INVARIANT 12 — Explicit History wins for its logical date.** Historical edits update that date’s outcome and may alter derived chronology without being overwritten by later calculation.
 
-## Part 14: Scenario matrix
+**TRANSITION INVARIANT 13 — Manual due changes are schedule boundaries.** Later derived calculation cannot turn dates before a manual due-date boundary into Missed contrary to that decision.
 
-`TARGET` — The following scenarios are concrete semantic fixtures. “Covered” means the scheduled occurrence is satisfied by an explicit event on a different logical date; it is not a second History row.
+**TRANSITION INVARIANT 14 — Repeat changes apply forward only.** A new recurrence cannot reinterpret established chronology before its change-date boundary.
 
-| # | Scenario/configuration | Anchor | Explicit History | Logical day | Consumed occurrence | Current occurrence | `due_on` projection | Calculated Calendar state | Positive streak | Missed streak |
-|---:|---|---|---|---|---|---|---|---|---|---|
-| 1 | Daily, on-time Done | 8/1 | 8/1 Done, due 8/1 | 8/1 | occurrence 8/1 | 8/2 | 8/2 | 8/1 explicit Done; 8/2 scheduled | +1 on 8/1 | Reset |
-| 2 | Daily, late Done | 8/1 | 8/3 Done, due 8/1 | 8/3 | occurrence 8/1 | 8/4 | 8/4 | 8/1 and 8/2 calculated Missed; 8/3 explicit Done | +1 on 8/3 | Ends at 8/3; earlier Missed remains visible |
-| 3 | Daily, early Done | 8/5 | 8/3 Done, due 8/5 | 8/3 | occurrence 8/5 | 8/6 | 8/6 | 8/3 explicit Done; 8/5 covered by early resolution; 8/6 scheduled | +1 on 8/3 | Reset |
-| 4 | Every 3 days, on-time | 8/1 | 8/1 Done, due 8/1 | 8/1 | occurrence 8/1 | 8/4 | 8/4 | 8/1 explicit Done; 8/4 scheduled | +1 | Reset |
-| 5 | Every 3 days, late | 8/1 | 8/6 Done, due 8/4 | 8/6 | occurrence 8/4 | 8/9 | 8/9 | 8/4 and 8/5 calculated Missed; 8/6 explicit Done | +1 on 8/6 | Ends at 8/6 |
-| 6 | Weekly Sunday, early Done | 8/10 | 8/8 Done, due 8/10 | 8/8 | occurrence 8/10 | 8/17 | 8/17 | 8/8 explicit Done; 8/10 covered; 8/17 scheduled | +1 on 8/8 | Reset |
-| 7 | Weekly Sunday, late Done | 8/10 | 8/12 Done, due 8/10 | 8/12 | occurrence 8/10 | 8/17 | 8/17 | 8/10 and 8/11 calculated Missed; 8/12 explicit Done | +1 on 8/12 | Ends at 8/12 |
-| 8 | Monday/Wednesday/Friday, early Done | 8/10 | 8/9 Done, due 8/10 | 8/9 | occurrence 8/10 | 8/12 | 8/12 | 8/9 explicit Done; 8/10 covered; 8/12 scheduled | +1 on 8/9 | Reset |
-| 9 | Monday/Wednesday/Friday, late Done | 8/10 | 8/11 Done, due 8/10 | 8/11 | occurrence 8/10 | 8/12 | 8/12 | 8/10 calculated Missed; 8/11 explicit Done; 8/12 scheduled | +1 on 8/11 | Ends at 8/11 |
-| 10 | Monthly day 15, early Done | 8/15 | 8/12 Done, due 8/15 | 8/12 | occurrence 8/15 | 9/15 | 9/15 | 8/12 explicit Done; 8/15 covered; 9/15 scheduled | +1 on 8/12 | Reset |
-| 11 | Monthly day 15, late Done | 8/15 | 8/20 Done, due 8/15 | 8/20 | occurrence 8/15 | 9/15 | 9/15 | 8/15–8/19 calculated Missed; 8/20 explicit Done | +1 on 8/20 | Ends at 8/20 |
-| 12 | Daily, unresolved overdue chain | 8/4 | None | 8/7 | None | occurrence 8/4 | 8/4 | 8/4–8/6 calculated Missed, 8/7 open/overdue; all Missed days share occurrence 8/4 | 0 | Active from closed Missed days/current overdue |
-| 13 | Daily, explicit Missed | 8/4 | 8/4 explicit Missed, due 8/4 | 8/5 | None | occurrence 8/4 | 8/4 | 8/4 explicit Missed; 8/5 open/overdue | 0/broken | Active |
-| 14 | Daily, calculated Missed | 8/4 | None | 8/6 | None | occurrence 8/4 | 8/4 | 8/4–8/5 calculated Missed; 8/6 open/overdue; no History row created | 0/broken | Active |
-| 15 | No Repeat, genuinely unscheduled | None | None | 8/1 | None | None | null | No Entry/unscheduled; no due or Missed | 0 | 0 |
-| 16 | No Repeat, first due activation | 8/1 | None | 8/1 | None | occurrence 8/1 | 8/1 | 8/1 open/due; effective mode is rolling daily | 0 | 0 |
-| 17 | No Repeat, first Done after activation | 8/1 | 8/1 Done, due 8/1 | 8/1 | occurrence 8/1 | occurrence 8/2 | 8/2 | 8/1 explicit Done; 8/2 scheduled | +1 on 8/1 | Reset |
-| 18 | Daily → Every 3 Days schedule change | 8/1 old; 8/4 new boundary | 8/1 Done | 8/4 | occurrence 8/1 | first new valid occurrence on/after 8/4, e.g. 8/4 | new cursor | Explicit 8/1 preserved; post-boundary Calendar uses Every 3 Days | Existing positive chronology preserved | No new Missed from the config edit |
-| 19 | Stale duplicate occurrence identity | 8/10 fixed | 8/8 Done due 8/10; 8/9 Did My Best due 8/10 | 8/10 | occurrence 8/10 once | 8/17 | 8/17 | Both explicit rows remain facts; duplicate consumption is flagged; no second advancement | One occurrence opportunity only; anomaly flagged | No calculated Missed for the consumed occurrence |
-| 20 | Ambiguous legacy anchor | Unknown; safe boundary 8/5 | Identity-less/ambiguous legacy History only | 8/7 | Only if directly proven | Safe current/future occurrence from valid boundary, otherwise unknown | Safe persisted cursor if valid; no invented anchor | No historical Missed asserted before safe boundary; diagnostics report ambiguity | Only proven explicit successes | No unproven historical Missed |
+**TRANSITION INVARIANT 15 — One canonical family-aware transition authority.** Recurrence, Calendar, current status, streaks, and persistence projections must consume the same family-aware result rather than independently applying rolling or fixed rules.
 
-## Part 15: Decisions Requiring Product Confirmation
+## Part 9: Scenario fixtures
 
-Only the following decisions remain genuinely product-sensitive after applying Phase 0, Phase 1A, and current source evidence. The recommendations are the target defaults; confirmation is required before a later implementation treats the alternatives as impossible.
+`TARGET` — The following 24 fixtures are the concrete semantic checks for this phase. “Explicit” means a saved History outcome. “Calculated” means a derived Calendar/status result and not a new History row.
 
-### 1. Rolling early-success lower bound
+| # | Scenario | Expected result |
+|---:|---|---|
+| 1 | No Repeat, no due date, no History | Genuinely unscheduled; no due, no recurrence, no calculated Missed. |
+| 2 | Unscheduled: 8/7 Done, 8/8 no success | 8/7 positive streak = 1; 8/8 ends that streak; no Missed streak or calculated Missed; Task remains unscheduled. |
+| 3 | Unscheduled: historical Did My Best | Historical positive success only; no due date, no repeat activation, no live recurrence. |
+| 4 | No Repeat due assignment | Assigned due date makes the Task scheduled implicit rolling-daily; History was not required for activation. |
+| 5 | Explicit repeat selection with no prior due | Selected recurrence begins at its change-date schedule boundary; it is scheduled from that boundary, not from older History. |
+| 6 | Every 3 Days, due 8/10, Done 8/8 | Positive success on 8/8; rolling next due = 8/11. No lower-bound formula. |
+| 7 | Every 3 Days, due 8/10, Done 8/10 | Next due = 8/13. |
+| 8 | Every 3 Days, due 8/10, Done 8/12 | Late success rebases from 8/12; next due = 8/15. |
+| 9 | Every 3 Days, due 8/10, Done 8/8, Done 8/9 | First next due = 8/11; second success rebases it to 8/12. |
+| 10 | Rolling due Monday, no success through Wednesday, Done Thursday | Monday due freezes; Monday–Wednesday may be calculated Missed for one obligation; Thursday ends chain; next due is Sunday for a 3-day interval. |
+| 11 | Rolling chain Calendar display | Monday, Tuesday, Wednesday are calculated Missed sharing the Monday obligation; Thursday is explicit Done; no automatic explicit Missed rows. |
+| 12 | Weekly Friday, Done Wednesday 8/8 | 8/8 explicit Done and positive +1; Friday 8/10 remains the scheduled occurrence. |
+| 13 | Monday/Wednesday/Friday: Monday Missed, Wednesday Done, Friday Done | Three independent date outcomes: Monday Missed, Wednesday Done, Friday Done; Monday does not block later dates. |
+| 14 | Scheduled Task: 8/5 Done, 8/6–8/7 no entry, 8/8 Done | Positive streak is 1 on 8/5, remains 1 through Not Due inactivity, then becomes 2 on 8/8. |
+| 15 | Fixed Monday Missed, Tuesday no success | Monday remains historical/calculated Missed; active status remains Missed; next fixed occurrence still exists. |
+| 16 | Fixed Monday Missed, Tuesday Done | Tuesday is explicit Done and positive streak starts at 1; active Missed ends; Monday remains Missed; schedule does not move. |
+| 17 | User edits fixed Monday from Missed to Done | Monday is corrected historically; the edit does not reinterpret Tuesday or rebase the fixed calendar. |
+| 18 | Rolling Every 3 Days: Monday–Friday calculated Missed; Wednesday changed to Done on Saturday | Monday and Tuesday remain Missed; Wednesday Done; next due Saturday; Saturday is Pending; positive streak = 1. |
+| 19 | Same rolling history, Tuesday changed to Done instead | Tuesday Done; next due Friday; unresolved Friday is Missed; Saturday active status is Missed. |
+| 20 | Fixed Mon Missed, Wed Done, Fri Done; Saturday changes Mon to Done | Mon/Wed/Fri are all Done; next fixed due remains Monday. |
+| 21 | Daily due moved manually on 8/8 from 8/8 to 8/10 | 8/8 and 8/9 are Not Due unless explicit History says otherwise; 8/10 is Due; Daily does not later create Missed for 8/8–8/9. |
+| 22 | Every 3 Days through 8/8; Repeat changed to Daily on 8/9 | Dates through 8/8 retain prior meaning; Daily begins at 8/9; opening History does not reinterpret 8/1–8/8. |
+| 23 | Rolling due Monday, Monday/Tuesday Missed, Wednesday Did My Best | Missed chain ends; positive streak = 1; next due Saturday. |
+| 24 | Monthly 31st in April and February | April occurrence normalizes to April 30; February normalizes to February 28 or 29; monthly family remains fixed-calendar. |
 
-**Question:** Should an early rolling success use the actual success date even when that would make the next occurrence precede the consumed occurrence’s due date?
+## Part 10: Remaining product ambiguity
 
-- **Option A — bounded rolling rule (recommended):** `max(successDate, occurrenceDueOn) + interval`. Early completion does not move the cursor backward; late completion drifts from the action date.
-- **Option B — pure action-date rule:** `successDate + interval` in all cases. This is simpler but can create a next due date before the occurrence just consumed.
-- **Architectural recommendation:** Option A, because it preserves chronological occurrence identity while retaining meaningful late-completion drift.
-- **Consequence:** A future product decision to allow early rolling completion to pull the next due date earlier would need an explicit change to the cursor invariant and scenario fixtures.
+The locked semantics leave only implementation-level questions for later phases; they do not reopen the recurrence contract:
 
-### 2. Fixed schedule after multiple missed calendar members
+- exact Delay behavior, including whether and how Delay ends or transforms a rolling or fixed active Missed state, remains Phase 1B-2;
+- exact storage and provenance representation for manual due-date and Repeat boundaries remains unspecified; and
+- future reward/statistics rules may distinguish Done from Did My Best even though recurrence handling treats both as successful handled outcomes.
 
-**Question:** If a selected-weekday or monthly schedule has another scheduled date before a late success is recorded, should that next date remain the next current occurrence or be skipped?
-
-- **Option A — preserve the first next fixed occurrence (recommended):** after resolving the older occurrence, the first scheduled date strictly after its due date becomes current, even if already overdue.
-- **Option B — skip to the first scheduled date after the action date:** this avoids an immediately overdue cursor but silently discards a scheduled occurrence.
-- **Architectural recommendation:** Option A, because one success cannot consume two occurrences and fixed calendars must not drift or erase obligations.
-- **Consequence:** A late success may immediately expose another overdue current occurrence; that is represented by the same one-current-unresolved model.
-
-### 3. No Repeat activation by Delayed or imported legacy facts
-
-**Question:** Should a manual Delayed event or an imported legacy Delayed/Missed event activate implicit rolling-daily mode when no due date exists?
-
-- **Option A — activation signal, workflow transition deferred (recommended):** such a fact establishes that the Task is no longer genuinely unscheduled, but Delay date movement and legacy provenance remain governed by Phase 1B-2/migration rules.
-- **Option B — only a due date or Done/Did My Best activates:** this is simpler but can discard meaningful user/import intent and leave the Task falsely unscheduled.
-- **Architectural recommendation:** Option A, with automatic legacy reconciliation rows excluded unless a trustworthy user/import provenance exists.
-- **Consequence:** Phase 1B-2 must define the resulting due/cursor behavior for Delayed activation; Phase 1B-1 does not invent that workflow transition.
+No user-facing warning or recalculate-history choice is added in Phase 1B-1. No schema, SQL, Supabase, or production implementation is defined here.
 
 ## Locked Recurrence Transition Contract
 
-Phase 1B-2 may rely on these recurrence rules without reopening them:
+Phase 1B-2 may rely on these rules without reopening them:
 
-- A genuinely unscheduled Task has no due date and no meaningful History; it has no current occurrence and no calculated Missed chronology.
-- A No Repeat Task becomes effective rolling-daily after a meaningful due date or qualifying activation; the mode is derived rather than inferred from stored `repeat_frequency = none` alone.
-- Current ADHDice has one current unresolved occurrence at a time. Future fixed-calendar dates may be projected but cannot replace or be independently consumed while an older occurrence remains unresolved.
-- `due_on` is the current/next unresolved occurrence cursor; it is not the recurrence anchor.
-- The canonical occurrence identity is `task:{taskId}:occurrence:{occurrenceDueOn}` for the current supported product.
-- Done and Did My Best each resolve at most one occurrence, advance recurrence at most once, contribute positive chronology on the action logical date, and cannot double-consume an occurrence.
-- Fixed-calendar early and late success consumes the scheduled occurrence and keeps the next occurrence aligned to the stable calendar rule.
-- Rolling recurrence uses the actual success date for late drift and the consumed due date as the lower bound for early completion: `max(successDate, consumedDueOn) + interval`.
-- Calculated Missed days remain derived, share the unresolved occurrence identity, and never create ordinary explicit History merely because time passed.
-- Explicit Missed overrides its logical date but does not consume or advance the occurrence in this phase.
-- Late success leaves earlier calculated Missed days visible and understandable; it does not erase them.
-- Recurrence configuration changes apply forward from an edit boundary, preserve explicit History, and recalculate future derived chronology without inventing uncertain historical anchors.
-- Known or safely reconstructed anchors may drive membership; ambiguous legacy anchors must preserve uncertainty and avoid unproven historical schedule claims.
+- A Task is genuinely unscheduled only when it has no due date and no selected repeat frequency.
+- History alone never activates an unscheduled Task. Unscheduled Done and Did My Best are historical successes; unscheduled inactivity ends positive streak without creating Missed.
+- A scheduled No Repeat Task with a due date is implicit rolling-daily. Other explicitly selected frequencies use their selected family.
+- ROLLING includes Daily, Daily Until Complete, Every X Days, other explicit rolling intervals, and scheduled No Repeat. FIXED CALENDAR includes weekly, selected weekdays, every N weeks, monthly day-of-month, and monthly ordinal weekday.
+- For ROLLING, every Done or Did My Best rebases `nextDue` from its logical success date plus the interval, including early and Not Due success.
+- A rolling Missed chain freezes `due_on` at the missed due date and does not auto-advance. Calculated Missed days may share that one obligation identity.
+- For FIXED CALENDAR, each scheduled date is its own occurrence. A missed date does not block later dates, and an extra Not Due success does not consume or move a future scheduled date.
+- Scheduled Not Due inactivity is neutral for positive streak continuity unless an active Missed chain already exists. Not Due Done and Did My Best each add positive streak.
+- Did My Best is always a successful handled outcome and follows Done for recurrence handling.
+- Rolling historical corrections can recalculate later derived chronology between boundaries; fixed historical corrections do not move the fixed schedule.
+- Manual due-date changes and Repeat changes are forward schedule boundaries. Later calculation must preserve the user’s subsequent scheduling decision and must not rewrite earlier established chronology.
+- Monthly day-of-month dates normalize to the last valid day when the target day is absent from the month.
+- Calculated Missed remains derived and non-mutating; time passing alone does not create explicit Missed History.
 
 The remaining Phase 1B-2 topics are workflow/lifecycle boundaries only:
 
