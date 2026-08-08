@@ -89,10 +89,12 @@ The current adhdice_task_history is not upgraded in place for initial canonical 
 - Every new user-owned row has user_id uuid not null references auth.users(id) on delete cascade.
 - Every Task fact has entity_id uuid not null and a composite owner relationship to adhdice_clean_tasks(user_id, id). The Task table must therefore gain unique (user_id, id) before child composite foreign keys are added.
 - UUID primary keys use gen_random_uuid() unless a table deliberately uses (user_id, entity_id) or another natural composite key.
-- All timestamps are timestamptz not null default now() unless the field is an action/transition timestamp that is nullable by state.
-- All mutable canonical fact rows have revision bigint not null default 1 check (revision >= 1) and an updated_at trigger. Immutable boundary/occurrence/override rows retain updated_at for operational freshness but are never semantically updated.
+- All timestamps are timestamptz not null default now() unless the field is an action/transition timestamp that is nullable by state or a Task canonical timestamp held nullable during the M1 bootstrap.
+- All mutable canonical fact rows have revision bigint not null default 1 check (revision >= 1) and an updated_at trigger once canonicalized. Immutable boundary/occurrence/override rows retain updated_at for operational freshness but are never semantically updated. The Task canonical revision/timestamps are nullable and explicitly initialized during the bootstrap-safe proven backfill, then tightened under §3.2.
 - New string discriminators are text not null with exact allow-list checks. No free-form status string is canonical.
 - All provenance strings are non-empty and versioned. Migration rows must carry migration_version, classifier_version, and schema_contract_version.
+- M1 has one explicit bootstrap exception to the general `not null` rule: canonical semantic columns added to the existing `adhdice_clean_tasks` rows are nullable and have no semantic defaults until proven backfill completes. A non-semantic `canonicalization_status` marker distinguishes legacy-uninitialized rows from genuinely canonical rows; it is migration metadata, never a Task-state axis or read authority.
+- A canonical runtime insert must provide its canonical semantic values explicitly. Defaults and `NOT NULL` tightening for the bootstrap columns are a later, separately verified step after the relevant legacy population has no uninitialized or unresolved rows.
 - created_at/updated_at are timing/audit fields, not semantic replacement identity. Command or migration identities are required for new writes.
 
 ## 3. Exact adhdice_clean_tasks changes
@@ -103,29 +105,32 @@ Add the following columns to adhdice_clean_tasks:
 
 | Column | Type/nullability/default | Constraint and meaning |
 |---|---|---|
-| entity_kind | text not null default 'parent' | CHECK (entity_kind in ('parent','step','substep')); derived during migration from same-table depth and explicit legacy mapping, then canonical for the entity |
-| terminal_state | text not null default 'active' | CHECK (terminal_state in ('active','permanently_complete')) |
-| container_state | text not null default 'active' | CHECK (container_state in ('active','archived','trashed')) |
+| canonicalization_status | text not null default 'legacy_uninitialized' | CHECK (canonicalization_status in ('legacy_uninitialized','canonical_proven','canonical_runtime','needs_attention')); migration/authority marker only, never a Task-state axis |
+| entity_kind | text | M1 bootstrap-nullable; once canonicalized, CHECK (entity_kind in ('parent','step','substep')); derived during migration from same-table depth and explicit legacy mapping, then canonical for the entity |
+| terminal_state | text | M1 bootstrap-nullable; once canonicalized, CHECK (terminal_state in ('active','permanently_complete')) |
+| container_state | text | M1 bootstrap-nullable; once canonicalized, CHECK (container_state in ('active','archived','trashed')) |
 | prior_container_state | text | CHECK (prior_container_state is null or prior_container_state in ('active','archived')); restore evidence, not a guess |
-| prior_container_state_status | text not null default 'not_applicable' | CHECK (prior_container_state_status in ('not_applicable','proven','unknown','contradictory')); while trashed it is proven, unknown, or contradictory; proven requires prior_container_state |
+| prior_container_state_status | text | M1 bootstrap-nullable; once canonicalized, CHECK (prior_container_state_status in ('not_applicable','proven','unknown','contradictory')); while trashed it is proven, unknown, or contradictory; proven requires prior_container_state |
 | terminal_completed_at | timestamptz | Canonical terminal transition timestamp; only non-null for permanently_complete |
 | container_trashed_at | timestamptz | Canonical current Trash transition timestamp; nullable unless container_state='trashed' |
-| workflow_state | text not null default 'none' | CHECK (workflow_state in ('none','in_progress')) |
+| workflow_state | text | M1 bootstrap-nullable; once canonicalized, CHECK (workflow_state in ('none','in_progress')) |
 | workflow_started_at | timestamptz | Required for workflow_state='in_progress' |
 | workflow_logical_date | date | Required for workflow_state='in_progress' |
-| workflow_occurrence_id | uuid | Nullable current occurrence reference; deferred FK to adhdice_task_occurrences(id,user_id) |
+| workflow_occurrence_id | uuid | Nullable current occurrence reference; deferred owner-safe FK `(user_id, workflow_occurrence_id) -> adhdice_task_occurrences(user_id, id)` |
 | workflow_command_id | uuid | Command that established the current workflow state; nullable only when workflow is none |
-| workflow_revision | bigint not null default 1 | CHECK (workflow_revision >= 1); increments on workflow changes |
-| canonical_revision | bigint not null default 1 | CHECK (canonical_revision >= 1); increments on semantic entity/lifecycle/container/workflow changes, not projection repair |
-| canonical_created_at | timestamptz not null default now() | Canonical migration/live boundary timestamp; current created_at remains source timing |
-| canonical_updated_at | timestamptz not null default now() | Canonical semantic update timestamp |
+| workflow_revision | bigint | M1 bootstrap-nullable; once canonicalized, CHECK (workflow_revision >= 1); increments on workflow changes |
+| canonical_revision | bigint | M1 bootstrap-nullable; once canonicalized, CHECK (canonical_revision >= 1); increments on semantic entity/lifecycle/container/workflow changes, not projection repair |
+| canonical_created_at | timestamptz | M1 bootstrap-nullable; explicit canonical migration/live boundary timestamp; current created_at remains source timing |
+| canonical_updated_at | timestamptz | M1 bootstrap-nullable; explicit canonical semantic update timestamp |
 | projection_source_canonical_revision | bigint | Revision used for compatibility projections; nullable before bootstrap |
 | projection_source_fingerprint | text | Canonical source digest for projection detection |
 | projection_version | text | Projection contract version; required together with projection source fields |
 
-The retained Task Entity columns are the existing id uuid primary key, user_id uuid not null, parent_task_id uuid nullable, title text not null, notes text nullable, priority enum, priority_level integer, energy enum, is_urgent boolean, is_important boolean, estimated_minutes integer nullable, actual_seconds integer, tags text array, external link fields, one_step_at_a_time boolean, subtasks_auto_reset boolean, pinned_at timestamptz, pin_order integer, sort_order bigint, created_at timestamptz, and updated_at timestamptz. The existing schedule/projection/lifecycle columns are retained and classified in §3.2. No retained descriptive field changes ownership or nullability in the first canonical schema artifact.
+The retained Task Entity columns are the existing id uuid primary key, user_id uuid not null, parent_task_id uuid nullable, title text not null, notes text nullable, priority enum, priority_level integer, energy enum, is_urgent boolean, is_important boolean, estimated_minutes integer nullable, actual_seconds integer, tags text array, external link fields, one_step_at_a_time boolean, subtasks_auto_reset boolean, pinned_at timestamptz, pin_order integer, sort_order bigint, created_at timestamptz, and updated_at timestamptz. The existing schedule/projection/lifecycle columns are retained and classified in §3.4. No retained descriptive field changes ownership or nullability in the first canonical schema artifact.
 
-Add unique (user_id, id) for composite owner foreign keys. Add checks:
+Add unique (user_id, id) for composite owner foreign keys. M1 adds only the bootstrap-safe shape: the semantic additions above remain nullable and do not default existing rows to parent, active, none, or any other canonical value. The `canonicalization_status` default is safe because it records that canonicalization has not happened; it is not a semantic Task fact.
+
+M1 may install NULL-tolerant allow-list checks (`column is null or column in (...)`) so malformed non-null values are rejected without rejecting legacy rows. Inter-column semantic checks are evaluated only when `canonicalization_status` is canonical, and the following are the tightened canonical form after the row is canonicalized:
 
 ~~~text
 terminal_state = active OR terminal_completed_at IS NOT NULL
@@ -140,7 +145,35 @@ prior_container_state_status = not_applicable -> container_state <> trashed
 
 The existing self-parent check remains. The migration classifier must additionally reject cross-user parents and cycles; a database recursive trigger is not the canonical hierarchy operation.
 
-### 3.2 Existing field classification
+### 3.2 Canonicalization bootstrap and tightening
+
+The staged physical contract is:
+
+1. **M1 schema/bootstrap state.** Add `canonicalization_status` with default `legacy_uninitialized`, add the canonical semantic Task columns as nullable with no semantic defaults, and leave existing legacy columns untouched. Existing rows therefore remain distinguishable: their canonical semantic columns are null and their marker is `legacy_uninitialized`. M1 does not claim that any such row is a canonical parent, active Task, unscheduled Task, or workflow-none Task. New canonical rows must supply all required semantic values explicitly; the bootstrap default must not be used as a runtime insert shortcut.
+2. **Proven backfill initialization.** For a row whose complete canonical identity, lifecycle/container, and workflow interpretation is `PROVEN` or `HIGH` under the Phase 1D-2 promotion rules, one migration operation writes the full required canonical set, explicit revisions/timestamps, and `canonicalization_status='canonical_proven'`. A row with unresolved or contradictory required facts remains `canonicalization_status='needs_attention'` with those unresolved semantic columns null; its proven sub-facts live in the migration classification/evidence, not in a partially authoritative Task row. The migration never fills an unresolved field with a semantic default.
+3. **Canonical runtime state.** A canonical command-created Task writes the same complete semantic set and uses `canonicalization_status='canonical_runtime'`; a runtime command may transition a proven row to that marker. Runtime commands cannot operate as canonical authority on `legacy_uninitialized` or `needs_attention` rows without an explicit, separately authorized migration/repair path.
+4. **Later tightening.** Only after the relevant population has no `legacy_uninitialized` or `needs_attention` rows and the M2 verification proves complete initialization may a later schema step add `NOT NULL`, semantic checks, and any desired canonical-only defaults. Tightening is not part of the bootstrap deployment if it would reject or reinterpret unresolved legacy rows. `canonicalization_status` remains provenance/operational metadata and is never consulted as a competing Task-state authority.
+
+### 3.3 Owner-safe composite-key contract
+
+Every new user-owned canonical relationship that carries both `user_id` and another row identity uses a matching composite key. Referenced canonical tables expose `UNIQUE (user_id, id)` before these FKs are added; `adhdice_clean_tasks` already has the same required unique key after the Task foundation step. RLS is defense in depth and cannot substitute for these constraints.
+
+| Child/reference | Required owner-safe relationship |
+|---|---|
+| Task `workflow_occurrence_id` | `(user_id, workflow_occurrence_id) -> adhdice_task_occurrences(user_id, id)`; nullable only when workflow is none |
+| Schedule boundary `entity_id`, `prior_boundary_id`, `affected_occurrence_id` | `(user_id, entity_id) -> adhdice_clean_tasks(user_id, id)`; `(user_id, prior_boundary_id) -> adhdice_task_schedule_boundaries(user_id, id)`; `(user_id, affected_occurrence_id) -> adhdice_task_occurrences(user_id, id)` |
+| Occurrence `entity_id`, `source_boundary_id`, `resolved_history_id` | `(user_id, entity_id) -> adhdice_clean_tasks(user_id, id)`; `(user_id, source_boundary_id) -> adhdice_task_schedule_boundaries(user_id, id)`; `(user_id, resolved_history_id) -> adhdice_task_history_facts(user_id, id)` |
+| Effective override `entity_id`, `occurrence_id`, `schedule_boundary_id`, `prior_override_id`, `history_id` | Composite FKs to `adhdice_clean_tasks`, `adhdice_task_occurrences`, `adhdice_task_schedule_boundaries`, the same override table, and `adhdice_task_history_facts` respectively; prior override also carries the same occurrence scope and predecessor sequence |
+| Canonical History `entity_id`, `occurrence_id`, `schedule_boundary_id` | Composite FKs to `adhdice_clean_tasks`, `adhdice_task_occurrences`, and `adhdice_task_schedule_boundaries`; `source_legacy_history_id` intentionally has no restrictive canonical FK so orphan legacy evidence survives |
+| Calendar override `entity_id`, command references | Composite FK to `adhdice_clean_tasks`; nullable runtime `command_id` and `cleared_by_command_id` use `(user_id, command_id) -> adhdice_task_command_operations(user_id, command_id)` |
+| Command operation `entity_id` | Nullable user-level command scope; when present, `(user_id, entity_id) -> adhdice_clean_tasks(user_id, id)` |
+| Reward entitlement `entity_id`, `canonical_history_id`, `canonical_command_id` | Composite FKs to `adhdice_clean_tasks`, `adhdice_task_history_facts`, and `(user_id, command_id) -> adhdice_task_command_operations(user_id, command_id)`; the command FK is nullable only for migration bootstrap under §11.1 |
+| Reward grant `entitlement_id` | `(user_id, entitlement_id) -> adhdice_task_reward_entitlements(user_id, id)` |
+| Reward claim consumption `grant_id` | `(user_id, grant_id) -> adhdice_task_reward_grants(user_id, id)` |
+
+The same composite pattern applies to runtime command references on boundaries, occurrences, effective overrides, and canonical History. Migration provenance references are operational, not user commands: `migration_operation_id` remains nullable on canonical tables in 1E-2A and receives its matching `(user_id, migration_operation_id)` FK when 1E-2B creates the migration operation table. No canonical relationship may use a user_id-only FK plus an independently trusted UUID.
+
+### 3.4 Existing field classification
 
 | Existing field | Initial target state | Compatibility projection | Canonical replacement/retirement gate |
 |---|---|---|---|
@@ -191,8 +224,8 @@ This is the immutable full-snapshot schedule table. It owns recurrence configura
 | anchor_confidence | text not null | proven, high_confidence, ambiguous, or unavailable |
 | historical_scope_known | boolean not null | False for a prospective boundary |
 | prospective_only | boolean not null default false | Must imply historical_scope_known=false |
-| prior_boundary_id | uuid | Self-FK; null only for initial boundary |
-| affected_occurrence_id | uuid | Nullable for Delay boundary; deferred FK to occurrence |
+| prior_boundary_id | uuid | Owner-safe self-FK `(user_id, prior_boundary_id) -> adhdice_task_schedule_boundaries(user_id, id)`; null only for initial boundary |
+| affected_occurrence_id | uuid | Nullable for Delay boundary; deferred owner-safe FK `(user_id, affected_occurrence_id) -> adhdice_task_occurrences(user_id, id)` |
 | logical_day_settings_revision | bigint not null | Profile settings generation used to accept the boundary |
 | timezone | text not null | IANA timezone snapshot; validated by command/function against pg_timezone_names |
 | day_start_time | time without time zone not null | Logical-day boundary snapshot |
@@ -200,7 +233,7 @@ This is the immutable full-snapshot schedule table. It owns recurrence configura
 | actor_id | uuid | Required for user/repair; null for migration/authorized server automation where no user actor exists |
 | source | text not null | Non-empty source label |
 | command_id | uuid | Runtime command identity, nullable for migration initial boundary |
-| idempotence_identity | text | Required for runtime writes; migration uses migration operation identity |
+| idempotence_identity | text not null | Stable retry identity for runtime or migration append |
 | migration_operation_id | uuid | Nullable for live commands; source migration operation when backfilled |
 | migration_version | text | Required when actor_kind='migration' |
 | classifier_version | text | Required when actor_kind='migration' |
@@ -213,6 +246,7 @@ Unique constraints and checks:
 
 - unique (user_id, entity_id, boundary_sequence) prevents conflicting same-sequence boundaries.
 - unique (user_id, id) supports composite child references.
+- `prior_boundary_id` and `affected_occurrence_id` are added as matching `(user_id, id)` composite FKs after all referenced tables exist; a user_id-only FK is insufficient.
 - schedule_model='unscheduled' requires repeat_frequency='none', one_time_due_on is null, and anchor_date is null.
 - schedule_model='one_time' requires repeat_frequency='none' and one_time_due_on is not null.
 - schedule_model in ('rolling','fixed') requires repeat_frequency <> 'none'.
@@ -244,7 +278,7 @@ Occurrences are materialized on demand, never for every future calculated fixed 
 | user_id, entity_id, entity_kind | owner-scoped UUID/text | Composite FK to Task; kind must match Task |
 | occurrence_key | text not null | Must equal task:{entity_id}:occurrence:{scheduled_due_on} |
 | scheduled_due_on | date not null | Immutable original scheduled origin |
-| source_boundary_id | uuid not null | Boundary that established the origin |
+| source_boundary_id | uuid not null | Owner-safe composite FK `(user_id, source_boundary_id) -> adhdice_task_schedule_boundaries(user_id, id)` that established the origin |
 | recurrence_source_fingerprint | text not null | Rule/anchor digest |
 | origin_kind | text not null | proven, reconstructed, or legacy_ambiguous |
 | origin_confidence | text not null | proven, high_confidence, ambiguous, or unavailable |
@@ -253,12 +287,12 @@ Occurrences are materialized on demand, never for every future calculated fixed 
 | resolution_state | text not null default 'unresolved' | unresolved, resolved, or superseded |
 | resolved_logical_date | date | Required when resolved |
 | resolved_outcome | text | Null or done, did_my_best, missed, delayed, complete |
-| resolved_history_id | uuid | Deferred FK to canonical History |
-| command_id, migration_operation_id | uuid | Runtime/migration provenance |
+| resolved_history_id | uuid | Deferred owner-safe composite FK `(user_id, resolved_history_id) -> adhdice_task_history_facts(user_id, id)` |
+| command_id, migration_operation_id | uuid | Runtime/migration provenance; runtime command reference uses `(user_id, command_id)`, while migration provenance is linked by 1E-2B |
 | revision | bigint not null default 1 | check (revision >= 1) |
 | created_at, updated_at | timestamptz not null default now() | Timing/audit |
 
-Use unique (user_id, entity_id, scheduled_due_on) and unique (user_id, occurrence_key). The first enforces the current same-day identity contract; the second makes deterministic retry lookup cheap. The source boundary FK is restricted. Occurrence FK from workflow/history/override is restricted; no future projection inserts one.
+Use unique (user_id, entity_id, scheduled_due_on), unique (user_id, occurrence_key), unique (user_id, id), and unique (user_id, id, scheduled_due_on). The first enforces the current same-day identity contract; the second makes deterministic retry lookup cheap; the third supports owner-safe child references; the fourth supports date-matching composite FKs from effective overrides and History. The source boundary FK is restricted. Occurrence FK from workflow/history/override is restricted; no future projection inserts one.
 
 Required indexes are (user_id, entity_id, scheduled_due_on), (user_id, entity_id, resolution_state, scheduled_due_on), (user_id, source_boundary_id), and (user_id, occurrence_key). RLS is owner-scoped select; mutations are command/RPC-only.
 
@@ -270,19 +304,22 @@ This is append-only. scheduled_due_on is copied for constraint/reference verific
 |---|---|---|
 | id | UUID PK | Override identity |
 | user_id, entity_id, occurrence_id | UUID not null | Owner-scoped composite FKs |
-| scheduled_due_on | date not null | Must match the referenced occurrence through composite FK |
+| scheduled_due_on | date not null | Must match the referenced occurrence through `(user_id, occurrence_id, scheduled_due_on) -> adhdice_task_occurrences(user_id, id, scheduled_due_on)` |
 | effective_due_on | date not null | Must be strictly after action_logical_date |
 | action_logical_date | date not null | Logical date of Delay/correction |
 | delay_kind | text not null | delay or correction |
-| prior_override_id | UUID | Previous override for this origin; null for first |
-| schedule_boundary_id | UUID not null | Boundary under which movement was accepted |
-| history_id | UUID | Canonical Delayed History audit row when present |
+| override_sequence | bigint not null | Deterministic append order per occurrence; CHECK (override_sequence >= 1) and unique with `(user_id, occurrence_id)` |
+| prior_override_id | UUID | Owner-safe self-reference to the previous override for this occurrence; null for sequence 1 |
+| prior_override_sequence | bigint | Previous sequence; null for sequence 1 and otherwise exactly `override_sequence - 1` |
+| schedule_boundary_id | UUID not null | Owner-safe composite FK `(user_id, schedule_boundary_id) -> adhdice_task_schedule_boundaries(user_id, id)` under which movement was accepted |
+| history_id | UUID | Nullable owner-safe composite FK `(user_id, history_id) -> adhdice_task_history_facts(user_id, id)` for the Delayed audit row |
 | provenance_kind, actor_kind, actor_id, source | provenance fields | Required source evidence |
-| command_id, idempotence_identity, migration_operation_id | UUID/text/UUID | Retry and migration identity |
-| revision | bigint not null default 1 | Immutable sequence marker |
+| command_id, idempotence_identity, migration_operation_id | UUID/text/UUID | Runtime/migration identity; `idempotence_identity` and `accepted_payload_digest` are required for every append |
+| accepted_payload_digest | text not null | Digest of the accepted Delay/correction request or migration input; same identity with a different digest is rejected |
+| revision | bigint not null default 1 | Immutable row revision marker; never business ordering |
 | created_at, updated_at | timestamptz | Timing/audit |
 
-Use unique (user_id, occurrence_id, idempotence_identity) for runtime and migration retry. The current override is the highest accepted sequence/creation order under boundary order; there is no mutable is_current authority. Repeated Delay appends a new row and preserves the origin. RLS is owner-scoped select and RPC-only mutation. FK to Task and occurrence is restrict; Trash/restore leaves overrides intact.
+Use unique (user_id, occurrence_id, idempotence_identity) for runtime and migration retry, unique (user_id, occurrence_id, override_sequence) for deterministic per-occurrence order, unique (user_id, occurrence_id, id) for the prior-override FK, and unique (user_id, id) for general owner-safe references. Add a composite FK `(user_id, occurrence_id, scheduled_due_on) -> adhdice_task_occurrences(user_id, id, scheduled_due_on)` plus `(user_id, occurrence_id, prior_override_id) -> adhdice_task_occurrence_effective_overrides(user_id, occurrence_id, id)` and `(user_id, occurrence_id, prior_override_sequence) -> adhdice_task_occurrence_effective_overrides(user_id, occurrence_id, override_sequence)`. Sequence 1 requires null prior fields; every later row requires both prior fields and `prior_override_sequence = override_sequence - 1`, with composite self-FKs proving the same user, occurrence, and predecessor. The current override is the row with the greatest `override_sequence`; `created_at` is audit timing only and never business ordering. Repeated Delay with the same identity and digest returns the existing row; the same identity with a different digest is rejected. A different concurrent request must lock the occurrence/current predecessor and supply the expected latest occurrence revision/override sequence; a stale expected state returns a conflict and appends nothing. A migration retry uses the same deterministic operation identity, input digest, and expected predecessor; it replays the existing row or returns a conflict and never allocates a second sequence for the same operation. RLS is owner-scoped select and RPC-only mutation. FK to Task and occurrence is restrict; Trash/restore leaves overrides intact.
 
 ## 7. adhdice_task_history_facts — canonical explicit History
 
@@ -295,17 +332,17 @@ The new table is the canonical History authority. It is a replaceable current fa
 | logical_date | date not null | Explicit outcome date |
 | outcome | text not null | done, did_my_best, missed, delayed, or complete |
 | event_kind | text not null | explicit_outcome, terminal_complete, delay_audit, correction, or authorized_automation |
-| occurrence_id | UUID | Nullable safe origin reference |
+| occurrence_id | UUID | Nullable safe origin reference; when present, owner-safe composite FK with scheduled_due_on to `adhdice_task_occurrences` |
 | scheduled_due_on | date | Nullable only when origin is unavailable; required with occurrence_id |
 | effective_due_on | date | Required for canonical delayed; otherwise null unless a correction explicitly records it |
-| schedule_boundary_id | UUID | Boundary used for interpretation |
+| schedule_boundary_id | UUID | Owner-safe composite FK `(user_id, schedule_boundary_id) -> adhdice_task_schedule_boundaries(user_id, id)` used for interpretation |
 | recurrence_source_fingerprint | text | Snapshot/digest when recurrence applies |
 | provenance_kind | text not null | user, authorized_automation, migration_reconstruction, or repair |
 | actor_kind, actor_id, source | source fields | User/automation/migration evidence |
 | logical_day_settings_revision | bigint not null | Profile generation |
 | timezone | text not null | Context snapshot |
 | day_start_time | time without time zone not null | Context snapshot |
-| command_id, idempotence_identity, migration_operation_id | UUID/text/UUID | Runtime/migration identity |
+| command_id, idempotence_identity, migration_operation_id | UUID/text/UUID | Runtime/migration identity; runtime command reference is owner-safe and migration provenance is linked by 1E-2B |
 | source_legacy_history_id | UUID | Raw source row identity; no cascade FK |
 | revision | bigint not null default 1 | Replace/clear expected revision |
 | created_at, updated_at | timestamptz | Timing/audit |
@@ -314,11 +351,13 @@ Constraints:
 
 - unique (user_id, entity_id, logical_date) is the one authoritative explicit outcome rule.
 - unique (user_id, id) supports owner-safe references.
+- `(user_id, entity_id)` and `(user_id, schedule_boundary_id)` are owner-safe composite FKs when the references are present. When `occurrence_id` is present, `(user_id, occurrence_id, scheduled_due_on)` references the matching occurrence key; a nullable occurrence reference is allowed only for the explicitly origin-unavailable cases in this table.
 - event_kind='terminal_complete' requires outcome='complete'; event_kind='delay_audit' requires outcome='delayed'.
 - outcome='delayed' requires effective_due_on is not null and effective_due_on > logical_date.
 - occurrence_id is not null requires scheduled_due_on is not null; no occurrence is assigned merely because due_on is present.
 - outcome='complete' does not itself prove lifecycle unless the same command transaction updates the Task terminal axis.
 - There is no automatic_missed canonical value and no calculated Missed insert path.
+- Runtime/authorized-repair canonical facts require a non-null command_id and a null migration_operation_id; migration_reconstruction facts require a non-null migration_operation_id and a null command_id. `idempotence_identity` is required in either case. Migration provenance never fabricates a user command.
 
 Create indexes (user_id, entity_id, logical_date desc), (user_id, logical_date desc, updated_at desc), (user_id, occurrence_id), and (user_id, command_id). Replace updates require expected row revision or absent-row proof. Clear physically removes the current fact through the canonical command and records the prior digest/result in the command ledger; it does not create a Missed row.
 
@@ -364,13 +403,13 @@ This table stores date-scoped scheduling state, not outcomes.
 | reason | text | Optional non-empty explanation |
 | is_active | boolean not null default true | Current active marker |
 | cleared_at | timestamptz | Required when inactive |
-| cleared_by_command_id | UUID | Clear identity |
+| cleared_by_command_id | UUID | Nullable owner-safe composite FK `(user_id, cleared_by_command_id) -> adhdice_task_command_operations(user_id, command_id)` |
 | provenance_kind, actor_kind, actor_id, source | source fields | Manual, authorized repair, or migration |
 | command_id, idempotence_identity, migration_operation_id | UUID/text/UUID | Retry/source evidence |
 | revision | bigint not null default 1 | Active replacement/clear revision |
 | created_at, updated_at | timestamptz | Timing |
 
-Use a unique partial index on (user_id, entity_id, logical_date) where is_active. A clear marks the row inactive and retains it; it never writes History or changes Repeat. Required indexes are active entity/date, user/date, and unresolved migration source. RLS is owner-scoped select; mutations are command/RPC-only.
+Use a unique partial index on (user_id, entity_id, logical_date) where is_active. The Task and nullable runtime command references use owner-safe composite FKs. A clear marks the row inactive and retains it; it never writes History or changes Repeat. Required indexes are active entity/date, user/date, and unresolved migration source. RLS is owner-scoped select; mutations are command/RPC-only.
 
 ## 10. Command-operation ledger: adhdice_task_command_operations
 
@@ -398,7 +437,7 @@ This is compact replay/idempotence storage, not universal event sourcing.
 | schema_contract_version | text not null | Command contract version |
 | created_at, completed_at | timestamptz | Completion nullable until terminal state |
 
-Use unique (user_id, idempotence_identity) and unique (user_id, command_id). Same identity plus same payload/proof returns the stored result. Same identity with a different payload is rejected. A command row is required for every canonical state-changing runtime command and not required for pure reads or calculated Missed evaluation. Migration operations use the separate migration ledger and never fabricate user commands.
+Use unique (user_id, id), unique (user_id, idempotence_identity), and unique (user_id, command_id). The `(user_id, command_id)` key is the parent key for owner-safe command references. Same identity plus same payload/proof returns the stored result. Same identity with a different payload is rejected. A command row is required for every canonical state-changing runtime command and not required for pure reads or calculated Missed evaluation. Migration operations use the separate migration ledger and never fabricate user commands.
 
 Required indexes: (user_id, command_id), (user_id, entity_id, created_at desc), (user_id, state, created_at), and (user_id, requested_logical_date). RLS is owner-scoped select only; runtime mutations execute through authenticated RPCs with server-owned user_id.
 
@@ -406,7 +445,7 @@ Required indexes: (user_id, command_id), (user_id, entity_id, created_at desc), 
 
 ### 11.1 adhdice_task_reward_entitlements
 
-This is the canonical handled-success entitlement. It is committed atomically with the successful canonical Task/History transition.
+This is the canonical handled-success entitlement. It is committed atomically with the successful canonical Task/History transition for runtime commands, or created by the private migration path only when the historical bootstrap evidence rules below are satisfied.
 
 | Column | Type/nullability/default | Exact rule |
 |---|---|---|
@@ -415,18 +454,21 @@ This is the canonical handled-success entitlement. It is committed atomically wi
 | logical_date | date not null | Reward scope |
 | reward_program_version | text not null | Program identity; version changes create a new uniqueness namespace |
 | canonical_history_id | UUID not null | Canonical success source |
-| canonical_command_id | UUID not null | Success command source |
+| canonical_command_id | UUID | Runtime success command source; null only for `migration_bootstrap` |
 | canonical_event_identity | text not null | Stable source identity |
 | outcome_snapshot | text not null | done, did_my_best, or complete |
 | effective_obligation_identity | text | Current effective grouping identity when applicable |
 | eligibility_kind | text not null | handled_success or authorized_automation |
+| entitlement_source_kind | text not null | `runtime_command` or `migration_bootstrap` |
 | state | text not null default pending | pending, fulfilled, or blocked |
-| migration_operation_id | UUID | Historical bootstrap evidence |
+| migration_operation_id | UUID | Non-null only for `migration_bootstrap`; never a command identity |
 | created_at, updated_at, fulfilled_at | timestamps | Fulfillment nullable |
 
-Unique (user_id, entity_id, logical_date, reward_program_version) is immutable even after reversal, claim, or status correction. Done, Did My Best, and Complete share this key. No entitlement is created for Delay, Missed, calculated Missed, In Progress, Archive, Trash, or time passage. A blocked entitlement remains unique and must be explicitly resolved, never duplicated.
+Unique (user_id, id) supports owner-safe child references. Unique (user_id, entity_id, logical_date, reward_program_version) is immutable even after reversal, claim, or status correction. Done, Did My Best, and Complete share this key. No entitlement is created for Delay, Missed, calculated Missed, In Progress, Archive, Trash, or time passage. A blocked runtime entitlement remains unique and must be explicitly resolved, never duplicated. The exact source checks are: `entitlement_source_kind='runtime_command'` requires `canonical_command_id is not null and migration_operation_id is null`; `entitlement_source_kind='migration_bootstrap'` requires `canonical_command_id is null and migration_operation_id is not null`. `canonical_history_id` is always required and owner-safe; migration bootstrap therefore points to a canonical History fact that itself records migration provenance, not to a fabricated command.
 
-Required indexes: uniqueness key, (user_id, state, created_at), (user_id, entity_id, logical_date desc), and (user_id, canonical_command_id). FK to Task and canonical History is restrict; RLS is owner-scoped select and RPC-only state changes.
+Historical reward evidence may produce a migration-bootstrap entitlement only when all of the following are true: (1) the matching canonical History row is an explicit handled-success outcome for the same owner, entity, logical date, and outcome, with no unresolved contradiction; (2) its source History classification is `PROVEN` or `CANONICAL_RECONSTRUCTABLE` under the locked Phase 1D-2 rules, and the resulting canonical History row records migration provenance; (3) a legacy claim/roll/effect or pending-reward operation uniquely proves the same owner/entity/date and reward-program scope, with a stable source operation/effect identity; and (4) the migration operation records the source fingerprint and evidence snapshot. A success History row without unique economy evidence, a status-only row, a pending balance without source mapping, or an ambiguous/owner-mismatched claim creates migration evidence/issues only and no entitlement. A consumed mapping may preserve `fulfilled`; a proven pending mapping may create `pending`; migration creates no grant, bank item, or new claim.
+
+Required indexes: uniqueness key, (user_id, state, created_at), (user_id, entity_id, logical_date desc), and (user_id, canonical_command_id). Composite FKs to Task and canonical History are restrict; the nullable runtime command reference is the owner-safe composite FK described above. RLS is owner-scoped select and RPC-only state changes.
 
 ### 11.2 adhdice_task_reward_grants
 
@@ -436,7 +478,7 @@ The target uses a new canonical grant record. Existing pending-dice/banked-roll 
 |---|---|---|
 | id | UUID PK | Grant identity |
 | user_id | UUID not null | Owner |
-| entitlement_id | UUID not null | FK to entitlement, restrict |
+| entitlement_id | UUID not null | Owner-safe composite FK `(user_id, entitlement_id) -> adhdice_task_reward_entitlements(user_id, id)`, restrict |
 | grant_operation_identity | text not null | Stable retry identity |
 | grant_kind | text not null default banked_roll | Only banked_roll in this phase |
 | units | integer not null default 1 | Positive grant count |
@@ -446,7 +488,7 @@ The target uses a new canonical grant record. Existing pending-dice/banked-roll 
 | economy_reference | text | Existing bank/roll/ledger identity when applied |
 | created_at, applied_at, updated_at | timestamps | Effect timing |
 
-Use unique (user_id, entitlement_id, grant_kind) and (user_id, grant_operation_identity). One entitlement produces at most one normal grant. Grant application is separate and retryable; it never changes Task, History, recurrence, lifecycle, or projections. Existing adhdice_pending_reward_dice* remains an operational queue/evidence adapter, not the canonical grant identity.
+Use unique (user_id, id), unique (user_id, entitlement_id, grant_kind), and unique (user_id, grant_operation_identity). One entitlement produces at most one normal grant. Grant application is separate and retryable; it never changes Task, History, recurrence, lifecycle, or projections. Existing adhdice_pending_reward_dice* remains an operational queue/evidence adapter, not the canonical grant identity.
 
 ### 11.3 adhdice_task_reward_claim_consumptions
 
@@ -456,14 +498,14 @@ The existing adhdice_task_reward_claims remains legacy compatibility/effect evid
 |---|---|---|
 | id | UUID PK | Consumption identity |
 | user_id | UUID not null | Owner |
-| grant_id | UUID not null | FK to canonical grant, restrict |
+| grant_id | UUID not null | Owner-safe composite FK `(user_id, grant_id) -> adhdice_task_reward_grants(user_id, id)`, restrict |
 | claim_operation_identity | text not null | Stable retry identity |
 | state | text not null default pending | pending, consumed, or failed |
 | economy_reference | text | Point/roll/bank effect identity |
 | error_code, error_message | text | Retry evidence |
 | created_at, consumed_at, updated_at | timestamps | Timing |
 
-Unique (user_id, grant_id) and (user_id, claim_operation_identity) prevent duplicate consumption. Existing claims map as consumed only when owner, entity/date, roll/effect, and promotion evidence uniquely prove the mapping. Ambiguous claims remain evidence and block new grant for the affected scope. A claim is never proof of Task success by itself.
+Use unique (user_id, id), unique (user_id, grant_id), and unique (user_id, claim_operation_identity). Existing claims map as consumed only when owner, entity/date, roll/effect, and promotion evidence uniquely prove the mapping. Ambiguous claims remain evidence and block new grant for the affected scope. A claim is never proof of Task success by itself.
 
 ## 12. Profile logical-day revision
 
@@ -508,7 +550,7 @@ last_successful_stage is one of M0, M1, M2, M3, M4, M5, M6, M7, M8, or M9. Lease
 
 ### 13.2 adhdice_task_state_migration_entities — one row per user/entity
 
-Primary key (user_id, entity_id) with a composite FK to Task. Columns:
+Primary key (user_id, entity_id) with the required composite FK `(user_id, entity_id) -> adhdice_clean_tasks(user_id, id)`. Columns:
 
 ~~~text
 entity_kind text not null
@@ -528,7 +570,7 @@ created_at timestamptz not null default now()
 updated_at timestamptz not null default now()
 ~~~
 
-Use indexes (user_id, state, updated_at), (user_id, blocking_issue_count desc), and (user_id, entity_kind). A user may be command_cutover for proven entities while another entity is needs_attention.
+Use indexes (user_id, state, updated_at), (user_id, blocking_issue_count desc), and (user_id, entity_kind). `last_operation_id` uses `(user_id, last_operation_id) -> adhdice_task_migration_operations(user_id, id)` once 1E-2B creates that parent key. A user may be command_cutover for proven entities while another entity is needs_attention.
 
 ### 13.3 adhdice_task_state_migration_issues — migration-only evidence
 
@@ -559,7 +601,7 @@ created_at timestamptz not null default now()
 updated_at timestamptz not null default now()
 ~~~
 
-Use unique (user_id, scope_identity, category, evidence_fingerprint, classifier_version), where scope_identity is equal to entity UUID or user scope. Index unresolved blocking rows by (user_id, severity, resolved_at) and (category, resolved_at).
+Use unique (user_id, scope_identity, category, evidence_fingerprint, classifier_version), where scope_identity is equal to entity UUID or user scope. `entity_id` and `source_history_id` intentionally have no restrictive canonical FK: issue rows must preserve orphan/cross-user evidence. `resolution_operation_id` uses the owner-safe `(user_id, resolution_operation_id) -> adhdice_task_migration_operations(user_id, id)` FK once 1E-2B creates that parent key. Index unresolved blocking rows by (user_id, severity, resolved_at) and (category, resolved_at).
 
 ### 13.4 adhdice_task_migration_operations
 
@@ -584,7 +626,7 @@ created_at timestamptz not null default now()
 completed_at timestamptz
 ~~~
 
-Unique (user_id, operation_identity) makes batches restartable. Migration operation IDs are never written as user command identities.
+Use unique (user_id, id) for owner-safe migration-operation references and unique (user_id, operation_identity) to make batches restartable. Migration operation IDs are never written as user command identities. Canonical rows that carry `migration_operation_id` receive the matching `(user_id, migration_operation_id) -> adhdice_task_migration_operations(user_id, id)` FK in 1E-2B; the operation table remains operational provenance, not a canonical Task-state authority.
 
 All migration tables enable RLS. Authenticated users may read their own report/state rows only if the future product exposes them; they have no direct write grants. Private migration functions/scripts own writes. Any SECURITY DEFINER function must live outside the exposed schema, set a fixed search path, validate auth.uid() or a controlled migration role, and have explicit execute grants.
 
@@ -777,9 +819,9 @@ These files are planned only; none is created by Phase 1E-1.
 
 | Artifact | Stage | Purpose | Idempotence/write/rollback |
 |---|---|---|---|
-| supabase/add_task_state_canonical_schema.sql | M1 | Add Task/profile canonical columns and all canonical fact/effect tables, base FKs, checks, RLS, grants, and indexes | DDL rerunnable with guarded names; schema-only; rollback is disabling runtime, not dropping data |
+| supabase/add_task_state_canonical_schema.sql | M1 / 1E-2A | Canonical Task/profile bootstrap foundation plus canonical fact/effect/command/reward structures, owner-safe base FKs, checks, RLS, grants, indexes, helpers, and schema marker | DDL rerunnable with guarded names; schema-only; no migration tables/functions and no data writes; rollback is disabling runtime, not dropping data |
 | scripts/task-state-migration-dry-run.ts | M0 | Read-only classifier/report | No writes; rerunnable; report artifact only |
-| supabase/add_task_state_migration_support.sql | M1/M2 | Migration state/entity/issue/operation tables and private function scaffolding | DDL plus safe support functions; rerunnable; no business data deletion |
+| supabase/add_task_state_migration_support.sql | M1/M2 / 1E-2B | Legacy History evidence plus migration state/entity/issue/operation tables, migration-only owner-safe references, and private classifier/backfill support scaffolding | DDL plus safe support functions; rerunnable; no canonical fact/effect/command/reward ownership and no business data deletion |
 | scripts/task-state-migration-backfill.ts | M2 | Bounded lease/snapshot/backfill/delta orchestration | Deterministic operation IDs; data-writing; retryable; rollback leaves canonical rows |
 | supabase/verify_task_state_schema.sql | M1 | Read-only deployment-proof assertions for structure, RLS, grants, and signatures | Read-only; rerunnable; no rollback needed |
 | supabase/verify_task_state_migration.sql | M2/M3 | Read-only integrity, provenance, ownership, and no-loss assertions | Read-only; report failure blocks stage advance |
@@ -788,32 +830,31 @@ These files are planned only; none is created by Phase 1E-1.
 | supabase/add_task_state_projection_sync.sql | M5 | Canonical-to-legacy projection/rebuild functions | Guarded/retryable; never mutates canonical truth on projection failure |
 | supabase/add_task_state_cutover_support.sql | M6-M8 | Temporary gates, canonical rollover, legacy disable/retirement probes | Idempotent operational functions; rollback disables gates without deleting canonical rows |
 
-The first SQL file after approval is exactly supabase/add_task_state_canonical_schema.sql. It may contain only M1 DDL, constraints, owner-safe RLS/grants, immutable timestamp/revision helpers, and schema version marker. It may not backfill data, alter runtime writers, implement command semantics, or execute live migration.
+The first SQL file after approval is exactly supabase/add_task_state_canonical_schema.sql. It owns 1E-2A only: the canonical Task/profile foundation, canonical fact/effect/command/reward tables, their owner-safe composite keys/FKs, bootstrap-safe constraints, RLS/grants, immutable timestamp/revision helpers, and schema version marker. It does not create `adhdice_task_state_migrations`, `adhdice_task_state_migration_entities`, `adhdice_task_state_migration_issues`, or `adhdice_task_migration_operations`; it does not create migration functions/classifier machinery, backfill data, alter runtime writers, implement command semantics, or execute live migration. Its nullable `migration_operation_id` provenance columns are allowed to exist without a parent FK until 1E-2B creates that operational parent table.
+
+supabase/add_task_state_migration_support.sql owns 1E-2B only: `adhdice_task_legacy_history_evidence`, the four migration state/entity/issue/operation structures, their migration-only indexes/RLS/grants, private lease/classifier/backfill support functions, and the deferred owner-safe `(user_id, migration_operation_id)` provenance FKs from canonical rows where appropriate. It does not create or redefine canonical Task/fact/effect/command/reward tables, alter product semantics, or perform a backfill merely because its support structures exist. The TypeScript dry-run/backfill scripts remain separate artifacts with the write boundaries in this table.
 
 ## 19. DDL ordering and constraint strategy
 
-Future SQL must execute in this order:
+The two SQL artifacts have separate DDL orders:
 
-1. Create/reuse the required extension and schema contract marker.
-2. Add Task/profile canonical columns and Task owner unique key.
-3. Create schedule boundaries.
-4. Create occurrences.
-5. Create effective-date overrides.
-6. Create canonical History facts.
-7. Create legacy History evidence.
-8. Create Calendar overrides.
-9. Create command ledger.
-10. Create reward entitlements, grants, and claim consumptions.
-11. Create migration state/entity/issue/operation structures.
-12. Add indexes, including partial unique indexes.
-13. Add immediate structural FKs and NOT VALID data-dependent FKs where the existing population may violate them.
-14. Run M1 verification and clean/repair source integrity.
-15. Backfill proven rows and only then VALIDATE CONSTRAINT for required constraints.
-16. Enable RLS, create policies, revoke direct mutation grants, grant owner-scoped select/execute.
-17. Add only updated_at/revision/projection-support triggers.
-18. Add migration/read-only functions and schema version marker.
+**1E-2A — `add_task_state_canonical_schema.sql`:**
 
-NOT VALID is permitted only for FKs/checks that inspect pre-existing legacy data; validation is a separate M2/M1 gate. New canonical writes must satisfy the constraint immediately. CREATE INDEX CONCURRENTLY is required for large live tables where deployment tooling permits it; unique indexes must be validated before backfill stage advance.
+1. Create/reuse the required extension and canonical schema contract marker.
+2. Add the Task/profile bootstrap columns, `canonicalization_status`, and Task owner unique key without semantic defaults on legacy rows.
+3. Create schedule boundaries, occurrences, effective-date overrides, canonical History facts, Calendar overrides, the command ledger, and reward entitlements/grants/claim consumptions.
+4. Add the required unique keys, indexes, bootstrap-safe checks, and all immediate owner-safe canonical composite FKs. Add deferred/circular FKs after every referenced canonical table exists. Runtime canonical writes must satisfy these constraints immediately.
+5. Enable RLS, create policies, revoke direct mutation grants, grant owner-scoped select/execute, and add only timestamp/revision/projection-support triggers and the canonical schema marker.
+
+1E-2A does not create migration state tables, migration operation parents, migration functions, classifiers, or backfill writes. Canonical tables may carry nullable `migration_operation_id` columns without an FK until 1E-2B.
+
+**1E-2B — `add_task_state_migration_support.sql`:**
+
+1. Create `adhdice_task_legacy_history_evidence` plus migration state, entity, issue, and operation structures with their private-role RLS/grants and indexes.
+2. Add owner-safe migration-operation keys/FKs and the deferred migration provenance FKs from canonical rows; preserve nullable/orphan issue evidence where the source identity is not proven.
+3. Add only private lease/classifier/backfill support functions and migration schema markers. No function writes canonical business facts merely because the support artifact is installed.
+
+M1 verification occurs after 1E-2A and before any M2 backfill. Data-dependent validation and proven backfill occur only in the later migration stages. `NOT VALID` is permitted only for FKs/checks that inspect pre-existing legacy data; validation is a separate gate. `CREATE INDEX CONCURRENTLY` is required for large live tables where deployment tooling permits it; unique indexes must be validated before backfill stage advance.
 
 ## 20. Transaction boundaries
 
@@ -845,7 +886,7 @@ Compatibility projections run after canonical commit in a separate retryable tra
 
 Enable RLS on every new public table. For each user-readable table, policies target authenticated and use (select auth.uid()) = user_id. Every update policy has both USING and WITH CHECK. No policy uses deprecated auth.role().
 
-Composite owner FKs are required wherever a child has both user_id and entity_id; the policy is defense in depth, not the only owner check. entity_kind is verified against the Task row by RPC or a safe relational check, never trusted from client payload.
+Composite owner FKs are required for every listed canonical relationship, not only for rows that have `entity_id`: workflow occurrence, boundary ancestry/occurrence, occurrence source/history, effective override occurrence/boundary/prior/history, canonical History occurrence/boundary, entitlement History/command, grant entitlement, and claim grant. Every referenced canonical table exposes `UNIQUE (user_id, id)` (and the command ledger exposes `UNIQUE (user_id, command_id)`). The policy is defense in depth, not the only owner check. `entity_kind` is verified against the Task row by RPC or a safe relational check, never trusted from client payload.
 
 Policy matrix:
 
@@ -875,7 +916,7 @@ Required indexes, in addition to primary/unique constraints:
 - Task: (user_id, entity_kind, container_state, terminal_state), (user_id, parent_task_id, sort_order, id).
 - Boundaries: (user_id, entity_id, effective_from_logical_date desc, boundary_sequence desc), (user_id, entity_id, boundary_sequence desc).
 - Occurrences: (user_id, entity_id, scheduled_due_on), (user_id, entity_id, resolution_state, scheduled_due_on), (user_id, occurrence_key).
-- Effective overrides: (user_id, occurrence_id, created_at desc), (user_id, entity_id, effective_due_on).
+- Effective overrides: (user_id, occurrence_id, override_sequence desc), (user_id, entity_id, effective_due_on).
 - History facts: (user_id, entity_id, logical_date desc), (user_id, logical_date desc, updated_at desc), (user_id, occurrence_id).
 - Legacy evidence: (user_id, classification, legacy_entry_date desc), (user_id, entity_id, legacy_entry_date desc), unresolved partial index.
 - Calendar: active partial (user_id, entity_id, logical_date), (user_id, logical_date desc).
