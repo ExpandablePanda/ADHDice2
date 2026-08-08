@@ -34,6 +34,35 @@ alter table public.adhdice_user_profiles
   add column if not exists day_start_time text not null default '06:00',
   add column if not exists settings_revision bigint not null default 1;
 
+-- Keep the logical-day settings revision database-owned.  A client-supplied
+-- settings_revision is ignored and cannot advance the generation unless one
+-- of the canonical settings actually changes in the same profile update.
+create or replace function public.adhdice_user_profiles_bump_settings_revision()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $function$
+begin
+  if new.timezone is distinct from old.timezone
+     or new.day_start_time is distinct from old.day_start_time then
+    new.settings_revision := old.settings_revision + 1;
+  else
+    new.settings_revision := old.settings_revision;
+  end if;
+
+  return new;
+end;
+$function$;
+
+revoke all on function public.adhdice_user_profiles_bump_settings_revision() from public, anon, authenticated;
+
+drop trigger if exists adhdice_user_profiles_bump_settings_revision
+  on public.adhdice_user_profiles;
+create trigger adhdice_user_profiles_bump_settings_revision
+  before update of timezone, day_start_time, settings_revision
+  on public.adhdice_user_profiles
+  for each row execute function public.adhdice_user_profiles_bump_settings_revision();
+
 alter table public.adhdice_clean_tasks
   add column if not exists canonicalization_status text not null default 'legacy_uninitialized',
   add column if not exists entity_kind text,
