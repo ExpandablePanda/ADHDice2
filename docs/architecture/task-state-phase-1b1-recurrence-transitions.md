@@ -155,6 +155,8 @@ Examples:
 
 An Unscheduled day is not a missed obligation. Inactivity on it cannot create a Missed result or a Missed streak.
 
+An active recurring Task does not become Unscheduled merely because its current due boundary is manually moved. Dates skipped by that move remain Not Due while the recurring schedule remains active.
+
 ### Not Due day
 
 A `Not Due` day means an active recurring schedule exists, but this logical date falls between scheduled obligations.
@@ -694,11 +696,11 @@ Daily Task
 
 Result:
 
-- 8/8 = Unscheduled unless explicit History says otherwise;
-- 8/9 = Unscheduled unless explicit History says otherwise; and
+- 8/8 = Not Due unless explicit History or a manual Calendar override says otherwise;
+- 8/9 = Not Due unless explicit History or a manual Calendar override says otherwise; and
 - 8/10 = Due/Open.
 
-Daily Repeat must not later create Missed for 8/8 or 8/9 contrary to this authoritative boundary.
+Daily Repeat remains active. It must not later create Missed for 8/8 or 8/9 contrary to this authoritative boundary.
 
 ### Manual due-date override on fixed recurrence
 
@@ -959,7 +961,7 @@ This is a future fail-safe and debugging mechanism. Phase 1B-1 defines only the 
 | 23 | Selecting Weekly Friday or Monday/Wednesday/Friday, today Tuesday 8/11 | Weekly Friday first due is 8/14; weekday-set first due is Wednesday 8/12. |
 | 24 | Selecting monthly recurrence on 8/11 | Monthly 15th first due is 8/15; monthly 7th first due is 9/7. |
 | 25 | Fixed Every Monday due 8/10 manually changed on 8/11 to Thursday 8/13 | 8/13 is the current overridden occurrence; Repeat remains Every Monday; normal Monday cadence resumes after it is handled. |
-| 26 | Daily due moved from 8/8 to 8/10 on 8/8 | 8/8 and 8/9 become Unscheduled unless explicit History says otherwise; 8/10 is Due/Open; no later Missed is manufactured for 8/8–8/9. |
+| 26 | Daily due moved from 8/8 to 8/10 on 8/8 | 8/8 and 8/9 are Not Due unless explicit History or a manual Calendar override says otherwise; 8/10 is Due/Open; no later Missed is manufactured for 8/8–8/9. |
 | 27 | Calculated 8/10–8/12 Missed; user overrides 8/11 to Not Due | 8/11 manual Not Due breaks the three-day Missed streak; recurrence rule remains unchanged. |
 | 28 | Every 3 Days: 8/10 Missed, 8/11 manually overridden to Not Due | 8/10 remains active Missed because the later unrelated-date override does not remove the unresolved 8/10 obligation. |
 | 29 | User changes the actual 8/10 Missed obligation date to Not Due | Treat the obligation as not having existed; remove it from derived active status and streak interpretation; do not rewrite Repeat automatically. |
