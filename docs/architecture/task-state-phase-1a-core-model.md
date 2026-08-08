@@ -67,6 +67,8 @@ Conceptual contents:
 
 The configuration is the source for determining whether a date is a scheduled opportunity. It does not itself say whether the opportunity is Pending, Missed, Done, or otherwise handled on a particular logical date.
 
+`TARGET` — A No Repeat configuration must not be assumed to mean “permanently one-off.” If it has no due date and no meaningful History, it is genuinely unscheduled. Once it receives its first meaningful due date or qualifying History activation, the target product behavior is effective rolling-daily recurrence until the user explicitly selects another cadence. Because legacy `repeat_frequency = none` cannot by itself distinguish those cases, the exact representation and transition semantics remain Phase 1B decisions.
+
 `TARGET` — `due_on` must not be treated as a configuration field merely because it is currently stored on the Task row. The target role of `due_on` is the current occurrence cursor projection described in Part 2. A separate stable recurrence anchor is required whenever schedule membership cannot be reconstructed from recurrence rule fields alone.
 
 ### 2. ExplicitHistoryEvent
@@ -193,7 +195,7 @@ These objects are deliberately separate from `due_on`, current status, and Calen
 | Selected weekdays | Current or next unresolved selected-weekday occurrence. | Required when configuration changes or the original schedule start affects which dates are eligible. |
 | Monthly | Current or next unresolved monthly occurrence. | Required for the schedule start and for distinguishing day-of-month/ordinal rules from a moving cursor. |
 | Daily Until Complete | Current or next unresolved obligation while the Task is not terminally complete. | Required. The start/anchor and the completion boundary are not the same as the active cursor. Exact advancement is Phase 1B. |
-| No Repeat | The one unresolved occurrence date. | The anchor and cursor may contain the same date in storage, but they remain separate concepts in the model. |
+| No Repeat | If there is no due date and no meaningful History, there is no active occurrence and the Task is genuinely unscheduled. After a first meaningful due date or qualifying History activation, the target effective behavior is rolling-daily until the user explicitly selects another cadence; `due_on` then represents the current or next unresolved cursor for that effective schedule. | The anchor/cursor representation and activation transition remain Phase 1B decisions. `repeat_frequency = none` alone must not be treated as proof of a one-off Task. |
 
 `TARGET` — The recurrence kernel must be able to answer schedule membership from the stable anchor and recurrence configuration, then use explicit History and chronology to determine the unresolved occurrence. A moving `due_on` value alone is insufficient as the universal recurrence anchor.
 
@@ -220,15 +222,25 @@ These objects are deliberately separate from `due_on`, current status, and Calen
 task:{taskId}:occurrence:{occurrenceDueOn}
 ```
 
-This is valid when a Task can have at most one recurrence obligation on a given due date. It makes the occurrence identity stable across the date on which the user resolves it and prevents `entry_date` from becoming an accidental occurrence key.
+### Resolved current same-day identity gate
 
-`TARGET` — If a future recurrence rule permits multiple obligations for the same Task on the same due date, the identity must include the additional deterministic discriminator, for example an occurrence ordinal or recurrence-sequence value:
+`CURRENT` — The supported engine recurrence model permits at most one generated obligation per Task per due date. [`TaskRecurrence` in `types.ts`](../../src/lib/task-state-engine/types.ts#L31-L51) contains one recurrence rule per Task, with only `none`, `rolling`, `weekly`, and `monthly` variants. [`scheduledOccurrences()`](../../src/lib/task-state-engine/recurrence.ts#L90-L142) generates date keys and deduplicates them in a `Set<string>`; no current recurrence variant models multiple independent same-day obligations. [`occurrenceIdentity()`](../../src/lib/task-state-engine/recurrence.ts#L195-L197) already uses the Task ID plus occurrence due date.
+
+`TARGET` — This validity gate is **RESOLVED**: the current supported product may use:
+
+```text
+task:{taskId}:occurrence:{occurrenceDueOn}
+```
+
+This identity is stable across the date on which the user resolves the occurrence and prevents `entry_date` from becoming an accidental occurrence key.
+
+`TARGET` — If ADHDice later supports multiple independent same-day obligations for one Task, occurrence identity must gain an additional deterministic discriminator, such as an occurrence ordinal or recurrence-sequence value:
 
 ```text
 task:{taskId}:occurrence:{occurrenceDueOn}:{occurrenceOrdinal}
 ```
 
-The model must not silently reuse the date-only form in a domain that permits more than one same-day obligation. Whether the current product needs this extension is a core-model validity gate, not a Phase 1B transition decision.
+The model must not silently reuse the date-only form in a future domain that permits more than one same-day obligation. No discriminator is required today.
 
 ### Missing, stale, and duplicate identity
 
@@ -256,7 +268,21 @@ The cursor may move as future phases define completion, delay, rollover, and rec
 
 `CURRENT` — Phase 0 identifies repeat fields as configuration input but also reports that `due_on` is overloaded and that persisted recurrence-cursor/satisfied-occurrence fields are absent from the current Task shape. See [Phase 0 § 7](task-state-phase-0-inventory.md#7-stored-versus-derived-task-state) and [`src/lib/task-state-engine/legacy-adapter.ts`](../../src/lib/task-state-engine/legacy-adapter.ts).
 
-`TARGET` — Existing repeat fields may be enough to describe the recurrence rule, but they are not assumed to be enough to recover a stable schedule anchor for every legacy row. The future model therefore requires an explicit conceptual anchor. Where an immutable anchor is recoverable from existing fields or chronology, the engine may use that fact; where it is not, a later migration or conservative data-quality state is required. Phase 1A does not choose a schema representation or perform repair.
+`CURRENT` — Weekly and monthly legacy adaptation currently assigns `anchorDate: dueOn`, while rolling recurrence has no separately persisted stable anchor in the engine snapshot. The adapter also reports that the current Task model has no persisted recurrence cursor field and that `active_occurrence_due_on` is a different live-occurrence value. See [`recurrenceFromLegacy()`](../../src/lib/task-state-engine/legacy-adapter.ts#L128-L208), [`adaptLegacyTaskState()`](../../src/lib/task-state-engine/legacy-adapter.ts#L285-L310), and the fallback behavior in [`isScheduledOccurrence()`](../../src/lib/task-state-engine/recurrence.ts#L64-L88) and [`scheduledOccurrences()`](../../src/lib/task-state-engine/recurrence.ts#L90-L142).
+
+`TARGET` — This validity gate is **RESOLVED** with the result: **a stable recurrence anchor is not recoverable for every legacy Task; later migration/data-quality policy is required.** The canonical target remains:
+
+```text
+recurrence anchor != current occurrence cursor
+```
+
+Future canonical data must have a stable anchor representation rather than inferring the anchor indefinitely from moving `due_on`. Phase 1A does not choose or add a database column. A later migration must classify legacy anchor recovery as:
+
+- deterministically recoverable;
+- high-confidence reconstructable; or
+- ambiguous/unrecoverable.
+
+An ambiguous legacy row must not receive an invented anchor that is presented as historical fact.
 
 ## Part 5: Stored versus derived active status
 
@@ -437,7 +463,7 @@ This hierarchy means lifecycle can control whether a Task is currently schedulab
 |---|---|---|---|---|---|
 | Task lifecycle | Canonical stored lifecycle fact | Lifecycle repository/Task configuration boundary | Not merely as a cache; lifecycle is authoritative | `status`, `trashed_at`, `completed_at`, and archive-like rules are split across TaskApp/CRUD and engine lifecycle inputs. [Phase 0 § 7](task-state-phase-0-inventory.md#7-stored-versus-derived-task-state) | Define Complete versus Archive versus Trash transitions and visibility precedence in Phase 1B. |
 | recurrence configuration | Canonical stored configuration fact | User-controlled Task configuration | Yes, because it is itself stored configuration | Repeat fields are consumed by both engine and legacy recurrence families. [Phase 0 § 3](task-state-phase-0-inventory.md#3-recurrence-implementations-and-authority-graph) | Converge all recurrence readers on one kernel. |
-| recurrence anchor | Canonical schedule value/fact | Stable schedule-start/anchor information plus approved legacy inference | Yes, if the stored representation is stable and versioned | No dedicated persisted recurrence cursor/anchor is present in the current Task shape; `due_on` is overloaded. [Phase 0 § 7](task-state-phase-0-inventory.md#7-stored-versus-derived-task-state) | Establish recoverability and migration policy before exact replay. |
+| recurrence anchor | Canonical schedule value/fact | Stable schedule-start/anchor information plus explicitly classified legacy inference | Yes, if the stored representation is stable and versioned | Weekly/monthly adaptation uses `due_on` as `anchorDate`; rolling recurrence lacks a separately persisted stable anchor, and the current Task shape lacks a persisted recurrence cursor. [Phase 0 § 7](task-state-phase-0-inventory.md#7-stored-versus-derived-task-state); [`legacy-adapter.ts`](../../src/lib/task-state-engine/legacy-adapter.ts) | Later migration must classify anchor recovery and preserve uncertainty rather than inventing historical anchors. |
 | occurrence identity | Canonical occurrence fact | Actual scheduled occurrence plus validated History metadata | Yes, as a clearly labeled cache or event metadata | `occurrence_key`, `occurrence_due_on`, `active_occurrence_due_on`, and On-Time identity coexist with missing/contradictory cases. [Phase 0 § 7](task-state-phase-0-inventory.md#7-stored-versus-derived-task-state) | Define duplicate detection and legacy reconstruction. |
 | current occurrence | Derived canonical result | Engine chronology over configuration, History, and logical day | Yes, through `due_on`/active fields as projections | `due_on` and `active_occurrence_due_on` are used by multiple competing paths. [Phase 0 § 2](task-state-phase-0-inventory.md#2-current-status-authorities) | Define advancement and unresolved-chain behavior in Phase 1B. |
 | due_on | Persisted cursor projection | Current/next unresolved occurrence from the engine | Yes; it is the intended projection | `due_on` is currently a schedule cursor, one-off due date, legacy status input, and recurrence anchor in different paths. [Phase 0 § 7](task-state-phase-0-inventory.md#7-stored-versus-derived-task-state) | Remove anchor/date/status ambiguity. |
@@ -455,7 +481,7 @@ This hierarchy means lifecycle can control whether a Task is currently schedulab
 
 ## Part 13: Questions Deferred to Phase 1B
 
-Phase 1A does not define transition algorithms. The following ten transition questions are deferred:
+Phase 1A does not define transition algorithms. The following ten transition/product questions are deferred:
 
 1. What exact occurrence does an early completion consume, and how does the next cursor advance?
 2. What exact occurrence does a late completion consume, including a completion after one or more overdue dates?
@@ -468,19 +494,21 @@ Phase 1A does not define transition algorithms. The following ten transition que
 9. What is the reward eligibility boundary for explicit outcomes, calculated Missed, rollover, and terminal completion?
 10. How do monthly and selected-weekday schedules advance when configuration, anchor, and current cursor disagree?
 
-### Core-model validity gates
+### Resolved core-model validity gates
 
-These are not transition questions and must be answered before implementing the model if the current data cannot satisfy them:
+Both Phase 1A validity gates are closed:
 
-- Is a stable recurrence anchor recoverable for every supported legacy recurrence type, or is a conservative migration/data-quality state required?
-- Can any supported Task generate more than one obligation on one due date? If yes, the occurrence identity must include a deterministic same-day discriminator.
+1. **Same-day occurrence identity — RESOLVED.** The current supported recurrence model has one recurrence rule per Task, only `none`/`rolling`/`weekly`/`monthly` variants, date-key generation, and date-key deduplication. It permits at most one generated obligation per Task per due date, so `task:{taskId}:occurrence:{occurrenceDueOn}` is sufficient today. A future multi-obligation same-day model would require a deterministic discriminator. See [`types.ts`](../../src/lib/task-state-engine/types.ts#L31-L51), [`scheduledOccurrences()`](../../src/lib/task-state-engine/recurrence.ts#L90-L142), and [`occurrenceIdentity()`](../../src/lib/task-state-engine/recurrence.ts#L195-L197).
+2. **Legacy recurrence anchor — RESOLVED.** A stable anchor is not recoverable for every legacy Task because weekly/monthly adaptation uses `due_on` as `anchorDate`, rolling recurrence has no separately persisted stable anchor in the engine snapshot, and `due_on` historically acts as a moving cursor. Future canonical data must separate anchor from cursor; later migration must classify anchor provenance as deterministically recoverable, high-confidence reconstructable, or ambiguous/unrecoverable. See [`recurrenceFromLegacy()`](../../src/lib/task-state-engine/legacy-adapter.ts#L128-L208), [`adaptLegacyTaskState()`](../../src/lib/task-state-engine/legacy-adapter.ts#L285-L310), and [Phase 0 § 7](task-state-phase-0-inventory.md#7-stored-versus-derived-task-state).
+
+No core-model validity gate remains open. The remaining questions above are transition/product semantics assigned to Phase 1B.
 
 ## Part 14: Phase 1A acceptance criteria
 
 Another engineer should be able to answer these without guessing:
 
 1. **What is a Task occurrence?** One recurrence obligation generated by TaskConfiguration, with its own due date, identity, recurrence source, resolution state, resolution date, and resolution outcome.
-2. **What uniquely identifies it?** A deterministic identity derived from the actual occurrence, preferably `task:{taskId}:occurrence:{occurrenceDueOn}` while one Task has at most one obligation per due date; add a deterministic ordinal/sequence if that assumption is false.
+2. **What uniquely identifies it?** For the current supported product, `task:{taskId}:occurrence:{occurrenceDueOn}`; the same-day identity gate is resolved because current recurrence generation permits at most one obligation per Task per due date. Add a deterministic ordinal/sequence only if a future product model supports multiple independent same-day obligations.
 3. **What does `due_on` mean?** The current or next unresolved occurrence date for an active scheduled Task; a cursor projection, not an anchor, history date, last-completed date, Calendar date, or generic status date.
 4. **What is the recurrence anchor?** A stable schedule basis used for membership and alignment, separate from the moving current occurrence cursor.
 5. **What is explicit History?** One persisted explicit outcome per Task/logical date, replaceable by editing and removable by clearing, with optional validated occurrence metadata and provenance.
@@ -492,7 +520,7 @@ Another engineer should be able to answer these without guessing:
 
 ## Phase 1A handoff
 
-`TARGET` — The core model is ready for a later transition phase only if the two validity gates above are resolved and the implementation plan preserves the following boundary:
+`TARGET` — Both core-model validity gates are resolved. The current supported product uses date-based occurrence identity because it permits at most one generated obligation per Task per due date. Legacy anchor recovery is explicitly uncertain for some rows, so future canonical implementation and migration must preserve anchor provenance and must not invent ambiguous historical anchors. The implementation plan must preserve the following boundary:
 
 ```text
 TaskConfiguration + RecurrenceAnchor + TaskLifecycle
@@ -510,4 +538,4 @@ TaskConfiguration + RecurrenceAnchor + TaskLifecycle
        active status / Calendar / current streak projections
 ```
 
-`CURRENT` — The branch does not yet have this single fully converged path. Phase 0 documents the remaining competing readers, recurrence calculators, mutation entry paths, direct persistence boundaries, and rollover alternatives. See [Phase 0 § 14](task-state-phase-0-inventory.md#14-dependency-map) and [§ 15](task-state-phase-0-inventory.md#15-top-architectural-risks).
+`CURRENT` — The branch does not yet have this single fully converged path. Phase 0 documents the remaining competing readers, recurrence calculators, mutation entry paths, direct persistence boundaries, and rollover alternatives. See [Phase 0 § 14](task-state-phase-0-inventory.md#14-dependency-map) and [§ 15](task-state-phase-0-inventory.md#15-top-architectural-risks). The remaining deferred work is transition/product semantics in Phase 1B; Phase 1A has no open core-model validity gate.
