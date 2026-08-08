@@ -159,6 +159,8 @@ create table if not exists public.adhdice_task_state_migration_entities (
     check (char_length(trim(migration_version)) > 0),
   classifier_version text not null
     check (char_length(trim(classifier_version)) > 0),
+  schema_contract_version text not null
+    check (schema_contract_version = 'task-state-schema-v1'),
   source_revision bigint
     check (source_revision is null or source_revision >= 1),
   source_fingerprint text,
