@@ -14,6 +14,7 @@ This phase defines:
 - workflow actions versus outcomes versus lifecycle/container state;
 - Delay for genuinely unscheduled, one-time, rolling, and fixed-calendar Tasks;
 - the deferred-occurrence identity problem created by Delay;
+- fixed-calendar same-Task Delay collision merge semantics and preserved provenance;
 - Complete as a successful outcome and terminal lifecycle transition;
 - Archive and Trash as lifecycle/container transitions;
 - lifecycle/status precedence;
@@ -38,7 +39,7 @@ The following rules are fixed inputs:
 - One-time overdue Done and Did My Best are checkpoints only.
 - Rolling Done and Did My Best rebase `nextDue = successLogicalDate + interval`.
 - Rolling Missed freezes the current due obligation.
-- Fixed-calendar scheduled dates remain independent.
+- Fixed-calendar scheduled dates remain independent membership facts; a canonical same-Task effective-date merge may group their obligation outcomes without changing that membership.
 - A fixed older Missed condition can coexist with future scheduled occurrences.
 - Later fixed Done or Did My Best can clear active Missed without rewriting earlier Missed dates or consuming a future fixed occurrence.
 - Fixed Missed streak counts missed scheduled occurrences; rolling Missed streak can count overdue logical days.
@@ -117,7 +118,7 @@ A valid Delay action must have:
 - an active Task lifecycle (`terminalState = active`, `containerState = active`);
 - a target obligation that can be identified safely;
 - a target date strictly later than the action logical date; and
-- no unresolved conflict with another authoritative occurrence or schedule boundary.
+- no unresolved conflict with another authoritative occurrence or schedule boundary after applying the canonical same-Task fixed-calendar merge rule below.
 
 The canonical Delay action:
 
@@ -127,7 +128,8 @@ The canonical Delay action:
 4. leaves the Repeat rule and stable recurrence anchor unchanged;
 5. does not create a successful outcome or reward eligibility;
 6. does not erase earlier explicit or calculated Missed facts; and
-7. emits a diagnostic instead of merging or replacing competing obligations when canonical precedence cannot resolve them.
+7. merges a same-Task fixed-calendar collision when the delayed and normal origins land on the same effective date, while preserving both origins; and
+8. emits a diagnostic only when a conflict remains genuinely ambiguous after the canonical merge rule is applied.
 
 `due_on` after Delay is the effective current obligation date when it is retained as a persisted projection. It is not the immutable scheduled date and not permission to rewrite earlier chronology.
 
@@ -139,7 +141,7 @@ The canonical Delay action:
 | Same day as the action | Reject as a no-op; do not write Delayed History or move the cursor. |
 | Strictly after the action date | Eligible if the obligation and occurrence identity are safe. |
 | `null` / indefinite “benched” | Not part of the Phase 1B-2A canonical Delay contract. Reject or return needs-attention until a separate indefinite-workflow decision exists. |
-| Target crosses a later authoritative schedule boundary | Do not silently overwrite the later boundary. Reject or return a conflict diagnostic. |
+| Target crosses a later authoritative schedule boundary outside the same-Task fixed-date merge rule | Do not silently overwrite the later boundary. Reject or return a conflict diagnostic. |
 
 Delay does not automatically create a new Repeat. A Delay boundary is a current-occurrence/obligation boundary, not a recurrence-family change.
 
@@ -280,7 +282,25 @@ If Thursday is instead a Delay action rather than Done, the target Friday occurr
 
 The next Monday is also a normal fixed-calendar occurrence. Therefore the deferred Friday occurrence and the normal Monday occurrence have the same effective date but different recurrence origins.
 
-`TARGET` — Do not silently merge, replace, or consume one of these occurrences. Preserve both origin facts and return an error/needs-attention diagnostic requiring explicit resolution. The normal M/W/F Repeat rule remains unchanged; after the conflict is resolved, normal membership resumes. A same-date collision is not a valid reason to invent a merged occurrence identity.
+`TARGET` — Merge these same-Task origins into one effective Monday obligation for ordinary use. Do not replace, erase, or rewrite either occurrence identity. Friday becomes Not Due for the delayed occurrence, and its explicit Delayed History preserves that Friday was deferred to Monday. Monday presents one Due/Open obligation containing both the normal Monday origin and the delayed Friday origin. One Done, Did My Best, or Complete action on Monday satisfies the combined obligation; it must not create two outcomes or count the Monday obligation twice for History or streaks.
+
+The fixed M/W/F Repeat rule remains unchanged. After the merged Monday obligation is handled, normal fixed-calendar membership continues. This canonical rule resolves this specific same-Task collision, so no needs-attention diagnostic is required merely because the two origins share Monday as their effective date. Diagnostics remain appropriate for genuinely ambiguous conflicts that this merge rule does not resolve.
+
+### Same-Task merged obligation and provenance
+
+The merge is an effective-obligation projection, not a replacement occurrence identity. The canonical model retains both immutable origin occurrences:
+
+```text
+effective obligation date = Monday
+
+origin occurrences:
+- Friday scheduled occurrence, delayed to Monday
+- normal Monday scheduled occurrence
+```
+
+Each origin remains available for chronology, audit, and later reconciliation. The effective Monday date has one combined resolution and one outcome, not one outcome per origin. The earlier Friday Delayed History remains a separate provenance fact even after the combined Monday obligation is handled or missed.
+
+If Monday is missed, the merged obligation contributes one Missed outcome and one Missed-streak increment for Monday, never two. If Monday is successfully handled, one Done, Did My Best, or Complete outcome resolves the combined obligation.
 
 ### Delay creates a schedule boundary, not a Repeat change
 
@@ -300,17 +320,17 @@ For every scheduling model in which Delay is valid, the action logical date beco
 `TARGET` — Phase 1A’s preferred identity is:
 
 ```text
-task:{taskId}:occurrence:{occurrenceDueOn}
+task:{taskId}:occurrence:{scheduledDueOn}
 ```
 
-Phase 1A also defines `TaskOccurrence.occurrenceDueOn` as the scheduled/due date generated by recurrence. Delay can move the effective expected date while conceptually preserving the same obligation:
+Phase 1A also defines `TaskOccurrence.occurrenceDueOn` as the scheduled/due date generated by recurrence. For this Phase 1B-2A contract, that immutable origin date is the `scheduledDueOn`. Delay can move the effective expected date while conceptually preserving the same obligation:
 
 ```text
 original scheduled due = 8/10
 effective delayed due  = 8/13
 ```
 
-If the identity were changed from `...:8/10` to `...:8/13`, the canonical engine could incorrectly treat one delayed obligation as two different obligations. If the identity remained date-only without distinguishing the two dates, it would be unclear whether 8/13 is the original schedule date, the current cursor, or the deferred effective date.
+If the identity were changed from `...:8/10` to `...:8/13`, the canonical engine could incorrectly treat one delayed obligation as two different obligations. If the identity remained date-only without distinguishing the two dates, it would be unclear whether 8/13 is the original schedule date, the current cursor, or the deferred effective date. A fixed-calendar collision adds the inverse implication: distinct immutable origins may contribute to one effective same-Task obligation date.
 
 ### Smallest proposed amendment
 
@@ -338,6 +358,8 @@ For a Delay from 8/10 to 8/13:
 - the Delayed History event references the original identity and stores the target effective date.
 
 For fixed-calendar recurrence, the normal schedule occurrence keeps its scheduled date. A deferred occurrence is an effective-date override of that occurrence, not a permanent change to fixed membership.
+
+When a delayed fixed occurrence and a normal fixed occurrence for the same Task share an effective date, the transition/projection layer groups their origin occurrences into one effective obligation for that date. This grouping preserves each origin identity and provenance while producing one resolution, one History outcome, and one streak contribution. It does not create a new replacement occurrence identity and does not require a second user action.
 
 ### Consequence for current fields and storage
 
@@ -690,7 +712,7 @@ The Phase 1B-1 contract applies unchanged: preserve user data, return the safest
 | Delay target before or equal to action date | Reject transition; no History or cursor mutation. |
 | Indefinite/null Delay target | Reject until separately specified; no hidden benched state. |
 | Delay target conflicts with a later schedule boundary | Reject or require explicit resolution; preserve both facts. |
-| Fixed deferred occurrence collides with a normal fixed occurrence | Preserve both occurrence origins; no merge/replace; error/needs-attention diagnostic. |
+| Same-Task fixed deferred occurrence collides with a normal fixed occurrence on the same effective date | Merge into one effective obligation; preserve both origin identities and the earlier Delayed History; one outcome and one streak contribution; no collision diagnostic required. |
 | Delay cannot identify the targeted occurrence | Reject mutation; diagnostic; do not invent an identity from a moving `due_on`. |
 | Complete after contradictory terminal lifecycle facts | Require explicit resolution; do not choose one terminal authority. |
 | Complete mutation on archived/trashed active Task | Reject active mutation; restore first or use an explicit historical correction. |
@@ -709,7 +731,7 @@ No SQL or schema is designed here. The following classification describes canoni
 | Fact | Classification | Target meaning |
 |---|---|---|
 | Delay action/event | **A. Canonical persisted fact** | Explicit Delayed History on the action logical date with target occurrence/effective date metadata when known. |
-| Delayed target/effective due date | **E. Unresolved pending storage design**, with a required event/boundary representation | Must survive reload and preserve scheduled origin versus effective target; must not live only in `due_on` or `status`. |
+| Delayed target/effective due date | **E. Unresolved pending storage design**, with a required event/boundary representation | Must survive reload and preserve scheduled origin versus effective target; multiple same-Task origins may project into one effective obligation date; must not live only in `due_on` or `status`. |
 | Complete History event | **A. Canonical persisted fact** | Explicit Complete outcome and terminal event semantics. |
 | Permanent Complete lifecycle | **A. Canonical persisted fact** | Terminal `permanently_complete`; not inferred from a display status alone. |
 | Archive lifecycle/container | **A. Canonical persisted fact** | Archived container state; preserves History and terminal completion. |
@@ -739,43 +761,45 @@ No SQL or schema is designed here. The following classification describes canoni
 
 **WORKFLOW/LIFECYCLE INVARIANT 6 — Delay target dates are future-only.** Targets before or equal to the action logical date are invalid in the live workflow contract.
 
-**WORKFLOW/LIFECYCLE INVARIANT 7 — Fixed Delay is one-occurrence override.** Fixed Delay does not move fixed-calendar membership; same-date collisions remain separate origins and require diagnostics.
+**WORKFLOW/LIFECYCLE INVARIANT 7 — Fixed Delay is one-occurrence override.** Fixed Delay does not move fixed-calendar membership; a same-Task delayed origin and normal fixed origin on one effective date merge into one effective obligation while retaining separate origin facts.
 
-**WORKFLOW/LIFECYCLE INVARIANT 8 — Delayed identity is stable.** Delay preserves the original occurrence identity and distinguishes scheduled/original due from effective/deferred due.
+**WORKFLOW/LIFECYCLE INVARIANT 8 — A merged effective date resolves once.** One Task on one effective logical due date produces one effective obligation outcome and one streak contribution, regardless of how many preserved origin occurrences contribute to that date.
 
-**WORKFLOW/LIFECYCLE INVARIANT 9 — Complete satisfies one-time.** Complete resolves a one-time obligation before, on, or after its due date.
+**WORKFLOW/LIFECYCLE INVARIANT 9 — Delayed identity is stable.** Delay preserves the original occurrence identity and distinguishes scheduled/original due from effective/deferred due; grouping origins for one effective date does not replace those identities.
 
-**WORKFLOW/LIFECYCLE INVARIANT 10 — Complete terminates recurrence.** Complete stops rolling, Daily Until Complete, and fixed-calendar future obligations unless an explicit correction/reopen transition is later accepted.
+**WORKFLOW/LIFECYCLE INVARIANT 10 — Complete satisfies one-time.** Complete resolves a one-time obligation before, on, or after its due date.
 
-**WORKFLOW/LIFECYCLE INVARIANT 11 — Complete is semantically permanent.** Archive and Trash may contain a completed Task, but neither replaces or erases `permanently_complete`.
+**WORKFLOW/LIFECYCLE INVARIANT 11 — Complete terminates recurrence.** Complete stops rolling, Daily Until Complete, and fixed-calendar future obligations unless an explicit correction/reopen transition is later accepted.
 
-**WORKFLOW/LIFECYCLE INVARIANT 12 — Complete clears active obligation projection.** Complete ends active Missed for the applicable obligation and clears the active current cursor while preserving History.
+**WORKFLOW/LIFECYCLE INVARIANT 12 — Complete is semantically permanent.** Archive and Trash may contain a completed Task, but neither replaces or erases `permanently_complete`.
 
-**WORKFLOW/LIFECYCLE INVARIANT 13 — Archive preserves data.** Archive does not create History, erase History, rewrite Calendar outcomes, or accrue new Missed while inactive.
+**WORKFLOW/LIFECYCLE INVARIANT 13 — Complete clears active obligation projection.** Complete ends active Missed for the applicable obligation and clears the active current cursor while preserving History.
 
-**WORKFLOW/LIFECYCLE INVARIANT 14 — Trash preserves data until deletion.** Trash is reversible container state, not hard deletion, and does not erase permanent completion.
+**WORKFLOW/LIFECYCLE INVARIANT 14 — Archive preserves data.** Archive does not create History, erase History, rewrite Calendar outcomes, or accrue new Missed while inactive.
 
-**WORKFLOW/LIFECYCLE INVARIANT 15 — Restore does not synthesize History.** Archive/Trash restore recalculates current state from preserved facts without manufacturing outcomes for inactive time.
+**WORKFLOW/LIFECYCLE INVARIANT 15 — Trash preserves data until deletion.** Trash is reversible container state, not hard deletion, and does not erase permanent completion.
 
-**WORKFLOW/LIFECYCLE INVARIANT 16 — Lifecycle precedes active schedule.** Permanent Complete, Archive, and Trash eligibility determine whether active recurrence/workflow is evaluated; they do not erase historical dates.
+**WORKFLOW/LIFECYCLE INVARIANT 16 — Restore does not synthesize History.** Archive/Trash restore recalculates current state from preserved facts without manufacturing outcomes for inactive time.
 
-**WORKFLOW/LIFECYCLE INVARIANT 17 — In Progress is not recurrence satisfaction.** In Progress neither resolves an occurrence nor moves `due_on` nor pauses Missed.
+**WORKFLOW/LIFECYCLE INVARIANT 17 — Lifecycle precedes active schedule.** Permanent Complete, Archive, and Trash eligibility determine whether active recurrence/workflow is evaluated; they do not erase historical dates.
 
-**WORKFLOW/LIFECYCLE INVARIANT 18 — In Progress is not a second status authority.** Workflow state may coexist as an orthogonal fact, but canonical active schedule state remains engine-derived.
+**WORKFLOW/LIFECYCLE INVARIANT 18 — In Progress is not recurrence satisfaction.** In Progress neither resolves an occurrence nor moves `due_on` nor pauses Missed.
 
-**WORKFLOW/LIFECYCLE INVARIANT 19 — In Progress crosses rollover without synthetic success.** A persisted session may survive a logical-day boundary; it does not become Done, Did My Best, or Missed by automatic guess.
+**WORKFLOW/LIFECYCLE INVARIANT 19 — In Progress is not a second status authority.** Workflow state may coexist as an orthogonal fact, but canonical active schedule state remains engine-derived.
 
-**WORKFLOW/LIFECYCLE INVARIANT 20 — Explicit actions end workflow cleanly.** Done, Did My Best, Complete, Delay, Archive, and Trash must clear or transition In Progress without leaving competing active workflow facts.
+**WORKFLOW/LIFECYCLE INVARIANT 20 — In Progress crosses rollover without synthetic success.** A persisted session may survive a logical-day boundary; it does not become Done, Did My Best, or Missed by automatic guess.
 
-**WORKFLOW/LIFECYCLE INVARIANT 21 — Historical corrections are boundary-constrained.** Past Complete and Delay corrections preserve later authoritative schedule boundaries and explicit History.
+**WORKFLOW/LIFECYCLE INVARIANT 21 — Explicit actions end workflow cleanly.** Done, Did My Best, Complete, Delay, Archive, and Trash must clear or transition In Progress without leaving competing active workflow facts.
 
-**WORKFLOW/LIFECYCLE INVARIANT 22 — Historical Complete is terminal from its correction boundary.** Clearing it requires an explicit reopen/correction transition; Archive/Trash restore alone cannot reopen it.
+**WORKFLOW/LIFECYCLE INVARIANT 22 — Historical corrections are boundary-constrained.** Past Complete and Delay corrections preserve later authoritative schedule boundaries and explicit History.
 
-**WORKFLOW/LIFECYCLE INVARIANT 23 — No reward replay in this phase.** Workflow/lifecycle replay must not manufacture or reverse rewards/economy side effects.
+**WORKFLOW/LIFECYCLE INVARIANT 23 — Historical Complete is terminal from its correction boundary.** Clearing it requires an explicit reopen/correction transition; Archive/Trash restore alone cannot reopen it.
 
-**WORKFLOW/LIFECYCLE INVARIANT 24 — Ambiguity fails safe.** Invalid or ambiguous transitions emit diagnostics, preserve user data, and do not silently choose competing lifecycle, occurrence, or schedule authorities.
+**WORKFLOW/LIFECYCLE INVARIANT 24 — No reward replay in this phase.** Workflow/lifecycle replay must not manufacture or reverse rewards/economy side effects.
 
-**WORKFLOW/LIFECYCLE INVARIANT 25 — One canonical transition authority.** Delay, Complete, Archive, Trash, In Progress, Calendar, streak, and persistence projections consume the same Phase 1B-1 family-aware recurrence result rather than independently applying competing schedule rules.
+**WORKFLOW/LIFECYCLE INVARIANT 25 — Ambiguity fails safe.** Invalid or ambiguous transitions emit diagnostics, preserve user data, and do not silently choose competing lifecycle, occurrence, or schedule authorities. The canonical same-Task fixed-date merge is not an ambiguity.
+
+**WORKFLOW/LIFECYCLE INVARIANT 26 — One canonical transition authority.** Delay, Complete, Archive, Trash, In Progress, Calendar, streak, and persistence projections consume the same Phase 1B-1 family-aware recurrence result rather than independently applying competing schedule rules.
 
 ## Part 14: Workflow and lifecycle scenario matrix
 
@@ -789,7 +813,7 @@ No SQL or schema is designed here. The following classification describes canoni
 | 4 | One-time due 8/10; active Missed on 8/11 | Delay 8/11 until 8/15 | 8/10 Missed remains; 8/11 Delayed | Remains active | `due_on = 8/15` | Same one-time obligation, new forward boundary | 8/12–8/14 Unscheduled; 8/15 Due/Open | Current Missed streak ends; prior Missed remains historical | Delayed/Upcoming before 8/15 | None if original identity is safe |
 | 5 | Fixed weekly Friday; active; Friday occurrence due 8/14 | Delay Thursday until Sunday 8/16 | Thursday Delayed references scheduled 8/14 occurrence | Remains active | Effective due 8/16 | Friday Repeat unchanged; one occurrence override | Friday Not Due for that occurrence; Sunday Due/Open; next Friday resumes | No positive credit; no future fixed streak rewrite | Upcoming/Not Due before Sunday | None without collision |
 | 6 | M/W/F; active Missed from Monday/Wednesday; Friday future | Delay Friday occurrence to Sunday | Friday Delayed; Monday/Wednesday Missed remain | Remains active | Current effective target Sunday | M/W/F membership unchanged | Friday Not Due; Sunday deferred Due/Open; older Missed remains | Older Missed streak unchanged; Delay adds no positive credit | Missed or diagnostic if older obligation remains active | None if target identity is distinct |
-| 7 | M/W/F; active; Friday occurrence deferred to next Monday, which is normal Monday | Delay Friday until Monday | Delayed event references Friday origin | Remains active | Effective target Monday | Normal Monday occurrence remains independent | Two origins collide on Monday | No silent streak change | Needs-attention state, not a guessed status | Error/needs attention; no merge/replace |
+| 7 | M/W/F; active; Friday occurrence deferred to next Monday, which is normal Monday | Delay Friday until Monday; handle Monday once | Thursday Delayed preserves Friday origin and target Monday; one Monday outcome resolves the combined obligation | Remains active | Effective obligation Monday with both origins | M/W/F membership unchanged; later fixed occurrences continue normally | Friday is Not Due for the delayed occurrence; Monday has one Due/Open obligation | Monday contributes at most one outcome/streak result; Friday Delayed provenance is not counted as a second obligation | One effective Monday status/outcome | None for this resolved collision |
 | 8 | Genuinely unscheduled; active; no due/Repeat | Delay to any date | No History | Unchanged | Unchanged null | No schedule activation | Remains Unscheduled | No streak mutation | Unscheduled | Validation diagnostic: no obligation |
 | 9 | One-time due 8/10; active; pre-due | Complete 8/7 | Explicit Complete on 8/7 | `permanently_complete` | Active cursor cleared/null | Future obligation eliminated | 8/10 never becomes Missed; future active cells terminate | Complete counts as successful Unscheduled day | Permanently Complete | None |
 | 10 | One-time due 8/10; active; Due/Open on 8/10 | Complete 8/10 | Explicit Complete | `permanently_complete` | Cursor cleared/null | One obligation satisfied | Due date resolves; no future recurrence | Final positive success | Permanently Complete | None |
@@ -808,54 +832,33 @@ No SQL or schema is designed here. The following classification describes canoni
 | 23 | Active In Progress on current occurrence | Done, Did My Best, or Complete | Explicit selected outcome; In Progress tracking cleared | Complete becomes terminal; Done/DMB remains active | Done/DMB apply family cursor rule; Complete clears cursor | Phase 1B-1 success/terminal rule applies | Calendar outcome becomes selected explicit result | Done/DMB positive; Complete final positive | Derived success or Permanently Complete | None |
 | 24 | Any model; active state has ambiguous occurrence/lifecycle boundary | Delay, Complete, or restore attempted | Preserve existing History; no synthetic event | No unsafe lifecycle mutation | Do not guess cursor | No speculative recurrence change | Safest provable projection only | No speculative streak mutation | Safest provable state | Error/needs attention diagnostic |
 
-## Part 15: Product decisions requiring confirmation
+## Part 15: Product decision and architectural consequences
 
-The following are genuinely product-sensitive because the current source and Phase 0/1A/1B-1 do not safely resolve them.
+Decision A records the product rule that was previously unresolved. Decisions B and C record the architectural/storage and fail-safe restoration consequences that implement or protect that rule; they are not unresolved product choices.
 
-### Decision A: Fixed deferred occurrence colliding with a normal fixed occurrence
+### Decision A: Fixed deferred occurrence colliding with a normal fixed occurrence — RESOLVED
 
 Concrete example: M/W/F; Friday is Delayed until Monday, and Monday is already a normal occurrence.
 
-**Option A — Merge.** Treat both origins as one Monday obligation.  
-Consequence: loses which fixed occurrence was delayed and can undercount or overcount History and Missed streaks.
+**Resolved product rule:** Merge the normal Monday origin and delayed Friday origin into one effective Monday obligation. Preserve both immutable origin identities and the Friday Delayed History/provenance. The user sees one Monday obligation, and one Monday Done, Did My Best, or Complete outcome satisfies the combined obligation without double-counting History or streaks. The fixed M/W/F Repeat membership remains unchanged, and this resolved collision does not require a diagnostic.
 
-**Option B — Replace.** Let the deferred Friday occurrence consume or replace Monday’s normal occurrence.  
-Consequence: silently changes fixed-calendar membership and may erase a normal Monday obligation.
-
-**Option C — Preserve both and require resolution.** Keep origin identities separate and return a diagnostic until a later contract defines coexistence.  
-Consequence: safest data preservation; the user must resolve a rare collision.
-
-**Recommendation:** Option C. Phase 1B-2A locks diagnostic handling rather than guessing.
-
-### Decision B: Occurrence storage names for Delay
+### Decision B: Occurrence identity names for Delay — ARCHITECTURAL/STORAGE CONSEQUENCE
 
 Concrete example: occurrence identity remains `...:8/10`, but Delay changes effective due to 8/13.
 
-**Option A — Reuse `occurrenceDueOn` for the moving date.**  
-Consequence: changes identity semantics and risks duplicate obligations.
+**Required architectural consequence:** Keep immutable `scheduledDueOn` and add `effectiveDueOn` (or equivalent names). A delayed target must not become a new occurrence identity, and multiple fixed-calendar origins may project into one effective obligation date. This requires a later Phase 1A documentation/storage amendment and migration handling, but is not an unresolved product question. No schema is changed here.
 
-**Option B — Keep immutable scheduled date and add effective/deferred date.**  
-Consequence: requires a later Phase 1A documentation/storage amendment and migration handling, but preserves identity.
-
-**Recommendation:** Option B. This document records the required amendment; no schema is changed here.
-
-### Decision C: Restore when legacy data cannot prove prior container or deferred cursor
+### Decision C: Restore when legacy data cannot prove prior container or deferred cursor — ARCHITECTURAL/SAFETY CONSEQUENCE
 
 Concrete example: a trashed Task has no reliable prior container marker and its `due_on` conflicts with Delayed History.
 
-**Option A — Restore as active with best-effort due.**  
-Consequence: can silently create or expose the wrong obligation.
+**Required safety consequence:** If prior lifecycle/container or deferred-cursor state cannot be safely reconstructed, do not guess. Keep the Task inactive/in the safest proven state, emit a diagnostic, and require later explicit resolution before recurrence resumes. This is a fail-safe restoration consequence, not an unresolved product question.
 
-**Option B — Keep inactive and require explicit resolution.**  
-Consequence: safer but requires a later repair/resolution path.
-
-**Recommendation:** Option B. Return the safest inactive/proven state with a diagnostic and do not resume recurrence until resolved.
-
-No other unresolved question is needed to define the Phase 1B-2A canonical transition semantics. Indefinite/null Delay is intentionally rejected in this phase rather than treated as a hidden lifecycle state.
+No genuine product decision remains unresolved in Decisions A–C. Indefinite/null Delay is intentionally rejected in this phase rather than treated as a hidden lifecycle state.
 
 ## Part 16: Handoff to Phase 1B-2B
 
-Workflow and lifecycle semantics are locked enough for Phase 1B-2B, subject to the explicitly recorded fixed-collision and Delay identity amendment decisions.
+Workflow and lifecycle semantics are locked enough for Phase 1B-2B. The fixed-collision merge rule and preserved-provenance requirement are now part of the canonical contract; the scheduled/effective occurrence distinction remains a later architectural/storage implementation consequence.
 
 Phase 1B-2B owns:
 
@@ -873,6 +876,8 @@ Phase 1B-2B must preserve:
 
 - workflow actions versus outcomes versus lifecycle/container state;
 - Delay as a current-obligation override, not a Repeat mutation;
+- same-Task fixed-calendar collisions merging into one effective obligation when origins share an effective date, with all origin/provenance facts preserved;
+- one History outcome and one streak contribution for one Task on one effective logical due date, even when multiple origins contribute;
 - stable occurrence identity across Delay;
 - Complete as terminal recurrence satisfaction;
 - Complete remaining semantically Complete inside Archive/Trash;
