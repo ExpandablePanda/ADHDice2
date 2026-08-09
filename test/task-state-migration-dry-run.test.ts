@@ -91,6 +91,19 @@ test("current Logical Day uses profile timezone and configured day-start", () =>
   assert.equal(deriveCurrentLogicalDate(profile, "2026-08-08T10:00:00Z"), "2026-08-08");
 });
 
+test("HH:MM:SS profile day-start matches the equivalent HH:MM Logical Day boundary", () => {
+  const minuteProfile = sources([]).profile;
+  const secondProfile = { ...minuteProfile, day_start_time: "06:00:00" };
+  for (const instant of ["2026-08-08T09:59:00Z", "2026-08-08T10:00:00Z"]) {
+    assert.equal(
+      deriveCurrentLogicalDate(secondProfile, instant),
+      deriveCurrentLogicalDate(minuteProfile, instant),
+    );
+  }
+  assert.equal(deriveCurrentLogicalDate(secondProfile, "2026-08-08T09:59:00Z"), "2026-08-07");
+  assert.equal(deriveCurrentLogicalDate(secondProfile, "2026-08-08T10:00:00Z"), "2026-08-08");
+});
+
 test("a future due date cannot become the current Logical Day", () => {
   const report = classifyUser(sources([task({ due_on: "2026-08-20" })]), {
     userId: USER_ID,

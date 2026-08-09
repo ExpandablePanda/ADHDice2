@@ -523,7 +523,7 @@ function hasValidProfileContext(profile: LegacyRow | null): boolean {
   if (!profile) return false;
   const timezone = stringValue(profile, "timezone");
   const dayStart = stringValue(profile, "day_start_time", "logical_day_start");
-  if (timezone === null || dayStart === null || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(dayStart)) return false;
+  if (timezone === null || dayStart === null || !/^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/.test(dayStart)) return false;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format();
     return true;
