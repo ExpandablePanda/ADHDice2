@@ -309,10 +309,13 @@ begin
   if not exists (
     select 1 from pg_constraint
     where conrelid = 'public.adhdice_task_occurrence_effective_overrides'::regclass
-      and conname = 'adhdice_task_occurrence_effective_overrides_migration_operation_fkey'
+      and conname in (
+        'adhdice_task_occurrence_effective_overrides_migration_operation',
+        'adhdice_task_occurrence_effective_overrides_operation_fkey'
+      )
   ) then
     alter table public.adhdice_task_occurrence_effective_overrides
-      add constraint adhdice_task_occurrence_effective_overrides_migration_operation_fkey
+      add constraint adhdice_task_occurrence_effective_overrides_operation_fkey
       foreign key (user_id, migration_operation_id)
       references public.adhdice_task_migration_operations (user_id, id)
       on delete restrict;
