@@ -776,24 +776,118 @@ type RpcClient = {
   rpc(name: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { code?: string; message: string } | null }>;
 };
 
+export type MigrationOperationLedgerRow = LegacyRow;
+
+export type BackfillProgressState =
+  | "skipped_exact_committed"
+  | "rpc_committed"
+  | "rpc_already_committed"
+  | "failure";
+
+export type BackfillProgressEvent = {
+  index: number;
+  total: number;
+  entityId: string | null;
+  state: BackfillProgressState;
+};
+
+export type ApplyBackfillPlansOptions = {
+  leaseToken: string;
+  leaseOwner: string;
+  leaseExpiresAt: string | (() => string);
+  operationLedger?: readonly MigrationOperationLedgerRow[];
+  onProgress?: (event: BackfillProgressEvent) => void;
+  progressOffset?: number;
+  progressTotal?: number;
+};
+
+function nullableEntityId(row: LegacyRow): string | null | undefined {
+  const candidate = value(row, "entity_id");
+  if (candidate === null) return null;
+  if (typeof candidate === "string" && candidate) return candidate;
+  return undefined;
+}
+
+function exactStringValue(row: LegacyRow, key: string): string | undefined {
+  const candidate = value(row, key);
+  return typeof candidate === "string" ? candidate : undefined;
+}
+
+export function backfillResumeDecision(
+  plan: BackfillPlan,
+  operationLedger: readonly MigrationOperationLedgerRow[],
+): "skip_committed" | "execute" {
+  const identityMatches = operationLedger.filter((row) => exactStringValue(row, "operation_identity") === plan.operationIdentity);
+  for (const row of identityMatches) {
+    const rowEntityId = nullableEntityId(row);
+    if (
+      exactStringValue(row, "user_id") !== plan.userId
+      || rowEntityId !== plan.entityId
+      || exactStringValue(row, "input_fingerprint") !== plan.inputFingerprint
+      || exactStringValue(row, "operation_kind") !== "backfill"
+    ) {
+      throw new MigrationBackfillDiagnostic(
+        "M2_OPERATION_IDENTITY_MISMATCH",
+        "operation identity is bound to a different owner, Task scope, source fingerprint, or operation kind",
+      );
+    }
+  }
+  return identityMatches.some((row) => exactStringValue(row, "state") === "committed") ? "skip_committed" : "execute";
+}
+
+export function formatBackfillProgress(event: BackfillProgressEvent): string {
+  const scope = event.entityId ?? "orphan-history";
+  return `M2 backfill ${event.index}/${event.total} ${scope} ${event.state}\n`;
+}
+
 export async function applyBackfillPlans(
   client: RpcClient,
   plans: readonly BackfillPlan[],
-  options: { leaseToken: string; leaseOwner: string; leaseExpiresAt: string | (() => string) },
+  options: ApplyBackfillPlansOptions,
 ): Promise<unknown[]> {
   const results: unknown[] = [];
-  for (const plan of plans) {
-    const leaseExpiresAt = typeof options.leaseExpiresAt === "function" ? options.leaseExpiresAt() : options.leaseExpiresAt;
-    const result = await client.rpc("adhdice_migration_backfill_entity", {
-      p_user_id: plan.userId,
-      p_lease_token: options.leaseToken,
-      p_lease_owner: options.leaseOwner,
-      p_lease_expires_at: leaseExpiresAt,
-      p_plan: plan,
-      p_source_guard: plan.sourceGuard,
+  const progressOffset = options.progressOffset ?? 0;
+  const progressTotal = options.progressTotal ?? plans.length;
+  for (let planIndex = 0; planIndex < plans.length; planIndex += 1) {
+    const plan = plans[planIndex]!;
+    const progress = (state: BackfillProgressState) => options.onProgress?.({
+      index: progressOffset + planIndex + 1,
+      total: progressTotal,
+      entityId: plan.entityId,
+      state,
     });
-    if (result.error) throw new MigrationBackfillDiagnostic(result.error.code ?? "BACKFILL_WRITE_FAILED", result.error.message);
-    results.push(result.data);
+    if (options.operationLedger && backfillResumeDecision(plan, options.operationLedger) === "skip_committed") {
+      progress("skipped_exact_committed");
+      results.push({ state: "already_committed", operation_identity: plan.operationIdentity, entity_id: plan.entityId });
+      continue;
+    }
+    const leaseExpiresAt = typeof options.leaseExpiresAt === "function" ? options.leaseExpiresAt() : options.leaseExpiresAt;
+    let progressReported = false;
+    try {
+      const result = await client.rpc("adhdice_migration_backfill_entity", {
+        p_user_id: plan.userId,
+        p_lease_token: options.leaseToken,
+        p_lease_owner: options.leaseOwner,
+        p_lease_expires_at: leaseExpiresAt,
+        p_plan: plan,
+        p_source_guard: plan.sourceGuard,
+      });
+      if (result.error) {
+        progress("failure");
+        progressReported = true;
+        throw new MigrationBackfillDiagnostic(result.error.code ?? "BACKFILL_WRITE_FAILED", result.error.message);
+      }
+      const returnedState = result.data && typeof result.data === "object" && !Array.isArray(result.data)
+        && (result.data as LegacyRow).state === "already_committed"
+        ? "rpc_already_committed"
+        : "rpc_committed";
+      progress(returnedState);
+      progressReported = true;
+      results.push(result.data);
+    } catch (error) {
+      if (!progressReported) progress("failure");
+      throw error;
+    }
   }
   return results;
 }
@@ -806,6 +900,22 @@ type ReadWriteClient = RpcClient & {
     upsert(row: LegacyRow, options?: { onConflict?: string }): Promise<{ error: { code?: string; message: string } | null }>;
   };
 };
+
+export async function readBackfillOperationLedger(
+  client: ReadWriteClient,
+  userId: string,
+): Promise<MigrationOperationLedgerRow[]> {
+  const result = await client
+    .from("adhdice_task_migration_operations")
+    .select("user_id,entity_id,operation_kind,operation_identity,input_fingerprint,state")
+    .eq("user_id", userId);
+  if (result.error) throw new MigrationBackfillDiagnostic(result.error.code ?? "M2_OPERATION_LEDGER_QUERY_FAILED", result.error.message);
+  const rows = result.data ?? [];
+  if (rows.some((row) => exactStringValue(row, "user_id") !== userId)) {
+    throw new MigrationBackfillDiagnostic("M2_OPERATION_LEDGER_SCOPE_MISMATCH", "operation ledger returned a row outside the requested owner scope");
+  }
+  return rows;
+}
 
 async function assertSchemaContracts(client: ReadWriteClient): Promise<void> {
   for (const [table, key, expected] of [
@@ -956,6 +1066,7 @@ async function main(argv: readonly string[]) {
   let activePackage = packageResult;
   let afterReport = buildMigrationRunReport([{ sources, userId: options.userId, logicalDate: options.logicalDate ?? undefined, currentInstant: new Date(), entityDispositions: buildCliEntityDispositions(options) }]);
   for (let pass = 0; pass < 2; pass += 1) {
+    const operationLedger = await readBackfillOperationLedger(privilegedClient, options.userId);
     for (let offset = 0; offset < activePackage.plans.length; offset += options.batchSize) {
       // The token/owner stay stable for the run.  The expiry is refreshed for
       // every bounded RPC group so a long owner migration cannot expire its
@@ -964,6 +1075,10 @@ async function main(argv: readonly string[]) {
         leaseToken,
         leaseOwner,
         leaseExpiresAt: migrationLeaseExpiresAt,
+        operationLedger,
+        progressOffset: offset,
+        progressTotal: activePackage.plans.length,
+        onProgress: (event) => process.stderr.write(formatBackfillProgress(event)),
       });
     }
     const afterSources = await loadAuthenticatedOwnerScopedEvidence(ownerClient as never, options.userId, accessToken, options.batchSize);

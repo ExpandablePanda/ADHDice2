@@ -5,6 +5,7 @@ import {
   MigrationBackfillDiagnostic,
   applyBackfillPlans,
   buildBackfillPackage,
+  formatBackfillProgress,
   migrationLeaseExpiresAt,
   parseBackfillCliArgs,
   sourceFingerprintsChanged,
@@ -12,6 +13,7 @@ import {
 import {
   OWNER_APPROVED_HISTORY_EXCLUSION,
   emptySourceEvidence,
+  normalizeCurrentScheduleForMigration,
   type LegacyRow,
   type MigrationSourceEvidence,
 } from "../scripts/task-state-migration-dry-run.ts";
@@ -92,10 +94,33 @@ test("forward schedule snapshot covers unscheduled, one-time, rolling, weekly fi
   assert.equal(result.report.tasksReadyForCanonicalInitialization, 5);
   assert.equal(result.report.prospectiveBoundariesPlanned, 5);
   assert.deepEqual(result.plans.find((plan) => plan.entityId === "unscheduled")?.scheduleBoundary?.scheduleModel, "unscheduled");
-  assert.deepEqual(result.plans.find((plan) => plan.entityId === "one-time")?.scheduleBoundary?.oneTimeDueOn, "2026-08-10");
+  const oneTime = result.plans.find((plan) => plan.entityId === "one-time")?.scheduleBoundary;
+  assert.deepEqual(oneTime?.oneTimeDueOn, "2026-08-10");
+  assert.equal(oneTime?.anchorDate, null);
+  assert.equal(oneTime?.anchorKind, "unknown");
+  assert.equal(oneTime?.anchorConfidence, "unavailable");
   assert.deepEqual(result.plans.find((plan) => plan.entityId === "weekly")?.scheduleBoundary?.repeatDaysOfWeek, [0]);
   assert.deepEqual(result.plans.find((plan) => plan.entityId === "monthly")?.scheduleBoundary?.repeatDayOfMonth, 15);
   assert.ok(result.plans.every((plan) => plan.scheduleBoundary?.prospectiveOnly === true));
+});
+
+test("rolling and fixed schedules retain prospective recurrence anchors", () => {
+  const rolling = normalizeCurrentScheduleForMigration(task("rolling", {
+    due_on: "2026-08-08",
+    repeat_frequency: "daily",
+    repeat_interval: 2,
+  }));
+  const fixed = normalizeCurrentScheduleForMigration(task("fixed", {
+    due_on: "2026-08-09",
+    repeat_frequency: "weekly",
+    repeat_days_of_week: [0],
+  }));
+  assert.equal(rolling.anchorDate, "2026-08-08");
+  assert.equal(rolling.anchorKind, "migration_prospective");
+  assert.equal(rolling.anchorConfidence, "high_confidence");
+  assert.equal(fixed.anchorDate, "2026-08-09");
+  assert.equal(fixed.anchorKind, "migration_prospective");
+  assert.equal(fixed.anchorConfidence, "high_confidence");
 });
 
 test("current Complete and stale Complete projections use the current Task snapshot", () => {
@@ -297,6 +322,121 @@ test("retry identity is deterministic and applying a dry-run plan performs no wr
 });
 
 type BackfillPlanLike = { operationIdentity: string };
+
+function operationRow(plan: BackfillPlanLike & { userId: string; entityId: string | null; inputFingerprint: string }, overrides: LegacyRow = {}): LegacyRow {
+  return {
+    user_id: plan.userId,
+    entity_id: plan.entityId,
+    operation_kind: "backfill",
+    operation_identity: plan.operationIdentity,
+    input_fingerprint: plan.inputFingerprint,
+    state: "committed",
+    ...overrides,
+  };
+}
+
+test("exact committed operation is skipped before the entity RPC", async () => {
+  const plan = packageFor([task("resume")]).plans[0]!;
+  let calls = 0;
+  const progress: string[] = [];
+  await applyBackfillPlans({
+    rpc: async () => {
+      calls += 1;
+      return { data: { state: "committed" }, error: null };
+    },
+  }, [plan], {
+    leaseToken: "lease",
+    leaseOwner: "owner",
+    leaseExpiresAt: CANONICAL_TIME,
+    operationLedger: [operationRow(plan)],
+    onProgress: (event) => progress.push(event.state),
+  });
+  assert.equal(calls, 0);
+  assert.deepEqual(progress, ["skipped_exact_committed"]);
+});
+
+test("same operation identity with a mismatched owner, scope, or fingerprint fails closed", async () => {
+  const plan = packageFor([task("mismatch")]).plans[0]!;
+  for (const mismatch of [{ user_id: OTHER_USER_ID }, { entity_id: "different-entity" }, { input_fingerprint: "different-fingerprint" }]) {
+    let calls = 0;
+    await assert.rejects(
+      () => applyBackfillPlans({
+        rpc: async () => {
+          calls += 1;
+          return { data: { state: "committed" }, error: null };
+        },
+      }, [plan], {
+        leaseToken: "lease",
+        leaseOwner: "owner",
+        leaseExpiresAt: CANONICAL_TIME,
+        operationLedger: [operationRow(plan, mismatch)],
+      }),
+      (error: unknown) => error instanceof MigrationBackfillDiagnostic && error.code === "M2_OPERATION_IDENTITY_MISMATCH",
+    );
+    assert.equal(calls, 0);
+  }
+});
+
+test("noncommitted and unseen operations still call the entity RPC", async () => {
+  const plan = packageFor([task("not-complete")]).plans[0]!;
+  for (const operationLedger of [[operationRow(plan, { state: "started" })], []]) {
+    let calls = 0;
+    await applyBackfillPlans({
+      rpc: async () => {
+        calls += 1;
+        return { data: { state: "committed" }, error: null };
+      },
+    }, [plan], {
+      leaseToken: "lease",
+      leaseOwner: "owner",
+      leaseExpiresAt: CANONICAL_TIME,
+      operationLedger,
+    });
+    assert.equal(calls, 1);
+  }
+});
+
+test("already_committed server responses are accepted without a client retry", async () => {
+  const plan = packageFor([task("server-replay")]).plans[0]!;
+  let calls = 0;
+  const result = await applyBackfillPlans({
+    rpc: async () => {
+      calls += 1;
+      return { data: { state: "already_committed" }, error: null };
+    },
+  }, [plan], { leaseToken: "lease", leaseOwner: "owner", leaseExpiresAt: CANONICAL_TIME });
+  assert.equal(calls, 1);
+  assert.deepEqual(result, [{ state: "already_committed" }]);
+});
+
+test("4xx and 5xx RPC failures are not automatically retried", async () => {
+  const plan = packageFor([task("no-retry")]).plans[0]!;
+  for (const error of [{ code: "42501", message: "permission denied" }, { code: "504", message: "upstream timeout" }]) {
+    let calls = 0;
+    await assert.rejects(
+      () => applyBackfillPlans({
+        rpc: async () => {
+          calls += 1;
+          return { data: null, error };
+        },
+      }, [plan], { leaseToken: "lease", leaseOwner: "owner", leaseExpiresAt: CANONICAL_TIME }),
+      (failure: unknown) => failure instanceof MigrationBackfillDiagnostic && failure.code === error.code,
+    );
+    assert.equal(calls, 1);
+  }
+});
+
+test("progress output reports safe scope and result state without plan content or credentials", () => {
+  const output = [
+    formatBackfillProgress({ index: 15, total: 923, entityId: "04230ed9-5c4e-442a-973a-21bd7d7c8cef", state: "skipped_exact_committed" }),
+    formatBackfillProgress({ index: 16, total: 923, entityId: null, state: "rpc_already_committed" }),
+    formatBackfillProgress({ index: 17, total: 923, entityId: "next-entity", state: "failure" }),
+  ].join("");
+  assert.match(output, /15\/923 04230ed9-5c4e-442a-973a-21bd7d7c8cef skipped_exact_committed/);
+  assert.match(output, /16\/923 orphan-history rpc_already_committed/);
+  assert.match(output, /17\/923 next-entity failure/);
+  assert.doesNotMatch(output, /Test Calendarrr|sourceSnapshot|sb_secret_|access_token|service_role/);
+});
 
 test("source drift is detectable and does not become a completed run", () => {
   assert.equal(sourceFingerprintsChanged({ tasks: "a", history: "b", rewards: "c" }, { tasks: "a", history: "x", rewards: "c" }), true);

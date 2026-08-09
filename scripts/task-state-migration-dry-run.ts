@@ -567,7 +567,7 @@ export function normalizeCurrentScheduleForMigration(task: LegacyRow): CurrentSc
   }
 
   const recurring = classification.model === "rolling" || classification.model === "fixed";
-  const anchorDate = classification.model === "one_time" ? dueOn : recurring ? dueOn : null;
+  const anchorDate = recurring ? dueOn : null;
   return {
     model: classification.model,
     repeatFrequency: classification.model === "unscheduled" || classification.model === "one_time"
