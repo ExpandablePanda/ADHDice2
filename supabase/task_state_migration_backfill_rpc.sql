@@ -140,7 +140,7 @@ begin
     if jsonb_typeof(p_plan->'taskSnapshot') <> 'object'
        or p_plan->'taskSnapshot'->>'id' is distinct from v_task.id::text
        or p_plan->'taskSnapshot'->>'user_id' is distinct from p_user_id::text
-       or p_plan->'taskSnapshot'->>'status' is distinct from v_task.status
+       or p_plan->'taskSnapshot'->>'status' is distinct from v_task.status::text
        or p_plan->'taskSnapshot'->>'revision' is distinct from v_task.revision::text
        or p_plan->'taskSnapshot'->>'updated_at' is null
        or (p_plan->'taskSnapshot'->>'updated_at')::timestamptz is distinct from v_task.updated_at
@@ -286,7 +286,7 @@ begin
     end if;
     if nullif(v_evidence->>'entityId', '')::uuid is distinct from v_source_history.task_id
        or (v_evidence->>'legacyEntryDate')::date is distinct from v_source_history.entry_date
-       or v_evidence->>'legacyStatus' is distinct from v_source_history.status
+       or v_evidence->>'legacyStatus' is distinct from v_source_history.status::text
        or v_evidence->>'legacyEventType' is distinct from v_source_history.event_type
        or v_evidence->>'legacyOccurrenceKey' is distinct from v_source_history.occurrence_key
        or nullif(v_evidence->>'legacyOccurrenceDueOn', '')::date is distinct from v_source_history.occurrence_due_on
@@ -297,7 +297,7 @@ begin
        or v_evidence->'sourceSnapshot'->>'id' is distinct from v_source_history.id::text
        or v_evidence->'sourceSnapshot'->>'task_id' is distinct from v_source_history.task_id::text
        or v_evidence->'sourceSnapshot'->>'entry_date' is distinct from v_source_history.entry_date::text
-       or v_evidence->'sourceSnapshot'->>'status' is distinct from v_source_history.status
+       or v_evidence->'sourceSnapshot'->>'status' is distinct from v_source_history.status::text
        or v_evidence->'sourceSnapshot'->>'event_type' is distinct from v_source_history.event_type
        or v_evidence->'sourceSnapshot'->>'occurrence_key' is distinct from v_source_history.occurrence_key
        or nullif(v_evidence->'sourceSnapshot'->>'occurrence_due_on', '')::date is distinct from v_source_history.occurrence_due_on
@@ -427,7 +427,7 @@ begin
       when v_task.repeat_frequency in ('weekly', 'monthly') then 'fixed'
       else 'ambiguous'
     end)
-       or p_plan->'scheduleBoundary'->>'repeatFrequency' is distinct from (case when v_task.repeat_frequency in ('none') then 'none' else v_task.repeat_frequency end)
+       or p_plan->'scheduleBoundary'->>'repeatFrequency' is distinct from (case when v_task.repeat_frequency in ('none') then 'none'::text else v_task.repeat_frequency::text end)
        or (p_plan->'scheduleBoundary'->>'repeatInterval')::integer is distinct from coalesce(v_task.repeat_interval, 1)
        or nullif(p_plan->'scheduleBoundary'->>'oneTimeDueOn', '')::date is distinct from (case when v_task.repeat_frequency = 'none' then v_task.due_on else null end)
        or nullif(p_plan->'scheduleBoundary'->>'anchorDate', '')::date is distinct from (case when v_task.repeat_frequency <> 'none' then v_task.due_on else null end)
@@ -550,7 +550,7 @@ begin
          or (
            nullif(v_fact->>'sourceLegacyHistoryId', '') is null
            and (
-             v_task.status is distinct from v_fact->>'outcome'
+             v_task.status::text is distinct from v_fact->>'outcome'
              or v_task.active_status_logical_date is distinct from (v_fact->>'logicalDate')::date
            )
          ) then
@@ -564,7 +564,7 @@ begin
           and history.user_id = p_user_id
           and history.task_id = v_entity_id
           and history.entry_date = (v_fact->>'logicalDate')::date
-          and history.status = v_fact->>'outcome'
+          and history.status::text = v_fact->>'outcome'
       ) then
         raise exception 'current-day History fact source evidence is not bound to the requested owner, Task, date, and outcome'
           using errcode = '42501';

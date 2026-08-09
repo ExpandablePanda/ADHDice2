@@ -72,7 +72,7 @@ test("privileged backfill RPC is service-role-only, owner-scoped, and fixed-sear
   assert.match(rpc, /v_fact->>'outcome' not in \('done', 'did_my_best'\)/i);
   assert.match(rpc, /v_fact->>'logicalDate' is distinct from p_plan->>'logicalDate'/i);
   assert.match(rpc, /history\.entry_date = \(v_fact->>'logicalDate'\)::date/i);
-  assert.match(rpc, /history\.status = v_fact->>'outcome'/i);
+  assert.match(rpc, /history\.status::text = v_fact->>'outcome'/i);
   assert.match(rpc, /lease_token = p_lease_token[\s\S]*lease_owner = p_lease_owner/i);
   assert.match(rpc, /active ready M2 plan is missing its schedule boundary/i);
   assert.match(rpc, /TRASHED_SCHEDULE_REPAIR_REQUIRED_BEFORE_RESTORE/i);
@@ -97,4 +97,31 @@ test("M2 backfill RPC parenthesizes CASE operands in DISTINCT FROM comparisons",
   ]) {
     assert.ok(normalized.includes(comparison.toLowerCase()), `missing parenthesized CASE operand: ${comparison}`);
   }
+});
+
+test("M2 backfill RPC normalizes all legacy enum comparisons to text", () => {
+  const normalized = rpc.replace(/\s+/g, " ").toLowerCase();
+  for (const comparison of [
+    "p_plan->'tasksnapshot'->>'status' is distinct from v_task.status::text",
+    "v_evidence->>'legacystatus' is distinct from v_source_history.status::text",
+    "v_evidence->'sourcesnapshot'->>'status' is distinct from v_source_history.status::text",
+    "p_plan->'scheduleboundary'->>'repeatfrequency' is distinct from (case when v_task.repeat_frequency in ('none') then 'none'::text else v_task.repeat_frequency::text end)",
+    "v_task.status::text is distinct from v_fact->>'outcome'",
+    "history.status::text = v_fact->>'outcome'",
+  ]) {
+    assert.ok(normalized.includes(comparison), `missing enum-to-text normalization: ${comparison}`);
+  }
+
+  for (const unsafeComparison of [
+    /p_plan->'tasksnapshot'->>'status' is distinct from v_task\.status(?!::text)/i,
+    /v_evidence->>'legacystatus' is distinct from v_source_history\.status(?!::text)/i,
+    /v_evidence->'sourcesnapshot'->>'status' is distinct from v_source_history\.status(?!::text)/i,
+    /p_plan->'scheduleboundary'->>'repeatfrequency' is distinct from \(case when v_task\.repeat_frequency in \('none'\) then 'none' else v_task\.repeat_frequency end\)/i,
+    /v_task\.status(?!::text) is distinct from v_fact->>'outcome'/i,
+    /history\.status(?!::text) = v_fact->>'outcome'/i,
+  ]) {
+    assert.doesNotMatch(normalized, unsafeComparison, `unsafe enum/text comparison remains: ${unsafeComparison}`);
+  }
+
+  assert.doesNotMatch(normalized, /repeatfrequency' is distinct from \(case[\s\S]*else v_task\.repeat_frequency end\)/i);
 });
