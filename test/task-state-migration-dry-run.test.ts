@@ -144,7 +144,56 @@ test("malformed recurrence is ambiguous and stale fields do not create a fifth m
   const stale = oneEntity(sources([task({ repeat_frequency: "none", due_on: null, repeat_days_of_week: [1], repeat_day_of_month: 15 })]));
   assert.equal(malformed.scheduleModel, "ambiguous");
   assert.ok(malformed.blockingIssueCodes.includes("INVALID_RECURRENCE_CONFIGURATION"));
+  assert.equal(malformed.migrationEligibility, "blocked");
+  assert.equal(malformed.migrationDisposition, "genuinely_blocked");
   assert.equal(stale.scheduleModel, "unscheduled");
+});
+
+test("trashed malformed recurrence stays quarantined and requires repair before restore", () => {
+  const legacyTask = task({
+    id: "trashed-malformed-recurrence",
+    status: "trashed",
+    trashed_at: "2026-08-01T12:00:00Z",
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    repeat_days_of_week: [7],
+    due_on: "2026-08-10",
+  });
+  const entity = oneEntity(sources([legacyTask]));
+
+  assert.equal(entity.lifecycleState.container, "trashed");
+  assert.equal(entity.scheduleModel, "ambiguous");
+  assert.equal(entity.anchor.classification, "ambiguous");
+  assert.equal(entity.anchor.date, null);
+  assert.deepEqual(entity.occurrenceClassifications, []);
+  assert.ok(entity.blockingIssueCodes.includes("INVALID_RECURRENCE_CONFIGURATION"));
+  assert.ok(entity.anchor.evidence.includes("invalid_recurrence_configuration"));
+  assert.ok(entity.anchor.evidence.includes("trashed_recurrence_anchor_requires_restore_repair"));
+  assert.equal(entity.anchor.evidence.some((evidence) => evidence.startsWith("prospective_weekday_from_due_on:")), false);
+  assert.equal(entity.migrationEligibility, "partial");
+  assert.equal(entity.migrationDisposition, "historical_uncertainty_retained");
+  assert.equal(legacyTask.due_on, "2026-08-10");
+  assert.deepEqual(legacyTask.repeat_days_of_week, [7]);
+});
+
+test("trashed recurrence quarantine does not suppress an unrelated ownership blocker", () => {
+  const foreignParent = task({ id: "foreign-parent-for-trashed-malformed", user_id: "22222222-2222-4222-8222-222222222222" });
+  const id = "trashed-malformed-with-foreign-parent";
+  const report = classifyUser(sources([foreignParent, task({
+    id,
+    parent_task_id: foreignParent.id,
+    status: "trashed",
+    trashed_at: "2026-08-01T12:00:00Z",
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    repeat_days_of_week: [7],
+    due_on: "2026-08-10",
+  })]), { userId: USER_ID, logicalDate: "2026-08-08", classifierVersion: CLASSIFIER_VERSION, schemaContractVersion: SCHEMA_CONTRACT_VERSION });
+  const entity = report.entities.find((candidate) => candidate.entityId === id)!;
+
+  assert.ok(entity.blockingIssueCodes.includes("CROSS_USER_PARENT"));
+  assert.equal(entity.migrationEligibility, "blocked");
+  assert.equal(entity.migrationDisposition, "genuinely_blocked");
 });
 
 test("weekly recurrence with missing weekdays uses due_on only for prospective schedule evidence", () => {

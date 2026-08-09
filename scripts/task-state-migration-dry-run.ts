@@ -1253,9 +1253,12 @@ function classifyEligibility(
   workflow: EntityClassification["workflowState"],
   issueCodes: readonly string[],
 ): MigrationEligibility {
-  if (issueCodes.some((issue) => issueSeverity(issue) === "blocked")) return "blocked";
-  if (model === "ambiguous" || lifecycle.terminal === "ambiguous" || workflow === "contradictory") return "blocked";
   const inactiveSchedule = lifecycle.container === "trashed" || lifecycle.terminal === "permanently_complete";
+  const trashedMalformedSchedule = lifecycle.container === "trashed"
+    && model === "ambiguous"
+    && issueCodes.includes("INVALID_RECURRENCE_CONFIGURATION");
+  if (issueCodes.some((issue) => issueSeverity(issue) === "blocked" && !(trashedMalformedSchedule && issue === "INVALID_RECURRENCE_CONFIGURATION"))) return "blocked";
+  if ((model === "ambiguous" && !trashedMalformedSchedule) || lifecycle.terminal === "ambiguous" || workflow === "contradictory") return "blocked";
   if (anchor.classification === "ambiguous" && !inactiveSchedule) return "blocked";
   if (anchor.classification === "prospective" || lifecycle.priorContainer === "unknown" || workflow === "stale" || issueCodes.length > 0) return "partial";
   return "safe";
@@ -1385,9 +1388,10 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
       entityDisposition?.preserveCurrentCompleteProjection === true,
       entityDisposition?.resetStaleLegacyCompleteProjection === true,
     );
-    if (anchor.classification === "ambiguous" && schedule.model !== "ambiguous") {
-      if (lifecycle.state.container === "trashed") anchor.evidence.push("trashed_recurrence_anchor_requires_restore_repair");
-      else if (lifecycle.state.terminal === "permanently_complete") anchor.evidence.push("terminal_recurrence_anchor_not_required");
+    if (lifecycle.state.container === "trashed" && (schedule.model === "ambiguous" || anchor.classification === "ambiguous")) {
+      anchor.evidence.push("trashed_recurrence_anchor_requires_restore_repair");
+    } else if (anchor.classification === "ambiguous" && lifecycle.state.terminal === "permanently_complete") {
+      anchor.evidence.push("terminal_recurrence_anchor_not_required");
     }
     const workflowProjectionReset = isOwnerApprovedStaleWorkflowReset(task, schedule.model, logicalDate, lifecycle.state, entityDisposition);
     const workflow = classifyWorkflow(task, logicalDate, lifecycle.state, occurrenceClassifications, workflowProjectionReset);
