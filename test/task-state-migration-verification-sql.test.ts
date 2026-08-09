@@ -78,3 +78,23 @@ test("privileged backfill RPC is service-role-only, owner-scoped, and fixed-sear
   assert.match(rpc, /TRASHED_SCHEDULE_REPAIR_REQUIRED_BEFORE_RESTORE/i);
   assert.match(rpc, /terminal_state <> 'permanently_complete'/i);
 });
+
+test("M2 backfill RPC parenthesizes CASE operands in DISTINCT FROM comparisons", () => {
+  assert.doesNotMatch(rpc, /\bis\s+(?:not\s+)?distinct\s+from\s+case\b/i);
+
+  const normalized = rpc.replace(/\s+/g, " ").toLowerCase();
+  for (const comparison of [
+    "p_plan->'canonicalTask'->>'terminalState' is distinct from (case",
+    "nullif(p_plan->'canonicalTask'->>'terminalCompletedAt', '')::timestamptz is distinct from (case",
+    "p_plan->'canonicalTask'->>'containerState' is distinct from (case",
+    "nullif(p_plan->'canonicalTask'->>'containerTrashedAt', '')::timestamptz is distinct from (case",
+    "nullif(p_plan->'canonicalTask'->>'priorContainerState', '') is distinct from (case",
+    "p_plan->'canonicalTask'->>'priorContainerStateStatus' is distinct from (case",
+    "p_plan->'scheduleBoundary'->>'scheduleModel' is distinct from (case",
+    "p_plan->'scheduleBoundary'->>'repeatFrequency' is distinct from (case",
+    "nullif(p_plan->'scheduleBoundary'->>'oneTimeDueOn', '')::date is distinct from (case",
+    "nullif(p_plan->'scheduleBoundary'->>'anchorDate', '')::date is distinct from (case",
+  ]) {
+    assert.ok(normalized.includes(comparison.toLowerCase()), `missing parenthesized CASE operand: ${comparison}`);
+  }
+});

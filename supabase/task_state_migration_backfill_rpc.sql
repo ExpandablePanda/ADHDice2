@@ -410,27 +410,27 @@ begin
       raise exception 'M2 schedule boundary is not a prospective current-snapshot boundary'
         using errcode = '22023';
     end if;
-    if p_plan->'canonicalTask'->>'terminalState' is distinct from case when v_task.status = 'complete' then 'permanently_complete' else 'active' end
-       or nullif(p_plan->'canonicalTask'->>'terminalCompletedAt', '')::timestamptz is distinct from case when v_task.status = 'complete' then v_task.completed_at else null end
-       or p_plan->'canonicalTask'->>'containerState' is distinct from case when v_task.status = 'archived' then 'archived' when v_task.status = 'trashed' then 'trashed' else 'active' end
-       or nullif(p_plan->'canonicalTask'->>'containerTrashedAt', '')::timestamptz is distinct from case when v_task.status = 'trashed' then v_task.trashed_at else null end
-       or nullif(p_plan->'canonicalTask'->>'priorContainerState', '') is distinct from case when v_task.status = 'trashed' then v_task.prior_container_state else null end
-       or p_plan->'canonicalTask'->>'priorContainerStateStatus' is distinct from case when v_task.status <> 'trashed' then 'not_applicable' when v_task.prior_container_state is null then 'unknown' else 'proven' end then
+    if p_plan->'canonicalTask'->>'terminalState' is distinct from (case when v_task.status = 'complete' then 'permanently_complete' else 'active' end)
+       or nullif(p_plan->'canonicalTask'->>'terminalCompletedAt', '')::timestamptz is distinct from (case when v_task.status = 'complete' then v_task.completed_at else null end)
+       or p_plan->'canonicalTask'->>'containerState' is distinct from (case when v_task.status = 'archived' then 'archived' when v_task.status = 'trashed' then 'trashed' else 'active' end)
+       or nullif(p_plan->'canonicalTask'->>'containerTrashedAt', '')::timestamptz is distinct from (case when v_task.status = 'trashed' then v_task.trashed_at else null end)
+       or nullif(p_plan->'canonicalTask'->>'priorContainerState', '') is distinct from (case when v_task.status = 'trashed' then v_task.prior_container_state else null end)
+       or p_plan->'canonicalTask'->>'priorContainerStateStatus' is distinct from (case when v_task.status <> 'trashed' then 'not_applicable' when v_task.prior_container_state is null then 'unknown' else 'proven' end) then
       raise exception 'M2 canonical Task plan is not bound to current terminal/container state'
         using errcode = '40001';
     end if;
     if jsonb_typeof(p_plan->'scheduleBoundary') = 'object'
-       and (p_plan->'scheduleBoundary'->>'scheduleModel' is distinct from case
+       and (p_plan->'scheduleBoundary'->>'scheduleModel' is distinct from (case
       when v_task.repeat_frequency = 'none' and v_task.due_on is null then 'unscheduled'
       when v_task.repeat_frequency = 'none' and v_task.due_on is not null then 'one_time'
       when v_task.repeat_frequency in ('daily', 'custom', 'daily_until_complete') then 'rolling'
       when v_task.repeat_frequency in ('weekly', 'monthly') then 'fixed'
       else 'ambiguous'
-    end
-       or p_plan->'scheduleBoundary'->>'repeatFrequency' is distinct from case when v_task.repeat_frequency in ('none') then 'none' else v_task.repeat_frequency end
+    end)
+       or p_plan->'scheduleBoundary'->>'repeatFrequency' is distinct from (case when v_task.repeat_frequency in ('none') then 'none' else v_task.repeat_frequency end)
        or (p_plan->'scheduleBoundary'->>'repeatInterval')::integer is distinct from coalesce(v_task.repeat_interval, 1)
-       or nullif(p_plan->'scheduleBoundary'->>'oneTimeDueOn', '')::date is distinct from case when v_task.repeat_frequency = 'none' then v_task.due_on else null end
-       or nullif(p_plan->'scheduleBoundary'->>'anchorDate', '')::date is distinct from case when v_task.repeat_frequency <> 'none' then v_task.due_on else null end
+       or nullif(p_plan->'scheduleBoundary'->>'oneTimeDueOn', '')::date is distinct from (case when v_task.repeat_frequency = 'none' then v_task.due_on else null end)
+       or nullif(p_plan->'scheduleBoundary'->>'anchorDate', '')::date is distinct from (case when v_task.repeat_frequency <> 'none' then v_task.due_on else null end)
        or nullif(p_plan->'scheduleBoundary'->>'dueTime', '')::time is distinct from v_task.due_time) then
       raise exception 'M2 schedule boundary is not bound to the current Task schedule configuration'
         using errcode = '40001';
