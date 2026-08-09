@@ -7,7 +7,7 @@ import { logicalDateForTimestamp } from "../src/lib/task-state-engine/calendar.t
 
 export const REPORT_VERSION = "task-state-migration-dry-run-v1" as const;
 export const MIGRATION_VERSION = "task-state-migration-v1" as const;
-export const CLASSIFIER_VERSION = "task-state-classifier-v1" as const;
+export const CLASSIFIER_VERSION = "task-state-classifier-v2" as const;
 export const SCHEMA_CONTRACT_VERSION = "task-state-schema-v1" as const;
 export const DEFAULT_BATCH_SIZE = 100;
 export const MAX_BATCH_SIZE = 1000;
@@ -64,11 +64,40 @@ export type ClassifierOptions = {
   currentInstant?: string | Date;
   classifierVersion?: string;
   schemaContractVersion?: string;
+  entityDispositions?: EntityMigrationDispositions;
 };
 
 export type ScheduleModel = "unscheduled" | "one_time" | "rolling" | "fixed" | "ambiguous";
 export type AnchorClassification = "proven" | "reconstructable" | "prospective" | "ambiguous";
 export type MigrationEligibility = "safe" | "partial" | "needs_attention" | "blocked";
+export type MigrationDisposition =
+  | "safe_current_future_deterministic"
+  | "historical_uncertainty_retained"
+  | "owner_approved_history_exclusion"
+  | "genuinely_blocked";
+
+export type MigrationEntityDisposition = {
+  preserveEntity: true;
+  preserveCurrentConfiguration: true;
+  excludeLegacyHistory: true;
+  approval: "owner_approved";
+};
+
+export type EntityMigrationDispositions = Readonly<Record<string, MigrationEntityDisposition>>;
+
+export const OWNER_APPROVED_HISTORY_EXCLUSION: MigrationEntityDisposition = {
+  preserveEntity: true,
+  preserveCurrentConfiguration: true,
+  excludeLegacyHistory: true,
+  approval: "owner_approved",
+};
+
+export type MigrationDispositionCounts = {
+  safeCurrentFutureDeterministic: number;
+  historicalUncertaintyRetained: number;
+  ownerApprovedHistoryExclusion: number;
+  genuinelyBlocked: number;
+};
 
 export type MigrationCounts = {
   taskEntities: number;
@@ -83,6 +112,7 @@ export type MigrationCounts = {
   inProgress: { valid: number; stale: number; contradictory: number };
   rewards: { mapped: number; consumed: number; pending: number; ambiguous: number };
   legacySubtasks: { promoted: number; unpromoted: number; nested: number; orphan: number; duplicate: number };
+  migrationDisposition: MigrationDispositionCounts;
   orphanReferences: number;
   projectionMismatches: number;
   needsAttention: number;
@@ -95,6 +125,9 @@ export type HistoryClassification = {
   classification: "explicit" | "automatic_missed" | "ambiguous" | "contradictory";
   confidence: "proven" | "high_confidence" | "not_promotable";
   canonicalEligible: boolean;
+  historicalEvidenceEligible: boolean;
+  provenance: "proven" | "unknown";
+  excludedFromCanonicalReconstruction: boolean;
   evidence: string[];
   blockingIssueCodes: string[];
 };
@@ -121,8 +154,10 @@ export type EntityClassification = {
     evidence: string[];
   };
   historyClassifications: HistoryClassification[];
+  historyDisposition: "retained" | "owner_approved_excluded";
   occurrenceClassifications: OccurrenceClassification[];
   delayState: "none" | "safe" | "ambiguous";
+  delayEvidence: string[];
   lifecycleState: {
     terminal: string;
     container: string;
@@ -131,6 +166,8 @@ export type EntityClassification = {
   workflowState: "none" | "valid_in_progress" | "stale" | "contradictory";
   rewardBootstrapState: "none" | "consumed_proven" | "pending_proven" | "safe" | "ambiguous";
   migrationEligibility: MigrationEligibility;
+  migrationDisposition: MigrationDisposition;
+  entityDisposition: MigrationEntityDisposition | null;
   blockingIssueCodes: string[];
   sourceFingerprints: Record<string, string>;
 };
@@ -176,6 +213,13 @@ export type MigrationRunReport = {
   userReports: UserMigrationReport[];
   entityRecords: EntityClassification[];
   global: GlobalMigrationReport;
+};
+
+type ScheduleClassification = {
+  model: ScheduleModel;
+  issueCodes: string[];
+  evidence: string[];
+  prospectiveOnly: boolean;
 };
 
 export class MigrationClassifierDiagnostic extends Error {
@@ -339,10 +383,14 @@ function scheduleConfiguration(task: LegacyRow): ScheduleConfiguration {
   };
 }
 
+function validRepeatInterval(interval: number | null): interval is number {
+  return interval !== null && Number.isInteger(interval) && interval >= 1;
+}
+
 function isValidSchedule(task: LegacyRow, model: ScheduleModel): boolean {
   const configuration = scheduleConfiguration(task);
   if (model === "unscheduled" || model === "one_time") return configuration.frequency === "none";
-  if (!configuration.interval || configuration.interval < 1) return false;
+  if (!validRepeatInterval(configuration.interval)) return false;
   if (model === "rolling") return ["daily", "custom", "daily_until_complete"].includes(configuration.frequency ?? "");
   if (model === "fixed" && configuration.frequency === "weekly") {
     return configuration.weekdays.length > 0
@@ -370,24 +418,55 @@ function isValidSchedule(task: LegacyRow, model: ScheduleModel): boolean {
   return false;
 }
 
-export function classifyScheduleModel(task: LegacyRow): { model: ScheduleModel; issueCodes: string[] } {
+function prospectiveScheduleCompatibility(task: LegacyRow): string[] | null {
+  const configuration = scheduleConfiguration(task);
+  const dueOn = dateValue(task, "due_on");
+  if (!dueOn || !validRepeatInterval(configuration.interval)) return null;
+  if (configuration.frequency === "weekly" && configuration.weekdays.length === 0) {
+    const weekday = new Date(`${dueOn}T00:00:00Z`).getUTCDay();
+    return [
+      "legacy_weekly_schedule_from_current_due_on",
+      `prospective_weekday_from_due_on:${weekday}`,
+      `prospective_cycle_interval:${configuration.interval}`,
+      "historical_scope_unknown",
+    ];
+  }
+  if (
+    configuration.frequency === "monthly"
+    && configuration.monthlyMode === "day_of_month"
+    && configuration.dayOfMonth === null
+    && configuration.monthlyOrdinal === null
+    && configuration.monthlyWeekday === null
+  ) {
+    return [
+      "legacy_monthly_day_of_month_from_current_due_on",
+      `prospective_day_of_month_from_due_on:${new Date(`${dueOn}T00:00:00Z`).getUTCDate()}`,
+      `prospective_cycle_interval:${configuration.interval}`,
+      "historical_scope_unknown",
+    ];
+  }
+  return null;
+}
+
+export function classifyScheduleModel(task: LegacyRow): ScheduleClassification {
   const frequency = stringValue(task, "repeat_frequency");
   const rawDueOn = stringValue(task, "due_on");
   const dueOn = dateValue(task, "due_on");
-  if (rawDueOn !== null && dueOn === null) return { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"] };
-  if (frequency === "none" && dueOn === null) return { model: "unscheduled", issueCodes: [] };
-  if (frequency === "none" && dueOn !== null) return { model: "one_time", issueCodes: [] };
+  if (rawDueOn !== null && dueOn === null) return { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"], evidence: [], prospectiveOnly: false };
+  if (frequency === "none" && dueOn === null) return { model: "unscheduled", issueCodes: [], evidence: [], prospectiveOnly: false };
+  if (frequency === "none" && dueOn !== null) return { model: "one_time", issueCodes: [], evidence: [], prospectiveOnly: false };
   if (frequency === "daily" || frequency === "custom" || frequency === "daily_until_complete") {
     return isValidSchedule(task, "rolling")
-      ? { model: "rolling", issueCodes: [] }
-      : { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"] };
+      ? { model: "rolling", issueCodes: [], evidence: [], prospectiveOnly: false }
+      : { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"], evidence: [], prospectiveOnly: false };
   }
   if (frequency === "weekly" || frequency === "monthly") {
-    return isValidSchedule(task, "fixed")
-      ? { model: "fixed", issueCodes: [] }
-      : { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"] };
+    if (isValidSchedule(task, "fixed")) return { model: "fixed", issueCodes: [], evidence: [], prospectiveOnly: false };
+    const prospectiveEvidence = prospectiveScheduleCompatibility(task);
+    if (prospectiveEvidence) return { model: "fixed", issueCodes: [], evidence: prospectiveEvidence, prospectiveOnly: true };
+    return { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"], evidence: [], prospectiveOnly: false };
   }
-  return { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"] };
+  return { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"], evidence: [], prospectiveOnly: false };
 }
 
 function scheduledOnDate(task: LegacyRow, model: ScheduleModel, date: string, anchorDate: string | null = null): boolean {
@@ -449,6 +528,7 @@ function sourceFingerprintForEntity(sources: MigrationSourceEvidence, taskId: st
 function classifyAnchor(
   task: LegacyRow,
   model: ScheduleModel,
+  scheduleEvidence: readonly string[],
   historyClassifications: readonly HistoryClassification[],
   occurrenceClassifications: readonly OccurrenceClassification[],
   delayState: "none" | "safe" | "ambiguous",
@@ -505,16 +585,22 @@ function classifyAnchor(
       return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["explicit_history", "historical_schedule_evidence_conflicts"] };
     }
   }
-  if (delayState === "ambiguous") {
-    return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["unresolved_delay_origin_or_target"] };
-  }
   if (profileAvailable && dateValue(task, "due_on") !== null && historyClassifications.every((item) => item.classification !== "contradictory")) {
     return {
       classification: "prospective",
       confidence: "high_confidence",
       date: null,
-      evidence: ["valid_forward_configuration", "current_due_cursor_only", "historical_scope_unknown"],
+      evidence: [
+        "valid_forward_configuration",
+        "current_due_cursor_only",
+        ...(delayState === "ambiguous" ? ["unresolved_historical_delay_provenance"] : []),
+        ...scheduleEvidence,
+        "historical_scope_unknown",
+      ],
     };
+  }
+  if (delayState === "ambiguous") {
+    return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["unresolved_delay_origin_or_target"] };
   }
   return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["recurrence_anchor_unavailable"] };
 }
@@ -590,6 +676,7 @@ function classifyHistory(
   taskId: string,
   history: readonly LegacyRow[],
   sources: MigrationSourceEvidence,
+  excludeLegacyHistory = false,
 ): HistoryClassification[] {
   const relevant = history.filter((row) => stringValue(row, "task_id") === taskId);
   const byDate = new Map<string, LegacyRow[]>();
@@ -597,7 +684,7 @@ function classifyHistory(
     const date = dateValue(row, "entry_date");
     if (date) byDate.set(date, [...(byDate.get(date) ?? []), row]);
   }
-  return [...relevant]
+  const classifications = [...relevant]
     .sort((left, right) => compareStrings(rowId(left, ""), rowId(right, "")))
     .map((row, index) => {
       const id = rowId(row, `${taskId}:history:${index}`);
@@ -677,6 +764,26 @@ function classifyHistory(
       evidence.push(...writer.evidence);
       return { historyId: id, entryDate, status, classification: "explicit", confidence: stringValue(row, "command_id") ? "proven" : "high_confidence", canonicalEligible: true, evidence, blockingIssueCodes: issues };
     });
+  return classifications.map((classification) => {
+    const historicalEvidenceEligible = !excludeLegacyHistory
+      && classification.classification !== "contradictory"
+      && classification.status !== null
+      && HISTORY_STATUSES.has(classification.status);
+    const provenance = !excludeLegacyHistory && (classification.canonicalEligible || classification.classification === "automatic_missed")
+      ? "proven"
+      : "unknown";
+    return {
+      ...classification,
+      canonicalEligible: excludeLegacyHistory ? false : classification.canonicalEligible,
+      historicalEvidenceEligible,
+      provenance,
+      excludedFromCanonicalReconstruction: excludeLegacyHistory,
+      evidence: excludeLegacyHistory
+        ? [...classification.evidence, "owner_approved_history_exclusion"]
+        : classification.evidence,
+      blockingIssueCodes: excludeLegacyHistory ? [] : classification.blockingIssueCodes,
+    };
+  });
 }
 
 type HistoricalScheduleEvidence = {
@@ -706,8 +813,9 @@ function historicalScheduleEvidenceFromRow(row: LegacyRow): HistoricalScheduleEv
     repeat_monthly_weekday: numberValue(snapshot, "repeat_monthly_weekday", "monthly_weekday") ?? numberValue(row, "repeat_monthly_weekday_at_event"),
     due_on: dateValue(snapshot, "due_on", "one_time_due_on", "current_due_on") ?? dateValue(row, "due_on_at_event", "historical_due_on"),
   };
-  const model = classifyScheduleModel(schedule).model;
-  if (model === "ambiguous") return null;
+  const scheduleClassification = classifyScheduleModel(schedule);
+  if (scheduleClassification.model === "ambiguous" || scheduleClassification.prospectiveOnly) return null;
+  const model = scheduleClassification.model;
   const anchorDate = dateValue(snapshot, "anchor_date", "schedule_anchor_date", "due_on", "one_time_due_on")
     ?? dateValue(row, "anchor_date_at_event", "historical_anchor_date")
     ?? effectiveFrom;
@@ -792,10 +900,11 @@ function classifyDelay(
   model: ScheduleModel,
   occurrenceClassifications: readonly OccurrenceClassification[],
   sources: MigrationSourceEvidence,
-): { state: "none" | "safe" | "ambiguous"; issueCodes: string[] } {
+): { state: "none" | "safe" | "ambiguous"; issueCodes: string[]; evidence: string[] } {
   const delayed = history.filter((row) => stringValue(row, "status") === "delayed");
-  if (delayed.length === 0) return { state: "none", issueCodes: [] };
+  if (delayed.length === 0) return { state: "none", issueCodes: [], evidence: [] };
   const issues: string[] = [];
+  const evidence: string[] = [];
   for (const row of delayed) {
     const historyId = rowId(row, "");
     const origin = dateValue(row, "occurrence_due_on") ?? occurrenceClassifications.find((item) => item.historyId === historyId)?.scheduledDueOn;
@@ -812,9 +921,12 @@ function classifyDelay(
     const oneTimeOrigin = model === "one_time" && origin !== null && dateValue(task, "due_on") === origin;
     if (!origin || !actionDate || !target || (!historicalOrigin && !oneTimeOrigin && !occurrenceEvidence?.evidence.includes("historical_schedule_boundary")) || dateDifferenceInDays(actionDate, target) <= 0) {
       issues.push("DELAY_ORIGIN_OR_TARGET_UNPROVEN");
+      evidence.push("historical_delay_provenance_unknown");
     }
   }
-  return issues.length > 0 ? { state: "ambiguous", issueCodes: [...new Set(issues)] } : { state: "safe", issueCodes: [] };
+  return issues.length > 0
+    ? { state: "ambiguous", issueCodes: [...new Set(issues)], evidence: [...new Set(evidence)] }
+    : { state: "safe", issueCodes: [], evidence: ["delay_origin_target_proven"] };
 }
 
 function analyzeHierarchy(tasks: readonly LegacyRow[], userId: string): Map<string, { kind: EntityClassification["entityKind"]; issues: string[]; cycle: boolean; orphan: boolean }> {
@@ -1029,7 +1141,6 @@ function issueSeverity(issue: string): "blocked" | "attention" {
     "ORPHAN_PARENT_REFERENCE",
     "ORPHAN_HISTORY_REFERENCE",
     "INVALID_RECURRENCE_CONFIGURATION",
-    "CONTRADICTORY_HISTORY_SAME_ENTITY_DATE",
     "COMPLETE_TERMINAL_CONTRADICTION",
     "IN_PROGRESS_LIFECYCLE_CONTRADICTION",
     "IN_PROGRESS_FIELDS_CONTRADICTORY",
@@ -1056,6 +1167,23 @@ function classifyEligibility(
   return "safe";
 }
 
+function classifyMigrationDisposition(
+  eligibility: MigrationEligibility,
+  historyDisposition: EntityClassification["historyDisposition"],
+): MigrationDisposition {
+  if (eligibility === "blocked") return "genuinely_blocked";
+  if (historyDisposition === "owner_approved_excluded") return "owner_approved_history_exclusion";
+  if (eligibility !== "safe") return "historical_uncertainty_retained";
+  return "safe_current_future_deterministic";
+}
+
+function isOwnerApprovedHistoryExclusion(disposition: MigrationEntityDisposition | null | undefined): disposition is MigrationEntityDisposition {
+  return disposition?.preserveEntity === true
+    && disposition.preserveCurrentConfiguration === true
+    && disposition.excludeLegacyHistory === true
+    && disposition.approval === "owner_approved";
+}
+
 function zeroCounts(): MigrationCounts {
   return {
     taskEntities: 0,
@@ -1070,6 +1198,12 @@ function zeroCounts(): MigrationCounts {
     inProgress: { valid: 0, stale: 0, contradictory: 0 },
     rewards: { mapped: 0, consumed: 0, pending: 0, ambiguous: 0 },
     legacySubtasks: { promoted: 0, unpromoted: 0, nested: 0, orphan: 0, duplicate: 0 },
+    migrationDisposition: {
+      safeCurrentFutureDeterministic: 0,
+      historicalUncertaintyRetained: 0,
+      ownerApprovedHistoryExclusion: 0,
+      genuinelyBlocked: 0,
+    },
     orphanReferences: 0,
     projectionMismatches: 0,
     needsAttention: 0,
@@ -1089,6 +1223,9 @@ function addCounts(target: MigrationCounts, source: MigrationCounts) {
   for (const key of ["valid", "stale", "contradictory"] as const) target.inProgress[key] += source.inProgress[key];
   for (const key of ["mapped", "consumed", "pending", "ambiguous"] as const) target.rewards[key] += source.rewards[key];
   for (const key of ["promoted", "unpromoted", "nested", "orphan", "duplicate"] as const) target.legacySubtasks[key] += source.legacySubtasks[key];
+  for (const key of ["safeCurrentFutureDeterministic", "historicalUncertaintyRetained", "ownerApprovedHistoryExclusion", "genuinelyBlocked"] as const) {
+    target.migrationDisposition[key] += source.migrationDisposition[key];
+  }
   target.orphanReferences += source.orphanReferences;
   target.projectionMismatches += source.projectionMismatches;
   target.needsAttention += source.needsAttention;
@@ -1131,19 +1268,25 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
     if (!hierarchyResult) throw new MigrationClassifierDiagnostic("INTERNAL_HIERARCHY_MISSING", `no hierarchy result for task ${taskId}`);
     const schedule = classifyScheduleModel(task);
     const taskHistory = sources.history.filter((row) => stringValue(row, "task_id") === taskId);
-    const historyClassifications = classifyHistory(taskId, taskHistory, sources);
-    const occurrenceClassifications = classifyOccurrences(taskId, task, schedule.model, taskHistory, historyClassifications, sources);
-    const delay = classifyDelay(task, taskHistory, schedule.model, occurrenceClassifications, sources);
+    const entityDisposition = options.entityDispositions?.[taskId] ?? null;
+    if (entityDisposition !== null && !isOwnerApprovedHistoryExclusion(entityDisposition)) {
+      throw new MigrationClassifierDiagnostic("INVALID_ENTITY_DISPOSITION", `entity ${taskId} has an incomplete owner-approved History exclusion policy`);
+    }
+    const historyExcluded = isOwnerApprovedHistoryExclusion(entityDisposition);
+    const historyForCanonicalReconstruction = historyExcluded ? [] : taskHistory;
+    const historyClassifications = classifyHistory(taskId, taskHistory, sources, historyExcluded);
+    const occurrenceClassifications = classifyOccurrences(taskId, task, schedule.model, historyForCanonicalReconstruction, historyClassifications, sources);
+    const delay = classifyDelay(task, historyForCanonicalReconstruction, schedule.model, occurrenceClassifications, sources);
     const historicalScheduleDates = new Set(
       historyClassifications
-        .filter((item) => item.classification === "explicit" && item.entryDate !== null && ACTIVE_HISTORY_STATUSES.has(item.status ?? ""))
+        .filter((item) => !item.excludedFromCanonicalReconstruction && item.classification === "explicit" && item.entryDate !== null && ACTIVE_HISTORY_STATUSES.has(item.status ?? ""))
         .map((item) => item.entryDate as string)
-        .filter((date) => historicalScheduleEvidenceForDate(taskId, date, taskHistory, sources.taskEvents, stringValue(task, "user_id") ?? undefined) !== null),
+        .filter((date) => historicalScheduleEvidenceForDate(taskId, date, historyForCanonicalReconstruction, sources.taskEvents, stringValue(task, "user_id") ?? undefined) !== null),
     );
-    const anchor = classifyAnchor(task, schedule.model, historyClassifications, occurrenceClassifications, delay.state, historicalScheduleDates, sourceStatus(sources, "profile").available && hasValidProfileContext(sources.profile));
-    const lifecycle = classifyLifecycle(task, historyClassifications, taskHistory);
+    const anchor = classifyAnchor(task, schedule.model, schedule.evidence, historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction), occurrenceClassifications, delay.state, historicalScheduleDates, sourceStatus(sources, "profile").available && hasValidProfileContext(sources.profile));
+    const lifecycle = classifyLifecycle(task, historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction), historyForCanonicalReconstruction);
     const workflow = classifyWorkflow(task, logicalDate, lifecycle.state, occurrenceClassifications);
-    const rewards = classifyRewards(taskId, historyClassifications, sources);
+    const rewards = classifyRewards(taskId, historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction), sources);
     const issues = new Set<string>([
       ...hierarchyResult.issues,
       ...schedule.issueCodes,
@@ -1165,6 +1308,8 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
     }
     const hasProjectionMismatch = [...issues].some((issue) => issue.startsWith("PROJECTION_MISMATCH") || issue === "COMPLETE_PROJECTION_ONLY");
     const eligibility = classifyEligibility(schedule.model, anchor, lifecycle.state, workflow.state, [...issues]);
+    const historyDisposition = historyExcluded ? "owner_approved_excluded" : "retained";
+    const migrationDisposition = classifyMigrationDisposition(eligibility, historyDisposition);
     const entity: EntityClassification = {
       userId: options.userId,
       entityId: taskId,
@@ -1173,12 +1318,16 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
       scheduleModel: schedule.model,
       anchor,
       historyClassifications,
+      historyDisposition,
       occurrenceClassifications,
       delayState: delay.state,
+      delayEvidence: delay.evidence,
       lifecycleState: lifecycle.state,
       workflowState: workflow.state,
       rewardBootstrapState: rewards.state,
       migrationEligibility: eligibility,
+      migrationDisposition,
+      entityDisposition,
       blockingIssueCodes: [...issues].sort(compareStrings),
       sourceFingerprints: sourceFingerprintForEntity(sources, taskId),
     };
@@ -1189,7 +1338,10 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
     if (hierarchyResult.cycle) counts.hierarchy.cycle += 1;
     counts.scheduleModels[schedule.model] += 1;
     counts.anchors[anchor.classification] += 1;
-    for (const classification of historyClassifications) counts.history[classification.classification === "automatic_missed" ? "automaticMissed" : classification.classification] += 1;
+    for (const classification of historyClassifications) {
+      if (classification.excludedFromCanonicalReconstruction) continue;
+      counts.history[classification.classification === "automatic_missed" ? "automaticMissed" : classification.classification] += 1;
+    }
     for (const classification of occurrenceClassifications) counts.occurrences[classification.classification] += 1;
     counts.delay[delay.state === "safe" ? "safe" : delay.state === "ambiguous" ? "ambiguous" : "safe"] += delay.state === "none" ? 0 : 1;
     if (lifecycle.issueCodes.includes("COMPLETE_TERMINAL_CONTRADICTION")) counts.completeContradictions += 1;
@@ -1200,6 +1352,14 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
     if (workflow.state === "stale") counts.inProgress.stale += 1;
     if (workflow.state === "contradictory") counts.inProgress.contradictory += 1;
     addCounts(counts, { ...zeroCounts(), rewards: rewards.counts });
+    const dispositionCountKey = migrationDisposition === "safe_current_future_deterministic"
+      ? "safeCurrentFutureDeterministic"
+      : migrationDisposition === "historical_uncertainty_retained"
+        ? "historicalUncertaintyRetained"
+        : migrationDisposition === "owner_approved_history_exclusion"
+          ? "ownerApprovedHistoryExclusion"
+          : "genuinelyBlocked";
+    counts.migrationDisposition[dispositionCountKey] += 1;
     if (hasProjectionMismatch) counts.projectionMismatches += 1;
     if (eligibility !== "safe") counts.needsAttention += 1;
   }
@@ -1256,18 +1416,19 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
 }
 
 export function buildMigrationRunReport(
-  users: readonly { sources: MigrationSourceEvidence; userId: string; logicalDate?: string; currentInstant?: string | Date }[],
+  users: readonly { sources: MigrationSourceEvidence; userId: string; logicalDate?: string; currentInstant?: string | Date; entityDispositions?: EntityMigrationDispositions }[],
   options: { generatedAt?: string; currentInstant?: string | Date; classifierVersion?: string; schemaContractVersion?: string } = {},
 ): MigrationRunReport {
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const userReports = [...users]
     .sort((left, right) => compareStrings(left.userId, right.userId))
-    .map(({ sources, userId, logicalDate, currentInstant }) => classifyUser(sources, {
+    .map(({ sources, userId, logicalDate, currentInstant, entityDispositions }) => classifyUser(sources, {
       userId,
       logicalDate,
       currentInstant: currentInstant ?? options.currentInstant,
       classifierVersion: options.classifierVersion,
       schemaContractVersion: options.schemaContractVersion,
+      entityDispositions,
     }))
     .map((report) => ({ ...report, generatedAt }));
   const globalCounts = zeroCounts();
@@ -1301,7 +1462,7 @@ export function buildMigrationRunReport(
     userCount: userReports.length,
     classifiedUserCount: userReports.filter((report) => report.counts.taskEntities > 0).length,
     commandCutoverEligibleUserCount: userReports.filter((report) => report.eligibility.commandCutoverEligible).length,
-    blockedUserCount: userReports.filter((report) => report.eligibility.blockedEntityCount > 0 || report.counts.needsAttention > 0).length,
+    blockedUserCount: userReports.filter((report) => report.eligibility.blockedEntityCount > 0).length,
     users: userReports.map((report) => ({ userId: report.userId, counts: report.counts, eligibility: report.eligibility })),
   };
   const entityRecords = userReports.flatMap((report) => report.entities);
@@ -1452,22 +1613,28 @@ type CliOptions = {
   outputPath: string | null;
   format: "json" | "jsonl";
   logicalDate: string | null;
+  historyExclusionEntityIds: string[];
 };
 
 function parseCliArgs(argv: readonly string[]): CliOptions {
   const values = new Map<string, string>();
+  const historyExclusionEntityIds: string[] = [];
   const forbidden = new Set(["--write", "--allow-writes", "--repair", "--backfill", "--execute"]);
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (forbidden.has(argument)) throw new MigrationClassifierDiagnostic("WRITE_MODE_REJECTED", "the migration classifier is read-only");
     if (!argument.startsWith("--")) throw new MigrationClassifierDiagnostic("INVALID_ARGUMENT", `unexpected argument ${argument}`);
     const [key, inlineValue] = argument.split("=", 2);
-    if (inlineValue !== undefined) values.set(key, inlineValue);
-    else if (["--user-id", "--batch-size", "--access-token", "--classifier-version", "--schema-contract-version", "--output", "--output-path", "--format", "--logical-date", "--mode"].includes(key)) {
+    if (inlineValue !== undefined) {
+      if (key === "--exclude-history-entity-id") historyExclusionEntityIds.push(inlineValue);
+      else values.set(key, inlineValue);
+    }
+    else if (["--user-id", "--batch-size", "--access-token", "--classifier-version", "--schema-contract-version", "--output", "--output-path", "--format", "--logical-date", "--mode", "--exclude-history-entity-id"].includes(key)) {
       const next = argv[index + 1];
       if (!next || next.startsWith("--")) throw new MigrationClassifierDiagnostic("MISSING_ARGUMENT_VALUE", `${key} requires a value`);
       if (key === "--mode" && next === "write") throw new MigrationClassifierDiagnostic("WRITE_MODE_REJECTED", "the migration classifier is read-only");
-      values.set(key, next);
+      if (key === "--exclude-history-entity-id") historyExclusionEntityIds.push(next);
+      else values.set(key, next);
       index += 1;
     } else throw new MigrationClassifierDiagnostic("INVALID_ARGUMENT", `unknown argument ${key}`);
   }
@@ -1494,6 +1661,7 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     outputPath: values.get("--output") ?? values.get("--output-path") ?? null,
     format,
     logicalDate,
+    historyExclusionEntityIds: [...new Set(historyExclusionEntityIds.map((id) => id.trim()).filter(Boolean))],
   };
 }
 
@@ -1509,7 +1677,8 @@ async function main(argv: readonly string[]) {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
   }) as unknown as AuthenticatedReadClient;
   const sources = await loadAuthenticatedOwnerScopedEvidence(client, options.userId, accessToken, options.batchSize);
-  const report = buildMigrationRunReport([{ userId: options.userId, sources, logicalDate: options.logicalDate ?? undefined, currentInstant: new Date() }], {
+  const entityDispositions = Object.fromEntries(options.historyExclusionEntityIds.map((entityId) => [entityId, OWNER_APPROVED_HISTORY_EXCLUSION]));
+  const report = buildMigrationRunReport([{ userId: options.userId, sources, logicalDate: options.logicalDate ?? undefined, currentInstant: new Date(), entityDispositions }], {
     classifierVersion: options.classifierVersion,
     schemaContractVersion: options.schemaContractVersion,
   });

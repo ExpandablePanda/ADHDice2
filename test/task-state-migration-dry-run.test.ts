@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   CLASSIFIER_VERSION,
   MigrationClassifierDiagnostic,
+  OWNER_APPROVED_HISTORY_EXCLUSION,
   SCHEMA_CONTRACT_VERSION,
   buildMigrationRunReport,
   classifyUser,
@@ -144,6 +145,232 @@ test("malformed recurrence is ambiguous and stale fields do not create a fifth m
   assert.equal(malformed.scheduleModel, "ambiguous");
   assert.ok(malformed.blockingIssueCodes.includes("INVALID_RECURRENCE_CONFIGURATION"));
   assert.equal(stale.scheduleModel, "unscheduled");
+});
+
+test("weekly recurrence with missing weekdays uses due_on only for prospective schedule evidence", () => {
+  const entity = oneEntity(sources([task({
+    id: "weekly-prospective",
+    repeat_frequency: "weekly",
+    repeat_interval: 2,
+    repeat_days_of_week: [],
+    due_on: "2026-08-09",
+  })]));
+  assert.equal(entity.scheduleModel, "fixed");
+  assert.equal(entity.anchor.classification, "prospective");
+  assert.ok(entity.anchor.evidence.includes("legacy_weekly_schedule_from_current_due_on"));
+  assert.ok(entity.anchor.evidence.includes("prospective_weekday_from_due_on:0"));
+  assert.ok(entity.anchor.evidence.includes("historical_scope_unknown"));
+  assert.equal(entity.blockingIssueCodes.includes("INVALID_RECURRENCE_CONFIGURATION"), false);
+});
+
+test("monthly day-of-month recurrence with missing day uses due_on only for prospective schedule evidence", () => {
+  const entity = oneEntity(sources([task({
+    id: "monthly-prospective",
+    repeat_frequency: "monthly",
+    repeat_interval: 1,
+    repeat_monthly_mode: "day_of_month",
+    repeat_day_of_month: null,
+    due_on: "2026-08-15",
+  })]));
+  assert.equal(entity.scheduleModel, "fixed");
+  assert.equal(entity.anchor.classification, "prospective");
+  assert.ok(entity.anchor.evidence.includes("legacy_monthly_day_of_month_from_current_due_on"));
+  assert.ok(entity.anchor.evidence.includes("prospective_day_of_month_from_due_on:15"));
+  assert.ok(entity.anchor.evidence.includes("historical_scope_unknown"));
+});
+
+test("prospective recurrence reconstruction never claims historical certainty", () => {
+  const entity = oneEntity(sources([task({
+    id: "prospective-only",
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    due_on: "2026-08-09",
+  })]));
+  assert.equal(entity.anchor.classification, "prospective");
+  assert.equal(entity.anchor.confidence, "high_confidence");
+  assert.equal(entity.anchor.date, null);
+  assert.equal(entity.anchor.evidence.includes("historical_schedule_boundary"), false);
+  assert.ok(entity.anchor.evidence.includes("historical_scope_unknown"));
+});
+
+test("unknown historical writer provenance is retained without blocking deterministic current and future state", () => {
+  const id = "unknown-history-provenance";
+  const entity = oneEntity(sources([task({ id, repeat_frequency: "daily", due_on: "2026-08-08" })], [{
+    id: "unknown-history",
+    task_id: id,
+    user_id: USER_ID,
+    entry_date: "2026-08-07",
+    status: "done",
+    event_type: "status",
+  }]));
+  const history = entity.historyClassifications[0]!;
+  assert.equal(history.classification, "ambiguous");
+  assert.equal(history.historicalEvidenceEligible, true);
+  assert.equal(history.provenance, "unknown");
+  assert.equal(entity.migrationEligibility, "partial");
+  assert.equal(entity.migrationDisposition, "historical_uncertainty_retained");
+  assert.equal(entity.blockingIssueCodes.includes("AMBIGUOUS_HISTORY_PROVENANCE"), true);
+});
+
+test("ambiguous Delay remains historical evidence without manufacturing origin or target", () => {
+  const id = "ambiguous-delay-history";
+  const entity = oneEntity(sources([task({ id, repeat_frequency: "daily", due_on: "2026-08-12" })], [{
+    id: "ambiguous-delay",
+    task_id: id,
+    user_id: USER_ID,
+    entry_date: "2026-08-08",
+    status: "delayed",
+    event_type: "status",
+  }]));
+  assert.equal(entity.delayState, "ambiguous");
+  assert.deepEqual(entity.occurrenceClassifications, []);
+  assert.deepEqual(entity.delayEvidence, ["historical_delay_provenance_unknown"]);
+  assert.equal(entity.anchor.classification, "prospective");
+  assert.equal(entity.migrationEligibility, "partial");
+  assert.equal(entity.migrationDisposition, "historical_uncertainty_retained");
+});
+
+test("known History outcomes remain useful historical evidence without command provenance", () => {
+  const statuses = ["done", "did_my_best", "missed", "complete"] as const;
+  const tasks = statuses.map((status) => task({ id: `known-${status}` }));
+  const history = statuses.map((status) => ({
+    id: `known-history-${status}`,
+    task_id: `known-${status}`,
+    user_id: USER_ID,
+    entry_date: "2026-08-08",
+    status,
+    event_type: "status",
+  }));
+  const report = classifyUser(sources(tasks, history), { userId: USER_ID, logicalDate: "2026-08-08" });
+  for (const status of statuses) {
+    const entity = report.entities.find((candidate) => candidate.entityId === `known-${status}`)!;
+    const classification = entity.historyClassifications[0]!;
+    assert.equal(classification.historicalEvidenceEligible, true);
+    assert.equal(classification.provenance, "unknown");
+    assert.equal(classification.canonicalEligible, false);
+    assert.notEqual(entity.migrationEligibility, "blocked");
+  }
+});
+
+test("owner-approved History exclusion preserves the entity and excludes canonical reconstruction", () => {
+  const id = "owner-excluded-history";
+  const excluded = classifyUser(sources([task({ id })], [
+    { id: "excluded-complete", task_id: id, user_id: USER_ID, entry_date: "2026-08-01", status: "complete", event_type: "status" },
+    { id: "excluded-done", task_id: id, user_id: USER_ID, entry_date: "2026-08-02", status: "done", event_type: "status" },
+  ]), {
+    userId: USER_ID,
+    logicalDate: "2026-08-08",
+    entityDispositions: { [id]: OWNER_APPROVED_HISTORY_EXCLUSION },
+  }).entities[0]!;
+  assert.equal(excluded.entityId, id);
+  assert.deepEqual(excluded.entityDisposition, OWNER_APPROVED_HISTORY_EXCLUSION);
+  assert.equal(excluded.historyDisposition, "owner_approved_excluded");
+  assert.equal(excluded.migrationDisposition, "owner_approved_history_exclusion");
+  assert.equal(excluded.migrationEligibility, "safe");
+  assert.equal(excluded.lifecycleState.terminal, "active");
+  assert.ok(excluded.historyClassifications.every((item) => item.excludedFromCanonicalReconstruction));
+  assert.ok(excluded.historyClassifications.every((item) => item.canonicalEligible === false && item.historicalEvidenceEligible === false));
+  assert.deepEqual(excluded.occurrenceClassifications, []);
+});
+
+test("History exclusion is keyed by stable entity identity rather than title", () => {
+  const excludedId = "same-title-excluded";
+  const retainedId = "same-title-retained";
+  const report = classifyUser(sources([
+    task({ id: excludedId, title: "Gummy Vitamins" }),
+    task({ id: retainedId, title: "Gummy Vitamins" }),
+  ], [{
+    id: "same-title-history",
+    task_id: retainedId,
+    user_id: USER_ID,
+    entry_date: "2026-08-08",
+    status: "done",
+    event_type: "status",
+  }]), {
+    userId: USER_ID,
+    logicalDate: "2026-08-08",
+    entityDispositions: { [excludedId]: OWNER_APPROVED_HISTORY_EXCLUSION },
+  });
+  assert.equal(report.entities.find((entity) => entity.entityId === excludedId)?.historyDisposition, "owner_approved_excluded");
+  assert.equal(report.entities.find((entity) => entity.entityId === retainedId)?.historyDisposition, "retained");
+});
+
+test("Gummy Vitamins contradictory chronology does not block when explicitly owner-excluded", () => {
+  const id = "gummy-vitamins-stable-id";
+  const entity = classifyUser(sources([task({ id, title: "Gummy Vitamins" })], [
+    { id: "gummy-complete", task_id: id, user_id: USER_ID, entry_date: "2026-08-01", status: "complete", event_type: "completed_permanently" },
+    { id: "gummy-done", task_id: id, user_id: USER_ID, entry_date: "2026-08-02", status: "done", event_type: "status" },
+  ]), {
+    userId: USER_ID,
+    logicalDate: "2026-08-08",
+    entityDispositions: { [id]: OWNER_APPROVED_HISTORY_EXCLUSION },
+  }).entities[0]!;
+  assert.equal(entity.migrationEligibility, "safe");
+  assert.equal(entity.migrationDisposition, "owner_approved_history_exclusion");
+  assert.equal(entity.blockingIssueCodes.includes("COMPLETE_TERMINAL_CONTRADICTION"), false);
+});
+
+test("Voids History exclusion leaves current Task configuration and metadata untouched", () => {
+  const voids = task({
+    id: "voids-stable-id",
+    title: "Voids",
+    repeat_frequency: "weekly",
+    repeat_interval: 2,
+    repeat_days_of_week: [1],
+    due_on: "2026-08-10",
+    list_id: "lamprey-list",
+    tags: ["Lamprey", "voids"],
+    lamprey_id: "lamprey-association",
+  });
+  const before = structuredClone(voids);
+  const entity = classifyUser(sources([voids], [{
+    id: "voids-old-history",
+    task_id: voids.id,
+    user_id: USER_ID,
+    entry_date: "2026-08-01",
+    status: "complete",
+    event_type: "status",
+  }]), {
+    userId: USER_ID,
+    logicalDate: "2026-08-08",
+    entityDispositions: { [voids.id as string]: OWNER_APPROVED_HISTORY_EXCLUSION },
+  }).entities[0]!;
+  assert.deepEqual(voids, before);
+  assert.equal(entity.entityId, "voids-stable-id");
+  assert.equal(entity.scheduleModel, "fixed");
+  assert.deepEqual(entity.entityDisposition, OWNER_APPROVED_HISTORY_EXCLUSION);
+  assert.equal(entity.historyDisposition, "owner_approved_excluded");
+});
+
+test("dangerous current or future recurrence ambiguity remains genuinely blocked", () => {
+  const entity = oneEntity(sources([task({
+    id: "dangerous-recurrence",
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    due_on: null,
+  })]));
+  assert.equal(entity.scheduleModel, "ambiguous");
+  assert.equal(entity.migrationEligibility, "blocked");
+  assert.equal(entity.migrationDisposition, "genuinely_blocked");
+  assert.ok(entity.blockingIssueCodes.includes("INVALID_RECURRENCE_CONFIGURATION"));
+});
+
+test("hierarchy and ownership safety remains blocked alongside historical uncertainty", () => {
+  const foreignParent = task({ id: "foreign-parent-after-policy", user_id: "22222222-2222-4222-8222-222222222222" });
+  const child = task({ id: "child-after-policy", parent_task_id: foreignParent.id });
+  const entity = oneEntity(sources([foreignParent, child], [{
+    id: "child-unknown-history",
+    task_id: child.id,
+    user_id: USER_ID,
+    entry_date: "2026-08-08",
+    status: "done",
+    event_type: "status",
+  }]));
+  assert.ok(entity.blockingIssueCodes.includes("CROSS_USER_PARENT"));
+  assert.equal(entity.migrationEligibility, "blocked");
+  assert.equal(entity.migrationDisposition, "genuinely_blocked");
 });
 
 test("automatic Missed remains compatibility evidence while explicit Missed is promotable", () => {
@@ -349,6 +576,32 @@ test("an unavailable required source prevents command-cutover eligibility", () =
   assert.deepEqual(report.sourceAvailability.history, { available: false, code: "HISTORY_READ_FAILED" });
   assert.equal(report.eligibility.commandCutoverEligible, false);
   assert.ok(report.entities[0]?.blockingIssueCodes.includes("SOURCE_UNAVAILABLE_HISTORY"));
+});
+
+test("report headline categories separate safe, historical uncertainty, owner exclusion, and blocked entities", () => {
+  const excludedId = "report-owner-excluded";
+  const report = buildMigrationRunReport([{
+    userId: USER_ID,
+    sources: sources([
+      task({ id: "report-safe" }),
+      task({ id: "report-historical", repeat_frequency: "daily", due_on: "2026-08-08" }),
+      task({ id: "report-blocked", repeat_frequency: "weekly", due_on: null, repeat_days_of_week: [] }),
+      task({ id: excludedId }),
+    ], [
+      { id: "report-history", task_id: "report-historical", user_id: USER_ID, entry_date: "2026-08-08", status: "done", event_type: "status" },
+      { id: "report-excluded-complete", task_id: excludedId, user_id: USER_ID, entry_date: "2026-08-01", status: "complete", event_type: "status" },
+      { id: "report-excluded-done", task_id: excludedId, user_id: USER_ID, entry_date: "2026-08-02", status: "done", event_type: "status" },
+    ]),
+    logicalDate: "2026-08-08",
+    entityDispositions: { [excludedId]: OWNER_APPROVED_HISTORY_EXCLUSION },
+  }], { generatedAt: "2026-08-08T12:00:00.000Z" });
+  assert.deepEqual(report.global.counts.migrationDisposition, {
+    safeCurrentFutureDeterministic: 1,
+    historicalUncertaintyRetained: 1,
+    ownerApprovedHistoryExclusion: 1,
+    genuinelyBlocked: 1,
+  });
+  assert.equal(report.global.blockedUserCount, 1);
 });
 
 test("fingerprints ignore row-return order and global counts reconcile", () => {
