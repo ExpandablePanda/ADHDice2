@@ -81,6 +81,8 @@ export type MigrationEntityDisposition = {
   preserveCurrentConfiguration: true;
   excludeLegacyHistory: true;
   approval: "owner_approved";
+  preserveCurrentCompleteProjection?: true;
+  resetStaleLegacyWorkflowProjection?: true;
 };
 
 export type EntityMigrationDispositions = Readonly<Record<string, MigrationEntityDisposition>>;
@@ -158,6 +160,7 @@ export type EntityClassification = {
   occurrenceClassifications: OccurrenceClassification[];
   delayState: "none" | "safe" | "ambiguous";
   delayEvidence: string[];
+  workflowProjectionDisposition: "retained" | "owner_approved_reset";
   lifecycleState: {
     terminal: string;
     container: string;
@@ -672,6 +675,8 @@ function hasMatchingRolloverEvidence(
   });
 }
 
+type RawHistoryClassification = Omit<HistoryClassification, "historicalEvidenceEligible" | "provenance" | "excludedFromCanonicalReconstruction">;
+
 function classifyHistory(
   taskId: string,
   history: readonly LegacyRow[],
@@ -684,9 +689,9 @@ function classifyHistory(
     const date = dateValue(row, "entry_date");
     if (date) byDate.set(date, [...(byDate.get(date) ?? []), row]);
   }
-  const classifications = [...relevant]
+  const classifications: RawHistoryClassification[] = [...relevant]
     .sort((left, right) => compareStrings(rowId(left, ""), rowId(right, "")))
-    .map((row, index) => {
+    .map((row, index): RawHistoryClassification => {
       const id = rowId(row, `${taskId}:history:${index}`);
       const entryDate = dateValue(row, "entry_date");
       const status = stringValue(row, "status");
@@ -1035,7 +1040,12 @@ function classifyLegacySubtasks(sources: MigrationSourceEvidence, userId: string
   return { byTask, counts };
 }
 
-function classifyLifecycle(task: LegacyRow, historyClassifications: readonly HistoryClassification[], history: readonly LegacyRow[]): { state: EntityClassification["lifecycleState"]; issueCodes: string[] } {
+function classifyLifecycle(
+  task: LegacyRow,
+  historyClassifications: readonly HistoryClassification[],
+  history: readonly LegacyRow[],
+  preserveCurrentCompleteProjection = false,
+): { state: EntityClassification["lifecycleState"]; issueCodes: string[] } {
   const issues: string[] = [];
   const completeHistory = historyClassifications.filter((item) => item.status === "complete" && item.classification === "explicit");
   const completeDate = completeHistory.map((item) => item.entryDate).filter((date): date is string => date !== null).sort(compareStrings)[0] ?? null;
@@ -1044,11 +1054,17 @@ function classifyLifecycle(task: LegacyRow, historyClassifications: readonly His
     return date !== null && date > completeDate && ACTIVE_HISTORY_STATUSES.has(stringValue(row, "status") ?? "") && stringValue(row, "status") !== "complete";
   });
   if (laterActive) issues.push("COMPLETE_FOLLOWED_BY_ACTIVE_HISTORY");
-  const terminal = completeHistory.length > 0 ? "permanently_complete" : stringValue(task, "status") === "complete" || stringValue(task, "completed_at") !== null ? "ambiguous" : "active";
+  const status = stringValue(task, "status");
+  const currentCompleteProjection = status === "complete" && stringValue(task, "completed_at") !== null;
+  if (preserveCurrentCompleteProjection && !currentCompleteProjection) issues.push("OWNER_COMPLETE_PROJECTION_NOT_MATCHED");
+  const terminal = completeHistory.length > 0 || (preserveCurrentCompleteProjection && currentCompleteProjection)
+    ? "permanently_complete"
+    : status === "complete" || stringValue(task, "completed_at") !== null
+      ? "ambiguous"
+      : "active";
   if (terminal === "ambiguous") issues.push("COMPLETE_PROJECTION_ONLY");
   if (laterActive) issues.push("COMPLETE_TERMINAL_CONTRADICTION");
 
-  const status = stringValue(task, "status");
   const container = status === "archived" ? "archived" : status === "trashed" ? "trashed" : "active";
   const rawPrior = stringValue(task, "prior_container_state", "previous_container_state");
   const priorContainer = container !== "trashed" ? "proven" : rawPrior === "active" || rawPrior === "archived" ? "proven" : "unknown";
@@ -1058,15 +1074,39 @@ function classifyLifecycle(task: LegacyRow, historyClassifications: readonly His
   return { state: { terminal, container, priorContainer }, issueCodes: [...new Set(issues)] };
 }
 
+function isOwnerApprovedStaleWorkflowReset(
+  task: LegacyRow,
+  scheduleModel: ScheduleModel,
+  logicalDate: string | null,
+  lifecycle: EntityClassification["lifecycleState"],
+  disposition: MigrationEntityDisposition | null,
+): boolean {
+  if (!disposition?.resetStaleLegacyWorkflowProjection) return false;
+  if (lifecycle.terminal !== "active" || lifecycle.container !== "active") return false;
+  const activeDate = dateValue(task, "active_status_logical_date");
+  const claimedOccurrence = dateValue(task, "active_occurrence_due_on");
+  return stringValue(task, "status") === "missed"
+    && scheduleModel === "fixed"
+    && stringValue(task, "repeat_frequency") === "weekly"
+    && dateValue(task, "due_on") !== null
+    && logicalDate !== null
+    && activeDate !== null
+    && claimedOccurrence !== null
+    && activeDate < logicalDate
+    && claimedOccurrence < logicalDate;
+}
+
 function classifyWorkflow(
   task: LegacyRow,
   logicalDate: string | null,
   lifecycle: EntityClassification["lifecycleState"],
   occurrenceClassifications: readonly OccurrenceClassification[],
+  resetStaleLegacyWorkflowProjection = false,
 ): { state: EntityClassification["workflowState"]; issueCodes: string[] } {
   const status = stringValue(task, "status");
   const activeDate = dateValue(task, "active_status_logical_date");
   const claimedOccurrence = dateValue(task, "active_occurrence_due_on");
+  if (resetStaleLegacyWorkflowProjection) return { state: "none", issueCodes: [] };
   if (status !== "in_progress" && activeDate === null && claimedOccurrence === null) return { state: "none", issueCodes: [] };
   if (lifecycle.terminal === "permanently_complete" || lifecycle.container !== "active") return { state: "contradictory", issueCodes: ["IN_PROGRESS_LIFECYCLE_CONTRADICTION"] };
   if (status !== "in_progress" || activeDate === null) return { state: "contradictory", issueCodes: ["IN_PROGRESS_FIELDS_CONTRADICTORY"] };
@@ -1087,9 +1127,15 @@ function rewardPayloadMatchesTask(payload: unknown, taskId: string): { task: boo
   return { task, date };
 }
 
-function classifyRewards(taskId: string, historyClassifications: readonly HistoryClassification[], sources: MigrationSourceEvidence): { state: EntityClassification["rewardBootstrapState"]; counts: MigrationCounts["rewards"]; issueCodes: string[] } {
+function classifyRewards(
+  taskId: string,
+  historyClassifications: readonly HistoryClassification[],
+  sources: MigrationSourceEvidence,
+  excludeLegacyHistory = false,
+): { state: EntityClassification["rewardBootstrapState"]; counts: MigrationCounts["rewards"]; issueCodes: string[] } {
   const counts = { mapped: 0, consumed: 0, pending: 0, ambiguous: 0 };
   const issues: string[] = [];
+  if (excludeLegacyHistory) return { state: "none", counts, issueCodes: [] };
   const successDates = new Set(historyClassifications.filter((item) => item.classification === "explicit" && ["done", "did_my_best", "complete"].includes(item.status ?? "") && item.entryDate).map((item) => item.entryDate as string));
   const claims = sources.rewardClaims.filter((row) => stringValue(row, "task_id") === taskId);
   const rollsById = new Map(sources.rewardRolls.map((row) => [stringValue(row, "id"), row]));
@@ -1147,6 +1193,7 @@ function issueSeverity(issue: string): "blocked" | "attention" {
     "LOGICAL_DAY_UNAVAILABLE",
     "INVALID_LOGICAL_DAY_SETTINGS",
     "CONTRADICTORY_TRASH_PRIOR_CONTAINER",
+    "OWNER_COMPLETE_PROJECTION_NOT_MATCHED",
     "DUPLICATE_LEGACY_SUBTASK_PROMOTION",
     "SOURCE_QUERY_FAILED",
   ].includes(issue)) return "blocked";
@@ -1284,9 +1331,15 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
         .filter((date) => historicalScheduleEvidenceForDate(taskId, date, historyForCanonicalReconstruction, sources.taskEvents, stringValue(task, "user_id") ?? undefined) !== null),
     );
     const anchor = classifyAnchor(task, schedule.model, schedule.evidence, historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction), occurrenceClassifications, delay.state, historicalScheduleDates, sourceStatus(sources, "profile").available && hasValidProfileContext(sources.profile));
-    const lifecycle = classifyLifecycle(task, historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction), historyForCanonicalReconstruction);
-    const workflow = classifyWorkflow(task, logicalDate, lifecycle.state, occurrenceClassifications);
-    const rewards = classifyRewards(taskId, historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction), sources);
+    const lifecycle = classifyLifecycle(
+      task,
+      historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction),
+      historyForCanonicalReconstruction,
+      entityDisposition?.preserveCurrentCompleteProjection === true,
+    );
+    const workflowProjectionReset = isOwnerApprovedStaleWorkflowReset(task, schedule.model, logicalDate, lifecycle.state, entityDisposition);
+    const workflow = classifyWorkflow(task, logicalDate, lifecycle.state, occurrenceClassifications, workflowProjectionReset);
+    const rewards = classifyRewards(taskId, historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction), sources, historyExcluded);
     const issues = new Set<string>([
       ...hierarchyResult.issues,
       ...schedule.issueCodes,
@@ -1322,6 +1375,7 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
       occurrenceClassifications,
       delayState: delay.state,
       delayEvidence: delay.evidence,
+      workflowProjectionDisposition: workflowProjectionReset ? "owner_approved_reset" : "retained",
       lifecycleState: lifecycle.state,
       workflowState: workflow.state,
       rewardBootstrapState: rewards.state,
@@ -1614,11 +1668,15 @@ type CliOptions = {
   format: "json" | "jsonl";
   logicalDate: string | null;
   historyExclusionEntityIds: string[];
+  completeProjectionEntityIds: string[];
+  staleWorkflowResetEntityIds: string[];
 };
 
 function parseCliArgs(argv: readonly string[]): CliOptions {
   const values = new Map<string, string>();
   const historyExclusionEntityIds: string[] = [];
+  const completeProjectionEntityIds: string[] = [];
+  const staleWorkflowResetEntityIds: string[] = [];
   const forbidden = new Set(["--write", "--allow-writes", "--repair", "--backfill", "--execute"]);
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -1627,13 +1685,17 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     const [key, inlineValue] = argument.split("=", 2);
     if (inlineValue !== undefined) {
       if (key === "--exclude-history-entity-id") historyExclusionEntityIds.push(inlineValue);
+      else if (key === "--preserve-complete-projection-entity-id") completeProjectionEntityIds.push(inlineValue);
+      else if (key === "--reset-stale-workflow-entity-id") staleWorkflowResetEntityIds.push(inlineValue);
       else values.set(key, inlineValue);
     }
-    else if (["--user-id", "--batch-size", "--access-token", "--classifier-version", "--schema-contract-version", "--output", "--output-path", "--format", "--logical-date", "--mode", "--exclude-history-entity-id"].includes(key)) {
+    else if (["--user-id", "--batch-size", "--access-token", "--classifier-version", "--schema-contract-version", "--output", "--output-path", "--format", "--logical-date", "--mode", "--exclude-history-entity-id", "--preserve-complete-projection-entity-id", "--reset-stale-workflow-entity-id"].includes(key)) {
       const next = argv[index + 1];
       if (!next || next.startsWith("--")) throw new MigrationClassifierDiagnostic("MISSING_ARGUMENT_VALUE", `${key} requires a value`);
       if (key === "--mode" && next === "write") throw new MigrationClassifierDiagnostic("WRITE_MODE_REJECTED", "the migration classifier is read-only");
       if (key === "--exclude-history-entity-id") historyExclusionEntityIds.push(next);
+      else if (key === "--preserve-complete-projection-entity-id") completeProjectionEntityIds.push(next);
+      else if (key === "--reset-stale-workflow-entity-id") staleWorkflowResetEntityIds.push(next);
       else values.set(key, next);
       index += 1;
     } else throw new MigrationClassifierDiagnostic("INVALID_ARGUMENT", `unknown argument ${key}`);
@@ -1662,7 +1724,25 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     format,
     logicalDate,
     historyExclusionEntityIds: [...new Set(historyExclusionEntityIds.map((id) => id.trim()).filter(Boolean))],
+    completeProjectionEntityIds: [...new Set(completeProjectionEntityIds.map((id) => id.trim()).filter(Boolean))],
+    staleWorkflowResetEntityIds: [...new Set(staleWorkflowResetEntityIds.map((id) => id.trim()).filter(Boolean))],
   };
+}
+
+function buildCliEntityDispositions(options: CliOptions): EntityMigrationDispositions {
+  const entityDispositions: Record<string, MigrationEntityDisposition> = {};
+  const add = (entityIds: readonly string[], repair: Partial<MigrationEntityDisposition>) => {
+    for (const entityId of entityIds) {
+      entityDispositions[entityId] = {
+        ...(entityDispositions[entityId] ?? OWNER_APPROVED_HISTORY_EXCLUSION),
+        ...repair,
+      };
+    }
+  };
+  add(options.historyExclusionEntityIds, {});
+  add(options.completeProjectionEntityIds, { preserveCurrentCompleteProjection: true });
+  add(options.staleWorkflowResetEntityIds, { resetStaleLegacyWorkflowProjection: true });
+  return entityDispositions;
 }
 
 async function main(argv: readonly string[]) {
@@ -1677,7 +1757,7 @@ async function main(argv: readonly string[]) {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
   }) as unknown as AuthenticatedReadClient;
   const sources = await loadAuthenticatedOwnerScopedEvidence(client, options.userId, accessToken, options.batchSize);
-  const entityDispositions = Object.fromEntries(options.historyExclusionEntityIds.map((entityId) => [entityId, OWNER_APPROVED_HISTORY_EXCLUSION]));
+  const entityDispositions = buildCliEntityDispositions(options);
   const report = buildMigrationRunReport([{ userId: options.userId, sources, logicalDate: options.logicalDate ?? undefined, currentInstant: new Date(), entityDispositions }], {
     classifierVersion: options.classifierVersion,
     schemaContractVersion: options.schemaContractVersion,

@@ -296,51 +296,132 @@ test("History exclusion is keyed by stable entity identity rather than title", (
   assert.equal(report.entities.find((entity) => entity.entityId === retainedId)?.historyDisposition, "retained");
 });
 
-test("Gummy Vitamins contradictory chronology does not block when explicitly owner-excluded", () => {
-  const id = "gummy-vitamins-stable-id";
-  const entity = classifyUser(sources([task({ id, title: "Gummy Vitamins" })], [
-    { id: "gummy-complete", task_id: id, user_id: USER_ID, entry_date: "2026-08-01", status: "complete", event_type: "completed_permanently" },
-    { id: "gummy-done", task_id: id, user_id: USER_ID, entry_date: "2026-08-02", status: "done", event_type: "status" },
+test("owner-approved current Complete projection preserves a complete Task after History exclusion", () => {
+  const id = "owner-approved-complete-projection";
+  const entity = classifyUser(sources([task({
+    id,
+    title: "fixture-complete",
+    status: "complete",
+    completed_at: "2026-08-01T12:00:00Z",
+  })], [
+    { id: "complete-history", task_id: id, user_id: USER_ID, entry_date: "2026-08-01", status: "complete", event_type: "status" },
+    { id: "later-history", task_id: id, user_id: USER_ID, entry_date: "2026-08-02", status: "done", event_type: "status" },
   ]), {
     userId: USER_ID,
     logicalDate: "2026-08-08",
-    entityDispositions: { [id]: OWNER_APPROVED_HISTORY_EXCLUSION },
+    entityDispositions: {
+      [id]: { ...OWNER_APPROVED_HISTORY_EXCLUSION, preserveCurrentCompleteProjection: true },
+    },
   }).entities[0]!;
+  assert.equal(entity.entityId, id);
+  assert.equal(entity.lifecycleState.terminal, "permanently_complete");
+  assert.equal(entity.workflowState, "none");
   assert.equal(entity.migrationEligibility, "safe");
   assert.equal(entity.migrationDisposition, "owner_approved_history_exclusion");
+  assert.equal(entity.blockingIssueCodes.includes("COMPLETE_PROJECTION_ONLY"), false);
   assert.equal(entity.blockingIssueCodes.includes("COMPLETE_TERMINAL_CONTRADICTION"), false);
+  assert.equal(entity.entityDisposition?.preserveCurrentCompleteProjection, true);
 });
 
-test("Voids History exclusion leaves current Task configuration and metadata untouched", () => {
+test("the same current Complete projection without explicit owner approval remains ambiguous and blocked", () => {
+  const id = "unapproved-complete-projection";
+  const entity = oneEntity(sources([task({
+    id,
+    status: "complete",
+    completed_at: "2026-08-01T12:00:00Z",
+  })], [
+    { id: "complete-history-unapproved", task_id: id, user_id: USER_ID, entry_date: "2026-08-01", status: "complete", event_type: "status" },
+    { id: "later-history-unapproved", task_id: id, user_id: USER_ID, entry_date: "2026-08-02", status: "done", event_type: "status" },
+  ]));
+  assert.equal(entity.lifecycleState.terminal, "ambiguous");
+  assert.equal(entity.migrationEligibility, "blocked");
+  assert.equal(entity.migrationDisposition, "genuinely_blocked");
+  assert.ok(entity.blockingIssueCodes.includes("COMPLETE_PROJECTION_ONLY"));
+});
+
+test("Voids-style stale workflow projection resets only with explicit owner approval", () => {
   const voids = task({
     id: "voids-stable-id",
-    title: "Voids",
+    title: "fixture-missed-weekly",
+    status: "missed",
     repeat_frequency: "weekly",
     repeat_interval: 2,
     repeat_days_of_week: [1],
     due_on: "2026-08-10",
+    active_status_logical_date: "2026-08-06",
+    active_occurrence_due_on: "2026-08-06",
+    notes: "Lamprey work notes",
     list_id: "lamprey-list",
     tags: ["Lamprey", "voids"],
     lamprey_id: "lamprey-association",
   });
   const before = structuredClone(voids);
   const entity = classifyUser(sources([voids], [{
-    id: "voids-old-history",
+    id: "voids-old-done",
     task_id: voids.id,
     user_id: USER_ID,
     entry_date: "2026-08-01",
-    status: "complete",
+    status: "done",
     event_type: "status",
-  }]), {
+    actor_kind: "user",
+    occurrence_due_on: "2026-08-01",
+    occurrence_key: `task:${voids.id}:occurrence:2026-08-01`,
+  }, {
+    id: "voids-old-delay",
+    task_id: voids.id,
+    user_id: USER_ID,
+    entry_date: "2026-08-02",
+    status: "delayed",
+    event_type: "status",
+    occurrence_due_on: "2026-08-02",
+    occurrence_key: `task:${voids.id}:occurrence:2026-08-02`,
+    delay_target_on: "2026-08-10",
+  }], {
+    rewardRolls: [{ id: "voids-roll", user_id: USER_ID, reward_date: "2026-08-01" }],
+    rewardClaims: [{ id: "voids-claim", user_id: USER_ID, task_id: voids.id, reward_roll_id: "voids-roll", reward_date: "2026-08-01" }],
+  }), {
     userId: USER_ID,
     logicalDate: "2026-08-08",
-    entityDispositions: { [voids.id as string]: OWNER_APPROVED_HISTORY_EXCLUSION },
+    entityDispositions: {
+      [voids.id as string]: { ...OWNER_APPROVED_HISTORY_EXCLUSION, resetStaleLegacyWorkflowProjection: true },
+    },
   }).entities[0]!;
   assert.deepEqual(voids, before);
   assert.equal(entity.entityId, "voids-stable-id");
   assert.equal(entity.scheduleModel, "fixed");
-  assert.deepEqual(entity.entityDisposition, OWNER_APPROVED_HISTORY_EXCLUSION);
+  assert.equal(entity.workflowState, "none");
+  assert.equal(entity.workflowProjectionDisposition, "owner_approved_reset");
+  assert.equal(entity.lifecycleState.terminal, "active");
+  assert.equal(entity.delayState, "none");
+  assert.deepEqual(entity.occurrenceClassifications, []);
+  assert.equal(entity.rewardBootstrapState, "none");
+  assert.equal(entity.anchor.classification, "prospective");
+  assert.equal(entity.anchor.evidence.includes("historical_schedule_boundary"), false);
+  assert.ok(entity.historyClassifications.every((item) => item.excludedFromCanonicalReconstruction));
+  assert.deepEqual(entity.entityDisposition, { ...OWNER_APPROVED_HISTORY_EXCLUSION, resetStaleLegacyWorkflowProjection: true });
   assert.equal(entity.historyDisposition, "owner_approved_excluded");
+});
+
+test("Voids-style stale workflow projection remains contradictory without owner-approved reset", () => {
+  const id = "voids-stale-without-reset";
+  const entity = classifyUser(sources([task({
+    id,
+    status: "missed",
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    repeat_days_of_week: [1],
+    due_on: "2026-08-10",
+    active_status_logical_date: "2026-08-06",
+    active_occurrence_due_on: "2026-08-06",
+  })]), {
+    userId: USER_ID,
+    logicalDate: "2026-08-08",
+    entityDispositions: { [id]: OWNER_APPROVED_HISTORY_EXCLUSION },
+  }).entities[0]!;
+  assert.equal(entity.workflowState, "contradictory");
+  assert.equal(entity.workflowProjectionDisposition, "retained");
+  assert.equal(entity.migrationEligibility, "blocked");
+  assert.ok(entity.blockingIssueCodes.includes("IN_PROGRESS_FIELDS_CONTRADICTORY"));
 });
 
 test("dangerous current or future recurrence ambiguity remains genuinely blocked", () => {
