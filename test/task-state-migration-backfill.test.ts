@@ -5,6 +5,7 @@ import {
   MigrationBackfillDiagnostic,
   applyBackfillPlans,
   buildBackfillPackage,
+  migrationLeaseExpiresAt,
   parseBackfillCliArgs,
   sourceFingerprintsChanged,
 } from "../scripts/task-state-migration-backfill.ts";
@@ -111,6 +112,37 @@ test("current Complete and stale Complete projections use the current Task snaps
   assert.equal(result.report.tasksNeedingAttention, 0);
 });
 
+test("inactive malformed recurrence can quarantine without inventing a schedule boundary", () => {
+  const completeId = "complete-without-anchor";
+  const trashedId = "trashed-without-anchor";
+  const result = packageFor([
+    task(completeId, {
+      status: "complete",
+      completed_at: "2026-08-01T12:00:00.000Z",
+      repeat_frequency: "weekly",
+      repeat_days_of_week: [7],
+      due_on: "2026-08-10",
+    }),
+    task(trashedId, {
+      status: "trashed",
+      trashed_at: "2026-08-01T12:00:00.000Z",
+      repeat_frequency: "weekly",
+      repeat_days_of_week: [7],
+      due_on: "2026-08-10",
+    }),
+  ]);
+  const complete = result.plans.find((plan) => plan.entityId === completeId)!;
+  const trashed = result.plans.find((plan) => plan.entityId === trashedId)!;
+  assert.equal(complete.ready, true);
+  assert.equal(complete.canonicalTask?.terminalState, "permanently_complete");
+  assert.equal(complete.scheduleBoundary, null);
+  assert.ok(complete.issues.some((issue) => issue.classification === "INACTIVE_SCHEDULE_REPAIR_REQUIRED_BEFORE_REACTIVATION" && issue.severity === "warning"));
+  assert.equal(trashed.ready, true);
+  assert.equal(trashed.canonicalTask?.containerState, "trashed");
+  assert.equal(trashed.scheduleBoundary, null);
+  assert.ok(trashed.issues.some((issue) => issue.classification === "TRASHED_SCHEDULE_REPAIR_REQUIRED_BEFORE_RESTORE" && issue.severity === "warning"));
+});
+
 test("owner-approved lifecycle dispositions remain visible while snapshot state stays authoritative", () => {
   const completeId = "preserved-complete";
   const staleId = "reset-stale-complete";
@@ -148,6 +180,9 @@ test("current Done and Did My Best preserve today's handled behavior with minimu
   );
   assert.equal(result.report.currentDayHistoryFactsPlanned, 2);
   assert.ok(result.plans.every((plan) => plan.occurrences.length === 0 && plan.delayOverrides.length === 0));
+  assert.equal(result.report.occurrencesPlanned, 0);
+  assert.equal(result.report.delayOverridesPlanned, 0);
+  assert.equal(result.report.historicalRewardRecordsPlanned, 0);
 });
 
 test("current Missed creates no automatic canonical Missed History", () => {
@@ -224,14 +259,29 @@ test("legacy History is copied as raw evidence and owner exclusion suppresses ca
   assert.equal(excluded.plans[0]?.classification?.historyDisposition, "owner_approved_excluded");
 });
 
+test("raw was_completed remains false when legacy status is handled", () => {
+  const taskId = "raw-history-values";
+  const plan = packageFor([task(taskId)], [history("raw-history", taskId, "done", "2026-08-07", { was_completed: false })]).plans[0]!;
+  assert.equal(plan.legacyHistoryEvidence[0]?.legacyWasCompleted, false);
+  assert.equal(plan.legacyHistoryEvidence[0]?.sourceSnapshot.was_completed, false);
+});
+
+test("missing raw History values are reported instead of manufactured", () => {
+  const taskId = "malformed-history-values";
+  const plan = packageFor([task(taskId)], [history("malformed-history", taskId, "done", "2026-08-07", { updated_at: undefined })]).plans[0]!;
+  assert.equal(plan.ready, false);
+  assert.ok(plan.issues.some((issue) => issue.classification === "MALFORMED_LEGACY_HISTORY" && issue.severity === "blocking"));
+  assert.equal(plan.legacyHistoryEvidence[0]?.legacyUpdatedAt, null);
+});
+
 test("malformed active and trashed recurrence fail closed without normalized guesses", () => {
   const active = packageFor([task("bad-active", { status: "pending", due_on: "2026-08-10", repeat_frequency: "weekly", repeat_days_of_week: [7] })]).plans[0]!;
   const trashed = packageFor([task("bad-trashed", { status: "trashed", trashed_at: "2026-08-01T12:00:00.000Z", due_on: "2026-08-10", repeat_frequency: "weekly", repeat_days_of_week: [7] })]).plans[0]!;
   assert.equal(active.ready, false);
   assert.ok(active.issues.some((issue) => issue.classification === "INVALID_RECURRENCE_CONFIGURATION"));
-  assert.equal(trashed.ready, false);
+  assert.equal(trashed.ready, true);
   assert.equal(trashed.scheduleBoundary, null);
-  assert.ok(trashed.issues.some((issue) => issue.classification === "SCHEDULE_BOUNDARY_UNREPRESENTABLE"));
+  assert.ok(trashed.issues.some((issue) => issue.classification === "TRASHED_SCHEDULE_REPAIR_REQUIRED_BEFORE_RESTORE" && issue.severity === "warning"));
 });
 
 test("retry identity is deterministic and applying a dry-run plan performs no writes", async () => {
@@ -251,6 +301,33 @@ type BackfillPlanLike = { operationIdentity: string };
 test("source drift is detectable and does not become a completed run", () => {
   assert.equal(sourceFingerprintsChanged({ tasks: "a", history: "b", rewards: "c" }, { tasks: "a", history: "x", rewards: "c" }), true);
   assert.equal(sourceFingerprintsChanged({ tasks: "a", history: "b", rewards: "c" }, { tasks: "a", history: "b", rewards: "c" }), false);
+  assert.equal(sourceFingerprintsChanged({ tasks: "a", history: "b", rewards: "c" }, { tasks: "a", history: "b", rewards: "changed" }), false);
+});
+
+test("lease expiry is refreshed from a stable run clock for each bounded group", () => {
+  assert.equal(migrationLeaseExpiresAt(Date.parse("2026-08-08T12:00:00.000Z")), "2026-08-08T12:10:00.000Z");
+  assert.equal(migrationLeaseExpiresAt(Date.parse("2026-08-08T12:10:00.000Z")), "2026-08-08T12:20:00.000Z");
+});
+
+test("backfill RPC groups request a fresh lease expiry while retaining token and owner", async () => {
+  const plans = packageFor([task("lease-a"), task("lease-b")]).plans;
+  const calls: Array<{ expiration: unknown; token: unknown; owner: unknown }> = [];
+  let now = Date.parse("2026-08-08T12:00:00.000Z");
+  const client = {
+    rpc: async (_name: string, args: Record<string, unknown>) => {
+      calls.push({ expiration: args.p_lease_expires_at, token: args.p_lease_token, owner: args.p_lease_owner });
+      return { data: { state: "committed" }, error: null };
+    },
+  };
+  await applyBackfillPlans(client, plans, {
+    leaseToken: "lease-token",
+    leaseOwner: "lease-owner",
+    leaseExpiresAt: () => migrationLeaseExpiresAt((now += 60_000)),
+  });
+  assert.deepEqual(calls, [
+    { expiration: "2026-08-08T12:11:00.000Z", token: "lease-token", owner: "lease-owner" },
+    { expiration: "2026-08-08T12:12:00.000Z", token: "lease-token", owner: "lease-owner" },
+  ]);
 });
 
 test("cross-user source scope is rejected before plan construction", () => {

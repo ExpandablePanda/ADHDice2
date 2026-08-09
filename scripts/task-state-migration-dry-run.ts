@@ -337,6 +337,47 @@ export function fingerprintEvidence(valueToFingerprint: unknown): string {
   return createHash("sha256").update(stableStringify(rows)).digest("hex");
 }
 
+/**
+ * M2 source identity deliberately excludes canonical/projection columns and
+ * generic Task revision timestamps.  The backfill writes those columns, and
+ * their trigger-maintained values must not look like legacy-source drift on
+ * the final read.
+ */
+export function m2TaskSourceSnapshot(task: LegacyRow): LegacyRow {
+  return {
+    id: value(task, "id"),
+    user_id: value(task, "user_id"),
+    parent_task_id: value(task, "parent_task_id"),
+    status: value(task, "status"),
+    due_on: value(task, "due_on"),
+    due_time: value(task, "due_time"),
+    repeat_frequency: value(task, "repeat_frequency"),
+    repeat_interval: value(task, "repeat_interval"),
+    repeat_days_of_week: value(task, "repeat_days_of_week"),
+    repeat_day_of_month: value(task, "repeat_day_of_month"),
+    repeat_monthly_mode: value(task, "repeat_monthly_mode"),
+    repeat_monthly_ordinal: value(task, "repeat_monthly_ordinal"),
+    repeat_monthly_weekday: value(task, "repeat_monthly_weekday"),
+    completed_at: value(task, "completed_at"),
+    trashed_at: value(task, "trashed_at"),
+    previous_container_state: value(task, "previous_container_state"),
+    active_status_logical_date: value(task, "active_status_logical_date"),
+    active_occurrence_due_on: value(task, "active_occurrence_due_on"),
+    in_progress_started_at: value(task, "in_progress_started_at"),
+    active_workflow_occurrence_id: value(task, "active_workflow_occurrence_id"),
+    active_workflow_command_id: value(task, "active_workflow_command_id"),
+  };
+}
+
+function m2ProfileSourceSnapshot(profile: LegacyRow | null): LegacyRow {
+  return {
+    timezone: value(profile, "timezone"),
+    day_start_time: value(profile, "day_start_time"),
+    logical_day_start: value(profile, "logical_day_start"),
+    settings_revision: value(profile, "settings_revision"),
+  };
+}
+
 function rowId(row: LegacyRow, fallback: string) {
   return stringValue(row, "id", "legacy_subtask_id", "operation_id", "source_operation_id") ?? fallback;
 }
@@ -601,23 +642,13 @@ function sourceFingerprintForEntity(sources: MigrationSourceEvidence, taskId: st
     currentId = stringValue(currentTask, "parent_task_id");
   }
   const history = sources.history.filter((row) => stringValue(row, "task_id") === taskId);
-  const rewardClaims = sources.rewardClaims.filter((row) => stringValue(row, "task_id") === taskId);
-  const taskEvents = sources.taskEvents.filter((row) => stringValue(row, "task_id") === taskId);
-  const pendingItems = sources.pendingRewardItems.filter((row) => {
-    const payload = value(row, "reward_payload", "payload");
-    return JSON.stringify(payload ?? {}).includes(taskId);
-  });
   return {
-    tasks: fingerprintEvidence(hierarchyRows),
+    tasks: fingerprintEvidence(hierarchyRows.map(m2TaskSourceSnapshot)),
     history: fingerprintEvidence(history),
-    profile: fingerprintEvidence(sources.profile ? [sources.profile] : []),
-    rewards: fingerprintEvidence({
-      claims: rewardClaims,
-      taskEvents,
-      pendingItems,
-      rolls: sources.rewardRolls.filter((row) => rewardClaims.some((claim) => stringValue(claim, "reward_roll_id") === stringValue(row, "id"))),
-      pointLedger: sources.pointLedger.filter((row) => stringValue(row, "ref_id") === taskId),
-    }),
+    profile: fingerprintEvidence([m2ProfileSourceSnapshot(sources.profile)]),
+    // M2 deliberately creates no reward/economy objects.  Reward changes are
+    // not part of the operation identity or source-drift authority.
+    rewards: fingerprintEvidence([]),
   };
 }
 
@@ -1344,12 +1375,14 @@ function classifyEligibility(
   workflow: EntityClassification["workflowState"],
   issueCodes: readonly string[],
 ): MigrationEligibility {
-  const inactiveSchedule = lifecycle.container === "trashed" || lifecycle.terminal === "permanently_complete";
-  const trashedMalformedSchedule = lifecycle.container === "trashed"
+  const inactiveSchedule = lifecycle.container === "trashed"
+    || lifecycle.container === "archived"
+    || lifecycle.terminal === "permanently_complete";
+  const inactiveMalformedSchedule = inactiveSchedule
     && model === "ambiguous"
     && issueCodes.includes("INVALID_RECURRENCE_CONFIGURATION");
-  if (issueCodes.some((issue) => issueSeverity(issue) === "blocked" && !(trashedMalformedSchedule && issue === "INVALID_RECURRENCE_CONFIGURATION"))) return "blocked";
-  if ((model === "ambiguous" && !trashedMalformedSchedule) || lifecycle.terminal === "ambiguous" || workflow === "contradictory") return "blocked";
+  if (issueCodes.some((issue) => issueSeverity(issue) === "blocked" && !(inactiveMalformedSchedule && issue === "INVALID_RECURRENCE_CONFIGURATION"))) return "blocked";
+  if ((model === "ambiguous" && !inactiveMalformedSchedule) || lifecycle.terminal === "ambiguous" || workflow === "contradictory") return "blocked";
   if (anchor.classification === "ambiguous" && !inactiveSchedule) return "blocked";
   if (anchor.classification === "prospective" || lifecycle.priorContainer === "unknown" || workflow === "stale" || issueCodes.length > 0) return "partial";
   return "safe";
@@ -1584,19 +1617,12 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
     && logicalDate !== null
     && unavailableSourceIssueCodes(sources).length === 0;
   const sourceFingerprints = {
-    tasks: fingerprintEvidence(sources.tasks),
+    tasks: fingerprintEvidence(sources.tasks.map(m2TaskSourceSnapshot)),
     history: fingerprintEvidence(sources.history),
-    profile: fingerprintEvidence(sources.profile ? [sources.profile] : []),
-    rewards: fingerprintEvidence({
-      taskEvents: sources.taskEvents,
-      pointLedger: sources.pointLedger,
-      rewardRolls: sources.rewardRolls,
-      rewardClaims: sources.rewardClaims,
-      pendingRewardAccount: sources.pendingRewardAccount,
-      pendingRewardOperations: sources.pendingRewardOperations,
-      pendingRewardItems: sources.pendingRewardItems,
-      rolloverEvidence: sources.rolloverEvidence,
-    }),
+    profile: fingerprintEvidence([m2ProfileSourceSnapshot(sources.profile)]),
+    // The M2 plan has zero reward writes, so economy rows are diagnostic input
+    // only and cannot block a stable canonical snapshot backfill.
+    rewards: fingerprintEvidence([]),
   };
   return {
     reportVersion: REPORT_VERSION,

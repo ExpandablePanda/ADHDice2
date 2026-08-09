@@ -32,6 +32,12 @@ test("M2 verifier is read-only and returns explicit PASS/FAIL counts", () => {
     "committed_operations_have_required_writes",
   ]) assert.match(verifier, new RegExp(check));
   assert.doesNotMatch(verifier, /adhdice_task_clean_tasks/);
+  assert.match(verifier, /with target_users as[\s\S]*last_successful_stage = 'M2'[\s\S]*state in \('canonical_backfilled', 'needs_attention'\)/i);
+  assert.match(verifier, /join target_users scope on scope\.user_id = history\.user_id/i);
+  assert.match(verifier, /legacy_was_completed is distinct from history\.was_completed/i);
+  assert.match(verifier, /source_snapshot->>'created_at'/i);
+  assert.match(verifier, /task\.terminal_state <> 'permanently_complete'/i);
+  assert.match(verifier, /task\.container_state not in \('archived', 'trashed'\)/i);
 });
 
 test("privileged backfill RPC is service-role-only, owner-scoped, and fixed-search-path", () => {
@@ -46,4 +52,29 @@ test("privileged backfill RPC is service-role-only, owner-scoped, and fixed-sear
   assert.match(rpc, /revoke all on function[\s\S]*?from public, anon, authenticated/i);
   assert.doesNotMatch(rpc, /security definer/i);
   assert.doesNotMatch(rpc, /NEXT_PUBLIC_/i);
+  const operationLookup = rpc.indexOf("select state, input_fingerprint, result_references, id, entity_id");
+  const taskGuard = rpc.indexOf("select * into v_task");
+  assert.ok(operationLookup >= 0 && taskGuard >= 0 && operationLookup < taskGuard, "committed operation lookup must precede mutable Task source validation");
+  assert.match(rpc, /v_existing_entity_id is distinct from v_entity_id/i);
+  assert.match(rpc, /Task already has canonical facts from another M2 operation/i);
+  assert.match(rpc, /legacy History evidence does not match the locked source row/i);
+  for (const field of [
+    "legacyEntryDate",
+    "legacyStatus",
+    "legacyEventType",
+    "legacyOccurrenceKey",
+    "legacyOccurrenceDueOn",
+    "legacyCountedAsDueOccurrence",
+    "legacyWasCompleted",
+    "legacyCreatedAt",
+    "legacyUpdatedAt",
+  ]) assert.match(rpc, new RegExp(`v_evidence->>'${field}'`));
+  assert.match(rpc, /v_fact->>'outcome' not in \('done', 'did_my_best'\)/i);
+  assert.match(rpc, /v_fact->>'logicalDate' is distinct from p_plan->>'logicalDate'/i);
+  assert.match(rpc, /history\.entry_date = \(v_fact->>'logicalDate'\)::date/i);
+  assert.match(rpc, /history\.status = v_fact->>'outcome'/i);
+  assert.match(rpc, /lease_token = p_lease_token[\s\S]*lease_owner = p_lease_owner/i);
+  assert.match(rpc, /active ready M2 plan is missing its schedule boundary/i);
+  assert.match(rpc, /TRASHED_SCHEDULE_REPAIR_REQUIRED_BEFORE_RESTORE/i);
+  assert.match(rpc, /terminal_state <> 'permanently_complete'/i);
 });

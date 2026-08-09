@@ -28,8 +28,10 @@ declare
   v_existing_state text;
   v_existing_input text;
   v_existing_result jsonb;
+  v_existing_entity_id uuid;
   v_boundary_id uuid;
   v_history_id uuid;
+  v_source_history public.adhdice_task_history%rowtype;
   v_item jsonb;
   v_fact jsonb;
   v_issue jsonb;
@@ -45,10 +47,6 @@ begin
   end if;
   if p_user_id is null or p_lease_token is null or nullif(trim(p_lease_owner), '') is null then
     raise exception 'M2 backfill requires an owner, lease token, and lease owner'
-      using errcode = '22023';
-  end if;
-  if p_lease_expires_at is null or p_lease_expires_at <= v_now then
-    raise exception 'M2 backfill lease must expire in the future'
       using errcode = '22023';
   end if;
   if jsonb_typeof(p_plan) <> 'object' or jsonb_typeof(p_source_guard) <> 'object' then
@@ -79,6 +77,42 @@ begin
      and p_plan->>'operationIdentity' not like 'm2:orphan-history:%' then
     raise exception 'M2 orphan operation identity is invalid'
       using errcode = '42501';
+  end if;
+
+  -- Resolve the operation before locking or validating the mutable legacy
+  -- Task row.  A committed replay must be a true no-op even though M2's own
+  -- Task update triggers changed revision and updated_at after the first run.
+  select state, input_fingerprint, result_references, id, entity_id
+    into v_existing_state, v_existing_input, v_existing_result, v_operation_id, v_existing_entity_id
+  from public.adhdice_task_migration_operations
+  where user_id = p_user_id
+    and operation_identity = p_plan->>'operationIdentity'
+  for update;
+  if found then
+    if v_existing_entity_id is distinct from v_entity_id then
+      raise exception 'operation identity is bound to a different Task scope'
+        using errcode = '42501';
+    end if;
+    if v_existing_input is distinct from p_plan->>'inputFingerprint' then
+      raise exception 'operation identity was reused with a different source fingerprint'
+        using errcode = '40001';
+    end if;
+    if v_existing_state = 'committed' then
+      return jsonb_build_object(
+        'state', 'already_committed',
+        'operation_id', v_operation_id,
+        'result_references', coalesce(v_existing_result, '{}'::jsonb)
+      );
+    end if;
+    if v_existing_state = 'failed_permanent' then
+      raise exception 'previous M2 operation is permanently failed'
+        using errcode = '55000';
+    end if;
+  end if;
+
+  if p_lease_expires_at is null or p_lease_expires_at <= v_now then
+    raise exception 'M2 backfill lease must expire in the future'
+      using errcode = '22023';
   end if;
   if not exists (
     select 1 from public.adhdice_task_state_schema_contract
@@ -161,28 +195,6 @@ begin
     end if;
   end if;
 
-  select state, input_fingerprint, result_references, id
-    into v_existing_state, v_existing_input, v_existing_result, v_operation_id
-  from public.adhdice_task_migration_operations
-  where user_id = p_user_id
-    and operation_identity = p_plan->>'operationIdentity'
-  for update;
-  if found and v_existing_state = 'committed' then
-    if v_existing_input <> p_plan->>'inputFingerprint' then
-      raise exception 'operation identity was reused with a different source fingerprint'
-        using errcode = '40001';
-    end if;
-    return jsonb_build_object(
-      'state', 'already_committed',
-      'operation_id', v_operation_id,
-      'result_references', coalesce(v_existing_result, '{}'::jsonb)
-    );
-  end if;
-  if found and v_existing_state = 'failed_permanent' then
-    raise exception 'previous M2 operation is permanently failed'
-      using errcode = '55000';
-  end if;
-
   insert into public.adhdice_task_state_migrations (
     user_id, migration_version, classifier_version, schema_contract_version,
     reward_program_version, state, last_successful_stage, source_fingerprint,
@@ -207,14 +219,30 @@ begin
     lease_expires_at = excluded.lease_expires_at
   where public.adhdice_task_state_migrations.lease_token is null
      or public.adhdice_task_state_migrations.lease_expires_at < v_now
-     or public.adhdice_task_state_migrations.lease_token = p_lease_token;
+     or (public.adhdice_task_state_migrations.lease_token = p_lease_token
+       and public.adhdice_task_state_migrations.lease_owner = p_lease_owner);
 
   if not exists (
     select 1 from public.adhdice_task_state_migrations
-    where user_id = p_user_id and lease_token = p_lease_token
+    where user_id = p_user_id
+      and lease_token = p_lease_token
+      and lease_owner = p_lease_owner
   ) then
     raise exception 'another migration worker owns the live user lease'
       using errcode = '55P03';
+  end if;
+
+  if v_entity_id is not null
+     and v_operation_id is null
+     and exists (
+       select 1
+       from public.adhdice_clean_tasks task
+       where task.user_id = p_user_id
+         and task.id = v_entity_id
+         and task.canonicalization_status = 'canonical_proven'
+     ) then
+    raise exception 'Task already has canonical facts from another M2 operation'
+      using errcode = '40001';
   end if;
 
   if v_operation_id is null then
@@ -238,19 +266,47 @@ begin
   for v_evidence in select value from jsonb_array_elements(coalesce(p_plan->'legacyHistoryEvidence', '[]'::jsonb)) loop
     if nullif(v_evidence->>'sourceHistoryId', '') is null
        or nullif(v_evidence->>'legacyEntryDate', '') is null
+       or nullif(v_evidence->>'legacyStatus', '') is null
+       or nullif(v_evidence->>'legacyEventType', '') is null
+       or v_evidence->>'legacyCountedAsDueOccurrence' is null
+       or v_evidence->>'legacyWasCompleted' is null
        or nullif(v_evidence->>'legacyCreatedAt', '') is null
-       or nullif(v_evidence->>'legacyUpdatedAt', '') is null then
+       or nullif(v_evidence->>'legacyUpdatedAt', '') is null
+       or jsonb_typeof(v_evidence->'sourceSnapshot') <> 'object' then
       raise exception 'legacy History evidence is missing a required source value'
         using errcode = '22023';
     end if;
-    if not exists (
-      select 1
-      from public.adhdice_task_history history
-      where history.id = (v_evidence->>'sourceHistoryId')::uuid
-        and history.user_id = p_user_id
-    ) then
+    select * into v_source_history
+    from public.adhdice_task_history history
+    where history.id = (v_evidence->>'sourceHistoryId')::uuid
+      and history.user_id = p_user_id;
+    if not found then
       raise exception 'legacy History evidence is outside the requested owner scope'
         using errcode = '42501';
+    end if;
+    if nullif(v_evidence->>'entityId', '')::uuid is distinct from v_source_history.task_id
+       or (v_evidence->>'legacyEntryDate')::date is distinct from v_source_history.entry_date
+       or v_evidence->>'legacyStatus' is distinct from v_source_history.status
+       or v_evidence->>'legacyEventType' is distinct from v_source_history.event_type
+       or v_evidence->>'legacyOccurrenceKey' is distinct from v_source_history.occurrence_key
+       or nullif(v_evidence->>'legacyOccurrenceDueOn', '')::date is distinct from v_source_history.occurrence_due_on
+       or (v_evidence->>'legacyCountedAsDueOccurrence')::boolean is distinct from v_source_history.counted_as_due_occurrence
+       or (v_evidence->>'legacyWasCompleted')::boolean is distinct from v_source_history.was_completed
+       or (v_evidence->>'legacyCreatedAt')::timestamptz is distinct from v_source_history.created_at
+       or (v_evidence->>'legacyUpdatedAt')::timestamptz is distinct from v_source_history.updated_at
+       or v_evidence->'sourceSnapshot'->>'id' is distinct from v_source_history.id::text
+       or v_evidence->'sourceSnapshot'->>'task_id' is distinct from v_source_history.task_id::text
+       or v_evidence->'sourceSnapshot'->>'entry_date' is distinct from v_source_history.entry_date::text
+       or v_evidence->'sourceSnapshot'->>'status' is distinct from v_source_history.status
+       or v_evidence->'sourceSnapshot'->>'event_type' is distinct from v_source_history.event_type
+       or v_evidence->'sourceSnapshot'->>'occurrence_key' is distinct from v_source_history.occurrence_key
+       or nullif(v_evidence->'sourceSnapshot'->>'occurrence_due_on', '')::date is distinct from v_source_history.occurrence_due_on
+       or (v_evidence->'sourceSnapshot'->>'counted_as_due_occurrence')::boolean is distinct from v_source_history.counted_as_due_occurrence
+       or (v_evidence->'sourceSnapshot'->>'was_completed')::boolean is distinct from v_source_history.was_completed
+       or (v_evidence->'sourceSnapshot'->>'created_at')::timestamptz is distinct from v_source_history.created_at
+       or (v_evidence->'sourceSnapshot'->>'updated_at')::timestamptz is distinct from v_source_history.updated_at then
+      raise exception 'legacy History evidence does not match the locked source row'
+        using errcode = '40001';
     end if;
     insert into public.adhdice_task_legacy_history_evidence (
       source_history_id, user_id, entity_id, legacy_entry_date, legacy_status,
@@ -265,13 +321,13 @@ begin
       (v_evidence->>'legacyEntryDate')::date, v_evidence->>'legacyStatus',
       v_evidence->>'legacyEventType', v_evidence->>'legacyOccurrenceKey',
       nullif(v_evidence->>'legacyOccurrenceDueOn', '')::date,
-      coalesce((v_evidence->>'legacyCountedAsDueOccurrence')::boolean, false),
-      coalesce((v_evidence->>'legacyWasCompleted')::boolean, false),
+      (v_evidence->>'legacyCountedAsDueOccurrence')::boolean,
+      (v_evidence->>'legacyWasCompleted')::boolean,
       (v_evidence->>'legacyCreatedAt')::timestamptz,
       (v_evidence->>'legacyUpdatedAt')::timestamptz,
       v_evidence->>'sourceKind', v_evidence->>'classification',
       v_evidence->>'confidence', v_evidence->>'sourceOperation',
-      coalesce(v_evidence->'sourceSnapshot', '{}'::jsonb), v_operation_id,
+      v_evidence->'sourceSnapshot', v_operation_id,
       p_plan->>'migrationVersion', p_plan->>'classifierVersion',
       p_plan->>'schemaContractVersion'
     ) on conflict (user_id, source_history_id) do update set
@@ -319,17 +375,38 @@ begin
   end loop;
 
   if v_entity_id is not null and coalesce((p_plan->>'ready')::boolean, false) then
-    if jsonb_typeof(p_plan->'scheduleBoundary') <> 'object'
-       or jsonb_typeof(p_plan->'canonicalTask') <> 'object' then
-      raise exception 'ready M2 plan is missing canonical Task or schedule boundary writes'
+    if jsonb_typeof(p_plan->'canonicalTask') <> 'object' then
+      raise exception 'ready M2 plan is missing the canonical Task write'
         using errcode = '22023';
     end if;
-    if p_plan->'scheduleBoundary'->>'idempotenceIdentity' is distinct from 'm2:boundary:' || v_entity_id::text || ':1'
-       or p_plan->'scheduleBoundary'->>'actorKind' is not null
-          and p_plan->'scheduleBoundary'->>'actorKind' <> 'migration'
-       or p_plan->'scheduleBoundary'->>'prospectiveOnly' <> 'true'
-       or p_plan->'scheduleBoundary'->>'historicalScopeKnown' <> 'false'
-       or p_plan->'scheduleBoundary'->>'sourceTaskRevision' is distinct from v_task.revision::text then
+    if jsonb_typeof(p_plan->'scheduleBoundary') <> 'object'
+       and not (
+         p_plan->'canonicalTask'->>'terminalState' = 'permanently_complete'
+         or p_plan->'canonicalTask'->>'containerState' in ('archived', 'trashed')
+       ) then
+      raise exception 'active ready M2 plan is missing its schedule boundary'
+        using errcode = '22023';
+    end if;
+    if jsonb_typeof(p_plan->'scheduleBoundary') <> 'object'
+       and not exists (
+         select 1
+         from jsonb_array_elements(coalesce(p_plan->'issues', '[]'::jsonb)) item
+         where item->>'severity' = 'warning'
+           and item->>'classification' in (
+             'TRASHED_SCHEDULE_REPAIR_REQUIRED_BEFORE_RESTORE',
+             'INACTIVE_SCHEDULE_REPAIR_REQUIRED_BEFORE_REACTIVATION'
+           )
+       ) then
+      raise exception 'inactive ready M2 plan without a boundary must carry an explicit schedule-repair warning'
+        using errcode = '22023';
+    end if;
+    if jsonb_typeof(p_plan->'scheduleBoundary') = 'object'
+       and (p_plan->'scheduleBoundary'->>'idempotenceIdentity' is distinct from 'm2:boundary:' || v_entity_id::text || ':1'
+         or p_plan->'scheduleBoundary'->>'actorKind' is not null
+            and p_plan->'scheduleBoundary'->>'actorKind' <> 'migration'
+         or p_plan->'scheduleBoundary'->>'prospectiveOnly' <> 'true'
+         or p_plan->'scheduleBoundary'->>'historicalScopeKnown' <> 'false'
+         or p_plan->'scheduleBoundary'->>'sourceTaskRevision' is distinct from v_task.revision::text) then
       raise exception 'M2 schedule boundary is not a prospective current-snapshot boundary'
         using errcode = '22023';
     end if;
@@ -342,7 +419,8 @@ begin
       raise exception 'M2 canonical Task plan is not bound to current terminal/container state'
         using errcode = '40001';
     end if;
-    if p_plan->'scheduleBoundary'->>'scheduleModel' is distinct from case
+    if jsonb_typeof(p_plan->'scheduleBoundary') = 'object'
+       and (p_plan->'scheduleBoundary'->>'scheduleModel' is distinct from case
       when v_task.repeat_frequency = 'none' and v_task.due_on is null then 'unscheduled'
       when v_task.repeat_frequency = 'none' and v_task.due_on is not null then 'one_time'
       when v_task.repeat_frequency in ('daily', 'custom', 'daily_until_complete') then 'rolling'
@@ -353,7 +431,7 @@ begin
        or (p_plan->'scheduleBoundary'->>'repeatInterval')::integer is distinct from coalesce(v_task.repeat_interval, 1)
        or nullif(p_plan->'scheduleBoundary'->>'oneTimeDueOn', '')::date is distinct from case when v_task.repeat_frequency = 'none' then v_task.due_on else null end
        or nullif(p_plan->'scheduleBoundary'->>'anchorDate', '')::date is distinct from case when v_task.repeat_frequency <> 'none' then v_task.due_on else null end
-       or nullif(p_plan->'scheduleBoundary'->>'dueTime', '')::time is distinct from v_task.due_time then
+       or nullif(p_plan->'scheduleBoundary'->>'dueTime', '')::time is distinct from v_task.due_time) then
       raise exception 'M2 schedule boundary is not bound to the current Task schedule configuration'
         using errcode = '40001';
     end if;
@@ -374,20 +452,21 @@ begin
       raise exception 'M2 In Progress plan is not bound to current canonical workflow references'
         using errcode = '40001';
     end if;
-    select id into v_boundary_id
-    from public.adhdice_task_schedule_boundaries
-    where user_id = p_user_id and entity_id = v_entity_id and boundary_sequence = 1;
-    if found then
-      if not exists (
-        select 1 from public.adhdice_task_schedule_boundaries
-        where user_id = p_user_id and id = v_boundary_id
-          and idempotence_identity = p_plan->'scheduleBoundary'->>'idempotenceIdentity'
-      ) then
-        raise exception 'initial schedule boundary already exists with a different identity'
-          using errcode = '40001';
-      end if;
-    else
-      insert into public.adhdice_task_schedule_boundaries (
+    if jsonb_typeof(p_plan->'scheduleBoundary') = 'object' then
+      select id into v_boundary_id
+      from public.adhdice_task_schedule_boundaries
+      where user_id = p_user_id and entity_id = v_entity_id and boundary_sequence = 1;
+      if found then
+        if not exists (
+          select 1 from public.adhdice_task_schedule_boundaries
+          where user_id = p_user_id and id = v_boundary_id
+            and idempotence_identity = p_plan->'scheduleBoundary'->>'idempotenceIdentity'
+        ) then
+          raise exception 'initial schedule boundary already exists with a different identity'
+            using errcode = '40001';
+        end if;
+      else
+        insert into public.adhdice_task_schedule_boundaries (
         user_id, entity_id, entity_kind, effective_from_logical_date,
         boundary_sequence, boundary_type, schedule_model, repeat_frequency,
         repeat_interval, repeat_days_of_week, repeat_day_of_month,
@@ -397,7 +476,7 @@ begin
         timezone, day_start_time, actor_kind, actor_id, source, idempotence_identity,
         migration_operation_id, migration_version, classifier_version,
         schema_contract_version, source_task_revision
-      ) values (
+        ) values (
         p_user_id, v_entity_id, p_plan->'canonicalTask'->>'entityKind',
         (p_plan->'scheduleBoundary'->>'effectiveFromLogicalDate')::date, 1,
         'initial', p_plan->'scheduleBoundary'->>'scheduleModel',
@@ -420,7 +499,8 @@ begin
         p_plan->>'migrationVersion', p_plan->>'classifierVersion',
         p_plan->>'schemaContractVersion',
         nullif(p_plan->'scheduleBoundary'->>'sourceTaskRevision', '')::bigint
-      ) returning id into v_boundary_id;
+        ) returning id into v_boundary_id;
+      end if;
     end if;
 
     if p_plan->'canonicalTask'->>'workflowState' = 'in_progress' then
@@ -464,6 +544,31 @@ begin
     where user_id = p_user_id and id = v_entity_id;
 
   for v_fact in select value from jsonb_array_elements(coalesce(p_plan->'currentDayHistoryFacts', '[]'::jsonb)) loop
+      if v_fact->>'outcome' not in ('done', 'did_my_best')
+         or v_fact->>'logicalDate' is distinct from p_plan->>'logicalDate'
+         or v_fact->>'logicalDate' !~ '^\d{4}-\d{2}-\d{2}$'
+         or (
+           nullif(v_fact->>'sourceLegacyHistoryId', '') is null
+           and (
+             v_task.status is distinct from v_fact->>'outcome'
+             or v_task.active_status_logical_date is distinct from (v_fact->>'logicalDate')::date
+           )
+         ) then
+        raise exception 'current-day History fact is not bound to the locked handled Task state'
+          using errcode = '40001';
+      end if;
+      if nullif(v_fact->>'sourceLegacyHistoryId', '') is not null and not exists (
+        select 1
+        from public.adhdice_task_history history
+        where history.id = (v_fact->>'sourceLegacyHistoryId')::uuid
+          and history.user_id = p_user_id
+          and history.task_id = v_entity_id
+          and history.entry_date = (v_fact->>'logicalDate')::date
+          and history.status = v_fact->>'outcome'
+      ) then
+        raise exception 'current-day History fact source evidence is not bound to the requested owner, Task, date, and outcome'
+          using errcode = '42501';
+      end if;
       select id into v_history_id
       from public.adhdice_task_history_facts
       where user_id = p_user_id and entity_id = v_entity_id
@@ -479,16 +584,6 @@ begin
         using errcode = '40001';
       end if;
     else
-      if nullif(v_fact->>'sourceLegacyHistoryId', '') is not null and not exists (
-        select 1
-        from public.adhdice_task_history history
-        where history.id = (v_fact->>'sourceLegacyHistoryId')::uuid
-          and history.user_id = p_user_id
-          and history.task_id = v_entity_id
-      ) then
-        raise exception 'current-day History evidence is outside the requested Task scope'
-          using errcode = '42501';
-      end if;
       insert into public.adhdice_task_history_facts (
           user_id, entity_id, entity_kind, logical_date, outcome, event_kind,
           schedule_boundary_id, recurrence_source_fingerprint, provenance_kind,
@@ -640,6 +735,8 @@ begin
   from public.adhdice_clean_tasks task
   where task.user_id = p_user_id
     and task.canonicalization_status = 'canonical_proven'
+    and task.terminal_state <> 'permanently_complete'
+    and task.container_state not in ('archived', 'trashed')
     and not exists (
       select 1 from public.adhdice_task_schedule_boundaries boundary
       where boundary.user_id = p_user_id and boundary.entity_id = task.id

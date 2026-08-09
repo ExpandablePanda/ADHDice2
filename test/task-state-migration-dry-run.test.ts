@@ -11,6 +11,7 @@ import {
   emptySourceEvidence,
   fingerprintEvidence,
   loadAuthenticatedOwnerScopedEvidence,
+  m2TaskSourceSnapshot,
   type LegacyRow,
   type MigrationSourceEvidence,
 } from "../scripts/task-state-migration-dry-run.ts";
@@ -855,4 +856,46 @@ test("fingerprints ignore row-return order and global counts reconcile", () => {
   assert.equal(report.global.userCount, 2);
   assert.equal(report.global.counts.taskEntities, 2);
   assert.equal(report.entityRecords.length, 2);
+});
+
+test("M2 fingerprints exclude canonical-only Task writes but detect legacy authority changes", () => {
+  const base = task({ id: "fingerprint-task", due_on: "2026-08-08", repeat_frequency: "daily" });
+  const canonicalOnly = {
+    ...base,
+    revision: 2,
+    updated_at: "2026-08-08T12:01:00Z",
+    canonicalization_status: "canonical_proven",
+    entity_kind: "parent",
+    terminal_state: "active",
+    container_state: "active",
+    canonical_revision: 1,
+    canonical_updated_at: "2026-08-08T12:00:00Z",
+    prior_container_state: "active",
+    prior_container_state_status: "proven",
+    workflow_state: "none",
+    workflow_started_at: "2026-08-08T10:00:00Z",
+    workflow_logical_date: "2026-08-08",
+    workflow_occurrence_id: "canonical-occurrence",
+    workflow_command_id: "canonical-command",
+    projection_source: "migration",
+  };
+  assert.equal(fingerprintEvidence(m2TaskSourceSnapshot(base)), fingerprintEvidence(m2TaskSourceSnapshot(canonicalOnly)));
+
+  for (const legacyChange of [
+    { status: "done" },
+    { due_on: "2026-08-09" },
+    { repeat_frequency: "weekly", repeat_days_of_week: [1] },
+    { parent_task_id: "parent-id" },
+    { completed_at: "2026-08-08T12:00:00Z" },
+    { active_status_logical_date: "2026-08-08" },
+  ]) {
+    assert.notEqual(
+      fingerprintEvidence(m2TaskSourceSnapshot(base)),
+      fingerprintEvidence(m2TaskSourceSnapshot({ ...base, ...legacyChange })),
+    );
+  }
+  assert.notEqual(
+    fingerprintEvidence([{ id: "history", task_id: base.id, entry_date: "2026-08-08", status: "done" }]),
+    fingerprintEvidence([{ id: "history", task_id: base.id, entry_date: "2026-08-08", status: "did_my_best" }]),
+  );
 });

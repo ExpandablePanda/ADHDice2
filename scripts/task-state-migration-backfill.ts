@@ -22,6 +22,7 @@ export const BACKFILL_VERSION = "task-state-migration-backfill-v1" as const;
 export const REWARD_PROGRAM_VERSION = "task-reward-v1" as const;
 export const DEFAULT_BATCH_SIZE = 25;
 export const MAX_BATCH_SIZE = 100;
+export const MIGRATION_LEASE_DURATION_MS = 10 * 60 * 1000;
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const UUID_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -86,15 +87,15 @@ export type BackfillIssuePlan = {
 };
 
 export type LegacyHistoryEvidencePlan = {
-  sourceHistoryId: string;
+  sourceHistoryId: string | null;
   entityId: string | null;
   legacyEntryDate: string | null;
-  legacyStatus: string;
-  legacyEventType: string;
+  legacyStatus: string | null;
+  legacyEventType: string | null;
   legacyOccurrenceKey: string | null;
   legacyOccurrenceDueOn: string | null;
-  legacyCountedAsDueOccurrence: boolean;
-  legacyWasCompleted: boolean;
+  legacyCountedAsDueOccurrence: boolean | null;
+  legacyWasCompleted: boolean | null;
   legacyCreatedAt: string | null;
   legacyUpdatedAt: string | null;
   sourceKind: "adhdice_task_history";
@@ -226,6 +227,16 @@ export type BackfillDryRunReport = {
 
 export type BackfillPackage = { report: BackfillDryRunReport; plans: BackfillPlan[] };
 
+export function migrationLeaseExpiresAt(
+  now = Date.now(),
+  durationMs = MIGRATION_LEASE_DURATION_MS,
+): string {
+  if (!Number.isFinite(now) || !Number.isFinite(durationMs) || durationMs <= 0) {
+    throw new MigrationBackfillDiagnostic("INVALID_LEASE_DURATION", "migration lease duration must be positive");
+  }
+  return new Date(now + durationMs).toISOString();
+}
+
 function value(row: LegacyRow | null | undefined, ...keys: string[]): unknown {
   if (!row) return undefined;
   for (const key of keys) if (Object.prototype.hasOwnProperty.call(row, key)) return row[key];
@@ -242,14 +253,24 @@ function dateValue(row: LegacyRow | null | undefined, ...keys: string[]): string
   return candidate && DATE_KEY.test(candidate) ? candidate : null;
 }
 
+function rawStringValue(row: LegacyRow | null | undefined, ...keys: string[]): string | null {
+  const candidate = value(row, ...keys);
+  return typeof candidate === "string" ? candidate : null;
+}
+
+function rawDateValue(row: LegacyRow | null | undefined, ...keys: string[]): string | null {
+  const candidate = rawStringValue(row, ...keys);
+  return candidate !== null && DATE_KEY.test(candidate) ? candidate : null;
+}
+
 function numberValue(row: LegacyRow | null | undefined, ...keys: string[]): number | null {
   const candidate = value(row, ...keys);
   return typeof candidate === "number" && Number.isFinite(candidate) ? candidate : null;
 }
 
-function booleanValue(row: LegacyRow, ...keys: string[]): boolean {
+function booleanValue(row: LegacyRow, ...keys: string[]): boolean | null {
   const candidate = value(row, ...keys);
-  return typeof candidate === "boolean" ? candidate : false;
+  return typeof candidate === "boolean" ? candidate : null;
 }
 
 function compareStrings(left: string, right: string): number {
@@ -308,21 +329,20 @@ function normalizedHistoryClassification(entity: EntityClassification | null, ro
 function buildLegacyHistoryEvidence(
   row: LegacyRow,
   entity: EntityClassification | null,
-  canonicalizationTime: string,
 ): LegacyHistoryEvidencePlan {
   const classification = normalizedHistoryClassification(entity, row);
   return {
-    sourceHistoryId: stringValue(row, "id") ?? "",
-    entityId: stringValue(row, "task_id"),
-    legacyEntryDate: dateValue(row, "entry_date"),
-    legacyStatus: stringValue(row, "status") ?? "unknown",
-    legacyEventType: stringValue(row, "event_type") ?? "status",
-    legacyOccurrenceKey: stringValue(row, "occurrence_key"),
-    legacyOccurrenceDueOn: dateValue(row, "occurrence_due_on"),
+    sourceHistoryId: rawStringValue(row, "id"),
+    entityId: rawStringValue(row, "task_id"),
+    legacyEntryDate: rawDateValue(row, "entry_date"),
+    legacyStatus: rawStringValue(row, "status"),
+    legacyEventType: rawStringValue(row, "event_type"),
+    legacyOccurrenceKey: rawStringValue(row, "occurrence_key"),
+    legacyOccurrenceDueOn: rawDateValue(row, "occurrence_due_on"),
     legacyCountedAsDueOccurrence: booleanValue(row, "counted_as_due_occurrence"),
-    legacyWasCompleted: booleanValue(row, "was_completed") || HANDLED_STATUSES.has(stringValue(row, "status") ?? "") || stringValue(row, "status") === "complete",
-    legacyCreatedAt: stringValue(row, "created_at") ?? canonicalizationTime,
-    legacyUpdatedAt: stringValue(row, "updated_at") ?? canonicalizationTime,
+    legacyWasCompleted: booleanValue(row, "was_completed"),
+    legacyCreatedAt: rawStringValue(row, "created_at"),
+    legacyUpdatedAt: rawStringValue(row, "updated_at"),
     sourceKind: "adhdice_task_history",
     classification: classification.classification,
     confidence: classification.confidence,
@@ -331,8 +351,29 @@ function buildLegacyHistoryEvidence(
   };
 }
 
+function hasCompleteRawHistoryEvidence(row: LegacyRow): boolean {
+  const sourceId = rawStringValue(row, "id");
+  const taskId = rawStringValue(row, "task_id");
+  const status = rawStringValue(row, "status");
+  const eventType = rawStringValue(row, "event_type");
+  return sourceId !== null
+    && sourceId.trim() !== ""
+    && taskId !== null
+    && taskId.trim() !== ""
+    && rawDateValue(row, "entry_date") !== null
+    && status !== null
+    && status.trim() !== ""
+    && eventType !== null
+    && eventType.trim() !== ""
+    && booleanValue(row, "counted_as_due_occurrence") !== null
+    && booleanValue(row, "was_completed") !== null
+    && isValidTimestamp(rawStringValue(row, "created_at"))
+    && isValidTimestamp(rawStringValue(row, "updated_at"));
+}
+
 function issueCategory(issue: string): BackfillIssuePlan["category"] {
   if (issue.includes("ORPHAN_HISTORY")) return "orphan_history";
+  if (issue.includes("SCHEDULE_REPAIR") || issue === "SCHEDULE_BOUNDARY_UNREPRESENTABLE") return "schedule_boundary_contradiction";
   if (issue === "HIERARCHY_CYCLE") return "hierarchy_cycle";
   if (issue.includes("CROSS_USER")) return "cross_user_reference";
   if (issue.includes("ORPHAN")) return "hierarchy_orphan";
@@ -386,7 +427,6 @@ export function sourceFingerprintsChanged(
 ): boolean {
   return before.tasks !== after.tasks
     || before.history !== after.history
-    || before.rewards !== after.rewards
     || before.profile !== after.profile;
 }
 
@@ -426,6 +466,7 @@ function currentDayFact(
   const matchingHistory = history.find((row) =>
     dateValue(row, "entry_date") === logicalDate
     && stringValue(row, "status") === status
+    && stringValue(row, "task_id") === entity.entityId
     && stringValue(row, "user_id") === entity.userId,
   );
   if (activeDate !== logicalDate && !matchingHistory) return [];
@@ -461,8 +502,6 @@ function buildTaskPlan(
     issues.add("INVALID_LOGICAL_DAY_SETTINGS");
   }
 
-  const schedule = normalizeCurrentScheduleForMigration(task);
-  if (schedule.model === "ambiguous") issues.add("INVALID_RECURRENCE_CONFIGURATION");
   const taskStatus = stringValue(task, "status");
   const terminalState = taskStatus === "complete" ? "permanently_complete" : "active";
   const terminalCompletedAt = terminalState === "permanently_complete" ? stringValue(task, "completed_at") : null;
@@ -475,12 +514,19 @@ function buildTaskPlan(
   const priorContainerState = containerState === "trashed" && (rawPrior === "active" || rawPrior === "archived") ? rawPrior : null;
   const priorContainerStateStatus = containerState !== "trashed" ? "not_applicable" : priorContainerState ? "proven" : "unknown";
   if (containerState === "trashed" && priorContainerStateStatus === "unknown") issues.add("TRASH_PRIOR_CONTAINER_UNKNOWN");
+  const inactiveLifecycle = terminalState === "permanently_complete"
+    || containerState === "archived"
+    || containerState === "trashed";
+
+  const schedule = normalizeCurrentScheduleForMigration(task);
+  if (schedule.model === "ambiguous" && !inactiveLifecycle) issues.add("INVALID_RECURRENCE_CONFIGURATION");
 
   const normalizedFrequency = schedule.repeatFrequency;
   const anchorRequired = schedule.model === "rolling" || (schedule.model === "fixed" && normalizedFrequency === "weekly");
-  if (anchorRequired && schedule.anchorDate === null) issues.add("RECURRENCE_ANCHOR_UNPROVEN");
-  if (schedule.model === "one_time" && schedule.oneTimeDueOn === null) issues.add("INVALID_RECURRENCE_CONFIGURATION");
-  if (schedule.dueTime !== null && !TIME_KEY.test(schedule.dueTime)) issues.add("INVALID_RECURRENCE_CONFIGURATION");
+  if (anchorRequired && schedule.anchorDate === null && !inactiveLifecycle) issues.add("RECURRENCE_ANCHOR_UNPROVEN");
+  if (schedule.model === "one_time" && schedule.oneTimeDueOn === null && !inactiveLifecycle) issues.add("INVALID_RECURRENCE_CONFIGURATION");
+  if (schedule.dueTime !== null && !TIME_KEY.test(schedule.dueTime) && !inactiveLifecycle) issues.add("INVALID_RECURRENCE_CONFIGURATION");
+  if (taskHistory.some((row) => !hasCompleteRawHistoryEvidence(row))) issues.add("MALFORMED_LEGACY_HISTORY");
 
   let workflowState: CanonicalTaskPlan["workflowState"] = "none";
   let workflowStartedAt: string | null = null;
@@ -508,6 +554,7 @@ function buildTaskPlan(
     if (classifierIssue === "COMPLETE_PROJECTION_ONLY" || classifierIssue === "COMPLETE_TERMINAL_CONTRADICTION") continue;
     if (classifierIssue === "STALE_IN_PROGRESS_NOT_DID_MY_BEST" && ownerApprovedWorkflowReset) continue;
     if (classifierIssue === "CONTRADICTORY_TRASH_PRIOR_CONTAINER") continue;
+    if (inactiveLifecycle && (classifierIssue === "INVALID_RECURRENCE_CONFIGURATION" || classifierIssue === "RECURRENCE_ANCHOR_UNPROVEN")) continue;
     if (classifierIssue.startsWith("IN_PROGRESS") || classifierIssue === "STALE_IN_PROGRESS_NOT_DID_MY_BEST") {
       if (taskStatus !== "in_progress") continue;
     }
@@ -520,7 +567,8 @@ function buildTaskPlan(
   const boundaryCanBeRepresented = reportLogicalDate !== null
     && representableScheduleModel !== null
     && !issues.has("INVALID_RECURRENCE_CONFIGURATION")
-    && !(anchorRequired && schedule.anchorDate === null);
+    && !(anchorRequired && schedule.anchorDate === null)
+    && (schedule.dueTime === null || TIME_KEY.test(schedule.dueTime));
   const scheduleBoundary: ScheduleBoundaryPlan | null = boundaryCanBeRepresented && reportLogicalDate
     ? {
       effectiveFromLogicalDate: reportLogicalDate,
@@ -545,7 +593,16 @@ function buildTaskPlan(
       evidence: schedule.evidence,
     }
     : null;
-  if (!scheduleBoundary) issues.add("SCHEDULE_BOUNDARY_UNREPRESENTABLE");
+  const inactiveScheduleQuarantine = inactiveLifecycle && scheduleBoundary === null;
+  if (!scheduleBoundary) {
+    if (inactiveScheduleQuarantine) {
+      issues.add(containerState === "trashed"
+        ? "TRASHED_SCHEDULE_REPAIR_REQUIRED_BEFORE_RESTORE"
+        : "INACTIVE_SCHEDULE_REPAIR_REQUIRED_BEFORE_REACTIVATION");
+    } else {
+      issues.add("SCHEDULE_BOUNDARY_UNREPRESENTABLE");
+    }
+  }
 
   const canonicalTask: CanonicalTaskPlan | null = {
     entityKind: entity.entityKind,
@@ -566,9 +623,9 @@ function buildTaskPlan(
     canonicalUpdatedAt: canonicalizationTime,
   };
   const blockingIssues = [...issues].filter((issue) => BLOCKING_ISSUES.has(issue) || issue.endsWith("_MISSING") || issue === "SCHEDULE_BOUNDARY_UNREPRESENTABLE");
-  const ready = blockingIssues.length === 0 && scheduleBoundary !== null;
+  const ready = blockingIssues.length === 0 && (scheduleBoundary !== null || inactiveScheduleQuarantine);
   const historyFacts = ready ? currentDayFact(task, entity, taskHistory, reportLogicalDate, sourceFingerprint) : [];
-  const evidence = taskHistory.map((row) => buildLegacyHistoryEvidence(row, entity, canonicalizationTime));
+  const evidence = taskHistory.map((row) => buildLegacyHistoryEvidence(row, entity));
   const issuePlans = [...new Set([...issues, ...(ready ? [] : ["CANONICAL_INITIALIZATION_UNRESOLVED"])])]
     .map((issue) => makeIssue(issue, entityId, task, sourceFingerprint));
   return {
@@ -619,7 +676,7 @@ function buildOrphanHistoryPlan(
 ): BackfillPlan | null {
   if (rows.length === 0) return null;
   const sourceFingerprint = fingerprintEvidence(rows);
-  const evidence = rows.map((row) => buildLegacyHistoryEvidence(row, null, canonicalizationTime));
+  const evidence = rows.map((row) => buildLegacyHistoryEvidence(row, null));
   return {
     backfillVersion: BACKFILL_VERSION,
     migrationVersion: MIGRATION_VERSION,
@@ -722,15 +779,16 @@ type RpcClient = {
 export async function applyBackfillPlans(
   client: RpcClient,
   plans: readonly BackfillPlan[],
-  options: { leaseToken: string; leaseOwner: string; leaseExpiresAt: string },
+  options: { leaseToken: string; leaseOwner: string; leaseExpiresAt: string | (() => string) },
 ): Promise<unknown[]> {
   const results: unknown[] = [];
   for (const plan of plans) {
+    const leaseExpiresAt = typeof options.leaseExpiresAt === "function" ? options.leaseExpiresAt() : options.leaseExpiresAt;
     const result = await client.rpc("adhdice_migration_backfill_entity", {
       p_user_id: plan.userId,
       p_lease_token: options.leaseToken,
       p_lease_owner: options.leaseOwner,
-      p_lease_expires_at: options.leaseExpiresAt,
+      p_lease_expires_at: leaseExpiresAt,
       p_plan: plan,
       p_source_guard: plan.sourceGuard,
     });
@@ -895,12 +953,18 @@ async function main(argv: readonly string[]) {
   await assertSchemaContracts(privilegedClient);
   const leaseToken = randomUUID();
   const leaseOwner = `adhdice-migration-backfill:${process.pid}`;
-  const leaseExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
   let activePackage = packageResult;
   let afterReport = buildMigrationRunReport([{ sources, userId: options.userId, logicalDate: options.logicalDate ?? undefined, currentInstant: new Date(), entityDispositions: buildCliEntityDispositions(options) }]);
   for (let pass = 0; pass < 2; pass += 1) {
     for (let offset = 0; offset < activePackage.plans.length; offset += options.batchSize) {
-      await applyBackfillPlans(privilegedClient, activePackage.plans.slice(offset, offset + options.batchSize), { leaseToken, leaseOwner, leaseExpiresAt });
+      // The token/owner stay stable for the run.  The expiry is refreshed for
+      // every bounded RPC group so a long owner migration cannot expire its
+      // own lease while sequential entities and History evidence are written.
+      await applyBackfillPlans(privilegedClient, activePackage.plans.slice(offset, offset + options.batchSize), {
+        leaseToken,
+        leaseOwner,
+        leaseExpiresAt: migrationLeaseExpiresAt,
+      });
     }
     const afterSources = await loadAuthenticatedOwnerScopedEvidence(ownerClient as never, options.userId, accessToken, options.batchSize);
     afterReport = buildMigrationRunReport([{ sources: afterSources, userId: options.userId, logicalDate: options.logicalDate ?? undefined, currentInstant: new Date(), entityDispositions: buildCliEntityDispositions(options) }]);

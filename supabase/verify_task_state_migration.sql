@@ -5,7 +5,13 @@
 -- or transaction-control statement.  Every row is a clear PASS/FAIL result;
 -- any non-zero violation_count blocks migration-stage completion.
 
-with checks as (
+with target_users as (
+  select user_id
+  from public.adhdice_task_state_migrations
+  where migration_version = 'task-state-migration-v1'
+    and last_successful_stage = 'M2'
+    and state in ('canonical_backfilled', 'needs_attention')
+), checks as (
   select
     'no_cross_user_canonical_relationships'::text as check_name,
     case when count(*) = 0 then 'PASS' else 'FAIL' end as result,
@@ -14,24 +20,28 @@ with checks as (
   from (
     select boundary.id
     from public.adhdice_task_schedule_boundaries boundary
+    join target_users scope on scope.user_id = boundary.user_id
     left join public.adhdice_clean_tasks task
       on task.user_id = boundary.user_id and task.id = boundary.entity_id
     where task.id is null
     union all
     select occurrence.id
     from public.adhdice_task_occurrences occurrence
+    join target_users scope on scope.user_id = occurrence.user_id
     left join public.adhdice_clean_tasks task
       on task.user_id = occurrence.user_id and task.id = occurrence.entity_id
     where task.id is null
     union all
     select fact.id
     from public.adhdice_task_history_facts fact
+    join target_users scope on scope.user_id = fact.user_id
     left join public.adhdice_clean_tasks task
       on task.user_id = fact.user_id and task.id = fact.entity_id
     where task.id is null
     union all
     select entity.entity_id
     from public.adhdice_task_state_migration_entities entity
+    join target_users scope on scope.user_id = entity.user_id
     left join public.adhdice_clean_tasks task
       on task.user_id = entity.user_id and task.id = entity.entity_id
     where task.id is null
@@ -43,11 +53,13 @@ with checks as (
   from (
     select user_id::text, entity_id::text, boundary_sequence::text
     from public.adhdice_task_schedule_boundaries
+    where user_id in (select user_id from target_users)
     group by user_id, entity_id, boundary_sequence
     having count(*) > 1
     union all
     select user_id::text, idempotence_identity, null::text
     from public.adhdice_task_schedule_boundaries
+    where user_id in (select user_id from target_users)
     group by user_id, idempotence_identity
     having count(*) > 1
   ) violations
@@ -58,6 +70,7 @@ with checks as (
   from (
     select user_id, entity_id, logical_date
     from public.adhdice_task_history_facts
+    where user_id in (select user_id from target_users)
     group by user_id, entity_id, logical_date
     having count(*) > 1
   ) violations
@@ -68,11 +81,13 @@ with checks as (
   from (
     select user_id, entity_id::text || ':' || scheduled_due_on::text as natural_key
     from public.adhdice_task_occurrences
+    where user_id in (select user_id from target_users)
     group by user_id, entity_id, scheduled_due_on
     having count(*) > 1
     union all
     select user_id, occurrence_key as natural_key
     from public.adhdice_task_occurrences
+    where user_id in (select user_id from target_users)
     group by user_id, occurrence_key
     having count(*) > 1
   ) violations
@@ -82,6 +97,7 @@ with checks as (
     'migration must not create a canonical Missed fact'::text
   from public.adhdice_task_history_facts fact
   where fact.provenance_kind = 'migration_reconstruction'
+    and fact.user_id in (select user_id from target_users)
     and fact.outcome = 'missed'
 
   union all
@@ -91,12 +107,14 @@ with checks as (
     select entitlement.id
     from public.adhdice_task_reward_entitlements entitlement
     where entitlement.migration_operation_id is not null
+      and entitlement.user_id in (select user_id from target_users)
     union all
     select grant_row.id
     from public.adhdice_task_reward_grants grant_row
     join public.adhdice_task_reward_entitlements entitlement
       on entitlement.user_id = grant_row.user_id and entitlement.id = grant_row.entitlement_id
     where entitlement.migration_operation_id is not null
+      and entitlement.user_id in (select user_id from target_users)
     union all
     select consumption.id
     from public.adhdice_task_reward_claim_consumptions consumption
@@ -105,6 +123,7 @@ with checks as (
     join public.adhdice_task_reward_entitlements entitlement
       on entitlement.user_id = grant_row.user_id and entitlement.id = grant_row.entitlement_id
     where entitlement.migration_operation_id is not null
+      and entitlement.user_id in (select user_id from target_users)
   ) violations
 
   union all
@@ -113,12 +132,14 @@ with checks as (
   from public.adhdice_task_migration_operations operation
   where operation.operation_kind = 'backfill'
     and operation.state = 'committed'
+    and operation.user_id in (select user_id from target_users)
     and coalesce((operation.result_references->>'reward_object_count')::integer, 0) <> 0
 
   union all
   select 'canonical_proven_tasks_have_complete_semantics', case when count(*) = 0 then 'PASS' else 'FAIL' end, count(*)::bigint,
     'canonical_proven rows must satisfy the required Task semantic set'::text
   from public.adhdice_clean_tasks task
+  join target_users scope on scope.user_id = task.user_id
   where task.canonicalization_status = 'canonical_proven'
     and (
       task.entity_kind is null or task.terminal_state is null or task.container_state is null
@@ -137,6 +158,7 @@ with checks as (
   select 'canonical_proven_tasks_have_migration_provenance', case when count(*) = 0 then 'PASS' else 'FAIL' end, count(*)::bigint,
     'every canonical Task must have a committed M2 operation and entity marker'::text
   from public.adhdice_clean_tasks task
+  join target_users scope on scope.user_id = task.user_id
   left join public.adhdice_task_state_migration_entities entity
     on entity.user_id = task.user_id and entity.entity_id = task.id
   left join public.adhdice_task_migration_operations operation
@@ -148,6 +170,7 @@ with checks as (
   select 'no_canonical_task_with_unresolved_required_state', case when count(*) = 0 then 'PASS' else 'FAIL' end, count(*)::bigint,
     'needs-attention Tasks cannot be marked canonical_proven'::text
   from public.adhdice_clean_tasks task
+  join target_users scope on scope.user_id = task.user_id
   left join public.adhdice_task_state_migration_entities entity
     on entity.user_id = task.user_id and entity.entity_id = task.id
   where task.canonicalization_status = 'canonical_proven'
@@ -155,16 +178,39 @@ with checks as (
 
   union all
   select 'legacy_history_source_identity_preserved', case when count(*) = 0 then 'PASS' else 'FAIL' end, count(*)::bigint,
-    'every owner-scoped legacy History source row must have evidence'::text
+    'every target-owner legacy History evidence row must match its raw source row'::text
   from public.adhdice_task_history history
+  join target_users scope on scope.user_id = history.user_id
   left join public.adhdice_task_legacy_history_evidence evidence
     on evidence.user_id = history.user_id and evidence.source_history_id = history.id
   where evidence.id is null
+    or evidence.entity_id is distinct from history.task_id
+    or evidence.legacy_entry_date is distinct from history.entry_date
+    or evidence.legacy_status is distinct from history.status
+    or evidence.legacy_event_type is distinct from history.event_type
+    or evidence.legacy_occurrence_key is distinct from history.occurrence_key
+    or evidence.legacy_occurrence_due_on is distinct from history.occurrence_due_on
+    or evidence.legacy_counted_as_due_occurrence is distinct from history.counted_as_due_occurrence
+    or evidence.legacy_was_completed is distinct from history.was_completed
+    or evidence.legacy_created_at is distinct from history.created_at
+    or evidence.legacy_updated_at is distinct from history.updated_at
+    or evidence.source_snapshot->>'id' is distinct from history.id::text
+    or evidence.source_snapshot->>'task_id' is distinct from history.task_id::text
+    or evidence.source_snapshot->>'entry_date' is distinct from history.entry_date::text
+    or evidence.source_snapshot->>'status' is distinct from history.status
+    or evidence.source_snapshot->>'event_type' is distinct from history.event_type
+    or evidence.source_snapshot->>'occurrence_key' is distinct from history.occurrence_key
+    or nullif(evidence.source_snapshot->>'occurrence_due_on', '')::date is distinct from history.occurrence_due_on
+    or (evidence.source_snapshot->>'counted_as_due_occurrence')::boolean is distinct from history.counted_as_due_occurrence
+    or (evidence.source_snapshot->>'was_completed')::boolean is distinct from history.was_completed
+    or (evidence.source_snapshot->>'created_at')::timestamptz is distinct from history.created_at
+    or (evidence.source_snapshot->>'updated_at')::timestamptz is distinct from history.updated_at
 
   union all
   select 'owner_history_exclusions_have_no_canonical_reconstruction', case when count(*) = 0 then 'PASS' else 'FAIL' end, count(*)::bigint,
     'excluded legacy History remains evidence only'::text
   from public.adhdice_task_history_facts fact
+  join target_users scope on scope.user_id = fact.user_id
   join public.adhdice_task_state_migration_entities entity
     on entity.user_id = fact.user_id and entity.entity_id = fact.entity_id
   where entity.classification->>'historyDisposition' = 'owner_approved_excluded'
@@ -175,12 +221,14 @@ with checks as (
     'M2 boundaries must not claim historical schedule authority'::text
   from public.adhdice_task_schedule_boundaries boundary
   where boundary.actor_kind = 'migration'
+    and boundary.user_id in (select user_id from target_users)
     and (boundary.historical_scope_known or not boundary.prospective_only)
 
   union all
   select 'task_entity_identity_count_unchanged', case when count(*) = 0 then 'PASS' else 'FAIL' end, count(*)::bigint,
     'every current owner Task must have exactly one migration entity marker'::text
   from public.adhdice_clean_tasks task
+  join target_users scope on scope.user_id = task.user_id
   left join public.adhdice_task_state_migration_entities entity
     on entity.user_id = task.user_id and entity.entity_id = task.id
   where entity.entity_id is null
@@ -190,13 +238,16 @@ with checks as (
     'M2 state/entity markers require non-null fingerprints and M2 stage'::text
   from (
     select user_id from public.adhdice_task_state_migrations
-    where state = 'canonical_backfilled' and source_fingerprint is null
+    where user_id in (select user_id from target_users)
+      and state = 'canonical_backfilled' and source_fingerprint is null
     union all
     select user_id from public.adhdice_task_state_migration_entities
-    where state = 'canonical_backfilled' and (source_fingerprint is null or last_successful_stage <> 'M2')
+    where user_id in (select user_id from target_users)
+      and state = 'canonical_backfilled' and (source_fingerprint is null or last_successful_stage <> 'M2')
     union all
     select entity.user_id
     from public.adhdice_task_state_migration_entities entity
+    join target_users scope on scope.user_id = entity.user_id
     left join public.adhdice_task_migration_operations operation
       on operation.user_id = entity.user_id and operation.id = entity.last_operation_id
     where entity.state = 'canonical_backfilled'
@@ -214,8 +265,16 @@ with checks as (
     on boundary.user_id = operation.user_id and boundary.entity_id = operation.entity_id
   where operation.operation_kind = 'backfill'
     and operation.state = 'committed'
+    and operation.user_id in (select user_id from target_users)
     and operation.result_references->>'required_writes_complete' = 'true'
-    and (task.canonicalization_status <> 'canonical_proven' or boundary.id is null)
+    and (
+      task.canonicalization_status <> 'canonical_proven'
+      or (
+        task.terminal_state <> 'permanently_complete'
+        and task.container_state not in ('archived', 'trashed')
+        and boundary.id is null
+      )
+    )
 )
 select check_name, result, violation_count, details
 from checks
