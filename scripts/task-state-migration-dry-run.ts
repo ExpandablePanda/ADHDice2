@@ -185,7 +185,7 @@ export type UserMigrationReport = {
   generatedAt: string;
   userId: string;
   logicalDate: string | null;
-  sourceFingerprints: { tasks: string; history: string; rewards: string };
+  sourceFingerprints: { tasks: string; history: string; rewards: string; profile: string };
   sourceAvailability: SourceAvailability;
   counts: MigrationCounts;
   eligibility: { safePercent: number; blockedEntityCount: number; commandCutoverEligible: boolean };
@@ -198,7 +198,7 @@ export type GlobalMigrationReport = {
   classifierVersion: string;
   schemaContractVersion: typeof SCHEMA_CONTRACT_VERSION;
   generatedAt: string;
-  sourceFingerprints: { tasks: string; history: string; rewards: string };
+  sourceFingerprints: { tasks: string; history: string; rewards: string; profile: string };
   sourceAvailability: SourceAvailability;
   counts: MigrationCounts;
   eligibility: { safePercent: number; blockedEntityCount: number; commandCutoverEligible: boolean };
@@ -474,6 +474,81 @@ export function classifyScheduleModel(task: LegacyRow): ScheduleClassification {
   return { model: "ambiguous", issueCodes: ["INVALID_RECURRENCE_CONFIGURATION"], evidence: [], prospectiveOnly: false };
 }
 
+export type CurrentScheduleNormalization = {
+  model: ScheduleModel;
+  repeatFrequency: string;
+  repeatInterval: number;
+  repeatDaysOfWeek: number[];
+  repeatDayOfMonth: number | null;
+  repeatMonthlyMode: string;
+  repeatMonthlyOrdinal: string | null;
+  repeatMonthlyWeekday: number | null;
+  oneTimeDueOn: string | null;
+  dueTime: string | null;
+  anchorDate: string | null;
+  anchorKind: "migration_prospective" | "unknown";
+  anchorConfidence: "high_confidence" | "unavailable";
+  historicalScopeKnown: false;
+  prospectiveOnly: true;
+  evidence: string[];
+};
+
+/**
+ * Return the current schedule snapshot after classifier-v2's approved
+ * forward-only normalization.  This intentionally does not infer any old
+ * boundary or historical anchor.
+ */
+export function normalizeCurrentScheduleForMigration(task: LegacyRow): CurrentScheduleNormalization {
+  const classification = classifyScheduleModel(task);
+  const configuration = scheduleConfiguration(task);
+  const dueOn = dateValue(task, "due_on");
+  const repeatInterval = validRepeatInterval(configuration.interval) ? configuration.interval : 1;
+  const monthlyMode = configuration.monthlyMode === "ordinal_weekday" ? "ordinal_weekday" : "day_of_month";
+  const evidence = [...(classification.evidence ?? [])];
+  let repeatDaysOfWeek = configuration.weekdays.filter((weekday) => Number.isInteger(weekday) && weekday >= 0 && weekday <= 6);
+  let repeatDayOfMonth = configuration.dayOfMonth;
+  let repeatMonthlyOrdinal = configuration.monthlyOrdinal;
+  let repeatMonthlyWeekday = configuration.monthlyWeekday;
+
+  if (classification.model === "fixed" && configuration.frequency === "weekly" && repeatDaysOfWeek.length === 0 && dueOn !== null) {
+    repeatDaysOfWeek = [new Date(`${dueOn}T00:00:00Z`).getUTCDay()];
+    evidence.push("prospective_weekday_from_due_on");
+  }
+  if (
+    classification.model === "fixed"
+    && configuration.frequency === "monthly"
+    && monthlyMode === "day_of_month"
+    && repeatDayOfMonth === null
+    && dueOn !== null
+  ) {
+    repeatDayOfMonth = new Date(`${dueOn}T00:00:00Z`).getUTCDate();
+    evidence.push("prospective_day_of_month_from_due_on");
+  }
+
+  const recurring = classification.model === "rolling" || classification.model === "fixed";
+  const anchorDate = classification.model === "one_time" ? dueOn : recurring ? dueOn : null;
+  return {
+    model: classification.model,
+    repeatFrequency: classification.model === "unscheduled" || classification.model === "one_time"
+      ? "none"
+      : configuration.frequency ?? "none",
+    repeatInterval,
+    repeatDaysOfWeek,
+    repeatDayOfMonth,
+    repeatMonthlyMode: monthlyMode,
+    repeatMonthlyOrdinal: monthlyMode === "ordinal_weekday" ? repeatMonthlyOrdinal : null,
+    repeatMonthlyWeekday: monthlyMode === "ordinal_weekday" ? repeatMonthlyWeekday : null,
+    oneTimeDueOn: classification.model === "one_time" ? dueOn : null,
+    dueTime: stringValue(task, "due_time"),
+    anchorDate,
+    anchorKind: anchorDate === null ? "unknown" : "migration_prospective",
+    anchorConfidence: anchorDate === null ? "unavailable" : "high_confidence",
+    historicalScopeKnown: false,
+    prospectiveOnly: true,
+    evidence: [...new Set(evidence)],
+  };
+}
+
 function scheduledOnDate(task: LegacyRow, model: ScheduleModel, date: string, anchorDate: string | null = null): boolean {
   if (!validDate(date) || model === "ambiguous" || model === "unscheduled") return false;
   const configuration = scheduleConfiguration(task);
@@ -510,6 +585,21 @@ function sourceStatus(sources: MigrationSourceEvidence, name: SourceName): Sourc
 }
 
 function sourceFingerprintForEntity(sources: MigrationSourceEvidence, taskId: string): Record<string, string> {
+  const tasksById = new Map(
+    sources.tasks
+      .map((row) => [stringValue(row, "id"), row] as const)
+      .filter(([id]) => id !== null),
+  );
+  const hierarchyRows: LegacyRow[] = [];
+  const seen = new Set<string>();
+  let currentId: string | null = taskId;
+  while (currentId !== null && !seen.has(currentId)) {
+    seen.add(currentId);
+    const currentTask = tasksById.get(currentId);
+    if (!currentTask) break;
+    hierarchyRows.push(currentTask);
+    currentId = stringValue(currentTask, "parent_task_id");
+  }
   const history = sources.history.filter((row) => stringValue(row, "task_id") === taskId);
   const rewardClaims = sources.rewardClaims.filter((row) => stringValue(row, "task_id") === taskId);
   const taskEvents = sources.taskEvents.filter((row) => stringValue(row, "task_id") === taskId);
@@ -518,8 +608,9 @@ function sourceFingerprintForEntity(sources: MigrationSourceEvidence, taskId: st
     return JSON.stringify(payload ?? {}).includes(taskId);
   });
   return {
-    tasks: fingerprintEvidence(sources.tasks.filter((row) => stringValue(row, "id") === taskId)),
+    tasks: fingerprintEvidence(hierarchyRows),
     history: fingerprintEvidence(history),
+    profile: fingerprintEvidence(sources.profile ? [sources.profile] : []),
     rewards: fingerprintEvidence({
       claims: rewardClaims,
       taskEvents,
@@ -1495,6 +1586,7 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
   const sourceFingerprints = {
     tasks: fingerprintEvidence(sources.tasks),
     history: fingerprintEvidence(sources.history),
+    profile: fingerprintEvidence(sources.profile ? [sources.profile] : []),
     rewards: fingerprintEvidence({
       taskEvents: sources.taskEvents,
       pointLedger: sources.pointLedger,
@@ -1556,6 +1648,7 @@ export function buildMigrationRunReport(
     sourceFingerprints: {
       tasks: fingerprintEvidence(userReports.map((report) => report.sourceFingerprints.tasks)),
       history: fingerprintEvidence(userReports.map((report) => report.sourceFingerprints.history)),
+      profile: fingerprintEvidence(userReports.map((report) => report.sourceFingerprints.profile)),
       rewards: fingerprintEvidence(userReports.map((report) => report.sourceFingerprints.rewards)),
     },
     sourceAvailability: Object.fromEntries(SOURCE_NAMES.map((name) => [

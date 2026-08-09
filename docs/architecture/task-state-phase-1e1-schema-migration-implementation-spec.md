@@ -759,6 +759,18 @@ Map a claim as consumed only with owner-safe Task/entity/date, a stable reward r
 
 ## 16. Backfill and prospective normalization
 
+### 16.0 Approved M2 snapshot policy
+
+M2 is a forward snapshot cutover. The current persisted Task snapshot is the
+authority for current terminal/container/workflow state and for the initial
+current/future schedule boundary. Historical legacy History is copied as raw
+evidence, but exhaustive reconstruction of old recurrence anchors, occurrence
+identity, Delay chains, workflow transitions, command identities, Missed
+provenance, or reward economics is not a cutover requirement. When a legacy
+provenance value is not trustworthy, the migration records unknown/needs-
+attention evidence instead of inventing a value; only the minimum current-day
+handled fact needed to preserve today's behavior may be materialized.
+
 ### 16.1 Backfill order
 
 The implementation order is:
