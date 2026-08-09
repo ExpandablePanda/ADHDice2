@@ -83,6 +83,7 @@ export type MigrationEntityDisposition = {
   approval: "owner_approved";
   preserveCurrentCompleteProjection?: true;
   resetStaleLegacyWorkflowProjection?: true;
+  resetStaleLegacyCompleteProjection?: true;
 };
 
 export type EntityMigrationDispositions = Readonly<Record<string, MigrationEntityDisposition>>;
@@ -161,6 +162,7 @@ export type EntityClassification = {
   delayState: "none" | "safe" | "ambiguous";
   delayEvidence: string[];
   workflowProjectionDisposition: "retained" | "owner_approved_reset";
+  lifecycleProjectionDisposition: "retained" | "owner_approved_complete_preserved" | "owner_approved_stale_complete_reset";
   lifecycleState: {
     terminal: string;
     container: string;
@@ -555,6 +557,19 @@ function classifyAnchor(
     .filter((item) => item.classification === "explicit" && item.entryDate !== null && ACTIVE_HISTORY_STATUSES.has(item.status ?? ""))
     .map((item) => item.entryDate as string)
     .sort(compareStrings);
+  const canUseProspectiveCurrentSchedule = model === "rolling"
+    && profileAvailable
+    && dateValue(task, "due_on") !== null
+    && historyClassifications.every((item) => item.classification !== "contradictory");
+  const prospectiveEvidence = (extra: readonly string[] = []) => [
+    "valid_forward_configuration",
+    "current_due_cursor_only",
+    ...(model === "rolling" ? ["rolling_current_schedule_deterministic"] : []),
+    ...(delayState === "ambiguous" ? ["unresolved_historical_delay_provenance"] : []),
+    ...scheduleEvidence,
+    ...extra,
+    "historical_scope_unknown",
+  ];
   if (exactOccurrenceDates.length > 0) {
     const occurrenceEvidence = occurrenceClassifications.filter((item) => item.scheduledDueOn !== null);
     const historicalScheduleProven = occurrenceEvidence.length > 0
@@ -565,6 +580,14 @@ function classifyAnchor(
         confidence: "high_confidence",
         date: exactOccurrenceDates[0],
         evidence: ["exact_occurrence_identity", "historical_schedule_boundary"],
+      };
+    }
+    if (canUseProspectiveCurrentSchedule) {
+      return {
+        classification: "prospective",
+        confidence: "high_confidence",
+        date: null,
+        evidence: prospectiveEvidence(["occurrence_identity_proven", "historical_schedule_provenance_unavailable"]),
       };
     }
     return {
@@ -585,21 +608,23 @@ function classifyAnchor(
       };
     }
     if (provenDates.length > 0) {
+      if (canUseProspectiveCurrentSchedule) {
+        return {
+          classification: "prospective",
+          confidence: "high_confidence",
+          date: null,
+          evidence: prospectiveEvidence(["explicit_history", "historical_schedule_evidence_conflicts"]),
+        };
+      }
       return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["explicit_history", "historical_schedule_evidence_conflicts"] };
     }
   }
-  if (profileAvailable && dateValue(task, "due_on") !== null && historyClassifications.every((item) => item.classification !== "contradictory")) {
+  if (canUseProspectiveCurrentSchedule || (profileAvailable && dateValue(task, "due_on") !== null && historyClassifications.every((item) => item.classification !== "contradictory"))) {
     return {
       classification: "prospective",
       confidence: "high_confidence",
       date: null,
-      evidence: [
-        "valid_forward_configuration",
-        "current_due_cursor_only",
-        ...(delayState === "ambiguous" ? ["unresolved_historical_delay_provenance"] : []),
-        ...scheduleEvidence,
-        "historical_scope_unknown",
-      ],
+      evidence: prospectiveEvidence(),
     };
   }
   if (delayState === "ambiguous") {
@@ -1045,7 +1070,12 @@ function classifyLifecycle(
   historyClassifications: readonly HistoryClassification[],
   history: readonly LegacyRow[],
   preserveCurrentCompleteProjection = false,
-): { state: EntityClassification["lifecycleState"]; issueCodes: string[] } {
+  resetStaleCompleteProjection = false,
+): {
+  state: EntityClassification["lifecycleState"];
+  issueCodes: string[];
+  projectionDisposition: EntityClassification["lifecycleProjectionDisposition"];
+} {
   const issues: string[] = [];
   const completeHistory = historyClassifications.filter((item) => item.status === "complete" && item.classification === "explicit");
   const completeDate = completeHistory.map((item) => item.entryDate).filter((date): date is string => date !== null).sort(compareStrings)[0] ?? null;
@@ -1056,8 +1086,14 @@ function classifyLifecycle(
   if (laterActive) issues.push("COMPLETE_FOLLOWED_BY_ACTIVE_HISTORY");
   const status = stringValue(task, "status");
   const currentCompleteProjection = status === "complete" && stringValue(task, "completed_at") !== null;
+  const staleCompleteProjection = ["pending", "missed"].includes(status ?? "") && stringValue(task, "completed_at") !== null;
+  const preserveCompleteProjection = preserveCurrentCompleteProjection && currentCompleteProjection;
+  const resetCompleteProjection = resetStaleCompleteProjection && staleCompleteProjection;
   if (preserveCurrentCompleteProjection && !currentCompleteProjection) issues.push("OWNER_COMPLETE_PROJECTION_NOT_MATCHED");
-  const terminal = completeHistory.length > 0 || (preserveCurrentCompleteProjection && currentCompleteProjection)
+  if (resetStaleCompleteProjection && !staleCompleteProjection) issues.push("OWNER_STALE_COMPLETE_PROJECTION_NOT_MATCHED");
+  const terminal = resetCompleteProjection
+    ? "active"
+    : completeHistory.length > 0 || preserveCompleteProjection
     ? "permanently_complete"
     : status === "complete" || stringValue(task, "completed_at") !== null
       ? "ambiguous"
@@ -1071,7 +1107,15 @@ function classifyLifecycle(
   if (container === "trashed" && rawPrior !== null && !["active", "archived"].includes(rawPrior)) {
     issues.push("CONTRADICTORY_TRASH_PRIOR_CONTAINER");
   }
-  return { state: { terminal, container, priorContainer }, issueCodes: [...new Set(issues)] };
+  return {
+    state: { terminal, container, priorContainer },
+    issueCodes: [...new Set(issues)],
+    projectionDisposition: preserveCompleteProjection
+      ? "owner_approved_complete_preserved"
+      : resetCompleteProjection
+        ? "owner_approved_stale_complete_reset"
+        : "retained",
+  };
 }
 
 function isOwnerApprovedStaleWorkflowReset(
@@ -1194,6 +1238,7 @@ function issueSeverity(issue: string): "blocked" | "attention" {
     "INVALID_LOGICAL_DAY_SETTINGS",
     "CONTRADICTORY_TRASH_PRIOR_CONTAINER",
     "OWNER_COMPLETE_PROJECTION_NOT_MATCHED",
+    "OWNER_STALE_COMPLETE_PROJECTION_NOT_MATCHED",
     "DUPLICATE_LEGACY_SUBTASK_PROMOTION",
     "SOURCE_QUERY_FAILED",
   ].includes(issue)) return "blocked";
@@ -1209,7 +1254,9 @@ function classifyEligibility(
   issueCodes: readonly string[],
 ): MigrationEligibility {
   if (issueCodes.some((issue) => issueSeverity(issue) === "blocked")) return "blocked";
-  if (model === "ambiguous" || anchor.classification === "ambiguous" || lifecycle.terminal === "ambiguous" || workflow === "contradictory") return "blocked";
+  if (model === "ambiguous" || lifecycle.terminal === "ambiguous" || workflow === "contradictory") return "blocked";
+  const inactiveSchedule = lifecycle.container === "trashed" || lifecycle.terminal === "permanently_complete";
+  if (anchor.classification === "ambiguous" && !inactiveSchedule) return "blocked";
   if (anchor.classification === "prospective" || lifecycle.priorContainer === "unknown" || workflow === "stale" || issueCodes.length > 0) return "partial";
   return "safe";
 }
@@ -1336,7 +1383,12 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
       historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction),
       historyForCanonicalReconstruction,
       entityDisposition?.preserveCurrentCompleteProjection === true,
+      entityDisposition?.resetStaleLegacyCompleteProjection === true,
     );
+    if (anchor.classification === "ambiguous" && schedule.model !== "ambiguous") {
+      if (lifecycle.state.container === "trashed") anchor.evidence.push("trashed_recurrence_anchor_requires_restore_repair");
+      else if (lifecycle.state.terminal === "permanently_complete") anchor.evidence.push("terminal_recurrence_anchor_not_required");
+    }
     const workflowProjectionReset = isOwnerApprovedStaleWorkflowReset(task, schedule.model, logicalDate, lifecycle.state, entityDisposition);
     const workflow = classifyWorkflow(task, logicalDate, lifecycle.state, occurrenceClassifications, workflowProjectionReset);
     const rewards = classifyRewards(taskId, historyClassifications.filter((item) => !item.excludedFromCanonicalReconstruction), sources, historyExcluded);
@@ -1376,6 +1428,7 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
       delayState: delay.state,
       delayEvidence: delay.evidence,
       workflowProjectionDisposition: workflowProjectionReset ? "owner_approved_reset" : "retained",
+      lifecycleProjectionDisposition: lifecycle.projectionDisposition,
       lifecycleState: lifecycle.state,
       workflowState: workflow.state,
       rewardBootstrapState: rewards.state,
@@ -1670,6 +1723,7 @@ type CliOptions = {
   historyExclusionEntityIds: string[];
   completeProjectionEntityIds: string[];
   staleWorkflowResetEntityIds: string[];
+  staleCompleteProjectionResetEntityIds: string[];
 };
 
 function parseCliArgs(argv: readonly string[]): CliOptions {
@@ -1677,6 +1731,7 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
   const historyExclusionEntityIds: string[] = [];
   const completeProjectionEntityIds: string[] = [];
   const staleWorkflowResetEntityIds: string[] = [];
+  const staleCompleteProjectionResetEntityIds: string[] = [];
   const forbidden = new Set(["--write", "--allow-writes", "--repair", "--backfill", "--execute"]);
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -1687,15 +1742,17 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
       if (key === "--exclude-history-entity-id") historyExclusionEntityIds.push(inlineValue);
       else if (key === "--preserve-complete-projection-entity-id") completeProjectionEntityIds.push(inlineValue);
       else if (key === "--reset-stale-workflow-entity-id") staleWorkflowResetEntityIds.push(inlineValue);
+      else if (key === "--reset-stale-complete-projection-entity-id") staleCompleteProjectionResetEntityIds.push(inlineValue);
       else values.set(key, inlineValue);
     }
-    else if (["--user-id", "--batch-size", "--access-token", "--classifier-version", "--schema-contract-version", "--output", "--output-path", "--format", "--logical-date", "--mode", "--exclude-history-entity-id", "--preserve-complete-projection-entity-id", "--reset-stale-workflow-entity-id"].includes(key)) {
+    else if (["--user-id", "--batch-size", "--access-token", "--classifier-version", "--schema-contract-version", "--output", "--output-path", "--format", "--logical-date", "--mode", "--exclude-history-entity-id", "--preserve-complete-projection-entity-id", "--reset-stale-workflow-entity-id", "--reset-stale-complete-projection-entity-id"].includes(key)) {
       const next = argv[index + 1];
       if (!next || next.startsWith("--")) throw new MigrationClassifierDiagnostic("MISSING_ARGUMENT_VALUE", `${key} requires a value`);
       if (key === "--mode" && next === "write") throw new MigrationClassifierDiagnostic("WRITE_MODE_REJECTED", "the migration classifier is read-only");
       if (key === "--exclude-history-entity-id") historyExclusionEntityIds.push(next);
       else if (key === "--preserve-complete-projection-entity-id") completeProjectionEntityIds.push(next);
       else if (key === "--reset-stale-workflow-entity-id") staleWorkflowResetEntityIds.push(next);
+      else if (key === "--reset-stale-complete-projection-entity-id") staleCompleteProjectionResetEntityIds.push(next);
       else values.set(key, next);
       index += 1;
     } else throw new MigrationClassifierDiagnostic("INVALID_ARGUMENT", `unknown argument ${key}`);
@@ -1726,6 +1783,7 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     historyExclusionEntityIds: [...new Set(historyExclusionEntityIds.map((id) => id.trim()).filter(Boolean))],
     completeProjectionEntityIds: [...new Set(completeProjectionEntityIds.map((id) => id.trim()).filter(Boolean))],
     staleWorkflowResetEntityIds: [...new Set(staleWorkflowResetEntityIds.map((id) => id.trim()).filter(Boolean))],
+    staleCompleteProjectionResetEntityIds: [...new Set(staleCompleteProjectionResetEntityIds.map((id) => id.trim()).filter(Boolean))],
   };
 }
 
@@ -1742,6 +1800,7 @@ function buildCliEntityDispositions(options: CliOptions): EntityMigrationDisposi
   add(options.historyExclusionEntityIds, {});
   add(options.completeProjectionEntityIds, { preserveCurrentCompleteProjection: true });
   add(options.staleWorkflowResetEntityIds, { resetStaleLegacyWorkflowProjection: true });
+  add(options.staleCompleteProjectionResetEntityIds, { resetStaleLegacyCompleteProjection: true });
   return entityDispositions;
 }
 

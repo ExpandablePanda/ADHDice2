@@ -339,6 +339,52 @@ test("the same current Complete projection without explicit owner approval remai
   assert.ok(entity.blockingIssueCodes.includes("COMPLETE_PROJECTION_ONLY"));
 });
 
+test("owner-approved stale Complete projection reset preserves Pending and Missed current state as active", () => {
+  for (const status of ["pending", "missed"] as const) {
+    const id = `stale-complete-reset-${status}`;
+    const entity = classifyUser(sources([task({
+      id,
+      status,
+      completed_at: "2026-08-01T12:00:00Z",
+    })], [{
+      id: `${id}-history`,
+      task_id: id,
+      user_id: USER_ID,
+      entry_date: "2026-08-01",
+      status: "complete",
+      event_type: "status",
+    }]), {
+      userId: USER_ID,
+      logicalDate: "2026-08-08",
+      entityDispositions: {
+        [id]: { ...OWNER_APPROVED_HISTORY_EXCLUSION, resetStaleLegacyCompleteProjection: true },
+      },
+    }).entities[0]!;
+    assert.equal(entity.entityId, id);
+    assert.equal(entity.lifecycleState.terminal, "active");
+    assert.equal(entity.lifecycleProjectionDisposition, "owner_approved_stale_complete_reset");
+    assert.equal(entity.workflowState, "none");
+    assert.notEqual(entity.migrationEligibility, "blocked");
+    assert.equal(entity.blockingIssueCodes.includes("COMPLETE_PROJECTION_ONLY"), false);
+    assert.equal(entity.historyDisposition, "owner_approved_excluded");
+    assert.ok(entity.historyClassifications.every((item) => item.excludedFromCanonicalReconstruction));
+  }
+});
+
+test("stale Complete projection without explicit reset approval remains ambiguous and blocked", () => {
+  for (const status of ["pending", "missed"] as const) {
+    const entity = oneEntity(sources([task({
+      id: `stale-complete-unapproved-${status}`,
+      status,
+      completed_at: "2026-08-01T12:00:00Z",
+    })]));
+    assert.equal(entity.lifecycleState.terminal, "ambiguous");
+    assert.equal(entity.lifecycleProjectionDisposition, "retained");
+    assert.equal(entity.migrationEligibility, "blocked");
+    assert.ok(entity.blockingIssueCodes.includes("COMPLETE_PROJECTION_ONLY"));
+  }
+});
+
 test("Voids-style stale workflow projection resets only with explicit owner approval", () => {
   const voids = task({
     id: "voids-stable-id",
@@ -528,7 +574,7 @@ test("matching occurrence identity reconstructs a high-confidence occurrence and
   assert.equal(entity.anchor.confidence, "high_confidence");
 });
 
-test("a changed current recurrence rule cannot manufacture a historical anchor", () => {
+test("a changed current recurrence rule uses a prospective anchor without manufacturing historical certainty", () => {
   const id = "changed-recurrence";
   const entity = oneEntity(sources([task({ id, repeat_frequency: "daily", due_on: "2026-08-08" })], [{
     id: "old-occurrence",
@@ -542,8 +588,66 @@ test("a changed current recurrence rule cannot manufacture a historical anchor",
     occurrence_key: `task:${id}:occurrence:2026-08-08`,
   }]));
   assert.equal(entity.occurrenceClassifications[0]?.classification, "proven");
-  assert.equal(entity.anchor.classification, "ambiguous");
+  assert.equal(entity.anchor.classification, "prospective");
   assert.ok(entity.anchor.evidence.includes("historical_schedule_provenance_unavailable"));
+  assert.ok(entity.anchor.evidence.includes("historical_scope_unknown"));
+  assert.equal(entity.anchor.evidence.includes("historical_schedule_boundary"), false);
+  assert.notEqual(entity.migrationEligibility, "blocked");
+});
+
+test("rolling recurrence without usable current scheduling evidence remains blocked while active", () => {
+  const entity = oneEntity(sources([task({
+    id: "rolling-anchor-required",
+    repeat_frequency: "daily",
+    due_on: null,
+  })]));
+  assert.equal(entity.scheduleModel, "rolling");
+  assert.equal(entity.anchor.classification, "ambiguous");
+  assert.equal(entity.migrationEligibility, "blocked");
+  assert.equal(entity.migrationDisposition, "genuinely_blocked");
+});
+
+test("trashed recurring entity keeps an unknown anchor without activating recurrence", () => {
+  const entity = oneEntity(sources([task({
+    id: "trashed-unknown-anchor",
+    status: "trashed",
+    trashed_at: "2026-08-01T12:00:00Z",
+    repeat_frequency: "daily",
+    due_on: null,
+  })]));
+  assert.equal(entity.scheduleModel, "rolling");
+  assert.equal(entity.anchor.classification, "ambiguous");
+  assert.equal(entity.anchor.date, null);
+  assert.ok(entity.anchor.evidence.includes("trashed_recurrence_anchor_requires_restore_repair"));
+  assert.equal(entity.workflowState, "none");
+  assert.notEqual(entity.migrationEligibility, "blocked");
+  assert.equal(entity.migrationDisposition, "historical_uncertainty_retained");
+});
+
+test("permanently Complete recurring entity keeps an unknown anchor without future obligation", () => {
+  const id = "permanently-complete-unknown-anchor";
+  const entity = oneEntity(sources([task({
+    id,
+    status: "complete",
+    completed_at: "2026-08-01T12:00:00Z",
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    repeat_days_of_week: [1],
+    due_on: null,
+  })], [{
+    id: "permanent-complete-history",
+    task_id: id,
+    user_id: USER_ID,
+    entry_date: "2026-08-01",
+    status: "complete",
+    event_type: "completed_permanently",
+  }]));
+  assert.equal(entity.lifecycleState.terminal, "permanently_complete");
+  assert.equal(entity.anchor.classification, "ambiguous");
+  assert.equal(entity.anchor.date, null);
+  assert.ok(entity.anchor.evidence.includes("terminal_recurrence_anchor_not_required"));
+  assert.notEqual(entity.migrationEligibility, "blocked");
+  assert.equal(entity.migrationDisposition, "historical_uncertainty_retained");
 });
 
 test("stale In Progress stays stale and is never reclassified as Did My Best", () => {
