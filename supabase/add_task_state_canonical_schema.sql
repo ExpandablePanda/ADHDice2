@@ -85,6 +85,86 @@ alter table public.adhdice_clean_tasks
   add column if not exists projection_source_fingerprint text,
   add column if not exists projection_version text;
 
+-- Keep the existing owner-scoped legacy Task CRUD surface during the
+-- compatibility period without allowing that surface to become a second
+-- canonical authority.  Canonical migration/command paths execute as a
+-- privileged database role (or through a SECURITY DEFINER function owned by
+-- one), while ordinary client roles may only insert the bootstrap marker and
+-- null canonical semantic fields or leave existing canonical values unchanged.
+create or replace function public.adhdice_clean_tasks_guard_canonical_writes()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $function$
+begin
+  if current_user in ('postgres', 'service_role', 'supabase_admin') then
+    return new;
+  end if;
+
+  if tg_op = 'INSERT' then
+    if new.canonicalization_status is distinct from 'legacy_uninitialized'
+       or new.entity_kind is not null
+       or new.terminal_state is not null
+       or new.container_state is not null
+       or new.prior_container_state is not null
+       or new.prior_container_state_status is not null
+       or new.terminal_completed_at is not null
+       or new.container_trashed_at is not null
+       or new.workflow_state is not null
+       or new.workflow_started_at is not null
+       or new.workflow_logical_date is not null
+       or new.workflow_occurrence_id is not null
+       or new.workflow_command_id is not null
+       or new.workflow_revision is not null
+       or new.canonical_revision is not null
+       or new.canonical_created_at is not null
+       or new.canonical_updated_at is not null
+       or new.projection_source_canonical_revision is not null
+       or new.projection_source_fingerprint is not null
+       or new.projection_version is not null then
+      raise exception 'Canonical Task fields may only be written by an authorized database path.'
+        using errcode = '42501',
+              hint = 'Use the canonical migration or command database path.';
+    end if;
+  elsif tg_op = 'UPDATE' then
+    if new.canonicalization_status is distinct from old.canonicalization_status
+       or new.entity_kind is distinct from old.entity_kind
+       or new.terminal_state is distinct from old.terminal_state
+       or new.container_state is distinct from old.container_state
+       or new.prior_container_state is distinct from old.prior_container_state
+       or new.prior_container_state_status is distinct from old.prior_container_state_status
+       or new.terminal_completed_at is distinct from old.terminal_completed_at
+       or new.container_trashed_at is distinct from old.container_trashed_at
+       or new.workflow_state is distinct from old.workflow_state
+       or new.workflow_started_at is distinct from old.workflow_started_at
+       or new.workflow_logical_date is distinct from old.workflow_logical_date
+       or new.workflow_occurrence_id is distinct from old.workflow_occurrence_id
+       or new.workflow_command_id is distinct from old.workflow_command_id
+       or new.workflow_revision is distinct from old.workflow_revision
+       or new.canonical_revision is distinct from old.canonical_revision
+       or new.canonical_created_at is distinct from old.canonical_created_at
+       or new.canonical_updated_at is distinct from old.canonical_updated_at
+       or new.projection_source_canonical_revision is distinct from old.projection_source_canonical_revision
+       or new.projection_source_fingerprint is distinct from old.projection_source_fingerprint
+       or new.projection_version is distinct from old.projection_version then
+      raise exception 'Canonical Task fields may only be written by an authorized database path.'
+        using errcode = '42501',
+              hint = 'Use the canonical migration or command database path.';
+    end if;
+  end if;
+
+  return new;
+end;
+$function$;
+
+revoke all on function public.adhdice_clean_tasks_guard_canonical_writes() from public, anon, authenticated;
+
+drop trigger if exists adhdice_clean_tasks_guard_canonical_writes
+  on public.adhdice_clean_tasks;
+create trigger adhdice_clean_tasks_guard_canonical_writes
+  before insert or update on public.adhdice_clean_tasks
+  for each row execute function public.adhdice_clean_tasks_guard_canonical_writes();
+
 -- Add constraints to the existing Task/profile tables by name so rerunning
 -- this patch does not duplicate them.  The Task checks are NULL-tolerant for
 -- legacy_uninitialized and needs_attention rows and become complete semantic
