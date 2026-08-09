@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
+import { logicalDateForTimestamp } from "../src/lib/task-state-engine/calendar.ts";
 
 export const REPORT_VERSION = "task-state-migration-dry-run-v1" as const;
 export const MIGRATION_VERSION = "task-state-migration-v1" as const;
@@ -60,6 +61,7 @@ export type MigrationSourceEvidence = {
 export type ClassifierOptions = {
   userId: string;
   logicalDate?: string;
+  currentInstant?: string | Date;
   classifierVersion?: string;
   schemaContractVersion?: string;
 };
@@ -140,7 +142,7 @@ export type UserMigrationReport = {
   schemaContractVersion: typeof SCHEMA_CONTRACT_VERSION;
   generatedAt: string;
   userId: string;
-  logicalDate: string;
+  logicalDate: string | null;
   sourceFingerprints: { tasks: string; history: string; rewards: string };
   sourceAvailability: SourceAvailability;
   counts: MigrationCounts;
@@ -185,6 +187,11 @@ export class MigrationClassifierDiagnostic extends Error {
     this.code = code;
   }
 }
+
+type ProfileLogicalDayContext = {
+  timezone: string;
+  dayStartTime: string;
+};
 
 function emptyAvailability(): SourceAvailability {
   return Object.fromEntries(SOURCE_NAMES.map((name) => [name, { available: true }])) as SourceAvailability;
@@ -291,12 +298,6 @@ function validDate(valueToCheck: string | null): valueToCheck is string {
 
 function dateDifferenceInDays(start: string, end: string): number {
   return Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000);
-}
-
-function addDays(date: string, days: number): string {
-  const valueToShift = new Date(`${date}T00:00:00Z`);
-  valueToShift.setUTCDate(valueToShift.getUTCDate() + days);
-  return valueToShift.toISOString().slice(0, 10);
 }
 
 function daysInMonth(year: number, monthIndex: number) {
@@ -420,36 +421,6 @@ function scheduledOnDate(task: LegacyRow, model: ScheduleModel, date: string, an
   return false;
 }
 
-function nextScheduledDate(task: LegacyRow, model: ScheduleModel, date: string, anchorDate: string | null): string | null {
-  const configuration = scheduleConfiguration(task);
-  if (!validDate(date) || model === "ambiguous" || model === "unscheduled") return null;
-  if (model === "one_time") return null;
-  if (configuration.frequency === "daily" || configuration.frequency === "custom" || configuration.frequency === "daily_until_complete") {
-    return addDays(date, configuration.interval ?? 1);
-  }
-  if (configuration.frequency === "weekly") {
-    for (let offset = 1; offset <= 7 * Math.max(configuration.interval ?? 1, 1) + 7; offset += 1) {
-      const candidate = addDays(date, offset);
-      if (scheduledOnDate(task, model, candidate, anchorDate)) return candidate;
-    }
-    return null;
-  }
-  if (configuration.frequency === "monthly") {
-    const dateObject = new Date(`${date}T00:00:00Z`);
-    for (let monthOffset = 1; monthOffset <= 24 * Math.max(configuration.interval ?? 1, 1); monthOffset += 1) {
-      const month = new Date(Date.UTC(dateObject.getUTCFullYear(), dateObject.getUTCMonth() + monthOffset, 1));
-      let candidate: string | null = null;
-      if (configuration.monthlyMode === "ordinal_weekday") {
-        candidate = nthWeekdayOfMonth(month.getUTCFullYear(), month.getUTCMonth(), configuration.monthlyWeekday ?? -1, configuration.monthlyOrdinal ?? "");
-      } else {
-        candidate = `${month.getUTCFullYear().toString().padStart(4, "0")}-${(month.getUTCMonth() + 1).toString().padStart(2, "0")}-${Math.min(configuration.dayOfMonth ?? 0, daysInMonth(month.getUTCFullYear(), month.getUTCMonth())).toString().padStart(2, "0")}`;
-      }
-      if (candidate && scheduledOnDate(task, model, candidate, anchorDate)) return candidate;
-    }
-  }
-  return null;
-}
-
 function sourceStatus(sources: MigrationSourceEvidence, name: SourceName): SourceStatus {
   return sources.availability?.[name] ?? { available: true };
 }
@@ -478,10 +449,10 @@ function sourceFingerprintForEntity(sources: MigrationSourceEvidence, taskId: st
 function classifyAnchor(
   task: LegacyRow,
   model: ScheduleModel,
-  history: readonly LegacyRow[],
   historyClassifications: readonly HistoryClassification[],
   occurrenceClassifications: readonly OccurrenceClassification[],
   delayState: "none" | "safe" | "ambiguous",
+  historicalScheduleDates: ReadonlySet<string>,
   profileAvailable: boolean,
 ): EntityClassification["anchor"] {
   if (model === "unscheduled") return { classification: "proven", confidence: "proven", date: null, evidence: ["repeat_frequency=none", "due_on=null"] };
@@ -500,32 +471,39 @@ function classifyAnchor(
   const explicitDates = historyClassifications
     .filter((item) => item.classification === "explicit" && item.entryDate !== null && ACTIVE_HISTORY_STATUSES.has(item.status ?? ""))
     .map((item) => item.entryDate as string)
-    .filter((date) => scheduledOnDate(task, model, date, date))
     .sort(compareStrings);
   if (exactOccurrenceDates.length > 0) {
-    const first = exactOccurrenceDates[0];
-    let contiguous = true;
-    for (let index = 1; index < exactOccurrenceDates.length; index += 1) {
-      const expected = nextScheduledDate(task, model, exactOccurrenceDates[index - 1], first);
-      if (expected !== exactOccurrenceDates[index]) contiguous = false;
-    }
-    if (contiguous) {
+    const occurrenceEvidence = occurrenceClassifications.filter((item) => item.scheduledDueOn !== null);
+    const historicalScheduleProven = occurrenceEvidence.length > 0
+      && occurrenceEvidence.every((item) => item.classification === "proven" && item.evidence.includes("historical_schedule_boundary"));
+    if (historicalScheduleProven) {
       return {
         classification: "reconstructable",
         confidence: "high_confidence",
-        date: first,
-        evidence: ["exact_occurrence_identity", "contiguous_occurrence_sequence"],
+        date: exactOccurrenceDates[0],
+        evidence: ["exact_occurrence_identity", "historical_schedule_boundary"],
       };
     }
-    return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["multiple_noncontiguous_occurrence_candidates"] };
-  }
-  if (explicitDates.length > 0 && occurrenceClassifications.every((item) => item.classification !== "ambiguous")) {
     return {
-      classification: "reconstructable",
-      confidence: "high_confidence",
-      date: explicitDates[0],
-      evidence: ["explicit_history", "schedule_rule_reconstruction"],
+      classification: "ambiguous",
+      confidence: "ambiguous",
+      date: null,
+      evidence: ["occurrence_identity_proven", "historical_schedule_provenance_unavailable"],
     };
+  }
+  if (explicitDates.length > 0) {
+    const provenDates = explicitDates.filter((date) => historicalScheduleDates.has(date));
+    if (provenDates.length === explicitDates.length) {
+      return {
+        classification: "reconstructable",
+        confidence: "high_confidence",
+        date: provenDates[0],
+        evidence: ["explicit_history", "historical_schedule_boundary"],
+      };
+    }
+    if (provenDates.length > 0) {
+      return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["explicit_history", "historical_schedule_evidence_conflicts"] };
+    }
   }
   if (delayState === "ambiguous") {
     return { classification: "ambiguous", confidence: "ambiguous", date: null, evidence: ["unresolved_delay_origin_or_target"] };
@@ -545,12 +523,32 @@ function hasValidProfileContext(profile: LegacyRow | null): boolean {
   if (!profile) return false;
   const timezone = stringValue(profile, "timezone");
   const dayStart = stringValue(profile, "day_start_time", "logical_day_start");
-  if (timezone === null || dayStart === null || !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?$/.test(dayStart)) return false;
+  if (timezone === null || dayStart === null || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(dayStart)) return false;
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format();
     return true;
   } catch {
     return false;
+  }
+}
+
+function profileLogicalDayContext(profile: LegacyRow | null): ProfileLogicalDayContext | null {
+  if (!hasValidProfileContext(profile)) return null;
+  return {
+    timezone: stringValue(profile, "timezone") as string,
+    dayStartTime: stringValue(profile, "day_start_time", "logical_day_start") as string,
+  };
+}
+
+export function deriveCurrentLogicalDate(profile: LegacyRow | null, currentInstant: string | Date = new Date()): string {
+  const context = profileLogicalDayContext(profile);
+  if (!context) throw new MigrationClassifierDiagnostic("INVALID_LOGICAL_DAY_SETTINGS", "profile timezone and day_start_time are required to derive the current Logical Day");
+  const instant = currentInstant instanceof Date ? currentInstant : new Date(currentInstant);
+  if (Number.isNaN(instant.getTime())) throw new MigrationClassifierDiagnostic("INVALID_CURRENT_INSTANT", "current instant must be a valid timestamp");
+  try {
+    return logicalDateForTimestamp(instant, context.timezone, context.dayStartTime);
+  } catch (error) {
+    throw new MigrationClassifierDiagnostic("INVALID_LOGICAL_DAY_SETTINGS", `profile Logical Day settings could not be evaluated: ${String(error)}`);
   }
 }
 
@@ -562,6 +560,16 @@ function hasExplicitActor(row: LegacyRow): boolean {
 function hasAutomaticActor(row: LegacyRow): boolean {
   const actor = stringValue(row, "actor_kind", "writer_kind", "source", "provenance", "origin", "event_type");
   return actor !== null && ["rollover", "automatic", "reconcile", "derived"].some((candidate) => actor.toLowerCase().includes(candidate));
+}
+
+function hasProvenExplicitWriter(taskId: string, row: LegacyRow, sources: MigrationSourceEvidence): { proven: boolean; evidence: string[] } {
+  const entryDate = dateValue(row, "entry_date");
+  if (!entryDate || hasAutomaticActor(row) || hasMatchingRolloverEvidence(taskId, entryDate, sources.rolloverEvidence)) {
+    return { proven: false, evidence: [] };
+  }
+  if (stringValue(row, "command_id") !== null) return { proven: true, evidence: ["command_identity", "writer_chronology"] };
+  if (hasExplicitActor(row)) return { proven: true, evidence: ["explicit_writer_context", "writer_chronology"] };
+  return { proven: false, evidence: [] };
 }
 
 function hasMatchingRolloverEvidence(
@@ -636,8 +644,9 @@ function classifyHistory(
         };
       }
       if (status === "missed") {
-        if (hasExplicitActor(row) || stringValue(row, "command_id") !== null) {
-          evidence.push("explicit_manual_missed");
+        const writer = hasProvenExplicitWriter(taskId, row, sources);
+        if (writer.proven) {
+          evidence.push("explicit_manual_missed", ...writer.evidence);
           return { historyId: id, entryDate, status, classification: "explicit", confidence: "high_confidence", canonicalEligible: true, evidence, blockingIssueCodes: [] };
         }
         if (hasAutomaticActor(row) || hasMatchingRolloverEvidence(taskId, entryDate, sources.rolloverEvidence)) {
@@ -652,9 +661,72 @@ function classifyHistory(
         }
         return { historyId: id, entryDate, status, classification: "ambiguous", confidence: "not_promotable", canonicalEligible: false, evidence: ["complete_status_without_terminal_event"], blockingIssueCodes: ["COMPLETE_PROJECTION_ONLY"] };
       }
-      evidence.push(stringValue(row, "command_id") ? "command_identity" : "explicit_writer_context_not_available");
+      const writer = hasProvenExplicitWriter(taskId, row, sources);
+      if (!writer.proven) {
+        return {
+          historyId: id,
+          entryDate,
+          status,
+          classification: "ambiguous",
+          confidence: "not_promotable",
+          canonicalEligible: false,
+          evidence: ["history_writer_provenance_unavailable"],
+          blockingIssueCodes: ["AMBIGUOUS_HISTORY_PROVENANCE"],
+        };
+      }
+      evidence.push(...writer.evidence);
       return { historyId: id, entryDate, status, classification: "explicit", confidence: stringValue(row, "command_id") ? "proven" : "high_confidence", canonicalEligible: true, evidence, blockingIssueCodes: issues };
     });
+}
+
+type HistoricalScheduleEvidence = {
+  effectiveFrom: string;
+  anchorDate: string;
+  model: ScheduleModel;
+  schedule: LegacyRow;
+};
+
+function historicalScheduleEvidenceFromRow(row: LegacyRow): HistoricalScheduleEvidence | null {
+  const nested = value(row, "historical_schedule", "schedule_snapshot", "schedule_boundary", "schedule");
+  const snapshot = nested && typeof nested === "object" && !Array.isArray(nested) ? nested as LegacyRow : row;
+  const frequency = stringValue(snapshot, "repeat_frequency", "frequency")
+    ?? stringValue(row, "repeat_frequency_at_event", "historical_repeat_frequency", "schedule_repeat_frequency");
+  const effectiveFrom = dateValue(row, "effective_from_logical_date", "schedule_effective_from", "effective_from", "boundary_date", "event_logical_date", "logical_date", "occurred_on")
+    ?? dateValue(snapshot, "effective_from_logical_date", "schedule_effective_from", "effective_from", "boundary_date");
+  if (!frequency || !effectiveFrom) return null;
+  const schedule: LegacyRow = {
+    repeat_frequency: frequency,
+    repeat_interval: numberValue(snapshot, "repeat_interval", "interval") ?? numberValue(row, "repeat_interval_at_event", "historical_repeat_interval") ?? 1,
+    repeat_days_of_week: arrayValue(snapshot, "repeat_days_of_week", "weekdays").length > 0
+      ? arrayValue(snapshot, "repeat_days_of_week", "weekdays")
+      : arrayValue(row, "repeat_days_of_week_at_event", "historical_repeat_days_of_week"),
+    repeat_day_of_month: numberValue(snapshot, "repeat_day_of_month", "day_of_month") ?? numberValue(row, "repeat_day_of_month_at_event", "historical_repeat_day_of_month"),
+    repeat_monthly_mode: stringValue(snapshot, "repeat_monthly_mode", "monthly_mode") ?? stringValue(row, "repeat_monthly_mode_at_event") ?? "day_of_month",
+    repeat_monthly_ordinal: stringValue(snapshot, "repeat_monthly_ordinal", "monthly_ordinal") ?? stringValue(row, "repeat_monthly_ordinal_at_event"),
+    repeat_monthly_weekday: numberValue(snapshot, "repeat_monthly_weekday", "monthly_weekday") ?? numberValue(row, "repeat_monthly_weekday_at_event"),
+    due_on: dateValue(snapshot, "due_on", "one_time_due_on", "current_due_on") ?? dateValue(row, "due_on_at_event", "historical_due_on"),
+  };
+  const model = classifyScheduleModel(schedule).model;
+  if (model === "ambiguous") return null;
+  const anchorDate = dateValue(snapshot, "anchor_date", "schedule_anchor_date", "due_on", "one_time_due_on")
+    ?? dateValue(row, "anchor_date_at_event", "historical_anchor_date")
+    ?? effectiveFrom;
+  return { effectiveFrom, anchorDate, model, schedule };
+}
+
+function historicalScheduleEvidenceForDate(
+  taskId: string,
+  date: string,
+  history: readonly LegacyRow[],
+  taskEvents: readonly LegacyRow[],
+  userId?: string,
+): HistoricalScheduleEvidence | null {
+  const candidates = [...history, ...taskEvents]
+    .filter((row) => stringValue(row, "task_id", "entity_id") === taskId && (userId === undefined || stringValue(row, "user_id") === null || stringValue(row, "user_id") === userId))
+    .map(historicalScheduleEvidenceFromRow)
+    .filter((candidate): candidate is HistoricalScheduleEvidence => candidate !== null)
+    .filter((candidate) => candidate.effectiveFrom <= date && scheduledOnDate(candidate.schedule, candidate.model, date, candidate.anchorDate));
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 function occurrenceDateFromKey(row: LegacyRow, taskId: string): string | null {
@@ -664,7 +736,14 @@ function occurrenceDateFromKey(row: LegacyRow, taskId: string): string | null {
   return match?.[1] ?? null;
 }
 
-function classifyOccurrences(taskId: string, task: LegacyRow, model: ScheduleModel, history: readonly LegacyRow[], historyClassifications: readonly HistoryClassification[]): OccurrenceClassification[] {
+function classifyOccurrences(
+  taskId: string,
+  task: LegacyRow,
+  model: ScheduleModel,
+  history: readonly LegacyRow[],
+  historyClassifications: readonly HistoryClassification[],
+  sources: MigrationSourceEvidence,
+): OccurrenceClassification[] {
   return history
     .filter((row) => stringValue(row, "task_id") === taskId)
     .sort((left, right) => compareStrings(rowId(left, ""), rowId(right, "")))
@@ -684,13 +763,21 @@ function classifyOccurrences(taskId: string, task: LegacyRow, model: ScheduleMod
         }
         return [];
       }
-      if (!scheduledOnDate(task, model, due, due)) {
-        return [{ historyId, scheduledDueOn: due, classification: "ambiguous", confidence: "not_promotable", evidence: ["occurrence_not_valid_for_current_rule"], blockingIssueCodes: ["AMBIGUOUS_OCCURRENCE_IDENTITY"] }];
-      }
+      const historicalSchedule = historicalScheduleEvidenceForDate(taskId, due, history, sources.taskEvents, stringValue(task, "user_id") ?? undefined);
       if (rawDue && keyDue) {
-        return [{ historyId, scheduledDueOn: due, classification: "proven", confidence: "high_confidence", evidence: ["matching_occurrence_key_and_due_date"], blockingIssueCodes: [] }];
+        return [{
+          historyId,
+          scheduledDueOn: due,
+          classification: "proven",
+          confidence: "high_confidence",
+          evidence: ["matching_occurrence_key_and_due_date", ...(historicalSchedule ? ["historical_schedule_boundary"] : [])],
+          blockingIssueCodes: [],
+        }];
       }
-      return [{ historyId, scheduledDueOn: due, classification: "reconstructable", confidence: "high_confidence", evidence: ["single_occurrence_date_evidence"], blockingIssueCodes: [] }];
+      if (historicalSchedule) {
+        return [{ historyId, scheduledDueOn: due, classification: "reconstructable", confidence: "high_confidence", evidence: ["single_occurrence_date_evidence", "historical_schedule_boundary"], blockingIssueCodes: [] }];
+      }
+      return [{ historyId, scheduledDueOn: due, classification: "ambiguous", confidence: "not_promotable", evidence: ["occurrence_schedule_provenance_unavailable"], blockingIssueCodes: ["AMBIGUOUS_OCCURRENCE_IDENTITY"] }];
     });
 }
 
@@ -699,7 +786,13 @@ function delayTarget(row: LegacyRow): string | null {
     ?? asDate(nestedValue(row, ["metadata", "delayTargetOn"]));
 }
 
-function classifyDelay(task: LegacyRow, history: readonly LegacyRow[], model: ScheduleModel, occurrenceClassifications: readonly OccurrenceClassification[]): { state: "none" | "safe" | "ambiguous"; issueCodes: string[] } {
+function classifyDelay(
+  task: LegacyRow,
+  history: readonly LegacyRow[],
+  model: ScheduleModel,
+  occurrenceClassifications: readonly OccurrenceClassification[],
+  sources: MigrationSourceEvidence,
+): { state: "none" | "safe" | "ambiguous"; issueCodes: string[] } {
   const delayed = history.filter((row) => stringValue(row, "status") === "delayed");
   if (delayed.length === 0) return { state: "none", issueCodes: [] };
   const issues: string[] = [];
@@ -708,7 +801,16 @@ function classifyDelay(task: LegacyRow, history: readonly LegacyRow[], model: Sc
     const origin = dateValue(row, "occurrence_due_on") ?? occurrenceClassifications.find((item) => item.historyId === historyId)?.scheduledDueOn;
     const actionDate = dateValue(row, "entry_date");
     const target = delayTarget(row);
-    if (!origin || !actionDate || !target || !scheduledOnDate(task, model, origin, origin) || dateDifferenceInDays(actionDate, target) <= 0) {
+    const occurrenceEvidence = occurrenceClassifications.find((item) => item.historyId === historyId);
+    const historicalOrigin = origin !== null && historicalScheduleEvidenceForDate(
+      stringValue(task, "id") ?? "",
+      origin,
+      history,
+      sources.taskEvents,
+      stringValue(task, "user_id") ?? undefined,
+    ) !== null;
+    const oneTimeOrigin = model === "one_time" && origin !== null && dateValue(task, "due_on") === origin;
+    if (!origin || !actionDate || !target || (!historicalOrigin && !oneTimeOrigin && !occurrenceEvidence?.evidence.includes("historical_schedule_boundary")) || dateDifferenceInDays(actionDate, target) <= 0) {
       issues.push("DELAY_ORIGIN_OR_TARGET_UNPROVEN");
     }
   }
@@ -846,7 +948,7 @@ function classifyLifecycle(task: LegacyRow, historyClassifications: readonly His
 
 function classifyWorkflow(
   task: LegacyRow,
-  logicalDate: string,
+  logicalDate: string | null,
   lifecycle: EntityClassification["lifecycleState"],
   occurrenceClassifications: readonly OccurrenceClassification[],
 ): { state: EntityClassification["workflowState"]; issueCodes: string[] } {
@@ -856,6 +958,7 @@ function classifyWorkflow(
   if (status !== "in_progress" && activeDate === null && claimedOccurrence === null) return { state: "none", issueCodes: [] };
   if (lifecycle.terminal === "permanently_complete" || lifecycle.container !== "active") return { state: "contradictory", issueCodes: ["IN_PROGRESS_LIFECYCLE_CONTRADICTION"] };
   if (status !== "in_progress" || activeDate === null) return { state: "contradictory", issueCodes: ["IN_PROGRESS_FIELDS_CONTRADICTORY"] };
+  if (logicalDate === null) return { state: "contradictory", issueCodes: ["LOGICAL_DAY_UNAVAILABLE"] };
   if (activeDate < logicalDate) return { state: "stale", issueCodes: ["STALE_IN_PROGRESS_NOT_DID_MY_BEST"] };
   if (claimedOccurrence !== null && !occurrenceClassifications.some((item) => item.classification === "proven" && item.scheduledDueOn === claimedOccurrence)) {
     return { state: "contradictory", issueCodes: ["IN_PROGRESS_OCCURRENCE_UNPROVEN"] };
@@ -930,6 +1033,8 @@ function issueSeverity(issue: string): "blocked" | "attention" {
     "COMPLETE_TERMINAL_CONTRADICTION",
     "IN_PROGRESS_LIFECYCLE_CONTRADICTION",
     "IN_PROGRESS_FIELDS_CONTRADICTORY",
+    "LOGICAL_DAY_UNAVAILABLE",
+    "INVALID_LOGICAL_DAY_SETTINGS",
     "CONTRADICTORY_TRASH_PRIOR_CONTAINER",
     "DUPLICATE_LEGACY_SUBTASK_PROMOTION",
     "SOURCE_QUERY_FAILED",
@@ -993,13 +1098,23 @@ function assertCountsEqual(left: MigrationCounts, right: MigrationCounts) {
   if (stableStringify(left) !== stableStringify(right)) throw new MigrationClassifierDiagnostic("INTERNAL_COUNT_RECONCILIATION", "report counts do not reconcile");
 }
 
+function unavailableSourceIssueCodes(sources: MigrationSourceEvidence): string[] {
+  return SOURCE_NAMES
+    .filter((name) => !sourceStatus(sources, name).available)
+    .map((name) => `SOURCE_UNAVAILABLE_${name.toUpperCase()}`);
+}
+
 export function classifyUser(sourcesInput: MigrationSourceEvidence, options: ClassifierOptions): UserMigrationReport {
   const sources = { ...emptySourceEvidence(), ...sourcesInput, availability: { ...emptyAvailability(), ...(sourcesInput.availability ?? {}) } };
   const classifierVersion = options.classifierVersion ?? CLASSIFIER_VERSION;
   if (classifierVersion !== CLASSIFIER_VERSION) throw new MigrationClassifierDiagnostic("UNSUPPORTED_CLASSIFIER_VERSION", `expected ${CLASSIFIER_VERSION}, received ${classifierVersion}`);
   if ((options.schemaContractVersion ?? SCHEMA_CONTRACT_VERSION) !== SCHEMA_CONTRACT_VERSION) throw new MigrationClassifierDiagnostic("UNSUPPORTED_SCHEMA_CONTRACT_VERSION", `expected ${SCHEMA_CONTRACT_VERSION}`);
   if (!options.userId.trim()) throw new MigrationClassifierDiagnostic("INVALID_USER_ID", "userId is required");
-  const logicalDate = options.logicalDate && validDate(options.logicalDate) ? options.logicalDate : "1970-01-01";
+  if (options.logicalDate !== undefined && !validDate(options.logicalDate)) throw new MigrationClassifierDiagnostic("INVALID_LOGICAL_DATE", "logical date must be YYYY-MM-DD");
+  const logicalDate = options.logicalDate
+    ?? (sourceStatus(sources, "profile").available && hasValidProfileContext(sources.profile)
+      ? deriveCurrentLogicalDate(sources.profile, options.currentInstant)
+      : null);
   const tasks = sources.tasks.filter((task) => stringValue(task, "user_id") === options.userId);
   const tasksById = new Map(tasks.map((task) => [stringValue(task, "id"), task] as const).filter(([id]) => id !== null) as Array<[string, LegacyRow]>);
   // The normal reader is owner-scoped. Test/diagnostic fixtures may still carry
@@ -1017,9 +1132,15 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
     const schedule = classifyScheduleModel(task);
     const taskHistory = sources.history.filter((row) => stringValue(row, "task_id") === taskId);
     const historyClassifications = classifyHistory(taskId, taskHistory, sources);
-    const occurrenceClassifications = classifyOccurrences(taskId, task, schedule.model, taskHistory, historyClassifications);
-    const delay = classifyDelay(task, taskHistory, schedule.model, occurrenceClassifications);
-    const anchor = classifyAnchor(task, schedule.model, taskHistory, historyClassifications, occurrenceClassifications, delay.state, sourceStatus(sources, "profile").available && hasValidProfileContext(sources.profile));
+    const occurrenceClassifications = classifyOccurrences(taskId, task, schedule.model, taskHistory, historyClassifications, sources);
+    const delay = classifyDelay(task, taskHistory, schedule.model, occurrenceClassifications, sources);
+    const historicalScheduleDates = new Set(
+      historyClassifications
+        .filter((item) => item.classification === "explicit" && item.entryDate !== null && ACTIVE_HISTORY_STATUSES.has(item.status ?? ""))
+        .map((item) => item.entryDate as string)
+        .filter((date) => historicalScheduleEvidenceForDate(taskId, date, taskHistory, sources.taskEvents, stringValue(task, "user_id") ?? undefined) !== null),
+    );
+    const anchor = classifyAnchor(task, schedule.model, historyClassifications, occurrenceClassifications, delay.state, historicalScheduleDates, sourceStatus(sources, "profile").available && hasValidProfileContext(sources.profile));
     const lifecycle = classifyLifecycle(task, historyClassifications, taskHistory);
     const workflow = classifyWorkflow(task, logicalDate, lifecycle.state, occurrenceClassifications);
     const rewards = classifyRewards(taskId, historyClassifications, sources);
@@ -1036,10 +1157,9 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
       ...rewards.issueCodes,
       ...legacySubtasks.byTask.get(taskId) ?? [],
     ]);
-    if (!sourceStatus(sources, "history").available) issues.add("SOURCE_UNAVAILABLE_HISTORY");
-    if (!sourceStatus(sources, "profile").available) issues.add("SOURCE_UNAVAILABLE_PROFILE");
-    else if (!hasValidProfileContext(sources.profile)) issues.add("INVALID_LOGICAL_DAY_SETTINGS");
-    if (!sourceStatus(sources, "subtasks").available && sources.subtasks.length === 0) issues.add("SOURCE_UNAVAILABLE_SUBTASKS");
+    for (const issue of unavailableSourceIssueCodes(sources)) issues.add(issue);
+    if (!sourceStatus(sources, "profile").available || !hasValidProfileContext(sources.profile)) issues.add("INVALID_LOGICAL_DAY_SETTINGS");
+    if (logicalDate === null) issues.add("LOGICAL_DAY_UNAVAILABLE");
     if (dateValue(task, "active_occurrence_due_on") !== null && occurrenceClassifications.length === 0) {
       issues.add("PROJECTION_MISMATCH_ACTIVE_OCCURRENCE");
     }
@@ -1096,7 +1216,11 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
   const safeCount = entities.filter((entity) => entity.migrationEligibility === "safe").length;
   const blockedEntityCount = entities.filter((entity) => entity.migrationEligibility === "blocked").length;
   if (!sourceStatus(sources, "tasks").available) counts.needsAttention += 1;
-  const commandCutoverEligible = entities.length > 0 && safeCount === entities.length && counts.needsAttention === 0;
+  const commandCutoverEligible = entities.length > 0
+    && safeCount === entities.length
+    && counts.needsAttention === 0
+    && logicalDate !== null
+    && unavailableSourceIssueCodes(sources).length === 0;
   const sourceFingerprints = {
     tasks: fingerprintEvidence(sources.tasks),
     history: fingerprintEvidence(sources.history),
@@ -1131,27 +1255,17 @@ export function classifyUser(sourcesInput: MigrationSourceEvidence, options: Cla
   };
 }
 
-function sourceDerivedLogicalDate(sources: MigrationSourceEvidence): string {
-  const dates = [
-    ...sources.tasks.flatMap((row) => [dateValue(row, "due_on"), dateValue(row, "active_status_logical_date"), dateValue(row, "scheduled_on")]),
-    ...sources.history.map((row) => dateValue(row, "entry_date")),
-    ...sources.rewardClaims.map((row) => dateValue(row, "reward_date")),
-    ...sources.rewardRolls.map((row) => dateValue(row, "reward_date")),
-    ...sources.rolloverEvidence.map((row) => dateValue(row, "logical_date")),
-  ].filter((date): date is string => date !== null);
-  return dates.sort(compareStrings).at(-1) ?? "1970-01-01";
-}
-
 export function buildMigrationRunReport(
-  users: readonly { sources: MigrationSourceEvidence; userId: string; logicalDate?: string }[],
-  options: { generatedAt?: string; classifierVersion?: string; schemaContractVersion?: string } = {},
+  users: readonly { sources: MigrationSourceEvidence; userId: string; logicalDate?: string; currentInstant?: string | Date }[],
+  options: { generatedAt?: string; currentInstant?: string | Date; classifierVersion?: string; schemaContractVersion?: string } = {},
 ): MigrationRunReport {
   const generatedAt = options.generatedAt ?? new Date().toISOString();
   const userReports = [...users]
     .sort((left, right) => compareStrings(left.userId, right.userId))
-    .map(({ sources, userId, logicalDate }) => classifyUser(sources, {
+    .map(({ sources, userId, logicalDate, currentInstant }) => classifyUser(sources, {
       userId,
-      logicalDate: logicalDate ?? sourceDerivedLogicalDate(sources),
+      logicalDate,
+      currentInstant: currentInstant ?? options.currentInstant,
       classifierVersion: options.classifierVersion,
       schemaContractVersion: options.schemaContractVersion,
     }))
@@ -1259,6 +1373,15 @@ type ReadOnlyQueryClient = {
   };
 };
 
+type AuthenticatedReadClient = ReadOnlyQueryClient & {
+  auth: {
+    getUser(accessToken: string): Promise<{
+      data: { user: { id: string } | null } | null;
+      error: { code?: string; message: string } | null;
+    }>;
+  };
+};
+
 async function readBoundedTable(client: ReadOnlyQueryClient, sourceName: SourceName, userId: string, batchSize: number): Promise<LegacyRow[]> {
   const specification = TABLE_SPECS[sourceName];
   const rows: LegacyRow[] = [];
@@ -1296,9 +1419,34 @@ export async function loadOwnerScopedEvidence(client: ReadOnlyQueryClient, userI
   return result;
 }
 
+export async function verifyAuthenticatedOwner(client: AuthenticatedReadClient, userId: string, accessToken: string): Promise<void> {
+  if (!accessToken.trim()) throw new MigrationClassifierDiagnostic("AUTHENTICATION_REQUIRED", "an authenticated user access token is required");
+  let result: Awaited<ReturnType<AuthenticatedReadClient["auth"]["getUser"]>>;
+  try {
+    result = await client.auth.getUser(accessToken);
+  } catch (error) {
+    throw new MigrationClassifierDiagnostic("AUTHENTICATION_FAILED", `authenticated identity could not be verified: ${String(error)}`);
+  }
+  if (result.error) throw new MigrationClassifierDiagnostic(result.error.code ?? "AUTHENTICATION_FAILED", result.error.message);
+  const authenticatedUserId = result.data?.user?.id ?? null;
+  if (authenticatedUserId === null) throw new MigrationClassifierDiagnostic("AUTHENTICATION_REQUIRED", "the classifier requires a non-anonymous authenticated user identity");
+  if (authenticatedUserId !== userId) throw new MigrationClassifierDiagnostic("OWNER_IDENTITY_MISMATCH", "authenticated user identity does not match --user-id");
+}
+
+export async function loadAuthenticatedOwnerScopedEvidence(
+  client: AuthenticatedReadClient,
+  userId: string,
+  accessToken: string,
+  batchSize: number,
+): Promise<MigrationSourceEvidence> {
+  await verifyAuthenticatedOwner(client, userId, accessToken);
+  return loadOwnerScopedEvidence(client, userId, batchSize);
+}
+
 type CliOptions = {
   userId: string;
   batchSize: number;
+  accessToken: string | null;
   classifierVersion: string;
   schemaContractVersion: string;
   outputPath: string | null;
@@ -1315,7 +1463,7 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
     if (!argument.startsWith("--")) throw new MigrationClassifierDiagnostic("INVALID_ARGUMENT", `unexpected argument ${argument}`);
     const [key, inlineValue] = argument.split("=", 2);
     if (inlineValue !== undefined) values.set(key, inlineValue);
-    else if (["--user-id", "--batch-size", "--classifier-version", "--schema-contract-version", "--output", "--output-path", "--format", "--logical-date", "--mode"].includes(key)) {
+    else if (["--user-id", "--batch-size", "--access-token", "--classifier-version", "--schema-contract-version", "--output", "--output-path", "--format", "--logical-date", "--mode"].includes(key)) {
       const next = argv[index + 1];
       if (!next || next.startsWith("--")) throw new MigrationClassifierDiagnostic("MISSING_ARGUMENT_VALUE", `${key} requires a value`);
       if (key === "--mode" && next === "write") throw new MigrationClassifierDiagnostic("WRITE_MODE_REJECTED", "the migration classifier is read-only");
@@ -1340,6 +1488,7 @@ function parseCliArgs(argv: readonly string[]): CliOptions {
   return {
     userId,
     batchSize,
+    accessToken: values.get("--access-token") ?? null,
     classifierVersion,
     schemaContractVersion,
     outputPath: values.get("--output") ?? values.get("--output-path") ?? null,
@@ -1353,9 +1502,14 @@ async function main(argv: readonly string[]) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anonKey) throw new MigrationClassifierDiagnostic("SUPABASE_CONFIG_MISSING", "NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are required");
-  const client = createClient(url, anonKey, { auth: { autoRefreshToken: false, persistSession: false } }) as unknown as ReadOnlyQueryClient;
-  const sources = await loadOwnerScopedEvidence(client, options.userId, options.batchSize);
-  const report = buildMigrationRunReport([{ userId: options.userId, sources, logicalDate: options.logicalDate ?? sourceDerivedLogicalDate(sources) }], {
+  const accessToken = options.accessToken ?? process.env.ADHDICE_SUPABASE_ACCESS_TOKEN ?? process.env.SUPABASE_USER_ACCESS_TOKEN;
+  if (!accessToken?.trim()) throw new MigrationClassifierDiagnostic("AUTHENTICATION_REQUIRED", "--access-token, ADHDICE_SUPABASE_ACCESS_TOKEN, or SUPABASE_USER_ACCESS_TOKEN is required for authenticated owner-scoped reads");
+  const client = createClient(url, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  }) as unknown as AuthenticatedReadClient;
+  const sources = await loadAuthenticatedOwnerScopedEvidence(client, options.userId, accessToken, options.batchSize);
+  const report = buildMigrationRunReport([{ userId: options.userId, sources, logicalDate: options.logicalDate ?? undefined, currentInstant: new Date() }], {
     classifierVersion: options.classifierVersion,
     schemaContractVersion: options.schemaContractVersion,
   });

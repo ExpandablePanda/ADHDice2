@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CLASSIFIER_VERSION,
+  MigrationClassifierDiagnostic,
   SCHEMA_CONTRACT_VERSION,
   buildMigrationRunReport,
   classifyUser,
+  deriveCurrentLogicalDate,
   emptySourceEvidence,
   fingerprintEvidence,
+  loadAuthenticatedOwnerScopedEvidence,
   type LegacyRow,
   type MigrationSourceEvidence,
 } from "../scripts/task-state-migration-dry-run.ts";
@@ -50,6 +53,61 @@ function oneEntity(s: MigrationSourceEvidence, logicalDate = "2026-08-08") {
   return classifyUser(s, { userId: USER_ID, logicalDate, classifierVersion: CLASSIFIER_VERSION, schemaContractVersion: SCHEMA_CONTRACT_VERSION }).entities[0];
 }
 
+function historicalDailyScheduleEvent(taskId: string): LegacyRow {
+  return {
+    id: `schedule-${taskId}`,
+    task_id: taskId,
+    user_id: USER_ID,
+    event_type: "schedule_boundary",
+    effective_from_logical_date: "2026-08-08",
+    schedule_snapshot: { repeat_frequency: "daily", repeat_interval: 1 },
+  };
+}
+
+test("unauthenticated and owner-mismatched identities are rejected before owner reads", async () => {
+  for (const identity of [
+    { data: { user: null }, error: null, code: "AUTHENTICATION_REQUIRED" },
+    { data: { user: { id: "22222222-2222-4222-8222-222222222222" } }, error: null, code: "OWNER_IDENTITY_MISMATCH" },
+  ]) {
+    let readCount = 0;
+    const client = {
+      auth: { getUser: async () => ({ data: identity.data, error: identity.error }) },
+      from: () => {
+        readCount += 1;
+        throw new Error("owner read should not execute");
+      },
+    };
+    await assert.rejects(
+      () => loadAuthenticatedOwnerScopedEvidence(client as never, USER_ID, "user-access-token", 10),
+      (error: unknown) => error instanceof MigrationClassifierDiagnostic && error.code === identity.code,
+    );
+    assert.equal(readCount, 0);
+  }
+});
+
+test("current Logical Day uses profile timezone and configured day-start", () => {
+  const profile = sources([]).profile;
+  assert.equal(deriveCurrentLogicalDate(profile, "2026-08-08T09:59:00Z"), "2026-08-07");
+  assert.equal(deriveCurrentLogicalDate(profile, "2026-08-08T10:00:00Z"), "2026-08-08");
+});
+
+test("a future due date cannot become the current Logical Day", () => {
+  const report = classifyUser(sources([task({ due_on: "2026-08-20" })]), {
+    userId: USER_ID,
+    currentInstant: "2026-08-08T12:00:00Z",
+    classifierVersion: CLASSIFIER_VERSION,
+    schemaContractVersion: SCHEMA_CONTRACT_VERSION,
+  });
+  assert.equal(report.logicalDate, "2026-08-08");
+});
+
+test("missing profile context does not invent a Logical Day", () => {
+  const report = classifyUser({ ...sources([task()]), profile: null }, { userId: USER_ID });
+  assert.equal(report.logicalDate, null);
+  assert.equal(report.eligibility.commandCutoverEligible, false);
+  assert.ok(report.entities[0]?.blockingIssueCodes.includes("INVALID_LOGICAL_DAY_SETTINGS"));
+});
+
 test("none plus no due is unscheduled, while none plus due is one-time", () => {
   const unscheduled = oneEntity(sources([task({ id: "task-unscheduled" })]));
   const oneTime = oneEntity(sources([task({ id: "task-one-time", due_on: "2026-08-10" })]));
@@ -90,6 +148,39 @@ test("automatic Missed remains compatibility evidence while explicit Missed is p
   assert.equal(explicit.historyClassifications[0]?.canonicalEligible, true);
 });
 
+test("Done, Did My Best, and Delayed without writer proof remain ambiguous", () => {
+  for (const status of ["done", "did_my_best", "delayed"]) {
+    const entity = oneEntity(sources([task({ id: `ambiguous-${status}` })], [{
+      id: `history-${status}`,
+      task_id: `ambiguous-${status}`,
+      user_id: USER_ID,
+      entry_date: "2026-08-08",
+      status,
+      event_type: "status",
+    }]));
+    assert.equal(entity.historyClassifications[0]?.classification, "ambiguous");
+    assert.equal(entity.historyClassifications[0]?.canonicalEligible, false);
+    assert.equal(entity.historyClassifications[0]?.confidence, "not_promotable");
+  }
+});
+
+test("proven writer context promotes explicit Done, Did My Best, and Delayed History", () => {
+  for (const status of ["done", "did_my_best", "delayed"]) {
+    const id = `proven-${status}`;
+    const entity = oneEntity(sources([task({ id })], [{
+      id: `history-${status}`,
+      task_id: id,
+      user_id: USER_ID,
+      entry_date: "2026-08-08",
+      status,
+      event_type: "status",
+      actor_kind: "user",
+    }]));
+    assert.equal(entity.historyClassifications[0]?.classification, "explicit");
+    assert.equal(entity.historyClassifications[0]?.canonicalEligible, true);
+  }
+});
+
 test("unknown recurrence anchor stays prospective or ambiguous, never historical proven", () => {
   const prospective = oneEntity(sources([task({ repeat_frequency: "daily", due_on: "2026-08-12" })]));
   const ambiguous = oneEntity(sources([task({ repeat_frequency: "daily", due_on: null })]));
@@ -107,12 +198,31 @@ test("matching occurrence identity reconstructs a high-confidence occurrence and
     entry_date: "2026-08-08",
     status: "done",
     event_type: "status",
+    actor_kind: "user",
+    occurrence_due_on: "2026-08-08",
+    occurrence_key: `task:${id}:occurrence:2026-08-08`,
+  }], { taskEvents: [historicalDailyScheduleEvent(id)] }));
+  assert.equal(entity.occurrenceClassifications[0]?.classification, "proven");
+  assert.equal(entity.anchor.classification, "reconstructable");
+  assert.equal(entity.anchor.confidence, "high_confidence");
+});
+
+test("a changed current recurrence rule cannot manufacture a historical anchor", () => {
+  const id = "changed-recurrence";
+  const entity = oneEntity(sources([task({ id, repeat_frequency: "daily", due_on: "2026-08-08" })], [{
+    id: "old-occurrence",
+    task_id: id,
+    user_id: USER_ID,
+    entry_date: "2026-08-08",
+    status: "done",
+    event_type: "status",
+    actor_kind: "user",
     occurrence_due_on: "2026-08-08",
     occurrence_key: `task:${id}:occurrence:2026-08-08`,
   }]));
   assert.equal(entity.occurrenceClassifications[0]?.classification, "proven");
-  assert.equal(entity.anchor.classification, "reconstructable");
-  assert.equal(entity.anchor.confidence, "high_confidence");
+  assert.equal(entity.anchor.classification, "ambiguous");
+  assert.ok(entity.anchor.evidence.includes("historical_schedule_provenance_unavailable"));
 });
 
 test("stale In Progress stays stale and is never reclassified as Did My Best", () => {
@@ -140,6 +250,13 @@ test("hierarchy reports orphan, cycle, and cross-user references", () => {
   assert.equal(report.counts.hierarchy.cycle, 2);
 });
 
+test("an owner-scoped missing parent is unresolved, not specifically cross-user", () => {
+  const child = task({ id: "owner-scoped-child", parent_task_id: "invisible-parent" });
+  const entity = oneEntity(sources([child]));
+  assert.ok(entity.blockingIssueCodes.includes("ORPHAN_PARENT_REFERENCE"));
+  assert.equal(entity.blockingIssueCodes.includes("CROSS_USER_PARENT"), false);
+});
+
 test("Delay without a proven origin is ambiguous", () => {
   const entity = oneEntity(sources([task({ repeat_frequency: "daily", due_on: "2026-08-12" })], [
     { id: "delay", task_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", user_id: USER_ID, entry_date: "2026-08-08", status: "delayed", event_type: "status" },
@@ -157,10 +274,11 @@ test("Delay with a proven origin and later target is safe", () => {
     entry_date: "2026-08-08",
     status: "delayed",
     event_type: "status",
+    actor_kind: "user",
     occurrence_due_on: "2026-08-08",
     occurrence_key: `task:${id}:occurrence:2026-08-08`,
     delay_target_on: "2026-08-12",
-  }]));
+  }], { taskEvents: [historicalDailyScheduleEvent(id)] }));
   assert.equal(entity.delayState, "safe");
   assert.equal(entity.blockingIssueCodes.includes("DELAY_ORIGIN_OR_TARGET_UNPROVEN"), false);
 });
@@ -178,7 +296,7 @@ test("Complete followed by active History is a terminal contradiction", () => {
 
 test("success History without economy proof does not become reward entitlement-safe", () => {
   const id = "reward-without-proof";
-  const entity = oneEntity(sources([task({ id })], [{ id: "success", task_id: id, user_id: USER_ID, entry_date: "2026-08-08", status: "done", event_type: "status" }]));
+  const entity = oneEntity(sources([task({ id })], [{ id: "success", task_id: id, user_id: USER_ID, entry_date: "2026-08-08", status: "done", event_type: "status", actor_kind: "user" }]));
   assert.equal(entity.rewardBootstrapState, "none");
   assert.ok(entity.blockingIssueCodes.includes("REWARD_ENTITLEMENT_UNPROVEN"));
   assert.equal(entity.migrationEligibility, "partial");
@@ -203,12 +321,21 @@ test("legacy Subtask promotion is mapped to the promoted Task rather than the ol
 test("a proven success claim requires a matching reward roll and date", () => {
   const id = "reward-proof";
   const rollId = "reward-roll";
-  const entity = oneEntity(sources([task({ id })], [{ id: "success", task_id: id, user_id: USER_ID, entry_date: "2026-08-08", status: "done", event_type: "status" }], {
+  const entity = oneEntity(sources([task({ id })], [{ id: "success", task_id: id, user_id: USER_ID, entry_date: "2026-08-08", status: "done", event_type: "status", actor_kind: "user" }], {
     rewardRolls: [{ id: rollId, user_id: USER_ID, reward_date: "2026-08-08", eligible_task_count: 1 }],
     rewardClaims: [{ id: "claim", user_id: USER_ID, task_id: id, reward_roll_id: rollId, reward_date: "2026-08-08" }],
   }));
   assert.equal(entity.rewardBootstrapState, "consumed_proven");
   assert.equal(entity.blockingIssueCodes.includes("REWARD_ENTITLEMENT_UNPROVEN"), false);
+});
+
+test("an unavailable required source prevents command-cutover eligibility", () => {
+  const report = classifyUser(sources([task()], [], {
+    availability: { history: { available: false, code: "HISTORY_READ_FAILED" } },
+  }), { userId: USER_ID, logicalDate: "2026-08-08" });
+  assert.deepEqual(report.sourceAvailability.history, { available: false, code: "HISTORY_READ_FAILED" });
+  assert.equal(report.eligibility.commandCutoverEligible, false);
+  assert.ok(report.entities[0]?.blockingIssueCodes.includes("SOURCE_UNAVAILABLE_HISTORY"));
 });
 
 test("fingerprints ignore row-return order and global counts reconcile", () => {
