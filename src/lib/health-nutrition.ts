@@ -1,6 +1,7 @@
 "use client";
 
 import type { HealthServingMeasureUnit } from "@/lib/database.types";
+import { createBrowserSupabaseClient } from "@/lib/supabase";
 
 export type HealthNutritionPerServing = {
   calories: number;
@@ -303,28 +304,22 @@ export async function searchOpenFoodFactsFoods(query: string) {
 }
 
 export async function searchUsdaFoods(query: string) {
-  const functionUrl = resolveSupabaseFunctionUrl("health-food-search");
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!functionUrl || !anonKey) {
+  const supabase = createBrowserSupabaseClient();
+  if (!supabase) {
     return [];
   }
 
-  const response = await fetch(functionUrl, {
-    body: JSON.stringify({ query }),
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      apikey: anonKey,
-      Authorization: `Bearer ${anonKey}`,
-    },
-    method: "POST",
+  const { data, error } = await supabase.functions.invoke<UsdaFunctionResponse>("health-food-search", {
+    body: { query },
   });
-
-  if (!response.ok) {
-    throw new Error("USDA search is unavailable right now.");
+  if (error) {
+    throw error;
   }
 
-  const payload = (await response.json()) as UsdaFunctionResponse;
+  const payload = data as UsdaFunctionResponse | null;
+  if (!payload) {
+    return [];
+  }
   if (payload.error) {
     throw new Error(payload.error);
   }
@@ -411,14 +406,6 @@ export function dedupeLookupResults(results: HealthFoodLookupResult[]) {
     seen.add(key);
     return true;
   });
-}
-
-function resolveSupabaseFunctionUrl(functionName: string) {
-  const baseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!baseUrl) {
-    return null;
-  }
-  return `${baseUrl.replace(/\/$/, "")}/functions/v1/${functionName}`;
 }
 
 function assertPositiveFinite(value: number | null | undefined, label: string): asserts value is number {
