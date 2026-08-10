@@ -1,14 +1,9 @@
 import { withSupabase } from "npm:@supabase/server@1.4.1";
-import { logicalDateForTimestamp } from "../../../src/lib/task-state-engine/calendar.ts";
 import {
-  CanonicalCommandPlanningError,
-  planTaskStateCommand,
-  serializeCanonicalTaskStateCommandForRpc,
-} from "../../../src/lib/task-state-canonical/command-service.ts";
-import { buildCanonicalTaskStateEngineInput } from "../../../src/lib/task-state-canonical/engine-input.ts";
-import { loadCanonicalTaskState, type CanonicalReadClient } from "../../../src/lib/task-state-canonical/read-model.ts";
+  executeTrustedTaskStateCommand,
+  type TrustedTaskStateCommandClient,
+} from "./orchestration.ts";
 import {
-  buildTrustedTaskStateCommand,
   validateTaskStateCommandIntent,
 } from "./domain.ts";
 
@@ -49,49 +44,11 @@ export default {
     const intent = validateTaskStateCommandIntent(body);
     if (!intent) return json({ error: { code: "invalid_request", message: "Command intent is malformed or contains privileged persistence fields." } }, 400);
 
-    const adminClient = context.supabaseAdmin as unknown as CanonicalReadClient;
-    const readResult = await loadCanonicalTaskState(adminClient, {
+    const result = await executeTrustedTaskStateCommand({
       userId,
-      taskId: intent.task_id,
-      includeLegacyHistoryEvidence: false,
+      intent,
+      adminClient: context.supabaseAdmin as unknown as TrustedTaskStateCommandClient,
     });
-    if (readResult.error || !readResult.data) {
-      return json({ error: { code: "canonical_state_unavailable", message: "Canonical Task State is unavailable." } }, 503);
-    }
-
-    try {
-      const now = new Date().toISOString();
-      const logicalDate = logicalDateForTimestamp(now, readResult.data.logicalDayProfile.timezone, readResult.data.logicalDayProfile.day_start_time);
-      const logicalDay = {
-        identity: `logical-day:${userId}:${readResult.data.logicalDayProfile.settings_revision}:${readResult.data.logicalDayProfile.timezone}:${readResult.data.logicalDayProfile.day_start_time}:${logicalDate}`,
-        logicalDate,
-        timezone: readResult.data.logicalDayProfile.timezone,
-        dayStartTime: readResult.data.logicalDayProfile.day_start_time,
-        settingsRevision: readResult.data.logicalDayProfile.settings_revision,
-      };
-      const engineInput = buildCanonicalTaskStateEngineInput(readResult.data, {
-        now,
-        timezone: logicalDay.timezone,
-        logicalDayRollover: logicalDay.dayStartTime,
-      });
-      const command = buildTrustedTaskStateCommand({ intent, userId, readModel: readResult.data, logicalDay, now });
-      const plan = planTaskStateCommand({ task: readResult.data.task, engineInput }, command);
-      const rpcCommand = serializeCanonicalTaskStateCommandForRpc(plan);
-      const rpcResult = await context.supabaseAdmin.rpc("adhdice_execute_task_state_command", {
-        p_user_id: userId,
-        p_command: rpcCommand,
-      });
-      if (rpcResult.error) {
-        const status = rpcResult.error.code === "40001" ? 409 : rpcResult.error.code === "42501" ? 403 : 422;
-        return json({ error: { code: "command_rejected", message: "Canonical Task State command was rejected." } }, status);
-      }
-      return json(rpcResult.data, 200);
-    } catch (error) {
-      if (error instanceof CanonicalCommandPlanningError) {
-        const status = error.code === "STALE_REVISION" ? 409 : 422;
-        return json({ error: { code: error.code, message: error.message } }, status);
-      }
-      return json({ error: { code: "canonical_state_unavailable", message: "Canonical Task State could not be planned." } }, 503);
-    }
+    return json(result.body, result.status);
   }),
 };

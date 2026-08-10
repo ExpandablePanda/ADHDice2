@@ -1,7 +1,7 @@
 import type { CanonicalTaskStateReadModel } from "../../../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalEntityKind, CanonicalJsonObject, CanonicalLogicalDayContext, CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../../../src/lib/task-state-canonical/types.ts";
 import type { CanonicalTaskStateCommand } from "../../../src/lib/task-state-canonical/command-service.ts";
-import { deterministicUuid } from "../../../src/lib/task-state-canonical/digest.ts";
+import { deterministicUuid, sha256Digest } from "../../../src/lib/task-state-canonical/digest.ts";
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_KEY = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
@@ -64,6 +64,31 @@ function exactOrSubsetKeys(value: Record<string, unknown>, allowed: Set<string>)
 
 function acceptedIntentValue(intent: TaskStateCommandIntent): CanonicalJsonObject {
   return Object.fromEntries(Object.entries(intent).filter(([, value]) => value !== undefined));
+}
+
+export type TrustedTaskStateCommandReplayDescriptor = {
+  commandId: string;
+  idempotenceIdentity: string;
+  acceptedPayloadDigest: string;
+  acceptedIntent: CanonicalJsonObject;
+};
+
+/**
+ * The replay keys are derived only from verified owner identity and the
+ * validated browser intent.  Server-derived canonical state never enters
+ * this descriptor.
+ */
+export function buildTrustedTaskStateCommandReplayDescriptor(input: {
+  userId: string;
+  intent: TaskStateCommandIntent;
+}): TrustedTaskStateCommandReplayDescriptor {
+  const acceptedIntent = acceptedIntentValue(input.intent);
+  return {
+    commandId: deterministicUuid(`task-state-command:${input.userId}:${input.intent.replay_identity}`),
+    idempotenceIdentity: `runtime:${input.intent.replay_identity}`,
+    acceptedPayloadDigest: sha256Digest(acceptedIntent),
+    acceptedIntent,
+  };
 }
 
 function validScheduleIntent(value: unknown): value is ScheduleChangeIntent {
@@ -134,22 +159,23 @@ function currentBoundary(readModel: CanonicalTaskStateReadModel): CanonicalTaskS
   return boundary;
 }
 
-function commandBase(intent: TaskStateCommandIntent, userId: string, readModel: CanonicalTaskStateReadModel, logicalDay: CanonicalLogicalDayContext, commandId: string) {
+function commandBase(intent: TaskStateCommandIntent, userId: string, readModel: CanonicalTaskStateReadModel, logicalDay: CanonicalLogicalDayContext) {
   const entityKind = readModel.task.entity_kind;
   if (!entityKind) throw new Error("The canonical entity kind is unavailable.");
+  const replay = buildTrustedTaskStateCommandReplayDescriptor({ userId, intent });
   const expectedBoundarySequence = readModel.scheduleBoundaries.length > 0
     ? readModel.scheduleBoundaries.reduce((latest, boundary) => Math.max(latest, boundary.boundary_sequence), 0)
     : undefined;
   return {
-    commandId,
+    commandId: replay.commandId,
     userId,
     taskId: readModel.task.id,
     entityKind,
-    acceptedIntent: acceptedIntentValue(intent),
+    acceptedIntent: replay.acceptedIntent,
     expectedRevision: intent.expected_revision ?? readModel.task.canonical_revision ?? readModel.task.revision,
     expectedBoundarySequence,
     logicalDay,
-    idempotenceIdentity: `runtime:${intent.replay_identity}`,
+    idempotenceIdentity: replay.idempotenceIdentity,
     sourceKind: "runtime" as const,
   };
 }
@@ -274,7 +300,7 @@ export function buildTrustedTaskStateCommand(input: {
   now: string;
 }): CanonicalTaskStateCommand {
   const { intent, userId, readModel, logicalDay, now } = input;
-  const base = commandBase(intent, userId, readModel, logicalDay, deterministicUuid(`task-state-command:${userId}:${intent.replay_identity}`));
+  const base = commandBase(intent, userId, readModel, logicalDay);
   const occurrence = occurrenceFor(readModel, "occurrence_key" in intent ? intent.occurrence_key : undefined);
   switch (intent.type) {
     case "set_outcome":

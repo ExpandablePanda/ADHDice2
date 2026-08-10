@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildTrustedTaskStateCommand, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
-import { planTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
+import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
+import { normalizeTaskStateCommand, planTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalLogicalDayContext, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 
@@ -75,6 +75,11 @@ test("browser intent accepts only command input and derives identity from the au
   assert.equal(command.idempotenceIdentity, "runtime:ui-action-1");
   assert.equal(command.type, "handled_outcome");
   assert.equal("task_patch" in command, false);
+  const descriptor = buildTrustedTaskStateCommandReplayDescriptor({ userId: "owner-1", intent });
+  const normalized = normalizeTaskStateCommand(command);
+  assert.equal(command.commandId, descriptor.commandId);
+  assert.equal(command.idempotenceIdentity, descriptor.idempotenceIdentity);
+  assert.equal(normalized.acceptedPayloadDigest, descriptor.acceptedPayloadDigest);
 });
 
 test("accepted intent digest survives replay rebuilds with newer canonical and server-derived state", () => {

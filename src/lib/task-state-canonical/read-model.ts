@@ -164,3 +164,19 @@ export async function loadCanonicalTaskCommandOperations(
   const result = await query;
   return { data: result.data ?? [], error: readError(result.error) };
 }
+
+export async function loadCanonicalTaskCommandOperationReplay(
+  client: CanonicalReadClient,
+  input: { userId: string; idempotenceIdentity: string },
+) {
+  const result = await client
+    .from("adhdice_task_command_operations")
+    .select("*")
+    .eq("user_id", input.userId)
+    .eq("idempotence_identity", input.idempotenceIdentity)
+    .maybeSingle();
+  return {
+    data: (result.data as CanonicalTaskCommandOperation | null) ?? null,
+    error: readError(result.error),
+  };
+}
