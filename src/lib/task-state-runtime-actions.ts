@@ -279,7 +279,11 @@ export function classifyTaskStateRuntimeAction(
     if (input.replayIdentity !== undefined && suppliedIntent.replay_identity !== undefined && input.replayIdentity !== suppliedIntent.replay_identity) {
       return unsupported([], [], [], "The canonical action has conflicting replay identities.");
     }
-    const resolvedReplayIdentity = replayIdentity?.trim() ? replayIdentity : createBrowserUuidV4();
+    const replayIdentityWasSupplied = input.replayIdentity !== undefined || suppliedIntent.replay_identity !== undefined;
+    if (replayIdentityWasSupplied && (!replayIdentity || replayIdentity.trim().length === 0)) {
+      return unsupported([], [], [], "Canonical Task State action requires a non-empty replay identity.");
+    }
+    const resolvedReplayIdentity = replayIdentity ?? createBrowserUuidV4();
     const fullIntent = { ...suppliedIntent, task_id: input.task.id, replay_identity: resolvedReplayIdentity } as TaskStateCommandIntent;
     return canonicalAction(input.task, commandTypeForIntent(fullIntent), [], resolvedReplayIdentity, suppliedIntent);
   }

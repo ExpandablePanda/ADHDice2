@@ -145,6 +145,36 @@ test("replay identity is stable when supplied and generated per new logical acti
   assert.equal(classify({ status: "done" }, {}, "").kind, "unsupported_state_mutation");
 });
 
+test("explicit canonical intents fail closed for empty replay identities", () => {
+  const omittedTaskUpdate = classifyTaskStateRuntimeAction({ task: task(), values: { status: "in_progress" } });
+  assert.equal(omittedTaskUpdate.kind, "canonical_action");
+  assert.match(omittedTaskUpdate.replayIdentity, /^[0-9a-f-]{36}$/i);
+
+  const omitted = classifyTaskStateRuntimeAction({
+    task: task(),
+    canonicalIntent: { type: "start_in_progress" },
+  });
+  assert.equal(omitted.kind, "canonical_action");
+  assert.match(omitted.replayIdentity, /^[0-9a-f-]{36}$/i);
+
+  const supplied = classifyTaskStateRuntimeAction({
+    task: task(),
+    canonicalIntent: { type: "start_in_progress", replay_identity: "canonical-logical-action" },
+  });
+  assert.equal(supplied.kind, "canonical_action");
+  assert.equal(supplied.replayIdentity, "canonical-logical-action");
+  assert.equal(supplied.intent?.replay_identity, "canonical-logical-action");
+
+  for (const replay_identity of ["", "   "]) {
+    const invalid = classifyTaskStateRuntimeAction({
+      task: task(),
+      canonicalIntent: { type: "start_in_progress", replay_identity },
+    });
+    assert.equal(invalid.kind, "unsupported_state_mutation");
+    assert.match(invalid.reason, /non-empty replay identity/);
+  }
+});
+
 test("no classification result authorizes legacy Task State fallback", () => {
   const results = [
     classify({ title: "metadata" }),

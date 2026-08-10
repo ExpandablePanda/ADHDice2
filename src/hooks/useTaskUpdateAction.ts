@@ -11,6 +11,14 @@ import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import { evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import { classifyTaskStateRuntimeAction } from "@/lib/task-state-runtime-actions";
+import {
+  executeTaskStateRuntimeAction,
+  type TaskStateRuntimeExecutionResult,
+  type TaskStateRuntimeLocalTask,
+  type TaskStateRuntimeCanonicalAction,
+} from "@/lib/task-state-runtime-executor";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -35,6 +43,10 @@ export type TaskHistoryFailureCompensation = (input: {
 }) => Promise<boolean>;
 
 type UseTaskUpdateActionOptions = {
+  /** Test-only override; production defaults to the disabled migration gate. */
+  canonicalCommandsEnabled?: boolean;
+  /** Test seam for the canonical executor; normal callers use the real executor. */
+  canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearPendingTaskMutations?: (taskIds: string[]) => void;
   currentDayKey: string;
   dayStartTime: string;
@@ -58,6 +70,8 @@ type UseTaskUpdateActionOptions = {
 };
 
 export function useTaskUpdateAction({
+  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
+  canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   clearPendingTaskMutations,
   currentDayKey,
   dayStartTime = "00:00",
@@ -87,6 +101,38 @@ export function useTaskUpdateAction({
       && values.status !== undefined
       && values.status !== previousTask.status,
     );
+
+    const isGatedWorkflowTransition = Boolean(
+      canonicalCommandsEnabled
+      && previousTask
+      && ((previousTask.status === "pending" && values.status === "in_progress")
+        || (previousTask.status === "in_progress" && values.status === "pending")),
+    );
+    if (isGatedWorkflowTransition) {
+      const runtimeAction = classifyTaskStateRuntimeAction({
+        task: previousTask as TaskStateRuntimeLocalTask,
+        values,
+      });
+      if (runtimeAction.kind !== "canonical_action"
+        || (runtimeAction.actionType !== "start_in_progress" && runtimeAction.actionType !== "clear_in_progress")) {
+        clearPendingTaskMutations?.([taskId]);
+        setMessage({ tone: "warn", text: runtimeAction.kind === "unsupported_state_mutation"
+          ? runtimeAction.reason
+          : "The canonical workflow action could not be classified." });
+        return false;
+      }
+
+      const canonicalResult = await canonicalCommandExecutor(runtimeAction, previousTask as TaskStateRuntimeLocalTask);
+      clearPendingTaskMutations?.([taskId]);
+      if (!canonicalResult.success) {
+        setMessage({ tone: "warn", text: canonicalResult.error.message });
+        return false;
+      }
+
+      setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? canonicalResult.task as Task : task)));
+      return true;
+    }
+
     const scheduleChanged = Boolean(previousTask && hasTaskScheduleChange(previousTask, values));
     const scheduleOnlyEdit = scheduleChanged && !statusChanged && options?.historyStatus === undefined;
     const scheduleIntentValues = scheduleOnlyEdit ? stripStatusFromScheduleIntent(values) : values;
