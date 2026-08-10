@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.7.15`.
+- Current working app version: `7.7.21`.
 - Current release group: `7.7.x` Flexible Meal Logging and Editing.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -16,6 +16,14 @@ Role: active working
 - Historical patch descriptions are intentionally excluded from this active document.
 
 ## Current Architectural Authorities
+
+### M3A.5 Trusted Task State Command Boundary
+
+- The M3A canonical Task State source foundation exists, but its RPC remains undeployed and no live SQL execution or Edge deployment is claimed.
+- The trusted `task-state-command` Edge Function accepts authenticated intent only. Direct authenticated submission of canonical plans or privileged persistence sections is forbidden.
+- The Edge Function derives owner identity from verified Supabase Auth, reads only that user's canonical Task State and logical-day profile, invokes the existing pure TypeScript planner, and sends its serialized plan through the backend-only invoker RPC using the modern secret-key admin client.
+- Runtime provenance, command identity, entity/owner IDs, timestamps, migration fields, and the SHA-256 accepted-payload digest are established inside the trusted boundary. History/occurrence collection max revisions are not runtime fences; canonical Task `canonical_revision` remains authoritative and schedule `boundary_sequence` protection remains active.
+- This trusted boundary is required before M3B runtime cutover. Normal production Task mutations and the active Task UI have not been cut over.
 
 ### Task State Engine
 

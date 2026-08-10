@@ -21,6 +21,22 @@ export type CanonicalReadError = {
   code?: string;
 };
 
+type CanonicalLogicalDayProfile = {
+  timezone: string;
+  day_start_time: string;
+  settings_revision: number;
+};
+
+type CanonicalProfileReadClient = {
+  from(table: string): {
+    select(columns: string): {
+      eq(column: string, value: string): {
+        maybeSingle(): Promise<{ data: CanonicalLogicalDayProfile | null; error: CanonicalReadError | null }>;
+      };
+    };
+  };
+};
+
 export type CanonicalTaskStateReadModel = {
   task: CanonicalTaskRow;
   commandOperations: CanonicalTaskCommandOperation[];
@@ -34,6 +50,11 @@ export type CanonicalTaskStateReadModel = {
   rewardClaimConsumptions: CanonicalTaskRewardClaimConsumption[];
   /** Raw legacy History is retained as migration evidence, never canonical input. */
   legacyHistoryEvidence: TaskHistory[];
+  logicalDayProfile: {
+    timezone: string;
+    day_start_time: string;
+    settings_revision: number;
+  };
 };
 
 export type CanonicalTaskStateReadResult = {
@@ -47,7 +68,7 @@ function readError(error: { message: string; code?: string } | null): CanonicalR
 
 export async function loadCanonicalTaskState(
   client: CanonicalReadClient,
-  input: { userId: string; taskId: string },
+  input: { userId: string; taskId: string; includeLegacyHistoryEvidence?: boolean },
 ): Promise<CanonicalTaskStateReadResult> {
   const taskResult = await client
     .from("adhdice_clean_tasks")
@@ -59,8 +80,14 @@ export async function loadCanonicalTaskState(
   if (taskResult.error) return { data: null, error: readError(taskResult.error) };
   if (!taskResult.data) return { data: null, error: { message: "Canonical Task was not found for this owner." } };
 
-  const [commandOperations, scheduleBoundaries, occurrences, occurrenceEffectiveOverrides, historyFacts, calendarOverrides,
+  const profileClient = client as unknown as CanonicalProfileReadClient;
+  const legacyHistoryEvidenceQuery = input.includeLegacyHistoryEvidence
+    ? client.from("adhdice_task_history").select("*").eq("user_id", input.userId).eq("task_id", input.taskId)
+      .order("entry_date", { ascending: false })
+    : Promise.resolve({ data: [] as TaskHistory[], error: null });
+  const [profile, commandOperations, scheduleBoundaries, occurrences, occurrenceEffectiveOverrides, historyFacts, calendarOverrides,
     rewardEntitlements, rewardGrants, rewardClaimConsumptions, legacyHistoryEvidence] = await Promise.all([
+    profileClient.from("adhdice_user_profiles").select("timezone,day_start_time,settings_revision").eq("user_id", input.userId).maybeSingle(),
     client.from("adhdice_task_command_operations").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("created_at", { ascending: false }),
     client.from("adhdice_task_schedule_boundaries").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
@@ -77,11 +104,11 @@ export async function loadCanonicalTaskState(
       .order("logical_date", { ascending: false }),
     client.from("adhdice_task_reward_grants").select("*").eq("user_id", input.userId),
     client.from("adhdice_task_reward_claim_consumptions").select("*").eq("user_id", input.userId),
-    client.from("adhdice_task_history").select("*").eq("user_id", input.userId).eq("task_id", input.taskId)
-      .order("entry_date", { ascending: false }),
+    legacyHistoryEvidenceQuery,
   ]);
 
   const results = [
+    profile,
     commandOperations,
     scheduleBoundaries,
     occurrences,
@@ -95,6 +122,10 @@ export async function loadCanonicalTaskState(
   ];
   const failed = results.find((result) => result.error);
   if (failed?.error) return { data: null, error: readError(failed.error) };
+  if (!profile.data || typeof profile.data.timezone !== "string" || typeof profile.data.day_start_time !== "string"
+    || !Number.isInteger(profile.data.settings_revision) || profile.data.settings_revision < 1) {
+    return { data: null, error: { message: "Canonical logical-day profile is unavailable or malformed." } };
+  }
 
   const entitlementIds = new Set((rewardEntitlements.data ?? []).map((row) => row.id));
   const grantRows = (rewardGrants.data ?? []).filter((row) => entitlementIds.has(row.entitlement_id));
@@ -113,6 +144,7 @@ export async function loadCanonicalTaskState(
       rewardGrants: grantRows,
       rewardClaimConsumptions: (rewardClaimConsumptions.data ?? []).filter((row) => grantIds.has(row.grant_id)),
       legacyHistoryEvidence: legacyHistoryEvidence.data ?? [],
+      logicalDayProfile: profile.data,
     },
     error: null,
   };

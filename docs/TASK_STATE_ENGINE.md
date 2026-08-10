@@ -19,6 +19,14 @@ The engine is the shared domain boundary for current task-state decisions. TaskA
 
 The engine owns domain calculations, while TaskApp and its adapters own invocation timing, presentation, optimistic state, and persistence calls. A caller may project engine facts for a surface, but it must not create a second recurrence or History interpretation for that surface.
 
+## Trusted command boundary
+
+The M3A source foundation includes a trusted `task-state-command` Edge Function path: an authenticated user's command intent is validated, the owner is taken from verified Auth claims, canonical Task State and logical-day profile facts are read server-side, and the existing pure TypeScript planner produces the canonical plan. The function serializes that plan and calls the backend-only `adhdice_execute_task_state_command` RPC with a modern Supabase secret-key admin client.
+
+The browser contract is intent-only. It must not submit `task_patch`, compatibility projections, History facts, schedule/occurrence rows, reward facts, provenance, `user_id`, or an accepted digest. The trusted boundary derives server-owned command identity, SHA-256 accepted-payload digest, runtime provenance, owner/entity identity, timestamps, and migration-null fields. The RPC is source-only and undeployed; it is invoker-only for the trusted backend role, and ordinary `authenticated` clients cannot execute it. SQL enforces transactionality, ownership/invariants, replay/revision fences, canonical and compatibility persistence, and reward-entitlement uniqueness without becoming a recurrence authority.
+
+This boundary is required before the M3B runtime cutover. Normal production Task mutations have not been routed through it, and no active Task UI is authorized to call it yet.
+
 ## Effective Timeline foundation
 
 The pure `buildTaskEffectiveTimeline` helper combines explicit History with calculated dates, emits only the bounded Calendar window, and calculates current-state facts over an internal range that is independent of that window. Explicit History wins for its logical date, retains its row and occurrence metadata, and is marked handled. Calculated Missed and Open dates describe an unresolved obligation without creating permanent History; they may recalculate after a schedule change.

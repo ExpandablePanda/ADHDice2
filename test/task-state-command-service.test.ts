@@ -7,6 +7,7 @@ import {
   type CanonicalCommandPlanningState,
   type CanonicalTaskStateCommand,
 } from "../src/lib/task-state-canonical/command-service.ts";
+import { sha256Hex } from "../src/lib/task-state-canonical/digest.ts";
 import type { CanonicalTaskRow } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 
@@ -164,6 +165,10 @@ function boundary(scheduleModel: CanonicalTaskScheduleBoundary["schedule_model"]
   };
 }
 
+test("trusted digest uses SHA-256", () => {
+  assert.equal(sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+});
+
 test("command ID and payload identity are stable for replay", () => {
   const first = planTaskStateCommand(state(), command());
   const second = planTaskStateCommand(state(), command());
@@ -171,6 +176,21 @@ test("command ID and payload identity are stable for replay", () => {
   assert.equal(first.command.idempotenceIdentity, second.command.idempotenceIdentity);
   assert.equal(first.command.acceptedPayloadDigest, second.command.acceptedPayloadDigest);
   assert.equal(serializeCanonicalTaskStateCommandForRpc(first).command_id, first.command.commandId);
+  assert.match(first.command.acceptedPayloadDigest, /^sha256-[0-9a-f]{64}$/);
+});
+
+test("reusing an idempotence identity with a different intent produces a different accepted digest", () => {
+  const first = planTaskStateCommand(state(), command({ idempotenceIdentity: "runtime:replay-mismatch", outcome: "did_my_best" }));
+  const second = planTaskStateCommand(state(), command({ idempotenceIdentity: "runtime:replay-mismatch", outcome: "missed" }));
+  assert.equal(first.command.idempotenceIdentity, second.command.idempotenceIdentity);
+  assert.notEqual(first.command.acceptedPayloadDigest, second.command.acceptedPayloadDigest);
+});
+
+test("explicit Missed remains a set_outcome History command without reward eligibility", () => {
+  const plan = planTaskStateCommand(state(), command({ outcome: "missed" }));
+  assert.equal(plan.command.commandType, "set_outcome");
+  assert.equal(plan.normalizedResult.historyFact?.outcome, "missed");
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
 });
 
 test("handled Done uses the engine-derived projection for a recurring task", () => {

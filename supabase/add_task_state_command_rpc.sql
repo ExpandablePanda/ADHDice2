@@ -1,7 +1,8 @@
 -- M3A: canonical Task State command persistence foundation.
 --
 -- Authored for separate review and deployment.  This file is intentionally
--- not executed by M3A.  The TypeScript command planner owns business-state
+-- not executed by M3A.  The trusted Edge Function calls this backend-only
+-- transaction.  The TypeScript command planner owns business-state
 -- planning; this RPC owns the transaction, ownership, revision, idempotence,
 -- canonical writes, compatibility projection, and reward-entitlement fence.
 -- One function invocation is one database transaction.  No external calls or
@@ -13,7 +14,7 @@ create or replace function public.adhdice_execute_task_state_command(
 )
 returns jsonb
 language plpgsql
-security definer
+security invoker
 set search_path = public, pg_temp
 as $function$
 declare
@@ -34,14 +35,8 @@ declare
   v_effective_override jsonb;
   v_calendar_override jsonb;
   v_expected_entity_revision bigint;
-  v_expected_history_revision bigint;
   v_expected_boundary_sequence bigint;
-  v_expected_occurrence_revision bigint;
-  v_expected_facts_fingerprint text;
-  v_current_facts_fingerprint text;
-  v_current_history_revision bigint;
   v_current_boundary_sequence bigint;
-  v_current_occurrence_revision bigint;
   v_task public.adhdice_clean_tasks%rowtype;
   v_operation public.adhdice_task_command_operations%rowtype;
   v_history_row public.adhdice_task_history_facts%rowtype;
@@ -55,15 +50,19 @@ declare
   v_next_revision bigint;
   v_projection_status text;
   v_projection_due_on date;
+  v_profile_timezone text;
+  v_profile_day_start_time text;
+  v_profile_settings_revision bigint;
   v_result jsonb;
   v_reward_program_version text;
   v_reward_event_identity text;
   v_operation_is_new boolean := false;
 begin
-  -- The RPC is an authenticated user boundary.  A future authorized
-  -- automation path must receive its own separately reviewed entry point.
-  if auth.uid() is null or auth.uid() is distinct from p_user_id then
-    raise exception 'Task State command ownership is invalid.'
+  -- Only the trusted Edge Function's secret-key backend role may invoke this
+  -- invoker function.  User ownership is established by the Edge Function
+  -- from verified Auth claims, not by a browser-supplied body field.
+  if current_user <> 'service_role' then
+    raise exception 'Task State command RPC is backend-only.'
       using errcode = '42501';
   end if;
 
@@ -89,13 +88,10 @@ begin
   v_effective_override := coalesce(v_payload->'occurrence_effective_override', '{}'::jsonb);
   v_calendar_override := coalesce(v_payload->'calendar_override', '{}'::jsonb);
   v_expected_entity_revision := nullif(p_command->>'expected_entity_revision', '')::bigint;
-  v_expected_history_revision := nullif(p_command->>'expected_history_revision', '')::bigint;
   v_expected_boundary_sequence := nullif(p_command->>'expected_boundary_sequence', '')::bigint;
-  v_expected_occurrence_revision := nullif(p_command->>'expected_occurrence_revision', '')::bigint;
-  v_expected_facts_fingerprint := nullif(p_command->>'expected_facts_fingerprint', '');
 
   if v_source_kind <> 'runtime' then
-    raise exception 'The authenticated Task State runtime RPC accepts source_kind=runtime only.'
+    raise exception 'The runtime RPC accepts source_kind=runtime only (backend invocation).'
       using errcode = '42501';
   end if;
 
@@ -110,10 +106,216 @@ begin
      )
      or v_idempotence_identity is null
      or v_accepted_payload_digest is null
+     or v_accepted_payload_digest !~ '^sha256-[0-9a-f]{64}$'
      or v_expected_entity_revision is null
      or v_expected_entity_revision < 1 then
     raise exception 'Task State command envelope is incomplete or invalid.'
       using errcode = '22023';
+  end if;
+
+  -- The Edge Function is the only caller allowed to build this payload.  Keep
+  -- the SQL checks structural: they reject impossible planner output without
+  -- reimplementing recurrence or Task State semantics.
+  if jsonb_typeof(v_payload) <> 'object'
+     or jsonb_typeof(v_logical_day_context) <> 'object'
+     or jsonb_typeof(v_task_patch) <> 'object'
+     or jsonb_typeof(v_projection) <> 'object'
+     or jsonb_typeof(v_history) <> 'object'
+     or jsonb_typeof(v_occurrence) <> 'object'
+     or jsonb_typeof(v_schedule) <> 'object'
+     or jsonb_typeof(v_effective_override) <> 'object'
+     or jsonb_typeof(v_calendar_override) <> 'object' then
+    raise exception 'Task State command payload sections must be JSON objects.'
+      using errcode = '22023';
+  end if;
+
+  if exists (
+    select 1 from jsonb_object_keys(v_payload) as payload_key(key)
+    where key not in (
+      'task_patch', 'compatibility_projection', 'history_fact', 'occurrence',
+      'schedule_boundary', 'occurrence_effective_override', 'calendar_override',
+      'reward_program_version', 'occurrence_key'
+    )
+  ) then
+    raise exception 'Task State command payload contains an unknown section.'
+      using errcode = '22023';
+  end if;
+
+  -- Runtime provenance is server-owned.  Reject a spoof before any replay
+  -- operation is claimed, then overwrite the accepted values again below.
+  if coalesce(nullif(v_history->>'provenance_kind', ''), 'user') <> 'user'
+     or coalesce(nullif(v_occurrence->>'provenance_kind', ''), 'user') <> 'user'
+     or coalesce(nullif(v_effective_override->>'provenance_kind', ''), 'user') <> 'user'
+     or coalesce(nullif(v_calendar_override->>'provenance_kind', ''), 'manual') <> 'manual'
+     or nullif(v_schedule->>'actor_kind', '') is not null and v_schedule->>'actor_kind' <> 'user'
+     or nullif(v_occurrence->>'actor_kind', '') is not null and v_occurrence->>'actor_kind' <> 'user'
+     or nullif(v_effective_override->>'actor_kind', '') is not null and v_effective_override->>'actor_kind' <> 'user'
+     or nullif(v_history->>'actor_kind', '') is not null and v_history->>'actor_kind' <> 'user'
+     or nullif(v_calendar_override->>'actor_kind', '') is not null and v_calendar_override->>'actor_kind' <> 'user'
+     or nullif(v_history->>'migration_operation_id', '') is not null
+     or nullif(v_occurrence->>'migration_operation_id', '') is not null
+     or nullif(v_effective_override->>'migration_operation_id', '') is not null
+     or nullif(v_calendar_override->>'migration_operation_id', '') is not null
+     or nullif(v_schedule->>'migration_operation_id', '') is not null
+     or nullif(v_history->>'source_legacy_history_id', '') is not null
+     or nullif(v_schedule->>'source', '') is not null and v_schedule->>'source' <> 'task_state_command'
+     or nullif(v_occurrence->>'source', '') is not null and v_occurrence->>'source' <> 'task_state_command'
+     or nullif(v_effective_override->>'source', '') is not null and v_effective_override->>'source' <> 'task_state_command'
+     or nullif(v_history->>'source', '') is not null and v_history->>'source' <> 'task_state_command'
+     or nullif(v_calendar_override->>'source', '') is not null and v_calendar_override->>'source' <> 'task_state_command' then
+    raise exception 'Runtime Task State provenance is server-owned.'
+      using errcode = '42501';
+  end if;
+
+  if v_command_type in ('clear_outcome', 'hierarchy_change') then
+    raise exception 'This Task State command type has no trusted planner boundary.'
+      using errcode = '0A000';
+  end if;
+
+  if v_command_type in ('archive_task', 'trash_task', 'restore_task') then
+    if v_history <> '{}'::jsonb or v_occurrence <> '{}'::jsonb or v_schedule <> '{}'::jsonb
+       or v_effective_override <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb
+       or v_payload ? 'reward_program_version' then
+      raise exception 'Lifecycle commands cannot carry History, schedule, occurrence, delay, Calendar, or reward mutations.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status', 'terminal_state', 'container_state', 'prior_container_state',
+                        'prior_container_state_status', 'container_trashed_at')
+    ) then
+      raise exception 'Lifecycle command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type = 'set_outcome' then
+    if v_history = '{}'::jsonb or v_schedule <> '{}'::jsonb or v_effective_override <> '{}'::jsonb
+       or v_calendar_override <> '{}'::jsonb or (v_payload ? 'reward_program_version' and v_history->>'outcome' = 'missed') then
+      raise exception 'Outcome command payload sections are incompatible.'
+        using errcode = '22023';
+    end if;
+    if v_history->>'outcome' not in ('done', 'did_my_best', 'missed')
+       or v_history->>'event_kind' <> 'explicit_outcome' then
+      raise exception 'Outcome command must carry one explicit outcome History fact.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status', 'workflow_state', 'workflow_started_at',
+                        'workflow_logical_date', 'workflow_occurrence_id', 'workflow_command_id', 'workflow_revision')
+    ) then
+      raise exception 'Outcome command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type = 'complete_task' then
+    if v_history = '{}'::jsonb or v_history->>'outcome' <> 'complete'
+       or v_history->>'event_kind' <> 'terminal_complete'
+       or v_schedule <> '{}'::jsonb or v_effective_override <> '{}'::jsonb
+       or v_calendar_override <> '{}'::jsonb or (v_payload ? 'reward_program_version') = false then
+      raise exception 'Complete command payload sections are incompatible.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status', 'terminal_state', 'terminal_completed_at', 'container_state',
+                        'workflow_state', 'workflow_started_at', 'workflow_logical_date',
+                        'workflow_occurrence_id', 'workflow_command_id', 'workflow_revision')
+    ) then
+      raise exception 'Complete command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type = 'delay_occurrence' then
+    if v_history = '{}'::jsonb or v_history->>'outcome' <> 'delayed'
+       or v_history->>'event_kind' <> 'delay_audit'
+       or v_effective_override = '{}'::jsonb or v_schedule <> '{}'::jsonb
+       or v_occurrence <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb
+       or v_payload ? 'reward_program_version' then
+      raise exception 'Delay command payload sections are incompatible.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status')
+    ) then
+      raise exception 'Delay command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type in ('set_due_date', 'set_repeat') then
+    if v_schedule = '{}'::jsonb or v_history <> '{}'::jsonb or v_occurrence <> '{}'::jsonb
+       or v_effective_override <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb
+       or v_payload ? 'reward_program_version' then
+      raise exception 'Schedule command payload sections are incompatible.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status')
+    ) then
+      raise exception 'Schedule command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type = 'calendar_override' then
+    if v_calendar_override = '{}'::jsonb or v_history <> '{}'::jsonb or v_occurrence <> '{}'::jsonb
+       or v_schedule <> '{}'::jsonb or v_effective_override <> '{}'::jsonb
+       or v_payload ? 'reward_program_version' then
+      raise exception 'Calendar override command payload sections are incompatible.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status')
+    ) then
+      raise exception 'Calendar command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type in ('start_in_progress', 'clear_in_progress') then
+    if v_history <> '{}'::jsonb or v_occurrence <> '{}'::jsonb or v_schedule <> '{}'::jsonb
+       or v_effective_override <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb
+       or v_payload ? 'reward_program_version' then
+      raise exception 'Workflow command payload sections are incompatible.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status', 'workflow_state', 'workflow_started_at',
+                        'workflow_logical_date', 'workflow_occurrence_id', 'workflow_command_id', 'workflow_revision')
+    ) then
+      raise exception 'Workflow command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+    if v_command_type = 'start_in_progress'
+       and (v_task_patch->>'workflow_state' <> 'in_progress'
+            or nullif(v_task_patch->>'workflow_started_at', '') is null
+            or nullif(v_task_patch->>'workflow_logical_date', '') is null) then
+      raise exception 'start_in_progress requires a compatible workflow patch.'
+        using errcode = '22023';
+    end if;
+    if v_command_type = 'clear_in_progress'
+       and (v_task_patch->>'workflow_state' <> 'none'
+            or nullif(v_task_patch->>'workflow_started_at', '') is not null
+            or nullif(v_task_patch->>'workflow_logical_date', '') is not null
+            or nullif(v_task_patch->>'workflow_occurrence_id', '') is not null) then
+      raise exception 'clear_in_progress requires a compatible workflow patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type = 'reconcile_rollover' then
+    if v_history <> '{}'::jsonb or v_occurrence <> '{}'::jsonb or v_schedule <> '{}'::jsonb
+       or v_effective_override <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb
+       or v_payload ? 'reward_program_version' then
+      raise exception 'Rollover cannot carry History, schedule, occurrence, delay, Calendar, or reward mutations.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status', 'workflow_state', 'workflow_started_at',
+                        'workflow_logical_date', 'workflow_occurrence_id', 'workflow_command_id', 'workflow_revision')
+    ) then
+      raise exception 'Rollover carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+    if v_history <> '{}'::jsonb or (v_payload->>'synthetic_did_my_best')::boolean is true then
+      raise exception 'Rollover cannot persist a History fact or synthesize Did My Best.'
+        using errcode = '22023';
+    end if;
   end if;
 
   -- Serialize the two replay identities before the read/claim sequence.  The
@@ -159,10 +361,7 @@ begin
     requested_logical_date,
     requested_occurrence_key,
     expected_entity_revision,
-    expected_history_revision,
     expected_boundary_sequence,
-    expected_occurrence_revision,
-    expected_facts_fingerprint,
     state,
     result_references,
     source_kind,
@@ -179,10 +378,7 @@ begin
     nullif(v_logical_day_context->>'logical_date', '')::date,
     nullif(v_payload->>'occurrence_key', ''),
     v_expected_entity_revision,
-    v_expected_history_revision,
     v_expected_boundary_sequence,
-    v_expected_occurrence_revision,
-    v_expected_facts_fingerprint,
     'accepted',
     '{}'::jsonb,
     v_source_kind,
@@ -270,6 +466,19 @@ begin
     return v_result || jsonb_build_object('was_replayed', false);
   end if;
 
+  select timezone, day_start_time::text, settings_revision
+    into v_profile_timezone, v_profile_day_start_time, v_profile_settings_revision
+    from public.adhdice_user_profiles
+   where user_id = p_user_id;
+  if not found or v_profile_timezone is null or v_profile_day_start_time is null
+     or v_profile_settings_revision is null or v_profile_settings_revision < 1 then
+    raise exception 'Canonical logical-day profile is unavailable.'
+      using errcode = '55000';
+  end if;
+  v_logical_day_context := jsonb_set(v_logical_day_context, '{timezone}', to_jsonb(v_profile_timezone), true);
+  v_logical_day_context := jsonb_set(v_logical_day_context, '{day_start_time}', to_jsonb(v_profile_day_start_time), true);
+  v_logical_day_context := jsonb_set(v_logical_day_context, '{settings_revision}', to_jsonb(v_profile_settings_revision), true);
+
   if v_task.entity_kind is distinct from v_entity_kind then
     v_result := jsonb_build_object(
       'command_id', v_command_id,
@@ -306,35 +515,14 @@ begin
     return v_result || jsonb_build_object('was_replayed', false);
   end if;
 
-   select coalesce(max(revision), 1)
-    into v_current_history_revision
-    from public.adhdice_task_history_facts
-   where user_id = p_user_id
-     and entity_id = v_entity_id;
-
+  -- canonical_revision is the entity-wide fence.  History and occurrence
+  -- collection revision aggregates are intentionally not runtime fences:
+  -- inserting a new revision-1 row does not create a monotonic generation.
+  -- boundary_sequence remains valid because schedule boundaries are append-only.
   select coalesce(max(boundary_sequence), 0)
     into v_current_boundary_sequence
     from public.adhdice_task_schedule_boundaries
    where user_id = p_user_id and entity_id = v_entity_id;
-
-  if v_expected_history_revision is not null
-     and v_expected_history_revision is distinct from v_current_history_revision then
-    v_result := jsonb_build_object(
-      'command_id', v_command_id,
-      'state', 'rejected',
-      'conflict_code', 'STALE_HISTORY_REVISION',
-      'expected_revision', v_expected_entity_revision,
-      'next_revision', v_task.canonical_revision
-    );
-    update public.adhdice_task_command_operations
-       set state = 'rejected',
-           conflict_code = 'STALE_HISTORY_REVISION',
-           result_digest = md5(v_result::text),
-           result_references = v_result,
-           completed_at = now()
-     where user_id = p_user_id and command_id = v_command_id;
-    return v_result || jsonb_build_object('was_replayed', false);
-  end if;
 
   if v_expected_boundary_sequence is not null
      and v_expected_boundary_sequence is distinct from v_current_boundary_sequence then
@@ -355,54 +543,6 @@ begin
     return v_result || jsonb_build_object('was_replayed', false);
   end if;
 
-  select coalesce(max(revision), 1) into v_current_occurrence_revision
-    from public.adhdice_task_occurrences
-   where user_id = p_user_id and entity_id = v_entity_id;
-  if v_expected_occurrence_revision is not null
-     and v_expected_occurrence_revision is distinct from v_current_occurrence_revision then
-    v_result := jsonb_build_object(
-      'command_id', v_command_id,
-      'state', 'rejected',
-      'conflict_code', 'STALE_OCCURRENCE_REVISION',
-      'expected_revision', v_expected_entity_revision,
-      'next_revision', v_task.canonical_revision
-    );
-    update public.adhdice_task_command_operations
-       set state = 'rejected',
-           conflict_code = 'STALE_OCCURRENCE_REVISION',
-           result_digest = md5(v_result::text),
-           result_references = v_result,
-           completed_at = now()
-     where user_id = p_user_id and command_id = v_command_id;
-    return v_result || jsonb_build_object('was_replayed', false);
-  end if;
-
-  if v_expected_facts_fingerprint is not null then
-    select md5(coalesce(string_agg(
-      history_fact.id::text || ':' || history_fact.logical_date::text || ':' || history_fact.outcome,
-      '|' order by history_fact.logical_date, history_fact.id
-    ), '')) into v_current_facts_fingerprint
-      from public.adhdice_task_history_facts history_fact
-     where history_fact.user_id = p_user_id and history_fact.entity_id = v_entity_id;
-    if v_expected_facts_fingerprint is distinct from v_current_facts_fingerprint then
-      v_result := jsonb_build_object(
-        'command_id', v_command_id,
-        'state', 'rejected',
-        'conflict_code', 'STALE_FACTS_FINGERPRINT',
-        'expected_revision', v_expected_entity_revision,
-        'next_revision', v_task.canonical_revision
-      );
-      update public.adhdice_task_command_operations
-         set state = 'rejected',
-             conflict_code = 'STALE_FACTS_FINGERPRINT',
-             result_digest = md5(v_result::text),
-             result_references = v_result,
-             completed_at = now()
-       where user_id = p_user_id and command_id = v_command_id;
-      return v_result || jsonb_build_object('was_replayed', false);
-    end if;
-  end if;
-
   -- Rollover is deliberately a projection/reconciliation command.  It may
   -- clear stale workflow state, but it cannot insert synthetic DMB or routine
   -- calculated Missed facts.  Explicit Missed remains a set_outcome command.
@@ -419,7 +559,7 @@ begin
 
   if v_projection->>'status' is null
      or v_projection->>'due_on' is null and not (v_projection ? 'due_on')
-     or v_projection->>'status' in ('unscheduled', 'in_progress') then
+     or v_projection->>'status' = 'unscheduled' then
     raise exception 'Canonical commands require a normalized persisted compatibility projection.'
       using errcode = '22023';
   end if;
@@ -427,13 +567,32 @@ begin
   v_projection_due_on := nullif(v_projection->>'due_on', '')::date;
   if v_projection_status not in (
     'pending', 'done', 'missed', 'did_my_best', 'upcoming', 'not_due',
-    'delayed', 'archived', 'trashed', 'complete'
+    'delayed', 'archived', 'trashed', 'complete', 'in_progress'
   ) then
     raise exception 'Compatibility status is not a supported persisted projection.'
       using errcode = '22023';
   end if;
+  if v_projection_status = 'in_progress' and v_command_type <> 'start_in_progress' then
+    raise exception 'Only start_in_progress may persist an in_progress compatibility projection.'
+      using errcode = '22023';
+  end if;
+  if v_command_type = 'start_in_progress' and v_projection_status <> 'in_progress' then
+    raise exception 'start_in_progress requires an in_progress compatibility projection.'
+      using errcode = '22023';
+  end if;
 
   v_next_revision := v_task.canonical_revision + 1;
+
+  if v_command_type = 'start_in_progress' then
+    v_task_patch := jsonb_set(v_task_patch, '{workflow_command_id}', to_jsonb(v_command_id), true);
+    v_task_patch := jsonb_set(v_task_patch, '{workflow_started_at}', to_jsonb(now()), true);
+    v_task_patch := jsonb_set(v_task_patch, '{workflow_logical_date}', to_jsonb(nullif(v_logical_day_context->>'logical_date', '')::date), true);
+  elsif v_command_type in ('set_outcome', 'complete_task', 'clear_in_progress') then
+    v_task_patch := jsonb_set(v_task_patch, '{workflow_command_id}', 'null'::jsonb, true);
+  end if;
+  if v_command_type in ('set_outcome', 'complete_task', 'start_in_progress', 'clear_in_progress') then
+    v_task_patch := jsonb_set(v_task_patch, '{workflow_revision}', to_jsonb(coalesce(v_task.workflow_revision, 0) + 1), true);
+  end if;
   update public.adhdice_clean_tasks
      set canonicalization_status = case
        when v_task.canonicalization_status = 'canonical_proven' then 'canonical_runtime'
@@ -473,7 +632,19 @@ begin
     v_schedule := jsonb_set(v_schedule, '{user_id}', to_jsonb(p_user_id), true);
     v_schedule := jsonb_set(v_schedule, '{entity_id}', to_jsonb(v_entity_id), true);
     v_schedule := jsonb_set(v_schedule, '{entity_kind}', to_jsonb(v_entity_kind), true);
+    v_schedule := jsonb_set(v_schedule, '{actor_kind}', to_jsonb('user'::text), true);
+    v_schedule := jsonb_set(v_schedule, '{actor_id}', to_jsonb(p_user_id), true);
+    v_schedule := jsonb_set(v_schedule, '{source}', to_jsonb('task_state_command'::text), true);
     v_schedule := jsonb_set(v_schedule, '{command_id}', to_jsonb(v_command_id), true);
+    v_schedule := jsonb_set(v_schedule, '{idempotence_identity}', to_jsonb(v_idempotence_identity), true);
+    v_schedule := jsonb_set(v_schedule, '{migration_operation_id}', 'null'::jsonb, true);
+    v_schedule := jsonb_set(v_schedule, '{migration_version}', 'null'::jsonb, true);
+    v_schedule := jsonb_set(v_schedule, '{classifier_version}', 'null'::jsonb, true);
+    v_schedule := jsonb_set(v_schedule, '{logical_day_settings_revision}', to_jsonb(v_profile_settings_revision), true);
+    v_schedule := jsonb_set(v_schedule, '{timezone}', to_jsonb(v_profile_timezone), true);
+    v_schedule := jsonb_set(v_schedule, '{day_start_time}', to_jsonb(v_profile_day_start_time), true);
+    v_schedule := jsonb_set(v_schedule, '{source_task_revision}', to_jsonb(v_task.revision), true);
+    v_schedule := jsonb_set(v_schedule, '{revision}', to_jsonb(1), true);
     v_schedule := jsonb_set(v_schedule, '{schema_contract_version}', to_jsonb('task-state-schema-v1'::text), true);
     v_schedule := jsonb_set(v_schedule, '{created_at}', to_jsonb(now()), true);
     v_schedule := jsonb_set(v_schedule, '{updated_at}', to_jsonb(now()), true);
@@ -489,7 +660,13 @@ begin
     v_occurrence := jsonb_set(v_occurrence, '{user_id}', to_jsonb(p_user_id), true);
     v_occurrence := jsonb_set(v_occurrence, '{entity_id}', to_jsonb(v_entity_id), true);
     v_occurrence := jsonb_set(v_occurrence, '{entity_kind}', to_jsonb(v_entity_kind), true);
+    v_occurrence := jsonb_set(v_occurrence, '{provenance_kind}', to_jsonb('user'::text), true);
+    v_occurrence := jsonb_set(v_occurrence, '{actor_kind}', to_jsonb('user'::text), true);
+    v_occurrence := jsonb_set(v_occurrence, '{actor_id}', to_jsonb(p_user_id), true);
+    v_occurrence := jsonb_set(v_occurrence, '{source}', to_jsonb('task_state_command'::text), true);
     v_occurrence := jsonb_set(v_occurrence, '{command_id}', to_jsonb(v_command_id), true);
+    v_occurrence := jsonb_set(v_occurrence, '{migration_operation_id}', 'null'::jsonb, true);
+    v_occurrence := jsonb_set(v_occurrence, '{revision}', to_jsonb(1), true);
     v_occurrence := jsonb_set(v_occurrence, '{created_at}', to_jsonb(now()), true);
     v_occurrence := jsonb_set(v_occurrence, '{updated_at}', to_jsonb(now()), true);
     insert into public.adhdice_task_occurrences
@@ -512,15 +689,29 @@ begin
 
   if v_effective_override <> '{}'::jsonb then
     if v_schedule_id is null then
-      raise exception 'An effective-date override requires its schedule boundary.'
-        using errcode = '23503';
+      v_schedule_id := nullif(v_effective_override->>'schedule_boundary_id', '')::uuid;
+      select id into v_schedule_id
+        from public.adhdice_task_schedule_boundaries
+       where user_id = p_user_id and entity_id = v_entity_id and id = v_schedule_id;
+      if not found then
+        raise exception 'An effective-date override requires an owned schedule boundary.'
+          using errcode = '23503';
+      end if;
     end if;
     v_effective_override := jsonb_set(v_effective_override, '{id}', to_jsonb(coalesce(nullif(v_effective_override->>'id', '')::uuid, gen_random_uuid())), true);
     v_effective_override := jsonb_set(v_effective_override, '{user_id}', to_jsonb(p_user_id), true);
     v_effective_override := jsonb_set(v_effective_override, '{entity_id}', to_jsonb(v_entity_id), true);
     v_effective_override := jsonb_set(v_effective_override, '{occurrence_id}', to_jsonb(v_occurrence_id), true);
     v_effective_override := jsonb_set(v_effective_override, '{schedule_boundary_id}', to_jsonb(v_schedule_id), true);
+    v_effective_override := jsonb_set(v_effective_override, '{provenance_kind}', to_jsonb('user'::text), true);
+    v_effective_override := jsonb_set(v_effective_override, '{actor_kind}', to_jsonb('user'::text), true);
+    v_effective_override := jsonb_set(v_effective_override, '{actor_id}', to_jsonb(p_user_id), true);
+    v_effective_override := jsonb_set(v_effective_override, '{source}', to_jsonb('task_state_command'::text), true);
     v_effective_override := jsonb_set(v_effective_override, '{command_id}', to_jsonb(v_command_id), true);
+    v_effective_override := jsonb_set(v_effective_override, '{idempotence_identity}', to_jsonb(v_idempotence_identity), true);
+    v_effective_override := jsonb_set(v_effective_override, '{migration_operation_id}', 'null'::jsonb, true);
+    v_effective_override := jsonb_set(v_effective_override, '{accepted_payload_digest}', to_jsonb(v_accepted_payload_digest), true);
+    v_effective_override := jsonb_set(v_effective_override, '{revision}', to_jsonb(1), true);
     v_effective_override := jsonb_set(v_effective_override, '{created_at}', to_jsonb(now()), true);
     v_effective_override := jsonb_set(v_effective_override, '{updated_at}', to_jsonb(now()), true);
     insert into public.adhdice_task_occurrence_effective_overrides
@@ -533,8 +724,18 @@ begin
     v_history := jsonb_set(v_history, '{user_id}', to_jsonb(p_user_id), true);
     v_history := jsonb_set(v_history, '{entity_id}', to_jsonb(v_entity_id), true);
     v_history := jsonb_set(v_history, '{entity_kind}', to_jsonb(v_entity_kind), true);
+    v_history := jsonb_set(v_history, '{provenance_kind}', to_jsonb('user'::text), true);
+    v_history := jsonb_set(v_history, '{actor_kind}', to_jsonb('user'::text), true);
+    v_history := jsonb_set(v_history, '{actor_id}', to_jsonb(p_user_id), true);
+    v_history := jsonb_set(v_history, '{source}', to_jsonb('task_state_command'::text), true);
+    v_history := jsonb_set(v_history, '{logical_day_settings_revision}', to_jsonb(v_profile_settings_revision), true);
+    v_history := jsonb_set(v_history, '{timezone}', to_jsonb(v_profile_timezone), true);
+    v_history := jsonb_set(v_history, '{day_start_time}', to_jsonb(v_profile_day_start_time), true);
     v_history := jsonb_set(v_history, '{command_id}', to_jsonb(v_command_id), true);
+    v_history := jsonb_set(v_history, '{idempotence_identity}', to_jsonb(v_idempotence_identity || ':history:' || (v_history->>'logical_date') || ':' || (v_history->>'outcome')), true);
     v_history := jsonb_set(v_history, '{migration_operation_id}', 'null'::jsonb, true);
+    v_history := jsonb_set(v_history, '{source_legacy_history_id}', 'null'::jsonb, true);
+    v_history := jsonb_set(v_history, '{revision}', to_jsonb(1), true);
     v_history := jsonb_set(v_history, '{created_at}', to_jsonb(now()), true);
     v_history := jsonb_set(v_history, '{updated_at}', to_jsonb(now()), true);
     if v_schedule_id is not null then
@@ -571,7 +772,14 @@ begin
     v_calendar_override := jsonb_set(v_calendar_override, '{user_id}', to_jsonb(p_user_id), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{entity_id}', to_jsonb(v_entity_id), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{entity_kind}', to_jsonb(v_entity_kind), true);
+    v_calendar_override := jsonb_set(v_calendar_override, '{provenance_kind}', to_jsonb('manual'::text), true);
+    v_calendar_override := jsonb_set(v_calendar_override, '{actor_kind}', to_jsonb('user'::text), true);
+    v_calendar_override := jsonb_set(v_calendar_override, '{actor_id}', to_jsonb(p_user_id), true);
+    v_calendar_override := jsonb_set(v_calendar_override, '{source}', to_jsonb('task_state_command'::text), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{command_id}', to_jsonb(v_command_id), true);
+    v_calendar_override := jsonb_set(v_calendar_override, '{idempotence_identity}', to_jsonb(v_idempotence_identity), true);
+    v_calendar_override := jsonb_set(v_calendar_override, '{migration_operation_id}', 'null'::jsonb, true);
+    v_calendar_override := jsonb_set(v_calendar_override, '{revision}', to_jsonb(1), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{created_at}', to_jsonb(now()), true);
     v_calendar_override := jsonb_set(v_calendar_override, '{updated_at}', to_jsonb(now()), true);
     insert into public.adhdice_task_calendar_overrides
@@ -655,5 +863,5 @@ begin
 end;
 $function$;
 
-revoke all on function public.adhdice_execute_task_state_command(uuid, jsonb) from public, anon;
-grant execute on function public.adhdice_execute_task_state_command(uuid, jsonb) to authenticated;
+revoke all on function public.adhdice_execute_task_state_command(uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.adhdice_execute_task_state_command(uuid, jsonb) to service_role;

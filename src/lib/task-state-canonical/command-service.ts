@@ -24,9 +24,10 @@ import type {
   CanonicalTerminalState,
   CanonicalWorkflowState,
 } from "./types.ts";
+import { sha256Digest } from "./digest.ts";
 import type { CanonicalTaskRow } from "./read-model.ts";
 
-export type CanonicalHandledOutcome = Extract<TaskHistoryOutcome, "done" | "did_my_best">;
+export type CanonicalHandledOutcome = Extract<TaskHistoryOutcome, "done" | "did_my_best" | "missed">;
 
 export type CanonicalCompatibilityProjection = {
   status: TaskStatus;
@@ -42,6 +43,7 @@ export type CanonicalTaskStateCommandBase = {
   taskId: string;
   entityKind: CanonicalEntityKind;
   expectedRevision: number;
+  expectedBoundarySequence?: number;
   logicalDay: CanonicalLogicalDayContext;
   idempotenceIdentity?: string;
   sourceKind?: CanonicalCommandSourceKind;
@@ -124,6 +126,7 @@ export type CanonicalCommandEnvelope = {
   entityKind: CanonicalEntityKind;
   commandType: CanonicalCommandType;
   expectedRevision: number;
+  expectedBoundarySequence?: number;
   logicalDay: CanonicalLogicalDayContext;
   idempotenceIdentity: string;
   acceptedPayloadDigest: string;
@@ -215,7 +218,9 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
       active_status_logical_date: projection.activeStatusLogicalDate,
       active_occurrence_due_on: projection.activeOccurrenceDueOn,
     },
-    reward_program_version: normalizedResult.rewardEntitlement?.rewardProgramVersion ?? "task-reward-v1",
+    ...(normalizedResult.rewardEntitlement
+      ? { reward_program_version: normalizedResult.rewardEntitlement.rewardProgramVersion }
+      : {}),
   };
   if (history) {
     payload.history_fact = {
@@ -250,6 +255,7 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
       settings_revision: command.logicalDay.settingsRevision,
     },
     expected_entity_revision: command.expectedRevision,
+    ...(command.expectedBoundarySequence !== undefined ? { expected_boundary_sequence: command.expectedBoundarySequence } : {}),
     source_kind: command.sourceKind,
     payload,
   };
@@ -269,26 +275,6 @@ export class CanonicalCommandPlanningError extends Error {
     this.name = "CanonicalCommandPlanningError";
     this.code = code;
   }
-}
-
-function stableSerialize(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, nested]) => `${JSON.stringify(key)}:${stableSerialize(nested)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-function digest(value: unknown) {
-  let hash = 2166136261;
-  for (const character of stableSerialize(value)) {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `fnv1a-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 function commandId() {
@@ -314,8 +300,31 @@ function commandType(command: CanonicalTaskStateCommand): CanonicalCommandType {
 }
 
 function commandPayload(command: CanonicalTaskStateCommand): CanonicalJsonObject {
-  const { commandId: _commandId, compatibilityProjection: _projection, ...payload } = command;
+  const { commandId: _commandId, compatibilityProjection: _projection, startedAt: _startedAt, changedAt: _changedAt, completedAt: _completedAt, ...payload } = command as CanonicalTaskStateCommand & {
+    compatibilityProjection?: unknown;
+    startedAt?: string;
+    changedAt?: string;
+    completedAt?: string;
+  };
   return payload as unknown as CanonicalJsonObject;
+}
+
+const SERVER_OWNED_INTENT_FIELDS = new Set([
+  "id", "user_id", "actor_kind", "actor_id", "source", "command_id", "migration_operation_id", "migration_version",
+  "classifier_version", "created_at", "updated_at", "revision", "accepted_payload_digest", "provenance_kind", "source_legacy_history_id",
+  "boundary_sequence", "prior_boundary_id", "affected_occurrence_id", "logical_day_settings_revision", "timezone", "day_start_time",
+  "source_task_revision", "schema_contract_version", "override_sequence", "prior_override_id", "prior_override_sequence", "history_id",
+  "workflow_command_id", "workflow_started_at", "terminal_completed_at", "container_trashed_at",
+]);
+
+function acceptedIntentValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(acceptedIntentValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !SERVER_OWNED_INTENT_FIELDS.has(key))
+      .map(([key, nested]) => [key, acceptedIntentValue(nested)]));
+  }
+  return value;
 }
 
 export function normalizeTaskStateCommand(command: CanonicalTaskStateCommand): CanonicalCommandEnvelope {
@@ -328,9 +337,10 @@ export function normalizeTaskStateCommand(command: CanonicalTaskStateCommand): C
     entityKind: command.entityKind,
     commandType: commandType(command),
     expectedRevision: command.expectedRevision,
+    ...(command.expectedBoundarySequence !== undefined ? { expectedBoundarySequence: command.expectedBoundarySequence } : {}),
     logicalDay: command.logicalDay,
     idempotenceIdentity: command.idempotenceIdentity ?? `task-state-command:${id}`,
-    acceptedPayloadDigest: digest(payload),
+    acceptedPayloadDigest: sha256Digest(acceptedIntentValue(payload)),
     sourceKind: command.sourceKind ?? "runtime",
     payload,
   };
@@ -409,18 +419,6 @@ function restoredContainerState(task: CanonicalTaskRow): "active" | "archived" {
 function baseTaskPatch(task: CanonicalTaskRow): CanonicalTaskPatch {
   return {
     canonicalization_status: "canonical_runtime",
-    terminal_state: task.terminal_state ?? "active",
-    container_state: task.container_state ?? "active",
-    prior_container_state: task.prior_container_state,
-    prior_container_state_status: task.prior_container_state_status ?? "unknown",
-    terminal_completed_at: task.terminal_completed_at,
-    container_trashed_at: task.container_trashed_at,
-    workflow_state: task.workflow_state ?? "none",
-    workflow_started_at: task.workflow_started_at,
-    workflow_logical_date: task.workflow_logical_date,
-    workflow_occurrence_id: task.workflow_occurrence_id,
-    workflow_command_id: task.workflow_command_id,
-    workflow_revision: task.workflow_revision ?? 1,
   };
 }
 
@@ -440,7 +438,11 @@ function historyFactFor(
     occurrence_id: occurrenceId,
     scheduled_due_on: scheduledDueOn,
     effective_due_on: effectiveDueOn,
-    schedule_boundary_id: "scheduleBoundary" in command ? command.scheduleBoundary?.id ?? null : null,
+    schedule_boundary_id: "scheduleBoundary" in command
+      ? command.scheduleBoundary?.id ?? null
+      : "override" in command
+        ? command.override?.schedule_boundary_id ?? null
+        : null,
     recurrence_source_fingerprint: "scheduleBoundary" in command ? command.scheduleBoundary?.id ?? null : null,
     source: envelope.sourceKind === "runtime" ? "task_state_command" : envelope.sourceKind,
     logical_day_settings_revision: envelope.logicalDay.settingsRevision,
@@ -595,6 +597,7 @@ export function planTaskStateCommand(
       projection.status = "complete";
       projection.dueOn = null;
       patch.terminal_state = "permanently_complete";
+      patch.container_state = task.container_state ?? "active";
       patch.terminal_completed_at = projection.completedAt;
       patch.workflow_state = "none";
       patch.workflow_started_at = null;
@@ -629,6 +632,7 @@ export function planTaskStateCommand(
     case "archive":
     case "trash":
     case "restore": {
+      patch.terminal_state = task.terminal_state ?? "active";
       const restoredState = input.type === "restore" ? restoredContainerState(task) : null;
       const restoredProjection = engineResult
         ? projectionFromEngine(task, engineResult)
