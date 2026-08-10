@@ -1,4 +1,4 @@
-import { withSupabase } from "npm:@supabase/server";
+import { withSupabase } from "npm:@supabase/server@1.4.1";
 import { logicalDateForTimestamp } from "../../../src/lib/task-state-engine/calendar.ts";
 import {
   CanonicalCommandPlanningError,

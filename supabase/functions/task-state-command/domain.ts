@@ -1,5 +1,5 @@
 import type { CanonicalTaskStateReadModel } from "../../../src/lib/task-state-canonical/read-model.ts";
-import type { CanonicalEntityKind, CanonicalLogicalDayContext, CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../../../src/lib/task-state-canonical/types.ts";
+import type { CanonicalEntityKind, CanonicalJsonObject, CanonicalLogicalDayContext, CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../../../src/lib/task-state-canonical/types.ts";
 import type { CanonicalTaskStateCommand } from "../../../src/lib/task-state-canonical/command-service.ts";
 import { deterministicUuid } from "../../../src/lib/task-state-canonical/digest.ts";
 
@@ -60,6 +60,10 @@ function isString(value: unknown, min = 1, max = 256): value is string {
 
 function exactOrSubsetKeys(value: Record<string, unknown>, allowed: Set<string>) {
   return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function acceptedIntentValue(intent: TaskStateCommandIntent): CanonicalJsonObject {
+  return Object.fromEntries(Object.entries(intent).filter(([, value]) => value !== undefined));
 }
 
 function validScheduleIntent(value: unknown): value is ScheduleChangeIntent {
@@ -141,6 +145,7 @@ function commandBase(intent: TaskStateCommandIntent, userId: string, readModel: 
     userId,
     taskId: readModel.task.id,
     entityKind,
+    acceptedIntent: acceptedIntentValue(intent),
     expectedRevision: intent.expected_revision ?? readModel.task.canonical_revision ?? readModel.task.revision,
     expectedBoundarySequence,
     logicalDay,

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildTrustedTaskStateCommand, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
+import { planTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
+import type { CanonicalLogicalDayContext, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 
 const readModel = {
   task: {
@@ -40,6 +42,24 @@ const logicalDay = {
   settingsRevision: 3,
 };
 
+function rebuiltReadModel(canonicalRevision: number, boundarySequence: number): CanonicalTaskStateReadModel {
+  return {
+    ...readModel,
+    task: { ...readModel.task, canonical_revision: canonicalRevision, revision: canonicalRevision },
+    scheduleBoundaries: [{ boundary_sequence: boundarySequence } as CanonicalTaskScheduleBoundary],
+  } as CanonicalTaskStateReadModel;
+}
+
+function rebuiltLogicalDay(settingsRevision: number, logicalDate: string): CanonicalLogicalDayContext {
+  return {
+    identity: `logical-day:owner-1:${settingsRevision}:America/New_York:06:00:${logicalDate}`,
+    logicalDate,
+    timezone: "America/New_York",
+    dayStartTime: "06:00",
+    settingsRevision,
+  };
+}
+
 test("browser intent accepts only command input and derives identity from the authenticated owner", () => {
   const intent = {
     type: "set_outcome",
@@ -55,6 +75,77 @@ test("browser intent accepts only command input and derives identity from the au
   assert.equal(command.idempotenceIdentity, "runtime:ui-action-1");
   assert.equal(command.type, "handled_outcome");
   assert.equal("task_patch" in command, false);
+});
+
+test("accepted intent digest survives replay rebuilds with newer canonical and server-derived state", () => {
+  const intent = {
+    type: "start_in_progress",
+    task_id: "task-1",
+    replay_identity: "ui-replay-1",
+  } as const;
+  const firstReadModel = rebuiltReadModel(3, 7);
+  const secondReadModel = rebuiltReadModel(4, 8);
+  const firstCommand = buildTrustedTaskStateCommand({
+    intent,
+    userId: "owner-1",
+    readModel: firstReadModel,
+    logicalDay: rebuiltLogicalDay(3, "2026-08-10"),
+    now: "2026-08-10T12:00:00.000Z",
+  });
+  const secondCommand = buildTrustedTaskStateCommand({
+    intent,
+    userId: "owner-1",
+    readModel: secondReadModel,
+    logicalDay: rebuiltLogicalDay(4, "2026-08-11"),
+    now: "2026-08-11T12:01:00.000Z",
+  });
+  const first = planTaskStateCommand({ task: firstReadModel.task }, firstCommand);
+  const second = planTaskStateCommand({ task: secondReadModel.task }, secondCommand);
+
+  assert.equal(first.command.commandId, second.command.commandId);
+  assert.equal(first.command.idempotenceIdentity, second.command.idempotenceIdentity);
+  assert.equal(first.command.acceptedPayloadDigest, second.command.acceptedPayloadDigest);
+  assert.notEqual(first.command.expectedRevision, second.command.expectedRevision);
+  assert.notEqual(first.command.expectedBoundarySequence, second.command.expectedBoundarySequence);
+  assert.notEqual(first.command.logicalDay.identity, second.command.logicalDay.identity);
+  assert.notEqual(firstCommand.startedAt, secondCommand.startedAt);
+});
+
+test("explicit expected revision remains in the accepted intent while omitted revision stays rebuildable", () => {
+  const omittedIntent = {
+    type: "archive_task",
+    task_id: "task-1",
+    replay_identity: "ui-replay-2",
+  } as const;
+  const explicitIntent = { ...omittedIntent, expected_revision: 3 } as const;
+  const firstReadModel = rebuiltReadModel(3, 7);
+  const secondReadModel = rebuiltReadModel(4, 8);
+  const omittedFirst = buildTrustedTaskStateCommand({ intent: omittedIntent, userId: "owner-1", readModel: firstReadModel, logicalDay, now: "2026-08-10T12:00:00.000Z" });
+  const omittedRetry = buildTrustedTaskStateCommand({ intent: omittedIntent, userId: "owner-1", readModel: secondReadModel, logicalDay: rebuiltLogicalDay(4, "2026-08-11"), now: "2026-08-11T12:01:00.000Z" });
+  const explicitFirst = buildTrustedTaskStateCommand({ intent: explicitIntent, userId: "owner-1", readModel: firstReadModel, logicalDay, now: "2026-08-10T12:00:00.000Z" });
+  const explicitRetry = buildTrustedTaskStateCommand({ intent: explicitIntent, userId: "owner-1", readModel: secondReadModel, logicalDay: rebuiltLogicalDay(4, "2026-08-11"), now: "2026-08-11T12:01:00.000Z" });
+
+  const omittedFirstPlan = planTaskStateCommand({ task: firstReadModel.task }, omittedFirst);
+  const omittedRetryPlan = planTaskStateCommand({ task: secondReadModel.task }, omittedRetry);
+  const explicitFirstPlan = planTaskStateCommand({ task: firstReadModel.task }, explicitFirst);
+  const explicitRetryPlan = planTaskStateCommand({ task: secondReadModel.task }, explicitRetry);
+  assert.equal(omittedFirst.expectedRevision, 3);
+  assert.equal(omittedRetry.expectedRevision, 4);
+  assert.equal(explicitFirst.expectedRevision, 3);
+  assert.equal(explicitRetry.expectedRevision, 3);
+  assert.equal(omittedFirstPlan.command.acceptedPayloadDigest, omittedRetryPlan.command.acceptedPayloadDigest);
+  assert.equal(explicitFirstPlan.command.acceptedPayloadDigest, explicitRetryPlan.command.acceptedPayloadDigest);
+  assert.notEqual(omittedFirstPlan.command.acceptedPayloadDigest, explicitFirstPlan.command.acceptedPayloadDigest);
+});
+
+test("changed intent with the same replay identity produces a different digest", () => {
+  const firstIntent = { type: "archive_task", task_id: "task-1", replay_identity: "ui-replay-3" } as const;
+  const changedIntent = { type: "trash_task", task_id: "task-1", replay_identity: "ui-replay-3" } as const;
+  const first = planTaskStateCommand({ task: readModel.task }, buildTrustedTaskStateCommand({ intent: firstIntent, userId: "owner-1", readModel, logicalDay, now: "2026-08-10T12:00:00.000Z" }));
+  const changed = planTaskStateCommand({ task: readModel.task }, buildTrustedTaskStateCommand({ intent: changedIntent, userId: "owner-1", readModel, logicalDay, now: "2026-08-10T12:00:01.000Z" }));
+  assert.equal(first.command.commandId, changed.command.commandId);
+  assert.equal(first.command.idempotenceIdentity, changed.command.idempotenceIdentity);
+  assert.notEqual(first.command.acceptedPayloadDigest, changed.command.acceptedPayloadDigest);
 });
 
 test("intent validation rejects privileged canonical output and caller provenance", () => {

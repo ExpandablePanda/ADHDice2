@@ -6,6 +6,8 @@ const edgeSource = readFileSync(new URL("../supabase/functions/task-state-comman
 const domainSource = readFileSync(new URL("../supabase/functions/task-state-command/domain.ts", import.meta.url), "utf8");
 
 test("Edge boundary verifies the user, reads canonical state without legacy authority, and calls the backend RPC", () => {
+  assert.match(edgeSource, /npm:@supabase\/server@1\.4\.1/);
+  assert.doesNotMatch(edgeSource, /npm:@supabase\/server["']/);
   assert.match(edgeSource, /withSupabase\(\{ auth: "user" \}/);
   assert.match(edgeSource, /context\.userClaims\?\.sub/);
   assert.match(edgeSource, /context\.supabaseAdmin/);

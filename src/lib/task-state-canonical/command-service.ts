@@ -42,6 +42,8 @@ export type CanonicalTaskStateCommandBase = {
   userId: string;
   taskId: string;
   entityKind: CanonicalEntityKind;
+  /** Validated browser intent; unlike the plan, this excludes server-derived state. */
+  acceptedIntent: CanonicalJsonObject;
   expectedRevision: number;
   expectedBoundarySequence?: number;
   logicalDay: CanonicalLogicalDayContext;
@@ -300,31 +302,8 @@ function commandType(command: CanonicalTaskStateCommand): CanonicalCommandType {
 }
 
 function commandPayload(command: CanonicalTaskStateCommand): CanonicalJsonObject {
-  const { commandId: _commandId, compatibilityProjection: _projection, startedAt: _startedAt, changedAt: _changedAt, completedAt: _completedAt, ...payload } = command as CanonicalTaskStateCommand & {
-    compatibilityProjection?: unknown;
-    startedAt?: string;
-    changedAt?: string;
-    completedAt?: string;
-  };
-  return payload as unknown as CanonicalJsonObject;
-}
-
-const SERVER_OWNED_INTENT_FIELDS = new Set([
-  "id", "user_id", "actor_kind", "actor_id", "source", "command_id", "migration_operation_id", "migration_version",
-  "classifier_version", "created_at", "updated_at", "revision", "accepted_payload_digest", "provenance_kind", "source_legacy_history_id",
-  "boundary_sequence", "prior_boundary_id", "affected_occurrence_id", "logical_day_settings_revision", "timezone", "day_start_time",
-  "source_task_revision", "schema_contract_version", "override_sequence", "prior_override_id", "prior_override_sequence", "history_id",
-  "workflow_command_id", "workflow_started_at", "terminal_completed_at", "container_trashed_at",
-]);
-
-function acceptedIntentValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(acceptedIntentValue);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => !SERVER_OWNED_INTENT_FIELDS.has(key))
-      .map(([key, nested]) => [key, acceptedIntentValue(nested)]));
-  }
-  return value;
+  const internalFields = new Set(["commandId", "acceptedIntent", "compatibilityProjection", "startedAt", "changedAt", "completedAt"]);
+  return Object.fromEntries(Object.entries(command).filter(([key]) => !internalFields.has(key)));
 }
 
 export function normalizeTaskStateCommand(command: CanonicalTaskStateCommand): CanonicalCommandEnvelope {
@@ -340,7 +319,7 @@ export function normalizeTaskStateCommand(command: CanonicalTaskStateCommand): C
     ...(command.expectedBoundarySequence !== undefined ? { expectedBoundarySequence: command.expectedBoundarySequence } : {}),
     logicalDay: command.logicalDay,
     idempotenceIdentity: command.idempotenceIdentity ?? `task-state-command:${id}`,
-    acceptedPayloadDigest: sha256Digest(acceptedIntentValue(payload)),
+    acceptedPayloadDigest: sha256Digest(command.acceptedIntent),
     sourceKind: command.sourceKind ?? "runtime",
     payload,
   };

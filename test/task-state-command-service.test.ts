@@ -107,7 +107,7 @@ function state(overrides: Partial<CanonicalTaskRow> = {}): CanonicalCommandPlann
 }
 
 function command(overrides: Partial<CanonicalTaskStateCommand> = {}): CanonicalTaskStateCommand {
-  return {
+  const result = {
     type: "handled_outcome",
     commandId: "00000000-0000-4000-8000-000000000001",
     userId: "user-1",
@@ -118,6 +118,15 @@ function command(overrides: Partial<CanonicalTaskStateCommand> = {}): CanonicalT
     outcome: "did_my_best",
     ...overrides,
   } as CanonicalTaskStateCommand;
+  return {
+    ...result,
+    acceptedIntent: {
+      type: result.type === "handled_outcome" ? "set_outcome" : result.type,
+      task_id: result.taskId,
+      replay_identity: result.idempotenceIdentity ?? "test-replay",
+      ...(result.type === "handled_outcome" ? { outcome: result.outcome } : {}),
+    },
+  };
 }
 
 function boundary(scheduleModel: CanonicalTaskScheduleBoundary["schedule_model"]): CanonicalTaskScheduleBoundary {
