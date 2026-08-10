@@ -1,4 +1,3 @@
-import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { Task, TaskHistory } from "@/lib/database.types";
 import type {
   CanonicalTaskCalendarOverride,
@@ -13,7 +12,6 @@ import type {
   CanonicalTaskStateColumns,
 } from "./types.ts";
 
-export type CanonicalReadClient = NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
 export type CanonicalTaskRow = Task & CanonicalTaskStateColumns;
 
 export type CanonicalReadError = {
@@ -27,14 +25,44 @@ type CanonicalLogicalDayProfile = {
   settings_revision: number;
 };
 
-type CanonicalProfileReadClient = {
-  from(table: string): {
-    select(columns: string): {
-      eq(column: string, value: string): {
-        maybeSingle(): Promise<{ data: CanonicalLogicalDayProfile | null; error: CanonicalReadError | null }>;
-      };
-    };
-  };
+type CanonicalReadResult<T> = {
+  data: T;
+  error: CanonicalReadError | null;
+};
+
+type CanonicalReadQuery<T> = {
+  select(columns: string): CanonicalReadQuery<T>;
+  eq(column: string, value: string): CanonicalReadQuery<T>;
+  order(column: string, options: { ascending: boolean }): CanonicalReadQuery<T>;
+  maybeSingle(): Promise<CanonicalReadResult<T | null>>;
+  then<TResult1 = CanonicalReadResult<T[]>, TResult2 = never>(
+    onfulfilled?: ((value: CanonicalReadResult<T[]>) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): PromiseLike<TResult1 | TResult2>;
+};
+
+type CanonicalReadTableRows = {
+  adhdice_clean_tasks: CanonicalTaskRow;
+  adhdice_user_profiles: CanonicalLogicalDayProfile;
+  adhdice_task_history: TaskHistory;
+  adhdice_task_command_operations: CanonicalTaskCommandOperation;
+  adhdice_task_schedule_boundaries: CanonicalTaskScheduleBoundary;
+  adhdice_task_occurrences: CanonicalTaskOccurrence;
+  adhdice_task_occurrence_effective_overrides: CanonicalTaskOccurrenceEffectiveOverride;
+  adhdice_task_history_facts: CanonicalTaskHistoryFact;
+  adhdice_task_calendar_overrides: CanonicalTaskCalendarOverride;
+  adhdice_task_reward_entitlements: CanonicalTaskRewardEntitlement;
+  adhdice_task_reward_grants: CanonicalTaskRewardGrant;
+  adhdice_task_reward_claim_consumptions: CanonicalTaskRewardClaimConsumption;
+};
+
+/**
+ * The canonical read model is shared by browser and Edge callers. Keep its
+ * client contract structural so the Edge graph does not resolve the browser
+ * Supabase singleton merely to derive a type.
+ */
+export type CanonicalReadClient = {
+  from<T extends keyof CanonicalReadTableRows>(table: T): CanonicalReadQuery<CanonicalReadTableRows[T]>;
 };
 
 export type CanonicalTaskStateReadModel = {
@@ -80,14 +108,13 @@ export async function loadCanonicalTaskState(
   if (taskResult.error) return { data: null, error: readError(taskResult.error) };
   if (!taskResult.data) return { data: null, error: { message: "Canonical Task was not found for this owner." } };
 
-  const profileClient = client as unknown as CanonicalProfileReadClient;
   const legacyHistoryEvidenceQuery = input.includeLegacyHistoryEvidence
     ? client.from("adhdice_task_history").select("*").eq("user_id", input.userId).eq("task_id", input.taskId)
       .order("entry_date", { ascending: false })
     : Promise.resolve({ data: [] as TaskHistory[], error: null });
   const [profile, commandOperations, scheduleBoundaries, occurrences, occurrenceEffectiveOverrides, historyFacts, calendarOverrides,
     rewardEntitlements, rewardGrants, rewardClaimConsumptions, legacyHistoryEvidence] = await Promise.all([
-    profileClient.from("adhdice_user_profiles").select("timezone,day_start_time,settings_revision").eq("user_id", input.userId).maybeSingle(),
+    client.from("adhdice_user_profiles").select("timezone,day_start_time,settings_revision").eq("user_id", input.userId).maybeSingle(),
     client.from("adhdice_task_command_operations").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("created_at", { ascending: false }),
     client.from("adhdice_task_schedule_boundaries").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
