@@ -645,10 +645,17 @@ export function planTaskStateCommand(
         patch.prior_container_state_status = "proven";
         patch.container_state = "archived";
       } else if (input.type === "trash") {
-        patch.prior_container_state = task.container_state === "active" || task.container_state === "archived" ? task.container_state : "active";
-        patch.prior_container_state_status = "proven";
-        patch.container_state = "trashed";
-        patch.container_trashed_at = input.changedAt ?? new Date().toISOString();
+        if (task.container_state === "trashed") {
+          patch.prior_container_state = task.prior_container_state;
+          patch.prior_container_state_status = task.prior_container_state_status;
+          patch.container_state = "trashed";
+          patch.container_trashed_at = task.container_trashed_at;
+        } else {
+          patch.prior_container_state = task.container_state === "active" || task.container_state === "archived" ? task.container_state : "active";
+          patch.prior_container_state_status = "proven";
+          patch.container_state = "trashed";
+          patch.container_trashed_at = input.changedAt ?? new Date().toISOString();
+        }
       } else {
         patch.container_state = restoredState;
         patch.prior_container_state = null;

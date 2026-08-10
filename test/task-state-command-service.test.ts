@@ -261,6 +261,145 @@ test("Trash restore preserves proven Active and Archived container provenance", 
   assert.equal(archivedRestore.normalizedResult.compatibilityProjection.status, "archived");
 });
 
+test("Active to Trash to Trash preserves Active provenance", () => {
+  const firstTrash = planTaskStateCommand(state(), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000020" }),
+    type: "trash",
+    changedAt: "2026-08-10T12:00:00.000Z",
+  });
+  const secondTrash = planTaskStateCommand(state({
+    status: "trashed",
+    container_state: "trashed",
+    prior_container_state: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state,
+    prior_container_state_status: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state_status,
+    container_trashed_at: firstTrash.normalizedResult.canonicalTaskPatch.container_trashed_at,
+    canonical_revision: 5,
+  }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000021", expectedRevision: 5 }),
+    type: "trash",
+    changedAt: "2026-08-10T13:00:00.000Z",
+  });
+
+  assert.equal(secondTrash.normalizedResult.canonicalTaskPatch.container_state, "trashed");
+  assert.equal(secondTrash.normalizedResult.canonicalTaskPatch.prior_container_state, "active");
+  assert.equal(secondTrash.normalizedResult.canonicalTaskPatch.prior_container_state_status, "proven");
+});
+
+test("Archived to Trash to Trash preserves Archived provenance", () => {
+  const firstTrash = planTaskStateCommand(state({ status: "archived", container_state: "archived" }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000022" }),
+    type: "trash",
+    changedAt: "2026-08-10T12:00:00.000Z",
+  });
+  const secondTrash = planTaskStateCommand(state({
+    status: "trashed",
+    container_state: "trashed",
+    prior_container_state: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state,
+    prior_container_state_status: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state_status,
+    container_trashed_at: firstTrash.normalizedResult.canonicalTaskPatch.container_trashed_at,
+    canonical_revision: 5,
+  }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000023", expectedRevision: 5 }),
+    type: "trash",
+    changedAt: "2026-08-10T13:00:00.000Z",
+  });
+
+  assert.equal(secondTrash.normalizedResult.canonicalTaskPatch.container_state, "trashed");
+  assert.equal(secondTrash.normalizedResult.canonicalTaskPatch.prior_container_state, "archived");
+  assert.equal(secondTrash.normalizedResult.canonicalTaskPatch.prior_container_state_status, "proven");
+});
+
+test("Second Trash preserves the original container_trashed_at", () => {
+  const originalTrashAt = "2026-08-10T12:00:00.000Z";
+  const firstTrash = planTaskStateCommand(state(), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000024" }),
+    type: "trash",
+    changedAt: originalTrashAt,
+  });
+  const secondTrash = planTaskStateCommand(state({
+    status: "trashed",
+    container_state: "trashed",
+    prior_container_state: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state,
+    prior_container_state_status: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state_status,
+    container_trashed_at: originalTrashAt,
+    canonical_revision: 5,
+  }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000025", expectedRevision: 5 }),
+    type: "trash",
+    changedAt: "2026-08-11T12:00:00.000Z",
+  });
+
+  assert.equal(secondTrash.normalizedResult.canonicalTaskPatch.container_trashed_at, originalTrashAt);
+});
+
+test("Archived to Trash to Trash to Restore returns Archived", () => {
+  const firstTrash = planTaskStateCommand(state({ status: "archived", container_state: "archived" }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000026" }),
+    type: "trash",
+    changedAt: "2026-08-10T12:00:00.000Z",
+  });
+  const secondTrash = planTaskStateCommand(state({
+    status: "trashed",
+    container_state: "trashed",
+    prior_container_state: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state,
+    prior_container_state_status: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state_status,
+    container_trashed_at: firstTrash.normalizedResult.canonicalTaskPatch.container_trashed_at,
+    canonical_revision: 5,
+  }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000027", expectedRevision: 5 }),
+    type: "trash",
+    changedAt: "2026-08-10T13:00:00.000Z",
+  });
+  const restore = planTaskStateCommand(state({
+    status: "trashed",
+    container_state: "trashed",
+    prior_container_state: secondTrash.normalizedResult.canonicalTaskPatch.prior_container_state,
+    prior_container_state_status: secondTrash.normalizedResult.canonicalTaskPatch.prior_container_state_status,
+    container_trashed_at: secondTrash.normalizedResult.canonicalTaskPatch.container_trashed_at,
+    canonical_revision: 6,
+  }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000028", expectedRevision: 6 }),
+    type: "restore",
+  });
+
+  assert.equal(restore.normalizedResult.canonicalTaskPatch.container_state, "archived");
+  assert.equal(restore.normalizedResult.compatibilityProjection.status, "archived");
+});
+
+test("Active to Trash to Trash to Restore returns Active", () => {
+  const firstTrash = planTaskStateCommand(state(), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000029" }),
+    type: "trash",
+    changedAt: "2026-08-10T12:00:00.000Z",
+  });
+  const secondTrash = planTaskStateCommand(state({
+    status: "trashed",
+    container_state: "trashed",
+    prior_container_state: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state,
+    prior_container_state_status: firstTrash.normalizedResult.canonicalTaskPatch.prior_container_state_status,
+    container_trashed_at: firstTrash.normalizedResult.canonicalTaskPatch.container_trashed_at,
+    canonical_revision: 5,
+  }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000030", expectedRevision: 5 }),
+    type: "trash",
+    changedAt: "2026-08-10T13:00:00.000Z",
+  });
+  const restore = planTaskStateCommand(state({
+    status: "trashed",
+    container_state: "trashed",
+    prior_container_state: secondTrash.normalizedResult.canonicalTaskPatch.prior_container_state,
+    prior_container_state_status: secondTrash.normalizedResult.canonicalTaskPatch.prior_container_state_status,
+    container_trashed_at: secondTrash.normalizedResult.canonicalTaskPatch.container_trashed_at,
+    canonical_revision: 6,
+  }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000031", expectedRevision: 6 }),
+    type: "restore",
+  });
+
+  assert.equal(restore.normalizedResult.canonicalTaskPatch.container_state, "active");
+  assert.equal(restore.normalizedResult.compatibilityProjection.status, "pending");
+});
+
 test("Trash restore fails closed when prior container provenance is not proven", () => {
   assert.throws(
     () => planTaskStateCommand(state({
