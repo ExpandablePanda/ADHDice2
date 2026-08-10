@@ -1,4 +1,4 @@
-import type { PersistedRecordCurrent, PersistedRecordEvent } from "@/lib/records/types";
+import type { PersistedRecordCurrent, PersistedRecordEvent } from "./records/persisted-types.ts";
 import type {
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
@@ -10,7 +10,7 @@ import type {
   CanonicalTaskRewardGrant,
   CanonicalTaskScheduleBoundary,
   CanonicalTaskStateColumns,
-} from "@/lib/task-state-canonical/types";
+} from "./task-state-canonical/types.ts";
 
 export type RecordReconcileRun = {
   id: string;

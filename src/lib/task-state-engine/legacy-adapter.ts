@@ -1,4 +1,4 @@
-import type { Task, TaskHistory } from "@/lib/database.types";
+import type { Task, TaskHistory } from "../database.types.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
 import type {
   TaskActiveStatus,

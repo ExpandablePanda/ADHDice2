@@ -1,11 +1,11 @@
-import type { Task, TaskStatus } from "@/lib/database.types";
-import { daysBetween } from "@/lib/task-state-engine/calendar.ts";
-import { evaluateTaskState } from "@/lib/task-state-engine/engine.ts";
+import type { Task, TaskStatus } from "../database.types.ts";
+import { daysBetween } from "../task-state-engine/calendar.ts";
+import { evaluateTaskState } from "../task-state-engine/engine.ts";
 import type {
   TaskHistoryOutcome,
   TaskStateEngineInput,
   TaskStateHistoryRow,
-} from "@/lib/task-state-engine/types.ts";
+} from "../task-state-engine/types.ts";
 import type {
   CanonicalCommandOperationState,
   CanonicalCommandSourceKind,
