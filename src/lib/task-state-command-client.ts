@@ -32,7 +32,7 @@ export type TaskStateCommandIntent =
   | { type: "archive_task" | "trash_task" | "restore_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "start_in_progress"; task_id: string; replay_identity: string; expected_revision?: number; occurrence_key?: string };
 
-type TaskStateScheduleChangeIntent = {
+export type TaskStateScheduleChangeIntent = {
   schedule_model: "unscheduled" | "one_time" | "rolling" | "fixed";
   repeat_frequency?: "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
   repeat_interval?: number;
