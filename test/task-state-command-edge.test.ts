@@ -19,7 +19,11 @@ test("Edge boundary verifies the user, reads canonical state without legacy auth
   assert.match(edgeSource, /npm:@supabase\/server@1\.4\.1/);
   assert.doesNotMatch(edgeSource, /npm:@supabase\/server["']/);
   assert.match(edgeSource, /withSupabase\(\{ auth: "user" \}/);
-  assert.match(edgeSource, /context\.userClaims\?\.sub/);
+  assert.match(edgeSource, /function userIdFromContext\(context: \{ userClaims\?: \{ id\?: unknown \} \}\)/);
+  assert.match(edgeSource, /context\.userClaims\?\.id/);
+  assert.doesNotMatch(edgeSource, /context\.userClaims\?\.sub/);
+  assert.match(edgeSource, /typeof context\.userClaims\?\.id === "string"[\s\S]*context\.userClaims\.id\.trim\(\)\.length > 0[\s\S]*\? context\.userClaims\.id/);
+  assert.match(edgeSource, /if \(!userId\) return json\(\{ error: \{ code: "authentication_failure"/);
   assert.match(edgeSource, /context\.supabaseAdmin/);
   assert.match(orchestrationSource, /includeLegacyHistoryEvidence: false/);
   assert.match(orchestrationSource, /adhdice_execute_task_state_command/);

@@ -13,9 +13,9 @@ function json(payload: unknown, status: number) {
   return Response.json(payload, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-function userIdFromContext(context: { userClaims?: { sub?: unknown } }) {
-  return typeof context.userClaims?.sub === "string" && context.userClaims.sub.length > 0
-    ? context.userClaims.sub
+function userIdFromContext(context: { userClaims?: { id?: unknown } }) {
+  return typeof context.userClaims?.id === "string" && context.userClaims.id.trim().length > 0
+    ? context.userClaims.id
     : null;
 }
 
