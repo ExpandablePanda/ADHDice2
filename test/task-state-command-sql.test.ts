@@ -14,6 +14,12 @@ test("M3A command RPC is an authenticated, owner-scoped security-definer boundar
   assert.match(sql, /grant execute on function public\.adhdice_execute_task_state_command\(uuid, jsonb\) to authenticated/i);
 });
 
+test("the authenticated runtime boundary rejects automation and repair provenance", () => {
+  assert.match(sql, /v_source_kind <> 'runtime'/i);
+  assert.match(sql, /runtime RPC accepts source_kind=runtime only/i);
+  assert.doesNotMatch(sql, /v_source_kind not in \('runtime', 'authorized_automation', 'repair'\)/i);
+});
+
 test("command identity and revision contracts are locked before canonical writes", () => {
   assert.match(schema, /unique \(user_id, idempotence_identity\)/i);
   assert.match(schema, /unique \(user_id, command_id\)/i);
@@ -28,6 +34,16 @@ test("command identity and revision contracts are locked before canonical writes
   assert.match(sql, /'STALE_FACTS_FINGERPRINT'/i);
   assert.match(sql, /expected_entity_revision bigint/i);
   assert.match(sql, /operation becomes committed only after every canonical write/i);
+});
+
+test("first-execution replay identity is serialized and re-read without weakening unique fences", () => {
+  assert.equal((sql.match(/pg_advisory_xact_lock\(hashtextextended\(/gi) ?? []).length, 2);
+  assert.match(sql, /on conflict do nothing\s+returning \* into v_operation/i);
+  assert.match(sql, /a concurrent or separately authorized writer claimed a replay key/i);
+  assert.match(sql, /where user_id = p_user_id[\s\S]*\(idempotence_identity = v_idempotence_identity or command_id = v_command_id\)/i);
+  assert.match(sql, /using errcode = '40001'/i);
+  assert.match(schema, /unique \(user_id, idempotence_identity\)/i);
+  assert.match(schema, /unique \(user_id, command_id\)/i);
 });
 
 test("canonical and compatibility writes are one guarded projection, with no legacy authority", () => {

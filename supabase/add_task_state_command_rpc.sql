@@ -58,6 +58,7 @@ declare
   v_result jsonb;
   v_reward_program_version text;
   v_reward_event_identity text;
+  v_operation_is_new boolean := false;
 begin
   -- The RPC is an authenticated user boundary.  A future authorized
   -- automation path must receive its own separately reviewed entry point.
@@ -93,6 +94,11 @@ begin
   v_expected_occurrence_revision := nullif(p_command->>'expected_occurrence_revision', '')::bigint;
   v_expected_facts_fingerprint := nullif(p_command->>'expected_facts_fingerprint', '');
 
+  if v_source_kind <> 'runtime' then
+    raise exception 'The authenticated Task State runtime RPC accepts source_kind=runtime only.'
+      using errcode = '42501';
+  end if;
+
   if v_command_id is null
      or v_entity_id is null
      or v_entity_kind not in ('parent', 'step', 'substep')
@@ -105,11 +111,24 @@ begin
      or v_idempotence_identity is null
      or v_accepted_payload_digest is null
      or v_expected_entity_revision is null
-     or v_expected_entity_revision < 1
-     or v_source_kind not in ('runtime', 'authorized_automation', 'repair') then
+     or v_expected_entity_revision < 1 then
     raise exception 'Task State command envelope is incomplete or invalid.'
       using errcode = '22023';
   end if;
+
+  -- Serialize the two replay identities before the read/claim sequence.  The
+  -- advisory locks are transaction-scoped and namespaced so equivalent first
+  -- calls cannot both observe an absent operation and race the unique keys.
+  -- The unique constraints remain the durable fence; ON CONFLICT plus the
+  -- re-read below also handles a competing writer outside this function.
+  perform pg_advisory_xact_lock(hashtextextended(
+    p_user_id::text || ':task-state-idempotence:' || v_idempotence_identity,
+    0
+  ));
+  perform pg_advisory_xact_lock(hashtextextended(
+    p_user_id::text || ':task-state-command:' || v_command_id::text,
+    0
+  ));
 
   -- Lock command identity before the entity.  Duplicate command ID and
   -- idempotence identity are both replay keys; a committed result is returned
@@ -127,21 +146,8 @@ begin
      for update;
   end if;
 
-  if found then
-    if v_operation.command_id is distinct from v_command_id
-       or v_operation.idempotence_identity is distinct from v_idempotence_identity
-       or v_operation.accepted_payload_digest is distinct from v_accepted_payload_digest then
-      raise exception 'Command identity was reused with a different payload.'
-        using errcode = '40001';
-    end if;
-    if v_operation.state in ('committed', 'rejected') then
-      return v_operation.result_references || jsonb_build_object('was_replayed', true);
-    end if;
-    raise exception 'The command is already being processed.'
-      using errcode = '40001';
-  end if;
-
-  insert into public.adhdice_task_command_operations (
+  if not found then
+    insert into public.adhdice_task_command_operations (
     user_id,
     entity_id,
     entity_kind,
@@ -181,7 +187,43 @@ begin
     '{}'::jsonb,
     v_source_kind,
     'task-state-schema-v1'
-  ) returning * into v_operation;
+    )
+    on conflict do nothing
+    returning * into v_operation;
+
+    if found then
+      v_operation_is_new := true;
+    else
+      -- A concurrent or separately authorized writer claimed a replay key.
+      -- Re-read it under row lock so equivalent requests replay while a
+      -- mismatched payload receives the explicit identity-reuse error below.
+      select * into v_operation
+        from public.adhdice_task_command_operations
+       where user_id = p_user_id
+         and (idempotence_identity = v_idempotence_identity or command_id = v_command_id)
+       order by case when idempotence_identity = v_idempotence_identity then 0 else 1 end
+       limit 1
+       for update;
+      if not found then
+        raise exception 'Task State command could not claim its replay identity.'
+          using errcode = '40001';
+      end if;
+    end if;
+  end if;
+
+  if not v_operation_is_new then
+    if v_operation.command_id is distinct from v_command_id
+       or v_operation.idempotence_identity is distinct from v_idempotence_identity
+       or v_operation.accepted_payload_digest is distinct from v_accepted_payload_digest then
+      raise exception 'Command identity was reused with a different payload.'
+        using errcode = '40001';
+    end if;
+    if v_operation.state in ('committed', 'rejected') then
+      return v_operation.result_references || jsonb_build_object('was_replayed', true);
+    end if;
+    raise exception 'The command is already being processed.'
+      using errcode = '40001';
+  end if;
 
   -- The canonical Task row is the sole entity lock.  Compatibility status and
   -- due_on are applied only after this canonical revision check and never

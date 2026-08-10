@@ -387,6 +387,25 @@ function projectionFromTask(task: Task): CanonicalCompatibilityProjection {
   };
 }
 
+function restoredContainerState(task: CanonicalTaskRow): "active" | "archived" {
+  if (task.container_state === "trashed") {
+    if (task.prior_container_state_status !== "proven"
+      || (task.prior_container_state !== "active" && task.prior_container_state !== "archived")) {
+      throw new CanonicalCommandPlanningError(
+        "RESTORE_PROVENANCE_REQUIRED",
+        "Trash restore requires a proven prior container state; explicit resolution is required.",
+      );
+    }
+    return task.prior_container_state;
+  }
+  if (task.container_state === "archived") return "active";
+  if (task.container_state === "active") return "active";
+  throw new CanonicalCommandPlanningError(
+    "RESTORE_PROVENANCE_REQUIRED",
+    "Restore requires a canonical active, archived, or proven trashed container state.",
+  );
+}
+
 function baseTaskPatch(task: CanonicalTaskRow): CanonicalTaskPatch {
   return {
     canonicalization_status: "canonical_runtime",
@@ -496,14 +515,19 @@ export function planTaskStateCommand(
   }
 
   let engineResult: ReturnType<typeof evaluateTaskState> | undefined;
-  const needsEngineProjection = ["handled_outcome", "delay", "schedule_change", "calendar_override", "rollover"].includes(input.type);
+  const needsEngineProjection = ["handled_outcome", "delay", "schedule_change", "calendar_override", "rollover"].includes(input.type)
+    || (input.type === "restore" && task.container_state !== "active");
   if (needsEngineProjection && !state.engineInput) {
     throw new CanonicalCommandPlanningError(
       "ENGINE_SNAPSHOT_REQUIRED",
       `${input.type} planning requires the canonical engine snapshot; a client projection cannot substitute for it.`,
     );
   }
-  if (state.engineInput && ["handled_outcome", "complete", "delay", "schedule_change", "calendar_override", "rollover"].includes(input.type)) {
+  const shouldEvaluateEngine = Boolean(state.engineInput && (
+    ["handled_outcome", "complete", "delay", "schedule_change", "calendar_override", "rollover"].includes(input.type)
+    || (input.type === "restore" && task.container_state !== "active")
+  ));
+  if (shouldEvaluateEngine) {
     const action = input.type === "handled_outcome"
       ? {
           type: "record_outcome" as const,
@@ -521,7 +545,17 @@ export function planTaskStateCommand(
             : input.type === "calendar_override"
               ? { type: "recompute" as const, fromLogicalDate: input.logicalDay.logicalDate }
           : undefined;
-    engineResult = evaluateTaskState({ ...state.engineInput, ...(action ? { action } : {}) });
+    const engineInput = input.type === "restore"
+      ? {
+          ...state.engineInput!,
+          task: {
+            ...state.engineInput!.task,
+            lifecycle: task.terminal_state === "permanently_complete" ? "complete" as const : "active" as const,
+          },
+          action: undefined,
+        }
+      : { ...state.engineInput!, ...(action ? { action } : {}) };
+    engineResult = evaluateTaskState(engineInput);
     if (engineResult.validationErrors.length > 0) {
       throw new CanonicalCommandPlanningError("DOMAIN_VALIDATION_FAILED", engineResult.validationErrors.join(" "));
     }
@@ -595,12 +629,16 @@ export function planTaskStateCommand(
     case "archive":
     case "trash":
     case "restore": {
+      const restoredState = input.type === "restore" ? restoredContainerState(task) : null;
+      const restoredProjection = engineResult
+        ? projectionFromEngine(task, engineResult)
+        : projectionFromTask(task);
+      if (input.type === "restore" && restoredState === "archived" && task.terminal_state !== "permanently_complete") {
+        restoredProjection.status = "archived";
+      }
       projection = {
-        status: input.type === "archive" ? "archived" : input.type === "trash" ? "trashed" : task.status,
-        dueOn: task.due_on,
-        completedAt: task.completed_at,
-        activeStatusLogicalDate: task.active_status_logical_date,
-        activeOccurrenceDueOn: task.active_occurrence_due_on,
+        ...restoredProjection,
+        status: input.type === "archive" ? "archived" : input.type === "trash" ? "trashed" : restoredProjection.status,
       };
       if (input.type === "archive") {
         patch.prior_container_state = task.container_state === "trashed" ? task.prior_container_state : "active";
@@ -612,7 +650,9 @@ export function planTaskStateCommand(
         patch.container_state = "trashed";
         patch.container_trashed_at = input.changedAt ?? new Date().toISOString();
       } else {
-        patch.container_state = "active";
+        patch.container_state = restoredState;
+        patch.prior_container_state = null;
+        patch.prior_container_state_status = "not_applicable";
         patch.container_trashed_at = null;
       }
       break;

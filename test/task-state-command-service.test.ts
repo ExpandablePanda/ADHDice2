@@ -216,6 +216,68 @@ test("terminal, container, and workflow axes remain independent", () => {
   assert.equal(trashed.normalizedResult.canonicalTaskPatch.container_state, "trashed");
 });
 
+test("Trash restore preserves proven Active and Archived container provenance", () => {
+  const activeTrash = planTaskStateCommand(state(), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000015" }),
+    type: "trash",
+    changedAt: "2026-08-10T12:00:00.000Z",
+  });
+  assert.equal(activeTrash.normalizedResult.canonicalTaskPatch.prior_container_state, "active");
+
+  const activeRestore = planTaskStateCommand(state({
+    status: "trashed",
+    container_state: "trashed",
+    prior_container_state: activeTrash.normalizedResult.canonicalTaskPatch.prior_container_state,
+    prior_container_state_status: "proven",
+    container_trashed_at: "2026-08-10T12:00:00.000Z",
+    canonical_revision: 5,
+  }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000016", expectedRevision: 5 }),
+    type: "restore",
+  });
+  assert.equal(activeRestore.normalizedResult.canonicalTaskPatch.container_state, "active");
+  assert.equal(activeRestore.normalizedResult.canonicalTaskPatch.prior_container_state, null);
+  assert.equal(activeRestore.normalizedResult.canonicalTaskPatch.prior_container_state_status, "not_applicable");
+
+  const archivedTrash = planTaskStateCommand(state({ status: "archived", container_state: "archived" }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000017" }),
+    type: "trash",
+    changedAt: "2026-08-10T12:00:00.000Z",
+  });
+  assert.equal(archivedTrash.normalizedResult.canonicalTaskPatch.prior_container_state, "archived");
+
+  const archivedRestore = planTaskStateCommand(state({
+    status: "trashed",
+    container_state: "trashed",
+    prior_container_state: archivedTrash.normalizedResult.canonicalTaskPatch.prior_container_state,
+    prior_container_state_status: "proven",
+    container_trashed_at: "2026-08-10T12:00:00.000Z",
+    canonical_revision: 5,
+  }), {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000018", expectedRevision: 5 }),
+    type: "restore",
+  });
+  assert.equal(archivedRestore.normalizedResult.canonicalTaskPatch.container_state, "archived");
+  assert.equal(archivedRestore.normalizedResult.compatibilityProjection.status, "archived");
+});
+
+test("Trash restore fails closed when prior container provenance is not proven", () => {
+  assert.throws(
+    () => planTaskStateCommand(state({
+      status: "trashed",
+      container_state: "trashed",
+      prior_container_state: null,
+      prior_container_state_status: "unknown",
+    }), {
+      ...command({ commandId: "00000000-0000-4000-8000-000000000019" }),
+      type: "restore",
+    }),
+    (error: unknown) => error instanceof Error
+      && "code" in error
+      && error.code === "RESTORE_PROVENANCE_REQUIRED",
+  );
+});
+
 test("clearing workflow restores a future due projection without changing lifecycle state", () => {
   const upcoming = planTaskStateCommand(state({ status: "in_progress", due_on: "2026-08-13" }), {
     ...command({ commandId: "00000000-0000-4000-8000-000000000012" }),
