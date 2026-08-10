@@ -1,4 +1,5 @@
 import { withSupabase } from "npm:@supabase/server@1.4.1";
+import { userIdFromContext } from "./auth.ts";
 import {
   executeTrustedTaskStateCommand,
   type TrustedTaskStateCommandClient,
@@ -11,12 +12,6 @@ const MAX_BODY_BYTES = 32 * 1024;
 
 function json(payload: unknown, status: number) {
   return Response.json(payload, { status, headers: { "Cache-Control": "no-store" } });
-}
-
-function userIdFromContext(context: { userClaims?: { id?: unknown } }) {
-  return typeof context.userClaims?.id === "string" && context.userClaims.id.trim().length > 0
-    ? context.userClaims.id
-    : null;
 }
 
 export default {

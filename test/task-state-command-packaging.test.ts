@@ -57,6 +57,7 @@ test("task-state-command uses no broad alias and has a narrow resolvable local g
   const graphPaths = new Set([...graph].map((file) => relative(repoRoot, file)));
   const expectedPaths = new Set([
     "supabase/functions/task-state-command/index.ts",
+    "supabase/functions/task-state-command/auth.ts",
     "supabase/functions/task-state-command/orchestration.ts",
     "supabase/functions/task-state-command/domain.ts",
     "src/lib/database.types.ts",

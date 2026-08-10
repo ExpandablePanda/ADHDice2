@@ -18,11 +18,10 @@ const orchestrationSource = readFileSync(new URL("../supabase/functions/task-sta
 test("Edge boundary verifies the user, reads canonical state without legacy authority, and calls the backend RPC", () => {
   assert.match(edgeSource, /npm:@supabase\/server@1\.4\.1/);
   assert.doesNotMatch(edgeSource, /npm:@supabase\/server["']/);
+  assert.match(edgeSource, /from "\.\/auth\.ts"/);
   assert.match(edgeSource, /withSupabase\(\{ auth: "user" \}/);
-  assert.match(edgeSource, /function userIdFromContext\(context: \{ userClaims\?: \{ id\?: unknown \} \}\)/);
-  assert.match(edgeSource, /context\.userClaims\?\.id/);
+  assert.match(edgeSource, /const userId = userIdFromContext\(context\)/);
   assert.doesNotMatch(edgeSource, /context\.userClaims\?\.sub/);
-  assert.match(edgeSource, /typeof context\.userClaims\?\.id === "string"[\s\S]*context\.userClaims\.id\.trim\(\)\.length > 0[\s\S]*\? context\.userClaims\.id/);
   assert.match(edgeSource, /if \(!userId\) return json\(\{ error: \{ code: "authentication_failure"/);
   assert.match(edgeSource, /context\.supabaseAdmin/);
   assert.match(orchestrationSource, /includeLegacyHistoryEvidence: false/);
