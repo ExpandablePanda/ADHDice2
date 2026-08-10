@@ -1,12 +1,38 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import type { createBrowserSupabaseClient } from "../src/lib/supabase.ts";
 import {
   calculateHealthFoodNutrition,
   getHealthFoodMeasurementOptions,
+  lookupOpenFoodFactsByBarcode,
   normalizeOpenFoodFactsProduct,
   normalizeUsdaFoodResult,
+  searchHealthFoods,
+  searchOpenFoodFactsFoods,
+  searchUsdaFoods,
 } from "../src/lib/health-nutrition.ts";
+
+type BrowserSupabaseClient = NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
+
+async function withTestBrowserSupabaseClient(client: unknown, callback: () => Promise<void>) {
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousClient = globalThis.__adhdiceSupabaseClient;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "sb_publishable_test";
+  globalThis.__adhdiceSupabaseClient = client as BrowserSupabaseClient;
+
+  try {
+    await callback();
+  } finally {
+    if (previousUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    else process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousKey;
+    globalThis.__adhdiceSupabaseClient = previousClient;
+  }
+}
 
 const goldfishServing = {
   nutritionPerServing: {
@@ -245,4 +271,176 @@ test("supported measurement options always include servings and only expose the 
     servingMeasureUnit: null,
     servingUnit: "slice",
   }).map((option) => option.value), ["serving", "slice"]);
+});
+
+test("USDA search uses the Supabase Functions client and normalizes its results", async () => {
+  const invocations: Array<[string, unknown]> = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("USDA search should not fetch the function URL directly.");
+  }) as typeof fetch;
+
+  try {
+    await withTestBrowserSupabaseClient({
+      functions: {
+        invoke: async (functionName: string, options: unknown) => {
+          invocations.push([functionName, options]);
+          return {
+            data: {
+              results: [{
+                attribution: "USDA FoodData Central",
+                barcode: "012345678905",
+                brandName: "USDA Brand",
+                calories: 210.4,
+                carbs: 28.6,
+                fat: 8.2,
+                foodName: "Roasted chickpea bowl",
+                id: 98765,
+                protein: 11.4,
+                provider: "usda",
+                servingLabel: "1 bowl (240 g)",
+              }],
+            },
+            error: null,
+          };
+        },
+      },
+    }, async () => {
+      const result = await searchUsdaFoods("roasted chickpeas");
+
+      assert.deepEqual(invocations, [["health-food-search", { body: { query: "roasted chickpeas" } }]]);
+      assert.deepEqual(result, [{
+        attribution: "USDA FoodData Central",
+        barcode: "012345678905",
+        brandName: "USDA Brand",
+        calories: 210,
+        carbs: 28.6,
+        fat: 8.2,
+        foodName: "Roasted chickpea bowl",
+        protein: 11.4,
+        provider: "usda",
+        providerItemId: "98765",
+        servingLabel: "1 bowl (240 g)",
+      }]);
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("USDA search returns no results when the browser Supabase client is unavailable", async () => {
+  const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const previousKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const previousClient = globalThis.__adhdiceSupabaseClient;
+
+  try {
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    globalThis.__adhdiceSupabaseClient = null;
+    assert.deepEqual(await searchUsdaFoods("chickpeas"), []);
+  } finally {
+    if (previousUrl === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+    if (previousKey === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    else process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousKey;
+    globalThis.__adhdiceSupabaseClient = previousClient;
+  }
+});
+
+test("USDA invocation errors preserve the Open Food Facts fallback", async () => {
+  const previousFetch = globalThis.fetch;
+  let openFoodFactsUrl = "";
+  globalThis.fetch = (async (input) => {
+    openFoodFactsUrl = String(input);
+    return {
+      ok: true,
+      json: async () => ({
+        products: [{
+          _id: "off-123",
+          brands: "Fallback Foods",
+          code: "001122334455",
+          nutriments: { "energy-kcal_serving": 180 },
+          product_name: "Fallback Tofu",
+          serving_size: "1 block",
+        }],
+      }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    await withTestBrowserSupabaseClient({
+      functions: {
+        invoke: async () => ({ data: null, error: new Error("USDA unavailable") }),
+      },
+    }, async () => {
+      const result = await searchHealthFoods("tofu");
+
+      assert.equal(result[0]?.provider, "open_food_facts");
+      assert.equal(result[0]?.foodName, "Fallback Tofu");
+      assert.match(openFoodFactsUrl, /world\.openfoodfacts\.org\/cgi\/search\.pl/);
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("direct Open Food Facts search still returns normalized products", async () => {
+  const previousFetch = globalThis.fetch;
+  let requestUrl = "";
+  globalThis.fetch = (async (input) => {
+    requestUrl = String(input);
+    return {
+      ok: true,
+      json: async () => ({
+        products: [{
+          _id: "off-granola",
+          brands: "Breakfast Co.",
+          code: "009988776655",
+          nutriments: { "energy-kcal_serving": 320 },
+          product_name: "Maple Granola",
+        }],
+      }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const result = await searchOpenFoodFactsFoods("granola");
+
+    assert.match(requestUrl, /search_terms=granola/);
+    assert.equal(result[0]?.provider, "open_food_facts");
+    assert.equal(result[0]?.foodName, "Maple Granola");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("Open Food Facts barcode lookup still returns the normalized product", async () => {
+  const previousFetch = globalThis.fetch;
+  let requestUrl = "";
+  globalThis.fetch = (async (input) => {
+    requestUrl = String(input);
+    return {
+      ok: true,
+      json: async () => ({
+        product: {
+          _id: "off-barcode",
+          brands: "Barcode Foods",
+          code: "012345678905",
+          nutriments: { "energy-kcal_serving": 95 },
+          product_name: "Barcode Snack",
+        },
+        status: 1,
+      }),
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    const result = await lookupOpenFoodFactsByBarcode("0123-4567-8905");
+
+    assert.match(requestUrl, /api\/v2\/product\/012345678905\.json$/);
+    assert.equal(result?.provider, "open_food_facts");
+    assert.equal(result?.barcode, "012345678905");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
