@@ -1,4 +1,16 @@
 import type { PersistedRecordCurrent, PersistedRecordEvent } from "@/lib/records/types";
+import type {
+  CanonicalTaskCalendarOverride,
+  CanonicalTaskCommandOperation,
+  CanonicalTaskHistoryFact,
+  CanonicalTaskOccurrence,
+  CanonicalTaskOccurrenceEffectiveOverride,
+  CanonicalTaskRewardClaimConsumption,
+  CanonicalTaskRewardEntitlement,
+  CanonicalTaskRewardGrant,
+  CanonicalTaskScheduleBoundary,
+  CanonicalTaskStateColumns,
+} from "@/lib/task-state-canonical/types";
 
 export type RecordReconcileRun = {
   id: string;
@@ -2089,7 +2101,7 @@ export type Database = {
   public: {
     Tables: {
       adhdice_clean_tasks: {
-        Row: Task;
+        Row: Task & CanonicalTaskStateColumns;
         Insert: TaskInsert;
         Update: TaskUpdate;
         Relationships: [];
@@ -2110,6 +2122,60 @@ export type Database = {
         Row: TaskHistory;
         Insert: TaskHistoryInsert;
         Update: TaskHistoryUpdate;
+        Relationships: [];
+      };
+      adhdice_task_command_operations: {
+        Row: CanonicalTaskCommandOperation;
+        Insert: Partial<CanonicalTaskCommandOperation>;
+        Update: Partial<CanonicalTaskCommandOperation>;
+        Relationships: [];
+      };
+      adhdice_task_schedule_boundaries: {
+        Row: CanonicalTaskScheduleBoundary;
+        Insert: Partial<CanonicalTaskScheduleBoundary>;
+        Update: Partial<CanonicalTaskScheduleBoundary>;
+        Relationships: [];
+      };
+      adhdice_task_occurrences: {
+        Row: CanonicalTaskOccurrence;
+        Insert: Partial<CanonicalTaskOccurrence>;
+        Update: Partial<CanonicalTaskOccurrence>;
+        Relationships: [];
+      };
+      adhdice_task_occurrence_effective_overrides: {
+        Row: CanonicalTaskOccurrenceEffectiveOverride;
+        Insert: Partial<CanonicalTaskOccurrenceEffectiveOverride>;
+        Update: Partial<CanonicalTaskOccurrenceEffectiveOverride>;
+        Relationships: [];
+      };
+      adhdice_task_history_facts: {
+        Row: CanonicalTaskHistoryFact;
+        Insert: Partial<CanonicalTaskHistoryFact>;
+        Update: Partial<CanonicalTaskHistoryFact>;
+        Relationships: [];
+      };
+      adhdice_task_calendar_overrides: {
+        Row: CanonicalTaskCalendarOverride;
+        Insert: Partial<CanonicalTaskCalendarOverride>;
+        Update: Partial<CanonicalTaskCalendarOverride>;
+        Relationships: [];
+      };
+      adhdice_task_reward_entitlements: {
+        Row: CanonicalTaskRewardEntitlement;
+        Insert: Partial<CanonicalTaskRewardEntitlement>;
+        Update: Partial<CanonicalTaskRewardEntitlement>;
+        Relationships: [];
+      };
+      adhdice_task_reward_grants: {
+        Row: CanonicalTaskRewardGrant;
+        Insert: Partial<CanonicalTaskRewardGrant>;
+        Update: Partial<CanonicalTaskRewardGrant>;
+        Relationships: [];
+      };
+      adhdice_task_reward_claim_consumptions: {
+        Row: CanonicalTaskRewardClaimConsumption;
+        Insert: Partial<CanonicalTaskRewardClaimConsumption>;
+        Update: Partial<CanonicalTaskRewardClaimConsumption>;
         Relationships: [];
       };
       adhdice_record_current: {

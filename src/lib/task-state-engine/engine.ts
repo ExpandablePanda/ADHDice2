@@ -425,29 +425,9 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     && task.activeStatusLogicalDate < today
     && !byDate.has(task.activeStatusLogicalDate);
   if (staleInProgress) {
-    const date = task.activeStatusLogicalDate as string;
-    const row: TaskStateHistoryRow = {
-      id: historyIdentity(task.id, date, "did_my_best", "rollover"),
-      taskId: task.id,
-      logicalDate: date,
-      outcome: "did_my_best",
-      provenance: "rollover",
-      occurredAt: nowIso,
-      occurrenceIdentity: task.activeOccurrenceDueOn
-        ? occurrenceIdentity(task.id, task.activeOccurrenceDueOn)
-        : null,
-      occurrenceDueOn: task.activeOccurrenceDueOn,
-      countedAsDueOccurrence: Boolean(task.activeOccurrenceDueOn),
-      wasCompleted: true,
-      eventType: "status",
-    };
-    byDate.set(date, row);
-    rows.push(row);
-    changes.push({ type: "insert", row });
-    const result = recurrenceAfterSuccess(task.recurrence, nextDue, date, consumed);
-    recurrenceAnchor = result.anchor;
-    nextDue = result.nextDue;
-    satisfied = result.satisfied;
+    // Workflow state is independent from terminal/container state and has no
+    // implicit outcome. Rollover only clears the stale workflow projection;
+    // an explicit user command owns any Done or Did My Best History fact.
   }
 
   if (action?.outcome === "delayed" && !errors.length) {
@@ -467,32 +447,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const overdueAnchor = !activeMissedOccurrence
     && task.lifecycle === "active" && !completed && !oneOffHandled && !unscheduled && nextDue && nextDue < today ? nextDue : null;
   if (overdueAnchor) {
-    const continuousStart = latestHandledRow && latestHandledRow.logicalDate >= overdueAnchor
-      ? shiftDateKey(latestHandledRow.logicalDate, 1)
-      : overdueAnchor;
-    const from = input.action?.type === "recompute" && input.action.fromLogicalDate > continuousStart
-      ? input.action.fromLogicalDate
-      : continuousStart;
-    for (const date of dateRange(from, shiftDateKey(today, -1))) {
-      if (byDate.has(date)) continue;
-      const row: TaskStateHistoryRow = {
-        id: historyIdentity(task.id, date, "missed", "rollover"),
-        taskId: task.id,
-        logicalDate: date,
-        outcome: "missed",
-        provenance: "rollover",
-        occurredAt: nowIso,
-        occurrenceIdentity: occurrenceIdentity(task.id, overdueAnchor),
-        occurrenceDueOn: overdueAnchor,
-        // Automatic continuous-overdue rows are evidence of a missed logical
-        // day, not a second counted due-occurrence charge.
-        countedAsDueOccurrence: false,
-        wasCompleted: false,
-        eventType: "status",
-      };
-      byDate.set(date, row);
-      changes.push({ type: "insert", row });
-    }
+    // Calculated Missed is a read/effective-timeline fact. It must not be
+    // materialized as ordinary History during rollover or recompute.
   }
 
   const currentRow = byDate.get(today) ?? null;
@@ -598,7 +554,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     .findLast((row) => SUCCESS.has(row.outcome))
     ?? currentRow;
   const unscheduledInactive = task.lifecycle === "active" && unscheduled && !currentRow && !staleInProgress;
-  const generatedMissed = changes.some((change) => change.type === "insert" && change.row.outcome === "missed");
+  const calculatedMissed = Boolean(overdueAnchor);
 
   return {
     logicalDate: today,
@@ -625,7 +581,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     proposedHistoryChanges: changes,
     proposedTaskPatch: patch,
     streakDisposition: streakFor(
-      currentOutcome ?? (staleInProgress ? "did_my_best" : generatedMissed ? "missed" : null),
+      currentOutcome ?? (calculatedMissed ? "missed" : null),
       unscheduledInactive,
     ),
     rewardEligibility: rewardFor(task.id, rewardRow ?? null),

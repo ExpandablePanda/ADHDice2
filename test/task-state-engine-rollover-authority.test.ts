@@ -22,20 +22,20 @@ test("rollover planner observes the 6 AM boundary and creates no needless plan",
   const after = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T10:01:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
   assert.equal(before.logicalDate, "2026-07-30");
   assert.equal(after.logicalDate, "2026-07-31");
-  assert.equal(after.tasks[0]?.history[0]?.outcome, "missed");
+  assert.deepEqual(after.tasks[0]?.history, []);
   assert.equal(engineRolloverPlanHasMutations(createEngineRolloverPlan({ ...context, history: [history("missed", "2026-07-30")], now: "2026-07-31T10:01:00.000Z", tasks: [task({ due_on: "2026-07-30", status: "missed" })] })), false);
 });
 
-test("custom timezone and stale In Progress produce one supported Did My Best plan", () => {
+test("custom timezone and stale In Progress clear workflow without Did My Best", () => {
   const plan = createEngineRolloverPlan({ rolloverTime: "04:30", timezone: "America/Los_Angeles", history: [], now: "2026-11-01T12:31:00.000Z",
     tasks: [task({ status: "in_progress", active_status_logical_date: "2026-10-31", active_occurrence_due_on: "2026-10-31" })] });
   assert.equal(plan.logicalDate, "2026-11-01");
-  assert.equal(plan.tasks[0]?.history[0]?.outcome, "did_my_best");
+  assert.deepEqual(plan.tasks[0]?.history, []);
   assert.equal(Object.hasOwn(plan.tasks[0]?.patch ?? {}, "recurrenceCursor"), false);
   assert.equal(Object.hasOwn(plan.tasks[0]?.patch ?? {}, "satisfiedOccurrenceIdentity"), false);
 });
 
-test("stale unscheduled In Progress writes Did My Best and restores persisted Pending", () => {
+test("stale unscheduled In Progress clears workflow and restores persisted Pending", () => {
   const plan = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [task({
     active_occurrence_due_on: null,
     active_status_logical_date: "2026-07-30",
@@ -43,7 +43,7 @@ test("stale unscheduled In Progress writes Did My Best and restores persisted Pe
     repeat_frequency: "none",
     status: "in_progress",
   })] });
-  assert.deepEqual(plan.tasks[0]?.history.map((row) => row.outcome), ["did_my_best"]);
+  assert.deepEqual(plan.tasks[0]?.history, []);
   assert.equal(plan.tasks[0]?.patch.status, "pending");
   assert.equal(JSON.stringify(plan).includes('"status":"unscheduled"'), false);
 });
@@ -56,18 +56,18 @@ test("explicit handled History and unscheduled tasks prevent automatic Missed", 
   assert.equal(unscheduled.tasks.length, 0);
 });
 
-test("successful rollover replay against reloaded persisted data has no writes or rewards", () => {
+test("calculated overdue rollover persists no History and remains replay-safe", () => {
   const original = task({ due_on: "2026-07-30", status: "pending" });
   const first = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [original] });
   assert.equal(first.tasks.filter((entry) => Object.keys(entry.patch).length > 0).length, 1);
-  assert.deepEqual(first.tasks.flatMap((entry) => entry.history.map((row) => row.outcome)), ["missed"]);
+  assert.deepEqual(first.tasks.flatMap((entry) => entry.history.map((row) => row.outcome)), []);
 
   const persisted = task({
     ...original,
     revision: 2,
     status: first.tasks[0]?.patch.status ?? original.status,
   });
-  const persistedHistory = first.tasks[0]?.history.map((row) => history(row.outcome, row.logicalDate)) ?? [];
+  const persistedHistory = [];
   const replay = createEngineRolloverPlan({ ...context, history: persistedHistory, now: "2026-07-31T12:00:00.000Z", tasks: [persisted] });
   assert.equal(replay.tasks.filter((entry) => Object.keys(entry.patch).length > 0).length, 0);
   assert.equal(replay.tasks.reduce((count, entry) => count + entry.history.length, 0), 0);
@@ -176,7 +176,7 @@ test("remaining rollover patch diagnostics are bounded and contain no task conte
   assert.equal(JSON.stringify(plan.remainingPatchSummaries).includes("Private"), false);
 });
 
-test("large rollover plans retain their bounded proposed History payload", () => {
+test("large rollover plans retain no calculated History payload", () => {
   const plan = createEngineRolloverPlan({
     ...context,
     history: [],
@@ -187,7 +187,7 @@ test("large rollover plans retain their bounded proposed History payload", () =>
     })),
   });
   assert.equal(plan.tasksEvaluated, 900);
-  assert.equal(plan.tasks.reduce((count, entry) => count + entry.history.length, 0), 205);
+  assert.equal(plan.tasks.reduce((count, entry) => count + entry.history.length, 0), 0);
 });
 
 test("7.6.10 rollover RPC stages once and uses bulk conflict-safe History/task writes", () => {

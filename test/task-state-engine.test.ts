@@ -243,14 +243,11 @@ test("Delayed resolves the occurrence through one coherent engine plan", () => {
   assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, missed.occurrenceIdentity);
 });
 
-test("open scheduled tasks roll to continuous Missed without advancing due_on", () => {
+test("open scheduled tasks derive continuous Missed without advancing due_on or writing History", () => {
   const result = evaluateTaskState(input({
     task: task({ dueOn: "2026-07-28", recurrence: { kind: "rolling", intervalDays: 5 } }),
   }));
-  assert.deepEqual(result.proposedHistoryChanges.map((change) => change.type === "insert" && [change.row.logicalDate, change.row.outcome]), [
-    ["2026-07-28", "missed"],
-    ["2026-07-29", "missed"],
-  ]);
+  assert.deepEqual(result.proposedHistoryChanges, []);
   assert.equal(result.activeStatus, "missed");
   assert.equal(result.nextDueDate, "2026-07-28");
   assert.equal(result.calendar["2026-07-30"], "open");
@@ -278,16 +275,14 @@ test("daily overdue preserves the last satisfied occurrence and proposes exactly
   assert.equal(result.nextDueDate, "2026-07-30");
   assert.equal(result.recurrenceAnchor, "2026-07-29");
   assert.equal(result.satisfiedOccurrenceIdentity, satisfiedIdentity);
-  assert.deepEqual(result.proposedHistoryChanges.map((change) => change.type === "insert"
-    ? [change.row.logicalDate, change.row.outcome]
-    : [change.logicalDate, "rejected"]), [["2026-07-30", "missed"]]);
+  assert.deepEqual(result.proposedHistoryChanges, []);
   assert.equal(result.rewardEligibility.eligible, false);
   assert.equal(Object.hasOwn(result.proposedTaskPatch, "recurrenceCursor"), false);
   assert.equal(Object.hasOwn(result.proposedTaskPatch, "satisfiedOccurrenceIdentity"), false);
   assert.equal(["archive", "trash", "archived", "trashed"].some((key) => Object.hasOwn(result.proposedTaskPatch, key)), false);
 });
 
-test("stale In Progress always rolls to Did My Best, including Unscheduled", () => {
+test("stale In Progress clears workflow state without synthesizing Did My Best", () => {
   for (const snapshot of [
     task({ activeStatus: "in_progress", activeStatusLogicalDate: "2026-07-29" }),
     task({
@@ -299,8 +294,8 @@ test("stale In Progress always rolls to Did My Best, including Unscheduled", () 
     }),
   ]) {
     const result = evaluateTaskState(input({ task: snapshot }));
-    assert.equal((result.proposedHistoryChanges[0] as { row: TaskStateHistoryRow }).row.outcome, "did_my_best");
-    assert.equal(result.rewardEligibility.eligible, true);
+    assert.deepEqual(result.proposedHistoryChanges, []);
+    assert.equal(result.rewardEligibility.eligible, false);
     assert.equal(result.proposedTaskPatch.activeStatusLogicalDate, null);
   }
 });
@@ -359,20 +354,20 @@ test("explicit Done History prevents one-off Done-to-Missed conversion and later
   assert.equal(result.continuousOverdue.active, false);
 });
 
-test("handled History starts continuous overdue after its latest authoritative occurrence", () => {
+test("handled History exposes continuous overdue without persisted calculated Missed rows", () => {
   const result = evaluateTaskState(input({
     task: task({ dueOn: "2026-07-20", recurrence: { kind: "none" } }),
     history: [history("2026-07-27", "did_my_best")],
   }));
-  assert.deepEqual(
-    result.proposedHistoryChanges.filter((change) => change.type === "insert").map((change) => change.row.logicalDate),
-    ["2026-07-28", "2026-07-29"],
-  );
+  assert.deepEqual(result.proposedHistoryChanges, []);
+  assert.equal(result.calendar["2026-07-28"], "missed");
+  assert.equal(result.calendar["2026-07-29"], "missed");
 });
 
-test("generated Missed outcomes never advance recurrence and persistence projection excludes metadata", () => {
+test("calculated Missed never advances recurrence or persists History", () => {
   const result = evaluateTaskState(input({ task: task({ dueOn: "2026-07-28" }) }));
   assert.equal(result.nextDueDate, "2026-07-28");
+  assert.deepEqual(result.proposedHistoryChanges, []);
   const projected = projectPersistableTaskStatePatch({
     status: "missed",
     dueOn: "2026-07-28",
