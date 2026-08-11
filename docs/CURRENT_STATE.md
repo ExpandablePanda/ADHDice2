@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.7.34`.
+- Current working app version: `7.7.35`.
 - Current release group: `7.7.x` Flexible Meal Logging and Editing.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -24,6 +24,25 @@ Role: active working
 - The Edge Function derives owner identity from verified Supabase Auth, reads only that user's canonical Task State and logical-day profile, invokes the existing pure TypeScript planner, and sends its serialized plan through the backend-only invoker RPC using the modern secret-key admin client.
 - Runtime provenance, command identity, entity/owner IDs, timestamps, migration fields, and the SHA-256 accepted-payload digest are established inside the trusted boundary. History/occurrence collection max revisions are not runtime fences; canonical Task `canonical_revision` remains authoritative and schedule `boundary_sequence` protection remains active.
 - This trusted boundary is ready for M3B runtime cutover. Normal production Task mutations and the active Task UI remain behind the disabled gate.
+
+### 7.7.35 M3B pre-activation reward correction behind the disabled gate
+
+- Canonical reward fulfillment is now an authored, minimal RPC contract: `adhdice_fulfill_canonical_reward_entitlement(p_entitlement_id uuid)`. The server locks the owned entitlement, validates exact canonical History provenance, derives successful-occurrence streaks and the existing dice tier, builds one-task/one-claim pending-reward payloads, and records one canonical grant, pending dice item, and award operation. Browser reward payloads, streaks, dice counts, Task arrays, claim references, and token-generating Task counts are not accepted.
+- The canonical reward client receives `reward_entitlement_id` from the committed canonical command and invokes only the entitlement ID. Transient fetch retry repeats that same deterministic entitlement identity; it does not read canonical History, recreate History, finalize legacy recurrence, or independently decide eligibility. Successful fulfillment retains the existing pending-reward refresh.
+- `blocked` entitlements fail closed. Exact provenance requires the authenticated owner, the entitlement's exact `canonical_history_id`, matching owner/entity/entity kind/logical date/outcome snapshot, a successful `Done`/`Did My Best`/`Complete` outcome, and an authenticated-owner canonical Task. Missed has no entitlement and remains reward-ineligible.
+- Reward streaks count consecutive successful logged canonical occurrences, not consecutive calendar dates. Explicit non-successful facts, including Missed, break the streak; one-time Tasks are capped at one occurrence. Existing 1/2/3/4/5/6-die tiers and the existing claim/economy pipeline are unchanged.
+- Rewarded Calendar clear remains a temporary initial-activation limitation: if an explicit canonical Calendar fact is already linked to a reward entitlement, clear fails closed with a useful provenance-preservation error and never falls back to legacy History. No tombstone/void system is included here; this single correction path is not an initial activation blocker.
+- `TASK_STATE_CANONICAL_COMMANDS_ENABLED` remains `false`.
+
+#### M3B backend deployment parity checklist (source-only; not executed here)
+
+- [ ] Install the reviewed `supabase/add_task_state_command_rpc.sql` source, including the canonical clear-outcome reward-provenance fence.
+- [ ] Install the reviewed `supabase/add_canonical_reward_entitlement_bridge.sql` source, including removal of the old browser-authoritative overload and installation of `adhdice_fulfill_canonical_reward_entitlement(uuid)`.
+- [ ] Deploy the exact reviewed `task-state-command` Edge bundle. Its complete local source graph is: `supabase/functions/task-state-command/index.ts`, `supabase/functions/task-state-command/auth.ts`, `supabase/functions/task-state-command/domain.ts`, `supabase/functions/task-state-command/orchestration.ts`; `src/lib/database.types.ts`, `src/lib/records/persisted-types.ts`; `src/lib/task-state-canonical/command-service.ts`, `src/lib/task-state-canonical/digest.ts`, `src/lib/task-state-canonical/engine-input.ts`, `src/lib/task-state-canonical/read-model.ts`, `src/lib/task-state-canonical/types.ts`; and `src/lib/task-state-engine/calendar.ts`, `src/lib/task-state-engine/engine.ts`, `src/lib/task-state-engine/legacy-adapter.ts`, `src/lib/task-state-engine/recurrence.ts`, `src/lib/task-state-engine/types.ts`. This is the full graph required by the packaging contract; changed canonical planner/domain/read-model/engine source must not be omitted from the bundle.
+- [ ] Verify RPC signatures and privileges: authenticated can execute the minimal fulfillment RPC and the trusted command RPC remains service-role-only; anon/public cannot execute either privileged function.
+- [ ] Verify deployed Edge version/source against the reviewed bundle (including the UUID auth boundary and `clear_outcome` intent support).
+- [ ] Run a controlled authenticated backend smoke test for one canonical success, exact fulfillment retry, blocked entitlement rejection, and non-owner/provenance mismatch rejection. Do not use browser-supplied reward payload fields.
+- [ ] Only after the SQL/RPC install, exact Edge deployment, privilege/signature checks, deployed-source proof, and controlled smoke test pass: enable the browser canonical gate, then perform browser QA.
 
 ### 7.7.34 M3B runtime wiring behind the disabled gate
 
