@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { Task } from "../src/lib/database.types.ts";
@@ -77,6 +78,7 @@ function useBuildUpdateAction(input: {
   currentTask: TaskStateRuntimeLocalTask;
   canonicalCommandsEnabled: boolean;
   execute?: (action: Parameters<NonNullable<Parameters<typeof useTaskUpdateAction>[0]["canonicalCommandExecutor"]>>[0], task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
+  routeTask?: Parameters<typeof useTaskUpdateAction>[0]["routeTask"];
   updateLegacy: () => Promise<{ data: Task | null; error: { message: string } | null; conflict: null; reappliedOnLatestRevision: boolean; usedActualSecondsFallback: boolean; usedEnergyFallback: boolean }>;
   setTasks: (updater: (current: Task[]) => Task[]) => void;
   setMessage: (message: { tone: "neutral" | "good" | "warn"; text: string }) => void;
@@ -90,7 +92,7 @@ function useBuildUpdateAction(input: {
     currentDayKey: "2026-08-10",
     onTasksCompleted: input.onTasksCompleted,
     reconcileOverdueTaskMisses: input.reconcileMisses,
-    routeTask: () => {},
+    routeTask: input.routeTask ?? (() => {}),
     setMessage: input.setMessage,
     setTasks: input.setTasks,
     sortTasksForUi: (tasks) => tasks,
@@ -228,6 +230,74 @@ test("gate-enabled Archive, Trash, and Restore use canonical lifecycle commands 
   }
 });
 
+test("gate-enabled Restore waits for canonical commit and routes from the returned projection", async () => {
+  const currentTask = task({ status: "trashed" });
+  const events: string[] = [];
+  let localTasks: Task[] = [currentTask];
+  let projectedTask: TaskStateRuntimeLocalTask | null = null;
+  let resolveCanonical!: (result: TaskStateRuntimeExecutionResult) => void;
+  const canonicalResponse = new Promise<TaskStateRuntimeExecutionResult>((resolve) => {
+    resolveCanonical = resolve;
+  });
+  const update = useBuildUpdateAction({
+    canonicalCommandsEnabled: true,
+    currentTask,
+    execute: async (action, taskForAction) => {
+      events.push(`execute:${action.actionType}`);
+      projectedTask = committedTask(taskForAction, "in_progress");
+      const result = await canonicalResponse;
+      events.push("canonical-committed");
+      return result;
+    },
+    onTasksCompleted: async () => {},
+    reconcileMisses: async () => true,
+    routeTask: (_taskId, bucket) => { events.push(`route:${bucket ?? "none"}`); },
+    setMessage: () => {},
+    setTasks: (updater) => { localTasks = updater(localTasks); },
+    syncHistory: async () => true,
+    updateLegacy: async () => {
+      throw new Error("Restore must not use the legacy writer when the gate is enabled.");
+    },
+  });
+
+  const pendingRestore = update.updateTask(currentTask.id, { status: "pending" });
+  await Promise.resolve();
+  assert.deepEqual(events, ["execute:restore_task"]);
+  assert.equal(localTasks[0]?.status, "trashed");
+
+  resolveCanonical(success(projectedTask!));
+  assert.equal(await pendingRestore, true);
+  assert.deepEqual(events, ["execute:restore_task", "canonical-committed", "route:inbox"]);
+  assert.equal(localTasks[0]?.status, "in_progress");
+});
+
+test("gate-enabled Restore failure leaves routing and legacy writes unchanged", async () => {
+  const currentTask = task({ status: "trashed" });
+  const routes: string[] = [];
+  let localTasks: Task[] = [currentTask];
+  let legacyWrites = 0;
+  const update = useBuildUpdateAction({
+    canonicalCommandsEnabled: true,
+    currentTask,
+    execute: async () => failure("Restore was rejected at the canonical boundary."),
+    onTasksCompleted: async () => {},
+    reconcileMisses: async () => true,
+    routeTask: (_taskId, bucket) => { routes.push(bucket ?? "none"); },
+    setMessage: () => {},
+    setTasks: (updater) => { localTasks = updater(localTasks); },
+    syncHistory: async () => true,
+    updateLegacy: async () => {
+      legacyWrites += 1;
+      return { data: null, error: null, conflict: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(currentTask.id, { status: "pending" }), false);
+  assert.deepEqual(routes, []);
+  assert.equal(legacyWrites, 0);
+  assert.deepEqual(localTasks[0], currentTask);
+});
+
 test("gate-enabled canonical failure leaves the local Task uncommitted and surfaces a warning", async () => {
   const currentTask = task();
   let localTasks: Task[] = [currentTask];
@@ -303,6 +373,43 @@ test("disabled gate preserves the existing legacy Task State path", async () => 
   assert.equal(legacyWrites, 1);
   assert.equal(historyWrites, 1);
   assert.equal(rewardCalls, 1);
+});
+
+test("disabled gate preserves the legacy Restore write and returned pending Task", async () => {
+  const currentTask = task({ status: "trashed" });
+  let localTasks: Task[] = [currentTask];
+  let legacyWrites = 0;
+  let historyWrites = 0;
+  const update = useBuildUpdateAction({
+    canonicalCommandsEnabled: false,
+    currentTask,
+    onTasksCompleted: async () => {},
+    reconcileMisses: async () => true,
+    setMessage: () => {},
+    setTasks: (updater) => { localTasks = updater(localTasks); },
+    syncHistory: async () => { historyWrites += 1; return true; },
+    updateLegacy: async () => {
+      legacyWrites += 1;
+      return { data: { ...currentTask, status: "pending" }, error: null, conflict: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(currentTask.id, { status: "pending" }), true);
+  assert.equal(legacyWrites, 1);
+  assert.equal(historyWrites, 1);
+  assert.equal(localTasks[0]?.status, "pending");
+});
+
+test("TaskApp keeps legacy Restore routing inside the disabled-gate branch", () => {
+  const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const restoreStart = source.indexOf("async function restoreTaskFromTrash");
+  const restoreEnd = source.indexOf("\n  async function confirmMilestoneLifecycle", restoreStart);
+  assert.ok(restoreStart >= 0);
+  assert.ok(restoreEnd > restoreStart);
+  const restoreSource = source.slice(restoreStart, restoreEnd);
+
+  assert.match(restoreSource, /if \(!TASK_STATE_CANONICAL_COMMANDS_ENABLED\) \{\s*optimisticallyRestoreTaskToInbox\(taskId\);\s*routeTask\(taskId, "inbox"\);\s*\}/);
+  assert.equal([...restoreSource.matchAll(/routeTask\(taskId, "inbox"\)/g)].length, 1);
 });
 
 test("disabled gate preserves the legacy Archive path", async () => {

@@ -578,7 +578,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.31";
+const APP_VERSION = "7.7.32";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -6009,8 +6009,8 @@ export function TaskApp() {
     }
     if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
       optimisticallyRestoreTaskToInbox(taskId);
+      routeTask(taskId, "inbox");
     }
-    routeTask(taskId, "inbox");
     if (milestone) {
       const operationKey = `restore:${milestone.id}`;
       const operationId = milestoneOperationIdsRef.current.get(operationKey) ?? createBrowserUuidV4();
