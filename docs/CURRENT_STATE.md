@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-06
+Last reviewed: 2026-08-10
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.7.27`.
+- Current working app version: `7.7.33`.
 - Current release group: `7.7.x` Flexible Meal Logging and Editing.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -25,12 +25,13 @@ Role: active working
 - Runtime provenance, command identity, entity/owner IDs, timestamps, migration fields, and the SHA-256 accepted-payload digest are established inside the trusted boundary. History/occurrence collection max revisions are not runtime fences; canonical Task `canonical_revision` remains authoritative and schedule `boundary_sequence` protection remains active.
 - This trusted boundary is required before M3B runtime cutover. Normal production Task mutations and the active Task UI have not been cut over.
 
-### 7.7.29 M3B runtime state-action coordinator
+### 7.7.33 M3B runtime wiring behind the disabled gate
 
 - `src/lib/task-state-runtime-actions.ts` is the classification boundary for the next runtime cutover. It explicitly separates metadata-only fields (`title`, `notes`, priority/energy/presentation fields, links, tags, focus/editor metadata, and pin/sort fields) from Task State-owned fields (`status`, schedule/repeat fields, active-status projections, `completed_at`, `trashed_at`, and hierarchy parent changes).
-- Canonical descriptors cover workflow start/clear, Done/Did My Best/Missed, permanent Complete, Archive/Trash/Restore, and due-date/repeat changes. Supplied Calendar/rollover intents are also accepted for later wiring. Canonical actions require `task.canonical_revision`; legacy `task.revision` is never substituted. Replay identity is caller-owned and preserved, with secure UUID generation available for a new logical action. No descriptor authorizes a legacy Task State fallback.
-- Current runtime mutation inventory for the later cutover: `TaskApp.updateTaskStatus`/`runTaskStatusMutation` for Table/List status actions; `requestTaskComplete`; `delayTaskToDate`/`delaySameTableTask`; direct schedule/repeat callbacks from the shared inspector and List/Table adapters; `useTaskUpdateAction` for generic edits; `useTaskBatchEditAction` for batch status/schedule edits; `useTaskHistoryActions` for History/Calendar corrections; the `TaskApp` rollover trigger through `taskRolloverCoordinator`; `useTaskSubtaskActions` for Step/Substep status writes; `useTaskCrudActions` and the compatibility `task-app-classic.tsx` path for lifecycle writes. `useTaskPriorityRoutingController` and `useTaskRewardController` also contain direct compatibility status mutations.
-- Existing UI still writes through the legacy path in this release. `TaskEditorModal` exposes `Pending`, `Upcoming`, and `Not Due` as editable status options, and those values flow through `handleTaskEditorSave`/`useTaskUpdateAction`; they are derived statuses and the coordinator stops them as unsupported rather than inventing canonical commands. No normal UI surface invokes `invokeTaskStateCommand()` yet.
+- Runtime coordinator/executor wiring now covers workflow, lifecycle, Done/Did My Best/Missed, permanent Complete, due-date/repeat edits, supported History/Calendar outcome corrections, rollover/reconciliation, and supported batch actions while the gate remains off. Canonical responses reconcile the local Task from `canonical_task_patch`, `compatibility_projection`, and `next_revision`; History refreshes are read-only and never recreate legacy facts.
+- Remaining-writer audit classification: `CANONICAL` = coordinator-routed lifecycle/outcome/schedule/History-calendar/rollover/batch paths; `METADATA_ONLY` = title, notes, priority, energy, links, tags, focus, pin, and sort persistence; `BLOCKED_WHEN_CANONICAL_ENABLED` = Delay without trusted occurrence identity, unsupported derived/Calendar states, incompatible Step/Substep status writes, Milestone Task State actions, and classic/demo Task State writes. No unidentified normal Task State writer remains in the audited runtime inventory.
+- Activation blockers: the pending-dice reward bridge cannot yet consume canonical reward-entitlement identity, so canonical eligible outcomes fail closed before legacy reward processing; current and historical Delay lack a trusted canonical occurrence identity; History Calendar clear/delayed actions have no approved command path; editor schedule changes are limited to pure canonical schedule edits; Step/Substep and Milestone state models remain incompatible. The canonical backend/RPC remains undeployed and browser/live validation is intentionally unrun.
+- `TASK_STATE_CANONICAL_COMMANDS_ENABLED` remains `false`. Normal production behavior therefore remains on the legacy path until the trusted backend, reward bridge, blockers, and browser QA are separately reviewed.
 
 ### Task State Engine
 

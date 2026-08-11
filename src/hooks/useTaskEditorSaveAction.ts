@@ -12,7 +12,7 @@ import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
-import { isTaskStateRuntimeLifecycleTransition } from "@/lib/task-state-runtime-actions";
+import { isTaskStateRuntimeLifecycleTransition, TASK_METADATA_UPDATE_FIELDS, TASK_STATE_OWNED_UPDATE_FIELDS } from "@/lib/task-state-runtime-actions";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
@@ -37,6 +37,7 @@ type InsertTaskRowResult = {
 type UseTaskEditorSaveActionOptions = {
   /** Test-only override; production defaults to the disabled migration gate. */
   canonicalCommandsEnabled?: boolean;
+  canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate) => Promise<boolean>;
   currentDayKey: string;
   dayStartTime: string;
   focusedTaskIds: string[];
@@ -63,6 +64,7 @@ type UseTaskEditorSaveActionOptions = {
 
 export function useTaskEditorSaveAction({
   canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
+  canonicalTaskStateUpdate,
   currentDayKey,
   dayStartTime = "00:00",
   focusedTaskIds,
@@ -115,8 +117,52 @@ export function useTaskEditorSaveAction({
         return null;
       }
       const scheduleChanged = Boolean(previousTask && hasTaskScheduleChange(previousTask, normalizedUpdateValues));
+      const changedStateFields = (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[]).filter((field) => {
+        const nextValue = normalizedUpdateValues[field as keyof TaskUpdate];
+        const previousValue = previousTask?.[field as keyof Task];
+        return nextValue !== undefined && nextValue !== previousValue;
+      });
+      if (canonicalCommandsEnabled && changedStateFields.length > 0 && !scheduleChanged) {
+        setMessage({ tone: "warn", text: "Canonical Task State editor actions must use the Task action coordinator; no legacy editor state fallback was used." });
+        return null;
+      }
       const scheduleOnlyEdit = scheduleChanged && !statusChanged;
       const scheduleIntentValues = scheduleOnlyEdit ? stripStatusFromScheduleIntent(normalizedUpdateValues) : normalizedUpdateValues;
+      if (canonicalCommandsEnabled && scheduleChanged) {
+        const changedScheduleValues = Object.fromEntries(
+          (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[])
+            .filter((field) => field !== "status" && field !== "completed_at" && field !== "trashed_at" && field !== "parent_task_id")
+            .filter((field) => {
+              const nextValue = normalizedUpdateValues[field as keyof TaskUpdate];
+              const previousValue = previousTask?.[field as keyof Task];
+              return nextValue !== undefined && nextValue !== previousValue;
+            })
+            .map((field) => [field, normalizedUpdateValues[field as keyof TaskUpdate]]),
+        ) as TaskUpdate;
+        const changedMetadata = (TASK_METADATA_UPDATE_FIELDS as readonly string[]).some((field) => {
+          const nextValue = normalizedUpdateValues[field as keyof TaskUpdate];
+          const previousValue = previousTask?.[field as keyof Task];
+          return nextValue !== undefined && nextValue !== previousValue;
+        });
+        if (!scheduleOnlyEdit || changedMetadata || !canonicalTaskStateUpdate || Object.keys(changedScheduleValues).length === 0) {
+          setMessage({ tone: "warn", text: "Canonical schedule commands cannot be combined with this editor change; no legacy schedule fallback was used." });
+          return null;
+        }
+        const canonicalSaved = await canonicalTaskStateUpdate(taskId, changedScheduleValues);
+        if (!canonicalSaved) {
+          return null;
+        }
+        const subtasksResult = await replaceTaskSubtasks(taskId, subtasks);
+        if (!subtasksResult.saved) return null;
+        const linkedNotesSaved = await syncTaskNoteLinks(taskId, linkedNoteIds);
+        if (!linkedNotesSaved) return null;
+        const nextFocusIds = focusToday
+          ? Array.from(new Set([...focusedTaskIds, taskId]))
+          : focusedTaskIds.filter((id) => id !== taskId);
+        await saveFocusSelection(nextFocusIds);
+        setMessage({ tone: "good", text: "Task schedule updated." });
+        return tasks.find((task) => task.id === taskId) ?? previousTask;
+      }
       const occurrenceSensitive = isOccurrenceSensitiveTaskMutation({
         task: previousTask,
         values: normalizedUpdateValues,

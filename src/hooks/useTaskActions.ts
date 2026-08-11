@@ -79,6 +79,7 @@ export function useTaskActions({
   });
   const editorSaveAction = useTaskEditorSaveAction({
     ...editorSave,
+    canonicalTaskStateUpdate: updateAction.updateTask,
     currentDayKey,
     replaceTaskSubtasks: subtaskActions.replaceTaskSubtasks,
     syncTaskHistoryEntry,

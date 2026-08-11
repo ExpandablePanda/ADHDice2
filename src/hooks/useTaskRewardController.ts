@@ -32,6 +32,7 @@ import {
   isMissingTaskRewardClaimsTableError,
   isMissingTaskRewardRollsTableError,
 } from "@/lib/task-db-compat";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -256,6 +257,10 @@ export function useTaskRewardController({
   }
 
   async function reconcileOverdueTaskMisses(task: Task) {
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+      setMessage({ tone: "warn", text: "Calculated Missed reconciliation is owned by the canonical rollover command; no legacy Missed History fallback was used." });
+      return false;
+    }
     const missedDates = buildOverdueTaskMissedDateKeys(task, currentDayKey);
     if (missedDates.length === 0) {
       return true;
@@ -515,6 +520,12 @@ export function useTaskRewardController({
   }
 
   async function queueTaskRewards(candidates: TaskRewardCandidate[]) {
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+      if (candidates.length > 0) {
+        setMessage({ tone: "warn", text: "Canonical reward entitlements are committed, but the pending-dice entitlement bridge is not installed; no legacy reward or recurrence fallback was used." });
+      }
+      return;
+    }
     const newlyCompleted = candidates.filter((candidate) =>
       candidate.claimRef?.subtaskId
         ? true

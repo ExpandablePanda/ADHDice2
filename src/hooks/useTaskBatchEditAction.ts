@@ -11,6 +11,13 @@ import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, isOccurrenceSensitiveTaskMutation } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, type TaskStateRuntimeAction } from "@/lib/task-state-runtime-actions";
+import {
+  executeTaskStateRuntimeAction,
+  type TaskStateRuntimeExecutionResult,
+  type TaskStateRuntimeLocalTask,
+} from "@/lib/task-state-runtime-executor";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -25,6 +32,8 @@ type UpdateTaskRowResult = {
 };
 
 type UseTaskBatchEditActionOptions = {
+  canonicalCommandsEnabled?: boolean;
+  canonicalCommandExecutor?: (action: Extract<TaskStateRuntimeAction, { kind: "canonical_action" }>, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearListTaskSelection: () => void;
   currentDayKey: string;
   dayStartTime: string;
@@ -51,6 +60,8 @@ type UseTaskBatchEditActionOptions = {
 };
 
 export function useTaskBatchEditAction({
+  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
+  canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   clearListTaskSelection,
   currentDayKey,
   dayStartTime = "00:00",
@@ -82,6 +93,7 @@ export function useTaskBatchEditAction({
 
     type BatchTaskPlan = {
       actionAuthority: ReturnType<typeof evaluateTaskActionAuthority>;
+      runtimeAction: TaskStateRuntimeAction | null;
       dueDateOnlyEdit: boolean;
       scopedHistory: TaskHistory[];
       task: Task;
@@ -166,6 +178,26 @@ export function useTaskBatchEditAction({
         values: updateValues,
       });
       let scopedHistory = taskHistory.filter((entry) => entry.task_id === task.id);
+      if (canonicalCommandsEnabled && Object.keys(updateValues).some((field) => field !== "revision" && updateValues[field as keyof TaskUpdate] !== undefined)) {
+        const runtimeAction = classifyTaskStateRuntimeAction({
+          replayIdentity: createTaskStateReplayIdentity(),
+          task: task as TaskStateRuntimeLocalTask,
+          values: updateValues,
+        });
+        if (runtimeAction.kind === "unsupported_state_mutation") {
+          setMessage({ tone: "warn", text: runtimeAction.reason });
+          return;
+        }
+        taskPlans.push({
+          actionAuthority: null,
+          dueDateOnlyEdit: false,
+          runtimeAction: runtimeAction.kind === "canonical_action" ? runtimeAction : null,
+          scopedHistory,
+          task,
+          trackedUpdateValues: updateValues,
+        });
+        continue;
+      }
       if (occurrenceSensitive && loadTaskHistoryForTasks) {
         const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
         if (!historyLoad || historyLoad.status !== "ready") {
@@ -207,10 +239,10 @@ export function useTaskBatchEditAction({
         ? { ...updateValues, ...authorityUpdate }
         : applyTaskActiveStatusTracking(task, updateValues, currentDayKey);
 
-      taskPlans.push({ actionAuthority, dueDateOnlyEdit, scopedHistory, task, trackedUpdateValues });
+      taskPlans.push({ actionAuthority, dueDateOnlyEdit, runtimeAction: null, scopedHistory, task, trackedUpdateValues });
     }
 
-    for (const { actionAuthority, dueDateOnlyEdit, scopedHistory, task, trackedUpdateValues } of taskPlans) {
+    for (const { actionAuthority, dueDateOnlyEdit, runtimeAction, scopedHistory, task, trackedUpdateValues } of taskPlans) {
       const updateValues = trackedUpdateValues;
       if (Object.keys(updateValues).length === 0) {
         successfulCount += 1;
@@ -229,6 +261,24 @@ export function useTaskBatchEditAction({
         } else if (draft.focusToday === "false") {
           nextFocusedTaskIds.delete(task.id);
         }
+        continue;
+      }
+
+      if (canonicalCommandsEnabled && runtimeAction?.kind === "canonical_action") {
+        let canonicalResult: TaskStateRuntimeExecutionResult;
+        try {
+          canonicalResult = await canonicalCommandExecutor(runtimeAction, task as TaskStateRuntimeLocalTask);
+        } catch (error) {
+          firstErrorMessage ??= error instanceof Error ? error.message : "The canonical batch command could not be invoked.";
+          continue;
+        }
+        if (!canonicalResult.success) {
+          firstErrorMessage ??= `Task "${task.title}": ${canonicalResult.error.message}`;
+          continue;
+        }
+        nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? canonicalResult.task : currentTask);
+        successfulCount += 1;
+        if (["archive_task", "trash_task", "complete_task", "set_outcome"].includes(runtimeAction.actionType)) routeTask(task.id, null);
         continue;
       }
 

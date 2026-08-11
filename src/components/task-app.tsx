@@ -224,7 +224,7 @@ import { buildTaskDurationEvidence, type TaskDurationEvidence } from "@/lib/task
 import { computeLearnedTaskDurationStatistics } from "@/lib/task-duration-statistics";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
-import { classifyTaskStateRuntimeAction, isTaskStateRuntimeLifecycleTransition } from "@/lib/task-state-runtime-actions";
+import { classifyTaskStateRuntimeAction, isTaskStateRuntimeLifecycleTransition, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
@@ -578,7 +578,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.32";
+const APP_VERSION = "7.7.33";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2362,6 +2362,23 @@ export function TaskApp() {
       logicalDayKey: rolloverSettingsKey,
       userId,
       execute: async () => {
+        if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+          const rolloverTasks = inputs.tasks.filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed");
+          let canonicalCommitted = 0;
+          let canonicalFailures = 0;
+          for (const task of rolloverTasks) {
+            const committed = await updateTask(task.id, {}, {
+              canonicalIntent: { type: "reconcile_rollover" } satisfies TaskStateRuntimeCanonicalIntent,
+              expectedTask: task,
+              replayIdentity: `rollover:${rolloverSettingsKey}:${task.id}`,
+            });
+            if (committed) canonicalCommitted += 1;
+            else canonicalFailures += 1;
+          }
+          committedTaskPatches = canonicalCommitted;
+          didMutate = canonicalCommitted > 0;
+          return { error: canonicalFailures > 0 ? { message: `${canonicalFailures} Task State rollover command${canonicalFailures === 1 ? "" : "s"} failed.` } : null };
+        }
         const rpc = client as unknown as { rpc: (fn: string, args: Record<string, unknown>) => Promise<{
           data: Array<{ changed_task_count?: number; deduplicated_outcome_count?: number; inserted_history_count?: number }> | null;
           error: { message: string } | null;
@@ -5471,6 +5488,32 @@ export function TaskApp() {
       }
     }
 
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+      if (milestoneData.milestoneByTaskId.has(task.id)) {
+        return fail("Canonical Complete is not yet wired for Milestone tasks; no legacy Task State fallback was used.");
+      }
+      const canonicalCommitted = await updateTask(task.id, { status: "complete" }, { expectedTask: task });
+      if (!canonicalCommitted) return false;
+
+      const linkedNoteIds = completeAction.linkedNoteIds ?? [];
+      const subtasks = completeAction.subtasks ?? [];
+      if (subtasks.length > 0) {
+        const subtasksResult = await replaceTaskSubtasks(task.id, subtasks);
+        if (!subtasksResult.saved) return fail("Task was completed canonically, but its Steps could not be saved.");
+      }
+      if (completeAction.source === "editor") {
+        const linkedNotesSaved = await syncTaskNoteLinks(task.id, linkedNoteIds);
+        if (!linkedNotesSaved) return fail("Task was completed canonically, but its linked notes could not be saved.");
+        closeTaskEditorWithReset();
+      }
+      routeTask(task.id, null);
+      if (focusedTaskIds.includes(task.id)) void saveFocusSelection(focusedTaskIds.filter((id) => id !== task.id));
+      setPendingCompleteAction(null);
+      clearOnTimeExecution(completeAction.onTimeOrigin);
+      setMessage({ tone: "good", text: task.parent_task_id ? `"${task.title}" marked Complete and kept with its parent.` : `"${task.title}" marked Complete and moved to Archive.` });
+      return true;
+    }
+
     if (!TASK_STATE_ENGINE_INTEGRATION_ENABLED && shouldReconcileOverdueTaskMisses(task, todayKey)) {
       const historyReconciled = await reconcileOverdueTaskMisses(task);
       if (!historyReconciled) {
@@ -5702,10 +5745,19 @@ export function TaskApp() {
 
   async function runTaskStatusMutation(task: Task, status: TaskStatus, bypassTimedCompletion = false, onTimeOrigin?: OnTimeLinkedItemOrigin) {
     const milestone = milestoneData.milestoneByTaskId.get(task.id);
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && isTaskStateRuntimeLifecycleTransition(task, status)) {
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && (isTaskStateRuntimeLifecycleTransition(task, status)
+      || status === "done"
+      || status === "did_my_best"
+      || status === "missed")) {
       if (milestone) {
-        setMessage({ tone: "warn", text: "Canonical lifecycle commands are not yet wired for Milestone tasks; no legacy lifecycle fallback was used." });
+        setMessage({ tone: "warn", text: "Canonical Task State commands are not yet wired for Milestone tasks; no legacy Task State fallback was used." });
         return false;
+      }
+      if (status === "done" || status === "did_my_best") {
+        if (!bypassTimedCompletion) {
+          const staged = await stageTimedTaskCompletion(task, { kind: "status", status }, onTimeOrigin);
+          if (staged !== "none") return false;
+        }
       }
       return await updateTask(task.id, buildTaskStatusUpdate(task, status), { expectedTask: task });
     }

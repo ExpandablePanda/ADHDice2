@@ -5,6 +5,7 @@ import { useTaskHistoryActions } from "../src/hooks/useTaskHistoryActions.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { TaskHistory, TaskHistoryInsert, TaskUpdate } from "../src/lib/database.types.ts";
 import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+import type { TaskStateRuntimeExecutionResult, TaskStateRuntimeLocalTask } from "../src/lib/task-state-runtime-executor.ts";
 
 test("task history batch action upserts selected dates together and merges local history", async () => {
   let capturedPayloads: TaskHistoryInsert[] = [];
@@ -70,6 +71,77 @@ test("task history batch action upserts selected dates together and merges local
   assert.equal(saved, true);
   assert.deepEqual(capturedPayloads.map((payload) => payload.entry_date), ["2026-06-18", "2026-06-19"]);
   assert.deepEqual(localHistory.map((entry) => entry.entry_date).sort(), ["2026-06-18", "2026-06-19"]);
+});
+
+test("canonical History Calendar outcome uses set_outcome and never writes legacy History", async () => {
+  const task = {
+    ...createTask({ id: "canonical-calendar", status: "pending", title: "Canonical Calendar", sort_order: 1 }),
+    canonical_revision: 4,
+    canonicalization_status: "canonical_proven" as const,
+    entity_kind: "parent" as const,
+  } satisfies TaskStateRuntimeLocalTask;
+  const existing: TaskHistory = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-08-09T09:00:00.000Z",
+    entry_date: "2026-08-09",
+    event_type: "status",
+    id: "canonical-history",
+    occurrence_due_on: "2026-08-09",
+    occurrence_key: "occurrence:2026-08-09",
+    status: "missed",
+    task_id: task.id,
+    updated_at: "2026-08-09T09:00:00.000Z",
+    user_id: "user-1",
+    was_completed: false,
+  };
+  let fromCalls = 0;
+  let actionType = "";
+  let localTask: TaskStateRuntimeLocalTask = task;
+  const actions = useTaskHistoryActions({
+    canonicalCommandsEnabled: true,
+    canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => {
+      actionType = action.actionType;
+      return {
+        success: true,
+        task: { ...currentTask, status: "done", canonical_revision: 5 },
+        response: {
+          success: true,
+          state: "committed",
+          task_id: currentTask.id,
+          command_id: "command-calendar",
+          expected_revision: 4,
+          next_revision: 5,
+          was_replayed: false,
+          conflict_code: null,
+          canonical_task_patch: {},
+          compatibility_projection: {},
+          side_effect_ids: {},
+          error: null,
+        },
+      };
+    },
+    client: { from: () => { fromCalls += 1; throw new Error("legacy History write"); } } as never,
+    currentDayKey: "2026-08-10",
+    currentUserId: "user-1",
+    dayStartTime: "06:00",
+    isTaskCompletedForHistory: (status) => status === "done" || status === "did_my_best" || status === "complete",
+    isTaskHistoryStatus: (status) => status === "done" || status === "did_my_best" || status === "missed" || status === "complete",
+    mapTaskHistoryRow: (row) => row,
+    now: new Date("2026-08-10T12:00:00.000Z"),
+    setMessage: () => {},
+    setTaskHistory: () => {},
+    setTasks: (updater) => { localTask = (typeof updater === "function" ? updater([localTask]) : updater)[0] as TaskStateRuntimeLocalTask; },
+    sortTasksForUi: (tasks) => tasks,
+    taskHistory: [existing],
+    tasks: [task],
+    timezone: "UTC",
+    updateTaskRowWithLegacyEnergyFallback: async () => { throw new Error("legacy Task write"); },
+  });
+
+  assert.equal(await actions.syncTaskHistoryEntries(task.id, "done", [existing.entry_date], { historicalOverride: true }), true);
+  assert.equal(actionType, "set_outcome");
+  assert.equal(fromCalls, 0);
+  assert.equal(localTask.status, "done");
 });
 
 for (const [previousStatus, nextStatus] of [

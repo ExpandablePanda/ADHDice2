@@ -350,6 +350,120 @@ test("gate-enabled lifecycle failure never falls back to a legacy lifecycle writ
   assert.match(warning, /rejected/);
 });
 
+for (const [status, actionType] of [
+  ["done", "set_outcome"],
+  ["did_my_best", "set_outcome"],
+  ["missed", "set_outcome"],
+  ["complete", "complete_task"],
+] as const) {
+  test(`gate-enabled ${status} uses the canonical command without legacy History, reward, or recurrence work`, async () => {
+    const currentTask = task();
+    let receivedActionType: string | null = null;
+    let legacyWrites = 0;
+    let historyWrites = 0;
+    let rewardCalls = 0;
+    let overdueCalls = 0;
+    const update = useBuildUpdateAction({
+      canonicalCommandsEnabled: true,
+      currentTask,
+      execute: async (action, taskForAction) => {
+        receivedActionType = action.actionType;
+        return success(committedTask(taskForAction, status));
+      },
+      onTasksCompleted: async () => { rewardCalls += 1; },
+      reconcileMisses: async () => { overdueCalls += 1; return true; },
+      setMessage: () => {},
+      setTasks: () => {},
+      syncHistory: async () => { historyWrites += 1; return true; },
+      updateLegacy: async () => {
+        legacyWrites += 1;
+        return { data: null, error: null, conflict: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+      },
+    });
+
+    assert.equal(await update.updateTask(currentTask.id, { status }), true);
+    assert.equal(receivedActionType, actionType);
+    assert.equal(legacyWrites, 0);
+    assert.equal(historyWrites, 0);
+    assert.equal(rewardCalls, 0);
+    assert.equal(overdueCalls, 0);
+  });
+}
+
+test("gate-enabled due-date and repeat edits use canonical schedule commands and fail closed on invocation failure", async () => {
+  const currentTask = task({ due_on: "2026-08-10", repeat_frequency: "daily", repeat_interval: 1 });
+  const actionTypes: string[] = [];
+  let legacyWrites = 0;
+  const update = useBuildUpdateAction({
+    canonicalCommandsEnabled: true,
+    currentTask,
+    execute: async (action, taskForAction) => {
+      actionTypes.push(action.actionType);
+      return action.actionType === "set_repeat"
+        ? failure("The repeat command was rejected.")
+        : success({ ...taskForAction, due_on: "2026-08-12", canonical_revision: 5 });
+    },
+    onTasksCompleted: async () => {},
+    reconcileMisses: async () => true,
+    setMessage: () => {},
+    setTasks: () => {},
+    syncHistory: async () => true,
+    updateLegacy: async () => {
+      legacyWrites += 1;
+      return { data: null, error: null, conflict: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(currentTask.id, { due_on: "2026-08-12" }), true);
+  assert.equal(await update.updateTask(currentTask.id, { repeat_frequency: "weekly", repeat_interval: 1 }), false);
+  assert.deepEqual(actionTypes, ["set_due_date", "set_repeat"]);
+  assert.equal(legacyWrites, 0);
+});
+
+test("gate-enabled canonical rollover intent uses the per-Task command path", async () => {
+  const currentTask = task();
+  let receivedActionType = "";
+  let legacyWrites = 0;
+  const update = useBuildUpdateAction({
+    canonicalCommandsEnabled: true,
+    currentTask,
+    execute: async (action, taskForAction) => {
+      receivedActionType = action.actionType;
+      return success(taskForAction);
+    },
+    onTasksCompleted: async () => {},
+    reconcileMisses: async () => true,
+    setMessage: () => {},
+    setTasks: () => {},
+    syncHistory: async () => true,
+    updateLegacy: async () => {
+      legacyWrites += 1;
+      return { data: null, error: null, conflict: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(currentTask.id, {}, {
+    canonicalIntent: { type: "reconcile_rollover" },
+    replayIdentity: "rollover:task-1:2026-08-10",
+  }), true);
+  assert.equal(receivedActionType, "reconcile_rollover");
+  assert.equal(legacyWrites, 0);
+});
+
+test("canonical gate remains disabled and source contains no legacy reward or Missed fallback branch for canonical mode", () => {
+  const gate = readFileSync(new URL("../src/lib/task-state-runtime-gate.ts", import.meta.url), "utf8");
+  const reward = readFileSync(new URL("../src/hooks/useTaskRewardController.ts", import.meta.url), "utf8");
+  const subtasks = readFileSync(new URL("../src/hooks/useTaskSubtaskActions.ts", import.meta.url), "utf8");
+  const editor = readFileSync(new URL("../src/hooks/useTaskEditorSaveAction.ts", import.meta.url), "utf8");
+  const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  assert.match(gate, /TASK_STATE_CANONICAL_COMMANDS_ENABLED = false/);
+  assert.match(reward, /pending-dice entitlement bridge is not installed/);
+  assert.match(reward, /Calculated Missed reconciliation is owned by the canonical rollover command/);
+  assert.match(subtasks, /Canonical Step\/Substep status commands are not yet supported/);
+  assert.match(editor, /Canonical schedule commands cannot be combined/);
+  assert.match(taskApp, /canonicalIntent: \{ type: "reconcile_rollover" \}/);
+});
+
 test("disabled gate preserves the existing legacy Task State path", async () => {
   const currentTask = task();
   let legacyWrites = 0;

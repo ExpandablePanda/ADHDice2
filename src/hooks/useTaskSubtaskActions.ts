@@ -5,6 +5,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { isUuid } from "@/lib/focus-utils";
 import type { Task, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskInsert, TaskSubtaskStatus } from "@/lib/database.types";
 import type { TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -12,6 +13,7 @@ type Message = {
 };
 
 type UseTaskSubtaskActionsOptions = {
+  canonicalCommandsEnabled?: boolean;
   client: SupabaseClient;
   currentUserId: string;
   isMissingParentSubtaskColumnError: (message: string) => boolean;
@@ -26,6 +28,7 @@ type UseTaskSubtaskActionsOptions = {
 };
 
 export function useTaskSubtaskActions({
+  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
   client,
   currentUserId,
   isMissingParentSubtaskColumnError,
@@ -43,6 +46,10 @@ export function useTaskSubtaskActions({
   }
 
   async function replaceTaskSubtasks(taskId: string, subtasks: TaskSubtaskDraft[]) {
+    if (canonicalCommandsEnabled && (subtasks.length > 0 || taskSubtasks.some((subtask) => subtask.task_id === taskId))) {
+      setMessage({ tone: "warn", text: "Canonical Step/Substep structure commands are not yet supported; no legacy child-state fallback was used." });
+      return { saved: false, usedNestedFallback: false };
+    }
     const { error: deleteError } = await client
       .from("adhdice_task_subtasks")
       .delete()
@@ -125,6 +132,10 @@ export function useTaskSubtaskActions({
   }
 
   async function resetTaskSubtasksToPending(taskId: string) {
+    if (canonicalCommandsEnabled) {
+      setMessage({ tone: "warn", text: "Canonical Step reset is not yet supported; no legacy Step status fallback was used." });
+      return false;
+    }
     const { data, error } = await client
       .from("adhdice_task_subtasks")
       .update({ status: "pending" })
@@ -146,6 +157,10 @@ export function useTaskSubtaskActions({
   }
 
   async function updateTaskSubtaskStatus(subtaskId: string, status: TaskSubtaskStatus) {
+    if (canonicalCommandsEnabled) {
+      setMessage({ tone: "warn", text: "Canonical Step/Substep status commands are not yet supported for this child entity; no legacy status fallback was used." });
+      return false;
+    }
     const previousSubtask = taskSubtasks.find((subtask) => subtask.id === subtaskId) ?? null;
     const { data, error } = await client
       .from("adhdice_task_subtasks")
@@ -226,6 +241,10 @@ export function useTaskSubtaskActions({
   }
 
   async function deleteTaskSubtask(subtaskId: string) {
+    if (canonicalCommandsEnabled) {
+      setMessage({ tone: "warn", text: "Canonical Step/Substep structure commands are not yet supported; no legacy child-state fallback was used." });
+      return false;
+    }
     const descendantIds = collectDescendantSubtaskIds(taskSubtasks, subtaskId);
     const idsToDelete = [subtaskId, ...descendantIds];
 
@@ -246,6 +265,10 @@ export function useTaskSubtaskActions({
   }
 
   async function addTaskSubtask(taskId: string) {
+    if (canonicalCommandsEnabled) {
+      setMessage({ tone: "warn", text: "Canonical Step/Substep structure commands are not yet supported; no legacy child-state fallback was used." });
+      return null;
+    }
     const nextSortOrder = taskSubtasks
       .filter((subtask) => subtask.task_id === taskId)
       .reduce((max, subtask) => Math.max(max, subtask.sort_order), -1) + 1;
@@ -293,6 +316,10 @@ export function useTaskSubtaskActions({
   }
 
   async function addChildTaskSubtask(parentSubtaskId: string) {
+    if (canonicalCommandsEnabled) {
+      setMessage({ tone: "warn", text: "Canonical Step/Substep structure commands are not yet supported; no legacy child-state fallback was used." });
+      return null;
+    }
     const parentSubtask = taskSubtasks.find((subtask) => subtask.id === parentSubtaskId) ?? null;
     if (!parentSubtask) {
       setMessage({ tone: "warn", text: "Could not find that parent step." });

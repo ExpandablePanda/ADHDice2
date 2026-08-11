@@ -10,7 +10,7 @@ import type {
   TaskStatus,
   TaskUpdate,
 } from "@/lib/database.types";
-import { isTaskStateRuntimeLifecycleTransition } from "@/lib/task-state-runtime-actions";
+import { TASK_STATE_OWNED_UPDATE_FIELDS } from "@/lib/task-state-runtime-actions";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
@@ -199,10 +199,12 @@ export function TaskApp() {
     if (
       TASK_STATE_CANONICAL_COMMANDS_ENABLED
       && currentTask
-      && values.status !== undefined
-      && isTaskStateRuntimeLifecycleTransition(currentTask, values.status)
+      && Object.keys(values).some((field) => (
+        (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[]).includes(field)
+        && values[field as keyof TaskUpdate] !== undefined
+      ))
     ) {
-      setMessage({ tone: "warn", text: "Canonical lifecycle commands are not yet wired for the classic Task surface; no legacy lifecycle fallback was used." });
+      setMessage({ tone: "warn", text: "Canonical Task State commands are not yet wired for the classic Task surface; no legacy state fallback was used." });
       return false;
     }
     setTasks((current) =>

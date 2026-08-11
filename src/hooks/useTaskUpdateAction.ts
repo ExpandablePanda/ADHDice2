@@ -11,7 +11,7 @@ import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import { evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
-import { classifyTaskStateRuntimeAction, isTaskStateRuntimeLifecycleTransition } from "@/lib/task-state-runtime-actions";
+import { classifyTaskStateRuntimeAction, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import {
   executeTaskStateRuntimeAction,
   type TaskStateRuntimeExecutionResult,
@@ -26,6 +26,8 @@ type Message = {
 };
 
 type UpdateTaskActionOptions = {
+  canonicalIntent?: TaskStateRuntimeCanonicalIntent;
+  replayIdentity?: string;
   engineManaged?: boolean;
   expectedTask?: Task | null;
   historyEntry?: TaskHistoryInsert;
@@ -102,30 +104,27 @@ export function useTaskUpdateAction({
       && values.status !== previousTask.status,
     );
 
-    const isGatedCanonicalTransition = Boolean(
-      canonicalCommandsEnabled
-      && previousTask
-      && ((previousTask.status === "pending" && values.status === "in_progress")
-        || (previousTask.status === "in_progress" && values.status === "pending")
-        || (values.status !== undefined && isTaskStateRuntimeLifecycleTransition(previousTask, values.status))),
-    );
-    if (isGatedCanonicalTransition) {
+    const hasTaskStateOwnedValues = Object.keys(values).some((field) => (
+      (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[]).includes(field)
+      && values[field as keyof TaskUpdate] !== undefined
+    ));
+    if (canonicalCommandsEnabled && (hasTaskStateOwnedValues || options?.canonicalIntent)) {
+      if (!previousTask) {
+        clearPendingTaskMutations?.([taskId]);
+        setMessage({ tone: "warn", text: "The canonical Task State action could not find the current Task; no legacy fallback was used." });
+        return false;
+      }
       const runtimeAction = classifyTaskStateRuntimeAction({
         task: previousTask as TaskStateRuntimeLocalTask,
         values,
+        canonicalIntent: options?.canonicalIntent,
+        ...(options?.replayIdentity ? { replayIdentity: options.replayIdentity } : {}),
       });
-      if (runtimeAction.kind !== "canonical_action"
-        || ![
-          "start_in_progress",
-          "clear_in_progress",
-          "archive_task",
-          "trash_task",
-          "restore_task",
-        ].includes(runtimeAction.actionType)) {
+      if (runtimeAction.kind !== "canonical_action") {
         clearPendingTaskMutations?.([taskId]);
         setMessage({ tone: "warn", text: runtimeAction.kind === "unsupported_state_mutation"
           ? runtimeAction.reason
-          : "The canonical Task State lifecycle action could not be classified." });
+          : "The canonical Task State action could not be classified." });
         return false;
       }
 
@@ -150,6 +149,22 @@ export function useTaskUpdateAction({
         routeTask(taskId, canonicalResult.task.status === "archived" || canonicalResult.task.status === "trashed"
           ? null
           : "inbox");
+      } else if (["complete_task", "set_outcome"].includes(runtimeAction.actionType)
+        && ["complete", "done", "did_my_best", "missed"].includes(canonicalResult.task.status)) {
+        routeTask(taskId, null);
+      }
+
+      // A canonical command may commit its History fact or Calendar/schedule
+      // side effect before the browser read cache is refreshed. Refresh only
+      // the read state; never recreate a legacy History fact here.
+      if (canonicalResult.response.side_effect_ids.history_fact_id && loadTaskHistoryForTasks) {
+        const refresh = await loadTaskHistoryForTasks([taskId]);
+        const refreshed = refresh[taskId];
+        if (!refreshed || refreshed.status !== "ready") {
+          setMessage({ tone: "warn", text: refreshed?.error ?? "Task State committed, but History could not be refreshed." });
+        } else {
+          await onTaskHistoryMutation?.(taskId, refreshed.history, canonicalResult.task as Task);
+        }
       }
       return true;
     }
@@ -210,7 +225,7 @@ export function useTaskUpdateAction({
         ] as const;
         const rollbackValues = rollbackFields.reduce<TaskUpdate>((valuesToRestore, field) => {
           if (Object.prototype.hasOwnProperty.call(nextValues, field)) {
-            valuesToRestore[field] = previousTask[field];
+            valuesToRestore[field] = previousTask[field] as never;
           }
           return valuesToRestore;
         }, {});

@@ -1,7 +1,7 @@
 import type { Task, TaskUpdate } from "@/lib/database.types";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import type { CanonicalTaskStateColumns } from "@/lib/task-state-canonical/types";
-import type { TaskStateCommandIntent } from "@/lib/task-state-command-client";
+import type { TaskStateCommandIntent, TaskStateScheduleChangeIntent } from "@/lib/task-state-command-client";
 
 /**
  * TaskUpdate fields whose meaning belongs to canonical Task State. This list
@@ -75,6 +75,37 @@ export type TaskStateScheduleChanges = Readonly<Partial<Pick<
   | "repeat_monthly_ordinal"
   | "repeat_monthly_weekday"
 >>>;
+
+function canonicalScheduleModel(task: TaskRuntimeTask, values: TaskUpdate): TaskStateScheduleChangeIntent["schedule_model"] | null {
+  const repeatFrequency = values.repeat_frequency ?? task.repeat_frequency ?? "none";
+  const dueOn = Object.hasOwn(values, "due_on") ? values.due_on : task.due_on;
+  if (repeatFrequency === "none") return dueOn ? "one_time" : "unscheduled";
+  if (repeatFrequency === "daily" || repeatFrequency === "custom" || repeatFrequency === "daily_until_complete") return "rolling";
+  if (repeatFrequency === "weekly" || repeatFrequency === "monthly") return "fixed";
+  return null;
+}
+
+function canonicalScheduleIntent(task: TaskRuntimeTask, values: TaskUpdate): TaskStateScheduleChangeIntent | null {
+  const scheduleModel = canonicalScheduleModel(task, values);
+  if (!scheduleModel) return null;
+  const repeatFrequency = values.repeat_frequency ?? task.repeat_frequency ?? "none";
+  const dueOn = Object.hasOwn(values, "due_on") ? values.due_on : task.due_on;
+  const schedule: TaskStateScheduleChangeIntent = {
+    schedule_model: scheduleModel,
+    ...(repeatFrequency !== "none" ? { repeat_frequency: repeatFrequency } : { repeat_frequency: "none" }),
+    ...(values.repeat_interval !== undefined ? { repeat_interval: values.repeat_interval } : {}),
+    ...(values.repeat_days_of_week !== undefined ? { repeat_days_of_week: values.repeat_days_of_week ?? [] } : {}),
+    ...(values.repeat_day_of_month !== undefined ? { repeat_day_of_month: values.repeat_day_of_month } : {}),
+    ...(values.repeat_monthly_mode !== undefined ? { repeat_monthly_mode: values.repeat_monthly_mode } : {}),
+    ...(values.repeat_monthly_ordinal !== undefined ? { repeat_monthly_ordinal: values.repeat_monthly_ordinal } : {}),
+    ...(values.repeat_monthly_weekday !== undefined ? { repeat_monthly_weekday: values.repeat_monthly_weekday } : {}),
+    ...(values.due_time !== undefined ? { due_time: values.due_time } : {}),
+    ...(scheduleModel === "one_time" ? { one_time_due_on: dueOn ?? null } : {}),
+    ...(scheduleModel === "rolling" || scheduleModel === "fixed" ? { anchor_date: dueOn ?? null } : {}),
+  };
+  if (scheduleModel === "one_time" && !schedule.one_time_due_on) return null;
+  return schedule;
+}
 
 export type TaskStateRuntimeActionType =
   | "start_in_progress"
@@ -362,10 +393,19 @@ export function classifyTaskStateRuntimeAction(
     return unsupported(fields, stateFields, metadataFields, "Due-date and repeat/cadence changes in one TaskUpdate require an explicit canonical schedule intent.");
   }
   if (scheduleDueFields.length > 0) {
-    return canonicalAction(input.task, "set_due_date", fields, replayIdentity, undefined, Object.fromEntries(scheduleDueFields.map((field) => [field, values[field]])) as TaskStateScheduleChanges);
+    if (scheduleDueFields.includes("scheduled_on")) {
+      return unsupported(fields, stateFields, metadataFields, "The legacy scheduled_on field has no canonical schedule representation; no legacy schedule fallback is allowed.");
+    }
+    const schedule = canonicalScheduleIntent(input.task, values);
+    return schedule
+      ? canonicalAction(input.task, "set_due_date", fields, replayIdentity, { type: "set_due_date", schedule }, Object.fromEntries(scheduleDueFields.map((field) => [field, values[field]])) as TaskStateScheduleChanges)
+      : unsupported(fields, stateFields, metadataFields, "The due-date change does not contain enough canonical schedule information.");
   }
   if (scheduleRepeatFields.length > 0) {
-    return canonicalAction(input.task, "set_repeat", fields, replayIdentity, undefined, Object.fromEntries(scheduleRepeatFields.map((field) => [field, values[field]])) as TaskStateScheduleChanges);
+    const schedule = canonicalScheduleIntent(input.task, values);
+    return schedule
+      ? canonicalAction(input.task, "set_repeat", fields, replayIdentity, { type: "set_repeat", schedule }, Object.fromEntries(scheduleRepeatFields.map((field) => [field, values[field]])) as TaskStateScheduleChanges)
+      : unsupported(fields, stateFields, metadataFields, "The repeat/cadence change does not contain enough canonical schedule information.");
   }
 
   return unsupported(fields, stateFields, metadataFields, "The Task State fields do not identify one already-approved canonical action.");

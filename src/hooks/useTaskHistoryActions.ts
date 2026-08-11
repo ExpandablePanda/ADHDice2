@@ -18,6 +18,9 @@ import { calcNextDueDateFromDate as calculateNextDueDateFromDate } from "@/lib/t
 import { evaluateTaskActionAuthority } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import { classifyTaskStateRuntimeAction, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
+import { executeTaskStateRuntimeAction, type TaskStateRuntimeExecutionResult, type TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -49,6 +52,8 @@ type HistoryRemoval = {
 };
 
 type UseTaskHistoryActionsOptions = {
+  canonicalCommandsEnabled?: boolean;
+  canonicalCommandExecutor?: (action: Extract<ReturnType<typeof classifyTaskStateRuntimeAction>, { kind: "canonical_action" }>, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   calcNextDueDateFromDate?: (task: Task, referenceDateKey: string) => string | null;
   client: SupabaseClient;
   currentUserId: string;
@@ -71,6 +76,8 @@ type UseTaskHistoryActionsOptions = {
 };
 
 export function useTaskHistoryActions({
+  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
+  canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   calcNextDueDateFromDate,
   client,
   currentUserId,
@@ -465,6 +472,81 @@ export function useTaskHistoryActions({
   ) {
     const uniqueEntryDates = Array.from(new Set(entryDates)).sort();
     if (uniqueEntryDates.length === 0) {
+      return true;
+    }
+
+    const canonicalTask = tasks.find((candidate) => candidate.id === taskId) ?? null;
+    if (canonicalCommandsEnabled) {
+      if (!canonicalTask) {
+        setMessage({ tone: "warn", text: "The canonical Calendar action could not find the current Task; no legacy History fallback was used." });
+        return false;
+      }
+      if (!isTaskHistoryStatus(status)) {
+        setMessage({ tone: "warn", text: "Clearing a History entry has no supported canonical command yet; no legacy History fallback was used." });
+        return false;
+      }
+      if (status === "delayed") {
+        setMessage({ tone: "warn", text: "Historical Delay requires a canonical occurrence identity; no legacy History fallback was used." });
+        return false;
+      }
+      if (status !== "done" && status !== "did_my_best" && status !== "missed" && status !== "complete") {
+        setMessage({ tone: "warn", text: "This History status has no supported canonical command; no legacy History fallback was used." });
+        return false;
+      }
+
+      let currentTask = canonicalTask as TaskStateRuntimeLocalTask;
+      for (const entryDate of uniqueEntryDates) {
+        const existingEntry = taskHistory.find((entry) => entry.task_id === taskId && entry.entry_date === entryDate)
+          ?? options?.historySnapshot?.find((entry) => entry.task_id === taskId && entry.entry_date === entryDate)
+          ?? null;
+        const canonicalIntent: TaskStateRuntimeCanonicalIntent = status === "complete"
+          ? {
+            type: "complete_task",
+            logical_date: entryDate,
+            ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
+            ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
+          }
+          : {
+            type: "set_outcome",
+            logical_date: entryDate,
+            outcome: status,
+            ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
+            ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
+          };
+        const action = classifyTaskStateRuntimeAction({
+          canonicalIntent,
+          replayIdentity: `calendar:${taskId}:${entryDate}:${status}`,
+          task: currentTask,
+        });
+        if (action.kind !== "canonical_action") {
+          setMessage({ tone: "warn", text: action.kind === "unsupported_state_mutation" ? action.reason : "The canonical Calendar action could not be classified." });
+          return false;
+        }
+        let canonicalResult: TaskStateRuntimeExecutionResult;
+        try {
+          canonicalResult = await canonicalCommandExecutor(action, currentTask);
+        } catch (error) {
+          setMessage({ tone: "warn", text: error instanceof Error ? error.message : "The canonical Calendar command could not be invoked." });
+          return false;
+        }
+        if (!canonicalResult.success) {
+          setMessage({ tone: "warn", text: canonicalResult.error.message });
+          return false;
+        }
+        currentTask = canonicalResult.task;
+      }
+
+      setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === taskId ? currentTask : candidate)));
+      const refreshed = loadTaskHistoryForTasks ? (await loadTaskHistoryForTasks([taskId]))[taskId] : null;
+      if (refreshed?.status === "ready") {
+        setTaskHistory((current) => [
+          ...refreshed.history,
+          ...current.filter((entry) => entry.task_id !== taskId),
+        ]);
+        notifyHistoryMutation(taskId, refreshed.history);
+      } else {
+        setMessage({ tone: "warn", text: "Calendar state committed, but History could not be refreshed." });
+      }
       return true;
     }
 
