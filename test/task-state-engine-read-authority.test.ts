@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
+import type { CanonicalTaskStateColumns } from "../src/lib/task-state-canonical/types.ts";
 import { projectTasksForActiveStatusRead, resolveActiveTaskStatuses } from "../src/lib/task-state-engine/index.ts";
 
-function task(overrides: Partial<Task> = {}): Task {
+type ReadTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>;
+
+function task(overrides: Partial<ReadTask> = {}): ReadTask {
   return {
     active_occurrence_due_on: null, active_status_logical_date: null, actual_seconds: 0,
     completed_at: null, created_at: "2026-07-01T12:00:00.000Z", due_on: "2026-07-28", due_time: null,
@@ -41,4 +44,42 @@ test("stored Pending dormant tasks remain engine-derived Unscheduled on read", (
     tasks: [task({ due_on: null, repeat_frequency: "none", status: "pending" })], timezone: "America/New_York",
   });
   assert.equal(engine.statusesByTaskId["task-1"], "unscheduled");
+});
+
+test("canonical current-day In Progress workflow is visible when legacy date is null", () => {
+  const source = task({
+    active_status_logical_date: null,
+    status: "pending",
+    workflow_logical_date: "2026-08-11",
+    workflow_state: "in_progress",
+  });
+  const engine = resolveActiveTaskStatuses({
+    historyByTaskId: { [source.id]: [] },
+    logicalDayRollover: "06:00",
+    now: "2026-08-11T14:00:00.000Z",
+    tasks: [source],
+    timezone: "America/New_York",
+  });
+
+  assert.equal(engine.statusesByTaskId[source.id], "in_progress");
+  assert.equal(source.status, "pending");
+  assert.equal(source.active_status_logical_date, null);
+});
+
+test("stale canonical In Progress workflow is not visible as current In Progress", () => {
+  const source = task({
+    active_status_logical_date: null,
+    status: "pending",
+    workflow_logical_date: "2026-08-10",
+    workflow_state: "in_progress",
+  });
+  const engine = resolveActiveTaskStatuses({
+    historyByTaskId: { [source.id]: [] },
+    logicalDayRollover: "06:00",
+    now: "2026-08-11T14:00:00.000Z",
+    tasks: [source],
+    timezone: "America/New_York",
+  });
+
+  assert.notEqual(engine.statusesByTaskId[source.id], "in_progress");
 });

@@ -1,6 +1,7 @@
 import type { Task, TaskHistory, TaskStatus } from "@/lib/database.types";
 import { getTaskDisplayStatusWithHistory } from "@/lib/task-cockpit";
 import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
+import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
 import { adaptLegacyTaskState } from "./legacy-adapter.ts";
 import { evaluateTaskState } from "./engine.ts";
@@ -20,12 +21,14 @@ export type ActiveStatusReadResult = {
   statusesByTaskId: Record<string, TaskStatus>;
 };
 
+type ActiveStatusReadTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>;
+
 export function resolveActiveTaskStatuses(input: {
   enabled?: boolean;
   historyByTaskId: Record<string, TaskHistory[]>;
   logicalDayRollover: string;
   now: string | Date;
-  tasks: Task[];
+  tasks: ActiveStatusReadTask[];
   timezone: string;
 }): ActiveStatusReadResult {
   const enabled = input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED;
@@ -44,7 +47,14 @@ export function resolveActiveTaskStatuses(input: {
       statusesByTaskId[task.id] = task.status;
       continue;
     }
-    const adapted = adaptLegacyTaskState(task, normalizedHistory, {
+    const taskForRead = task.workflow_state === "in_progress" && task.workflow_logical_date
+      ? {
+        ...task,
+        status: "in_progress" as const,
+        active_status_logical_date: task.workflow_logical_date,
+      }
+      : task;
+    const adapted = adaptLegacyTaskState(taskForRead, normalizedHistory, {
       now: input.now,
       timezone: input.timezone,
       logicalDayRollover: input.logicalDayRollover,
