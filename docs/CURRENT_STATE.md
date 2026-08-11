@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.7.36`.
+- Current working app version: `7.7.37`.
 - Current release group: `7.7.x` Flexible Meal Logging and Editing.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -15,11 +15,16 @@ Role: active working
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
 
+### 7.7.37 Canonical Task State runtime activation
+
+- Canonical Task State browser commands are now enabled behind the reviewed trusted runtime boundary.
+- Browser QA is pending; visible browser behavior and live runtime parity remain unverified.
+
 ## Current Architectural Authorities
 
 ### M3A.5 Trusted Task State Command Boundary
 
-- The trusted M3A Task State backend/RPC and `task-state-command` Edge path are deployed and have been live-validated. Runtime gate activation and browser QA remain separate steps.
+- The trusted M3A Task State backend/RPC and `task-state-command` Edge path are deployed and have been live-validated. Runtime gate activation is complete; browser QA remains pending.
 - The trusted `task-state-command` Edge Function accepts authenticated intent only. Direct authenticated submission of canonical plans or privileged persistence sections is forbidden.
 - The Edge Function derives owner identity from verified Supabase Auth, reads only that user's canonical Task State and logical-day profile, invokes the existing pure TypeScript planner, and sends its serialized plan through the backend-only invoker RPC using the modern secret-key admin client.
 - Runtime provenance, command identity, entity/owner IDs, timestamps, migration fields, and the SHA-256 accepted-payload digest are established inside the trusted boundary. History/occurrence collection max revisions are not runtime fences; canonical Task `canonical_revision` remains authoritative and schedule `boundary_sequence` protection remains active.
@@ -32,7 +37,7 @@ Role: active working
 - `blocked` entitlements fail closed. Exact provenance requires the authenticated owner, the entitlement's exact `canonical_history_id`, matching owner/entity/entity kind/logical date/outcome snapshot, a successful `Done`/`Did My Best`/`Complete` outcome, and an authenticated-owner canonical Task. Missed has no entitlement and remains reward-ineligible.
 - Reward streaks count consecutive successful logged canonical occurrences, not consecutive calendar dates. Explicit non-successful facts, including Missed, break the streak; one-time Tasks are capped at one occurrence. Existing 1/2/3/4/5/6-die tiers and the existing claim/economy pipeline are unchanged.
 - Rewarded Calendar clear remains a temporary initial-activation limitation: if an explicit canonical Calendar fact is already linked to a reward entitlement, clear fails closed with a useful provenance-preservation error and never falls back to legacy History. No tombstone/void system is included here; this single correction path is not an initial activation blocker.
-- `TASK_STATE_CANONICAL_COMMANDS_ENABLED` remains `false`.
+- `TASK_STATE_CANONICAL_COMMANDS_ENABLED` is `true` as of 7.7.37; browser QA remains pending.
 
 #### M3B backend deployment parity checklist (source-only; not executed here)
 
@@ -54,7 +59,7 @@ Role: active working
 - The previously failing legacy History runtime assertion was stale: a prior-day Calendar completion advances the recurring cursor but does not rewrite the stored Missed compatibility projection. The focused test now documents that locked behavior; calculated Missed remains non-persistent.
 - Canonical Calendar replacement upserts the existing entity/logical-date fact while preserving its canonical identity. Clearing removes explicit facts and deactivates dependent Calendar/override references only when no reward entitlement references that fact; reward-linked clear fails closed because the locked entitlement-to-history foreign key cannot be safely orphaned or clawed back in this ticket.
 - 7.7.34 activation blocker: the exact unsupported action is clearing an explicit Calendar outcome after its canonical reward entitlement exists. The smallest missing capability is a reviewed canonical void/tombstone outcome (or an equivalently reviewed entitlement-provenance retention change) that preserves the referenced fact without awarding twice; this ticket deliberately does not invent or install that capability.
-- `TASK_STATE_CANONICAL_COMMANDS_ENABLED` remains `false`. Normal production behavior therefore remains on the legacy path until the reward bridge is reviewed/installed and browser QA is completed.
+- Before 7.7.37 activation, `TASK_STATE_CANONICAL_COMMANDS_ENABLED` remained `false` and normal production behavior stayed on the legacy path pending the reviewed activation boundary.
 
 ### Task State Engine
 

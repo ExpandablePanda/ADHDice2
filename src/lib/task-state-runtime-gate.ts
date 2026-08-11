@@ -1,5 +1,4 @@
 /**
- * Temporary M3B migration gate. Keep disabled until every normal Task State
- * mutation entrypoint has been covered and reviewed.
+ * M3B migration gate for the reviewed canonical Task State command boundary.
  */
-export const TASK_STATE_CANONICAL_COMMANDS_ENABLED = false;
+export const TASK_STATE_CANONICAL_COMMANDS_ENABLED = true;

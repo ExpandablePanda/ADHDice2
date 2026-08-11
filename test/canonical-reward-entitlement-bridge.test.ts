@@ -183,8 +183,8 @@ test("pending-reward refresh remains after successful canonical fulfillment", ()
   assert.match(canonicalClient, /if \(allFulfilled\) await refreshPendingRewards\(\);/);
 });
 
-test("canonical gate remains disabled", () => {
-  assert.match(gate, /TASK_STATE_CANONICAL_COMMANDS_ENABLED = false/);
+test("canonical gate is enabled", () => {
+  assert.match(gate, /TASK_STATE_CANONICAL_COMMANDS_ENABLED = true/);
 });
 
 test("backend deployment parity checklist names the exact reviewed set and ordering", () => {
