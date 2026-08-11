@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.7.35`.
+- Current working app version: `7.7.36`.
 - Current release group: `7.7.x` Flexible Meal Logging and Editing.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -25,7 +25,7 @@ Role: active working
 - Runtime provenance, command identity, entity/owner IDs, timestamps, migration fields, and the SHA-256 accepted-payload digest are established inside the trusted boundary. History/occurrence collection max revisions are not runtime fences; canonical Task `canonical_revision` remains authoritative and schedule `boundary_sequence` protection remains active.
 - This trusted boundary is ready for M3B runtime cutover. Normal production Task mutations and the active Task UI remain behind the disabled gate.
 
-### 7.7.35 M3B pre-activation reward correction behind the disabled gate
+### 7.7.36 M3B pre-activation reward correction behind the disabled gate
 
 - Canonical reward fulfillment is now an authored, minimal RPC contract: `adhdice_fulfill_canonical_reward_entitlement(p_entitlement_id uuid)`. The server locks the owned entitlement, validates exact canonical History provenance, derives successful-occurrence streaks and the existing dice tier, builds one-task/one-claim pending-reward payloads, and records one canonical grant, pending dice item, and award operation. Browser reward payloads, streaks, dice counts, Task arrays, claim references, and token-generating Task counts are not accepted.
 - The canonical reward client receives `reward_entitlement_id` from the committed canonical command and invokes only the entitlement ID. Transient fetch retry repeats that same deterministic entitlement identity; it does not read canonical History, recreate History, finalize legacy recurrence, or independently decide eligibility. Successful fulfillment retains the existing pending-reward refresh.

@@ -1,10 +1,9 @@
--- 7.7.35: trusted fulfillment bridge for canonical reward entitlements.
+-- 7.7.36: trusted fulfillment bridge for canonical reward entitlements.
 -- Review this file before installation. It is intentionally authored only;
 -- do not execute or deploy it as part of the source correction.
 
 -- The 7.7.34 overload accepted browser-derived reward authority. Remove it
 -- before installing the minimal entitlement-only contract below.
-revoke all on function public.adhdice_fulfill_canonical_reward_entitlement(uuid, integer, jsonb) from public, anon, authenticated;
 drop function if exists public.adhdice_fulfill_canonical_reward_entitlement(uuid, integer, jsonb);
 
 create or replace function public.adhdice_fulfill_canonical_reward_entitlement(

@@ -67,6 +67,20 @@ test("fulfillment RPC accepts only the entitlement ID", () => {
   assert.match(rewardSql, /grant execute on function public\.adhdice_fulfill_canonical_reward_entitlement\(uuid\)/);
 });
 
+test("obsolete overload cleanup is install-safe and the new RPC is authenticated-only", () => {
+  const obsoleteSignature = "public.adhdice_fulfill_canonical_reward_entitlement(uuid, integer, jsonb)";
+  const obsoleteDrop = `drop function if exists ${obsoleteSignature};`;
+  const obsoleteDropIndex = rewardSql.indexOf(obsoleteDrop);
+  const newFunctionIndex = rewardSql.indexOf("create or replace function public.adhdice_fulfill_canonical_reward_entitlement(");
+  assert.ok(obsoleteDropIndex >= 0 && obsoleteDropIndex < newFunctionIndex);
+  assert.doesNotMatch(rewardSql, /revoke\s+all\s+on\s+function\s+public\.adhdice_fulfill_canonical_reward_entitlement\(uuid, integer, jsonb\)/i);
+
+  const newPrivilegeBlock = rewardSql.slice(rewardSql.indexOf("revoke all on function public.adhdice_fulfill_canonical_reward_entitlement(uuid)"));
+  assert.match(newPrivilegeBlock, /revoke all on function public\.adhdice_fulfill_canonical_reward_entitlement\(uuid\) from public, anon;/);
+  assert.match(newPrivilegeBlock, /grant execute on function public\.adhdice_fulfill_canonical_reward_entitlement\(uuid\) to authenticated;/);
+  assert.doesNotMatch(newPrivilegeBlock, /grant execute on function public\.adhdice_fulfill_canonical_reward_entitlement\(uuid\) to (?:public|anon)/);
+});
+
 test("entitlement ownership is checked and locked before replay lookup", () => {
   const entitlementLock = rewardSql.indexOf("where entitlement.id = p_entitlement_id");
   const operationLookup = rewardSql.indexOf("from public.adhdice_pending_reward_dice_operations");
