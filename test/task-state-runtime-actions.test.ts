@@ -49,6 +49,11 @@ test("Archive, Trash, and Restore map to canonical lifecycle commands", () => {
   assert.equal(classify({ status: "archived" }).actionType, "archive_task");
   assert.equal(classify({ status: "trashed" }).actionType, "trash_task");
   assert.equal(classify({ status: "pending" }, { status: "trashed" }).actionType, "restore_task");
+  assert.equal(classify({ completed_at: null, status: "pending", trashed_at: null }, {
+    completed_at: null,
+    status: "trashed",
+    trashed_at: "2026-08-10T12:00:00.000Z",
+  }).actionType, "restore_task");
 });
 
 test("due-date and repeat changes are canonical schedule descriptors", () => {

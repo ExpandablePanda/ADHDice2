@@ -178,6 +178,56 @@ test("gate-enabled In Progress to Pending uses clear_in_progress with the same c
   assert.equal(rewardCalls, 0);
 });
 
+test("gate-enabled Archive, Trash, and Restore use canonical lifecycle commands and server projections", async () => {
+  const cases = [
+    { actionType: "archive_task", from: "pending" as const, requested: "archived" as const, projected: "archived" as const },
+    { actionType: "trash_task", from: "archived" as const, requested: "trashed" as const, projected: "trashed" as const },
+    { actionType: "restore_task", from: "trashed" as const, requested: "pending" as const, projected: "in_progress" as const },
+  ] as const;
+
+  for (const currentCase of cases) {
+    const currentTask = task({ id: `task-${currentCase.actionType}`, status: currentCase.from });
+    let legacyWrites = 0;
+    let historyWrites = 0;
+    let rewardCalls = 0;
+    let receivedActionType: string | null = null;
+    let receivedRevision: number | null = null;
+    let receivedReplayIdentity: string | null = null;
+    let localTasks: Task[] = [currentTask];
+
+    // Each iteration is an isolated plain-function hook harness for one lifecycle case.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const update = useBuildUpdateAction({
+      canonicalCommandsEnabled: true,
+      currentTask,
+      execute: async (action, taskForAction) => {
+        receivedActionType = action.actionType;
+        receivedRevision = action.intent?.expected_revision ?? null;
+        receivedReplayIdentity = action.intent?.replay_identity ?? null;
+        return success(committedTask(taskForAction, currentCase.projected));
+      },
+      onTasksCompleted: async () => { rewardCalls += 1; },
+      reconcileMisses: async () => true,
+      setMessage: () => {},
+      setTasks: (updater) => { localTasks = updater(localTasks); },
+      syncHistory: async () => { historyWrites += 1; return true; },
+      updateLegacy: async () => {
+        legacyWrites += 1;
+        return { data: null, error: null, conflict: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+      },
+    });
+
+    assert.equal(await update.updateTask(currentTask.id, { status: currentCase.requested }), true);
+    assert.equal(receivedActionType, currentCase.actionType);
+    assert.equal(receivedRevision, 4);
+    assert.match(receivedReplayIdentity ?? "", /^[0-9a-f-]{36}$/i);
+    assert.equal(localTasks[0]?.status, currentCase.projected);
+    assert.equal(legacyWrites, 0);
+    assert.equal(historyWrites, 0);
+    assert.equal(rewardCalls, 0);
+  }
+});
+
 test("gate-enabled canonical failure leaves the local Task uncommitted and surfaces a warning", async () => {
   const currentTask = task();
   let localTasks: Task[] = [currentTask];
@@ -204,6 +254,32 @@ test("gate-enabled canonical failure leaves the local Task uncommitted and surfa
   assert.match(warning, /changed before/);
 });
 
+test("gate-enabled lifecycle failure never falls back to a legacy lifecycle write", async () => {
+  const currentTask = task({ status: "pending" });
+  let legacyWrites = 0;
+  let warning = "";
+  let localTasks: Task[] = [currentTask];
+  const update = useBuildUpdateAction({
+    canonicalCommandsEnabled: true,
+    currentTask,
+    execute: async () => failure("Canonical Trash was rejected."),
+    onTasksCompleted: async () => {},
+    reconcileMisses: async () => true,
+    setMessage: (message) => { warning = message.text; },
+    setTasks: (updater) => { localTasks = updater(localTasks); },
+    syncHistory: async () => true,
+    updateLegacy: async () => {
+      legacyWrites += 1;
+      return { data: null, error: null, conflict: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(currentTask.id, { status: "trashed" }), false);
+  assert.equal(legacyWrites, 0);
+  assert.deepEqual(localTasks[0], currentTask);
+  assert.match(warning, /rejected/);
+});
+
 test("disabled gate preserves the existing legacy Task State path", async () => {
   const currentTask = task();
   let legacyWrites = 0;
@@ -227,4 +303,27 @@ test("disabled gate preserves the existing legacy Task State path", async () => 
   assert.equal(legacyWrites, 1);
   assert.equal(historyWrites, 1);
   assert.equal(rewardCalls, 1);
+});
+
+test("disabled gate preserves the legacy Archive path", async () => {
+  const currentTask = task();
+  let legacyWrites = 0;
+  let historyWrites = 0;
+  const update = useBuildUpdateAction({
+    canonicalCommandsEnabled: false,
+    currentTask,
+    onTasksCompleted: async () => {},
+    reconcileMisses: async () => true,
+    setMessage: () => {},
+    setTasks: () => {},
+    syncHistory: async () => { historyWrites += 1; return true; },
+    updateLegacy: async () => {
+      legacyWrites += 1;
+      return { data: { ...currentTask, status: "archived" }, error: null, conflict: null, reappliedOnLatestRevision: false, usedActualSecondsFallback: false, usedEnergyFallback: false };
+    },
+  });
+
+  assert.equal(await update.updateTask(currentTask.id, { status: "archived" }), true);
+  assert.equal(legacyWrites, 1);
+  assert.equal(historyWrites, 1);
 });

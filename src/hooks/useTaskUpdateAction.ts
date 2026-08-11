@@ -11,7 +11,7 @@ import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import { evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
-import { classifyTaskStateRuntimeAction } from "@/lib/task-state-runtime-actions";
+import { classifyTaskStateRuntimeAction, isTaskStateRuntimeLifecycleTransition } from "@/lib/task-state-runtime-actions";
 import {
   executeTaskStateRuntimeAction,
   type TaskStateRuntimeExecutionResult,
@@ -102,27 +102,41 @@ export function useTaskUpdateAction({
       && values.status !== previousTask.status,
     );
 
-    const isGatedWorkflowTransition = Boolean(
+    const isGatedCanonicalTransition = Boolean(
       canonicalCommandsEnabled
       && previousTask
       && ((previousTask.status === "pending" && values.status === "in_progress")
-        || (previousTask.status === "in_progress" && values.status === "pending")),
+        || (previousTask.status === "in_progress" && values.status === "pending")
+        || (values.status !== undefined && isTaskStateRuntimeLifecycleTransition(previousTask, values.status))),
     );
-    if (isGatedWorkflowTransition) {
+    if (isGatedCanonicalTransition) {
       const runtimeAction = classifyTaskStateRuntimeAction({
         task: previousTask as TaskStateRuntimeLocalTask,
         values,
       });
       if (runtimeAction.kind !== "canonical_action"
-        || (runtimeAction.actionType !== "start_in_progress" && runtimeAction.actionType !== "clear_in_progress")) {
+        || ![
+          "start_in_progress",
+          "clear_in_progress",
+          "archive_task",
+          "trash_task",
+          "restore_task",
+        ].includes(runtimeAction.actionType)) {
         clearPendingTaskMutations?.([taskId]);
         setMessage({ tone: "warn", text: runtimeAction.kind === "unsupported_state_mutation"
           ? runtimeAction.reason
-          : "The canonical workflow action could not be classified." });
+          : "The canonical Task State lifecycle action could not be classified." });
         return false;
       }
 
-      const canonicalResult = await canonicalCommandExecutor(runtimeAction, previousTask as TaskStateRuntimeLocalTask);
+      let canonicalResult: TaskStateRuntimeExecutionResult;
+      try {
+        canonicalResult = await canonicalCommandExecutor(runtimeAction, previousTask as TaskStateRuntimeLocalTask);
+      } catch (error) {
+        clearPendingTaskMutations?.([taskId]);
+        setMessage({ tone: "warn", text: error instanceof Error ? error.message : "The canonical Task State command could not be invoked." });
+        return false;
+      }
       clearPendingTaskMutations?.([taskId]);
       if (!canonicalResult.success) {
         setMessage({ tone: "warn", text: canonicalResult.error.message });
@@ -130,6 +144,13 @@ export function useTaskUpdateAction({
       }
 
       setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? canonicalResult.task as Task : task)));
+      if (runtimeAction.actionType === "archive_task" || runtimeAction.actionType === "trash_task") {
+        routeTask(taskId, null);
+      } else if (runtimeAction.actionType === "restore_task") {
+        routeTask(taskId, canonicalResult.task.status === "archived" || canonicalResult.task.status === "trashed"
+          ? null
+          : "inbox");
+      }
       return true;
     }
 

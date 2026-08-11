@@ -11,6 +11,14 @@ import { parseImportedTaskLines } from "@/lib/task-input-parsing";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import { isMissingTaskActualSecondsColumnError, isMissingTaskEnergyNoneEnumError } from "@/lib/task-db-compat";
+import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity } from "@/lib/task-state-runtime-actions";
+import {
+  executeTaskStateRuntimeAction,
+  type TaskStateRuntimeExecutionResult,
+  type TaskStateRuntimeLocalTask,
+  type TaskStateRuntimeCanonicalAction,
+} from "@/lib/task-state-runtime-executor";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -33,6 +41,12 @@ type UseTaskCrudActionsOptions = {
   currentUserId: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
   mutateMilestoneTask?: (action: "delete" | "trash", task: Task) => Promise<{ deleted: boolean; error: string | null; handled: boolean; task: Task | null }>;
+  /** Test seam; production uses the disabled migration gate. */
+  canonicalCommandsEnabled?: boolean;
+  /** Test seam for the canonical executor; normal callers use the real executor. */
+  canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
+  /** Lets enabled-gate deletion fail closed before invoking Milestone RPCs. */
+  isMilestoneTask?: (task: Task) => boolean;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTaskRouting: Dispatch<SetStateAction<Record<string, TaskRoutingBucket>>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -47,7 +61,10 @@ type UseTaskCrudActionsOptions = {
 export function useTaskCrudActions({
   client,
   clearPendingTaskMutations,
+  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
+  canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   currentUserId,
+  isMilestoneTask,
   markPendingTaskMutations,
   mutateMilestoneTask,
   setMessage,
@@ -194,6 +211,14 @@ export function useTaskCrudActions({
       const expectedTask = taskSnapshots.get(taskId) ?? null;
 
       if (expectedTask && mutateMilestoneTask) {
+        if (canonicalCommandsEnabled && expectedTask.status !== "trashed" && isMilestoneTask?.(expectedTask)) {
+          firstErrorMessage ??= "Canonical Trash is not yet supported for Milestone tasks; no legacy Trash fallback was used.";
+          continue;
+        }
+        if (canonicalCommandsEnabled && expectedTask.status !== "trashed" && !isMilestoneTask) {
+          firstErrorMessage ??= "Canonical Trash could not verify Milestone lifecycle ownership; no legacy Trash fallback was used.";
+          continue;
+        }
         const milestoneResult = await mutateMilestoneTask(expectedTask.status === "trashed" ? "delete" : "trash", expectedTask);
         if (milestoneResult.handled) {
           if (milestoneResult.error) firstErrorMessage ??= milestoneResult.error;
@@ -204,6 +229,39 @@ export function useTaskCrudActions({
       }
 
       if (expectedTask && expectedTask.status !== "trashed") {
+        if (canonicalCommandsEnabled) {
+          if (isMilestoneTask?.(expectedTask)) {
+            firstErrorMessage ??= "Canonical Trash is not yet supported for Milestone tasks; no legacy Trash fallback was used.";
+            continue;
+          }
+          const runtimeAction = classifyTaskStateRuntimeAction({
+            replayIdentity: createTaskStateReplayIdentity(),
+            task: expectedTask as TaskStateRuntimeLocalTask,
+            values: { status: "trashed" },
+          });
+          if (runtimeAction.kind !== "canonical_action" || runtimeAction.actionType !== "trash_task") {
+            firstErrorMessage ??= runtimeAction.kind === "unsupported_state_mutation"
+              ? runtimeAction.reason
+              : "The canonical Trash action could not be classified.";
+            continue;
+          }
+
+          let canonicalResult: TaskStateRuntimeExecutionResult;
+          try {
+            canonicalResult = await canonicalCommandExecutor(runtimeAction, expectedTask as TaskStateRuntimeLocalTask);
+          } catch (error) {
+            firstErrorMessage ??= error instanceof Error ? error.message : "The canonical Trash command could not be invoked.";
+            continue;
+          }
+          if (!canonicalResult.success) {
+            firstErrorMessage ??= canonicalResult.error.message;
+            continue;
+          }
+
+          movedToTrashTasks.push(canonicalResult.task as Task);
+          continue;
+        }
+
         const result = await updateTaskRowWithLegacyEnergyFallback(taskId, {
           completed_at: null,
           status: "trashed",

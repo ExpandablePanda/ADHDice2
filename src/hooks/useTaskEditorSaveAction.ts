@@ -12,6 +12,8 @@ import { shouldReconcileOverdueTaskMisses } from "@/lib/task-repeat";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "@/lib/task-state-engine/read-authority";
 import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import { isTaskStateRuntimeLifecycleTransition } from "@/lib/task-state-runtime-actions";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   text: string;
@@ -33,6 +35,8 @@ type InsertTaskRowResult = {
 };
 
 type UseTaskEditorSaveActionOptions = {
+  /** Test-only override; production defaults to the disabled migration gate. */
+  canonicalCommandsEnabled?: boolean;
   currentDayKey: string;
   dayStartTime: string;
   focusedTaskIds: string[];
@@ -58,6 +62,7 @@ type UseTaskEditorSaveActionOptions = {
 };
 
 export function useTaskEditorSaveAction({
+  canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
   currentDayKey,
   dayStartTime = "00:00",
   focusedTaskIds,
@@ -100,6 +105,15 @@ export function useTaskEditorSaveAction({
         && normalizedUpdateValues.status !== undefined
         && normalizedUpdateValues.status !== previousTask.status,
       );
+      if (
+        canonicalCommandsEnabled
+        && previousTask
+        && normalizedUpdateValues.status !== undefined
+        && isTaskStateRuntimeLifecycleTransition(previousTask, normalizedUpdateValues.status)
+      ) {
+        setMessage({ tone: "warn", text: "Canonical lifecycle commands must be routed through the Task action coordinator; no legacy editor lifecycle fallback was used." });
+        return null;
+      }
       const scheduleChanged = Boolean(previousTask && hasTaskScheduleChange(previousTask, normalizedUpdateValues));
       const scheduleOnlyEdit = scheduleChanged && !statusChanged;
       const scheduleIntentValues = scheduleOnlyEdit ? stripStatusFromScheduleIntent(normalizedUpdateValues) : normalizedUpdateValues;

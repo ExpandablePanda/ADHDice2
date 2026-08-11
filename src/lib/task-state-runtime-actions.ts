@@ -245,6 +245,16 @@ function buildStatusAction(
   return null;
 }
 
+export function isTaskStateRuntimeLifecycleTransition(
+  task: Pick<TaskRuntimeTask, "status">,
+  targetStatus: Task["status"],
+) {
+  return targetStatus !== task.status
+    && (targetStatus === "archived"
+      || targetStatus === "trashed"
+      || (targetStatus === "pending" && (task.status === "archived" || task.status === "trashed")));
+}
+
 function normalizeReplayIdentity(input: ClassifyTaskStateRuntimeActionInput) {
   const supplied = input.replayIdentity ?? "";
   if (input.replayIdentity !== undefined && supplied.trim().length === 0) return null;
@@ -322,12 +332,15 @@ export function classifyTaskStateRuntimeAction(
     if (scheduleDueFields.length > 0 || scheduleRepeatFields.length > 0) {
       return unsupported(fields, stateFields, metadataFields, "Status and schedule changes in one TaskUpdate are ambiguous; no legacy Task State fallback is allowed.");
     }
+    const isRestore = targetStatus === "pending" && (input.task.status === "archived" || input.task.status === "trashed");
     const allowedProjectionFields = targetStatus === "done"
       || targetStatus === "did_my_best"
       || targetStatus === "complete"
       ? new Set(["status", "completed_at"])
       : targetStatus === "archived" || targetStatus === "trashed"
         ? new Set(["status", "trashed_at", "completed_at"])
+        : isRestore
+          ? new Set(["status", "trashed_at", "completed_at"])
         : new Set(["status"]);
     if (fields.some((field) => !allowedProjectionFields.has(field))) {
       return unsupported(fields, stateFields, metadataFields, "The state mutation contains projection fields that cannot be translated safely into one canonical command.");

@@ -10,6 +10,8 @@ import type {
   TaskStatus,
   TaskUpdate,
 } from "@/lib/database.types";
+import { isTaskStateRuntimeLifecycleTransition } from "@/lib/task-state-runtime-actions";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
 type Message = {
   tone: "neutral" | "good" | "warn";
@@ -193,6 +195,16 @@ export function TaskApp() {
   }
 
   async function updateTask(taskId: string, values: TaskUpdate) {
+    const currentTask = tasks.find((task) => task.id === taskId);
+    if (
+      TASK_STATE_CANONICAL_COMMANDS_ENABLED
+      && currentTask
+      && values.status !== undefined
+      && isTaskStateRuntimeLifecycleTransition(currentTask, values.status)
+    ) {
+      setMessage({ tone: "warn", text: "Canonical lifecycle commands are not yet wired for the classic Task surface; no legacy lifecycle fallback was used." });
+      return false;
+    }
     setTasks((current) =>
       current.map((task) =>
         task.id === taskId ? { ...task, ...values, updated_at: new Date().toISOString() } : task,

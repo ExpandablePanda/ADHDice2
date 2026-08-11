@@ -1,5 +1,13 @@
 import type { Task } from "@/lib/database.types";
-import type { CanonicalTaskStateColumns } from "@/lib/task-state-canonical/types";
+import type {
+  CanonicalContainerState,
+  CanonicalEntityKind,
+  CanonicalPriorContainerState,
+  CanonicalPriorContainerStateStatus,
+  CanonicalTaskStateColumns,
+  CanonicalTerminalState,
+  CanonicalWorkflowState,
+} from "@/lib/task-state-canonical/types";
 import {
   invokeTaskStateCommand,
   type TaskStateCommandFailure,
@@ -58,6 +66,17 @@ const CANONICALIZATION_STATUS_VALUES = new Set<NonNullable<CanonicalTaskStateCol
   "canonical_runtime",
   "needs_attention",
 ]);
+const ENTITY_KIND_VALUES = new Set<CanonicalEntityKind>(["parent", "step", "substep"]);
+const TERMINAL_STATE_VALUES = new Set<CanonicalTerminalState>(["active", "permanently_complete"]);
+const CONTAINER_STATE_VALUES = new Set<CanonicalContainerState>(["active", "archived", "trashed"]);
+const PRIOR_CONTAINER_STATE_VALUES = new Set<NonNullable<CanonicalPriorContainerState>>(["active", "archived"]);
+const PRIOR_CONTAINER_STATE_STATUS_VALUES = new Set<CanonicalPriorContainerStateStatus>([
+  "not_applicable",
+  "proven",
+  "unknown",
+  "contradictory",
+]);
+const WORKFLOW_STATE_VALUES = new Set<CanonicalWorkflowState>(["none", "in_progress"]);
 const CANONICAL_PATCH_FIELDS = [
   "canonicalization_status",
   "entity_kind",
@@ -163,6 +182,14 @@ function requiredInteger(object: JsonObject, key: string): number {
   return object[key] as number;
 }
 
+function validateNullableEnum<T extends string>(object: JsonObject, key: string, values: ReadonlySet<T>) {
+  if (!hasOwn(object, key)) return;
+  const value = object[key];
+  if (value !== null && (typeof value !== "string" || !values.has(value as T))) {
+    throw new Error(`Committed response field ${key} contains an invalid enum value.`);
+  }
+}
+
 function validateWorkflowPatch(action: TaskStateRuntimeCanonicalAction, patch: JsonObject) {
   const workflowState = requiredString(patch, "workflow_state");
   if (workflowState !== (action.actionType === "start_in_progress" ? "in_progress" : action.actionType === "clear_in_progress" ? "none" : workflowState)) {
@@ -197,7 +224,19 @@ function validateCanonicalPatch(
   for (const field of CANONICAL_PATCH_FIELDS) {
     if (!hasOwn(patch, field)) continue;
     const value = patch[field];
-    if (field === "workflow_revision" || field === "projection_source_canonical_revision") {
+    if (field === "entity_kind") {
+      validateNullableEnum(patch, field, ENTITY_KIND_VALUES);
+    } else if (field === "terminal_state") {
+      validateNullableEnum(patch, field, TERMINAL_STATE_VALUES);
+    } else if (field === "container_state") {
+      validateNullableEnum(patch, field, CONTAINER_STATE_VALUES);
+    } else if (field === "prior_container_state") {
+      validateNullableEnum(patch, field, PRIOR_CONTAINER_STATE_VALUES);
+    } else if (field === "prior_container_state_status") {
+      validateNullableEnum(patch, field, PRIOR_CONTAINER_STATE_STATUS_VALUES);
+    } else if (field === "workflow_state") {
+      validateNullableEnum(patch, field, WORKFLOW_STATE_VALUES);
+    } else if (field === "workflow_revision" || field === "projection_source_canonical_revision") {
       if (!Number.isInteger(value)) throw new Error(`Committed response field ${field} must be an integer.`);
     } else if (field === "canonicalization_status") {
       if (typeof value !== "string" || !CANONICALIZATION_STATUS_VALUES.has(value as NonNullable<CanonicalTaskStateColumns["canonicalization_status"]>)) {

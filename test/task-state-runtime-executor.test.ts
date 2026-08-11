@@ -42,6 +42,12 @@ function startAction(currentTask = task()) {
   return action;
 }
 
+function archiveAction(currentTask = task()) {
+  const action = classifyTaskStateRuntimeAction({ task: currentTask, values: { status: "archived" } });
+  assert.equal(action.kind, "canonical_action");
+  return action;
+}
+
 function committedResponse(overrides: Partial<TaskStateCommandSuccess> = {}): TaskStateCommandSuccess {
   return {
     success: true,
@@ -137,6 +143,63 @@ test("committed response reconciles canonical and compatibility fields without o
   assert.equal(result.task.active_occurrence_due_on, "2026-08-10");
   assert.equal(result.task.canonical_revision, 5);
   assert.equal(result.task.revision, currentTask.revision);
+});
+
+test("valid lifecycle enum values are accepted and reconciled from the committed response", async () => {
+  const currentTask = task({ terminal_state: "permanently_complete" });
+  const action = archiveAction(currentTask);
+  const result = await executeTaskStateRuntimeAction(action, currentTask, {
+    invoke: async () => committedResponse({
+      canonical_task_patch: {
+        canonicalization_status: "canonical_runtime",
+        container_state: "archived",
+        entity_kind: "parent",
+        prior_container_state: "active",
+        prior_container_state_status: "proven",
+        terminal_state: "permanently_complete",
+        workflow_state: "none",
+      },
+      compatibility_projection: {
+        active_occurrence_due_on: null,
+        active_status_logical_date: null,
+        completed_at: "2026-08-09T12:00:00.000Z",
+        due_on: null,
+        status: "archived",
+      },
+    }),
+  });
+
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  assert.equal(result.task.container_state, "archived");
+  assert.equal(result.task.terminal_state, "permanently_complete");
+  assert.equal(result.task.status, "archived");
+});
+
+test("invalid lifecycle enum values fail closed before local reconciliation", async () => {
+  const invalidFields = [
+    ["entity_kind", "task"],
+    ["terminal_state", "complete"],
+    ["container_state", "deleted"],
+    ["prior_container_state", "trashed"],
+    ["prior_container_state_status", "guessed"],
+    ["workflow_state", "running"],
+  ] as const;
+
+  for (const [field, value] of invalidFields) {
+    const currentTask = task();
+    const action = archiveAction(currentTask);
+    const result = await executeTaskStateRuntimeAction(action, currentTask, {
+      invoke: async () => committedResponse({
+        canonical_task_patch: { [field]: value },
+      }),
+    });
+
+    assert.equal(result.success, false, field);
+    assert.equal(result.task, null, field);
+    assert.equal(result.error.kind, "malformed_response", field);
+    assert.match(result.error.message, new RegExp(field), field);
+  }
 });
 
 test("malformed committed responses fail closed before local reconciliation", async () => {

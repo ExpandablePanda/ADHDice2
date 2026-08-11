@@ -224,6 +224,9 @@ import { buildTaskDurationEvidence, type TaskDurationEvidence } from "@/lib/task
 import { computeLearnedTaskDurationStatistics } from "@/lib/task-duration-statistics";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
+import { classifyTaskStateRuntimeAction, isTaskStateRuntimeLifecycleTransition } from "@/lib/task-state-runtime-actions";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
+import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import {
@@ -575,7 +578,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.30";
+const APP_VERSION = "7.7.31";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3616,6 +3619,7 @@ export function TaskApp() {
       clearPendingTaskMutations,
       currentUserId: currentUserIdText,
       deleteTaskRow: (taskId, expectedTask) => deleteTaskRow(client, taskId, { expectedTask }),
+      isMilestoneTask: (task) => milestoneData.milestoneByTaskId.has(task.id),
       markPendingTaskMutations,
       mutateMilestoneTask,
       setMessage,
@@ -5270,6 +5274,29 @@ export function TaskApp() {
       return;
     }
 
+    if (
+      TASK_STATE_CANONICAL_COMMANDS_ENABLED
+      && selectedTaskForEditor
+      && draft.values.status !== undefined
+      && draft.values.status !== selectedTaskForEditor.status
+      && isTaskStateRuntimeLifecycleTransition(selectedTaskForEditor, draft.values.status)
+    ) {
+      const lifecycleAction = classifyTaskStateRuntimeAction({
+        task: selectedTaskForEditor as TaskStateRuntimeLocalTask,
+        values: draft.values,
+      });
+      if (lifecycleAction.kind !== "canonical_action"
+        || !["archive_task", "trash_task", "restore_task"].includes(lifecycleAction.actionType)) {
+        setMessage({ tone: "warn", text: lifecycleAction.kind === "unsupported_state_mutation"
+          ? lifecycleAction.reason
+          : "The canonical editor lifecycle action could not be classified." });
+        return;
+      }
+      const updated = await updateTaskStatus(selectedTaskForEditor, draft.values.status);
+      if (updated) closeTaskEditorWithReset();
+      return;
+    }
+
     const requestedEngineOutcome = selectedTaskForEditor
       && draft.values.status !== selectedTaskForEditor.status
       && (draft.values.status === "done" || draft.values.status === "did_my_best" || draft.values.status === "missed")
@@ -5675,6 +5702,13 @@ export function TaskApp() {
 
   async function runTaskStatusMutation(task: Task, status: TaskStatus, bypassTimedCompletion = false, onTimeOrigin?: OnTimeLinkedItemOrigin) {
     const milestone = milestoneData.milestoneByTaskId.get(task.id);
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && isTaskStateRuntimeLifecycleTransition(task, status)) {
+      if (milestone) {
+        setMessage({ tone: "warn", text: "Canonical lifecycle commands are not yet wired for Milestone tasks; no legacy lifecycle fallback was used." });
+        return false;
+      }
+      return await updateTask(task.id, buildTaskStatusUpdate(task, status), { expectedTask: task });
+    }
     if (shouldReverseCompletedMilestoneForStatusChange(task, milestone, status)) {
       setPendingMilestoneLifecycle({ action: "reverse", milestoneId: milestone!.id });
       return false;
@@ -5923,9 +5957,14 @@ export function TaskApp() {
       return;
     }
 
-    optimisticallyMoveTaskToTrash(taskId);
-
     const milestone = milestoneData.milestoneByTaskId.get(taskId);
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && milestone) {
+      setMessage({ tone: "warn", text: "Canonical Trash is not yet supported for Milestone tasks; no legacy Trash fallback was used." });
+      return;
+    }
+    if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+      optimisticallyMoveTaskToTrash(taskId);
+    }
     if (milestone) {
       markPendingTaskMutations([taskId]);
       const mutation = await mutateMilestoneTask("trash", task);
@@ -5963,9 +6002,15 @@ export function TaskApp() {
       return;
     }
     const previousRoutingBucket = taskRouting[taskId];
-    optimisticallyRestoreTaskToInbox(taskId);
-    routeTask(taskId, "inbox");
     const milestone = milestoneData.milestoneByTaskId.get(taskId);
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && milestone) {
+      setMessage({ tone: "warn", text: "Canonical Restore is not yet supported for Milestone tasks; no legacy lifecycle fallback was used." });
+      return;
+    }
+    if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+      optimisticallyRestoreTaskToInbox(taskId);
+    }
+    routeTask(taskId, "inbox");
     if (milestone) {
       const operationKey = `restore:${milestone.id}`;
       const operationId = milestoneOperationIdsRef.current.get(operationKey) ?? createBrowserUuidV4();
