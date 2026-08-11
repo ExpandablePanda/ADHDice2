@@ -139,6 +139,7 @@ export type TaskRewardClaim = {
 };
 
 export type TaskRewardCandidate = {
+  canonicalRewardEntitlementId?: string;
   claimRef?: { subtaskId: string | null; taskId: string; title: string };
   engineManaged?: boolean;
   forceRecurringFinalization?: boolean;

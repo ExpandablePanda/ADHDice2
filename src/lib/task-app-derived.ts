@@ -26,6 +26,7 @@ import { isTaskFinished, isTaskOpen, isTaskUrgent, isTaskVisibleInPrimaryViews }
 import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { isTaskInRecentTrash } from "@/lib/task-trash";
 import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
+import { todayISO } from "@/lib/utils";
 
 type TaskGridItem = TaskGridLayoutItem<string>;
 type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "includeStepsByView" | "matchAny" | "quickFilters" | "selectedBucket" | "statusFilters" | "tableColumnFilters" | "view">;

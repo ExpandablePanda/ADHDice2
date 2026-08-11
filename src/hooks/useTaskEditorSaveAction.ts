@@ -139,18 +139,32 @@ export function useTaskEditorSaveAction({
             })
             .map((field) => [field, normalizedUpdateValues[field as keyof TaskUpdate]]),
         ) as TaskUpdate;
-        const changedMetadata = (TASK_METADATA_UPDATE_FIELDS as readonly string[]).some((field) => {
+        const changedMetadataValues = Object.fromEntries((TASK_METADATA_UPDATE_FIELDS as readonly string[]).flatMap((field) => {
           const nextValue = normalizedUpdateValues[field as keyof TaskUpdate];
           const previousValue = previousTask?.[field as keyof Task];
-          return nextValue !== undefined && nextValue !== previousValue;
-        });
-        if (!scheduleOnlyEdit || changedMetadata || !canonicalTaskStateUpdate || Object.keys(changedScheduleValues).length === 0) {
+          return nextValue !== undefined && nextValue !== previousValue ? [[field, nextValue]] : [];
+        })) as TaskUpdate;
+        const hasNonScheduleStateChange = changedStateFields.some((field) => !Object.hasOwn(changedScheduleValues, field));
+        if (hasNonScheduleStateChange || statusChanged || !canonicalTaskStateUpdate || Object.keys(changedScheduleValues).length === 0) {
           setMessage({ tone: "warn", text: "Canonical schedule commands cannot be combined with this editor change; no legacy schedule fallback was used." });
           return null;
         }
         const canonicalSaved = await canonicalTaskStateUpdate(taskId, changedScheduleValues);
         if (!canonicalSaved) {
           return null;
+        }
+        let metadataTask: Task | null = null;
+        if (Object.keys(changedMetadataValues).length > 0) {
+          const metadataResult = await updateTaskRowWithLegacyEnergyFallback(taskId, changedMetadataValues);
+          if (metadataResult.error || metadataResult.conflict || !metadataResult.data) {
+            setMessage({
+              tone: "warn",
+              text: `Schedule committed, but metadata could not be synchronized. ${metadataResult.error?.message ?? (metadataResult.conflict ? buildTaskUpdateConflictMessage(metadataResult.conflict) : "No updated metadata row was returned.")}`,
+            });
+            return null;
+          }
+          metadataTask = metadataResult.data;
+          setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === taskId ? { ...candidate, ...metadataResult.data } : candidate)));
         }
         const subtasksResult = await replaceTaskSubtasks(taskId, subtasks);
         if (!subtasksResult.saved) return null;
@@ -160,8 +174,8 @@ export function useTaskEditorSaveAction({
           ? Array.from(new Set([...focusedTaskIds, taskId]))
           : focusedTaskIds.filter((id) => id !== taskId);
         await saveFocusSelection(nextFocusIds);
-        setMessage({ tone: "good", text: "Task schedule updated." });
-        return tasks.find((task) => task.id === taskId) ?? previousTask;
+        setMessage({ tone: "good", text: Object.keys(changedMetadataValues).length > 0 ? "Task schedule and metadata updated." : "Task schedule updated." });
+        return metadataTask ?? tasks.find((task) => task.id === taskId) ?? previousTask;
       }
       const occurrenceSensitive = isOccurrenceSensitiveTaskMutation({
         task: previousTask,

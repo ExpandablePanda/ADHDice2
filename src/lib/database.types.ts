@@ -518,6 +518,12 @@ export type TaskHistory = {
   was_completed: boolean;
   created_at: string;
   updated_at: string;
+  /** Present only when this read row is projected from canonical History facts. */
+  canonical_fact_id?: string;
+  canonical_occurrence_id?: string | null;
+  canonical_provenance_kind?: string;
+  canonical_command_id?: string | null;
+  canonical_source?: string;
 };
 
 export type TaskHistoryEventType = "status" | "completed_permanently";

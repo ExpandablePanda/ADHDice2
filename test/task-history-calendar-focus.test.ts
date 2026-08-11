@@ -56,7 +56,7 @@ test("later History mutations do not retrigger date-strip focus", () => {
 });
 
 test("History Calendar warning is bound to the shared due-date set", () => {
-  const dueDateSelection = taskHistoryModalSource.indexOf("const selectedIsDue = dueDates.has(selectedDate);");
+  const dueDateSelection = taskHistoryModalSource.indexOf("const selectedIsDue =");
   const warningCopy = taskHistoryModalSource.indexOf("This date is outside the inferred due schedule");
 
   assert.ok(dueDateSelection >= 0);

@@ -3,7 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
 import { isUuid } from "@/lib/focus-utils";
-import type { Task, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskInsert, TaskSubtaskStatus } from "@/lib/database.types";
+import type { LegacySubtaskPromotion, Task, TaskStatus, TaskSubtask as DbTaskSubtask, TaskSubtaskInsert, TaskSubtaskStatus, TaskUpdate } from "@/lib/database.types";
 import type { TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 
@@ -14,6 +14,7 @@ type Message = {
 
 type UseTaskSubtaskActionsOptions = {
   canonicalCommandsEnabled?: boolean;
+  canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate, options?: { expectedTask?: Task | null }) => Promise<boolean>;
   client: SupabaseClient;
   currentUserId: string;
   isMissingParentSubtaskColumnError: (message: string) => boolean;
@@ -25,10 +26,12 @@ type UseTaskSubtaskActionsOptions = {
   supportsNestedSubtasks: boolean;
   tasks: Task[];
   taskSubtasks: DbTaskSubtask[];
+  taskLegacySubtaskPromotions?: LegacySubtaskPromotion[];
 };
 
 export function useTaskSubtaskActions({
   canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
+  canonicalTaskStateUpdate,
   client,
   currentUserId,
   isMissingParentSubtaskColumnError,
@@ -40,21 +43,36 @@ export function useTaskSubtaskActions({
   supportsNestedSubtasks,
   tasks,
   taskSubtasks,
+  taskLegacySubtaskPromotions = [],
 }: UseTaskSubtaskActionsOptions) {
+  const promotedTaskByLegacyId = new Map(taskLegacySubtaskPromotions.map((promotion) => [promotion.legacy_subtask_id, promotion.task_id]));
+
+  async function updatePromotedTask(legacySubtaskId: string, values: TaskUpdate) {
+    const taskId = promotedTaskByLegacyId.get(legacySubtaskId);
+    if (!taskId || !canonicalTaskStateUpdate) return null;
+    const task = tasks.find((candidate) => candidate.id === taskId) ?? null;
+    if (!task) {
+      setMessage({ tone: "warn", text: "The promoted Step no longer exists; no legacy child-state fallback was used." });
+      return false;
+    }
+    return canonicalTaskStateUpdate(taskId, values, { expectedTask: task });
+  }
   function isRewardSubtaskStatus(status: TaskSubtaskStatus) {
     return status === "done" || status === "did_my_best";
   }
 
   async function replaceTaskSubtasks(taskId: string, subtasks: TaskSubtaskDraft[]) {
-    if (canonicalCommandsEnabled && (subtasks.length > 0 || taskSubtasks.some((subtask) => subtask.task_id === taskId))) {
-      setMessage({ tone: "warn", text: "Canonical Step/Substep structure commands are not yet supported; no legacy child-state fallback was used." });
-      return { saved: false, usedNestedFallback: false };
-    }
-    const { error: deleteError } = await client
+    const promotedIds = new Set<string>(taskLegacySubtaskPromotions
+      .filter((promotion) => taskSubtasks.some((subtask) => subtask.id === promotion.legacy_subtask_id && subtask.task_id === taskId))
+      .map((promotion) => promotion.legacy_subtask_id)
+      .filter((id): id is string => typeof id === "string"));
+    let deleteQuery = client
       .from("adhdice_task_subtasks")
       .delete()
       .eq("task_id", taskId)
       .eq("user_id", currentUserId);
+    if (promotedIds.size > 0) deleteQuery = deleteQuery.not("id", "in", `(${[...promotedIds].join(",")})`);
+    const { error: deleteError } = await deleteQuery;
 
     if (deleteError) {
       setMessage({ tone: "warn", text: deleteError.message });
@@ -82,6 +100,14 @@ export function useTaskSubtaskActions({
       return result;
     }
     const cleanedSubtasks = flattenRecursive(subtasks);
+
+    if (canonicalCommandsEnabled && promotedIds.size > 0) {
+      for (const draft of cleanedSubtasks) {
+        if (!draft.id || !promotedIds.has(draft.id)) continue;
+        const promoted = await updatePromotedTask(draft.id, { title: draft.title, status: draft.status as TaskStatus });
+        if (promoted !== true) return { saved: false, usedNestedFallback: false };
+      }
+    }
 
     if (cleanedSubtasks.length === 0) {
       setTaskSubtasks((current) => current.filter((subtask) => subtask.task_id !== taskId));
@@ -133,8 +159,12 @@ export function useTaskSubtaskActions({
 
   async function resetTaskSubtasksToPending(taskId: string) {
     if (canonicalCommandsEnabled) {
-      setMessage({ tone: "warn", text: "Canonical Step reset is not yet supported; no legacy Step status fallback was used." });
-      return false;
+      const promoted = taskSubtasks.filter((subtask) => subtask.task_id === taskId && promotedTaskByLegacyId.has(subtask.id));
+      for (const subtask of promoted) {
+        if (await updatePromotedTask(subtask.id, { status: "pending" }) !== true) return false;
+      }
+      const legacyOnly = taskSubtasks.some((subtask) => subtask.task_id === taskId && !promotedTaskByLegacyId.has(subtask.id));
+      if (!legacyOnly) return true;
     }
     const { data, error } = await client
       .from("adhdice_task_subtasks")
@@ -158,8 +188,14 @@ export function useTaskSubtaskActions({
 
   async function updateTaskSubtaskStatus(subtaskId: string, status: TaskSubtaskStatus) {
     if (canonicalCommandsEnabled) {
-      setMessage({ tone: "warn", text: "Canonical Step/Substep status commands are not yet supported for this child entity; no legacy status fallback was used." });
-      return false;
+      if (promotedTaskByLegacyId.has(subtaskId)) {
+        if (status === "upcoming" || status === "not_due") {
+          setMessage({ tone: "warn", text: "Upcoming and Not Due are derived canonical Step states and cannot be written directly." });
+          return false;
+        }
+        return (await updatePromotedTask(subtaskId, { status })) === true;
+      }
+      // Unpromoted checklist rows are intentionally legacy-only entities.
     }
     const previousSubtask = taskSubtasks.find((subtask) => subtask.id === subtaskId) ?? null;
     const { data, error } = await client
@@ -213,6 +249,10 @@ export function useTaskSubtaskActions({
       return false;
     }
 
+    if (canonicalCommandsEnabled && promotedTaskByLegacyId.has(subtaskId)) {
+      return (await updatePromotedTask(subtaskId, { title: trimmedTitle })) === true;
+    }
+
     const { data, error } = await client
       .from("adhdice_task_subtasks")
       .update({ title: trimmedTitle })
@@ -242,8 +282,10 @@ export function useTaskSubtaskActions({
 
   async function deleteTaskSubtask(subtaskId: string) {
     if (canonicalCommandsEnabled) {
-      setMessage({ tone: "warn", text: "Canonical Step/Substep structure commands are not yet supported; no legacy child-state fallback was used." });
-      return false;
+      if (promotedTaskByLegacyId.has(subtaskId)) {
+        return (await updatePromotedTask(subtaskId, { status: "trashed" })) === true;
+      }
+      // Unpromoted checklist rows remain an explicitly noncanonical entity.
     }
     const descendantIds = collectDescendantSubtaskIds(taskSubtasks, subtaskId);
     const idsToDelete = [subtaskId, ...descendantIds];
@@ -265,10 +307,9 @@ export function useTaskSubtaskActions({
   }
 
   async function addTaskSubtask(taskId: string) {
-    if (canonicalCommandsEnabled) {
-      setMessage({ tone: "warn", text: "Canonical Step/Substep structure commands are not yet supported; no legacy child-state fallback was used." });
-      return null;
-    }
+    // This API adds a legacy checklist row. Same-table canonical Steps are
+    // created through the Task creation coordinator, so the two models never
+    // silently compete for the same logical child.
     const nextSortOrder = taskSubtasks
       .filter((subtask) => subtask.task_id === taskId)
       .reduce((max, subtask) => Math.max(max, subtask.sort_order), -1) + 1;
@@ -316,10 +357,8 @@ export function useTaskSubtaskActions({
   }
 
   async function addChildTaskSubtask(parentSubtaskId: string) {
-    if (canonicalCommandsEnabled) {
-      setMessage({ tone: "warn", text: "Canonical Step/Substep structure commands are not yet supported; no legacy child-state fallback was used." });
-      return null;
-    }
+    // See addTaskSubtask: an unpromoted nested checklist remains explicitly
+    // legacy-only and cannot conflict with a promoted canonical Step.
     const parentSubtask = taskSubtasks.find((subtask) => subtask.id === parentSubtaskId) ?? null;
     if (!parentSubtask) {
       setMessage({ tone: "warn", text: "Could not find that parent step." });

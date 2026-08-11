@@ -29,6 +29,7 @@ export type TaskStateCommandIntent =
   | { type: "delay_occurrence"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key: string; effective_due_on: string }
   | { type: "set_due_date" | "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: TaskStateScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
+  | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
   | { type: "archive_task" | "trash_task" | "restore_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "start_in_progress"; task_id: string; replay_identity: string; expected_revision?: number; occurrence_key?: string };
 

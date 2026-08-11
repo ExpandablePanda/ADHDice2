@@ -8,7 +8,7 @@ const TIME_KEY = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
 const COMMAND_TYPES = new Set([
   "set_outcome", "complete_task", "delay_occurrence", "set_due_date", "set_repeat",
   "calendar_override", "archive_task", "trash_task", "restore_task", "start_in_progress",
-  "clear_in_progress", "reconcile_rollover",
+  "clear_in_progress", "clear_outcome", "reconcile_rollover",
 ]);
 const COMMON_KEYS = new Set(["type", "task_id", "replay_identity", "expected_revision"]);
 const FORBIDDEN_KEYS = new Set([
@@ -39,6 +39,7 @@ export type TaskStateCommandIntent =
   | { type: "delay_occurrence"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key: string; effective_due_on: string }
   | { type: "set_due_date" | "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: ScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
+  | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
   | { type: "archive_task" | "trash_task" | "restore_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "start_in_progress"; task_id: string; replay_identity: string; expected_revision?: number; occurrence_key?: string };
 
@@ -135,6 +136,9 @@ export function validateTaskStateCommandIntent(value: unknown): TaskStateCommand
     ["logical_date", "override_state", "reason"].forEach((key) => allowed.add(key));
     if (!isDate(value.logical_date) || !["unscheduled", "not_due", "due_open"].includes(String(value.override_state))) return null;
     if (value.reason !== undefined && value.reason !== null && !isString(value.reason, 0, 512)) return null;
+  } else if (type === "clear_outcome") {
+    ["logical_date", "occurrence_key", "scheduled_due_on"].forEach((key) => allowed.add(key));
+    if (!isDate(value.logical_date)) return null;
   } else if (type === "start_in_progress") {
     allowed.add("occurrence_key");
   }
@@ -316,6 +320,8 @@ export function buildTrustedTaskStateCommand(input: {
       return { ...base, type: "schedule_change", changeKind: intent.type === "set_repeat" ? "repeat" : "due_date", scheduleBoundary: serverScheduleBoundary(intent, readModel, base, logicalDay, now) };
     case "calendar_override":
       return { ...base, type: "calendar_override", calendarOverride: serverCalendarOverride(intent, base, logicalDay, now) };
+    case "clear_outcome":
+      return { ...base, type: "clear_outcome", logicalDate: intent.logical_date, occurrenceId: occurrence?.id ?? null, occurrenceKey: intent.occurrence_key ?? occurrence?.occurrence_key ?? null, scheduledDueOn: intent.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null, occurrence: occurrence ?? undefined };
     case "archive_task": return { ...base, type: "archive" };
     case "trash_task": return { ...base, type: "trash" };
     case "restore_task": return { ...base, type: "restore" };

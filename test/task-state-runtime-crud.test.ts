@@ -218,7 +218,7 @@ test("already-trashed deleteTasks remains on the existing permanent-delete path"
   assert.equal(harness.localTasks.length, 0);
 });
 
-test("Milestone first-stage Trash fails closed under the enabled gate", async () => {
+test("Milestone first-stage Trash stays on the trusted Milestone lifecycle seam under the enabled gate", async () => {
   const milestoneTask = task("milestone");
   let milestoneCalls = 0;
   let legacyWrites = 0;
@@ -237,7 +237,7 @@ test("Milestone first-stage Trash fails closed under the enabled gate", async ()
   });
 
   assert.equal(await harness.crud.deleteTasks([milestoneTask.id]), false);
-  assert.equal(milestoneCalls, 0);
+  assert.equal(milestoneCalls, 1);
   assert.equal(legacyWrites, 0);
   assert.equal(harness.localTasks[0]?.status, "pending");
 });

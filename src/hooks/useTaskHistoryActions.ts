@@ -21,6 +21,7 @@ import type { TaskHistoryLoadMap } from "@/lib/task-history";
 import { classifyTaskStateRuntimeAction, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import { executeTaskStateRuntimeAction, type TaskStateRuntimeExecutionResult, type TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
+import { resolveCanonicalTaskOccurrence } from "@/lib/task-state-canonical/occurrence-resolution";
 
 type Message = {
   text: string;
@@ -481,15 +482,7 @@ export function useTaskHistoryActions({
         setMessage({ tone: "warn", text: "The canonical Calendar action could not find the current Task; no legacy History fallback was used." });
         return false;
       }
-      if (!isTaskHistoryStatus(status)) {
-        setMessage({ tone: "warn", text: "Clearing a History entry has no supported canonical command yet; no legacy History fallback was used." });
-        return false;
-      }
-      if (status === "delayed") {
-        setMessage({ tone: "warn", text: "Historical Delay requires a canonical occurrence identity; no legacy History fallback was used." });
-        return false;
-      }
-      if (status !== "done" && status !== "did_my_best" && status !== "missed" && status !== "complete") {
+      if (status !== "pending" && status !== "done" && status !== "did_my_best" && status !== "missed" && status !== "delayed" && status !== "complete") {
         setMessage({ tone: "warn", text: "This History status has no supported canonical command; no legacy History fallback was used." });
         return false;
       }
@@ -499,7 +492,38 @@ export function useTaskHistoryActions({
         const existingEntry = taskHistory.find((entry) => entry.task_id === taskId && entry.entry_date === entryDate)
           ?? options?.historySnapshot?.find((entry) => entry.task_id === taskId && entry.entry_date === entryDate)
           ?? null;
-        const canonicalIntent: TaskStateRuntimeCanonicalIntent = status === "complete"
+        const existingOccurrence = existingEntry?.canonical_occurrence_id ?? null;
+        let canonicalIntent: TaskStateRuntimeCanonicalIntent;
+        if (status === "pending") {
+          canonicalIntent = {
+            type: "clear_outcome",
+            logical_date: entryDate,
+            ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
+            ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
+          };
+        } else if (status === "delayed") {
+          const occurrenceResolution = await resolveCanonicalTaskOccurrence(client, currentUserId, taskId, {
+            logicalDate: entryDate,
+            occurrenceId: existingOccurrence,
+            occurrenceKey: existingEntry?.occurrence_key,
+            scheduledDueOn: existingEntry?.occurrence_due_on,
+          });
+          if (!occurrenceResolution.occurrence) {
+            setMessage({ tone: "warn", text: occurrenceResolution.error ?? "Historical Delay requires a valid canonical occurrence; no legacy History fallback was used." });
+            return false;
+          }
+          const effectiveDueOn = options?.historicalOverrideDelayUntilDate ?? null;
+          if (!effectiveDueOn) {
+            setMessage({ tone: "warn", text: "Historical Delay requires a future effective date; no legacy History fallback was used." });
+            return false;
+          }
+          canonicalIntent = {
+            type: "delay_occurrence",
+            logical_date: entryDate,
+            occurrence_key: occurrenceResolution.occurrence.occurrence_key,
+            effective_due_on: effectiveDueOn,
+          };
+        } else canonicalIntent = status === "complete"
           ? {
             type: "complete_task",
             logical_date: entryDate,

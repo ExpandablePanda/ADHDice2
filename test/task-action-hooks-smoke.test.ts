@@ -1106,7 +1106,7 @@ test("manual due-date edits preserve unresolved History and skip reconciliation,
   assert.equal(JSON.stringify([missedHistory]), historySnapshot);
 });
 
-test("Test D keeps an identity-bearing Missed occurrence through the full due edit chain", async () => {
+test("Test D keeps an identity-bearing Missed occurrence as historical evidence while the edited cursor becomes future", async () => {
   const taskId = "task-test-d";
   const missedHistory = {
     counted_as_due_occurrence: false,
@@ -1164,8 +1164,11 @@ test("Test D keeps an identity-bearing Missed occurrence through the full due ed
       },
     });
     return action.updateTask(taskId, { due_on: dueOn }).then(() => {
-      assert.equal(committedTask.status, "missed");
-      assert.equal(optimisticTasks[0]?.status, "missed");
+      // The explicit Missed row remains identity-bearing History. A future
+      // cursor is Upcoming; moving the cursor onto today is Pending.
+      const expectedStatus = dueOn > "2026-08-04" ? "upcoming" : "pending";
+      assert.equal(committedTask.status, expectedStatus);
+      assert.equal(optimisticTasks[0]?.status, expectedStatus);
     });
   };
 

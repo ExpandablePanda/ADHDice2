@@ -3,9 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy } from "lucide-react";
 import type { Milestone, MilestoneEvent, Task, TaskHistory } from "@/lib/database.types";
+import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
 import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { mapTaskHistoryRow } from "@/lib/task-history";
+import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import { mapFocusDailyGoalAdjustmentRow, mapFocusSessionRow } from "@/hooks/useFocus";
 import type { TaskListDefinition, TaskListMembership } from "@/lib/task-lists";
 import {
@@ -77,6 +80,39 @@ async function fetchTaskReportHistoryForRange({
   const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
   const fullHistory: TaskHistory[] = [];
   let offset = 0;
+
+  if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+    while (true) {
+      let query = client
+        .from("adhdice_task_history_facts")
+        .select("*")
+        .eq("user_id", userId)
+        .order("logical_date", { ascending: false })
+        .order("updated_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(offset, offset + REPORT_HISTORY_PAGE_SIZE - 1);
+
+      if (fetchRange.startDateKey) {
+        query = query.gte("logical_date", fetchRange.startDateKey);
+      }
+      if (fetchRange.endDateKey) {
+        query = query.lte("logical_date", fetchRange.endDateKey);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        throw error;
+      }
+
+      const batch = mapCanonicalTaskHistoryFacts((data ?? []) as CanonicalTaskHistoryFact[]);
+      fullHistory.push(...batch);
+      if (batch.length < REPORT_HISTORY_PAGE_SIZE) {
+        break;
+      }
+      offset += REPORT_HISTORY_PAGE_SIZE;
+    }
+    return fullHistory;
+  }
 
   while (true) {
     let query = client

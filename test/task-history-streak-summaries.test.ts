@@ -165,8 +165,8 @@ test("normal Tasks startup uses a paged compact query and never starts full Hist
   );
 
   assert.match(workspaceSource, /TASK_HISTORY_STREAK_SUMMARY_COLUMNS/);
-  assert.equal(TASK_HISTORY_STREAK_SUMMARY_COLUMNS, "id,task_id,entry_date,status,was_completed,created_at,updated_at");
-  assert.match(streakSummarySource, /TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,status,was_completed,created_at,updated_at"/);
+  assert.equal(TASK_HISTORY_STREAK_SUMMARY_COLUMNS, "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at");
+  assert.match(streakSummarySource, /TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at"/);
   assert.match(workspaceSource, /fetchAllPagedRows<TaskHistoryStreakEntry>/);
   assert.match(workspaceSource, /\.range\(from, to\)/);
   assert.match(coreLoader, /void loadTaskHistoryStreakSummaries\(nextTasks\)/);

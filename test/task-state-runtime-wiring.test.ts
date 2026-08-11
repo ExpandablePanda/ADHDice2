@@ -450,17 +450,17 @@ test("gate-enabled canonical rollover intent uses the per-Task command path", as
   assert.equal(legacyWrites, 0);
 });
 
-test("canonical gate remains disabled and source contains no legacy reward or Missed fallback branch for canonical mode", () => {
+test("canonical gate remains disabled and source keeps canonical activation boundaries explicit", () => {
   const gate = readFileSync(new URL("../src/lib/task-state-runtime-gate.ts", import.meta.url), "utf8");
   const reward = readFileSync(new URL("../src/hooks/useTaskRewardController.ts", import.meta.url), "utf8");
   const subtasks = readFileSync(new URL("../src/hooks/useTaskSubtaskActions.ts", import.meta.url), "utf8");
   const editor = readFileSync(new URL("../src/hooks/useTaskEditorSaveAction.ts", import.meta.url), "utf8");
   const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   assert.match(gate, /TASK_STATE_CANONICAL_COMMANDS_ENABLED = false/);
-  assert.match(reward, /pending-dice entitlement bridge is not installed/);
+  assert.match(reward, /adhdice_fulfill_canonical_reward_entitlement/);
   assert.match(reward, /Calculated Missed reconciliation is owned by the canonical rollover command/);
-  assert.match(subtasks, /Canonical Step\/Substep status commands are not yet supported/);
-  assert.match(editor, /Canonical schedule commands cannot be combined/);
+  assert.match(subtasks, /Unpromoted checklist rows are intentionally legacy-only entities/);
+  assert.match(editor, /Schedule committed, but metadata could not be synchronized/);
   assert.match(taskApp, /canonicalIntent: \{ type: "reconcile_rollover" \}/);
 });
 

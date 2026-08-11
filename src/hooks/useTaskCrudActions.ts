@@ -211,10 +211,6 @@ export function useTaskCrudActions({
       const expectedTask = taskSnapshots.get(taskId) ?? null;
 
       if (expectedTask && mutateMilestoneTask) {
-        if (canonicalCommandsEnabled && expectedTask.status !== "trashed" && isMilestoneTask?.(expectedTask)) {
-          firstErrorMessage ??= "Canonical Trash is not yet supported for Milestone tasks; no legacy Trash fallback was used.";
-          continue;
-        }
         if (canonicalCommandsEnabled && expectedTask.status !== "trashed" && !isMilestoneTask) {
           firstErrorMessage ??= "Canonical Trash could not verify Milestone lifecycle ownership; no legacy Trash fallback was used.";
           continue;
@@ -230,10 +226,6 @@ export function useTaskCrudActions({
 
       if (expectedTask && expectedTask.status !== "trashed") {
         if (canonicalCommandsEnabled) {
-          if (isMilestoneTask?.(expectedTask)) {
-            firstErrorMessage ??= "Canonical Trash is not yet supported for Milestone tasks; no legacy Trash fallback was used.";
-            continue;
-          }
           const runtimeAction = classifyTaskStateRuntimeAction({
             replayIdentity: createTaskStateReplayIdentity(),
             task: expectedTask as TaskStateRuntimeLocalTask,

@@ -33,6 +33,8 @@ import {
   isMissingTaskRewardRollsTableError,
 } from "@/lib/task-db-compat";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
+import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
+import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
 
 type Message = {
   text: string;
@@ -519,11 +521,57 @@ export function useTaskRewardController({
     });
   }
 
+  async function fulfillCanonicalRewardEntitlements(candidates: TaskRewardCandidate[]) {
+    if (!client || !currentUserId || candidates.length === 0) return;
+    let allFulfilled = true;
+    for (const candidate of candidates) {
+      const entitlementId = candidate.canonicalRewardEntitlementId;
+      if (!entitlementId) continue;
+      const facts = await client
+        .from("adhdice_task_history_facts")
+        .select("*")
+        .eq("user_id", currentUserId)
+        .eq("entity_id", candidate.task.id)
+        .order("logical_date", { ascending: true });
+      if (facts.error) {
+        allFulfilled = false;
+        setMessage({ tone: "warn", text: facts.error.message });
+        continue;
+      }
+      const canonicalHistory = mapCanonicalTaskHistoryFacts((facts.data ?? []) as CanonicalTaskHistoryFact[]);
+      const pendingReward = buildSingleTaskReward([candidate.task], canonicalHistory, currentDayKey);
+      if (!pendingReward) {
+        allFulfilled = false;
+        setMessage({ tone: "warn", text: "Canonical reward entitlement could not produce a pending reward." });
+        continue;
+      }
+      const rewardPayload = { ...pendingReward, canonicalEntitlementId: entitlementId };
+      let fulfillment = await client.rpc("adhdice_fulfill_canonical_reward_entitlement", {
+        p_entitlement_id: entitlementId,
+        p_reward_payload: rewardPayload,
+        p_streak_length: pendingReward.streakLength,
+      });
+      if (fulfillment.error && isFetchFailure(fulfillment.error)) {
+        fulfillment = await client.rpc("adhdice_fulfill_canonical_reward_entitlement", {
+          p_entitlement_id: entitlementId,
+          p_reward_payload: rewardPayload,
+          p_streak_length: pendingReward.streakLength,
+        });
+      }
+      const mutationRow = fulfillment.data?.[0] as PendingRewardDiceMutationRow | undefined;
+      if (fulfillment.error || !mutationRow) {
+        allFulfilled = false;
+        setMessage({ tone: "warn", text: fulfillment.error?.message ?? "Could not fulfill the canonical reward entitlement." });
+        continue;
+      }
+      applyMutationRow(mutationRow);
+    }
+    if (allFulfilled) await refreshPendingRewards();
+  }
+
   async function queueTaskRewards(candidates: TaskRewardCandidate[]) {
     if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
-      if (candidates.length > 0) {
-        setMessage({ tone: "warn", text: "Canonical reward entitlements are committed, but the pending-dice entitlement bridge is not installed; no legacy reward or recurrence fallback was used." });
-      }
+      await fulfillCanonicalRewardEntitlements(candidates.filter((candidate) => Boolean(candidate.canonicalRewardEntitlementId)));
       return;
     }
     const newlyCompleted = candidates.filter((candidate) =>

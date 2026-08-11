@@ -23,9 +23,9 @@ The engine owns domain calculations, while TaskApp and its adapters own invocati
 
 The M3A source foundation includes a trusted `task-state-command` Edge Function path: an authenticated user's command intent is validated, the owner is taken from verified Auth claims, canonical Task State and logical-day profile facts are read server-side, and the existing pure TypeScript planner produces the canonical plan. The function serializes that plan and calls the backend-only `adhdice_execute_task_state_command` RPC with a modern Supabase secret-key admin client.
 
-The browser contract is intent-only. It must not submit `task_patch`, compatibility projections, History facts, schedule/occurrence rows, reward facts, provenance, `user_id`, or an accepted digest. The trusted boundary derives server-owned command identity, SHA-256 accepted-payload digest, runtime provenance, owner/entity identity, timestamps, and migration-null fields. The RPC is source-only and undeployed; it is invoker-only for the trusted backend role, and ordinary `authenticated` clients cannot execute it. SQL enforces transactionality, ownership/invariants, replay/revision fences, canonical and compatibility persistence, and reward-entitlement uniqueness without becoming a recurrence authority.
+The browser contract is intent-only. It must not submit `task_patch`, compatibility projections, History facts, schedule/occurrence rows, reward facts, provenance, `user_id`, or an accepted digest. The trusted boundary derives server-owned command identity, SHA-256 accepted-payload digest, runtime provenance, owner/entity identity, timestamps, and migration-null fields. The RPC and Edge command path are deployed and live-validated; the RPC remains invoker-only for the trusted backend role, and ordinary `authenticated` clients cannot execute it. SQL enforces transactionality, ownership/invariants, replay/revision fences, canonical and compatibility persistence, and reward-entitlement uniqueness without becoming a recurrence authority.
 
-This boundary is required before the M3B runtime cutover. Normal production Task mutations have not been routed through it, and no active Task UI is authorized to call it yet.
+This boundary is ready for the M3B runtime cutover. Normal production Task mutations remain behind `TASK_STATE_CANONICAL_COMMANDS_ENABLED = false` pending reward-bridge installation and browser QA.
 
 ## Effective Timeline foundation
 
@@ -73,7 +73,7 @@ Future Calendar recurrence projection uses the shared recurrence schedule for ro
 
 The History Calendar is a manual correction ledger. Its `historicalOverride` intent is distinct from normal task actions: normal actions retain schedule validation, while editable past and current calculated or explicit dates may be corrected into Done, Did My Best, Missed, Delayed, or Complete. Explicit History always wins over calculation. Future dates remain read-only, Complete keeps its existing permanent-completion workflow, and rewards/economy remain outside historical correction.
 
-A new recurring override uses the selected logical date as its occurrence identity. Replacing an existing explicit row preserves its occurrence metadata exactly. Clear removes only an explicit History row and returns authority to the Effective Timeline; calculated dates have nothing to clear. Calculated Missed dates remain non-persistent.
+A new recurring override uses the selected logical date as its occurrence identity. Replacing an existing explicit row upserts the same entity/logical-date fact and preserves its canonical identity. Clear removes only an explicit History row and returns authority to the Effective Timeline when no reward entitlement references that fact; a reward-linked clear fails closed rather than orphaning canonical reward provenance. Calculated dates have nothing to clear. Calculated Missed dates remain non-persistent.
 
 The Calendar adapter may expose both state facts and action authority for the requested occurrence. It is not a separate persistence authority and must use the same projection rules when a Calendar action changes task state.
 
@@ -95,7 +95,7 @@ Recurrence evaluation handles logical dates, fixed and repeating schedules, acti
 
 The rollover authority plans eligible transitions from bounded current-state facts and relevant History. It returns a task patch, proposed History changes, reward eligibility, and revision context for the caller. Rollover must be idempotent and must not replay a valid future occurrence merely because a displayed status is stale.
 
-The engine is the planning authority; the application and deployed RPCs remain responsible for guarded execution. SQL deployment state is not established here.
+The engine is the planning authority; the application and deployed RPCs remain responsible for guarded execution. The M3A Task State RPC and Edge command path are deployed and live-validated; this contract does not establish installation of the separate M3B reward-bridge SQL.
 
 Rollover readiness is user-scoped and logical-day-scoped. A changed user, logical day, timezone, or rollover setting must be treated as a new planning context; repeated work in one context should remain single-flight and idempotent.
 

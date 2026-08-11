@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { createBrowserSupabaseClient } from "@/lib/supabase";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import {
   dryRunLegacyStepPromotion,
   promoteLegacySteps,
@@ -110,6 +111,11 @@ export function SettingsPage({
     const rows = (parsed as Task[]).filter((row) => typeof row.title === "string" && row.title.trim());
     if (rows.length === 0) {
       setImportStatus("No valid tasks found.");
+      return;
+    }
+
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+      setImportStatus("JSON restore is a legacy compatibility surface and is unavailable while canonical Task State is active. Use the Task editor or Task import flow instead.");
       return;
     }
 

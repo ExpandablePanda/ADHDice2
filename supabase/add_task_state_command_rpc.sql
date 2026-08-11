@@ -43,6 +43,7 @@ declare
   v_occurrence_row public.adhdice_task_occurrences%rowtype;
   v_schedule_id uuid;
   v_occurrence_id uuid;
+  v_prior_history_occurrence_id uuid;
   v_history_id uuid;
   v_effective_override_id uuid;
   v_calendar_override_id uuid;
@@ -134,7 +135,7 @@ begin
     where key not in (
       'task_patch', 'compatibility_projection', 'history_fact', 'occurrence',
       'schedule_boundary', 'occurrence_effective_override', 'calendar_override',
-      'reward_program_version', 'occurrence_key'
+      'reward_program_version', 'occurrence_key', 'clear_logical_date'
     )
   ) then
     raise exception 'Task State command payload contains an unknown section.'
@@ -167,7 +168,7 @@ begin
       using errcode = '42501';
   end if;
 
-  if v_command_type in ('clear_outcome', 'hierarchy_change') then
+  if v_command_type = 'hierarchy_change' then
     raise exception 'This Task State command type has no trusted planner boundary.'
       using errcode = '0A000';
   end if;
@@ -265,6 +266,22 @@ begin
       where key not in ('canonicalization_status')
     ) then
       raise exception 'Calendar command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type = 'clear_outcome' then
+    if v_history <> '{}'::jsonb or v_occurrence <> '{}'::jsonb or v_schedule <> '{}'::jsonb
+       or v_effective_override <> '{}'::jsonb or v_calendar_override <> '{}'
+       or v_payload ? 'reward_program_version'
+       or not (v_payload ? 'clear_logical_date')
+       or nullif(v_payload->>'clear_logical_date', '') is null then
+      raise exception 'Clear outcome command payload sections are incompatible.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status')
+    ) then
+      raise exception 'Clear outcome command carries an unrelated canonical Task patch.'
         using errcode = '22023';
     end if;
   elsif v_command_type in ('start_in_progress', 'clear_in_progress') then
@@ -719,7 +736,61 @@ begin
     v_effective_override_id := (v_effective_override->>'id')::uuid;
   end if;
 
-  if v_history <> '{}'::jsonb then
+  if v_command_type = 'clear_outcome' then
+    if exists (
+      select 1
+        from public.adhdice_task_reward_entitlements entitlement
+       where entitlement.user_id = p_user_id
+         and entitlement.entity_id = v_entity_id
+         and entitlement.logical_date = (v_payload->>'clear_logical_date')::date
+    ) then
+      raise exception 'A canonical reward entitlement references this outcome; clearing it would invalidate reward provenance.'
+        using errcode = '55000';
+    end if;
+    update public.adhdice_task_occurrences occurrence
+       set resolution_state = 'unresolved',
+           resolved_logical_date = null,
+           resolved_outcome = null,
+           resolved_history_id = null,
+           revision = occurrence.revision + 1,
+           updated_at = now()
+     where occurrence.user_id = p_user_id
+       and occurrence.entity_id = v_entity_id
+       and occurrence.resolved_logical_date = (v_payload->>'clear_logical_date')::date;
+    update public.adhdice_task_occurrence_effective_overrides override_row
+       set history_id = null,
+           updated_at = now()
+     where override_row.user_id = p_user_id
+       and override_row.entity_id = v_entity_id
+       and override_row.history_id in (
+         select fact.id
+           from public.adhdice_task_history_facts fact
+          where fact.user_id = p_user_id
+            and fact.entity_id = v_entity_id
+            and fact.logical_date = (v_payload->>'clear_logical_date')::date
+       );
+    update public.adhdice_task_calendar_overrides calendar_override_row
+       set is_active = false,
+           cleared_at = now(),
+           cleared_by_command_id = v_command_id,
+           revision = calendar_override_row.revision + 1,
+           updated_at = now()
+     where calendar_override_row.user_id = p_user_id
+       and calendar_override_row.entity_id = v_entity_id
+       and calendar_override_row.logical_date = (v_payload->>'clear_logical_date')::date
+       and calendar_override_row.is_active;
+    delete from public.adhdice_task_history_facts
+     where user_id = p_user_id
+       and entity_id = v_entity_id
+       and logical_date = (v_payload->>'clear_logical_date')::date;
+  elsif v_history <> '{}'::jsonb then
+    select fact.occurrence_id
+      into v_prior_history_occurrence_id
+      from public.adhdice_task_history_facts fact
+     where fact.user_id = p_user_id
+       and fact.entity_id = v_entity_id
+       and fact.logical_date = nullif(v_history->>'logical_date', '')::date
+     for update;
     v_history := jsonb_set(v_history, '{id}', to_jsonb(coalesce(nullif(v_history->>'id', '')::uuid, gen_random_uuid())), true);
     v_history := jsonb_set(v_history, '{user_id}', to_jsonb(p_user_id), true);
     v_history := jsonb_set(v_history, '{entity_id}', to_jsonb(v_entity_id), true);
@@ -746,8 +817,44 @@ begin
     end if;
     insert into public.adhdice_task_history_facts
     select (jsonb_populate_record(null::public.adhdice_task_history_facts, v_history)).*
+    on conflict (user_id, entity_id, logical_date) do update
+      set outcome = excluded.outcome,
+          event_kind = excluded.event_kind,
+          occurrence_id = excluded.occurrence_id,
+          scheduled_due_on = excluded.scheduled_due_on,
+          effective_due_on = excluded.effective_due_on,
+          schedule_boundary_id = excluded.schedule_boundary_id,
+          recurrence_source_fingerprint = excluded.recurrence_source_fingerprint,
+          provenance_kind = excluded.provenance_kind,
+          actor_kind = excluded.actor_kind,
+          actor_id = excluded.actor_id,
+          source = excluded.source,
+          logical_day_settings_revision = excluded.logical_day_settings_revision,
+          timezone = excluded.timezone,
+          day_start_time = excluded.day_start_time,
+          command_id = excluded.command_id,
+          idempotence_identity = excluded.idempotence_identity,
+          migration_operation_id = excluded.migration_operation_id,
+          source_legacy_history_id = excluded.source_legacy_history_id,
+          revision = public.adhdice_task_history_facts.revision + 1,
+          updated_at = now()
     returning * into v_history_row;
     v_history_id := v_history_row.id;
+
+    if v_prior_history_occurrence_id is not null
+       and v_prior_history_occurrence_id is distinct from v_history_row.occurrence_id then
+      update public.adhdice_task_occurrences prior_occurrence
+         set resolution_state = 'unresolved',
+             resolved_logical_date = null,
+             resolved_outcome = null,
+             resolved_history_id = null,
+             revision = prior_occurrence.revision + 1,
+             updated_at = now()
+       where prior_occurrence.user_id = p_user_id
+         and prior_occurrence.id = v_prior_history_occurrence_id
+         and prior_occurrence.entity_id = v_entity_id
+         and prior_occurrence.resolved_history_id = v_history_id;
+    end if;
 
     if v_occurrence_id is not null then
       update public.adhdice_task_occurrences

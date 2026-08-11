@@ -119,6 +119,7 @@ export type TaskStateRuntimeActionType =
   | "set_due_date"
   | "set_repeat"
   | "calendar_override"
+  | "clear_outcome"
   | "reconcile_rollover";
 
 type ClassificationBase = {

@@ -5,33 +5,37 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.7.33`.
+- Current working app version: `7.7.34`.
 - Current release group: `7.7.x` Flexible Meal Logging and Editing.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
-- This document summarizes current authority and known limits; it does not establish deployed SQL, browser, or runtime parity.
+- This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
 
 ## Current Architectural Authorities
 
 ### M3A.5 Trusted Task State Command Boundary
 
-- The M3A canonical Task State source foundation exists, but its RPC remains undeployed and no live SQL execution or Edge deployment is claimed.
+- The trusted M3A Task State backend/RPC and `task-state-command` Edge path are deployed and have been live-validated. Runtime gate activation and browser QA remain separate steps.
 - The trusted `task-state-command` Edge Function accepts authenticated intent only. Direct authenticated submission of canonical plans or privileged persistence sections is forbidden.
 - The Edge Function derives owner identity from verified Supabase Auth, reads only that user's canonical Task State and logical-day profile, invokes the existing pure TypeScript planner, and sends its serialized plan through the backend-only invoker RPC using the modern secret-key admin client.
 - Runtime provenance, command identity, entity/owner IDs, timestamps, migration fields, and the SHA-256 accepted-payload digest are established inside the trusted boundary. History/occurrence collection max revisions are not runtime fences; canonical Task `canonical_revision` remains authoritative and schedule `boundary_sequence` protection remains active.
-- This trusted boundary is required before M3B runtime cutover. Normal production Task mutations and the active Task UI have not been cut over.
+- This trusted boundary is ready for M3B runtime cutover. Normal production Task mutations and the active Task UI remain behind the disabled gate.
 
-### 7.7.33 M3B runtime wiring behind the disabled gate
+### 7.7.34 M3B runtime wiring behind the disabled gate
 
 - `src/lib/task-state-runtime-actions.ts` is the classification boundary for the next runtime cutover. It explicitly separates metadata-only fields (`title`, `notes`, priority/energy/presentation fields, links, tags, focus/editor metadata, and pin/sort fields) from Task State-owned fields (`status`, schedule/repeat fields, active-status projections, `completed_at`, `trashed_at`, and hierarchy parent changes).
 - Runtime coordinator/executor wiring now covers workflow, lifecycle, Done/Did My Best/Missed, permanent Complete, due-date/repeat edits, supported History/Calendar outcome corrections, rollover/reconciliation, and supported batch actions while the gate remains off. Canonical responses reconcile the local Task from `canonical_task_patch`, `compatibility_projection`, and `next_revision`; History refreshes are read-only and never recreate legacy facts.
-- Remaining-writer audit classification: `CANONICAL` = coordinator-routed lifecycle/outcome/schedule/History-calendar/rollover/batch paths; `METADATA_ONLY` = title, notes, priority, energy, links, tags, focus, pin, and sort persistence; `BLOCKED_WHEN_CANONICAL_ENABLED` = Delay without trusted occurrence identity, unsupported derived/Calendar states, incompatible Step/Substep status writes, Milestone Task State actions, and classic/demo Task State writes. No unidentified normal Task State writer remains in the audited runtime inventory.
-- Activation blockers: the pending-dice reward bridge cannot yet consume canonical reward-entitlement identity, so canonical eligible outcomes fail closed before legacy reward processing; current and historical Delay lack a trusted canonical occurrence identity; History Calendar clear/delayed actions have no approved command path; editor schedule changes are limited to pure canonical schedule edits; Step/Substep and Milestone state models remain incompatible. The canonical backend/RPC remains undeployed and browser/live validation is intentionally unrun.
-- `TASK_STATE_CANONICAL_COMMANDS_ENABLED` remains `false`. Normal production behavior therefore remains on the legacy path until the trusted backend, reward bridge, blockers, and browser QA are separately reviewed.
+- Canonical History reads now use `adhdice_task_history_facts` through `history-projection.ts` for full workspace, task-scoped, streak, critical-fact, realtime, Records, and report-range refresh paths; the legacy table remains the read source while the gate is false. The adapter projects explicit facts only and never manufactures calculated Missed rows.
+- Remaining-writer audit classification: `CANONICAL` = coordinator-routed lifecycle/outcome/schedule/History-calendar/rollover/batch paths; `METADATA_ONLY` = title, notes, priority, energy, links, tags, focus, pin, and sort persistence; `LEGACY_ONLY_NONCANONICAL_ENTITY` = intentionally unpromoted checklist rows, the inactive `/classic` demo surface, and Settings JSON restore while the gate is disabled; `MILESTONE_ATOMIC_TRUSTED_SEAM` = the existing trusted Milestone completion/trash/restore/delete transactions whose Milestone-specific atomicity cannot be split here. Promoted Steps/Substeps use the same-table canonical Task coordinator, and Milestone Done/Did My Best/Missed outcomes use the canonical coordinator. Settings JSON restore is explicitly fenced while the gate is enabled so its legacy ID-based upsert cannot overwrite canonical status or schedule state.
+- Activation installation item: `supabase/add_canonical_reward_entitlement_bridge.sql` is authored for review but not installed. It consumes canonical entitlement identity, derives the existing dice tier from canonical successful facts, and is idempotent by entitlement/grant identity. Delay now resolves a materialized canonical occurrence and fails closed when none exists; undated bench Delay remains unsupported by the locked command contract.
+- The previously failing legacy History runtime assertion was stale: a prior-day Calendar completion advances the recurring cursor but does not rewrite the stored Missed compatibility projection. The focused test now documents that locked behavior; calculated Missed remains non-persistent.
+- Canonical Calendar replacement upserts the existing entity/logical-date fact while preserving its canonical identity. Clearing removes explicit facts and deactivates dependent Calendar/override references only when no reward entitlement references that fact; reward-linked clear fails closed because the locked entitlement-to-history foreign key cannot be safely orphaned or clawed back in this ticket.
+- 7.7.34 activation blocker: the exact unsupported action is clearing an explicit Calendar outcome after its canonical reward entitlement exists. The smallest missing capability is a reviewed canonical void/tombstone outcome (or an equivalently reviewed entitlement-provenance retention change) that preserves the referenced fact without awarding twice; this ticket deliberately does not invent or install that capability.
+- `TASK_STATE_CANONICAL_COMMANDS_ENABLED` remains `false`. Normal production behavior therefore remains on the legacy path until the reward bridge is reviewed/installed and browser QA is completed.
 
 ### Task State Engine
 

@@ -145,6 +145,7 @@ import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress"
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import { clearMatchingOnTimeExecution, reconcileOnTimeManualDurationsFromTasks, type OnTimeLinkedItemOrigin } from "@/lib/on-time-plan-state";
 import { occurrenceIdentityMatches } from "@/lib/on-time-planner";
+import { resolveCanonicalTaskOccurrence } from "@/lib/task-state-canonical/occurrence-resolution";
 import { buildTaskOccurrenceIdentity } from "@/lib/task-duration-evidence";
 import { isTimedCompletionEvidenceSaved, type TimedCompletionWorkflow } from "@/lib/task-timed-completion";
 import { useBrainstormState } from "@/hooks/useBrainstormState";
@@ -224,7 +225,7 @@ import { buildTaskDurationEvidence, type TaskDurationEvidence } from "@/lib/task
 import { computeLearnedTaskDurationStatistics } from "@/lib/task-duration-statistics";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
-import { classifyTaskStateRuntimeAction, isTaskStateRuntimeLifecycleTransition, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
+import { classifyTaskStateRuntimeAction, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
@@ -578,7 +579,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.33";
+const APP_VERSION = "7.7.34";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3620,6 +3621,7 @@ export function TaskApp() {
     deleteTasks,
     importTasks,
     renameTaskSubtask,
+    replaceTaskSubtasks,
     routeTask,
     saveTaskEditor,
     saveTaskListDefinition,
@@ -3761,6 +3763,7 @@ export function TaskApp() {
       setTaskSubtasks,
       supportsNestedSubtasks,
       tasks,
+      taskLegacySubtaskPromotions,
       taskSubtasks,
     },
     update: {
@@ -4512,6 +4515,39 @@ export function TaskApp() {
       return false;
     }
 
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+      if (!nextDueOn) {
+        setMessage({ tone: "warn", text: "Canonical Delay requires a future effective date; no legacy due_on fallback was used." });
+        return false;
+      }
+      const occurrenceResolution = await resolveCanonicalTaskOccurrence(
+        supabase!,
+        currentUserId!,
+        task.id,
+        {
+          logicalDate: delayAnchorDate,
+          scheduledDueOn: task.active_occurrence_due_on ?? task.due_on,
+        },
+      );
+      if (!occurrenceResolution.occurrence) {
+        setMessage({ tone: "warn", text: occurrenceResolution.error ?? "No valid canonical occurrence exists; the task was not delayed." });
+        return false;
+      }
+      const didDelay = await updateTask(taskId, {}, {
+        canonicalIntent: {
+          type: "delay_occurrence",
+          logical_date: delayAnchorDate,
+          occurrence_key: occurrenceResolution.occurrence.occurrence_key,
+          effective_due_on: nextDueOn,
+        },
+        expectedTask: task,
+        replayIdentity: `delay:${task.id}:${delayAnchorDate}:${nextDueOn}`,
+      });
+      if (!didDelay) return false;
+      setMessage({ tone: "good", text: `"${task.title}" was delayed until ${nextDueOn}.` });
+      return true;
+    }
+
     const delayDays = nextDueOn
       ? Math.round((Date.parse(`${nextDueOn}T00:00:00.000Z`) - Date.parse(`${todayKey}T00:00:00.000Z`)) / 86_400_000)
       : null;
@@ -4562,7 +4598,7 @@ export function TaskApp() {
       text: nextDueOn ? `"${task.title}" was delayed until ${nextDueOn}.` : `"${task.title}" was benched without a date.`,
     });
     return true;
-  }, [dayStartTime, getTaskDelayAnchorDate, loadTaskHistoryForTasks, logicalDayNow, setMessage, tasks, todayKey, updateTask, userTimeZone]);
+  }, [currentUserId, dayStartTime, getTaskDelayAnchorDate, loadTaskHistoryForTasks, logicalDayNow, setMessage, supabase, tasks, todayKey, updateTask, userTimeZone]);
 
   const delaySameTableTask = useCallback(async (taskId: string, days: number) => {
     const task = tasks.find((entry) => entry.id === taskId);
@@ -5488,10 +5524,7 @@ export function TaskApp() {
       }
     }
 
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
-      if (milestoneData.milestoneByTaskId.has(task.id)) {
-        return fail("Canonical Complete is not yet wired for Milestone tasks; no legacy Task State fallback was used.");
-      }
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && !milestoneData.milestoneByTaskId.has(task.id)) {
       const canonicalCommitted = await updateTask(task.id, { status: "complete" }, { expectedTask: task });
       if (!canonicalCommitted) return false;
 
@@ -5745,14 +5778,10 @@ export function TaskApp() {
 
   async function runTaskStatusMutation(task: Task, status: TaskStatus, bypassTimedCompletion = false, onTimeOrigin?: OnTimeLinkedItemOrigin) {
     const milestone = milestoneData.milestoneByTaskId.get(task.id);
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && (isTaskStateRuntimeLifecycleTransition(task, status)
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && (isTaskStateRuntimeLifecycleTransition(task, status) && !milestone
       || status === "done"
       || status === "did_my_best"
       || status === "missed")) {
-      if (milestone) {
-        setMessage({ tone: "warn", text: "Canonical Task State commands are not yet wired for Milestone tasks; no legacy Task State fallback was used." });
-        return false;
-      }
       if (status === "done" || status === "did_my_best") {
         if (!bypassTimedCompletion) {
           const staged = await stageTimedTaskCompletion(task, { kind: "status", status }, onTimeOrigin);
@@ -5819,6 +5848,11 @@ export function TaskApp() {
               created_at: row.occurredAt,
               entry_date: row.logicalDate,
               id: row.id,
+              occurrence_key: historyInsert.occurrence_key ?? null,
+              occurrence_due_on: historyInsert.occurrence_due_on ?? null,
+              event_type: historyInsert.event_type ?? "status",
+              counted_as_due_occurrence: historyInsert.counted_as_due_occurrence ?? false,
+              was_completed: historyInsert.was_completed ?? false,
               updated_at: row.occurredAt,
             });
           }
@@ -5833,6 +5867,11 @@ export function TaskApp() {
               created_at: row.occurredAt,
               entry_date: row.logicalDate,
               id: row.id,
+              occurrence_key: historyInsert.occurrence_key ?? null,
+              occurrence_due_on: historyInsert.occurrence_due_on ?? null,
+              event_type: historyInsert.event_type ?? "status",
+              counted_as_due_occurrence: historyInsert.counted_as_due_occurrence ?? false,
+              was_completed: historyInsert.was_completed ?? false,
               updated_at: row.occurredAt,
             });
           }
@@ -5889,6 +5928,12 @@ export function TaskApp() {
   async function applyTaskMutationWithoutHistory(taskId: string, values: TaskUpdate, options?: { expectedTask?: Task | null }) {
     markPendingTaskMutations?.([taskId]);
     const previousTask = options?.expectedTask ?? tasks.find((task) => task.id === taskId) ?? null;
+    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED
+      && Object.keys(values).some((field) => (TASK_STATE_OWNED_UPDATE_FIELDS as readonly string[]).includes(field))) {
+      const committed = await updateTask(taskId, values, { expectedTask: previousTask });
+      clearPendingTaskMutations?.([taskId]);
+      return committed === true;
+    }
     const result = await runGuardedTaskRowUpdate(taskId, values, { expectedTask: previousTask });
     clearPendingTaskMutations?.([taskId]);
 
@@ -6010,10 +6055,6 @@ export function TaskApp() {
     }
 
     const milestone = milestoneData.milestoneByTaskId.get(taskId);
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && milestone) {
-      setMessage({ tone: "warn", text: "Canonical Trash is not yet supported for Milestone tasks; no legacy Trash fallback was used." });
-      return;
-    }
     if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
       optimisticallyMoveTaskToTrash(taskId);
     }
@@ -6055,10 +6096,6 @@ export function TaskApp() {
     }
     const previousRoutingBucket = taskRouting[taskId];
     const milestone = milestoneData.milestoneByTaskId.get(taskId);
-    if (TASK_STATE_CANONICAL_COMMANDS_ENABLED && milestone) {
-      setMessage({ tone: "warn", text: "Canonical Restore is not yet supported for Milestone tasks; no legacy lifecycle fallback was used." });
-      return;
-    }
     if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
       optimisticallyRestoreTaskToInbox(taskId);
       routeTask(taskId, "inbox");
@@ -6282,6 +6319,9 @@ export function TaskApp() {
       if (entryDate === todayKey) {
         const didDelay = await delayTaskToDate(taskHistoryModalTaskId, nextDueOn);
         if (!didDelay) {
+          return;
+        }
+        if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
           return;
         }
       }

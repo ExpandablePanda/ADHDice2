@@ -166,6 +166,14 @@ export function useTaskUpdateAction({
           await onTaskHistoryMutation?.(taskId, refreshed.history, canonicalResult.task as Task);
         }
       }
+      const canonicalRewardEntitlementId = canonicalResult.response.side_effect_ids.reward_entitlement_id;
+      if (canonicalRewardEntitlementId && ["complete_task", "set_outcome"].includes(runtimeAction.actionType)) {
+        await onTasksCompleted([{
+          canonicalRewardEntitlementId,
+          previousStatus: previousTask.status,
+          task: canonicalResult.task as Task,
+        }]);
+      }
       return true;
     }
 

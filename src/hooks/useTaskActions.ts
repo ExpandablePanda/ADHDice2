@@ -61,7 +61,17 @@ export function useTaskActions({
     historySnapshot: options?.historySnapshot,
   });
   const noteLinkActions = useTaskNoteLinkActions(noteLinks);
-  const subtaskActions = useTaskSubtaskActions(subtask);
+  const updateAction = useTaskUpdateAction({
+    ...update,
+    currentDayKey,
+    routeTask: routingActions.routeTask,
+    syncTaskHistoryEntry,
+    syncTaskHistoryEntries,
+  });
+  const subtaskActions = useTaskSubtaskActions({
+    ...subtask,
+    canonicalTaskStateUpdate: updateAction.updateTask,
+  });
   const crudActions = useTaskCrudActions({
     ...crud,
     replaceTaskSubtasks: subtaskActions.replaceTaskSubtasks,
@@ -69,13 +79,6 @@ export function useTaskActions({
   const createAction = useTaskCreateAction({
     ...create,
     routeTask: routingActions.routeTask,
-  });
-  const updateAction = useTaskUpdateAction({
-    ...update,
-    currentDayKey,
-    routeTask: routingActions.routeTask,
-    syncTaskHistoryEntry,
-    syncTaskHistoryEntries,
   });
   const editorSaveAction = useTaskEditorSaveAction({
     ...editorSave,

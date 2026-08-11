@@ -1,7 +1,10 @@
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusSession, Task, TaskHistory } from "@/lib/database.types";
+import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
 import type { RecordsEvaluation, PersistedRecordCurrent, PersistedRecordEvent } from "@/lib/records/types";
 import { evaluateRecords } from "@/lib/records/evaluator";
+import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
+import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import {
   RECORDS_CHUNK_CLIENT_MAX_BYTES,
   recordsUploadEnvelope,
@@ -136,6 +139,21 @@ export async function loadRecordsTasks(client: RecordsClient, userId: string) {
 
 export async function loadRecordsTaskHistory(client: RecordsClient, userId: string) {
   const rows: TaskHistory[] = [];
+  if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await client
+        .from("adhdice_task_history_facts")
+        .select("*")
+        .eq("user_id", userId)
+        .order("logical_date", { ascending: true })
+        .order("updated_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) throw error;
+      rows.push(...mapCanonicalTaskHistoryFacts((data ?? []) as CanonicalTaskHistoryFact[]));
+      if ((data?.length ?? 0) < PAGE_SIZE) return rows;
+    }
+  }
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await client.from("adhdice_task_history").select("*").eq("user_id", userId).order("created_at", { ascending: true }).range(from, from + PAGE_SIZE - 1);
     if (error) throw error;

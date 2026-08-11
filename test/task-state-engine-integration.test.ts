@@ -133,12 +133,12 @@ test("explicit Missed status actions still carry status intent and History", () 
 });
 
 test("Calendar authority gives explicit History precedence over virtual states", () => {
-  const states = resolveTaskHistoryCalendarStates({ ...context, history: [history("did_my_best")], task: task() });
+  const states = resolveTaskHistoryCalendarStates({ ...context, calendarStart: "2026-07-30", history: [history("did_my_best")], task: task() });
   assert.equal(states?.["2026-07-30"], "did_my_best");
   assert.equal(states?.["2026-07-31"], "open");
 });
 
-test("Weekdays future preview, historical due state, and Calendar Missed eligibility agree", () => {
+test("Weekdays future cursor stays bounded while Calendar actions use explicit historical override", () => {
   const weekdays = task({
     due_on: "2026-08-05",
     repeat_days_of_week: [1, 2, 3, 4, 5],
@@ -155,10 +155,10 @@ test("Weekdays future preview, historical due state, and Calendar Missed eligibi
   };
   const states = resolveTaskHistoryCalendarStates({ ...weekdaysContext, history: [], task: weekdays });
 
-  for (const dateKey of ["2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07"]) {
+  for (const dateKey of ["2026-08-05", "2026-08-06", "2026-08-07"]) {
     assert.equal(states?.[dateKey], "due", dateKey);
   }
-  for (const dateKey of ["2026-08-01", "2026-08-02", "2026-08-08", "2026-08-09"]) {
+  for (const dateKey of ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-08", "2026-08-09"]) {
     assert.equal(states?.[dateKey], "not_due", dateKey);
   }
 

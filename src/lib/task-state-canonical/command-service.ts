@@ -107,6 +107,15 @@ export type CanonicalCalendarOverrideCommand = CanonicalTaskStateCommandBase & {
   calendarOverride: CanonicalTaskCalendarOverride;
 };
 
+export type CanonicalClearOutcomeCommand = CanonicalTaskStateCommandBase & {
+  type: "clear_outcome";
+  logicalDate: string;
+  occurrenceId?: string | null;
+  occurrenceKey?: string | null;
+  scheduledDueOn?: string | null;
+  occurrence?: CanonicalTaskOccurrence;
+};
+
 export type CanonicalRolloverCommand = CanonicalTaskStateCommandBase & {
   type: "rollover";
 };
@@ -119,6 +128,7 @@ export type CanonicalTaskStateCommand =
   | CanonicalDelayCommand
   | CanonicalScheduleCommand
   | CanonicalCalendarOverrideCommand
+  | CanonicalClearOutcomeCommand
   | CanonicalRolloverCommand;
 
 export type CanonicalCommandEnvelope = {
@@ -297,6 +307,7 @@ function commandType(command: CanonicalTaskStateCommand): CanonicalCommandType {
     case "delay": return "delay_occurrence";
     case "schedule_change": return command.changeKind === "due_date" ? "set_due_date" : "set_repeat";
     case "calendar_override": return "calendar_override";
+    case "clear_outcome": return "clear_outcome";
     case "rollover": return "reconcile_rollover";
   }
 }
@@ -309,6 +320,7 @@ function commandPayload(command: CanonicalTaskStateCommand): CanonicalJsonObject
 export function normalizeTaskStateCommand(command: CanonicalTaskStateCommand): CanonicalCommandEnvelope {
   const id = command.commandId ?? commandId();
   const payload = commandPayload(command);
+  if (command.type === "clear_outcome") payload.clear_logical_date = command.logicalDate;
   return {
     commandId: id,
     userId: command.userId,
@@ -496,7 +508,7 @@ export function planTaskStateCommand(
   }
 
   let engineResult: ReturnType<typeof evaluateTaskState> | undefined;
-  const needsEngineProjection = ["handled_outcome", "delay", "schedule_change", "calendar_override", "rollover"].includes(input.type)
+  const needsEngineProjection = ["handled_outcome", "delay", "schedule_change", "calendar_override", "clear_outcome", "rollover"].includes(input.type)
     || (input.type === "restore" && task.container_state !== "active");
   if (needsEngineProjection && !state.engineInput) {
     throw new CanonicalCommandPlanningError(
@@ -505,7 +517,7 @@ export function planTaskStateCommand(
     );
   }
   const shouldEvaluateEngine = Boolean(state.engineInput && (
-    ["handled_outcome", "complete", "delay", "schedule_change", "calendar_override", "rollover"].includes(input.type)
+    ["handled_outcome", "complete", "delay", "schedule_change", "calendar_override", "clear_outcome", "rollover"].includes(input.type)
     || (input.type === "restore" && task.container_state !== "active")
   ));
   if (shouldEvaluateEngine) {
@@ -525,6 +537,8 @@ export function planTaskStateCommand(
             ? { type: "change_schedule" as const }
             : input.type === "calendar_override"
               ? { type: "recompute" as const, fromLogicalDate: input.logicalDay.logicalDate }
+              : input.type === "clear_outcome"
+                ? undefined
           : undefined;
     const engineInput = input.type === "restore"
       ? {
@@ -535,7 +549,13 @@ export function planTaskStateCommand(
           },
           action: undefined,
         }
-      : { ...state.engineInput!, ...(action ? { action } : {}) };
+      : input.type === "clear_outcome"
+        ? {
+            ...state.engineInput!,
+            history: state.engineInput!.history.filter((row) => row.logicalDate !== input.logicalDate),
+            action: undefined,
+          }
+        : { ...state.engineInput!, ...(action ? { action } : {}) };
     engineResult = evaluateTaskState(engineInput);
     if (engineResult.validationErrors.length > 0) {
       throw new CanonicalCommandPlanningError("DOMAIN_VALIDATION_FAILED", engineResult.validationErrors.join(" "));
@@ -662,6 +682,11 @@ export function planTaskStateCommand(
     case "calendar_override": {
       projection = requireProjection(engineResult, task);
       calendarOverride = input.calendarOverride;
+      break;
+    }
+    case "clear_outcome": {
+      projection = requireProjection(engineResult, task);
+      occurrence = input.occurrence ?? null;
       break;
     }
     case "rollover": {

@@ -719,7 +719,7 @@ for (const status of ["done", "did_my_best"] as const) {
   });
 }
 
-test("task history batch action rebases a prior-day calendar completion without reward or completion effects", async () => {
+test("prior-day calendar completion advances the cursor while preserving the stored Missed compatibility projection", async () => {
   const task = createTask({
     created_at: "2026-07-01T09:00:00.000Z",
     due_on: "2026-07-10",
@@ -808,7 +808,9 @@ test("task history batch action rebases a prior-day calendar completion without 
   assert.deepEqual(capturedTaskUpdate, {
     completed_at: null,
     due_on: "2026-07-16",
-    status: "upcoming",
+    // Calculated Missed is not an explicit History row. The compatibility
+    // projection remains Missed until a current-day command resolves it.
+    status: "missed",
   });
 });
 
