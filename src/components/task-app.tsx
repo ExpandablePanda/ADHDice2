@@ -124,6 +124,7 @@ import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHist
 import { useHealth } from "@/hooks/useHealth";
 import { useScratchNotes } from "@/hooks/useScratchNotes";
 import { useTaskActions } from "@/hooks/useTaskActions";
+import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
@@ -580,7 +581,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.40";
+const APP_VERSION = "7.7.41";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1532,6 +1533,10 @@ export function TaskApp() {
   const focusAlarmPreviousSettingsRef = useRef<{ enabled: boolean; intervalMinutes: number } | null>(null);
   const focusAlarmSkipNextPersistRef = useRef(false);
   const pendingTaskMutationExpirationsRef = useRef<Map<string, number>>(new Map());
+  const canonicalTaskMutationStateRef = useRef<TaskCanonicalMutationState>({
+    mutationsInFlight: new Map(),
+    taskSnapshots: new Map(),
+  });
 
   function clampFocusAlarmInterval(minutes: number) {
     return Math.max(MIN_FOCUS_ALARM_INTERVAL_MINUTES, Math.min(MAX_FOCUS_ALARM_INTERVAL_MINUTES, minutes));
@@ -3769,6 +3774,7 @@ export function TaskApp() {
       taskSubtasks,
     },
     update: {
+      canonicalTaskMutationState: canonicalTaskMutationStateRef.current,
       clearPendingTaskMutations,
       markPendingTaskMutations,
       onTaskHistoryFailure: async ({ committedTask, rollbackValues, taskId }) => {

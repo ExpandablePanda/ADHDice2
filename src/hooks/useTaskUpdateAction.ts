@@ -69,11 +69,46 @@ type UseTaskUpdateActionOptions = {
   logicalDayNow?: Date | string;
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;
+  canonicalTaskMutationState?: TaskCanonicalMutationState;
 };
+
+type CanonicalMutationInFlight = {
+  fingerprint: string;
+  promise: Promise<boolean>;
+};
+
+export type TaskCanonicalMutationState = {
+  taskSnapshots: Map<string, TaskStateRuntimeLocalTask>;
+  mutationsInFlight: Map<string, CanonicalMutationInFlight>;
+};
+
+function canonicalMutationFingerprint(
+  action: TaskStateRuntimeCanonicalAction,
+  options?: UpdateTaskActionOptions,
+) {
+  const intent = action.intent
+    ? Object.fromEntries(
+      Object.entries(action.intent)
+        .filter(([key]) => !["expected_revision", "replay_identity", "task_id"].includes(key))
+        .sort(([left], [right]) => left.localeCompare(right)),
+    )
+    : null;
+  const explicitReplayIdentity = options?.replayIdentity
+    ?? options?.canonicalIntent?.replay_identity
+    ?? null;
+  return JSON.stringify({
+    actionType: action.actionType,
+    changedFields: [...action.changedFields].sort(),
+    explicitReplayIdentity,
+    intent,
+    scheduleChanges: action.scheduleChanges ?? null,
+  });
+}
 
 export function useTaskUpdateAction({
   canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
+  canonicalTaskMutationState,
   clearPendingTaskMutations,
   currentDayKey,
   dayStartTime = "00:00",
@@ -95,6 +130,23 @@ export function useTaskUpdateAction({
   timezone = "UTC",
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskUpdateActionOptions) {
+  const mutationState: TaskCanonicalMutationState = canonicalTaskMutationState ?? {
+    taskSnapshots: new Map<string, TaskStateRuntimeLocalTask>(),
+    mutationsInFlight: new Map<string, CanonicalMutationInFlight>(),
+  };
+
+  function getCanonicalTaskSnapshot(taskId: string, fallback: Task | null) {
+    if (!fallback) return null;
+    const tracked = mutationState.taskSnapshots.get(taskId);
+    const fallbackRevision = fallback?.canonical_revision;
+    const trackedRevision = tracked?.canonical_revision;
+    if (!tracked || (typeof fallbackRevision === "number" && (typeof trackedRevision !== "number" || fallbackRevision >= trackedRevision))) {
+      mutationState.taskSnapshots.set(taskId, fallback as TaskStateRuntimeLocalTask);
+      return fallback as TaskStateRuntimeLocalTask | null;
+    }
+    return tracked;
+  }
+
   async function updateTask(taskId: string, values: TaskUpdate, options?: UpdateTaskActionOptions) {
     markPendingTaskMutations?.([taskId]);
     const previousTask = options?.expectedTask ?? tasks.find((task) => task.id === taskId) ?? null;
@@ -109,72 +161,117 @@ export function useTaskUpdateAction({
       && values[field as keyof TaskUpdate] !== undefined
     ));
     if (canonicalCommandsEnabled && (hasTaskStateOwnedValues || options?.canonicalIntent)) {
-      if (!previousTask) {
+      const initialCanonicalTask = getCanonicalTaskSnapshot(taskId, previousTask);
+      if (!initialCanonicalTask) {
         clearPendingTaskMutations?.([taskId]);
         setMessage({ tone: "warn", text: "The canonical Task State action could not find the current Task; no legacy fallback was used." });
         return false;
       }
-      const runtimeAction = classifyTaskStateRuntimeAction({
-        task: previousTask as TaskStateRuntimeLocalTask,
+      const initialRuntimeAction = classifyTaskStateRuntimeAction({
+        task: initialCanonicalTask,
         values,
         canonicalIntent: options?.canonicalIntent,
         ...(options?.replayIdentity ? { replayIdentity: options.replayIdentity } : {}),
       });
-      if (runtimeAction.kind !== "canonical_action") {
+      if (initialRuntimeAction.kind !== "canonical_action") {
         clearPendingTaskMutations?.([taskId]);
-        setMessage({ tone: "warn", text: runtimeAction.kind === "unsupported_state_mutation"
-          ? runtimeAction.reason
+        if (initialRuntimeAction.kind === "metadata_only" && initialRuntimeAction.changedFields.length === 0) {
+          return true;
+        }
+        setMessage({ tone: "warn", text: initialRuntimeAction.kind === "unsupported_state_mutation"
+          ? initialRuntimeAction.reason
           : "The canonical Task State action could not be classified." });
         return false;
       }
 
-      let canonicalResult: TaskStateRuntimeExecutionResult;
-      try {
-        canonicalResult = await canonicalCommandExecutor(runtimeAction, previousTask as TaskStateRuntimeLocalTask);
-      } catch (error) {
+      const fingerprint = canonicalMutationFingerprint(initialRuntimeAction, options);
+      const existingMutation = mutationState.mutationsInFlight.get(taskId);
+      if (existingMutation?.fingerprint === fingerprint) {
+        return existingMutation.promise;
+      }
+
+      const canonicalPromise = (existingMutation?.promise ?? Promise.resolve(true)).then(async () => {
+        const currentCanonicalTask = getCanonicalTaskSnapshot(taskId, previousTask);
+        if (!currentCanonicalTask) {
+          clearPendingTaskMutations?.([taskId]);
+          setMessage({ tone: "warn", text: "The canonical Task State action could not find the current Task; no legacy fallback was used." });
+          return false;
+        }
+        const runtimeAction = classifyTaskStateRuntimeAction({
+          task: currentCanonicalTask,
+          values,
+          canonicalIntent: options?.canonicalIntent,
+          ...(options?.replayIdentity ? { replayIdentity: options.replayIdentity } : {}),
+        });
+        if (runtimeAction.kind !== "canonical_action") {
+          clearPendingTaskMutations?.([taskId]);
+          if (runtimeAction.kind === "metadata_only" && runtimeAction.changedFields.length === 0) {
+            return true;
+          }
+          setMessage({ tone: "warn", text: runtimeAction.kind === "unsupported_state_mutation"
+            ? runtimeAction.reason
+            : "The canonical Task State action could not be classified." });
+          return false;
+        }
+
+        let canonicalResult: TaskStateRuntimeExecutionResult;
+        try {
+          canonicalResult = await canonicalCommandExecutor(runtimeAction, currentCanonicalTask);
+        } catch (error) {
+          clearPendingTaskMutations?.([taskId]);
+          setMessage({ tone: "warn", text: error instanceof Error ? error.message : "The canonical Task State command could not be invoked." });
+          return false;
+        }
         clearPendingTaskMutations?.([taskId]);
-        setMessage({ tone: "warn", text: error instanceof Error ? error.message : "The canonical Task State command could not be invoked." });
-        return false;
-      }
-      clearPendingTaskMutations?.([taskId]);
-      if (!canonicalResult.success) {
-        setMessage({ tone: "warn", text: canonicalResult.error.message });
-        return false;
-      }
+        if (!canonicalResult.success) {
+          setMessage({ tone: "warn", text: canonicalResult.error.message });
+          return false;
+        }
 
-      setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? canonicalResult.task as Task : task)));
-      if (runtimeAction.actionType === "archive_task" || runtimeAction.actionType === "trash_task") {
-        routeTask(taskId, null);
-      } else if (runtimeAction.actionType === "restore_task") {
-        routeTask(taskId, canonicalResult.task.status === "archived" || canonicalResult.task.status === "trashed"
-          ? null
-          : "inbox");
-      } else if (["complete_task", "set_outcome"].includes(runtimeAction.actionType)
-        && ["complete", "done", "did_my_best", "missed"].includes(canonicalResult.task.status)) {
-        routeTask(taskId, null);
-      }
+        mutationState.taskSnapshots.set(taskId, canonicalResult.task);
+        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? canonicalResult.task as Task : task)));
+        if (runtimeAction.actionType === "archive_task" || runtimeAction.actionType === "trash_task") {
+          routeTask(taskId, null);
+        } else if (runtimeAction.actionType === "restore_task") {
+          routeTask(taskId, canonicalResult.task.status === "archived" || canonicalResult.task.status === "trashed"
+            ? null
+            : "inbox");
+        } else if (["complete_task", "set_outcome"].includes(runtimeAction.actionType)
+          && ["complete", "done", "did_my_best", "missed"].includes(canonicalResult.task.status)) {
+          routeTask(taskId, null);
+        }
 
-      // A canonical command may commit its History fact or Calendar/schedule
-      // side effect before the browser read cache is refreshed. Refresh only
-      // the read state; never recreate a legacy History fact here.
-      if (canonicalResult.response.side_effect_ids.history_fact_id && loadTaskHistoryForTasks) {
-        const refresh = await loadTaskHistoryForTasks([taskId]);
-        const refreshed = refresh[taskId];
-        if (!refreshed || refreshed.status !== "ready") {
-          setMessage({ tone: "warn", text: refreshed?.error ?? "Task State committed, but History could not be refreshed." });
-        } else {
-          await onTaskHistoryMutation?.(taskId, refreshed.history, canonicalResult.task as Task);
+        // A canonical command may commit its History fact or Calendar/schedule
+        // side effect before the browser read cache is refreshed. Refresh only
+        // the read state; never recreate a legacy History fact here.
+        if (canonicalResult.response.side_effect_ids.history_fact_id && loadTaskHistoryForTasks) {
+          const refresh = await loadTaskHistoryForTasks([taskId]);
+          const refreshed = refresh[taskId];
+          if (!refreshed || refreshed.status !== "ready") {
+            setMessage({ tone: "warn", text: refreshed?.error ?? "Task State committed, but History could not be refreshed." });
+          } else {
+            await onTaskHistoryMutation?.(taskId, refreshed.history, canonicalResult.task as Task);
+          }
+        }
+        const canonicalRewardEntitlementId = canonicalResult.response.side_effect_ids.reward_entitlement_id;
+        if (canonicalRewardEntitlementId && ["complete_task", "set_outcome"].includes(runtimeAction.actionType)) {
+          await onTasksCompleted([{
+            canonicalRewardEntitlementId,
+            previousStatus: currentCanonicalTask.status,
+            task: canonicalResult.task as Task,
+          }]);
+        }
+        return true;
+      });
+      const mutationEntry = { fingerprint, promise: canonicalPromise };
+      mutationState.mutationsInFlight.set(taskId, mutationEntry);
+      try {
+        return await canonicalPromise;
+      } finally {
+        if (mutationState.mutationsInFlight.get(taskId)?.promise === canonicalPromise) {
+          mutationState.mutationsInFlight.delete(taskId);
         }
       }
-      const canonicalRewardEntitlementId = canonicalResult.response.side_effect_ids.reward_entitlement_id;
-      if (canonicalRewardEntitlementId && ["complete_task", "set_outcome"].includes(runtimeAction.actionType)) {
-        await onTasksCompleted([{
-          canonicalRewardEntitlementId,
-          previousStatus: previousTask.status,
-          task: canonicalResult.task as Task,
-        }]);
-      }
-      return true;
     }
 
     const scheduleChanged = Boolean(previousTask && hasTaskScheduleChange(previousTask, values));

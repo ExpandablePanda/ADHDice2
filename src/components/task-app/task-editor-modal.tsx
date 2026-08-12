@@ -299,6 +299,7 @@ export function TaskEditorModal({
     scrollable: false,
     top: 0,
   });
+  const saveInFlightRef = useRef(false);
   const isEditing = mode === "edit" && task !== null;
   const draftRef = useRef<TaskEditorDraft>(applyTaskEditorDraftOverrides(
     createTaskEditorDraft(task, task ? focusedToday.includes(task.id) : false, subtasks),
@@ -548,51 +549,57 @@ export function TaskEditorModal({
         className="space-y-6 px-5 pb-6 pt-5"
         onSubmit={async (event) => {
           event.preventDefault();
+          if (saveInFlightRef.current) return;
           const draftSnapshot = draftRef.current;
           const trimmedSnapshotTitle = draftSnapshot.title.trim();
           if (!trimmedSnapshotTitle || hasUrlError) return;
+          saveInFlightRef.current = true;
           setIsSaving(true);
-          await onSave({
-            focusToday: draftSnapshot.focusToday,
-            linkedNoteIds: draftSnapshot.linkedNoteIds,
-            subtasks: mergeDraftSubtasksWithLines(draftSnapshot.subtasks, subtaskMultiAdd),
-            values: {
-              title: trimmedSnapshotTitle,
-              notes: emptyToNull(draftSnapshot.notes),
-              status: draftSnapshot.status,
-              ...buildTaskPriorityUpdate(Number.parseInt(draftSnapshot.priorityLevel, 10) as 0 | 1 | 2 | 3 | 4 | 5),
-              energy: draftSnapshot.energy,
-              due_on: emptyToNull(draftSnapshot.dueOn),
-              due_time: emptyToNull(draftSnapshot.dueTime),
-              estimated_minutes: parsePositiveInteger(draftSnapshot.estimatedMinutes),
-              tags: draftSnapshot.tags,
-              external_link_label: emptyToNull(draftSnapshot.externalLinkLabel),
-              external_link_url: emptyToNull(normalizedUrl),
-              one_step_at_a_time: draftSnapshot.oneStepAtATime,
-              subtasks_auto_reset: draftSnapshot.subtasksAutoReset,
-              repeat_frequency: draftSnapshot.repeatFrequency,
-              repeat_interval: Math.max(1, parsePositiveInteger(draftSnapshot.repeatInterval) ?? 1),
-              repeat_days_of_week: draftSnapshot.repeatFrequency === "weekly" || draftSnapshot.repeatFrequency === "custom"
-                ? [...draftSnapshot.repeatDaysOfWeek].sort((a, b) => a - b)
-                : [],
-              repeat_day_of_month: draftSnapshot.repeatFrequency === "monthly" || draftSnapshot.repeatFrequency === "custom"
-                ? (draftSnapshot.repeatMonthlyMode === "ordinal_weekday" ? null : parseDayOfMonth(draftSnapshot.repeatDayOfMonth))
-                : null,
-              repeat_monthly_mode: draftSnapshot.repeatFrequency === "monthly"
-                ? draftSnapshot.repeatMonthlyMode
-                : "day_of_month",
-              repeat_monthly_ordinal: draftSnapshot.repeatFrequency === "monthly" && draftSnapshot.repeatMonthlyMode === "ordinal_weekday"
-                ? draftSnapshot.repeatMonthlyOrdinal ?? "first"
-                : null,
-              repeat_monthly_weekday: draftSnapshot.repeatFrequency === "monthly" && draftSnapshot.repeatMonthlyMode === "ordinal_weekday"
-                ? draftSnapshot.repeatMonthlyWeekday ?? 1
-                : null,
-              completed_at: isTaskFinishedStatusValue(draftSnapshot.status)
-                ? task?.completed_at ?? new Date().toISOString()
-                : null,
-            },
-          });
-          setIsSaving(false);
+          try {
+            await onSave({
+              focusToday: draftSnapshot.focusToday,
+              linkedNoteIds: draftSnapshot.linkedNoteIds,
+              subtasks: mergeDraftSubtasksWithLines(draftSnapshot.subtasks, subtaskMultiAdd),
+              values: {
+                title: trimmedSnapshotTitle,
+                notes: emptyToNull(draftSnapshot.notes),
+                status: draftSnapshot.status,
+                ...buildTaskPriorityUpdate(Number.parseInt(draftSnapshot.priorityLevel, 10) as 0 | 1 | 2 | 3 | 4 | 5),
+                energy: draftSnapshot.energy,
+                due_on: emptyToNull(draftSnapshot.dueOn),
+                due_time: emptyToNull(draftSnapshot.dueTime),
+                estimated_minutes: parsePositiveInteger(draftSnapshot.estimatedMinutes),
+                tags: draftSnapshot.tags,
+                external_link_label: emptyToNull(draftSnapshot.externalLinkLabel),
+                external_link_url: emptyToNull(normalizedUrl),
+                one_step_at_a_time: draftSnapshot.oneStepAtATime,
+                subtasks_auto_reset: draftSnapshot.subtasksAutoReset,
+                repeat_frequency: draftSnapshot.repeatFrequency,
+                repeat_interval: Math.max(1, parsePositiveInteger(draftSnapshot.repeatInterval) ?? 1),
+                repeat_days_of_week: draftSnapshot.repeatFrequency === "weekly" || draftSnapshot.repeatFrequency === "custom"
+                  ? [...draftSnapshot.repeatDaysOfWeek].sort((a, b) => a - b)
+                  : [],
+                repeat_day_of_month: draftSnapshot.repeatFrequency === "monthly" || draftSnapshot.repeatFrequency === "custom"
+                  ? (draftSnapshot.repeatMonthlyMode === "ordinal_weekday" ? null : parseDayOfMonth(draftSnapshot.repeatDayOfMonth))
+                  : null,
+                repeat_monthly_mode: draftSnapshot.repeatFrequency === "monthly"
+                  ? draftSnapshot.repeatMonthlyMode
+                  : "day_of_month",
+                repeat_monthly_ordinal: draftSnapshot.repeatFrequency === "monthly" && draftSnapshot.repeatMonthlyMode === "ordinal_weekday"
+                  ? draftSnapshot.repeatMonthlyOrdinal ?? "first"
+                  : null,
+                repeat_monthly_weekday: draftSnapshot.repeatFrequency === "monthly" && draftSnapshot.repeatMonthlyMode === "ordinal_weekday"
+                  ? draftSnapshot.repeatMonthlyWeekday ?? 1
+                  : null,
+                completed_at: isTaskFinishedStatusValue(draftSnapshot.status)
+                  ? task?.completed_at ?? new Date().toISOString()
+                  : null,
+              },
+            });
+          } finally {
+            saveInFlightRef.current = false;
+            setIsSaving(false);
+          }
         }}
       >
         {/* Title */}

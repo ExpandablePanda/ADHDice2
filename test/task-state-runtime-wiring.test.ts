@@ -420,6 +420,62 @@ test("gate-enabled due-date and repeat edits use canonical schedule commands and
   assert.equal(legacyWrites, 0);
 });
 
+test("same-client near-simultaneous due-date saves deduplicate in-flight commands and rebase later intent", async () => {
+  const currentTask = task({ due_on: "2026-08-10" });
+  const received: Array<{ dueOn: string | null; expectedRevision: number }> = [];
+  let localTasks: Task[] = [currentTask];
+  let releaseFirst!: () => void;
+  const firstCommand = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let commandCount = 0;
+  const update = useBuildUpdateAction({
+    canonicalCommandsEnabled: true,
+    currentTask,
+    execute: async (action, taskForAction) => {
+      commandCount += 1;
+      received.push({
+        dueOn: action.scheduleChanges?.due_on ?? null,
+        expectedRevision: action.expectedRevision,
+      });
+      if (commandCount === 1) await firstCommand;
+      const dueOn = action.scheduleChanges?.due_on ?? taskForAction.due_on;
+      return success({
+        ...taskForAction,
+        canonical_revision: (taskForAction.canonical_revision ?? 0) + 1,
+        due_on: dueOn,
+      });
+    },
+    onTasksCompleted: async () => {},
+    reconcileMisses: async () => true,
+    setMessage: () => {},
+    setTasks: (updater) => { localTasks = updater(localTasks); },
+    syncHistory: async () => true,
+    updateLegacy: async () => {
+      throw new Error("Canonical schedule saves must not use the legacy writer.");
+    },
+  });
+
+  const firstSave = update.updateTask(currentTask.id, { due_on: "2026-08-12" });
+  await Promise.resolve();
+  const duplicateSave = update.updateTask(currentTask.id, { due_on: "2026-08-12" });
+  await Promise.resolve();
+
+  assert.equal(commandCount, 1);
+  assert.deepEqual(received, [{ dueOn: "2026-08-12", expectedRevision: 4 }]);
+
+  releaseFirst();
+  assert.deepEqual(await Promise.all([firstSave, duplicateSave]), [true, true]);
+  assert.equal((localTasks[0] as TaskStateRuntimeLocalTask).canonical_revision, 5);
+  assert.equal(await update.updateTask(currentTask.id, { due_on: "2026-08-12" }), true);
+  assert.equal(commandCount, 1);
+
+  assert.equal(await update.updateTask(currentTask.id, { due_on: "2026-08-13" }), true);
+  assert.deepEqual(received, [
+    { dueOn: "2026-08-12", expectedRevision: 4 },
+    { dueOn: "2026-08-13", expectedRevision: 5 },
+  ]);
+  assert.equal((localTasks[0] as TaskStateRuntimeLocalTask).canonical_revision, 6);
+});
+
 test("gate-enabled canonical rollover intent uses the per-Task command path", async () => {
   const currentTask = task();
   let receivedActionType = "";
