@@ -9,7 +9,7 @@ import {
 } from "../src/lib/task-state-canonical/command-service.ts";
 import { sha256Hex } from "../src/lib/task-state-canonical/digest.ts";
 import type { CanonicalTaskRow } from "../src/lib/task-state-canonical/read-model.ts";
-import type { CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
+import type { CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import type { TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts";
 
 const logicalDay = {
@@ -600,6 +600,75 @@ test("Delay preserves origin occurrence identity and only changes effective date
   assert.equal(plan.normalizedResult.occurrenceEffectiveOverride?.occurrence_id, "occurrence-1");
   assert.equal(plan.normalizedResult.occurrenceEffectiveOverride?.scheduled_due_on, "2026-08-10");
   assert.equal(plan.normalizedResult.occurrenceEffectiveOverride?.effective_due_on, "2026-08-13");
+});
+
+test("trusted Delay serializes the materialized occurrence consistently across payload facts", () => {
+  const occurrence = {
+    id: "occurrence-1",
+    user_id: "user-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    occurrence_key: "task-state:task-1:2026-08-10",
+    scheduled_due_on: "2026-08-10",
+    source_boundary_id: "boundary-1",
+    recurrence_source_fingerprint: "boundary-1",
+    origin_kind: "proven",
+    origin_confidence: "proven",
+    provenance_kind: "user",
+    actor_kind: "user",
+    actor_id: "user-1",
+    source: "task_state_command",
+    materialization_reason: "required_command_state",
+    resolution_state: "unresolved",
+    resolved_logical_date: null,
+    resolved_outcome: null,
+    resolved_history_id: null,
+    command_id: "00000000-0000-4000-8000-000000000009",
+    migration_operation_id: null,
+    revision: 1,
+    created_at: "2026-08-10T12:00:00.000Z",
+    updated_at: "2026-08-10T12:00:00.000Z",
+  } satisfies CanonicalTaskOccurrence;
+  const override = {
+    id: "override-1",
+    user_id: "user-1",
+    entity_id: "task-1",
+    occurrence_id: occurrence.id,
+    scheduled_due_on: occurrence.scheduled_due_on,
+    effective_due_on: "2026-08-13",
+    action_logical_date: "2026-08-10",
+    delay_kind: "delay",
+    override_sequence: 1,
+    prior_override_id: null,
+    prior_override_sequence: null,
+    schedule_boundary_id: "boundary-1",
+    history_id: null,
+    provenance_kind: "user",
+    actor_kind: "user",
+    actor_id: "user-1",
+    source: "task_state_command",
+    command_id: null,
+    idempotence_identity: "delay:occurrence-1:2026-08-13",
+    migration_operation_id: null,
+    accepted_payload_digest: "digest",
+    revision: 1,
+    created_at: "2026-08-10T12:00:00.000Z",
+    updated_at: "2026-08-10T12:00:00.000Z",
+  } satisfies CanonicalTaskOccurrenceEffectiveOverride;
+  const plan = planTaskStateCommand(state(), {
+    ...command({ commandId: occurrence.command_id! }),
+    type: "delay",
+    occurrenceId: occurrence.id,
+    scheduledDueOn: occurrence.scheduled_due_on,
+    effectiveDueOn: "2026-08-13",
+    occurrence,
+    override,
+  });
+  const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, Record<string, unknown>>;
+
+  assert.equal(payload.occurrence.id, occurrence.id);
+  assert.equal(payload.history_fact.occurrence_id, occurrence.id);
+  assert.equal(payload.occurrence_effective_override.occurrence_id, occurrence.id);
 });
 
 test("reward entitlement identity is stable per entity and logical date", () => {

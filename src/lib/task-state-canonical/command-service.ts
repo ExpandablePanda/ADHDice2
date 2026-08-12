@@ -689,6 +689,7 @@ export function planTaskStateCommand(
     case "delay": {
       projection = requireProjection(engineResult, task);
       historyFact = historyFactFor(input, command, input.logicalDate ?? command.logicalDay.logicalDate, "delayed", input.effectiveDueOn);
+      occurrence = input.occurrence ?? null;
       occurrenceEffectiveOverride = input.override ?? null;
       scheduleBoundary = input.scheduleBoundary ?? null;
       break;
