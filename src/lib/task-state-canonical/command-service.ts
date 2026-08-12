@@ -566,6 +566,10 @@ export function planTaskStateCommand(
       : input.type === "clear_outcome"
         ? {
             ...state.engineInput!,
+            task: {
+              ...state.engineInput!.task,
+              ...(state.engineInput!.task.activeStatus === "missed" ? { activeStatus: "pending" as const } : {}),
+            },
             history: state.engineInput!.history.filter((row) => row.logicalDate !== input.logicalDate),
             action: undefined,
           }

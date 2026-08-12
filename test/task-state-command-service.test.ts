@@ -10,6 +10,7 @@ import {
 import { sha256Hex } from "../src/lib/task-state-canonical/digest.ts";
 import type { CanonicalTaskRow } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
+import type { TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts";
 
 const logicalDay = {
   identity: "user-1:2026-08-10:America/New_York:06:00:3",
@@ -103,6 +104,19 @@ function state(overrides: Partial<CanonicalTaskRow> = {}): CanonicalCommandPlann
       timezone: logicalDay.timezone,
       logicalDayRollover: logicalDay.dayStartTime,
     },
+  };
+}
+
+function missedHistory(logicalDate: string, occurrenceDueOn = logicalDate): TaskStateHistoryRow {
+  return {
+    id: `missed-${logicalDate}`,
+    taskId: "task-1",
+    logicalDate,
+    outcome: "missed",
+    provenance: "manual",
+    occurredAt: `${logicalDate}T12:00:00.000Z`,
+    occurrenceIdentity: `task-state:task-1:${occurrenceDueOn}`,
+    occurrenceDueOn,
   };
 }
 
@@ -206,6 +220,42 @@ test("clear_outcome RPC serialization preserves its clear date without side effe
   assert.equal(payload.calendar_override, undefined);
   assert.equal(payload.occurrence, undefined);
   assert.equal(payload.occurrence_effective_override, undefined);
+});
+
+test("clearing today's explicit Missed recomputes Pending from the remaining schedule", () => {
+  const planningState = state({ status: "missed", due_on: "2026-08-10" });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, activeStatus: "missed", dueOn: "2026-08-10" },
+    history: [missedHistory("2026-08-10")],
+  };
+  const plan = planTaskStateCommand(planningState, command({
+    type: "clear_outcome",
+    commandId: "00000000-0000-4000-8000-000000000017",
+    logicalDate: "2026-08-10",
+  }));
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "pending");
+  assert.equal(plan.normalizedResult.historyFact, null);
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+});
+
+test("clearing an overdue explicit Missed preserves calculated Missed when still warranted", () => {
+  const planningState = state({ status: "missed", due_on: "2026-08-09" });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, activeStatus: "missed", dueOn: "2026-08-09" },
+    history: [missedHistory("2026-08-09")],
+  };
+  const plan = planTaskStateCommand(planningState, command({
+    type: "clear_outcome",
+    commandId: "00000000-0000-4000-8000-000000000019",
+    logicalDate: "2026-08-09",
+  }));
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "missed");
+  assert.equal(plan.normalizedResult.historyFact, null);
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
 });
 
 test("reusing an idempotence identity with a different intent produces a different accepted digest", () => {
