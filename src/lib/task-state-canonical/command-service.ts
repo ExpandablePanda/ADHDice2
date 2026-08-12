@@ -234,6 +234,9 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
       ? { reward_program_version: normalizedResult.rewardEntitlement.rewardProgramVersion }
       : {}),
   };
+  if (command.commandType === "clear_outcome") {
+    payload.clear_logical_date = command.payload.clear_logical_date;
+  }
   if (history) {
     payload.history_fact = {
       ...history,

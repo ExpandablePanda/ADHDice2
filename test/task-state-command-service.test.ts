@@ -188,6 +188,26 @@ test("command ID and payload identity are stable for replay", () => {
   assert.match(first.command.acceptedPayloadDigest, /^sha256-[0-9a-f]{64}$/);
 });
 
+test("clear_outcome RPC serialization preserves its clear date without side effects", () => {
+  const plan = planTaskStateCommand(state(), command({
+    type: "clear_outcome",
+    commandId: "00000000-0000-4000-8000-000000000016",
+    logicalDate: "2026-08-09",
+  }));
+  const serialized = serializeCanonicalTaskStateCommandForRpc(plan);
+  const payload = serialized.payload as Record<string, unknown>;
+
+  assert.equal(payload.clear_logical_date, "2026-08-09");
+  assert.equal(plan.normalizedResult.historyFact, null);
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.equal(payload.history_fact, undefined);
+  assert.equal(payload.reward_program_version, undefined);
+  assert.equal(payload.schedule_boundary, undefined);
+  assert.equal(payload.calendar_override, undefined);
+  assert.equal(payload.occurrence, undefined);
+  assert.equal(payload.occurrence_effective_override, undefined);
+});
+
 test("reusing an idempotence identity with a different intent produces a different accepted digest", () => {
   const first = planTaskStateCommand(state(), command({ idempotenceIdentity: "runtime:replay-mismatch", outcome: "did_my_best" }));
   const second = planTaskStateCommand(state(), command({ idempotenceIdentity: "runtime:replay-mismatch", outcome: "missed" }));
