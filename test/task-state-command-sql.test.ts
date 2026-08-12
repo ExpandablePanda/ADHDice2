@@ -4,6 +4,7 @@ import test from "node:test";
 
 const sql = readFileSync(new URL("../supabase/add_task_state_command_rpc.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/add_task_state_canonical_schema.sql", import.meta.url), "utf8");
+const delayMigration = readFileSync(new URL("../supabase/patch_task_state_command_delay_occurrence_7_7_47.sql", import.meta.url), "utf8");
 
 test("M3A command RPC is a backend-only invoker boundary", () => {
   assert.match(sql, /create or replace function public\.adhdice_execute_task_state_command\(\s*p_user_id uuid,\s*p_command jsonb\s*\)/i);
@@ -32,6 +33,37 @@ test("runtime payload structure is command-specific and rejects provenance spoof
   assert.match(sql, /migration_operation_id.*null/i);
   assert.match(sql, /actor_kind.*user/i);
   assert.match(sql, /accepted_payload_digest.*sha256-/i);
+});
+
+test("canonical Delay requires a trusted occurrence, delayed History, and effective override", () => {
+  const delayBranch = sql.match(/elsif v_command_type = 'delay_occurrence' then([\s\S]*?)elsif v_command_type in \('set_due_date', 'set_repeat'\) then/i)?.[1] ?? "";
+  assert.match(delayBranch, /v_history = '\{\}'::jsonb/);
+  assert.match(delayBranch, /v_history->>'outcome' <> 'delayed'/);
+  assert.match(delayBranch, /v_history->>'event_kind' <> 'delay_audit'/);
+  assert.match(delayBranch, /v_effective_override = '\{\}'::jsonb/);
+  assert.match(delayBranch, /v_occurrence = '\{\}'::jsonb/);
+  assert.match(delayBranch, /v_schedule <> '\{\}'::jsonb/);
+  assert.match(delayBranch, /v_calendar_override <> '\{\}'::jsonb/);
+  assert.match(delayBranch, /v_payload \? 'reward_program_version'/);
+  assert.match(delayBranch, /where key not in \('canonicalization_status'\)/);
+});
+
+test("canonical Delay materializes occurrence before validating History ownership", () => {
+  const occurrenceInsert = sql.indexOf("insert into public.adhdice_task_occurrences");
+  const historyOwnershipCheck = sql.indexOf("History fact occurrence is not owned by the Task entity.");
+  assert.ok(occurrenceInsert >= 0);
+  assert.ok(historyOwnershipCheck >= 0);
+  assert.ok(occurrenceInsert < historyOwnershipCheck);
+});
+
+test("7.7.47 migration changes only the stale Delay occurrence predicate and preserves service-role grants", () => {
+  assert.match(delayMigration, /pg_get_functiondef\(p\.oid\)/i);
+  assert.match(delayMigration, /or v_occurrence <> '\{\}'::jsonb/);
+  assert.match(delayMigration, /or v_occurrence = '\{\}'::jsonb/);
+  assert.match(delayMigration, /execute replace\(v_definition, v_old, v_new\)/i);
+  assert.match(delayMigration, /revoke all on function public\.adhdice_execute_task_state_command\(uuid, jsonb\) from public, anon, authenticated/i);
+  assert.match(delayMigration, /grant execute on function public\.adhdice_execute_task_state_command\(uuid, jsonb\) to service_role/i);
+  assert.doesNotMatch(delayMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
 });
 
 test("command identity and revision contracts are locked before canonical writes", () => {

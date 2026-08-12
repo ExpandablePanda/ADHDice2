@@ -228,7 +228,7 @@ begin
     if v_history = '{}'::jsonb or v_history->>'outcome' <> 'delayed'
        or v_history->>'event_kind' <> 'delay_audit'
        or v_effective_override = '{}'::jsonb or v_schedule <> '{}'::jsonb
-       or v_occurrence <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb
+       or v_occurrence = '{}'::jsonb or v_calendar_override <> '{}'::jsonb
        or v_payload ? 'reward_program_version' then
       raise exception 'Delay command payload sections are incompatible.'
         using errcode = '22023';
