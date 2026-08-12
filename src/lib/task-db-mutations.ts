@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskUpdate } from "@/lib/database.types";
+import type { CanonicalTaskRow } from "@/lib/task-state-canonical/read-model";
 
 type TaskUpdateField = Exclude<keyof TaskUpdate, "revision">;
 
@@ -38,6 +39,20 @@ export type DeleteTaskRowResult = {
   error: { message: string } | null;
   conflict: TaskRowUpdateConflict | null;
 };
+
+export type CanonicalTaskCreationSource = "task_creation" | "task_import";
+
+export type CanonicalTaskCreationResult = {
+  data: CanonicalTaskRow | null;
+  error: { message: string } | null;
+  usedEnergyFallback: boolean;
+  usedActualSecondsFallback: false;
+};
+
+export type CanonicalTaskCreator = (
+  payload: TaskInsert,
+  source?: CanonicalTaskCreationSource,
+) => Promise<CanonicalTaskCreationResult>;
 
 const HIGH_RISK_TASK_UPDATE_FIELDS: TaskUpdateField[] = [
   "actual_seconds",
@@ -89,6 +104,94 @@ export async function insertTaskRowWithLegacyEnergyFallback(
     data: initialResult.data,
     error: initialResult.error,
     usedEnergyFallback: false,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function creationErrorMessage(error: unknown, fallback: string) {
+  return error && typeof error === "object" && "message" in error && typeof error.message === "string"
+    ? error.message
+    : fallback;
+}
+
+function canonicalTaskFromResponse(value: unknown): CanonicalTaskRow | null {
+  if (!isRecord(value) || !isRecord(value.task)) return null;
+  const task = value.task;
+  if (
+    typeof task.id !== "string"
+    || typeof task.user_id !== "string"
+    || task.revision !== 1
+    || task.canonicalization_status !== "canonical_runtime"
+    || task.canonical_revision !== 1
+    || !["parent", "step", "substep"].includes(String(task.entity_kind))
+    || !["active", "permanently_complete"].includes(String(task.terminal_state))
+    || !["active", "archived", "trashed"].includes(String(task.container_state))
+    || task.prior_container_state !== null
+    || task.prior_container_state_status !== "not_applicable"
+    || !["none", "in_progress"].includes(String(task.workflow_state))
+    || task.workflow_revision !== 1
+    || typeof task.canonical_created_at !== "string"
+    || typeof task.canonical_updated_at !== "string"
+  ) {
+    return null;
+  }
+  return task as unknown as CanonicalTaskRow;
+}
+
+/**
+ * Browser creation intent only. The owner, canonical fields, and transaction
+ * are derived by the authenticated trusted creator; this helper never writes
+ * the Task table directly.
+ */
+export async function insertTaskRowWithCanonicalCreation(
+  client: SupabaseClient,
+  payload: TaskInsert,
+  source: CanonicalTaskCreationSource = "task_creation",
+): Promise<CanonicalTaskCreationResult> {
+  const task = Object.fromEntries(
+    Object.entries(payload).filter(([key]) => key !== "id" && key !== "revision" && key !== "user_id"),
+  ) as Omit<TaskInsert, "user_id" | "id" | "revision">;
+  let response: { data: unknown; error: unknown };
+  try {
+    response = await client.functions.invoke<unknown>("task-create-canonical", {
+      body: { source, task },
+    });
+  } catch (error) {
+    return {
+      data: null,
+      error: { message: creationErrorMessage(error, "Canonical Task creation could not be invoked.") },
+      usedEnergyFallback: false,
+      usedActualSecondsFallback: false,
+    };
+  }
+
+  if (response.error) {
+    return {
+      data: null,
+      error: { message: creationErrorMessage(response.error, "Canonical Task creation failed.") },
+      usedEnergyFallback: false,
+      usedActualSecondsFallback: false,
+    };
+  }
+
+  const data = canonicalTaskFromResponse(response.data);
+  if (!data) {
+    return {
+      data: null,
+      error: { message: "Canonical Task creation returned an unusable Task row." },
+      usedEnergyFallback: false,
+      usedActualSecondsFallback: false,
+    };
+  }
+
+  return {
+    data,
+    error: null,
+    usedEnergyFallback: isRecord(response.data) && response.data.used_energy_fallback === true,
+    usedActualSecondsFallback: false,
   };
 }
 

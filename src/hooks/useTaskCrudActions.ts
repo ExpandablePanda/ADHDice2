@@ -5,7 +5,13 @@ import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskInsert, TaskUpdate } from "@/lib/database.types";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import { buildChildTaskCreationDraft } from "@/lib/task-child-creation";
-import type { DeleteTaskRowResult, TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
+import {
+  insertTaskRowWithCanonicalCreation,
+  type CanonicalTaskCreator,
+  type DeleteTaskRowResult,
+  type TaskRowUpdateOptions,
+  type UpdateTaskRowResult,
+} from "@/lib/task-db-mutations";
 import type { ImportedTaskSubtask, ImportedTaskWarning } from "@/lib/task-input-parsing";
 import { parseImportedTaskLines } from "@/lib/task-input-parsing";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
@@ -36,12 +42,13 @@ type DeleteTasksOptions = {
 };
 
 type UseTaskCrudActionsOptions = {
+  canonicalTaskCreator?: CanonicalTaskCreator;
   client: SupabaseClient;
   clearPendingTaskMutations?: (taskIds: string[]) => void;
   currentUserId: string;
   markPendingTaskMutations?: (taskIds: string[]) => void;
   mutateMilestoneTask?: (action: "delete" | "trash", task: Task) => Promise<{ deleted: boolean; error: string | null; handled: boolean; task: Task | null }>;
-  /** Test seam; production uses the disabled migration gate. */
+  /** Test seam; production follows the canonical runtime gate. */
   canonicalCommandsEnabled?: boolean;
   /** Test seam for the canonical executor; normal callers use the real executor. */
   canonicalCommandExecutor?: (action: TaskStateRuntimeCanonicalAction, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
@@ -60,6 +67,7 @@ type UseTaskCrudActionsOptions = {
 
 export function useTaskCrudActions({
   client,
+  canonicalTaskCreator,
   clearPendingTaskMutations,
   canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
@@ -76,6 +84,8 @@ export function useTaskCrudActions({
   deleteTaskRow,
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskCrudActionsOptions) {
+  const createTask = canonicalTaskCreator ?? ((payload: TaskInsert, source?: "task_creation" | "task_import") => insertTaskRowWithCanonicalCreation(client, payload, source));
+
   async function importTasks(lines: string[]) {
     if (lines.every((line) => !line.trim())) {
       return { errorCount: 0, importedCount: 0, warningCount: 0 } satisfies ImportTasksResult;
@@ -119,7 +129,12 @@ export function useTaskCrudActions({
         user_id: currentUserId,
       });
 
-      const insertResult = await insertImportedTaskRow(client, payload);
+      const insertResult = await insertImportedTaskRowForMode({
+        canonicalCommandsEnabled,
+        canonicalTaskCreator: createTask,
+        client,
+        payload,
+      });
       if (insertResult.error) {
         importErrors.push({ line: parsedTask.line, message: insertResult.error.message });
         continue;
@@ -150,6 +165,8 @@ export function useTaskCrudActions({
       if (parsedTask.subtasks.length > 0) {
         const childImport = await insertImportedChildTaskTree({
           children: parsedTask.subtasks,
+          canonicalCommandsEnabled,
+          canonicalTaskCreator: createTask,
           client,
           currentUserId,
           importErrors,
@@ -471,8 +488,38 @@ async function insertImportedTaskRow(client: SupabaseClient, payload: TaskInsert
   };
 }
 
+type ImportedTaskInsertResult = {
+  data: Task | null;
+  error: { message: string } | null;
+  usedActualFallback: boolean;
+  usedEnergyFallback: boolean;
+};
+
+async function insertImportedTaskRowForMode({
+  canonicalCommandsEnabled,
+  canonicalTaskCreator,
+  client,
+  payload,
+}: {
+  canonicalCommandsEnabled: boolean;
+  canonicalTaskCreator: CanonicalTaskCreator;
+  client: SupabaseClient;
+  payload: TaskInsert;
+}): Promise<ImportedTaskInsertResult> {
+  if (!canonicalCommandsEnabled) return insertImportedTaskRow(client, payload);
+  const result = await canonicalTaskCreator(payload, "task_import");
+  return {
+    data: result.data,
+    error: result.error,
+    usedActualFallback: false,
+    usedEnergyFallback: result.usedEnergyFallback,
+  };
+}
+
 async function insertImportedChildTaskTree({
   children,
+  canonicalCommandsEnabled,
+  canonicalTaskCreator,
   client,
   currentUserId,
   importErrors,
@@ -480,6 +527,8 @@ async function insertImportedChildTaskTree({
   warnings,
 }: {
   children: ImportedTaskSubtask[];
+  canonicalCommandsEnabled: boolean;
+  canonicalTaskCreator: CanonicalTaskCreator;
   client: SupabaseClient;
   currentUserId: string;
   importErrors: ImportedTaskWarning[];
@@ -520,7 +569,12 @@ async function insertImportedChildTaskTree({
       user_id: currentUserId,
     });
 
-    const insertResult = await insertImportedTaskRow(client, payload);
+    const insertResult = await insertImportedTaskRowForMode({
+      canonicalCommandsEnabled,
+      canonicalTaskCreator,
+      client,
+      payload,
+    });
     if (insertResult.error) {
       importErrors.push({ line: child.line, message: insertResult.error.message });
       continue;
@@ -550,6 +604,8 @@ async function insertImportedChildTaskTree({
     if (child.children.length > 0) {
       const descendantImport = await insertImportedChildTaskTree({
         children: child.children,
+        canonicalCommandsEnabled,
+        canonicalTaskCreator,
         client,
         currentUserId,
         importErrors,

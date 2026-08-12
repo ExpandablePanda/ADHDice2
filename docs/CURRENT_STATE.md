@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-08-10
+Last reviewed: 2026-08-11
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.7.38`.
+- Current working app version: `7.7.39`.
 - Current release group: `7.7.x` Flexible Meal Logging and Editing.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -25,6 +25,12 @@ Role: active working
 - Browser QA is pending; visible browser behavior and live runtime parity remain unverified.
 
 ## Current Architectural Authorities
+
+### 7.7.39 Trusted canonical Task creation
+
+- With the canonical runtime gate enabled, normal Add Task, editor-based Task creation, and Import now send creation intent through the authenticated `task-create-canonical` Edge boundary. The Edge path derives the verified owner, validates the draft and parent entity kind, builds the canonical TypeScript creation plan, and invokes the service-role-only `adhdice_create_canonical_task` RPC.
+- The RPC atomically inserts the Task with `canonical_revision = 1`, initialized terminal/container/workflow state, and its initial schedule boundary. Creation does not write legacy History or canonical reward records. Imported outcome/lifecycle snapshots that require provenance fail closed and remain visible as import errors; pending/open metadata and parent/Step/Substep relationships are preserved.
+- The SQL and Edge implementation are source-only for this release. SQL execution, Edge deployment, live Supabase mutations, and browser QA remain unverified and unauthorized in this task.
 
 ### M3A.5 Trusted Task State Command Boundary
 

@@ -166,6 +166,9 @@ function currentBoundary(readModel: CanonicalTaskStateReadModel): CanonicalTaskS
 function commandBase(intent: TaskStateCommandIntent, userId: string, readModel: CanonicalTaskStateReadModel, logicalDay: CanonicalLogicalDayContext) {
   const entityKind = readModel.task.entity_kind;
   if (!entityKind) throw new Error("The canonical entity kind is unavailable.");
+  if (!Number.isInteger(readModel.task.canonical_revision) || readModel.task.canonical_revision < 1) {
+    throw new Error("Canonical Task State requires canonical_revision; legacy revision is not a substitute.");
+  }
   const replay = buildTrustedTaskStateCommandReplayDescriptor({ userId, intent });
   const expectedBoundarySequence = readModel.scheduleBoundaries.length > 0
     ? readModel.scheduleBoundaries.reduce((latest, boundary) => Math.max(latest, boundary.boundary_sequence), 0)
@@ -176,7 +179,7 @@ function commandBase(intent: TaskStateCommandIntent, userId: string, readModel: 
     taskId: readModel.task.id,
     entityKind,
     acceptedIntent: replay.acceptedIntent,
-    expectedRevision: intent.expected_revision ?? readModel.task.canonical_revision ?? readModel.task.revision,
+    expectedRevision: intent.expected_revision ?? readModel.task.canonical_revision,
     expectedBoundarySequence,
     logicalDay,
     idempotenceIdentity: replay.idempotenceIdentity,

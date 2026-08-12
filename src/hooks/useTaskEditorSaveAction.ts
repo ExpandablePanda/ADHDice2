@@ -3,7 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskHistory, TaskHistoryInsert, TaskUpdate } from "@/lib/database.types";
 import type { TaskDraft, TaskSubtaskDraft } from "@/components/task-app/task-editor-model";
-import type { TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
+import type { CanonicalTaskCreator, TaskRowUpdateOptions, UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { buildTaskUpdateConflictMessage } from "@/lib/task-db-mutations";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
@@ -35,8 +35,9 @@ type InsertTaskRowResult = {
 };
 
 type UseTaskEditorSaveActionOptions = {
-  /** Test-only override; production defaults to the disabled migration gate. */
+  /** Test-only override; production follows the canonical runtime gate. */
   canonicalCommandsEnabled?: boolean;
+  canonicalTaskCreator?: CanonicalTaskCreator;
   canonicalTaskStateUpdate?: (taskId: string, values: TaskUpdate) => Promise<boolean>;
   currentDayKey: string;
   dayStartTime: string;
@@ -64,6 +65,7 @@ type UseTaskEditorSaveActionOptions = {
 
 export function useTaskEditorSaveAction({
   canonicalCommandsEnabled = TASK_STATE_CANONICAL_COMMANDS_ENABLED,
+  canonicalTaskCreator,
   canonicalTaskStateUpdate,
   currentDayKey,
   dayStartTime = "00:00",
@@ -329,7 +331,17 @@ export function useTaskEditorSaveAction({
       user_id: currentUserId,
       sort_order: sortOrder,
     });
-    const { data, error, usedEnergyFallback } = await insertTaskRowWithLegacyEnergyFallback(payload);
+    const creationResult = canonicalCommandsEnabled
+      ? canonicalTaskCreator
+        ? await canonicalTaskCreator(payload, "task_creation")
+        : {
+            data: null,
+            error: { message: "Trusted canonical Task creation is unavailable." },
+            usedEnergyFallback: false,
+            usedActualSecondsFallback: false as const,
+          }
+      : await insertTaskRowWithLegacyEnergyFallback(payload);
+    const { data, error, usedEnergyFallback } = creationResult;
 
     if (error) {
       setMessage({ tone: "warn", text: error.message });
@@ -345,9 +357,13 @@ export function useTaskEditorSaveAction({
       return null;
     }
 
-    const historySaved = await syncTaskHistoryEntry(data.id, data.status, data);
-    if (!historySaved) {
-      return false;
+    if (!canonicalCommandsEnabled) {
+      const historySaved = await syncTaskHistoryEntry(data.id, data.status, data);
+      if (!historySaved) {
+        return false;
+      }
+
+      await onTasksCompleted([{ previousStatus: null, task: data }]);
     }
 
     const subtasksResult = await replaceTaskSubtasks(data.id, subtasks);
@@ -359,8 +375,6 @@ export function useTaskEditorSaveAction({
     if (!linkedNotesSaved) {
       return false;
     }
-
-    await onTasksCompleted([{ previousStatus: null, task: data }]);
 
     if (focusToday) {
       await saveFocusSelection(

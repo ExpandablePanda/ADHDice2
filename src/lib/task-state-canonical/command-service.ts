@@ -289,6 +289,17 @@ export class CanonicalCommandPlanningError extends Error {
   }
 }
 
+function requireCanonicalRevision(task: CanonicalTaskRow): number {
+  const revision = task.canonical_revision;
+  if (!Number.isInteger(revision) || revision < 1) {
+    throw new CanonicalCommandPlanningError(
+      "CANONICAL_REVISION_REQUIRED",
+      "Canonical Task State requires canonical_revision; legacy revision is not a substitute.",
+    );
+  }
+  return revision;
+}
+
 function commandId() {
   const generated = globalThis.crypto?.randomUUID?.();
   if (!generated) throw new CanonicalCommandPlanningError("COMMAND_ID_REQUIRED", "A command ID is required when secure UUID generation is unavailable.");
@@ -472,7 +483,7 @@ function initialResult(
     state: "accepted",
     conflictCode: null,
     expectedRevision: envelope.expectedRevision,
-    nextRevision: (task.canonical_revision ?? task.revision) + 1,
+    nextRevision: requireCanonicalRevision(task) + 1,
     canonicalTaskPatch,
     compatibilityProjection: projection,
     historyFact: null,
@@ -491,7 +502,7 @@ export function planTaskStateCommand(
 ): CanonicalTaskCommandPlan {
   const command = normalizeTaskStateCommand(input);
   const task = state.task;
-  const currentRevision = task.canonical_revision ?? task.revision;
+  const currentRevision = requireCanonicalRevision(task);
   if (task.user_id !== command.userId || task.id !== command.taskId || task.entity_kind !== command.entityKind) {
     throw new CanonicalCommandPlanningError("OWNERSHIP_MISMATCH", "The command entity is not owned by the command user or has a different entity kind.");
   }
