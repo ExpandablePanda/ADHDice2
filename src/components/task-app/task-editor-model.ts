@@ -9,10 +9,37 @@ import type {
   TaskSubtask as DbTaskSubtask,
   TaskSubtaskStatus,
 } from "@/lib/database.types";
-import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
+import { buildTaskPriorityUpdate, formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 
 export type TaskDraft = Omit<TaskInsert, "user_id">;
 export type TaskEditorMode = "create" | "edit";
+
+export function buildNewTaskDraft(title: string): TaskDraft {
+  return {
+    actual_seconds: 0,
+    completed_at: null,
+    due_on: null,
+    due_time: null,
+    energy: "none",
+    estimated_minutes: null,
+    external_link_label: null,
+    external_link_url: null,
+    notes: null,
+    one_step_at_a_time: false,
+    ...buildTaskPriorityUpdate(0),
+    repeat_day_of_month: null,
+    repeat_days_of_week: [],
+    repeat_frequency: "none",
+    repeat_interval: 1,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    status: "pending",
+    subtasks_auto_reset: false,
+    tags: [],
+    title,
+  };
+}
 
 export type VerticalScrollIndicator = {
   active: boolean;

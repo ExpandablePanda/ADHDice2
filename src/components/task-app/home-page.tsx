@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Plus, Search, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -11,9 +11,11 @@ import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import { getSelectableTaskStatuses } from "@/lib/task-complete";
 import type { Task, TaskStatus } from "@/lib/database.types";
+import type { TaskDraft } from "@/components/task-app/task-editor-model";
 import type { TaskListMembership } from "@/lib/task-lists";
 import {
   buildHomeTodoHierarchy,
+  createHomeTodoTask,
   getHomeTodoSearchText,
   isHomeTodoTaskEligible,
   moveHomeTodoTaskIdToEdge,
@@ -25,12 +27,14 @@ const HOME_TODO_VISIBLE_LIMIT = 10;
 
 export function HomePage({
   listMembershipsByTaskId,
+  onCreateTask,
   onOpenTask,
   onSetStatus,
   tasks,
   userId,
 }: {
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
+  onCreateTask: (draft: TaskDraft) => Promise<Task | null>;
   onOpenTask: (taskId: string) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   tasks: Task[];
@@ -39,9 +43,13 @@ export function HomePage({
   const { state, syncStatus, updateTaskIds } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement | null>(null);
+  const newTaskInputRef = useRef<HTMLInputElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const reconciledTaskIds = useMemo(
@@ -68,6 +76,36 @@ export function HomePage({
 
   const nowTasks = todoTasks.slice(0, HOME_TODO_VISIBLE_LIMIT);
   const doLaterTasks = todoTasks.slice(HOME_TODO_VISIBLE_LIMIT);
+
+  useEffect(() => {
+    if (isCreateOpen) newTaskInputRef.current?.focus();
+  }, [isCreateOpen]);
+
+  async function handleCreateTask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (isCreating) return;
+
+    setIsCreating(true);
+    try {
+      const createdTask = await createHomeTodoTask(
+        newTaskTitle,
+        onCreateTask,
+        (taskId) => updateTaskIds((taskIds) => [...taskIds, taskId]),
+      );
+      if (createdTask) {
+        setNewTaskTitle("");
+        setIsCreateOpen(false);
+      }
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  function cancelCreateTask() {
+    if (isCreating) return;
+    setNewTaskTitle("");
+    setIsCreateOpen(false);
+  }
 
   useEffect(() => {
     if (!statusMenuTaskId) return;
@@ -207,8 +245,20 @@ export function HomePage({
         )}
       >
         <div className="relative mt-4" ref={searchRef}>
-          <label className="grid gap-1.5">
+          <div className="flex flex-wrap items-end justify-between gap-2">
             <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Search tasks</span>
+            <AdhdChip
+              disabled={isCreating}
+              onClick={() => {
+                setIsSearchOpen(false);
+                setIsCreateOpen(true);
+              }}
+              selected={isCreateOpen}
+            >
+              New task
+            </AdhdChip>
+          </div>
+          <label className="mt-1.5 grid gap-1.5">
             <span className="relative">
               <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#938ab8]" />
               <input
@@ -223,6 +273,33 @@ export function HomePage({
               />
             </span>
           </label>
+          {isCreateOpen ? (
+            <form
+              className="mt-3 flex flex-wrap items-end gap-2 rounded-[1rem] border border-[#e4def2] bg-[#fcfbff] p-2.5 dark:border-white/10 dark:bg-white/[0.03]"
+              onSubmit={handleCreateTask}
+            >
+              <label className="min-w-[min(100%,16rem)] flex-1">
+                <span className="sr-only">Task title</span>
+                <input
+                  autoComplete="off"
+                  className="health-input"
+                  disabled={isCreating}
+                  onChange={(event) => setNewTaskTitle(event.target.value)}
+                  placeholder="Task title"
+                  ref={newTaskInputRef}
+                  value={newTaskTitle}
+                />
+              </label>
+              <div className="flex shrink-0 gap-1.5">
+                <AdhdChip disabled={isCreating} selected type="submit">
+                  {isCreating ? "Adding…" : "Add"}
+                </AdhdChip>
+                <AdhdChip disabled={isCreating} onClick={cancelCreateTask}>
+                  Cancel
+                </AdhdChip>
+              </div>
+            </form>
+          ) : null}
           {isSearchOpen && query.trim() ? (
             <div className="absolute inset-x-0 top-full z-30 mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">
               {searchResults.length ? searchResults.map(({ hierarchy, task }) => (

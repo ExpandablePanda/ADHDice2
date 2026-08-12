@@ -1,3 +1,4 @@
+import { buildNewTaskDraft, type TaskDraft } from "@/components/task-app/task-editor-model";
 import type { Task } from "@/lib/database.types";
 import type { TaskListMembership } from "@/lib/task-lists";
 
@@ -12,6 +13,21 @@ export const EMPTY_HOME_TODO_STATE: HomeTodoStateV1 = {
   schemaVersion: 1,
   taskIds: [],
 };
+
+export async function createHomeTodoTask(
+  title: string,
+  onCreateTask: (draft: TaskDraft) => Promise<Task | null>,
+  appendTaskId: (taskId: string) => void,
+) {
+  const trimmedTitle = title.trim();
+  if (!trimmedTitle) return null;
+
+  const createdTask = await onCreateTask(buildNewTaskDraft(trimmedTitle));
+  if (!createdTask) return null;
+
+  appendTaskId(createdTask.id);
+  return createdTask;
+}
 
 export function normalizeHomeTodoState(value: unknown): HomeTodoStateV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

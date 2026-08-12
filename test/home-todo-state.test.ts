@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
+import type { TaskDraft } from "../src/components/task-app/task-editor-model.ts";
 import type { Task } from "../src/lib/database.types.ts";
 import {
   buildHomeTodoHierarchy,
+  createHomeTodoTask,
   getHomeTodoSearchText,
   isHomeTodoTaskEligible,
   moveHomeTodoTaskId,
@@ -36,6 +38,81 @@ test("Home todo state normalizes to ordered unique task ids", () => {
     schemaVersion: 1,
     taskIds: ["a", "b"],
   });
+});
+
+test("Home task creation ignores whitespace-only titles without calling canonical creation", async () => {
+  let createCalls = 0;
+  const appendedTaskIds: string[] = [];
+
+  const createdTask = await createHomeTodoTask(
+    " \t\n ",
+    async () => {
+      createCalls += 1;
+      return task("should-not-exist");
+    },
+    (taskId) => appendedTaskIds.push(taskId),
+  );
+
+  assert.equal(createdTask, null);
+  assert.equal(createCalls, 0);
+  assert.deepEqual(appendedTaskIds, []);
+});
+
+test("Home task creation trims the title and creates exactly one canonical task", async () => {
+  let createCalls = 0;
+  let receivedDraft: TaskDraft | null = null;
+  const canonicalTask = task("canonical-task", { title: "Capture this task" });
+
+  const createdTask = await createHomeTodoTask(
+    "  Capture this task  ",
+    async (draft) => {
+      createCalls += 1;
+      receivedDraft = draft;
+      return canonicalTask;
+    },
+    () => {},
+  );
+
+  assert.equal(createdTask, canonicalTask);
+  assert.equal(createCalls, 1);
+  assert.equal(receivedDraft?.title, "Capture this task");
+});
+
+test("Home task creation uses current new-task defaults and appends the returned canonical id", async () => {
+  const appendedTaskIds: string[] = [];
+  let receivedDraft: TaskDraft | null = null;
+  const canonicalTask = task("canonical-task");
+
+  await createHomeTodoTask(
+    "New task",
+    async (draft) => {
+      receivedDraft = draft;
+      return canonicalTask;
+    },
+    (taskId) => appendedTaskIds.push(taskId),
+  );
+
+  assert.equal(receivedDraft?.status, "pending");
+  assert.equal(receivedDraft?.priority_level, 0);
+  assert.equal(receivedDraft?.priority, "low");
+  assert.equal(receivedDraft?.energy, "none");
+  assert.equal(receivedDraft?.repeat_frequency, "none");
+  assert.equal(receivedDraft?.repeat_interval, 1);
+  assert.equal(receivedDraft?.actual_seconds, 0);
+  assert.deepEqual(appendedTaskIds, [canonicalTask.id]);
+});
+
+test("Home task creation does not append a phantom id when canonical creation fails", async () => {
+  const appendedTaskIds: string[] = [];
+
+  const createdTask = await createHomeTodoTask(
+    "Retry me",
+    async () => null,
+    (taskId) => appendedTaskIds.push(taskId),
+  );
+
+  assert.equal(createdTask, null);
+  assert.deepEqual(appendedTaskIds, []);
 });
 
 test("Home todo eligibility follows active task ancestry", () => {
@@ -102,8 +179,18 @@ test("Home todo renders the recovered ten-item, wrapped-title, status, and picke
   assert.match(source, /break-words text-sm font-semibold leading-5/);
   assert.match(source, /<TaskStatusCircleRail/);
   assert.match(source, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
+  assert.match(source, /onSubmit=\{handleCreateTask\}/);
+  assert.match(source, /New task/);
+  assert.match(source, /type="submit"/);
+  assert.match(source, /Cancel/);
   assert.match(source, /setIsSearchOpen\(true\)/);
   assert.doesNotMatch(source, /setQuery\(""\)/);
+});
+
+test("TaskApp passes Home creation through the shared canonical addTask seam", () => {
+  const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  assert.match(source, /<TaskHomePage[\s\S]*onCreateTask=\{addTask\}/);
+  assert.match(source, /addTask\(buildNewTaskDraft\("New Task"\)\)/);
 });
 
 test("Home todo migration and schema provide owner-scoped realtime state", () => {

@@ -95,6 +95,7 @@ import { TaskActiveTimersTray } from "./task-app/task-active-timers-tray";
 import { ScratchPaperWidget, type ScratchPaperData } from "./task-app/scratch-paper";
 import {
   applyTaskEditorDraftOverrides,
+  buildNewTaskDraft,
   createTaskEditorDraft,
   emptyToNull,
   parseDayOfMonth,
@@ -580,7 +581,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.50";
+const APP_VERSION = "7.7.51";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -3977,27 +3978,7 @@ export function TaskApp() {
   }, [openNewTaskEditor]);
 
   const openInlineNewListTaskComposer = useCallback(async () => {
-    const createdTask = await addTask({
-      actual_seconds: 0,
-      completed_at: null,
-      due_on: null,
-      due_time: null,
-      energy: "none",
-      estimated_minutes: null,
-      external_link_label: null,
-      external_link_url: null,
-      notes: null,
-      one_step_at_a_time: false,
-      ...buildTaskPriorityUpdate(0),
-      repeat_day_of_month: null,
-      repeat_days_of_week: [],
-      repeat_frequency: "none",
-      repeat_interval: 1,
-      status: "pending",
-      subtasks_auto_reset: false,
-      tags: [],
-      title: "New Task",
-    });
+    const createdTask = await addTask(buildNewTaskDraft("New Task"));
 
     if (!createdTask) {
       return;
@@ -6921,6 +6902,7 @@ export function TaskApp() {
         ) : activePage === "Home" ? (
           <TaskHomePage
             listMembershipsByTaskId={taskListMembershipsByTaskId}
+            onCreateTask={addTask}
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             tasks={tasksForActiveStatusRead}
