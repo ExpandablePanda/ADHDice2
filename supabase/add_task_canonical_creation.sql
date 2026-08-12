@@ -215,7 +215,7 @@ begin
      or v_repeat_frequency not in ('none', 'daily', 'weekly', 'monthly', 'custom', 'daily_until_complete')
      or v_repeat_interval < 1
      or cardinality(v_repeat_days) > 7
-     or v_repeat_days <@ array[0, 1, 2, 3, 4, 5, 6]::smallint[]
+     or not (v_repeat_days <@ array[0, 1, 2, 3, 4, 5, 6]::smallint[])
      or v_repeat_monthly_mode not in ('day_of_month', 'ordinal_weekday')
      or (v_repeat_monthly_ordinal is not null and v_repeat_monthly_ordinal not in ('first', 'second', 'third', 'fourth', 'last'))
      or (v_repeat_monthly_weekday is not null and v_repeat_monthly_weekday not between 0 and 6)
