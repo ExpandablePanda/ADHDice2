@@ -351,6 +351,18 @@ test("trusted creation source and RPC contracts are service-role-only and do not
   assert.doesNotMatch(edge, /body\.user_id|body\.task\.user_id/);
 });
 
+test("canonical creation source parsing accepts creation/import forms and rejects unsupported values", () => {
+  const edge = readFileSync(new URL("../supabase/functions/task-create-canonical/index.ts", import.meta.url), "utf8");
+  assert.match(
+    edge,
+    /const source =\s*\n\s*body\.source === "task_import"\s*\n\s*\? "task_import"\s*\n\s*:\s*body\.source === "task_creation" \|\| body\.source === undefined\s*\n\s*\? "task_creation"\s*\n\s*:\s*null;/,
+  );
+  assert.match(edge, /body\.source === "task_creation"/);
+  assert.match(edge, /body\.source === undefined/);
+  assert.match(edge, /body\.source === "task_import"/);
+  assert.match(edge, /: null;/);
+});
+
 test("canonical command planning rejects legacy revision substitution", () => {
   const legacyTask = canonicalTask({ canonical_revision: null, revision: 19 });
   const command = {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.7.39`.
+- Current working app version: `7.7.40`.
 - Current release group: `7.7.x` Flexible Meal Logging and Editing.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -25,6 +25,10 @@ Role: active working
 - Browser QA is pending; visible browser behavior and live runtime parity remain unverified.
 
 ## Current Architectural Authorities
+
+### 7.7.40 Canonical creation source parsing
+
+- The trusted canonical Task creation Edge boundary accepts both explicit `task_creation` and omitted creation sources, continues to accept explicit `task_import`, and rejects unsupported source values. SQL, RPC, planner, recurrence, History, reward, Import behavior, and deployment state are unchanged.
 
 ### 7.7.39 Trusted canonical Task creation
 

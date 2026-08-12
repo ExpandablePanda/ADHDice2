@@ -162,7 +162,12 @@ export default {
       || !validTaskIntent(body.task)) {
       return json({ error: { code: "invalid_request", message: "Task creation intent is malformed or contains privileged fields." } }, 400);
     }
-    const source = body.source === "task_import" ? "task_import" : body.source === undefined ? "task_creation" : null;
+    const source =
+      body.source === "task_import"
+        ? "task_import"
+        : body.source === "task_creation" || body.source === undefined
+          ? "task_creation"
+          : null;
     if (!source) return json({ error: { code: "invalid_request", message: "Task creation source is invalid." } }, 400);
 
     try {
