@@ -22,6 +22,9 @@ import { classifyTaskStateRuntimeAction, type TaskStateRuntimeCanonicalIntent } 
 import { executeTaskStateRuntimeAction, type TaskStateRuntimeExecutionResult, type TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import { resolveCanonicalTaskOccurrence } from "@/lib/task-state-canonical/occurrence-resolution";
+import { createBrowserUuidV4 } from "@/lib/browser-uuid";
+
+const calendarReplayAttemptStores = new WeakMap<object, Map<string, string>>();
 
 type Message = {
   text: string;
@@ -99,6 +102,25 @@ export function useTaskHistoryActions({
   timezone,
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskHistoryActionsOptions) {
+  // React dispatch identities are stable across renders and keep this store
+  // scoped to one hook owner without making direct hook tests require a DOM.
+  const calendarReplayAttempts = calendarReplayAttemptStores.get(setTasks as object)
+    ?? new Map<string, string>();
+  calendarReplayAttemptStores.set(setTasks as object, calendarReplayAttempts);
+
+  function calendarReplayIdentity(taskId: string, entryDate: string, status: TaskStatus) {
+    const key = `${taskId}:${entryDate}:${status}`;
+    const existing = calendarReplayAttempts.get(key);
+    if (existing) return { key, identity: existing };
+    const identity = `calendar:${createBrowserUuidV4()}`;
+    calendarReplayAttempts.set(key, identity);
+    return { key, identity };
+  }
+
+  function retireCalendarReplayIdentity(key: string) {
+    calendarReplayAttempts.delete(key);
+  }
+
   function notifyHistoryMutation(taskId: string, nextHistory?: DbTaskHistory[]) {
     void onHistoryMutation?.(taskId, nextHistory);
   }
@@ -537,9 +559,10 @@ export function useTaskHistoryActions({
             ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
             ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
           };
+        const replayAttempt = calendarReplayIdentity(taskId, entryDate, status);
         const action = classifyTaskStateRuntimeAction({
           canonicalIntent,
-          replayIdentity: `calendar:${taskId}:${entryDate}:${status}`,
+          replayIdentity: replayAttempt.identity,
           task: currentTask,
         });
         if (action.kind !== "canonical_action") {
@@ -557,6 +580,7 @@ export function useTaskHistoryActions({
           setMessage({ tone: "warn", text: canonicalResult.error.message });
           return false;
         }
+        retireCalendarReplayIdentity(replayAttempt.key);
         currentTask = canonicalResult.task;
       }
 

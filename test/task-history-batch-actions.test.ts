@@ -144,6 +144,77 @@ test("canonical History Calendar outcome uses set_outcome and never writes legac
   assert.equal(localTask.status, "done");
 });
 
+test("canonical Calendar replay identities follow attempt lifecycle", async () => {
+  const task = {
+    ...createTask({ id: "calendar-replay-lifecycle", status: "pending", title: "Calendar replay lifecycle" }),
+    canonical_revision: 4,
+    canonicalization_status: "canonical_proven" as const,
+    entity_kind: "parent" as const,
+  } satisfies TaskStateRuntimeLocalTask;
+  const replayIdentities: string[] = [];
+  let releaseFirstAttempt: (() => void) | null = null;
+  const firstAttemptReleased = new Promise<void>((resolve) => { releaseFirstAttempt = resolve; });
+  let executorCalls = 0;
+  const actions = useTaskHistoryActions({
+    canonicalCommandsEnabled: true,
+    canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => {
+      replayIdentities.push(action.replayIdentity);
+      executorCalls += 1;
+      if (executorCalls <= 2) await firstAttemptReleased;
+      return {
+        success: true,
+        task: { ...currentTask, canonical_revision: currentTask.canonical_revision + 1 },
+        response: {
+          success: true,
+          state: "committed",
+          task_id: currentTask.id,
+          command_id: `command-${executorCalls}`,
+          expected_revision: currentTask.canonical_revision,
+          next_revision: currentTask.canonical_revision + 1,
+          was_replayed: false,
+          conflict_code: null,
+          canonical_task_patch: {},
+          compatibility_projection: {},
+          side_effect_ids: {},
+          error: null,
+        },
+      };
+    },
+    client: { from: () => { throw new Error("legacy History write"); } } as never,
+    currentDayKey: "2026-08-11",
+    currentUserId: "user-1",
+    dayStartTime: "06:00",
+    isTaskCompletedForHistory: (status) => status === "done" || status === "did_my_best" || status === "complete",
+    isTaskHistoryStatus: (status) => status === "done" || status === "did_my_best" || status === "missed" || status === "complete",
+    mapTaskHistoryRow: (row) => row,
+    now: new Date("2026-08-11T12:00:00.000Z"),
+    setMessage: () => {},
+    setTaskHistory: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    tasks: [task],
+    timezone: "UTC",
+    updateTaskRowWithLegacyEnergyFallback: async () => { throw new Error("legacy Task write"); },
+  });
+
+  const first = actions.syncTaskHistoryEntries(task.id, "missed", ["2026-08-11"], { syncLiveTask: true });
+  const retry = actions.syncTaskHistoryEntries(task.id, "missed", ["2026-08-11"], { syncLiveTask: true });
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+  assert.equal(replayIdentities[0], replayIdentities[1]);
+  releaseFirstAttempt!();
+  await Promise.all([first, retry]);
+
+  await actions.syncTaskHistoryEntries(task.id, "missed", ["2026-08-11"], { syncLiveTask: true });
+  assert.notEqual(replayIdentities[2], replayIdentities[0]);
+
+  await actions.syncTaskHistoryEntries(task.id, "pending", ["2026-08-11"], { syncLiveTask: true });
+  await actions.syncTaskHistoryEntries(task.id, "missed", ["2026-08-11"], { syncLiveTask: true });
+  await actions.syncTaskHistoryEntries(task.id, "pending", ["2026-08-11"], { syncLiveTask: true });
+  await actions.syncTaskHistoryEntries(task.id, "missed", ["2026-08-11"], { syncLiveTask: true });
+  assert.notEqual(replayIdentities[5], replayIdentities[2]);
+  assert.notEqual(replayIdentities[7], replayIdentities[5]);
+});
+
 for (const [previousStatus, nextStatus] of [
   ["missed", "done"],
   ["missed", "did_my_best"],
