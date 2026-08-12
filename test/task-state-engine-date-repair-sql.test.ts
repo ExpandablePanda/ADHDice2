@@ -7,7 +7,22 @@ const FORWARD_RESET_SQL_PATH = "supabase/patch_task_state_forward_reset_7_6_18.s
 const FORWARD_RESET_PREVIEW_SQL_PATH = "supabase/preview_task_state_forward_reset_7_6_18.sql";
 const FORWARD_RESET_7_6_19_SQL_PATH = "supabase/patch_task_state_forward_reset_7_6_19.sql";
 const FORWARD_RESET_7_6_19_PREVIEW_SQL_PATH = "supabase/preview_task_state_forward_reset_7_6_19.sql";
-const REPAIR_REPORT_PATH = "src/lib/task-state-engine/recurring-date-repair-report.ts";
+const HISTORICAL_REPAIR_REPORT_IDS = [
+  "96d688b4-54f5-4884-9971-38b43cba4aa5", "40dfaed0-4c1c-4ab0-a930-3bc0accbed94",
+  "b421f72a-2745-46df-81a1-d8c8416e1951", "87a9e225-b385-44c7-b336-c3b9c6c5ea1b",
+  "8ee7441c-2e4d-439a-be7f-d1e19fdb2a41", "81b64697-4291-4d3d-913a-c9d0e2f8d804",
+  "27035f67-c008-4e54-9761-c7f01cf0604d", "0c3ccc7b-fcce-4a6a-aa77-9c5cfd471fc7",
+  "723be9b2-64c0-43a9-b49a-5b7f648f57ea", "a1eb2348-99ed-42bd-867b-ceb246128066",
+  "b4940db0-5217-4f53-99d0-60e46933e58e", "09180da0-58bb-46e4-8ec2-53c1cc4d2f21",
+  "7fb30d0c-1d12-4c3e-9c82-f39a82ff6055", "f4e11d51-6bba-4eff-a05f-7c2e81f19a92",
+  "c72a281c-5932-4b7b-8e49-4ee4397acf6e", "058390ab-cc42-49ec-a458-8da05773732b",
+  "8b50fb4b-a634-4c15-afb3-70307ebc528a", "d5d2d1ba-94f1-47d3-a7af-11fd3f208db1",
+  "df4ef91d-fcee-4411-970c-0c1cf9520ff5", "dba6e6d4-981f-4941-a5c9-e78e8def250f",
+  "a3e34bd7-35dd-44b0-82e0-7677c957c5f0", "713cfd40-287c-4531-bba5-46d9f6f2a496",
+  "a415dc65-b841-448b-b8a8-4b299987cb8a", "01eda993-ddfc-4fb1-b817-1fb986d1b7b2",
+  "52e90aba-364a-4b9f-8c03-e512a099fe44", "46c06353-7930-4ed3-9449-4ae2084ffa57",
+  "c48c40ee-296a-4bd5-aec4-eec75ccf48ba", "9f69b644-4943-4329-9162-53fefe1bc7dc",
+] as const;
 
 const EXPECTED_CORRECTIONS = [
   ["96d688b4-54f5-4884-9971-38b43cba4aa5", "2027-05-31", "2026-08-03"],
@@ -56,16 +71,12 @@ test("7.6.17 dry run is CTE-and-select only and fails closed", async () => {
 });
 
 test("7.6.18 forward reset contains the exact unique 28-ID repair-report scope", async () => {
-  const [sql, reportSource] = await Promise.all([
-    readFile(FORWARD_RESET_SQL_PATH, "utf8"),
-    readFile(REPAIR_REPORT_PATH, "utf8"),
-  ]);
+  const sql = await readFile(FORWARD_RESET_SQL_PATH, "utf8");
   const sqlIds = [...sql.matchAll(/'([0-9a-f-]{36})'::uuid/g)].map((match) => match[1]);
-  const reportIds = [...reportSource.matchAll(/"([0-9a-f-]{36})"/g)].map((match) => match[1]);
 
   assert.equal(sqlIds.length, 28);
   assert.equal(new Set(sqlIds).size, 28);
-  assert.deepEqual(sqlIds, reportIds);
+  assert.deepEqual(sqlIds, HISTORICAL_REPAIR_REPORT_IDS);
 });
 
 test("7.6.18 forward reset guards every ID by its exact live corruption snapshot", async () => {
