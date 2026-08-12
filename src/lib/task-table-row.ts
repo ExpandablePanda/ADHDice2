@@ -10,6 +10,7 @@ import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { formatTaskPriorityLevel, getTaskPriorityLevel } from "@/lib/task-priority";
 import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
+import { getTaskTrashTimestamp } from "@/lib/task-trash";
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 let buildTaskTableRowDebugCount = 0;
@@ -99,7 +100,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     actualSeconds: task.actual_seconds ?? 0,
     completedAt: task.completed_at,
     createdAt: task.created_at,
-    trashedAt: task.trashed_at,
+    trashedAt: getTaskTrashTimestamp(task),
     updatedAt: task.updated_at,
     dueOn: task.due_on ?? "",
     dueTime: task.due_time ?? "",
