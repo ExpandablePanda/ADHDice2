@@ -518,6 +518,8 @@ test("canonical gate is enabled and source keeps canonical activation boundaries
   assert.match(subtasks, /Unpromoted checklist rows are intentionally legacy-only entities/);
   assert.match(editor, /Schedule committed, but metadata could not be synchronized/);
   assert.match(taskApp, /canonicalIntent: \{ type: "reconcile_rollover" \}/);
+  assert.match(taskApp, /if \(!TASK_STATE_CANONICAL_COMMANDS_ENABLED && shouldReconcileOverdueTaskMisses\(selectedTaskForEditor, todayKey\)\)/);
+  assert.match(taskApp, /if \(!TASK_STATE_CANONICAL_COMMANDS_ENABLED && task && shouldReconcileOverdueTaskMisses\(task, todayKey\)\)/);
 });
 
 test("disabled gate preserves the existing legacy Task State path", async () => {
@@ -580,6 +582,19 @@ test("TaskApp keeps legacy Restore routing inside the disabled-gate branch", () 
 
   assert.match(restoreSource, /if \(!TASK_STATE_CANONICAL_COMMANDS_ENABLED\) \{\s*optimisticallyRestoreTaskToInbox\(taskId\);\s*routeTask\(taskId, "inbox"\);\s*\}/);
   assert.equal([...restoreSource.matchAll(/routeTask\(taskId, "inbox"\)/g)].length, 1);
+});
+
+test("Archive and Trash expose the canonical Restore to inbox action", () => {
+  const source = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
+  assert.match(source, /Restore to inbox/);
+  assert.match(source, /aria-label="Restore task to inbox"/);
+  assert.match(source, /onRestoreTask\(task\.id\)/);
+});
+
+test("workspace refresh projects Task rows from canonical schedule boundaries", () => {
+  const source = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  assert.match(source, /from\("adhdice_task_schedule_boundaries"\)/);
+  assert.match(source, /projectTasksWithCanonicalScheduleBoundaries/);
 });
 
 test("disabled gate preserves the legacy Archive path", async () => {

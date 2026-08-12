@@ -2,6 +2,7 @@ import type { CanonicalTaskStateReadModel } from "../../../src/lib/task-state-ca
 import type { CanonicalEntityKind, CanonicalJsonObject, CanonicalLogicalDayContext, CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../../../src/lib/task-state-canonical/types.ts";
 import type { CanonicalTaskStateCommand } from "../../../src/lib/task-state-canonical/command-service.ts";
 import { deterministicUuid, sha256Digest } from "../../../src/lib/task-state-canonical/digest.ts";
+import { occurrenceIdentity } from "../../../src/lib/task-state-engine/recurrence.ts";
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_KEY = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
@@ -36,7 +37,7 @@ export type ScheduleChangeIntent = {
 export type TaskStateCommandIntent =
   | { type: "set_outcome"; task_id: string; replay_identity: string; expected_revision?: number; outcome: "done" | "did_my_best" | "missed"; logical_date?: string; occurrence_key?: string; scheduled_due_on?: string }
   | { type: "complete_task"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key?: string; scheduled_due_on?: string }
-  | { type: "delay_occurrence"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key: string; effective_due_on: string }
+  | { type: "delay_occurrence"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key?: string; effective_due_on: string }
   | { type: "set_due_date" | "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: ScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
@@ -128,7 +129,8 @@ export function validateTaskStateCommandIntent(value: unknown): TaskStateCommand
     ["logical_date", "occurrence_key", "scheduled_due_on"].forEach((key) => allowed.add(key));
   } else if (type === "delay_occurrence") {
     ["logical_date", "occurrence_key", "effective_due_on"].forEach((key) => allowed.add(key));
-    if (!isString(value.occurrence_key, 1, 256) || !isDate(value.effective_due_on)) return null;
+    if (value.occurrence_key !== undefined && !isString(value.occurrence_key, 1, 256)) return null;
+    if (!isDate(value.effective_due_on)) return null;
   } else if (type === "set_due_date" || type === "set_repeat") {
     ["logical_date", "schedule"].forEach((key) => allowed.add(key));
     if (!validScheduleIntent(value.schedule)) return null;
@@ -161,6 +163,42 @@ function currentBoundary(readModel: CanonicalTaskStateReadModel): CanonicalTaskS
   const boundary = [...readModel.scheduleBoundaries].sort((left, right) => right.boundary_sequence - left.boundary_sequence)[0];
   if (!boundary) throw new Error("The canonical schedule boundary is unavailable.");
   return boundary;
+}
+
+function materializeDelayOccurrence(readModel: CanonicalTaskStateReadModel, base: ReturnType<typeof commandBase>, now: string): CanonicalTaskOccurrence {
+  const boundary = currentBoundary(readModel);
+  if (boundary.schedule_model === "unscheduled") throw new Error("Delay requires a scheduled canonical occurrence.");
+  const scheduledDueOn = boundary.schedule_model === "one_time"
+    ? boundary.one_time_due_on
+    : readModel.task.active_occurrence_due_on ?? readModel.task.due_on;
+  if (!scheduledDueOn) throw new Error("Delay requires a scheduled canonical occurrence.");
+  const occurrenceKey = occurrenceIdentity(base.taskId, scheduledDueOn);
+  return {
+    id: deterministicUuid(`${base.commandId}:occurrence:${occurrenceKey}`),
+    user_id: base.userId,
+    entity_id: base.taskId,
+    entity_kind: base.entityKind,
+    occurrence_key: occurrenceKey,
+    scheduled_due_on: scheduledDueOn,
+    source_boundary_id: boundary.id,
+    recurrence_source_fingerprint: boundary.id,
+    origin_kind: "proven",
+    origin_confidence: boundary.anchor_confidence,
+    provenance_kind: "user",
+    actor_kind: "user",
+    actor_id: base.userId,
+    source: "task_state_command",
+    materialization_reason: "required_command_state",
+    resolution_state: "unresolved",
+    resolved_logical_date: null,
+    resolved_outcome: null,
+    resolved_history_id: null,
+    command_id: base.commandId,
+    migration_operation_id: null,
+    revision: 1,
+    created_at: now,
+    updated_at: now,
+  };
 }
 
 function commandBase(intent: TaskStateCommandIntent, userId: string, readModel: CanonicalTaskStateReadModel, logicalDay: CanonicalLogicalDayContext) {
@@ -308,7 +346,9 @@ export function buildTrustedTaskStateCommand(input: {
 }): CanonicalTaskStateCommand {
   const { intent, userId, readModel, logicalDay, now } = input;
   const base = commandBase(intent, userId, readModel, logicalDay);
-  const occurrence = occurrenceFor(readModel, "occurrence_key" in intent ? intent.occurrence_key : undefined);
+  const occurrence = intent.type === "delay_occurrence" && !intent.occurrence_key
+    ? materializeDelayOccurrence(readModel, base, now)
+    : occurrenceFor(readModel, "occurrence_key" in intent ? intent.occurrence_key : undefined);
   switch (intent.type) {
     case "set_outcome":
       return { ...base, type: "handled_outcome", outcome: intent.outcome, logicalDate: intent.logical_date, occurrenceId: occurrence?.id ?? null, occurrenceKey: intent.occurrence_key ?? occurrence?.occurrence_key ?? null, scheduledDueOn: intent.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null, occurrence: occurrence ?? undefined };
@@ -316,7 +356,7 @@ export function buildTrustedTaskStateCommand(input: {
       return { ...base, type: "complete", logicalDate: intent.logical_date, occurrenceId: occurrence?.id ?? null, occurrenceKey: intent.occurrence_key ?? occurrence?.occurrence_key ?? null, scheduledDueOn: intent.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null, occurrence: occurrence ?? undefined };
     case "delay_occurrence": {
       if (!occurrence) throw new Error("Delay requires a canonical occurrence identity.");
-      return { ...base, type: "delay", logicalDate: intent.logical_date, occurrenceId: occurrence.id, scheduledDueOn: occurrence.scheduled_due_on, effectiveDueOn: intent.effective_due_on, override: serverDelayOverride(intent, occurrence, readModel, base, now) };
+      return { ...base, type: "delay", logicalDate: intent.logical_date, occurrenceId: occurrence.id, scheduledDueOn: occurrence.scheduled_due_on, effectiveDueOn: intent.effective_due_on, override: serverDelayOverride(intent, occurrence, readModel, base, now), occurrence };
     }
     case "set_due_date":
     case "set_repeat":

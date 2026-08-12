@@ -633,17 +633,17 @@ export function TaskRowContextMenu({
               <span>Clear selection</span>
             </TaskTableChipButton>
           ) : null}
+          {(task.status === "archived" || task.status === "trashed") && onRestoreTask ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => onRestoreTask()}
+            >
+              <span>Restore to inbox</span>
+              <MoveLeft className="h-3.5 w-3.5" />
+            </TaskTableChipButton>
+          ) : null}
           {onDeleteTask ? (
             <>
-              {(task.status === "archived" || task.status === "trashed") && onRestoreTask ? (
-                <TaskTableChipButton
-                  className="w-full justify-between gap-2"
-                  onClick={() => onRestoreTask()}
-                >
-                  <span>Restore to inbox</span>
-                  <MoveLeft className="h-3.5 w-3.5" />
-                </TaskTableChipButton>
-              ) : null}
               <TaskTableChipButton
                 className="w-full justify-between gap-2"
                 toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]"

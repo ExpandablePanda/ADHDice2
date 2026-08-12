@@ -19,6 +19,7 @@ import {
   type TaskStateRuntimeCanonicalAction,
 } from "@/lib/task-state-runtime-executor";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
+import { projectTaskWithCanonicalScheduleChanges } from "@/lib/task-state-canonical/schedule-projection";
 
 type Message = {
   text: string;
@@ -228,16 +229,19 @@ export function useTaskUpdateAction({
           return false;
         }
 
-        mutationState.taskSnapshots.set(taskId, canonicalResult.task);
-        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? canonicalResult.task as Task : task)));
+        const reconciledCanonicalTask = runtimeAction.scheduleChanges
+          ? projectTaskWithCanonicalScheduleChanges(canonicalResult.task as Task, runtimeAction.scheduleChanges)
+          : canonicalResult.task as Task;
+        mutationState.taskSnapshots.set(taskId, reconciledCanonicalTask);
+        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? reconciledCanonicalTask : task)));
         if (runtimeAction.actionType === "archive_task" || runtimeAction.actionType === "trash_task") {
           routeTask(taskId, null);
         } else if (runtimeAction.actionType === "restore_task") {
-          routeTask(taskId, canonicalResult.task.status === "archived" || canonicalResult.task.status === "trashed"
+          routeTask(taskId, reconciledCanonicalTask.status === "archived" || reconciledCanonicalTask.status === "trashed"
             ? null
             : "inbox");
         } else if (["complete_task", "set_outcome"].includes(runtimeAction.actionType)
-          && ["complete", "done", "did_my_best", "missed"].includes(canonicalResult.task.status)) {
+          && ["complete", "done", "did_my_best", "missed"].includes(reconciledCanonicalTask.status)) {
           routeTask(taskId, null);
         }
 

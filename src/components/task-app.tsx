@@ -146,7 +146,6 @@ import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress"
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import { clearMatchingOnTimeExecution, reconcileOnTimeManualDurationsFromTasks, type OnTimeLinkedItemOrigin } from "@/lib/on-time-plan-state";
 import { occurrenceIdentityMatches } from "@/lib/on-time-planner";
-import { resolveCanonicalTaskOccurrence } from "@/lib/task-state-canonical/occurrence-resolution";
 import { buildTaskOccurrenceIdentity } from "@/lib/task-duration-evidence";
 import { isTimedCompletionEvidenceSaved, type TimedCompletionWorkflow } from "@/lib/task-timed-completion";
 import { useBrainstormState } from "@/hooks/useBrainstormState";
@@ -581,7 +580,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.44";
+const APP_VERSION = "7.7.45";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -4528,24 +4527,10 @@ export function TaskApp() {
         setMessage({ tone: "warn", text: "Canonical Delay requires a future effective date; no legacy due_on fallback was used." });
         return false;
       }
-      const occurrenceResolution = await resolveCanonicalTaskOccurrence(
-        supabase!,
-        currentUserId!,
-        task.id,
-        {
-          logicalDate: delayAnchorDate,
-          scheduledDueOn: task.active_occurrence_due_on ?? task.due_on,
-        },
-      );
-      if (!occurrenceResolution.occurrence) {
-        setMessage({ tone: "warn", text: occurrenceResolution.error ?? "No valid canonical occurrence exists; the task was not delayed." });
-        return false;
-      }
       const didDelay = await updateTask(taskId, {}, {
         canonicalIntent: {
           type: "delay_occurrence",
           logical_date: delayAnchorDate,
-          occurrence_key: occurrenceResolution.occurrence.occurrence_key,
           effective_due_on: nextDueOn,
         },
         expectedTask: task,
@@ -5389,7 +5374,7 @@ export function TaskApp() {
     if (selectedTaskForEditor) {
       setTaskHistoryModalTaskId(selectedTaskForEditor.id);
       void loadTaskHistoryForTask(selectedTaskForEditor.id);
-      if (shouldReconcileOverdueTaskMisses(selectedTaskForEditor, todayKey)) {
+      if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED && shouldReconcileOverdueTaskMisses(selectedTaskForEditor, todayKey)) {
         void reconcileOverdueTaskMisses(selectedTaskForEditor);
       }
     }
@@ -5399,7 +5384,7 @@ export function TaskApp() {
     setTaskHistoryModalTaskId(taskId);
     void loadTaskHistoryForTask(taskId);
     const task = tasks.find((entry) => entry.id === taskId);
-    if (task && shouldReconcileOverdueTaskMisses(task, todayKey)) {
+    if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED && task && shouldReconcileOverdueTaskMisses(task, todayKey)) {
       void reconcileOverdueTaskMisses(task);
     }
   }

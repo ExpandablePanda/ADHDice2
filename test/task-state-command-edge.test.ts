@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildTrustedTaskStateCommandReplayDescriptor, type TaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
+import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, type TaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
 import {
   executeTrustedTaskStateCommand,
   type TrustedTaskStateCommandClient,
@@ -39,6 +39,35 @@ test("Edge intent validation owns the privileged-field rejection list", () => {
   assert.match(domainSource, /accepted_payload_digest/);
   assert.match(domainSource, /migration_operation_id/);
   assert.match(domainSource, /source_kind/);
+});
+
+test("trusted Delay materializes the current canonical occurrence for the RPC without legacy writes", () => {
+  const boundary = {
+    id: "boundary-1",
+    entity_id: "task-1",
+    schedule_model: "one_time",
+    one_time_due_on: "2026-08-11",
+    boundary_sequence: 1,
+    anchor_confidence: "proven",
+  } as unknown as CanonicalTaskStateReadModel["scheduleBoundaries"][number];
+  const intent: TaskStateCommandIntent = {
+    type: "delay_occurrence",
+    task_id: "task-1",
+    replay_identity: "delay:task-1:2026-08-11:2026-08-12",
+    effective_due_on: "2026-08-12",
+    logical_date: "2026-08-11",
+  };
+  const command = buildTrustedTaskStateCommand({
+    intent,
+    userId: "owner-1",
+    readModel: { ...canonicalReadModel, scheduleBoundaries: [boundary] },
+    logicalDay: { logicalDate: "2026-08-11", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 },
+    now: "2026-08-11T12:00:00.000Z",
+  });
+  assert.equal(command.type, "delay");
+  assert.equal(command.occurrence?.source_boundary_id, "boundary-1");
+  assert.equal(command.occurrence?.scheduled_due_on, "2026-08-11");
+  assert.equal(command.override?.occurrence_id, command.occurrence?.id);
 });
 
 const canonicalReadModel = {

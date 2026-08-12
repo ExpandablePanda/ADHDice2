@@ -3,6 +3,7 @@ import type { TaskHistory } from "../database.types.ts";
 import type { TaskRecurrence, TaskStateEngineInput } from "../task-state-engine/types.ts";
 import type { CanonicalTaskScheduleBoundary } from "./types.ts";
 import type { CanonicalTaskStateReadModel } from "./read-model.ts";
+import { latestCanonicalScheduleBoundary } from "./schedule-projection.ts";
 
 function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {
   if (boundary.schedule_model === "unscheduled" || boundary.schedule_model === "one_time") return { kind: "none" };
@@ -82,7 +83,7 @@ export function buildCanonicalTaskStateEngineInput(
   readModel: CanonicalTaskStateReadModel,
   context: { now: string; timezone: string; logicalDayRollover: string },
 ): TaskStateEngineInput {
-  const boundary = [...readModel.scheduleBoundaries].sort((left, right) => right.boundary_sequence - left.boundary_sequence)[0];
+  const boundary = latestCanonicalScheduleBoundary(readModel.scheduleBoundaries);
   if (!boundary) throw new Error("Canonical schedule state is unavailable.");
 
   const adapted = adaptLegacyTaskState(

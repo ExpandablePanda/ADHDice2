@@ -93,6 +93,7 @@ export type CanonicalDelayCommand = CanonicalTaskStateCommandBase & {
   scheduledDueOn: string;
   effectiveDueOn: string;
   override?: CanonicalTaskOccurrenceEffectiveOverride;
+  occurrence?: CanonicalTaskOccurrence;
   scheduleBoundary?: CanonicalTaskScheduleBoundary;
 };
 

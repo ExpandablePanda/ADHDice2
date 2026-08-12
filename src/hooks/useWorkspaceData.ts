@@ -22,6 +22,8 @@ import type {
 } from "@/lib/database.types";
 import { loadProfileMedia, setActiveProfileUserId, WORKSPACE_PROFILE_COLUMNS, type WorkspaceProfileRow } from "@/lib/profile-store";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
+import type { CanonicalTaskScheduleBoundary } from "@/lib/task-state-canonical/types";
+import { projectTasksWithCanonicalScheduleBoundaries } from "@/lib/task-state-canonical/schedule-projection";
 import {
   deduplicateTaskHistoryByLogicalDate,
   TASK_HISTORY_COLUMNS,
@@ -438,6 +440,14 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         .order("created_at", { ascending: false });
     }
 
+    function createTaskScheduleBoundariesRequest() {
+      return client
+        .from("adhdice_task_schedule_boundaries")
+        .select("*")
+        .eq("user_id", userId)
+        .order("boundary_sequence", { ascending: false });
+    }
+
     async function reloadTaskRows({ silent = false, source = "realtime" }: { silent?: boolean; source?: string } = {}) {
       if (!isActive) {
         return;
@@ -454,21 +464,27 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         try {
         do {
           queuedTaskReloadRef.current = false;
-          const taskResult = await createTaskRowsRequest();
+          const [taskResult, boundaryResult] = await Promise.all([
+            createTaskRowsRequest(),
+            createTaskScheduleBoundariesRequest(),
+          ]);
 
           if (!isActive) {
             return;
           }
 
-          if (taskResult.error) {
+          if (taskResult.error || boundaryResult.error) {
             if (!silent) {
-              setMessage({ tone: "warn", text: taskResult.error.message ?? "Could not refresh your tasks." });
+              setMessage({ tone: "warn", text: taskResult.error?.message ?? boundaryResult.error?.message ?? "Could not refresh your tasks." });
             }
             return;
           }
 
           startTransition(() => {
-            const nextTasks = taskResult.data ?? [];
+            const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
+              taskResult.data ?? [],
+              (boundaryResult.data ?? []) as CanonicalTaskScheduleBoundary[],
+            );
             setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
           });
           if (isWorkspacePerformanceDiagnosticsEnabled() && source === "rollover") {
@@ -956,6 +972,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const loadStartedAt = performance.now();
       const criticalCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
       const taskRequest = createTaskRowsRequest();
+      const taskScheduleBoundariesRequest = createTaskScheduleBoundariesRequest();
       const taskSubtasksRequest = client
         .from("adhdice_task_subtasks")
         .select("*")
@@ -974,6 +991,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         .maybeSingle();
       const criticalCoreRequest = Promise.all([
         taskRequest,
+        taskScheduleBoundariesRequest,
         taskSubtasksRequest,
         taskLegacySubtaskPromotionsRequest,
         profileRequest,
@@ -1020,7 +1038,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .then((data) => ({ data, error: null }))
           .catch((error: { message?: string }) => ({ data: null, error })),
       ]);
-      const [taskResult, taskSubtasksResult, taskLegacySubtaskPromotionsResult, profileResult] = await criticalCoreRequest;
+      const [taskResult, taskScheduleBoundariesResult, taskSubtasksResult, taskLegacySubtaskPromotionsResult, profileResult] = await criticalCoreRequest;
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -1031,6 +1049,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const criticalErrors = [
         taskResult.error,
+        taskScheduleBoundariesResult.error,
         taskSubtasksResult.error,
         taskLegacySubtaskPromotionsResult.error,
         profileResult.error,
@@ -1050,7 +1069,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const nextTaskSubtasks = (taskSubtasksResult.data ?? []).map(mapTaskSubtaskRow);
       const nextTaskLegacySubtaskPromotions = taskLegacySubtaskPromotionsResult.data ?? [];
-      const nextTasks = taskResult.data ?? [];
+      const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
+        taskResult.data ?? [],
+        (taskScheduleBoundariesResult.data ?? []) as CanonicalTaskScheduleBoundary[],
+      );
       tasksRef.current = nextTasks;
       const criticalHistoryResult = await loadCriticalTaskHistoryFacts(nextTasks);
       if (criticalHistoryResult.error) {
