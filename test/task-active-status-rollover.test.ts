@@ -243,6 +243,18 @@ test("engine rollover waits for loaded Tasks and History, then reads current inp
   assert.match(lifecycle, /committedTaskPatches: error \? 0 : committedTaskPatches/);
 });
 
+test("canonical rollover commands are mutation-scoped and use plan-specific replay identities", () => {
+  const source = readFileSync("src/components/task-app.tsx", "utf8");
+  const canonicalStart = source.indexOf("if (TASK_STATE_CANONICAL_COMMANDS_ENABLED)");
+  const legacyStart = source.indexOf("const rpc", canonicalStart);
+  const canonical = source.slice(canonicalStart, legacyStart);
+  assert.match(canonical, /createEngineRolloverPlan\(/);
+  assert.match(canonical, /engineRolloverPlanTaskMutationCandidates\(plan\)/);
+  assert.match(canonical, /for \(const candidate of mutationCandidates\)/);
+  assert.match(canonical, /createTaskRolloverReplayIdentity\(/);
+  assert.doesNotMatch(canonical, /for \(const task of rolloverTasks\)/);
+});
+
 test("engine and legacy rollover stay mutually exclusive per coordinator execution", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
   const start = source.indexOf('if (TASK_STATE_ENGINE_INTEGRATION_ENABLED)');

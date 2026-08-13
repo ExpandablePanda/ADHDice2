@@ -45,6 +45,19 @@ test("list hierarchy groups render directly without an unsafe render-prop memo b
   assert.match(listSource, /windowedTasks\.map\(\(task\) =>/);
 });
 
+test("requested List overlay rows use the requested task for every rowContext lookup", () => {
+  const overlayStart = listSource.indexOf("const overlayRows = useMemo(");
+  const overlayEnd = listSource.indexOf("const requestedOpenTaskRow", overlayStart);
+  assert.ok(overlayStart >= 0 && overlayEnd > overlayStart);
+  const overlaySource = listSource.slice(overlayStart, overlayEnd);
+  assert.doesNotMatch(overlaySource, /\[task\.id\]/);
+  assert.match(overlaySource, /linkedNotesByTaskId\[tableProps\.requestedOpenTask\.id\]/);
+  assert.match(overlaySource, /listMembershipsByTaskId\[tableProps\.requestedOpenTask\.id\]/);
+  assert.match(overlaySource, /subtasksByTaskId\[tableProps\.requestedOpenTask\.id\]/);
+  assert.match(overlaySource, /taskHistoryByTaskId\[tableProps\.requestedOpenTask\.id\]/);
+  assert.match(overlaySource, /taskHistoryStreakSummaryByTaskId\[tableProps\.requestedOpenTask\.id\]/);
+});
+
 test("table hierarchy groups render directly without an unsafe render-prop memo boundary", () => {
   assert.doesNotMatch(tableSource, /TaskTableRow|render=\{\(\) => \(/);
   assert.match(tableSource, /<div\s+key=\{`task:\$\{getPrototypeTaskRowKey\(task\)\}`\}/);

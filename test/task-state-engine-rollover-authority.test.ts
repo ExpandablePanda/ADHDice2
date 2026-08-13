@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { Task, TaskHistory } from "@/lib/database.types";
-import { createEngineRolloverPlan, engineRolloverPlanHasMutations } from "@/lib/task-state-engine/rollover-authority";
+import { createEngineRolloverPlan, engineRolloverPlanHasMutations, engineRolloverPlanTaskMutationCandidates } from "@/lib/task-state-engine/rollover-authority";
 
 function task(overrides: Partial<Task> = {}): Task {
   return { id: "task-1", user_id: "user-1", title: "Rollover", status: "pending", due_on: "2026-07-30", revision: 1,
@@ -72,6 +72,14 @@ test("calculated overdue rollover persists no History and remains replay-safe", 
   assert.equal(replay.tasks.filter((entry) => Object.keys(entry.patch).length > 0).length, 0);
   assert.equal(replay.tasks.reduce((count, entry) => count + entry.history.length, 0), 0);
   assert.equal(replay.tasks.filter((entry) => entry.rewardEligible).length, 0);
+});
+
+test("canonical rollover candidates include only Tasks with persistable patches", () => {
+  const first = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [task({ due_on: "2026-07-30" })] });
+  const persisted = task({ due_on: first.tasks[0]?.patch.dueOn ?? "2026-07-30", revision: 2, status: first.tasks[0]?.patch.status ?? "pending" });
+  const replay = createEngineRolloverPlan({ ...context, history: [], now: "2026-07-31T12:00:00.000Z", tasks: [persisted] });
+  assert.equal(engineRolloverPlanTaskMutationCandidates(first).length, 1);
+  assert.equal(engineRolloverPlanTaskMutationCandidates(replay).length, 0);
 });
 
 test("first fixed-schedule run advances once and reloaded persistence produces an empty plan", () => {

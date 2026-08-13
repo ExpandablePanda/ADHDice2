@@ -107,3 +107,7 @@ export function createEngineRolloverPlan(input: {
 export function engineRolloverPlanHasMutations(plan: EngineRolloverPlan) {
   return plan.tasks.length > 0;
 }
+
+export function engineRolloverPlanTaskMutationCandidates(plan: EngineRolloverPlan) {
+  return plan.tasks.filter((entry) => Object.keys(entry.patch).length > 0);
+}

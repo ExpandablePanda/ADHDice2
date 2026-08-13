@@ -1,3 +1,5 @@
+import { sha256Hex, stableSerialize } from "@/lib/task-state-canonical/digest";
+
 export const TASK_ROLLOVER_KEY_STORAGE_PREFIX = "adhdice:task-rollover-key";
 
 export function createTaskRolloverSettingsKey(input: {
@@ -19,4 +21,14 @@ export function shouldAttemptTaskRollover(storage: Pick<Storage, "getItem">, key
 
 export function persistProcessedTaskRolloverKey(storage: Pick<Storage, "setItem">, key: string, userId: string) {
   storage.setItem(getTaskRolloverStorageKey(userId), key);
+}
+
+export function createTaskRolloverReplayIdentity(input: {
+  canonicalRevision: number;
+  logicalDayKey: string;
+  patch: unknown;
+  taskId: string;
+}) {
+  const planFingerprint = sha256Hex(stableSerialize(input.patch)).slice(0, 16);
+  return `rollover:${input.logicalDayKey}:${input.taskId}:${input.canonicalRevision}:${planFingerprint}`;
 }

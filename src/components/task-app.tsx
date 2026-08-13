@@ -182,6 +182,7 @@ import {
 import {
   createEngineRolloverPlan,
   engineRolloverPlanHasMutations,
+  engineRolloverPlanTaskMutationCandidates,
   evaluateTaskActionAuthority,
   taskStateHistoryRowToInsert,
   projectTasksForActiveStatusRead,
@@ -246,6 +247,7 @@ import {
 import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
 import {
+  createTaskRolloverReplayIdentity,
   createTaskRolloverSettingsKey,
   persistProcessedTaskRolloverKey,
   shouldAttemptTaskRollover,
@@ -581,7 +583,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.7.51";
+const APP_VERSION = "7.7.52";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -2331,13 +2333,55 @@ export function TaskApp() {
       execute: async () => {
         if (TASK_STATE_CANONICAL_COMMANDS_ENABLED) {
           const rolloverTasks = inputs.tasks.filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed");
+          const rolloverTaskIds = rolloverTasks.map((candidate) => candidate.id);
+          const scopedRolloverHistory = await loadTaskHistoryForTasks(rolloverTaskIds);
+          const historyLoadFailureTaskId = rolloverTaskIds.find((taskId) => {
+            const result = scopedRolloverHistory[taskId];
+            return !result || result.status !== "ready";
+          });
+          if (historyLoadFailureTaskId) {
+            const historyLoadFailure = scopedRolloverHistory[historyLoadFailureTaskId];
+            return { error: { message: historyLoadFailure?.status === "error" ? historyLoadFailure.error : "Could not load task history for canonical rollover." } };
+          }
+          const rolloverHistory = deduplicateTaskHistoryByLogicalDate([
+            ...inputs.taskHistory,
+            ...Object.values(scopedRolloverHistory).flatMap((result) => result.status === "ready" ? result.history : []),
+          ]);
+          const plan = createEngineRolloverPlan({
+            history: rolloverHistory,
+            includeDiagnostics: diagnosticsEnabled,
+            now: new Date(),
+            rolloverTime: inputs.dayStartTime,
+            tasks: rolloverTasks,
+            timezone: inputs.userTimeZone,
+          });
+          const taskById = new Map(rolloverTasks.map((task) => [task.id, task]));
+          const mutationCandidates = engineRolloverPlanTaskMutationCandidates(plan);
+          tasksEvaluated = plan.tasksEvaluated;
+          plannedTaskPatches = mutationCandidates.length;
+          remainingTaskPatchSummaries = plan.remainingPatchSummaries;
           let canonicalCommitted = 0;
           let canonicalFailures = 0;
-          for (const task of rolloverTasks) {
+          for (const candidate of mutationCandidates) {
+            const task = taskById.get(candidate.taskId);
+            if (!task) {
+              canonicalFailures += 1;
+              continue;
+            }
+            const canonicalRevision = (task as Partial<TaskStateRuntimeLocalTask>).canonical_revision;
+            if (!Number.isInteger(canonicalRevision) || canonicalRevision < 1) {
+              canonicalFailures += 1;
+              continue;
+            }
             const committed = await updateTask(task.id, {}, {
               canonicalIntent: { type: "reconcile_rollover" } satisfies TaskStateRuntimeCanonicalIntent,
               expectedTask: task,
-              replayIdentity: `rollover:${rolloverSettingsKey}:${task.id}`,
+              replayIdentity: createTaskRolloverReplayIdentity({
+                canonicalRevision,
+                logicalDayKey: rolloverSettingsKey,
+                patch: candidate.patch,
+                taskId: task.id,
+              }),
             });
             if (committed) canonicalCommitted += 1;
             else canonicalFailures += 1;
