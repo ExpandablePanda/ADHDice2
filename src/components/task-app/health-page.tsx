@@ -2072,6 +2072,7 @@ export function HealthPage({
       {activeTab === "Sleep" ? (
         <div aria-labelledby="health-tab-sleep" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Sleep")} role="tabpanel">
           <HealthPanel
+            collapseAfterHeaderActions
             headerActions={<FoodHistoryDateChip ariaLabel="Sleep ledger date" date={sleepLedgerDate} dayStepper today={today} onChange={setSleepLedgerDate} />}
             icon={<MoonStar />}
             subtitle="Sleep ledger"
@@ -2342,12 +2343,14 @@ export function HealthPage({
 }
 
 function HealthPanel({
+  collapseAfterHeaderActions = false,
   children,
   headerActions,
   icon,
   subtitle,
   title,
 }: {
+  collapseAfterHeaderActions?: boolean;
   children: ReactNode;
   headerActions?: ReactNode;
   icon: ReactNode;
@@ -2355,31 +2358,62 @@ function HealthPanel({
   title?: string;
 }) {
   const [isOpen, setIsOpen] = useState(true);
+  const panelTitle = (
+    <span className="flex min-w-0 items-center gap-3">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center text-[#6f57f6] dark:text-[#cabfff] [&_svg]:h-6 [&_svg]:w-6">
+        {icon}
+      </span>
+      <span>
+        <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{subtitle}</span>
+        {title ? <span className="mt-1 block text-xl font-black text-[#1e2744] dark:text-white">{title}</span> : null}
+      </span>
+    </span>
+  );
+  const collapseButton = (
+    <button
+      aria-expanded={isOpen}
+      aria-label={`${isOpen ? "Collapse" : "Expand"} ${title ?? subtitle}`}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8d87a7] transition hover:bg-[#f7f3ff] hover:text-[#6f57f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:text-white/45 dark:hover:bg-white/[0.08] dark:hover:text-[#cabfff]"
+      onClick={() => setIsOpen((current) => !current)}
+      type="button"
+    >
+      <ChevronDown
+        aria-hidden="true"
+        className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
+      />
+    </button>
+  );
 
   return (
     <div className="rounded-[2rem] border border-[#ece8f8] bg-white/85 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-center gap-2 px-5 py-5">
-        <button
-          aria-expanded={isOpen}
-          className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
-          onClick={() => setIsOpen((current) => !current)}
-          type="button"
-        >
-          <span className="flex min-w-0 items-center gap-3">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center text-[#6f57f6] dark:text-[#cabfff] [&_svg]:h-6 [&_svg]:w-6">
-              {icon}
-            </span>
-            <span>
-              <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{subtitle}</span>
-              {title ? <span className="mt-1 block text-xl font-black text-[#1e2744] dark:text-white">{title}</span> : null}
-            </span>
-          </span>
-          <ChevronDown
-            aria-hidden="true"
-            className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${isOpen ? "rotate-180" : ""}`}
-          />
-        </button>
-        {headerActions}
+        {collapseAfterHeaderActions ? (
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <button
+              aria-expanded={isOpen}
+              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+              onClick={() => setIsOpen((current) => !current)}
+              type="button"
+            >
+              {panelTitle}
+            </button>
+            {headerActions}
+          </div>
+        ) : (
+          <button
+            aria-expanded={isOpen}
+            className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+            onClick={() => setIsOpen((current) => !current)}
+            type="button"
+          >
+            {panelTitle}
+            <ChevronDown
+              aria-hidden="true"
+              className={`h-4 w-4 shrink-0 text-[#8d87a7] transition-transform dark:text-white/45 ${isOpen ? "rotate-180" : ""}`}
+            />
+          </button>
+        )}
+        {collapseAfterHeaderActions ? collapseButton : headerActions}
       </div>
       {isOpen ? <div className="px-5 pb-5 pt-4">{children}</div> : null}
     </div>
@@ -2639,11 +2673,11 @@ function FoodHistoryDateChip({
   if (dayStepper) {
     return (
       <span className="flex items-start gap-1.5">
+        {daySteppers}
         <span className="flex flex-col items-start gap-1">
           {dateInput}
-          <span className="flex h-[26px] items-center">{todayButton}</span>
+          <span className="flex h-[26px] w-full items-center justify-center">{todayButton}</span>
         </span>
-        {daySteppers}
       </span>
     );
   }
