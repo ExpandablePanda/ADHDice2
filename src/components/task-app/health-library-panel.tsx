@@ -573,23 +573,25 @@ export function HealthLibraryPanel({
               </div>
             </HealthCollapsiblePanel>
           </div>
-          <LibraryCards empty={foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."} items={filteredFoods.map((food) => (
-            <AdhdCard key={food.id}>
-              <div className="flex items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <LibraryCardHeader
-                    detail={`${food.food_category || "Uncategorized"} / ${food.serving_label || "1 serving"} / ${food.calories} kcal`}
-                    title={formatBrandedFoodName(food)}
-                  />
-                  <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
+          <div className="adhdice-scrollbar max-h-[36rem] overflow-y-auto pr-1">
+            <LibraryCards empty={foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."} items={filteredFoods.map((food) => (
+              <AdhdCard key={food.id}>
+                <div className="flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <LibraryCardHeader
+                      detail={`${food.food_category || "Uncategorized"} / ${food.serving_label || "1 serving"} / ${food.calories} kcal`}
+                      title={formatBrandedFoodName(food)}
+                    />
+                    <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
+                  </div>
+                  <div className="flex shrink-0 flex-nowrap gap-2">
+                    <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
+                    <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteFood(food.id); }} tone="danger">Remove</AdhdChip>
+                  </div>
                 </div>
-                <div className="flex shrink-0 flex-nowrap gap-2">
-                  <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
-                  <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteFood(food.id); }} tone="danger">Remove</AdhdChip>
-                </div>
-              </div>
-            </AdhdCard>
-          ))} />
+              </AdhdCard>
+            ))} />
+          </div>
         </div>
         </>
       ) : null}

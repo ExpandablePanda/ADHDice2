@@ -367,6 +367,7 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /adhdice-scrollbar max-h-\[26rem\].*overflow-y-auto/);
   assert.match(source, /adhdice-scrollbar max-h-24 overflow-y-auto/);
   assert.match(library, /grid items-start gap-5 xl:grid-cols-\[0\.9fr_1\.1fr\]/);
+  assert.match(library, /adhdice-scrollbar max-h-\[36rem\] overflow-y-auto/);
   assert.match(source, /loggedCountByIdentity/);
   assert.match(source, /formatHealthNutritionNumber\(selectedNutrition\.calories\)/);
   assert.match(source, /formatHealthNutritionNumber\(slotCaloriesTotal\)/);
