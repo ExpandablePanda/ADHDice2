@@ -104,6 +104,9 @@ test("shared line chart hover uses scaled X/Y distance for the nearest point", (
   assert.match(sharedChart, /const localX = \(\(clientX - bounds\.left\) \/ Math\.max\(bounds\.width, 1\)\) \* CHART_WIDTH/);
   assert.match(sharedChart, /const localY = \(\(clientY - bounds\.top\) \/ Math\.max\(bounds\.height, 1\)\) \* CHART_HEIGHT/);
   assert.match(sharedChart, /Math\.hypot\(point\.x - localX, point\.y - localY\)/);
+  assert.match(sharedChart, /left: 68/);
+  assert.match(sharedChart, /min-h-\[3\.5rem\]/);
+  assert.match(sharedChart, /Hover over a point to see its details/);
 });
 
 test("Focus config preserves a plain zero axis label and duration values", () => {

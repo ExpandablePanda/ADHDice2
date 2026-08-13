@@ -41,7 +41,7 @@ type InteractivePoint = NumericLineChartPoint & {
 
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 220;
-const PADDING = { top: 24, right: 24, bottom: 42, left: 44 };
+const PADDING = { top: 24, right: 24, bottom: 42, left: 68 };
 const PLOT_WIDTH = CHART_WIDTH - PADDING.left - PADDING.right;
 const PLOT_HEIGHT = CHART_HEIGHT - PADDING.top - PADDING.bottom;
 
@@ -146,19 +146,6 @@ export function ActivityLineChartCard({
 
           {hasData ? (
             <div className="min-w-0 overflow-x-auto pb-2">
-              {activePoint ? (
-                <div className="mb-3 flex flex-wrap items-center gap-3 rounded-[1.2rem] border border-[#e9e2fb] bg-white/90 px-4 py-3 text-left shadow-[0_12px_30px_rgba(81,61,168,0.08)] dark:border-white/10 dark:bg-white/[0.04]">
-                  <span className="inline-flex items-center gap-2 rounded-full bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]">
-                    <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activePoint.color }} />
-                    {activePoint.seriesLabel}
-                  </span>
-                  <span className="text-sm font-semibold text-[var(--text-primary)]">{activePoint.detailLabel ?? activePoint.label}</span>
-                  <span className="text-sm text-[var(--text-secondary)]">{activePoint.seriesLabel}</span>
-                  <span className="text-sm font-black text-[var(--text-primary)]">{formatValue(activePoint.value)}</span>
-                  {activePointContext ? <span className="text-xs text-[var(--text-muted)]">{activePointContext}</span> : null}
-                  {pinnedPointKey ? <button className="ml-auto rounded-full border border-[#e4deef] px-3 py-1 text-xs font-semibold text-[#68738c] dark:border-white/10 dark:text-white/70" onClick={() => setPinnedPointKey(null)} type="button">Clear pin</button> : null}
-                </div>
-              ) : null}
               <ul className="sr-only">
                 {interactivePoints.map((point) => (
                   <li key={`accessible-${point.pointKey}`}>
@@ -212,6 +199,23 @@ export function ActivityLineChartCard({
           ) : (
             <div className="rounded-[var(--radius-card)] bg-[var(--surface-muted)] px-4 py-6 text-center text-sm text-[var(--text-secondary)] dark:bg-white/[0.04]">{emptyText}</div>
           )}
+          <div className="flex min-h-[3.5rem] flex-wrap items-center gap-3 rounded-[1.2rem] border border-[#e9e2fb] bg-white/90 px-4 py-3 text-left shadow-[0_12px_30px_rgba(81,61,168,0.08)] dark:border-white/10 dark:bg-white/[0.04]">
+            {activePoint ? (
+              <>
+                <span className="inline-flex items-center gap-2 rounded-full bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]">
+                  <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activePoint.color }} />
+                  {activePoint.seriesLabel}
+                </span>
+                <span className="text-sm font-semibold text-[var(--text-primary)]">{activePoint.detailLabel ?? activePoint.label}</span>
+                <span className="text-sm text-[var(--text-secondary)]">{activePoint.seriesLabel}</span>
+                <span className="text-sm font-black text-[var(--text-primary)]">{formatValue(activePoint.value)}</span>
+                {activePointContext ? <span className="text-xs text-[var(--text-muted)]">{activePointContext}</span> : null}
+                {pinnedPointKey ? <button className="ml-auto rounded-full border border-[#e4deef] px-3 py-1 text-xs font-semibold text-[#68738c] dark:border-white/10 dark:text-white/70" onClick={() => setPinnedPointKey(null)} type="button">Clear pin</button> : null}
+              </>
+            ) : (
+              <span className="text-sm text-[var(--text-muted)]">Hover over a point to see its details.</span>
+            )}
+          </div>
         </div>
       </div>
     </div>
