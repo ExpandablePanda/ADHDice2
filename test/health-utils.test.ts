@@ -23,6 +23,7 @@ import {
   getSleepFocusSessions,
   HEALTH_SLEEP_KINDS,
   normalizeHealthSleepKind,
+  resolveHealthSleepKind,
   parseHealthSleepDuration,
   kilogramsToDisplayValue,
   isHealthMealTimestampFuture,
@@ -411,6 +412,30 @@ test("Health Sleep classifications normalize supported and legacy subtypes", () 
   assert.equal(normalizeHealthSleepKind("CPAP Sleep"), "CPAP Sleep");
   assert.equal(normalizeHealthSleepKind("legacy-subtype"), "Sleep");
   assert.equal(normalizeHealthSleepKind(null), "Sleep");
+});
+
+test("Health Sleep resolver prioritizes explicit subtype over session title", () => {
+  assert.equal(resolveHealthSleepKind({ focusSubtype: "CPAP Nap", title: "Sleep" }), "CPAP Nap");
+});
+
+test("Health Sleep resolver recovers normalized legacy session titles", () => {
+  assert.equal(resolveHealthSleepKind({ focusSubtype: null, title: "CPAP Sleep" }), "CPAP Sleep");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: null, title: "  cpap-NAP  " }), "CPAP Nap");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: undefined, title: "Nap" }), "Nap");
+});
+
+test("Health Sleep resolver uses the linked category only after session metadata", () => {
+  assert.equal(resolveHealthSleepKind({ focusSubtype: null, title: "Legacy sleep label" }, { title: "CPAP Sleep" }), "CPAP Sleep");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: null, title: "Nap" }, { title: "CPAP Sleep" }), "Nap");
+  assert.equal(resolveHealthSleepKind({ focusSubtype: "unsupported", title: "Also unsupported" }, { title: "Sleep" }), "Sleep");
+});
+
+test("Health Sleep resolver does not mutate session or linked category", () => {
+  const session = { focusSubtype: null, title: "CPAP Sleep" };
+  const category = { title: "Sleep" };
+  const before = JSON.stringify({ session, category });
+  assert.equal(resolveHealthSleepKind(session, category), "CPAP Sleep");
+  assert.equal(JSON.stringify({ session, category }), before);
 });
 
 test("Health Sleep durations use compact friendly formatting", () => {

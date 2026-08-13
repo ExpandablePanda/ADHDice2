@@ -248,6 +248,35 @@ export function normalizeHealthSleepKind(value: string | null | undefined): Heal
   return HEALTH_SLEEP_KINDS.includes(value as HealthSleepKind) ? value as HealthSleepKind : "Sleep";
 }
 
+function normalizeRecognizedHealthSleepKind(value: string | null | undefined): HealthSleepKind | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().replace(/[_-]+/g, " ").replace(/\s+/g, " ").toLowerCase();
+  switch (normalized) {
+    case "cpap sleep":
+      return "CPAP Sleep";
+    case "cpap nap":
+      return "CPAP Nap";
+    case "sleep":
+      return "Sleep";
+    case "nap":
+      return "Nap";
+    default:
+      return null;
+  }
+}
+
+export function resolveHealthSleepKind(
+  session: Pick<HistoricalFocusSession, "focusSubtype" | "title">,
+  linkedCategory?: Pick<FocusCategory, "title"> | null,
+): HealthSleepKind {
+  return normalizeRecognizedHealthSleepKind(session.focusSubtype)
+    ?? normalizeRecognizedHealthSleepKind(session.title)
+    ?? normalizeRecognizedHealthSleepKind(linkedCategory?.title)
+    ?? "Sleep";
+}
+
 export function parseHealthSleepDuration(hours: string, minutes: string) {
   const parsedHours = Number(hours);
   const parsedMinutes = Number(minutes);

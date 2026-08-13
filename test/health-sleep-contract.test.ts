@@ -51,9 +51,18 @@ test("Health Sleep selected date controls the ledger totals and graph range", as
   assert.match(health, /const \[sleepLedgerDate, setSleepLedgerDate\] = useState\(todayHealthDate\(\)\)/);
   assert.match(health, /ariaLabel="Sleep ledger date"[\s\S]*?max=\{today\}/);
   assert.match(health, /onChange=\{setSleepLedgerDate\}/);
+  assert.match(health, /dayStepper/);
+  assert.match(health, /aria-label="Previous sleep date"[\s\S]*?shiftHealthDate\(date, -1\)/);
+  assert.match(health, /aria-label="Next sleep date"[\s\S]*?shiftHealthDate\(date, \+1\)/);
+  assert.match(health, /disabled=\{date >= today\}/);
+  assert.match(health, /nextDate > today \? today : nextDate/);
+  assert.equal((health.match(/<FoodHistoryDateChip[^>]*dayStepper/g) ?? []).length, 1);
   assert.match(health, /onClick=\{\(\) => onChange\(today\)\}/);
   assert.match(health, /const selectedSleepTotal = useMemo\([\s\S]*?date: sleepLedgerDate/);
   assert.match(health, /sleepFocusSessions\.filter\(\(session\) => session\.date === sleepLedgerDate\)/);
+  assert.equal((health.match(/resolveHealthSleepKind\(session,/g) ?? []).length, 2);
+  assert.match(health, /kind: resolveHealthSleepKind\(session, session\.categoryId \? focusCategories\.find/);
+  assert.doesNotMatch(health, /normalizeHealthSleepKind\(session\.focusSubtype\)/);
   assert.doesNotMatch(health, /selectedSleepFocusSessions\.slice\(/);
   assert.match(health, /<HealthSleepLineChart series=\{sleepActivitySeries\} \/>/);
   assert.match(utils, /buildHealthDailySleepSeries\([\s\S]*?getHealthSleepDayTotal/);

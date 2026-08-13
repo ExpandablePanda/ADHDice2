@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, Apple, CalendarDays, Camera, Check, ChevronDown, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
+import { Activity, Apple, CalendarDays, Camera, Check, ChevronDown, ChevronUp, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import type {
@@ -62,9 +62,10 @@ import {
   kilogramsToDisplayValue,
   sumMealNutritionForDate,
   sumMetricValueForDate,
+  shiftHealthDate,
   todayHealthDate,
   buildHealthSleepTimestamps,
-  normalizeHealthSleepKind,
+  resolveHealthSleepKind,
   parseHealthSleepDuration,
   isHealthMealTimestampFuture,
   type HealthSleepKind,
@@ -94,6 +95,7 @@ import {
   TASK_TABLE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
+import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
@@ -694,7 +696,7 @@ export function HealthPage({
     setSleepEditDraft({
       date: session.date,
       hours: String(Math.floor(session.durationSeconds / 3600)),
-      kind: normalizeHealthSleepKind(session.focusSubtype),
+      kind: resolveHealthSleepKind(session, session.categoryId ? focusCategories.find((category) => category.id === session.categoryId) : null),
       minutes: String(Math.floor((session.durationSeconds % 3600) / 60)),
       time: startDate && Number.isFinite(startDate.getTime())
         ? `${String(startDate.getHours()).padStart(2, "0")}:${String(startDate.getMinutes()).padStart(2, "0")}`
@@ -2070,7 +2072,7 @@ export function HealthPage({
       {activeTab === "Sleep" ? (
         <div aria-labelledby="health-tab-sleep" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Sleep")} role="tabpanel">
           <HealthPanel
-            headerActions={<FoodHistoryDateChip ariaLabel="Sleep ledger date" date={sleepLedgerDate} onChange={setSleepLedgerDate} today={today} />}
+            headerActions={<FoodHistoryDateChip ariaLabel="Sleep ledger date" date={sleepLedgerDate} dayStepper today={today} onChange={setSleepLedgerDate} />}
             icon={<MoonStar />}
             subtitle="Sleep ledger"
             title="Health sleep totals"
@@ -2145,7 +2147,7 @@ export function HealthPage({
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <AdhdChip tone="purple">{normalizeHealthSleepKind(session.focusSubtype)}</AdhdChip>
+                          <AdhdChip tone="purple">{resolveHealthSleepKind(session, session.categoryId ? focusCategories.find((category) => category.id === session.categoryId) : null)}</AdhdChip>
                           <span className="text-xs text-[#74809b] dark:text-white/45">{formatHealthDateLabel(session.date)}</span>
                           <span className="text-xs text-[#74809b] dark:text-white/45">{formatHealthSleepStartTime(session)}</span>
                         </div>
@@ -2573,16 +2575,46 @@ function SectionMiniTitle({ actions, title }: { actions?: ReactNode; title: stri
 function FoodHistoryDateChip({
   ariaLabel = "Food history date",
   date,
+  dayStepper = false,
   onChange,
   today,
 }: {
   ariaLabel?: string;
   date: string;
+  dayStepper?: boolean;
   onChange: (date: string) => void;
   today: string;
 }) {
   return (
     <span className="flex flex-wrap items-center gap-1.5">
+      {dayStepper ? (
+        <span className="flex h-[26px] flex-col justify-center gap-px" aria-label="Sleep date navigation">
+          <AdhdIconButton
+            aria-label="Next sleep date"
+            className="!h-3 !w-5 !rounded-[3px] !border-transparent !bg-transparent !p-0 text-[#7b6bc8] hover:!bg-[#f3efff] dark:text-[#c1b5ff] dark:hover:!bg-white/[0.08]"
+            disabled={date >= today}
+            iconClassName="!h-3 !w-3"
+            onClick={() => {
+              const nextDate = shiftHealthDate(date, +1);
+              onChange(nextDate > today ? today : nextDate);
+            }}
+            size="sm"
+            tone="ghost"
+          >
+            <ChevronUp aria-hidden="true" />
+          </AdhdIconButton>
+          <AdhdIconButton
+            aria-label="Previous sleep date"
+            className="!h-3 !w-5 !rounded-[3px] !border-transparent !bg-transparent !p-0 text-[#7b6bc8] hover:!bg-[#f3efff] dark:text-[#c1b5ff] dark:hover:!bg-white/[0.08]"
+            iconClassName="!h-3 !w-3"
+            onClick={() => onChange(shiftHealthDate(date, -1))}
+            size="sm"
+            tone="ghost"
+          >
+            <ChevronDown aria-hidden="true" />
+          </AdhdIconButton>
+        </span>
+      ) : null}
       <label className="relative inline-flex items-center">
         <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
         <input
