@@ -11,8 +11,10 @@ import {
   formatEditableWeight,
   formatHealthMealSummary,
   formatHealthNutritionNumber,
+  formatHealthSleepDuration,
   formatMealLoggedTime,
   buildHealthSleepTimestamps,
+  buildHealthDailySleepSeries,
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getCurrentHealthDateTimeInputs,
@@ -411,6 +413,13 @@ test("Health Sleep classifications normalize supported and legacy subtypes", () 
   assert.equal(normalizeHealthSleepKind(null), "Sleep");
 });
 
+test("Health Sleep durations use compact friendly formatting", () => {
+  assert.equal(formatHealthSleepDuration(0), "0m");
+  assert.equal(formatHealthSleepDuration(45), "45m");
+  assert.equal(formatHealthSleepDuration(420), "7h");
+  assert.equal(formatHealthSleepDuration(450), "7h 30m");
+});
+
 test("Health Sleep timestamps preserve local start plus duration across midnight", () => {
   const durationSeconds = parseHealthSleepDuration("2", "30");
   assert.equal(durationSeconds, 2.5 * 60 * 60);
@@ -433,4 +442,28 @@ test("Health Sleep rejects invalid local date/time and recomputes edited duratio
 test("Health Sleep elapsed display derives from the canonical active session", () => {
   assert.equal(getHealthSleepElapsedSeconds({ accumulatedSeconds: 120, isRunning: true, startTime: 100_000 }, 101_501), 121);
   assert.equal(getHealthSleepElapsedSeconds({ accumulatedSeconds: 120, isRunning: false, startTime: 100_000 }, 101_501), 120);
+});
+
+test("Health Sleep daily series returns chronological selected-date totals without mutating inputs", () => {
+  const focusCategories = [{ color: "#6f57f6", focusType: "Sleep", icon: "moon", id: "sleep", title: "Sleep" }];
+  const focusHistory = [{ categoryId: "sleep", date: "2026-08-10", durationSeconds: 60 * 60, focusType: "Sleep", id: "focus-only", title: "Sleep" }];
+  const metricEntries = [
+    { metric_date: "2026-08-09", metric_type: "sleep_minutes" as const, metric_value: 420 },
+    { metric_date: "2026-08-10", metric_type: "sleep_minutes" as const, metric_value: 30 },
+  ];
+  const before = JSON.stringify({ focusCategories, focusHistory, metricEntries });
+  const series = buildHealthDailySleepSeries({ endDate: "2026-08-10", focusCategories, focusHistory, metricEntries });
+
+  assert.equal(series.length, 7);
+  assert.deepEqual(series.map((point) => point.date), [
+    "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08", "2026-08-09", "2026-08-10",
+  ]);
+  assert.equal(series.at(-1)?.date, "2026-08-10");
+  assert.equal(series[0]?.totalMinutes, 0);
+  assert.equal(series[5]?.importedMinutes, 420);
+  assert.equal(series[5]?.focusMinutes, 0);
+  assert.equal(series[6]?.focusMinutes, 60);
+  assert.equal(series[6]?.importedMinutes, 30);
+  assert.equal(series[6]?.totalMinutes, 90);
+  assert.equal(JSON.stringify({ focusCategories, focusHistory, metricEntries }), before);
 });

@@ -42,11 +42,13 @@ import {
   formatHealthMealSummary,
   formatMealLoggedTime,
   formatHealthNutritionNumber,
+  formatHealthSleepDuration,
   formatWeight,
   getCurrentHealthDateTimeInputs,
   getHealthSleepElapsedSeconds,
   getHealthSleepStartTimestamp,
   getHealthSleepDayTotal,
+  buildHealthDailySleepSeries,
   getSleepFocusSessions,
   getLatestWeight,
   getMealSlotLabel,
@@ -96,6 +98,7 @@ import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { HealthCalorieLineChart } from "./health-calorie-line-chart";
+import { HealthSleepLineChart } from "./health-sleep-line-chart";
 import { HealthWaterPanel } from "./health-water-panel";
 import { PageShellHeader } from "./page-shell-header";
 
@@ -401,6 +404,7 @@ export function HealthPage({
   const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
   const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
   const [foodHistoryDate, setFoodHistoryDate] = useState(todayHealthDate());
+  const [sleepLedgerDate, setSleepLedgerDate] = useState(todayHealthDate());
   const [expandedFavoriteId, setExpandedFavoriteId] = useState<string | null>(null);
   const [targetWeightDraft, setTargetWeightDraft] = useState("");
   const [barcodeLookup, setBarcodeLookup] = useState("");
@@ -537,6 +541,18 @@ export function HealthPage({
   const sleepFocusSessions = useMemo(
     () => getSleepFocusSessions(focusHistory, focusCategories),
     [focusCategories, focusHistory],
+  );
+  const selectedSleepTotal = useMemo(
+    () => getHealthSleepDayTotal({ date: sleepLedgerDate, focusCategories, focusHistory, metricEntries }),
+    [focusCategories, focusHistory, metricEntries, sleepLedgerDate],
+  );
+  const selectedSleepFocusSessions = useMemo(
+    () => sleepFocusSessions.filter((session) => session.date === sleepLedgerDate),
+    [sleepFocusSessions, sleepLedgerDate],
+  );
+  const sleepActivitySeries = useMemo(
+    () => buildHealthDailySleepSeries({ endDate: sleepLedgerDate, focusCategories, focusHistory, metricEntries }),
+    [focusCategories, focusHistory, metricEntries, sleepLedgerDate],
   );
   const sleepClockSeconds = sleepActiveSession ? getHealthSleepElapsedSeconds(sleepActiveSession, sleepClockNow) : 0;
   const latestWeight = useMemo(() => getLatestWeight(weightEntries), [weightEntries]);
@@ -790,7 +806,7 @@ export function HealthPage({
   const effectiveSleepGoalMinutes = parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes);
   const sleepGoalHours = effectiveSleepGoalMinutes === null ? "" : String(Math.floor(effectiveSleepGoalMinutes / 60));
   const sleepGoalRemainingMinutes = effectiveSleepGoalMinutes === null ? "" : String(effectiveSleepGoalMinutes % 60);
-  const sleepPercent = clampPercent(activeProfile.sleep_goal_minutes ? (todaySleep / activeProfile.sleep_goal_minutes) * 100 : 0);
+  const selectedSleepPercent = clampPercent(activeProfile.sleep_goal_minutes ? (selectedSleepTotal.totalMinutes / activeProfile.sleep_goal_minutes) * 100 : 0);
 
   function handleWeightUnitChange(nextUnit: HealthProfile["preferred_weight_unit"]) {
     const currentUnit = profileDraft.preferred_weight_unit ?? activeProfile.preferred_weight_unit;
@@ -2053,13 +2069,19 @@ export function HealthPage({
 
       {activeTab === "Sleep" ? (
         <div aria-labelledby="health-tab-sleep" className="mt-6 grid gap-5 xl:grid-cols-[1fr_1fr]" id={getHealthTabPanelId("Sleep")} role="tabpanel">
-          <HealthPanel icon={<MoonStar />} subtitle="Sleep ledger" title="Health sleep totals">
+          <HealthPanel
+            headerActions={<FoodHistoryDateChip ariaLabel="Sleep ledger date" date={sleepLedgerDate} onChange={setSleepLedgerDate} today={today} />}
+            icon={<MoonStar />}
+            subtitle="Sleep ledger"
+            title="Health sleep totals"
+          >
             <div className="grid gap-3 sm:grid-cols-2">
-              <CompactStat detail="combined today" label="Today" value={formatSleepMinutes(todaySleep)} />
-              <CompactStat detail={profile.sleep_goal_minutes ? `goal ${formatSleepMinutes(profile.sleep_goal_minutes)}` : "set in goals"} label="Goal" value={`${sleepPercent}%`} />
-              <CompactStat detail="from Sleep Focus timers" label="Focus Clock" value={formatSleepMinutes(todaySleepTotal.focusMinutes)} />
-              <CompactStat detail="from Apple Health imports" label="Imported" value={formatSleepMinutes(todaySleepTotal.importedMinutes)} />
+              <CompactStat detail={formatHealthDateLabel(sleepLedgerDate)} label="Total" value={formatHealthSleepDuration(selectedSleepTotal.totalMinutes)} />
+              <CompactStat detail={profile.sleep_goal_minutes ? `goal ${formatHealthSleepDuration(profile.sleep_goal_minutes)}` : "set in goals"} label="Goal" value={`${selectedSleepPercent}%`} />
+              <CompactStat detail={formatHealthDateLabel(sleepLedgerDate)} label="Focus Clock" value={formatHealthSleepDuration(selectedSleepTotal.focusMinutes)} />
+              <CompactStat detail={formatHealthDateLabel(sleepLedgerDate)} label="Imported" value={formatHealthSleepDuration(selectedSleepTotal.importedMinutes)} />
             </div>
+            <HealthSleepLineChart series={sleepActivitySeries} />
             <div className="mt-4 rounded-[1.25rem] border border-[#e6ebfb] bg-white/80 px-4 py-4 dark:border-white/10 dark:bg-white/[0.04]">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -2093,32 +2115,32 @@ export function HealthPage({
 
           <HealthPanel icon={<Activity />} subtitle="Last 7 days" title="Sleep sources">
             <div className="grid gap-3 sm:grid-cols-3">
-              <CompactStat detail="combined week" label="Total" value={formatSleepMinutes(recentSleepTotalMinutes)} />
-              <CompactStat detail="Sleep Focus timers" label="Clock" value={formatSleepMinutes(recentSleepFocusMinutes)} />
-              <CompactStat detail="Apple Health" label="Imported" value={formatSleepMinutes(recentSleepImportedMinutes)} />
+              <CompactStat detail="combined week" label="Total" value={formatHealthSleepDuration(recentSleepTotalMinutes)} />
+              <CompactStat detail="Sleep Focus timers" label="Clock" value={formatHealthSleepDuration(recentSleepFocusMinutes)} />
+              <CompactStat detail="Apple Health" label="Imported" value={formatHealthSleepDuration(recentSleepImportedMinutes)} />
             </div>
             <div className="mt-4 space-y-3">
               {recentSleepTotals.map((entry) => (
                 <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.date}>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthDateLabel(entry.date)}</span>
-                    <span className="text-xs font-semibold text-[#74809b] dark:text-white/45">{formatSleepMinutes(entry.totalMinutes)}</span>
+                    <span className="text-xs font-semibold text-[#74809b] dark:text-white/45">{formatHealthSleepDuration(entry.totalMinutes)}</span>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-[#6a7793] dark:text-white/55">
-                    <MetricPill icon={<MoonStar className="h-3.5 w-3.5" />} label={`${formatSleepMinutes(entry.focusMinutes)} clock`} />
-                    <MetricPill icon={<Apple className="h-3.5 w-3.5" />} label={`${formatSleepMinutes(entry.importedMinutes)} import`} />
+                    <MetricPill icon={<MoonStar className="h-3.5 w-3.5" />} label={`${formatHealthSleepDuration(entry.focusMinutes)} clock`} />
+                    <MetricPill icon={<Apple className="h-3.5 w-3.5" />} label={`${formatHealthSleepDuration(entry.importedMinutes)} import`} />
                   </div>
                 </div>
               ))}
             </div>
           </HealthPanel>
 
-          <HealthPanel icon={<Sparkles />} subtitle="Migrated history" title="Recent Sleep Focus sessions">
+          <HealthPanel icon={<Sparkles />} subtitle="Selected date" title="Sleep Ledger">
             <div className="space-y-3">
-              {sleepFocusSessions.length === 0 ? (
-                <EmptyCopy text="Sleep Focus sessions will appear here after you log or finish them from Health." />
+              {selectedSleepFocusSessions.length === 0 ? (
+                <EmptyCopy text={`No Sleep Focus sessions logged for ${formatHealthDateLabel(sleepLedgerDate)}.`} />
               ) : (
-                sleepFocusSessions.slice(0, 8).map((session) => (
+                selectedSleepFocusSessions.map((session) => (
                   <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={session.id}>
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -2129,7 +2151,7 @@ export function HealthPage({
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-[#26324f] dark:text-white">{formatSleepMinutes(session.durationSeconds / 60)}</span>
+                        <span className="text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthSleepDuration(session.durationSeconds / 60)}</span>
                         <button className="ui-pill-button-light" onClick={() => openSleepEdit(session)} type="button">Edit</button>
                       </div>
                     </div>
@@ -2388,19 +2410,6 @@ function MetricPill({ icon, label }: { icon: ReactNode; label: string }) {
   );
 }
 
-function formatSleepMinutes(minutes: number) {
-  const roundedMinutes = Math.max(0, Math.round(minutes));
-  const hours = Math.floor(roundedMinutes / 60);
-  const remainingMinutes = roundedMinutes % 60;
-  if (hours === 0) {
-    return `${remainingMinutes}m`;
-  }
-  if (remainingMinutes === 0) {
-    return `${hours}h`;
-  }
-  return `${hours}h ${remainingMinutes}m`;
-}
-
 function formatSleepClock(seconds: number) {
   const safeSeconds = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(safeSeconds / 3600);
@@ -2562,10 +2571,12 @@ function SectionMiniTitle({ actions, title }: { actions?: ReactNode; title: stri
 }
 
 function FoodHistoryDateChip({
+  ariaLabel = "Food history date",
   date,
   onChange,
   today,
 }: {
+  ariaLabel?: string;
   date: string;
   onChange: (date: string) => void;
   today: string;
@@ -2575,7 +2586,7 @@ function FoodHistoryDateChip({
       <label className="relative inline-flex items-center">
         <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
         <input
-          aria-label="Food history date"
+          aria-label={ariaLabel}
           className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} h-[26px] min-h-[26px] min-w-[9.5rem] pl-7 text-[13px] leading-none`}
           max={today}
           onChange={(event) => onChange(event.target.value || today)}

@@ -469,6 +469,19 @@ export type HealthSleepDayTotal = {
   totalMinutes: number;
 };
 
+export type HealthDailySleepPoint = HealthSleepDayTotal & {
+  label: string;
+};
+
+export function formatHealthSleepDuration(minutes: number) {
+  const roundedMinutes = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(roundedMinutes / 60);
+  const remainingMinutes = roundedMinutes % 60;
+  if (hours === 0) return `${remainingMinutes}m`;
+  if (remainingMinutes === 0) return `${hours}h`;
+  return `${hours}h ${remainingMinutes}m`;
+}
+
 export function getSleepFocusSessions(
   focusHistory: HistoricalFocusSession[],
   focusCategories: FocusCategory[],
@@ -503,6 +516,30 @@ export function getHealthSleepDayTotal({
     importedMinutes,
     totalMinutes: importedMinutes + focusMinutes,
   };
+}
+
+export function buildHealthDailySleepSeries({
+  endDate,
+  focusCategories,
+  focusHistory,
+  metricEntries,
+  days = 7,
+}: {
+  endDate: string;
+  focusCategories: FocusCategory[];
+  focusHistory: HistoricalFocusSession[];
+  metricEntries: HealthMetricEntry[];
+  days?: number;
+}) {
+  const pointCount = Number.isFinite(days) ? Math.max(1, Math.floor(days)) : 7;
+  return Array.from({ length: pointCount }, (_, index) => {
+    const date = shiftHealthDate(endDate, index - pointCount + 1);
+    const total = getHealthSleepDayTotal({ date, focusCategories, focusHistory, metricEntries });
+    return {
+      ...total,
+      label: formatHealthDateLabel(date),
+    } satisfies HealthDailySleepPoint;
+  });
 }
 
 export function getLatestWeight(weights: HealthWeightEntry[]) {

@@ -42,6 +42,27 @@ test("Health Sleep stays on the existing Focus authorities", async () => {
   assert.match(focus, /started_at: data\.startedAt/);
 });
 
+test("Health Sleep selected date controls the ledger totals and graph range", async () => {
+  const [health, chart, utils] = await Promise.all([
+    readFile(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/task-app/health-sleep-line-chart.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(health, /const \[sleepLedgerDate, setSleepLedgerDate\] = useState\(todayHealthDate\(\)\)/);
+  assert.match(health, /ariaLabel="Sleep ledger date"[\s\S]*?max=\{today\}/);
+  assert.match(health, /onChange=\{setSleepLedgerDate\}/);
+  assert.match(health, /onClick=\{\(\) => onChange\(today\)\}/);
+  assert.match(health, /const selectedSleepTotal = useMemo\([\s\S]*?date: sleepLedgerDate/);
+  assert.match(health, /sleepFocusSessions\.filter\(\(session\) => session\.date === sleepLedgerDate\)/);
+  assert.doesNotMatch(health, /selectedSleepFocusSessions\.slice\(/);
+  assert.match(health, /<HealthSleepLineChart series=\{sleepActivitySeries\} \/>/);
+  assert.match(utils, /buildHealthDailySleepSeries\([\s\S]*?getHealthSleepDayTotal/);
+  assert.match(chart, /ActivityLineChartCard/);
+  assert.match(chart, /variant="embedded"/);
+  assert.match(chart, /value: point\.totalMinutes/);
+  assert.doesNotMatch(chart, /<svg/);
+});
+
 test("Apple Health sleep remains separate from Focus Sleep totals", async () => {
   const healthUtils = await readFile(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8");
   assert.match(healthUtils, /const importedMinutes = sumMetricValueForDate\(metricEntries, date, \["sleep_minutes"\]\)/);
