@@ -33,6 +33,7 @@ export function HealthCalorieLineChart({ series }: { series: HealthDailyCalorieP
       series={chartSeries}
       subtitle={`${formatDate(firstDate)} – ${formatDate(lastDate)} • daily points`}
       title="Calorie Activity"
+      variant="embedded"
     />
   );
 }

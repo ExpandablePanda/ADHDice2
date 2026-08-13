@@ -94,6 +94,7 @@ test("Focus Activity Lines adapts its existing series into the shared chart card
   assert.match(source, /NumericLineChartSeries/);
   assert.match(source, /activityLineSeries/);
   assert.match(source, /formatRoundedMinuteDuration/);
+  assert.doesNotMatch(source, /variant="embedded"/);
   assert.match(sharedChart, /NumericLineChartSeries/);
   assert.match(sharedChart, /onPointerMove/);
   assert.match(sharedChart, /onPointerUp/);

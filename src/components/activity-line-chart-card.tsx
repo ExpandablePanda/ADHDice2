@@ -28,6 +28,7 @@ type ActivityLineChartCardProps = {
   series: NumericLineChartSeries[];
   subtitle: string;
   title: string;
+  variant?: "standalone" | "embedded";
 };
 
 type InteractivePoint = NumericLineChartPoint & {
@@ -84,6 +85,7 @@ export function ActivityLineChartCard({
   series,
   subtitle,
   title,
+  variant = "standalone",
 }: ActivityLineChartCardProps) {
   const titleId = useId();
   const [hoveredPointKey, setHoveredPointKey] = useState<string | null>(null);
@@ -109,6 +111,7 @@ export function ActivityLineChartCard({
     ?? interactivePoints.find((point) => point.pointKey === pinnedPointKey)
     ?? null;
   const hasData = series.length > 0 && axisPoints.length > 0 && !(emptyWhenAllZero && series.every((item) => item.points.every((point) => point.value === 0)));
+  const isEmbedded = variant === "embedded";
 
   function setNearestPointFromPointer(clientX: number, clientY: number, bounds: DOMRect) {
     const nearestPointKey = getNearestNumericLineChartPoint(interactivePoints, clientX, clientY, bounds);
@@ -119,13 +122,13 @@ export function ActivityLineChartCard({
   }
 
   return (
-    <div aria-labelledby={titleId} className="w-full overflow-hidden rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]">
-      <div className="px-5 pb-5 pt-5 sm:px-6 sm:pb-6">
+    <div aria-labelledby={titleId} className={isEmbedded ? "w-full border-t border-[#eeeaf8] pt-4 dark:border-white/10" : "w-full overflow-hidden rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]"}>
+      <div className={isEmbedded ? "px-0 pb-0 pt-0" : "px-5 pb-5 pt-5 sm:px-6 sm:pb-6"}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">{eyebrow}</p>
-              <h4 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]" id={titleId}>{title}</h4>
+              <h4 className={`mt-2 font-black tracking-tight text-[var(--text-primary)] ${isEmbedded ? "text-lg" : "text-2xl"}`} id={titleId}>{title}</h4>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">{subtitle}</p>
             </div>
             {series.length > 0 ? (

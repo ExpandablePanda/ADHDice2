@@ -465,11 +465,17 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /expandedFavoriteId/);
   assert.match(chart, /ActivityLineChartCard/);
   assert.match(chart, /buildHealthDailyCalorieSeries|HealthDailyCaloriePoint/);
+  assert.doesNotMatch(chart, /<svg/);
   assert.match(sharedChart, /aria-label=\{ariaLabel\}/);
+  assert.match(sharedChart, /<svg/);
   assert.match(sharedChart, /emptyText/);
   assert.match(sharedChart, /Clear pin/);
   assert.match(source, /<HealthCalorieLineChart series=\{dailyCalorieSeries\} \/>/);
-  assert.doesNotMatch(source, /<HealthCalorieLineChart series=\{dailyCalorieSeries\}[\s\S]{0,500}selectedNutrition/);
+  assert.match(source, /subtitle="Daily totals"[\s\S]*?<HealthCalorieLineChart series=\{dailyCalorieSeries\} \/>[\s\S]*?<\/HealthPanel>/);
+  assert.doesNotMatch(source, /<div className="xl:col-span-2">\s*<HealthCalorieLineChart/);
+  assert.match(chart, /variant="embedded"/);
+  assert.match(sharedChart, /variant\?: "standalone" \| "embedded"/);
+  assert.match(sharedChart, /variant = "standalone"/);
   assert.match(chart, /No calories logged in this 7-day range/);
   assert.match(chart, /series\.map/);
   assert.doesNotMatch(source, /Recent Foods[\s\S]{0,2500}FavoriteFoodHistoryInlay/);
