@@ -38,6 +38,7 @@ import {
 } from "@/lib/health-food-import";
 import { getMealSlotLabel, HEALTH_MEAL_SLOTS } from "@/lib/health-utils";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
+import { HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 
 type LibrarySection = "foods" | "recipes" | "meals";
 
@@ -185,8 +186,16 @@ export function HealthLibraryPanel({
     () => searchHealthFoodLibrary(favorites, foodSearchQuery),
     [favorites, foodSearchQuery],
   );
+  const filteredFoodGroups = useMemo(() => {
+    const groups = new Map<string, HealthFoodLibraryItem[]>();
+    filteredFoods.forEach((food) => {
+      const category = food.food_category?.trim() || "Uncategorized";
+      groups.set(category, [...(groups.get(category) ?? []), food]);
+    });
+    return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+  }, [filteredFoods]);
   const categorySuggestions = useMemo(
-    () => [...new Set(favorites.map((food) => food.food_category?.trim() || food.category?.trim()).filter((category): category is string => Boolean(category)))]
+    () => [...new Set(favorites.map((food) => food.food_category?.trim()).filter((category): category is string => Boolean(category)))]
       .sort((left, right) => left.localeCompare(right)),
     [favorites],
   );
@@ -473,7 +482,7 @@ export function HealthLibraryPanel({
             <HealthCollapsiblePanel subtitle="Filter saved custom foods in this library." title="Search custom foods" variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
                 <input
-                  className="health-input"
+                  className={HEALTH_COMPACT_INPUT_CLASS}
                   onChange={(event) => setFoodSearchQuery(event.target.value)}
                   placeholder="Food, brand, category, serving, barcode"
                   value={foodSearchQuery}
@@ -494,52 +503,54 @@ export function HealthLibraryPanel({
             <HealthCollapsiblePanel subtitle="Nutrition is stored per serving." title={foodDraft.id ? "Edit custom food" : "New custom food"} variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-2">
                 <LibraryField label="Food name">
-                  <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, foodName: event.target.value }))} value={foodDraft.foodName} />
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setFoodDraft((current) => ({ ...current, foodName: event.target.value }))} value={foodDraft.foodName} />
                 </LibraryField>
                 <LibraryField label="Brand">
-                  <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, brandName: event.target.value }))} value={foodDraft.brandName} />
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setFoodDraft((current) => ({ ...current, brandName: event.target.value }))} value={foodDraft.brandName} />
                 </LibraryField>
                 <LibraryField label="Food category">
                   <input
-                    className="health-input"
+                    className={HEALTH_COMPACT_INPUT_CLASS}
                     onChange={(event) => setFoodDraft((current) => ({ ...current, foodCategory: event.target.value }))}
                     placeholder="Protein, Produce, Snack"
                     value={foodDraft.foodCategory}
                   />
                 </LibraryField>
                 <LibraryField label="Serving quantity">
-                  <input className="health-input" inputMode="decimal" min="0" onChange={(event) => setFoodDraft((current) => ({ ...current, servingQuantity: event.target.value }))} placeholder="55" value={foodDraft.servingQuantity} />
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" min="0" onChange={(event) => setFoodDraft((current) => ({ ...current, servingQuantity: event.target.value }))} placeholder="55" value={foodDraft.servingQuantity} />
                 </LibraryField>
                 <LibraryField label="Serving unit">
-                  <input className="health-input" onChange={(event) => setFoodDraft((current) => ({ ...current, servingUnit: event.target.value }))} placeholder="cracker, slice, serving" value={foodDraft.servingUnit} />
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setFoodDraft((current) => ({ ...current, servingUnit: event.target.value }))} placeholder="cracker, slice, serving" value={foodDraft.servingUnit} />
                 </LibraryField>
                 <LibraryField label="Serving measure (optional)">
                   <span className="grid grid-cols-[1fr_auto] gap-2">
-                    <input className="health-input" inputMode="decimal" min="0" onChange={(event) => setFoodDraft((current) => ({ ...current, servingMeasureValue: event.target.value }))} placeholder="30" value={foodDraft.servingMeasureValue} />
-                    <select className="health-input min-w-28" onChange={(event) => setFoodDraft((current) => ({ ...current, servingMeasureUnit: event.target.value as HealthServingMeasureUnit | "" }))} value={foodDraft.servingMeasureUnit}>
-                      <option value="">No measure</option>
-                      <optgroup label="Mass">
-                        <option value="g">g</option>
-                        <option value="oz">oz</option>
-                      </optgroup>
-                      <optgroup label="Volume">
-                        <option value="ml">mL</option>
-                        <option value="fl_oz">fl oz</option>
-                      </optgroup>
-                    </select>
+                    <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" min="0" onChange={(event) => setFoodDraft((current) => ({ ...current, servingMeasureValue: event.target.value }))} placeholder="30" value={foodDraft.servingMeasureValue} />
+                    <HealthDropdown
+                      ariaLabel="Serving measure"
+                      className="min-w-28"
+                      onChange={(value) => setFoodDraft((current) => ({ ...current, servingMeasureUnit: value as HealthServingMeasureUnit | "" }))}
+                      options={[
+                        { label: "No measure", value: "" },
+                        { label: "g", value: "g" },
+                        { label: "oz", value: "oz" },
+                        { label: "mL", value: "ml" },
+                        { label: "fl oz", value: "fl_oz" },
+                      ]}
+                      value={foodDraft.servingMeasureUnit}
+                    />
                   </span>
                 </LibraryField>
                 <LibraryField label="Calories per serving">
-                  <input className="health-input" inputMode="numeric" onChange={(event) => setFoodDraft((current) => ({ ...current, calories: event.target.value }))} value={foodDraft.calories} />
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="numeric" onChange={(event) => setFoodDraft((current) => ({ ...current, calories: event.target.value }))} value={foodDraft.calories} />
                 </LibraryField>
                 <LibraryField label="Protein (g)">
-                  <input className="health-input" inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, protein: event.target.value }))} value={foodDraft.protein} />
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, protein: event.target.value }))} value={foodDraft.protein} />
                 </LibraryField>
                 <LibraryField label="Carbs (g)">
-                  <input className="health-input" inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, carbs: event.target.value }))} value={foodDraft.carbs} />
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, carbs: event.target.value }))} value={foodDraft.carbs} />
                 </LibraryField>
                 <LibraryField label="Fat (g)">
-                  <input className="health-input" inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, fat: event.target.value }))} value={foodDraft.fat} />
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, fat: event.target.value }))} value={foodDraft.fat} />
                 </LibraryField>
               </div>
               {categorySuggestions.length ? (
@@ -559,19 +570,42 @@ export function HealthLibraryPanel({
               </div>
             </HealthCollapsiblePanel>
           </div>
-          <LibraryCards empty={foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."} items={filteredFoods.map((food) => (
-            <AdhdCard key={food.id}>
-              <LibraryCardHeader
-                detail={`${food.food_category || food.category || "Uncategorized"} / ${food.serving_label || "1 serving"} / ${food.calories} kcal`}
-                title={formatBrandedFoodName(food)}
-              />
-              <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
-              <div className="mt-3 flex flex-wrap gap-2">
-                <AdhdChip contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
-                <AdhdChip contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteFood(food.id); }} tone="danger">Remove</AdhdChip>
-              </div>
-            </AdhdCard>
-          ))} />
+          {filteredFoodGroups.length === 0 ? (
+            <AdhdPanel variant="subpanel">
+              <p className="text-sm text-[#7d7598] dark:text-white/55">{foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."}</p>
+            </AdhdPanel>
+          ) : (
+            <div className="grid content-start gap-3">
+              {filteredFoodGroups.map(([category, foods]) => (
+                <HealthCollapsiblePanel
+                  key={category}
+                  subtitle={`${foods.length} food${foods.length === 1 ? "" : "s"}`}
+                  title={category}
+                  variant="subpanel"
+                >
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {foods.map((food) => (
+                      <AdhdCard key={food.id}>
+                        <div className="flex items-start gap-3">
+                          <div className="min-w-0 flex-1">
+                            <LibraryCardHeader
+                              detail={`${food.food_category?.trim() || "Uncategorized"} / ${food.serving_label || "1 serving"} / ${food.calories} kcal`}
+                              title={formatBrandedFoodName(food)}
+                            />
+                            <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
+                          </div>
+                          <div className="flex shrink-0 flex-nowrap gap-2">
+                            <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
+                            <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteFood(food.id); }} tone="danger">Remove</AdhdChip>
+                          </div>
+                        </div>
+                      </AdhdCard>
+                    ))}
+                  </div>
+                </HealthCollapsiblePanel>
+              ))}
+            </div>
+          )}
         </div>
         </>
       ) : null}
@@ -615,7 +649,7 @@ export function HealthLibraryPanel({
             </HealthCollapsiblePanel>
             <HealthCollapsiblePanel subtitle="Search by brand, food, or serving before adding an ingredient." title="Add ingredients" variant="subpanel">
               <input
-                className="health-input mb-3"
+                className={`${HEALTH_COMPACT_INPUT_CLASS} mb-3`}
                 onChange={(event) => setIngredientSearchQuery(event.target.value)}
                 placeholder="Search custom foods"
                 value={ingredientSearchQuery}
@@ -829,7 +863,7 @@ function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
     id: food.id,
     brandName: food.brand_name ?? "",
     calories: String(food.calories),
-    foodCategory: food.food_category ?? food.category ?? "Uncategorized",
+    foodCategory: food.food_category ?? "Uncategorized",
     carbs: food.carbs_g === null ? "" : String(food.carbs_g),
     fat: food.fat_g === null ? "" : String(food.fat_g),
     foodName: food.food_name,

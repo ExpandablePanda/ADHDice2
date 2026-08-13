@@ -317,7 +317,7 @@ test("custom-food search keeps the existing name, brand, category, serving, prov
 test("Health Food renders grouped foods, calorie totals, favorite sorting, and goal progress", () => {
   const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
   assert.match(source, /matchingCustomFoodGroups/);
-  assert.match(source, /item\.category\?\.trim\(\) \|\| "Uncategorized"/);
+  assert.match(source, /item\.food_category\?\.trim\(\) \|\| "Uncategorized"/);
   assert.match(source, /loggedCountByIdentity/);
   assert.match(source, /formatHealthNutritionNumber\(selectedNutrition\.calories\)/);
   assert.match(source, /formatHealthNutritionNumber\(slotCaloriesTotal\)/);

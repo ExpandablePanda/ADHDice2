@@ -80,6 +80,7 @@ import {
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
+import { HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { HealthWaterPanel } from "./health-water-panel";
 import { PageShellHeader } from "./page-shell-header";
 
@@ -459,7 +460,6 @@ export function HealthPage({
         seen.add(key);
         return true;
       })
-      .slice(0, 8);
   }, [mealEntries]);
   const favoriteFoods = useMemo(
     () => {
@@ -504,7 +504,7 @@ export function HealthPage({
   const matchingCustomFoodGroups = useMemo(() => {
     const groups = new Map<string, HealthFoodLibraryItem[]>();
     matchingCustomFoods.forEach((item) => {
-      const category = item.category?.trim() || "Uncategorized";
+      const category = item.food_category?.trim() || "Uncategorized";
       groups.set(category, [...(groups.get(category) ?? []), item]);
     });
     return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
@@ -1359,19 +1359,16 @@ export function HealthPage({
 
             <div className="grid gap-3 lg:grid-cols-[0.65fr_1.35fr_0.7fr_0.55fr_auto]">
               <Field label="Meal">
-                <select
-                  className="health-input"
-                  onChange={(event) => setMealDraft((current) => ({ ...current, mealSlot: event.target.value as HealthMealEntry["meal_slot"] }))}
+                <HealthDropdown
+                  ariaLabel="Meal"
+                  onChange={(value) => setMealDraft((current) => ({ ...current, mealSlot: value as HealthMealEntry["meal_slot"] }))}
+                  options={HEALTH_MEAL_SLOTS.map((slot) => ({ label: getMealSlotLabel(slot), value: slot }))}
                   value={mealDraft.mealSlot}
-                >
-                  {HEALTH_MEAL_SLOTS.map((slot) => (
-                    <option key={slot} value={slot}>{getMealSlotLabel(slot)}</option>
-                  ))}
-                </select>
+                />
               </Field>
               <Field label="Food">
                 <input
-                  className="health-input"
+                  className={HEALTH_COMPACT_INPUT_CLASS}
                   onChange={(event) => setCustomFoodSearchQuery(event.target.value)}
                   placeholder="Search custom foods"
                   value={customFoodSearchQuery}
@@ -1384,22 +1381,19 @@ export function HealthPage({
               ) : (
                 <>
                   <Field label="Measurement">
-                    <select
-                      className="health-input"
+                    <HealthDropdown
+                      ariaLabel="Measurement"
                       disabled={!mealDraft.foodName}
-                      onChange={(event) => setMealDraft((current) => ({ ...current, measurement: event.target.value }))}
-                      value={mealDraft.measurement}
-                    >
-                      {getHealthFoodMeasurementOptions({
+                      onChange={(value) => setMealDraft((current) => ({ ...current, measurement: value }))}
+                      options={getHealthFoodMeasurementOptions({
                         servingMeasureUnit: mealDraft.servingMeasureUnit,
                         servingUnit: mealDraft.servingUnit,
-                      }).map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
+                      })}
+                      value={mealDraft.measurement}
+                    />
                   </Field>
                   <Field label="Amount">
-                    <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, quantity: event.target.value }))} placeholder="1" value={mealDraft.quantity} />
+                    <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, quantity: event.target.value }))} placeholder="1" value={mealDraft.quantity} />
                   </Field>
                 </>
               )}
@@ -1425,7 +1419,7 @@ export function HealthPage({
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field label="Food name">
                     <input
-                      className="health-input"
+                      className={HEALTH_COMPACT_INPUT_CLASS}
                       onChange={(event) => setMealDraft((current) => ({ ...current, foodName: event.target.value }))}
                       placeholder="Homemade snack"
                       value={mealDraft.foodName}
@@ -1433,7 +1427,7 @@ export function HealthPage({
                   </Field>
                   <Field label="Calories">
                     <input
-                      className="health-input"
+                      className={HEALTH_COMPACT_INPUT_CLASS}
                       inputMode="numeric"
                       onChange={(event) => setMealDraft((current) => ({ ...current, calories: event.target.value }))}
                       placeholder="250"
@@ -1441,13 +1435,13 @@ export function HealthPage({
                     />
                   </Field>
                   <Field label="Protein (optional)">
-                    <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, protein: event.target.value }))} value={mealDraft.protein} />
+                    <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, protein: event.target.value }))} value={mealDraft.protein} />
                   </Field>
                   <Field label="Carbohydrates (optional)">
-                    <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, carbs: event.target.value }))} value={mealDraft.carbs} />
+                    <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, carbs: event.target.value }))} value={mealDraft.carbs} />
                   </Field>
                   <Field label="Fat (optional)">
-                    <input className="health-input" inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, fat: event.target.value }))} value={mealDraft.fat} />
+                    <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, fat: event.target.value }))} value={mealDraft.fat} />
                   </Field>
                 </div>
                 <label className="flex items-center gap-2 text-xs text-[#66718f] dark:text-white/60">
@@ -1463,7 +1457,7 @@ export function HealthPage({
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <Field label="Date">
                 <input
-                  className="health-input"
+                  className={HEALTH_COMPACT_INPUT_CLASS}
                   max={today}
                   onChange={(event) => setMealDraft((current) => ({ ...current, date: event.target.value }))}
                   type="date"
@@ -1472,7 +1466,7 @@ export function HealthPage({
               </Field>
               <Field label="Time">
                 <input
-                  className="health-input"
+                  className={HEALTH_COMPACT_INPUT_CLASS}
                   onChange={(event) => setMealDraft((current) => ({ ...current, time: event.target.value }))}
                   type="time"
                   value={mealDraft.time}
@@ -1494,12 +1488,16 @@ export function HealthPage({
               {matchingCustomFoods.length === 0 ? (
                 <EmptyCopy text="No custom foods match this search." />
               ) : matchingCustomFoodGroups.map(([category, items]) => (
-                <div className="grid gap-2" key={category}>
-                  <SectionMiniTitle title={category} />
+                <HealthCollapsiblePanel
+                  key={category}
+                  subtitle={`${items.length} food${items.length === 1 ? "" : "s"}`}
+                  title={category}
+                  variant="subpanel"
+                >
                   <div className="flex flex-wrap gap-2">
                     {items.map((item) => (
                       <button
-                        className={`ui-pill-button-light ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
+                        className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
                         key={item.id}
                         onClick={() => {
                           setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name);
@@ -1525,11 +1523,11 @@ export function HealthPage({
                         }}
                         type="button"
                       >
-                        {item.brand_name ? `${item.brand_name} · ` : ""}{item.food_name}
+                        {formatBrandedFoodName(item)} · {item.calories} kcal
                       </button>
                     ))}
                   </div>
-                </div>
+                </HealthCollapsiblePanel>
               ))}
             </div>
 
@@ -1591,38 +1589,32 @@ export function HealthPage({
                       <div className="mt-4 grid gap-3 rounded-[1.25rem] border border-[#e8ecfb] bg-[#fbfcff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         <div className="grid gap-3 sm:grid-cols-5">
                           <Field label="Amount">
-                            <input className="health-input" inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, quantity: event.target.value }))} value={mealEditDraft.quantity} />
+                            <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, quantity: event.target.value }))} value={mealEditDraft.quantity} />
                           </Field>
                           <Field label="Measurement">
-                            <select
-                              className="health-input"
-                              onChange={(event) => setMealEditDraft((current) => ({ ...current, measurement: event.target.value }))}
-                              value={mealEditDraft.measurement}
-                            >
-                              {getHealthFoodMeasurementOptions({
+                            <HealthDropdown
+                              ariaLabel="Measurement"
+                              onChange={(value) => setMealEditDraft((current) => ({ ...current, measurement: value }))}
+                              options={getHealthFoodMeasurementOptions({
                                 servingMeasureUnit: structuredMeal.servingMeasureUnit,
                                 servingUnit: structuredMeal.servingUnit,
-                              }).map((option) => (
-                                <option key={option.value} value={option.value}>{option.label}</option>
-                              ))}
-                            </select>
+                              })}
+                              value={mealEditDraft.measurement}
+                            />
                           </Field>
                           <Field label="Date">
-                            <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, date: event.target.value }))} type="date" value={mealEditDraft.date} />
+                            <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setMealEditDraft((current) => ({ ...current, date: event.target.value }))} type="date" value={mealEditDraft.date} />
                           </Field>
                           <Field label="Time">
-                            <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, time: event.target.value }))} type="time" value={mealEditDraft.time} />
+                            <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setMealEditDraft((current) => ({ ...current, time: event.target.value }))} type="time" value={mealEditDraft.time} />
                           </Field>
                           <Field label="Meal">
-                            <select
-                              className="health-input"
-                              onChange={(event) => setMealEditDraft((current) => ({ ...current, mealSlot: event.target.value as HealthMealEntry["meal_slot"] }))}
+                            <HealthDropdown
+                              ariaLabel="Meal"
+                              onChange={(value) => setMealEditDraft((current) => ({ ...current, mealSlot: value as HealthMealEntry["meal_slot"] }))}
+                              options={HEALTH_MEAL_SLOTS.map((slot) => ({ label: getMealSlotLabel(slot), value: slot }))}
                               value={mealEditDraft.mealSlot}
-                            >
-                              {HEALTH_MEAL_SLOTS.map((slot) => (
-                                <option key={slot} value={slot}>{getMealSlotLabel(slot)}</option>
-                              ))}
-                            </select>
+                            />
                           </Field>
                         </div>
                         {isHealthMealTimestampFuture(mealEditDraft.date, mealEditDraft.time) ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">Choose a past or current meal time.</p> : null}
@@ -1649,24 +1641,21 @@ export function HealthPage({
                       <div className="mt-4 grid gap-3 rounded-[1.25rem] border border-[#e8ecfb] bg-[#fbfcff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         <div className="grid gap-3 sm:grid-cols-4">
                           <Field label="Amount">
-                            <input className="health-input" inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, quantity: event.target.value }))} value={mealEditDraft.quantity} />
+                            <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealEditDraft((current) => ({ ...current, quantity: event.target.value }))} value={mealEditDraft.quantity} />
                           </Field>
                           <Field label="Date">
-                            <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, date: event.target.value }))} type="date" value={mealEditDraft.date} />
+                            <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setMealEditDraft((current) => ({ ...current, date: event.target.value }))} type="date" value={mealEditDraft.date} />
                           </Field>
                           <Field label="Time">
-                            <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, time: event.target.value }))} type="time" value={mealEditDraft.time} />
+                            <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setMealEditDraft((current) => ({ ...current, time: event.target.value }))} type="time" value={mealEditDraft.time} />
                           </Field>
                           <Field label="Meal">
-                            <select
-                              className="health-input"
-                              onChange={(event) => setMealEditDraft((current) => ({ ...current, mealSlot: event.target.value as HealthMealEntry["meal_slot"] }))}
+                            <HealthDropdown
+                              ariaLabel="Meal"
+                              onChange={(value) => setMealEditDraft((current) => ({ ...current, mealSlot: value as HealthMealEntry["meal_slot"] }))}
+                              options={HEALTH_MEAL_SLOTS.map((slot) => ({ label: getMealSlotLabel(slot), value: slot }))}
                               value={mealEditDraft.mealSlot}
-                            >
-                              {HEALTH_MEAL_SLOTS.map((slot) => (
-                                <option key={slot} value={slot}>{getMealSlotLabel(slot)}</option>
-                              ))}
-                            </select>
+                            />
                           </Field>
                         </div>
                         {isHealthMealTimestampFuture(mealEditDraft.date, mealEditDraft.time) ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">Choose a past or current meal time.</p> : null}
@@ -1723,78 +1712,81 @@ export function HealthPage({
               </div>
             </HealthPanel>
 
-            <HealthPanel icon={<Sparkles />} subtitle="Favorites">
-              <div className="space-y-3">
-                {favoriteFoods.length === 0 ? (
-                  <EmptyCopy text="Save a meal as a favorite and it will show up here for one-tap reuse." />
-                ) : (
-                  favoriteFoods.slice(0, 8).map((item) => (
-                    <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(item)}</p>
-                          <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{item.serving_label || "Saved favorite"} / {item.calories} kcal</p>
+            <HealthPanel icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
+              <div className="max-h-[26rem] space-y-5 overflow-y-auto pr-1">
+                <section className="space-y-3" aria-labelledby="health-favorites-heading">
+                  <SectionMiniTitle title="Favorites" />
+                  <h3 className="sr-only" id="health-favorites-heading">Favorites</h3>
+                  {favoriteFoods.length === 0 ? (
+                    <EmptyCopy text="Save a meal as a favorite and it will show up here for one-tap reuse." />
+                  ) : (
+                    favoriteFoods.map((item) => (
+                      <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
+                        <div className="flex items-start gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(item)}</p>
+                            <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{item.serving_label || "Saved favorite"} / {item.calories} kcal</p>
+                          </div>
+                          <div className="flex shrink-0 flex-nowrap gap-2">
+                            <button className="ui-pill-button-strong-light shrink-0" onClick={() => { void handleFavoriteReuse(item); }} type="button">
+                              Add Today
+                            </button>
+                            <button className="ui-pill-button-danger-light shrink-0" onClick={() => { void handleRemoveFavorite(item); }} type="button">
+                              Remove
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex gap-2">
-                          <button className="ui-pill-button-strong-light" onClick={() => { void handleFavoriteReuse(item); }} type="button">
-                            Add Today
-                          </button>
-                          <button className="ui-pill-button-danger-light" onClick={() => { void handleRemoveFavorite(item); }} type="button">
-                            Remove
+                      </div>
+                    ))
+                  )}
+                </section>
+                <section className="space-y-3" aria-labelledby="health-recent-foods-heading">
+                  <SectionMiniTitle title="Recent Foods" />
+                  <h3 className="sr-only" id="health-recent-foods-heading">Recent Foods</h3>
+                  {recentFoods.length === 0 ? (
+                    <EmptyCopy text="Once you log a few meals, your recent foods will show up here for quick draft-filling." />
+                  ) : (
+                    recentFoods.map((item) => (
+                      <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
+                        <div className="flex items-start gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(item)}</p>
+                            <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
+                              {item.brand_name || "No brand"} / {item.serving_label || "Saved meal"} / {item.calories} kcal
+                            </p>
+                          </div>
+                          <button
+                            className="ui-pill-button-strong-light shrink-0"
+                            onClick={() =>
+                              applyLookupResult({
+                                attribution: item.attribution,
+                                barcode: item.barcode,
+                                brandName: item.brand_name,
+                                foodCategory: item.food_snapshot?.food_category,
+                                calories: item.calories,
+                                carbs: item.carbs_g,
+                                fat: item.fat_g,
+                                foodName: item.food_name,
+                                protein: item.protein_g,
+                                provider: item.provider,
+                                providerItemId: item.provider_item_id ?? item.id,
+                                servingLabel: item.serving_label,
+                                sourceFoodId: item.source_food_id ?? item.food_snapshot?.source_food_id,
+                                servingQuantity: item.food_snapshot?.serving_quantity,
+                                servingUnit: item.food_snapshot?.serving_unit,
+                                servingMeasureValue: item.food_snapshot?.serving_measure_value,
+                                servingMeasureUnit: item.food_snapshot?.serving_measure_unit,
+                              })
+                            }
+                            type="button"
+                          >
+                            Fill Draft
                           </button>
                         </div>
                       </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </HealthPanel>
-
-            <HealthPanel icon={<Search />} subtitle="Recent foods">
-              <div className="space-y-3">
-                {recentFoods.length === 0 ? (
-                  <EmptyCopy text="Once you log a few meals, your recent foods will show up here for quick draft-filling." />
-                ) : (
-                  recentFoods.map((item) => (
-                    <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(item)}</p>
-                          <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">
-                            {item.brand_name || "No brand"} / {item.serving_label || "Saved meal"} / {item.calories} kcal
-                          </p>
-                        </div>
-                        <button
-                          className="ui-pill-button-strong-light"
-                          onClick={() =>
-                            applyLookupResult({
-                              attribution: item.attribution,
-                              barcode: item.barcode,
-                              brandName: item.brand_name,
-                              foodCategory: item.food_snapshot?.food_category,
-                              calories: item.calories,
-                              carbs: item.carbs_g,
-                              fat: item.fat_g,
-                              foodName: item.food_name,
-                              protein: item.protein_g,
-                              provider: item.provider,
-                              providerItemId: item.provider_item_id ?? item.id,
-                              servingLabel: item.serving_label,
-                              sourceFoodId: item.source_food_id ?? item.food_snapshot?.source_food_id,
-                              servingQuantity: item.food_snapshot?.serving_quantity,
-                              servingUnit: item.food_snapshot?.serving_unit,
-                              servingMeasureValue: item.food_snapshot?.serving_measure_value,
-                              servingMeasureUnit: item.food_snapshot?.serving_measure_unit,
-                            })
-                          }
-                          type="button"
-                        >
-                          Fill Draft
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
+                    ))
+                  )}
+                </section>
               </div>
             </HealthPanel>
           </div>
@@ -2270,14 +2262,14 @@ function FoodHistoryDateChip({
         <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
         <input
           aria-label="Food history date"
-          className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} min-w-[9.5rem] pl-7`}
+          className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} h-[26px] min-h-[26px] min-w-[9.5rem] pl-7 text-[13px] leading-none`}
           max={today}
           onChange={(event) => onChange(event.target.value || today)}
           type="date"
           value={date}
         />
       </label>
-      {date !== today ? <AdhdChip onClick={() => onChange(today)}>Today</AdhdChip> : null}
+      {date !== today ? <AdhdChip className="!h-[26px]" onClick={() => onChange(today)}>Today</AdhdChip> : null}
     </span>
   );
 }
