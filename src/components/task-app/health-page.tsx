@@ -1553,7 +1553,8 @@ export function HealthPage({
               {matchingCustomFoods.length === 0 ? (
                 <EmptyCopy text="No custom foods match this search." />
               ) : (
-                <div className="flex flex-wrap gap-2">
+                <div className="adhdice-scrollbar max-h-24 overflow-y-auto pr-1">
+                  <div className="flex flex-wrap gap-2">
                   {matchingCustomFoods.map((item) => (
                     <button
                       className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
@@ -1585,6 +1586,7 @@ export function HealthPage({
                       {formatBrandedFoodName(item)} · {item.calories} kcal
                     </button>
                   ))}
+                  </div>
                 </div>
               )}
             </div>

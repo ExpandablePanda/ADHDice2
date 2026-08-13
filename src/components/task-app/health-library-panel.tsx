@@ -473,7 +473,7 @@ export function HealthLibraryPanel({
               ) : null}
             </HealthCollapsiblePanel>
           ) : null}
-          <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+          <div className="grid items-start gap-5 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-4">
             <HealthCollapsiblePanel subtitle="Filter saved custom foods in this library." title="Search custom foods" variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
