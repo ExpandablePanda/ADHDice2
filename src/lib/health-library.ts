@@ -1,6 +1,7 @@
 import type {
   HealthFoodLibraryItem,
   HealthFoodLibraryItemInsert,
+  HealthMealEntry,
   HealthServingMeasureUnit,
   HealthServingWeightUnit,
   HealthRecipe,
@@ -179,6 +180,67 @@ export function searchHealthFoodLibrary(items: HealthFoodLibraryItem[], query: s
     food.provider,
     food.barcode,
   ].some((value) => value?.toLowerCase().includes(normalizedQuery)));
+}
+
+export type HealthFoodAutocompleteField = "food_name" | "brand_name" | "food_category" | "serving_unit";
+
+export function sortHealthFoodLibraryByCreatedAt(items: HealthFoodLibraryItem[]) {
+  return [...items].sort((left, right) => right.created_at.localeCompare(left.created_at) || right.id.localeCompare(left.id));
+}
+
+export function getHealthFoodAutocompleteValues(
+  items: HealthFoodLibraryItem[],
+  field: HealthFoodAutocompleteField,
+) {
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const food of sortHealthFoodLibraryByCreatedAt(items)) {
+    const value = food[field];
+    if (typeof value !== "string" || !value.trim()) {
+      continue;
+    }
+    const normalized = value.toLocaleLowerCase();
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    values.push(value);
+  }
+  return values;
+}
+
+export function sortHealthFoodsForMealPicker(
+  foods: HealthFoodLibraryItem[],
+  mealEntries: HealthMealEntry[],
+) {
+  const latestLoggedAtByIdentity = new Map<string, number>();
+  mealEntries.forEach((entry) => {
+    const identity = getHealthFoodIdentityKey(entry);
+    if (!identity) {
+      return;
+    }
+    const parsedLoggedAt = Date.parse(entry.logged_at);
+    const parsedEntryDate = Date.parse(`${entry.entry_date}T00:00:00`);
+    const loggedAt = Number.isFinite(parsedLoggedAt) ? parsedLoggedAt : parsedEntryDate;
+    if (!Number.isFinite(loggedAt)) {
+      return;
+    }
+    const current = latestLoggedAtByIdentity.get(identity);
+    if (current === undefined || loggedAt > current) {
+      latestLoggedAtByIdentity.set(identity, loggedAt);
+    }
+  });
+
+  return [...foods].sort((left, right) => {
+    const leftLoggedAt = latestLoggedAtByIdentity.get(getHealthFoodIdentityKey(left) ?? "");
+    const rightLoggedAt = latestLoggedAtByIdentity.get(getHealthFoodIdentityKey(right) ?? "");
+    if (leftLoggedAt !== undefined || rightLoggedAt !== undefined) {
+      if (leftLoggedAt === undefined) return 1;
+      if (rightLoggedAt === undefined) return -1;
+      if (leftLoggedAt !== rightLoggedAt) return rightLoggedAt - leftLoggedAt;
+    }
+    return right.created_at.localeCompare(left.created_at) || right.id.localeCompare(left.id);
+  });
 }
 
 export function formatHealthServingWeightUnit(unit: HealthServingWeightUnit) {

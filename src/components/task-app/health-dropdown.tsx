@@ -12,6 +12,113 @@ export type HealthDropdownOption = {
   value: string;
 };
 
+export function HealthAutocomplete({
+  ariaLabel,
+  id,
+  onChange,
+  suggestions,
+  value,
+}: {
+  ariaLabel: string;
+  id?: string;
+  onChange: (value: string) => void;
+  suggestions: string[];
+  value: string;
+}) {
+  const generatedId = useId();
+  const listboxId = id ? `${id}-listbox` : `${generatedId}-listbox`;
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const matchingSuggestions = suggestions.filter((suggestion) => suggestion.toLocaleLowerCase().includes(value.trim().toLocaleLowerCase()));
+
+  useEffect(() => {
+    function handleOutsidePointerDown(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
+    return () => document.removeEventListener("pointerdown", handleOutsidePointerDown);
+  }, []);
+
+  function chooseSuggestion(index: number) {
+    const suggestion = matchingSuggestions[index];
+    if (suggestion === undefined) {
+      return;
+    }
+    onChange(suggestion);
+    setIsOpen(false);
+  }
+
+  return (
+    <div className="relative w-full" ref={rootRef}>
+      <input
+        aria-activedescendant={isOpen && matchingSuggestions[highlightedIndex] ? `${listboxId}-option-${highlightedIndex}` : undefined}
+        aria-autocomplete="list"
+        aria-controls={isOpen ? listboxId : undefined}
+        aria-expanded={isOpen}
+        aria-label={ariaLabel}
+        className={HEALTH_COMPACT_INPUT_CLASS}
+        id={id}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setHighlightedIndex(0);
+          setIsOpen(true);
+        }}
+        onFocus={() => {
+          setHighlightedIndex(0);
+          setIsOpen(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" && matchingSuggestions.length > 0) {
+            event.preventDefault();
+            setIsOpen(true);
+            setHighlightedIndex((current) => (current + 1) % matchingSuggestions.length);
+          } else if (event.key === "ArrowUp" && matchingSuggestions.length > 0) {
+            event.preventDefault();
+            setIsOpen(true);
+            setHighlightedIndex((current) => (current - 1 + matchingSuggestions.length) % matchingSuggestions.length);
+          } else if (event.key === "Enter" && isOpen && matchingSuggestions.length > 0) {
+            event.preventDefault();
+            chooseSuggestion(highlightedIndex);
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            setIsOpen(false);
+          }
+        }}
+        role="combobox"
+        value={value}
+      />
+      {isOpen && matchingSuggestions.length > 0 ? (
+        <AdhdDropdownPanel
+          aria-label={`${ariaLabel} suggestions`}
+          className="max-h-64 overflow-y-auto"
+          id={listboxId}
+          role="listbox"
+          widthClassName="w-full"
+        >
+          {matchingSuggestions.map((suggestion, index) => (
+            <button
+              aria-selected={index === highlightedIndex}
+              className={`flex w-full items-center rounded-[0.8rem] px-2 py-1.5 text-left text-[13px] leading-5 transition ${index === highlightedIndex ? "bg-[#f1ecff] text-[#5f4bd7] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : "text-[#5f5876] hover:bg-[#f7f5fb] dark:text-white/75 dark:hover:bg-white/8"}`}
+              id={`${listboxId}-option-${index}`}
+              key={`${suggestion}-${index}`}
+              onClick={() => chooseSuggestion(index)}
+              onMouseEnter={() => setHighlightedIndex(index)}
+              role="option"
+              type="button"
+            >
+              {suggestion}
+            </button>
+          ))}
+        </AdhdDropdownPanel>
+      ) : null}
+    </div>
+  );
+}
+
 export function HealthDropdown({
   ariaLabel,
   className,

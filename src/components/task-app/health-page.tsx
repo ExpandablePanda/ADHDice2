@@ -1,7 +1,7 @@
 "use client";
 
 import { Activity, Apple, CalendarDays, Camera, Check, ChevronDown, Heart, HeartPulse, MoonStar, Pencil, Salad, Scale, ScanSearch, Search, Sparkles, Target, Trophy, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import type {
   HealthAchievementAward,
@@ -72,6 +72,7 @@ import {
   composeHealthFoodServingDefinition,
   formatHealthFoodQuantityUnit,
   getHealthFoodIdentityKey,
+  sortHealthFoodsForMealPicker,
 } from "@/lib/health-library";
 import {
   TASK_TABLE_CHIP_BASE_CLASS,
@@ -283,6 +284,39 @@ function createQuickFoodId() {
 
 const EMPTY_FOOD_LOOKUP_RESULTS: HealthFoodLookupResult[] = [];
 const DEFAULT_IMPORT_STATUS = "Waiting for an Apple Health export.";
+const HEALTH_TAB_STORAGE_KEY = "adhdice-health-tab";
+const healthTabPreferenceListeners = new Set<() => void>();
+
+function readHealthTabPreference(): HealthTab {
+  if (typeof window === "undefined") {
+    return "Today";
+  }
+  try {
+    const stored = window.localStorage.getItem(HEALTH_TAB_STORAGE_KEY);
+    return HEALTH_TABS.includes(stored as HealthTab) ? stored as HealthTab : "Today";
+  } catch {
+    return "Today";
+  }
+}
+
+function subscribeToHealthTabPreference(listener: () => void) {
+  healthTabPreferenceListeners.add(listener);
+  const handleStorage = () => listener();
+  window.addEventListener("storage", handleStorage);
+  return () => {
+    healthTabPreferenceListeners.delete(listener);
+    window.removeEventListener("storage", handleStorage);
+  };
+}
+
+function persistHealthTabPreference(tab: HealthTab) {
+  try {
+    window.localStorage.setItem(HEALTH_TAB_STORAGE_KEY, tab);
+  } catch {
+    // UI preference persistence is best effort.
+  }
+  healthTabPreferenceListeners.forEach((listener) => listener());
+}
 
 type DetectedBarcode = {
   rawValue?: string;
@@ -328,11 +362,12 @@ export function HealthPage({
   weightEntries,
   waterEntries,
 }: HealthPageProps) {
-  const [activeTab, setActiveTab] = useState<HealthTab>("Today");
+  const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
   const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
   const [foodSearchQuery, setFoodSearchQuery] = useState("");
   const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
+  const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
   const [foodHistoryDate, setFoodHistoryDate] = useState(todayHealthDate());
   const [targetWeightDraft, setTargetWeightDraft] = useState("");
   const [barcodeLookup, setBarcodeLookup] = useState("");
@@ -459,7 +494,7 @@ export function HealthPage({
         }
         seen.add(key);
         return true;
-      })
+      });
   }, [mealEntries]);
   const favoriteFoods = useMemo(
     () => {
@@ -468,7 +503,7 @@ export function HealthPage({
         const identity = getHealthFoodIdentityKey(entry);
         if (identity) loggedCountByIdentity.set(identity, (loggedCountByIdentity.get(identity) ?? 0) + 1);
       });
-      return favorites
+      return [...favorites]
         .filter((item) => item.is_favorite)
         .sort((left, right) => {
           const countDifference = (loggedCountByIdentity.get(getHealthFoodIdentityKey(right) ?? "") ?? 0) - (loggedCountByIdentity.get(getHealthFoodIdentityKey(left) ?? "") ?? 0);
@@ -489,26 +524,28 @@ export function HealthPage({
   }, [favoriteFoods]);
   const matchingCustomFoods = useMemo(() => {
     const query = customFoodSearchQuery.trim().toLowerCase();
-    if (!query) {
-      return favorites.slice(0, 8);
-    }
-    return favorites.filter((item) => [
+    const category = selectedCustomFoodCategory;
+    return sortHealthFoodsForMealPicker(favorites, mealEntries).filter((item) => {
+      if (category && (item.food_category || "Uncategorized") !== category) {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
+      return [
       item.brand_name,
       item.category,
       item.food_category,
       item.food_name,
       item.serving_size,
       item.serving_label,
-    ].some((value) => value?.toLowerCase().includes(query))).slice(0, 8);
-  }, [customFoodSearchQuery, favorites]);
-  const matchingCustomFoodGroups = useMemo(() => {
-    const groups = new Map<string, HealthFoodLibraryItem[]>();
-    matchingCustomFoods.forEach((item) => {
-      const category = item.food_category?.trim() || "Uncategorized";
-      groups.set(category, [...(groups.get(category) ?? []), item]);
+      ].some((value) => value?.toLowerCase().includes(query));
     });
-    return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
-  }, [matchingCustomFoods]);
+  }, [customFoodSearchQuery, favorites, mealEntries, selectedCustomFoodCategory]);
+  const customFoodCategories = useMemo(
+    () => [...new Set(favorites.map((item) => item.food_category || "Uncategorized"))].sort((left, right) => left.localeCompare(right)),
+    [favorites],
+  );
   const recentWeekDates = useMemo(
     () => Array.from({ length: 7 }, (_, index) => {
       const offset = 6 - index;
@@ -1140,7 +1177,7 @@ export function HealthPage({
             }`}
             id={`health-tab-${tab.toLowerCase()}`}
             key={tab}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => persistHealthTabPreference(tab)}
             role="tab"
             type="button"
           >
@@ -1485,50 +1522,56 @@ export function HealthPage({
               </div>
             ) : null}
             <div className="mt-3 grid gap-3">
+              {customFoodCategories.length > 0 ? (
+                <div aria-label="Filter custom foods by category" className="flex flex-wrap gap-1.5">
+                  {customFoodCategories.map((category) => (
+                    <AdhdChip
+                      key={category}
+                      onClick={() => setSelectedCustomFoodCategory((current) => current === category ? null : category)}
+                      selected={selectedCustomFoodCategory === category}
+                    >
+                      {category}
+                    </AdhdChip>
+                  ))}
+                </div>
+              ) : null}
               {matchingCustomFoods.length === 0 ? (
                 <EmptyCopy text="No custom foods match this search." />
-              ) : matchingCustomFoodGroups.map(([category, items]) => (
-                <HealthCollapsiblePanel
-                  key={category}
-                  subtitle={`${items.length} food${items.length === 1 ? "" : "s"}`}
-                  title={category}
-                  variant="subpanel"
-                >
-                  <div className="flex flex-wrap gap-2">
-                    {items.map((item) => (
-                      <button
-                        className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
-                        key={item.id}
-                        onClick={() => {
-                          setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name);
-                          applyLookupResult({
-                            attribution: item.attribution,
-                            barcode: item.barcode,
-                            brandName: item.brand_name,
-                            foodCategory: item.food_category ?? item.category,
-                            calories: item.calories,
-                            carbs: item.carbs_g,
-                            fat: item.fat_g,
-                            foodName: item.food_name,
-                            protein: item.protein_g,
-                            provider: item.provider,
-                            providerItemId: item.provider_item_id ?? item.id,
-                            servingLabel: item.serving_label,
-                            sourceFoodId: item.id,
-                            servingQuantity: item.serving_quantity,
-                            servingUnit: item.serving_unit,
-                            servingMeasureValue: item.serving_measure_value,
-                            servingMeasureUnit: item.serving_measure_unit,
-                          });
-                        }}
-                        type="button"
-                      >
-                        {formatBrandedFoodName(item)} · {item.calories} kcal
-                      </button>
-                    ))}
-                  </div>
-                </HealthCollapsiblePanel>
-              ))}
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {matchingCustomFoods.map((item) => (
+                    <button
+                      className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
+                      key={item.id}
+                      onClick={() => {
+                        setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name);
+                        applyLookupResult({
+                          attribution: item.attribution,
+                          barcode: item.barcode,
+                          brandName: item.brand_name,
+                          foodCategory: item.food_category ?? item.category,
+                          calories: item.calories,
+                          carbs: item.carbs_g,
+                          fat: item.fat_g,
+                          foodName: item.food_name,
+                          protein: item.protein_g,
+                          provider: item.provider,
+                          providerItemId: item.provider_item_id ?? item.id,
+                          servingLabel: item.serving_label,
+                          sourceFoodId: item.id,
+                          servingQuantity: item.serving_quantity,
+                          servingUnit: item.serving_unit,
+                          servingMeasureValue: item.serving_measure_value,
+                          servingMeasureUnit: item.serving_measure_unit,
+                        });
+                      }}
+                      type="button"
+                    >
+                      {formatBrandedFoodName(item)} · {item.calories} kcal
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="mt-6 grid gap-3">
@@ -1713,7 +1756,7 @@ export function HealthPage({
             </HealthPanel>
 
             <HealthPanel icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
-              <div className="max-h-[26rem] space-y-5 overflow-y-auto pr-1">
+              <div className="adhdice-scrollbar max-h-[26rem] space-y-5 overflow-y-auto pr-1">
                 <section className="space-y-3" aria-labelledby="health-favorites-heading">
                   <SectionMiniTitle title="Favorites" />
                   <h3 className="sr-only" id="health-favorites-heading">Favorites</h3>

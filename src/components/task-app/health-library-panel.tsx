@@ -23,9 +23,11 @@ import {
   composeHealthFoodStructuredServingLabel,
   formatQuantity,
   getHealthFoodIdentityKey,
+  getHealthFoodAutocompleteValues,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
   searchHealthFoodLibrary,
+  sortHealthFoodLibraryByCreatedAt,
 } from "@/lib/health-library";
 import {
   buildHealthCustomFoodImportTemplate,
@@ -38,7 +40,7 @@ import {
 } from "@/lib/health-food-import";
 import { getMealSlotLabel, HEALTH_MEAL_SLOTS } from "@/lib/health-utils";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
-import { HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
+import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 
 type LibrarySection = "foods" | "recipes" | "meals";
 
@@ -182,23 +184,15 @@ export function HealthLibraryPanel({
   const [recipeDraft, setRecipeDraft] = useState<RecipeDraft>(EMPTY_RECIPE_DRAFT);
   const [mealDraft, setMealDraft] = useState<MealDraft>(EMPTY_MEAL_DRAFT);
 
+  const orderedFoods = useMemo(() => sortHealthFoodLibraryByCreatedAt(favorites), [favorites]);
   const filteredFoods = useMemo(
-    () => searchHealthFoodLibrary(favorites, foodSearchQuery),
-    [favorites, foodSearchQuery],
+    () => searchHealthFoodLibrary(orderedFoods, foodSearchQuery),
+    [foodSearchQuery, orderedFoods],
   );
-  const filteredFoodGroups = useMemo(() => {
-    const groups = new Map<string, HealthFoodLibraryItem[]>();
-    filteredFoods.forEach((food) => {
-      const category = food.food_category?.trim() || "Uncategorized";
-      groups.set(category, [...(groups.get(category) ?? []), food]);
-    });
-    return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
-  }, [filteredFoods]);
-  const categorySuggestions = useMemo(
-    () => [...new Set(favorites.map((food) => food.food_category?.trim()).filter((category): category is string => Boolean(category)))]
-      .sort((left, right) => left.localeCompare(right)),
-    [favorites],
-  );
+  const foodNameSuggestions = useMemo(() => getHealthFoodAutocompleteValues(orderedFoods, "food_name"), [orderedFoods]);
+  const brandSuggestions = useMemo(() => getHealthFoodAutocompleteValues(orderedFoods, "brand_name"), [orderedFoods]);
+  const categorySuggestions = useMemo(() => getHealthFoodAutocompleteValues(orderedFoods, "food_category"), [orderedFoods]);
+  const servingUnitSuggestions = useMemo(() => getHealthFoodAutocompleteValues(orderedFoods, "serving_unit"), [orderedFoods]);
   const filteredIngredientFoods = useMemo(() => {
     const query = ingredientSearchQuery.trim().toLowerCase();
     if (!query) {
@@ -503,16 +497,26 @@ export function HealthLibraryPanel({
             <HealthCollapsiblePanel subtitle="Nutrition is stored per serving." title={foodDraft.id ? "Edit custom food" : "New custom food"} variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-2">
                 <LibraryField label="Food name">
-                  <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setFoodDraft((current) => ({ ...current, foodName: event.target.value }))} value={foodDraft.foodName} />
+                  <HealthAutocomplete
+                    ariaLabel="Food name"
+                    onChange={(value) => setFoodDraft((current) => ({ ...current, foodName: value }))}
+                    suggestions={foodNameSuggestions}
+                    value={foodDraft.foodName}
+                  />
                 </LibraryField>
                 <LibraryField label="Brand">
-                  <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setFoodDraft((current) => ({ ...current, brandName: event.target.value }))} value={foodDraft.brandName} />
+                  <HealthAutocomplete
+                    ariaLabel="Brand"
+                    onChange={(value) => setFoodDraft((current) => ({ ...current, brandName: value }))}
+                    suggestions={brandSuggestions}
+                    value={foodDraft.brandName}
+                  />
                 </LibraryField>
                 <LibraryField label="Food category">
-                  <input
-                    className={HEALTH_COMPACT_INPUT_CLASS}
-                    onChange={(event) => setFoodDraft((current) => ({ ...current, foodCategory: event.target.value }))}
-                    placeholder="Protein, Produce, Snack"
+                  <HealthAutocomplete
+                    ariaLabel="Food category"
+                    onChange={(value) => setFoodDraft((current) => ({ ...current, foodCategory: value }))}
+                    suggestions={categorySuggestions}
                     value={foodDraft.foodCategory}
                   />
                 </LibraryField>
@@ -520,7 +524,12 @@ export function HealthLibraryPanel({
                   <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" min="0" onChange={(event) => setFoodDraft((current) => ({ ...current, servingQuantity: event.target.value }))} placeholder="55" value={foodDraft.servingQuantity} />
                 </LibraryField>
                 <LibraryField label="Serving unit">
-                  <input className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setFoodDraft((current) => ({ ...current, servingUnit: event.target.value }))} placeholder="cracker, slice, serving" value={foodDraft.servingUnit} />
+                  <HealthAutocomplete
+                    ariaLabel="Serving unit"
+                    onChange={(value) => setFoodDraft((current) => ({ ...current, servingUnit: value }))}
+                    suggestions={servingUnitSuggestions}
+                    value={foodDraft.servingUnit}
+                  />
                 </LibraryField>
                 <LibraryField label="Serving measure (optional)">
                   <span className="grid grid-cols-[1fr_auto] gap-2">
@@ -553,15 +562,6 @@ export function HealthLibraryPanel({
                   <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, fat: event.target.value }))} value={foodDraft.fat} />
                 </LibraryField>
               </div>
-              {categorySuggestions.length ? (
-                <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Previously used food categories">
-                  {categorySuggestions.slice(0, 8).map((category) => (
-                    <AdhdChip key={category} onClick={() => setFoodDraft((current) => ({ ...current, foodCategory: category }))}>
-                      {category}
-                    </AdhdChip>
-                  ))}
-                </div>
-              ) : null}
               <div className="mt-4 flex flex-wrap gap-2">
                 <AdhdChip onClick={() => { void handleSaveFood(); }} selected>
                   Save food
@@ -570,42 +570,23 @@ export function HealthLibraryPanel({
               </div>
             </HealthCollapsiblePanel>
           </div>
-          {filteredFoodGroups.length === 0 ? (
-            <AdhdPanel variant="subpanel">
-              <p className="text-sm text-[#7d7598] dark:text-white/55">{foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."}</p>
-            </AdhdPanel>
-          ) : (
-            <div className="grid content-start gap-3">
-              {filteredFoodGroups.map(([category, foods]) => (
-                <HealthCollapsiblePanel
-                  key={category}
-                  subtitle={`${foods.length} food${foods.length === 1 ? "" : "s"}`}
-                  title={category}
-                  variant="subpanel"
-                >
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {foods.map((food) => (
-                      <AdhdCard key={food.id}>
-                        <div className="flex items-start gap-3">
-                          <div className="min-w-0 flex-1">
-                            <LibraryCardHeader
-                              detail={`${food.food_category?.trim() || "Uncategorized"} / ${food.serving_label || "1 serving"} / ${food.calories} kcal`}
-                              title={formatBrandedFoodName(food)}
-                            />
-                            <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
-                          </div>
-                          <div className="flex shrink-0 flex-nowrap gap-2">
-                            <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
-                            <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteFood(food.id); }} tone="danger">Remove</AdhdChip>
-                          </div>
-                        </div>
-                      </AdhdCard>
-                    ))}
-                  </div>
-                </HealthCollapsiblePanel>
-              ))}
-            </div>
-          )}
+          <LibraryCards empty={foodSearchQuery.trim() ? "No custom foods match this search." : "No custom foods yet."} items={filteredFoods.map((food) => (
+            <AdhdCard key={food.id}>
+              <div className="flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <LibraryCardHeader
+                    detail={`${food.food_category || "Uncategorized"} / ${food.serving_label || "1 serving"} / ${food.calories} kcal`}
+                    title={formatBrandedFoodName(food)}
+                  />
+                  <NutritionLine calories={food.calories} carbs={food.carbs_g ?? 0} fat={food.fat_g ?? 0} protein={food.protein_g ?? 0} />
+                </div>
+                <div className="flex shrink-0 flex-nowrap gap-2">
+                  <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setFoodDraft(foodToDraft(food))}>Edit</AdhdChip>
+                  <AdhdChip className="shrink-0" contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteFood(food.id); }} tone="danger">Remove</AdhdChip>
+                </div>
+              </div>
+            </AdhdCard>
+          ))} />
         </div>
         </>
       ) : null}

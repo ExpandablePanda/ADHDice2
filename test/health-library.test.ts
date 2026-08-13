@@ -13,11 +13,14 @@ import {
   getRecipeNutrition,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
+  getHealthFoodAutocompleteValues,
   getHealthFoodIdentityKey,
   normalizeHealthFoodLibraryInput,
   normalizeHealthFoodLibraryItem,
   searchHealthFoodLibrary,
   setHealthFoodFavoriteStatus,
+  sortHealthFoodLibraryByCreatedAt,
+  sortHealthFoodsForMealPicker,
   sumWaterForDate,
   waterAmountToMilliliters,
 } from "../src/lib/health-library.ts";
@@ -314,10 +317,41 @@ test("custom-food search keeps the existing name, brand, category, serving, prov
   assert.deepEqual(searchHealthFoodLibrary([food], ""), [food]);
 });
 
-test("Health Food renders grouped foods, calorie totals, favorite sorting, and goal progress", () => {
+test("custom food ordering uses creation time and newer values win autocomplete deduplication", () => {
+  const older = { ...food, id: "food-older", food_name: "Test food", created_at: "2026-07-27T12:00:00.000Z" };
+  const newer = { ...food, id: "food-newer", food_name: "TEST FOOD", created_at: "2026-07-29T12:00:00.000Z" };
+  assert.deepEqual(sortHealthFoodLibraryByCreatedAt([older, newer]).map((item) => item.id), ["food-newer", "food-older"]);
+  assert.deepEqual(getHealthFoodAutocompleteValues([older, newer], "food_name"), ["TEST FOOD"]);
+});
+
+test("meal picker ordering prefers most recent matching log, then newest unlogged food", () => {
+  const loggedFood = { ...food, id: "food-logged", created_at: "2026-07-20T12:00:00.000Z" };
+  const unloggedFood = { ...food, id: "food-unlogged", food_name: "Unlogged", created_at: "2026-07-28T12:00:00.000Z" };
+  const mealEntry = {
+    ...loggedFood,
+    entry_date: "2026-07-29",
+    logged_at: "2026-07-30T12:00:00.000Z",
+    meal_slot: "lunch" as const,
+  };
+  assert.deepEqual(sortHealthFoodsForMealPicker([unloggedFood, loggedFood], [mealEntry]).map((item) => item.id), ["food-logged", "food-unlogged"]);
+});
+
+test("Health Food preserves nutrition behavior while using flat category-filtered picker and local tab preference", () => {
   const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
-  assert.match(source, /matchingCustomFoodGroups/);
-  assert.match(source, /item\.food_category\?\.trim\(\) \|\| "Uncategorized"/);
+  const library = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
+  const dropdown = readFileSync(new URL("../src/components/task-app/health-dropdown.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(library, /filteredFoodGroups/);
+  assert.match(library, /sortHealthFoodLibraryByCreatedAt/);
+  assert.match(library, /HealthAutocomplete/);
+  assert.match(dropdown, /aria-autocomplete="list"/);
+  assert.match(dropdown, /onChange\(event\.target\.value\)/);
+  assert.match(source, /sortHealthFoodsForMealPicker/);
+  assert.match(source, /selectedCustomFoodCategory/);
+  assert.doesNotMatch(source, /matchingCustomFoodGroups/);
+  assert.match(source, /getHealthFoodIdentityKey/);
+  assert.match(source, /HEALTH_TAB_STORAGE_KEY/);
+  assert.match(source, /HEALTH_TABS\.includes/);
+  assert.match(source, /adhdice-scrollbar max-h-\[26rem\].*overflow-y-auto/);
   assert.match(source, /loggedCountByIdentity/);
   assert.match(source, /formatHealthNutritionNumber\(selectedNutrition\.calories\)/);
   assert.match(source, /formatHealthNutritionNumber\(slotCaloriesTotal\)/);
@@ -331,6 +365,7 @@ test("Health Food renders grouped foods, calorie totals, favorite sorting, and g
   assert.doesNotMatch(source, /mealDraft\.measurement === "serving"/);
   assert.match(source, /nutrition_snapshot: calculation\.nutrientTotals/);
   assert.match(source, /mode: "legacy"/);
+  assert.doesNotMatch(source, /sortHealthFoodsForMealPicker\(favorites, mealEntries\)[\s\S]{0,1000}\.slice\(0, 8\)/);
 });
 
 test("Task History selected actions use semantic inverted status fills", () => {
