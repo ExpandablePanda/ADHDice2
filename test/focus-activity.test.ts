@@ -5,6 +5,7 @@ import { attachDailyOverallGoalSeconds } from "../src/lib/focus-activity.ts";
 import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, getFocusActivityScrollDistance } from "../src/lib/focus-activity-scroll.ts";
 
 const source = readFileSync(new URL("../src/components/focus-history.tsx", import.meta.url), "utf8");
+const sharedChart = readFileSync(new URL("../src/components/activity-line-chart-card.tsx", import.meta.url), "utf8");
 
 function sourceBetween(start: string, end: string) {
   const startIndex = source.indexOf(start);
@@ -86,4 +87,14 @@ test("horizontal chart overflow availability, distance, and reduced motion stay 
   assert.match(source, /Scroll activity chart left/);
   assert.match(source, /Scroll activity chart right/);
   assert.match(source, /ResizeObserver/);
+});
+
+test("Focus Activity Lines adapts its existing series into the shared chart card", () => {
+  assert.match(source, /ActivityLineChartCard/);
+  assert.match(source, /NumericLineChartSeries/);
+  assert.match(source, /activityLineSeries/);
+  assert.match(source, /formatRoundedMinuteDuration/);
+  assert.match(sharedChart, /NumericLineChartSeries/);
+  assert.match(sharedChart, /onPointerMove/);
+  assert.match(sharedChart, /onPointerUp/);
 });

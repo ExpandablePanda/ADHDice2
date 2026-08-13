@@ -1780,7 +1780,6 @@ export function HealthPage({
                 <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
                 <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />
               </div>
-              <HealthCalorieLineChart series={dailyCalorieSeries} />
             </HealthPanel>
 
             <HealthPanel icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
@@ -1875,6 +1874,9 @@ export function HealthPage({
                 </section>
               </div>
             </HealthPanel>
+          </div>
+          <div className="xl:col-span-2">
+            <HealthCalorieLineChart series={dailyCalorieSeries} />
           </div>
           <HealthLibraryPanel
             deleteFood={deleteFavoriteFood}

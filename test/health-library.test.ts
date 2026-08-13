@@ -430,6 +430,7 @@ test("food history index counts and sorts identity-matched meals without mutatin
 test("Health Food preserves nutrition behavior while using flat category-filtered picker and local tab preference", () => {
   const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
   const chart = readFileSync(new URL("../src/components/task-app/health-calorie-line-chart.tsx", import.meta.url), "utf8");
+  const sharedChart = readFileSync(new URL("../src/components/activity-line-chart-card.tsx", import.meta.url), "utf8");
   const library = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
   const dropdown = readFileSync(new URL("../src/components/task-app/health-dropdown.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(library, /filteredFoodGroups/);
@@ -462,7 +463,13 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /buildHealthFoodLogHistoryIndex/);
   assert.match(source, /FavoriteFoodHistoryInlay/);
   assert.match(source, /expandedFavoriteId/);
-  assert.match(chart, /aria-label="7-day calorie line graph"/);
+  assert.match(chart, /ActivityLineChartCard/);
+  assert.match(chart, /buildHealthDailyCalorieSeries|HealthDailyCaloriePoint/);
+  assert.match(sharedChart, /aria-label=\{ariaLabel\}/);
+  assert.match(sharedChart, /emptyText/);
+  assert.match(sharedChart, /Clear pin/);
+  assert.match(source, /<HealthCalorieLineChart series=\{dailyCalorieSeries\} \/>/);
+  assert.doesNotMatch(source, /<HealthCalorieLineChart series=\{dailyCalorieSeries\}[\s\S]{0,500}selectedNutrition/);
   assert.match(chart, /No calories logged in this 7-day range/);
   assert.match(chart, /series\.map/);
   assert.doesNotMatch(source, /Recent Foods[\s\S]{0,2500}FavoriteFoodHistoryInlay/);

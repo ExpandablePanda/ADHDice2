@@ -12,6 +12,7 @@ import { getFocusActivityScrollAvailability, getFocusActivityScrollBehavior, get
 import { isSleepCategory } from "@/lib/focus-goals";
 import { type FocusCategory, type HistoricalFocusSession, type FocusLabelOptions, type FocusSubtype, type FocusType } from "@/lib/types";
 import { formatLocalDate } from "@/lib/utils";
+import { ActivityLineChartCard, type NumericLineChartSeries } from "@/components/activity-line-chart-card";
 
 type TimeScope = "daily" | "weekly" | "monthly";
 
@@ -85,17 +86,6 @@ type ActivityLineSeries = {
   label: string;
   points: ActivityLinePoint[];
   totalSeconds: number;
-};
-
-type InteractiveActivityPoint = {
-  color: string;
-  key: string;
-  label: string;
-  pointLabel: string;
-  pointKey: string;
-  seconds: number;
-  x: number;
-  y: number;
 };
 
 type CategoryBreakdownRow = {
@@ -1672,20 +1662,6 @@ function CompactCategoryBar({ row }: { row: CategoryBreakdownRow }) {
   );
 }
 
-function getLinePointPosition(
-  index: number,
-  pointCount: number,
-  seconds: number,
-  maxSeconds: number,
-  width: number,
-  height: number,
-) {
-  const x = pointCount <= 1 ? width / 2 : (index / (pointCount - 1)) * width;
-  const y = height - ((maxSeconds > 0 ? seconds / maxSeconds : 0) * height);
-
-  return { x, y };
-}
-
 function FocusActivityLineCard({
   range,
   scope,
@@ -1695,257 +1671,24 @@ function FocusActivityLineCard({
   scope: TimeScope;
   series: ActivityLineSeries[];
 }) {
-  const chartWidth = 640;
-  const chartHeight = 220;
-  const padding = { top: 24, right: 24, bottom: 42, left: 44 };
-  const plotWidth = chartWidth - padding.left - padding.right;
-  const plotHeight = chartHeight - padding.top - padding.bottom;
-  const maxSeconds = Math.max(
-    1,
-    ...series.flatMap((item) => item.points.map((point) => point.seconds)),
-  );
-  const axisPoints = series[0]?.points ?? [];
-  const labelStep = Math.max(1, Math.ceil(axisPoints.length / 6));
-  const hasData = series.length > 0 && axisPoints.length > 0;
-  const [hoveredPointKey, setHoveredPointKey] = useState<string | null>(null);
-  const [pinnedPointKey, setPinnedPointKey] = useState<string | null>(null);
-  const interactivePoints = useMemo(() => (
-    series.flatMap((item) => (
-      item.points.map((point, index) => {
-        const position = getLinePointPosition(index, item.points.length, point.seconds, maxSeconds, plotWidth, plotHeight);
-        return {
-          color: item.color,
-          key: item.key,
-          label: item.label,
-          pointLabel: point.label,
-          pointKey: `${item.key}:${point.key}`,
-          seconds: point.seconds,
-          x: padding.left + position.x,
-          y: padding.top + position.y,
-        } satisfies InteractiveActivityPoint;
-      })
-    ))
-  ), [maxSeconds, padding.left, padding.top, plotHeight, plotWidth, series]);
-  const activePoint = interactivePoints.find((point) => point.pointKey === (hoveredPointKey ?? pinnedPointKey))
-    ?? interactivePoints.find((point) => point.pointKey === pinnedPointKey)
-    ?? null;
-
-  const setNearestPointFromPointer = (clientX: number, clientY: number, bounds: DOMRect) => {
-    if (!interactivePoints.length) {
-      return null;
-    }
-    const localX = clientX - bounds.left;
-    const localY = clientY - bounds.top;
-    let nearestPoint = interactivePoints[0];
-    let nearestDistance = Number.POSITIVE_INFINITY;
-
-    for (const point of interactivePoints) {
-      const distance = Math.hypot(point.x - localX, point.y - localY);
-      if (distance < nearestDistance) {
-        nearestPoint = point;
-        nearestDistance = distance;
-      }
-    }
-
-    setHoveredPointKey(nearestPoint.pointKey);
-    return nearestPoint.pointKey;
-  };
-
+  const chartSeries: NumericLineChartSeries[] = series.map((item) => ({
+    color: item.color,
+    key: item.key,
+    label: item.label,
+    points: item.points.map((point) => ({ key: point.key, label: point.label, value: point.seconds })),
+    totalValue: item.totalSeconds,
+  }));
   return (
-    <div
-      aria-labelledby="activity-line-card-title"
-      className="w-full overflow-hidden rounded-[var(--radius-modal)] border border-[var(--border-soft)] bg-[var(--surface-elevated)] shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-white/[0.03]"
-    >
-      <div className="px-5 pb-5 pt-5 sm:px-6 sm:pb-6">
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Activity Summary</p>
-              <h4 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]" id="activity-line-card-title">Focus Activity Lines</h4>
-              <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                {range.label} • {scope === "daily" ? "session points" : scope === "weekly" ? "daily points" : "weekly buckets"}
-              </p>
-            </div>
-            {series.length > 0 ? (
-              <div className="flex max-w-2xl flex-wrap gap-2 lg:justify-end">
-                {series.map((item) => (
-                  <span
-                    className="inline-flex items-center gap-1.5 rounded-full border border-[#e4deef] bg-[var(--surface-elevated)] px-2.5 py-1 text-[11px] font-semibold leading-none text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60"
-                    key={item.key}
-                    title={`${item.label}: ${formatRoundedMinuteDuration(item.totalSeconds)}`}
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="h-2 w-2 rounded-full"
-                      style={{ backgroundColor: item.color }}
-                    />
-                    {item.label}
-                    <span className="text-[var(--text-muted)]">{formatRoundedMinuteDuration(item.totalSeconds)}</span>
-                  </span>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          {hasData ? (
-            <div className="min-w-0 overflow-x-auto pb-2">
-              {activePoint ? (
-                <motion.div
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mb-3 flex flex-wrap items-center gap-3 rounded-[1.2rem] border border-[#e9e2fb] bg-white/90 px-4 py-3 text-left shadow-[0_12px_30px_rgba(81,61,168,0.08)] dark:border-white/10 dark:bg-white/[0.04]"
-                  initial={{ opacity: 0, y: 6 }}
-                >
-                  <span className="inline-flex items-center gap-2 rounded-full bg-[#f4efff] px-3 py-1 text-xs font-semibold text-[#6f57f6] dark:bg-[#261e49] dark:text-[#cabfff]">
-                    <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: activePoint.color }} />
-                    {activePoint.label}
-                  </span>
-                  <span className="text-sm font-semibold text-[var(--text-primary)]">{activePoint.pointLabel}</span>
-                  <span className="text-sm text-[var(--text-secondary)]">{activePoint.label}</span>
-                  <span className="text-sm font-black text-[var(--text-primary)]">{formatCompactDuration(activePoint.seconds)}</span>
-                  <span className="text-xs text-[var(--text-muted)]">{activePoint.pointLabel} • {range.label}</span>
-                  {pinnedPointKey ? (
-                    <button
-                      className="ml-auto rounded-full border border-[#e4deef] px-3 py-1 text-xs font-semibold text-[#68738c] dark:border-white/10 dark:text-white/70"
-                      onClick={() => setPinnedPointKey(null)}
-                      type="button"
-                    >
-                      Clear pin
-                    </button>
-                  ) : null}
-                </motion.div>
-              ) : null}
-              <svg
-                aria-label="Category focus line graph"
-                className="block min-w-[42rem]"
-                onPointerLeave={() => setHoveredPointKey(null)}
-                onPointerMove={(event) => {
-                  setNearestPointFromPointer(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
-                }}
-                onPointerUp={(event) => {
-                  const nextPointKey = setNearestPointFromPointer(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
-                  if (nextPointKey) {
-                    setPinnedPointKey(nextPointKey);
-                  }
-                }}
-                role="img"
-                viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-              >
-                {[0, 0.5, 1].map((ratio) => {
-                  const y = padding.top + plotHeight - ratio * plotHeight;
-                  return (
-                    <g key={ratio}>
-                      <line
-                        stroke="var(--border-soft)"
-                        strokeDasharray={ratio === 0 ? undefined : "4 8"}
-                        strokeWidth="1"
-                        x1={padding.left}
-                        x2={padding.left + plotWidth}
-                        y1={y}
-                        y2={y}
-                      />
-                      <text
-                        fill="var(--text-muted)"
-                        fontSize="10"
-                        fontWeight="600"
-                        textAnchor="end"
-                        x={padding.left - 8}
-                        y={y + 3}
-                      >
-                        {ratio === 0 ? "0" : formatRoundedMinuteDuration(maxSeconds * ratio)}
-                      </text>
-                    </g>
-                  );
-                })}
-
-                {series.map((item) => {
-                  const points = item.points.map((point, index) => (
-                    getLinePointPosition(index, item.points.length, point.seconds, maxSeconds, plotWidth, plotHeight)
-                  ));
-                  const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${padding.left + point.x} ${padding.top + point.y}`).join(" ");
-
-                  return (
-                    <g key={item.key}>
-                      {points.length > 1 ? (
-                        <path
-                          d={path}
-                          fill="none"
-                          stroke={item.color}
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="3"
-                        />
-                      ) : null}
-                      {points.map((point, index) => (
-                        <circle
-                          cx={padding.left + point.x}
-                          cy={padding.top + point.y}
-                          fill="var(--surface-elevated)"
-                          key={`${item.key}-${item.points[index]?.key ?? index}`}
-                          onClick={() => setPinnedPointKey(`${item.key}:${item.points[index]?.key ?? index}`)}
-                          r={(hoveredPointKey === `${item.key}:${item.points[index]?.key ?? index}` || pinnedPointKey === `${item.key}:${item.points[index]?.key ?? index}`)
-                            ? 6
-                            : item.points[index]?.seconds ? 4 : 2.5}
-                          stroke={item.color}
-                          strokeWidth="2"
-                          style={{ cursor: "pointer", transition: "r 180ms ease" }}
-                        />
-                      ))}
-                    </g>
-                  );
-                })}
-
-                {activePoint ? (
-                  <g>
-                    <line
-                      stroke={activePoint.color}
-                      strokeDasharray="5 7"
-                      strokeWidth="1.5"
-                      x1={activePoint.x}
-                      x2={activePoint.x}
-                      y1={padding.top}
-                      y2={padding.top + plotHeight}
-                    />
-                    <circle
-                      cx={activePoint.x}
-                      cy={activePoint.y}
-                      fill={activePoint.color}
-                      r={6}
-                      stroke="white"
-                      strokeWidth="2.5"
-                    />
-                  </g>
-                ) : null}
-
-                {axisPoints.map((point, index) => {
-                  if (index !== 0 && index !== axisPoints.length - 1 && index % labelStep !== 0) {
-                    return null;
-                  }
-
-                  const { x } = getLinePointPosition(index, axisPoints.length, 0, maxSeconds, plotWidth, plotHeight);
-
-                  return (
-                    <text
-                      fill="var(--text-muted)"
-                      fontSize="11"
-                      key={point.key}
-                      textAnchor="middle"
-                      x={padding.left + x}
-                      y={chartHeight - 12}
-                    >
-                      {point.label}
-                    </text>
-                  );
-                })}
-              </svg>
-            </div>
-          ) : (
-            <div className="rounded-[var(--radius-card)] bg-[var(--surface-muted)] px-4 py-6 text-center text-sm text-[var(--text-secondary)] dark:bg-white/[0.04]">
-              No category activity to graph for this range yet.
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <ActivityLineChartCard
+      activePointContext={range.label}
+      ariaLabel="Category focus line graph"
+      emptyText="No category activity to graph for this range yet."
+      eyebrow="Activity Summary"
+      formatValue={formatRoundedMinuteDuration}
+      series={chartSeries}
+      subtitle={`${range.label} • ${scope === "daily" ? "session points" : scope === "weekly" ? "daily points" : "weekly buckets"}`}
+      title="Focus Activity Lines"
+    />
   );
 }
 
