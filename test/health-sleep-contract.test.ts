@@ -57,6 +57,8 @@ test("Health Sleep selected date controls the ledger totals and graph range", as
   assert.match(health, /disabled=\{date >= today\}/);
   assert.match(health, /nextDate > today \? today : nextDate/);
   assert.equal((health.match(/<FoodHistoryDateChip[^>]*dayStepper/g) ?? []).length, 1);
+  assert.match(health, /aria-hidden=\{dayStepper && date === today\}/);
+  assert.match(health, /if \(dayStepper\) \{[\s\S]*?dateInput[\s\S]*?todayButton[\s\S]*?daySteppers/);
   assert.match(health, /onClick=\{\(\) => onChange\(today\)\}/);
   assert.match(health, /const selectedSleepTotal = useMemo\([\s\S]*?date: sleepLedgerDate/);
   assert.match(health, /sleepFocusSessions\.filter\(\(session\) => session\.date === sleepLedgerDate\)/);

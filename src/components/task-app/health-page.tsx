@@ -2585,48 +2585,73 @@ function FoodHistoryDateChip({
   onChange: (date: string) => void;
   today: string;
 }) {
+  const dateInput = (
+    <label className="relative inline-flex items-center">
+      <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
+      <input
+        aria-label={ariaLabel}
+        className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} h-[26px] min-h-[26px] min-w-[9.5rem] pl-7 text-[13px] leading-none`}
+        max={today}
+        onChange={(event) => onChange(event.target.value || today)}
+        type="date"
+        value={date}
+      />
+    </label>
+  );
+  const todayButton = (
+    <AdhdChip
+      aria-hidden={dayStepper && date === today}
+      className={`!h-[26px] ${dayStepper && date === today ? "invisible" : ""}`}
+      onClick={() => onChange(today)}
+    >
+      Today
+    </AdhdChip>
+  );
+  const daySteppers = (
+    <span className="flex h-[26px] flex-col justify-center gap-px" aria-label="Sleep date navigation">
+      <AdhdIconButton
+        aria-label="Next sleep date"
+        className="!h-3 !w-5 !rounded-[3px] !border-transparent !bg-transparent !p-0 text-[#7b6bc8] hover:!bg-[#f3efff] dark:text-[#c1b5ff] dark:hover:!bg-white/[0.08]"
+        disabled={date >= today}
+        iconClassName="!h-3 !w-3"
+        onClick={() => {
+          const nextDate = shiftHealthDate(date, +1);
+          onChange(nextDate > today ? today : nextDate);
+        }}
+        size="sm"
+        tone="ghost"
+      >
+        <ChevronUp aria-hidden="true" />
+      </AdhdIconButton>
+      <AdhdIconButton
+        aria-label="Previous sleep date"
+        className="!h-3 !w-5 !rounded-[3px] !border-transparent !bg-transparent !p-0 text-[#7b6bc8] hover:!bg-[#f3efff] dark:text-[#c1b5ff] dark:hover:!bg-white/[0.08]"
+        iconClassName="!h-3 !w-3"
+        onClick={() => onChange(shiftHealthDate(date, -1))}
+        size="sm"
+        tone="ghost"
+      >
+        <ChevronDown aria-hidden="true" />
+      </AdhdIconButton>
+    </span>
+  );
+
+  if (dayStepper) {
+    return (
+      <span className="flex items-start gap-1.5">
+        <span className="flex flex-col items-start gap-1">
+          {dateInput}
+          <span className="flex h-[26px] items-center">{todayButton}</span>
+        </span>
+        {daySteppers}
+      </span>
+    );
+  }
+
   return (
     <span className="flex flex-wrap items-center gap-1.5">
-      {dayStepper ? (
-        <span className="flex h-[26px] flex-col justify-center gap-px" aria-label="Sleep date navigation">
-          <AdhdIconButton
-            aria-label="Next sleep date"
-            className="!h-3 !w-5 !rounded-[3px] !border-transparent !bg-transparent !p-0 text-[#7b6bc8] hover:!bg-[#f3efff] dark:text-[#c1b5ff] dark:hover:!bg-white/[0.08]"
-            disabled={date >= today}
-            iconClassName="!h-3 !w-3"
-            onClick={() => {
-              const nextDate = shiftHealthDate(date, +1);
-              onChange(nextDate > today ? today : nextDate);
-            }}
-            size="sm"
-            tone="ghost"
-          >
-            <ChevronUp aria-hidden="true" />
-          </AdhdIconButton>
-          <AdhdIconButton
-            aria-label="Previous sleep date"
-            className="!h-3 !w-5 !rounded-[3px] !border-transparent !bg-transparent !p-0 text-[#7b6bc8] hover:!bg-[#f3efff] dark:text-[#c1b5ff] dark:hover:!bg-white/[0.08]"
-            iconClassName="!h-3 !w-3"
-            onClick={() => onChange(shiftHealthDate(date, -1))}
-            size="sm"
-            tone="ghost"
-          >
-            <ChevronDown aria-hidden="true" />
-          </AdhdIconButton>
-        </span>
-      ) : null}
-      <label className="relative inline-flex items-center">
-        <CalendarDays aria-hidden="true" className="pointer-events-none absolute left-2 h-3.5 w-3.5 text-[#6f57f6]" />
-        <input
-          aria-label={ariaLabel}
-          className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS} h-[26px] min-h-[26px] min-w-[9.5rem] pl-7 text-[13px] leading-none`}
-          max={today}
-          onChange={(event) => onChange(event.target.value || today)}
-          type="date"
-          value={date}
-        />
-      </label>
-      {date !== today ? <AdhdChip className="!h-[26px]" onClick={() => onChange(today)}>Today</AdhdChip> : null}
+      {dateInput}
+      {date !== today ? todayButton : null}
     </span>
   );
 }
