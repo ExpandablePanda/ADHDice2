@@ -71,6 +71,8 @@ export type TaskStateHistoryRow = {
   occurredAt: string;
   occurrenceIdentity?: string | null;
   occurrenceDueOn?: string | null;
+  /** Internal read-model boundary: false preserves History metadata without driving recurrence. */
+  recurrenceAuthoritative?: boolean;
   countedAsDueOccurrence?: boolean;
   wasCompleted?: boolean;
   eventType?: "status" | "completed_permanently";

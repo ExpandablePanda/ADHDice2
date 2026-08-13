@@ -242,6 +242,11 @@ function occurrenceDue(row: PromotionRow): string | null {
   return dateValue(row, "occurrence_due_on");
 }
 
+function countedAsDueOccurrence(row: PromotionRow): boolean | null {
+  const candidate = value(row, "counted_as_due_occurrence", "legacy_counted_as_due_occurrence");
+  return typeof candidate === "boolean" ? candidate : null;
+}
+
 function explicitDelayTarget(row: PromotionRow, evidence: PromotionRow | null): { target: string | null; evidence: string[] } {
   const directKeys = ["effective_due_on", "delay_target_on", "target_due_on", "new_due_on", "delayed_until"] as const;
   for (const key of directKeys) {
@@ -314,9 +319,11 @@ function makePlan(
   const date = logicalDate(row);
   const outcome = status(row);
   const kind = entityKind(task, migrationEntity);
-  if (!sourceHistoryId || !owner || !taskId || !date || !kind || !outcome || !HISTORY_OUTCOMES.has(outcome)) return null;
+  const counted = countedAsDueOccurrence(row);
+  if (!sourceHistoryId || !owner || !taskId || !date || !kind || !outcome || !HISTORY_OUTCOMES.has(outcome) || counted === null) return null;
   const effectiveDueOn = outcome === "delayed" ? target : null;
   if (outcome === "delayed" && effectiveDueOn === null) return null;
+  const scheduledDueOn = counted ? occurrenceDue(row) ?? date : null;
   return {
     user_id: owner,
     entity_id: taskId,
@@ -325,7 +332,7 @@ function makePlan(
     outcome: outcome as PromotionFactPlan["outcome"],
     event_kind: outcome === "complete" ? "terminal_complete" : outcome === "delayed" ? "delay_audit" : "explicit_outcome",
     occurrence_id: null,
-    scheduled_due_on: occurrenceDue(row),
+    scheduled_due_on: scheduledDueOn,
     effective_due_on: effectiveDueOn,
     schedule_boundary_id: null,
     recurrence_source_fingerprint: null,

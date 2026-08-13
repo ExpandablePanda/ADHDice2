@@ -97,13 +97,15 @@ export function buildTaskEffectiveTimeline(
     .filter((row) => row.taskId === input.task.id)
     .map((row) => ({ ...row }));
   const explicitByDate = authoritativeRowsByDate(rows);
-  const explicitRows = [...explicitByDate.values()];
-  const initialDueOn = initialOccurrenceDueOn(input.task, explicitRows);
+  const recurrenceRows = rows.filter((row) => row.recurrenceAuthoritative !== false);
+  const recurrenceByDate = authoritativeRowsByDate(recurrenceRows);
+  const recurrenceExplicitRows = [...recurrenceByDate.values()];
+  const initialDueOn = initialOccurrenceDueOn(input.task, recurrenceExplicitRows);
   const simulationStart = earliestDate([
     input.calendarStart,
     input.logicalDate,
     initialDueOn,
-    ...explicitRows.flatMap((row) => [
+    ...recurrenceExplicitRows.flatMap((row) => [
       row.logicalDate,
       row.occurrenceDueOn,
       occurrenceDateFromIdentity(row.occurrenceIdentity),
@@ -116,7 +118,7 @@ export function buildTaskEffectiveTimeline(
   const days: Record<string, TaskEffectiveTimelineDay> = {};
   const effectiveDays: Record<string, TaskEffectiveTimelineDay> = {};
   const historicalMissedDueOnByDate = new Map<string, string>();
-  for (const row of explicitRows) {
+  for (const row of recurrenceExplicitRows) {
     if (!SUCCESSFUL_OUTCOMES.has(row.outcome)) continue;
     const historicalOccurrenceDueOn = row.occurrenceDueOn
       ?? occurrenceDateFromIdentity(row.occurrenceIdentity);
@@ -200,11 +202,12 @@ export function buildTaskEffectiveTimeline(
   let currentUnresolvedDueOn: string | null = null;
   for (const date of simulationDates) {
     const row = explicitByDate.get(date);
+    const recurrenceRow = recurrenceByDate.get(date);
     let day: TaskEffectiveTimelineDay;
 
     if (row) {
       day = explicitDay(row);
-      applyExplicitRow(row);
+      if (recurrenceRow) applyExplicitRow(recurrenceRow);
     } else if (historicalMissedDueOnByDate.has(date)) {
       day = calculatedDay(
         input.task.id,

@@ -524,6 +524,8 @@ export type TaskHistory = {
   canonical_provenance_kind?: string;
   canonical_command_id?: string | null;
   canonical_source?: string;
+  /** Internal canonical-read transport only; this is not a persisted database column. */
+  recurrence_authoritative?: boolean;
 };
 
 export type TaskHistoryEventType = "status" | "completed_permanently";

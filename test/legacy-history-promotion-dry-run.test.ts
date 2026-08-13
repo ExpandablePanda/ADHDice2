@@ -17,7 +17,7 @@ function task(id: string, overrides: PromotionRow = {}): PromotionRow {
 }
 
 function history(id: string, taskId: string, status: string, date: string, overrides: PromotionRow = {}): PromotionRow {
-  return { id, task_id: taskId, user_id: USER_ID, entry_date: date, status, event_type: status === "complete" ? "completed_permanently" : "status", occurrence_due_on: null, ...overrides };
+  return { id, task_id: taskId, user_id: USER_ID, entry_date: date, status, event_type: status === "complete" ? "completed_permanently" : "status", occurrence_due_on: null, counted_as_due_occurrence: true, ...overrides };
 }
 
 function sources(overrides: Partial<PromotionSources> = {}): PromotionSources {
@@ -146,6 +146,44 @@ test("planned facts preserve source identity, migration provenance, and zero rew
   assert.equal(report.plannedRewardWrites, 0);
   assert.equal(report.plannedCurrentTaskStateWrites, 0);
   assert.equal(report.plannedWrites, 0);
+});
+
+test("counted-as-due bridge preserves an explicit occurrence due date", () => {
+  const report = buildLegacyHistoryPromotionDryRun(sources({
+    legacyHistory: [history("h-due", "task-done", "done", "2026-06-20", { counted_as_due_occurrence: true, occurrence_due_on: "2026-06-19" })],
+  }), USER_ID);
+  assert.equal(report.plannedFacts[0]?.scheduled_due_on, "2026-06-19");
+});
+
+test("counted-as-due bridge uses entry date when the due date is absent", () => {
+  const report = buildLegacyHistoryPromotionDryRun(sources({
+    legacyHistory: [history("h-entry", "task-done", "done", "2026-06-20", { counted_as_due_occurrence: true, occurrence_due_on: null })],
+  }), USER_ID);
+  assert.equal(report.plannedFacts[0]?.scheduled_due_on, "2026-06-20");
+});
+
+test("counted-as-due false suppresses compatibility due metadata", () => {
+  const withDue = buildLegacyHistoryPromotionDryRun(sources({
+    legacyHistory: [history("h-not-due", "task-done", "done", "2026-06-20", { counted_as_due_occurrence: false, occurrence_due_on: "2026-06-19" })],
+  }), USER_ID);
+  const withoutDue = buildLegacyHistoryPromotionDryRun(sources({
+    legacyHistory: [history("h-not-due-2", "task-done", "done", "2026-06-20", { counted_as_due_occurrence: false, occurrence_due_on: null })],
+  }), USER_ID);
+  assert.equal(withDue.plannedFacts[0]?.scheduled_due_on, null);
+  assert.equal(withoutDue.plannedFacts[0]?.scheduled_due_on, null);
+});
+
+test("counted-as-due metadata changes do not change candidate eligibility", () => {
+  const report = buildLegacyHistoryPromotionDryRun(sources({
+    legacyHistory: [
+      history("h-1", "task-done", "done", "2026-06-20", { counted_as_due_occurrence: true, occurrence_due_on: "2026-06-20" }),
+      history("h-2", "task-dmb", "did_my_best", "2026-06-21", { counted_as_due_occurrence: true, occurrence_due_on: null }),
+      history("h-3", "task-missed", "missed", "2026-06-22", { counted_as_due_occurrence: false, occurrence_due_on: "2026-06-22" }),
+      history("h-4", "task-complete", "complete", "2026-06-23", { counted_as_due_occurrence: false, occurrence_due_on: null }),
+    ],
+  }), USER_ID);
+  assert.equal(report.candidateCounts.straightforward, 4);
+  assert.equal(report.plannedFacts.length, 4);
 });
 
 test("results are deterministic independent of input ordering", () => {

@@ -91,7 +91,7 @@ export function findUnresolvedMissedOccurrence(
   task: TaskStateEngineInput["task"],
   history: readonly TaskStateHistoryRow[],
 ): UnresolvedMissedOccurrence {
-  const rows = history.filter((row) => row.taskId === task.id);
+  const rows = history.filter((row) => row.taskId === task.id && row.recurrenceAuthoritative !== false);
   const resolvedKeys = new Set(
     rows
       .filter((row) => row.outcome !== "missed")
@@ -158,12 +158,14 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     .filter((row) => row.taskId === task.id)
     .map((row) => ({ ...row }));
   const byDate = authoritativeRowsByDate(rows);
+  const recurrenceByDate = authoritativeRowsByDate(rows.filter((row) => row.recurrenceAuthoritative !== false));
   const unscheduled = isUnscheduled(task.recurrence, task.dueOn);
   const scheduleChange = input.action?.type === "change_schedule";
   const action = input.action?.type === "record_outcome" ? input.action : null;
   const historicalOverride = action?.historicalOverride === true;
   const actionDate = action?.logicalDate ?? today;
   const existingActionRow = action ? byDate.get(actionDate) ?? null : null;
+  const existingRecurrenceActionRow = action ? recurrenceByDate.get(actionDate) ?? null : null;
   const activeActionOccurrenceDueOn = action
     && task.activeStatusLogicalDate === actionDate
     ? task.activeOccurrenceDueOn ?? null
@@ -171,7 +173,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const unresolvedMissedBeforeAction = findUnresolvedMissedOccurrence(task, rows);
   const actionOccurrenceIdentity = action?.occurrenceIdentity
     ?? (action?.occurrenceDueOn ? occurrenceIdentity(task.id, action.occurrenceDueOn) : null)
-    ?? existingActionRow?.occurrenceIdentity
+    ?? existingRecurrenceActionRow?.occurrenceIdentity
     ?? (activeActionOccurrenceDueOn ? occurrenceIdentity(task.id, activeActionOccurrenceDueOn) : null)
     ?? unresolvedMissedBeforeAction.identity
     ?? (action
@@ -234,6 +236,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       };
       rows.push(row);
       byDate.set(actionDate, row);
+      recurrenceByDate.set(actionDate, row);
       changes.push({ type: "insert", row });
     }
   }
@@ -241,7 +244,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const unresolvedMissed = findUnresolvedMissedOccurrence(task, rows);
 
   const consumed = new Set(
-    rows.map((row) => row.occurrenceIdentity).filter((value): value is string => Boolean(value))
+    rows.filter((row) => row.recurrenceAuthoritative !== false)
+      .map((row) => row.occurrenceIdentity).filter((value): value is string => Boolean(value))
       .map((identity) => identity.split(":").at(-1) as string),
   );
   let recurrenceAnchor: string | null = null;
@@ -251,6 +255,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   let protectedFixedOccurrence: string | null = null;
   const successfulRows = [...byDate.values()]
     .filter((row) => SUCCESS.has(row.outcome))
+    .filter((row) => row.recurrenceAuthoritative !== false)
     .filter(() => !scheduleChange)
     .sort((a, b) => a.logicalDate.localeCompare(b.logicalDate) || a.occurredAt.localeCompare(b.occurredAt));
 
@@ -386,7 +391,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     && task.activeStatus === "missed"
     && task.dueOn
     && task.dueOn < today
-    && ![...byDate.values()].some((row) => {
+    && ![...recurrenceByDate.values()].some((row) => {
       if (row.outcome === "missed") return false;
       const recordedOccurrence = occurrenceDateFromIdentity(row.occurrenceIdentity);
       return row.logicalDate >= task.dueOn || recordedOccurrence === task.dueOn;
@@ -423,7 +428,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     && task.activeStatus === "in_progress"
     && task.activeStatusLogicalDate
     && task.activeStatusLogicalDate < today
-    && !byDate.has(task.activeStatusLogicalDate);
+    && !recurrenceByDate.has(task.activeStatusLogicalDate);
   if (staleInProgress) {
     // Workflow state is independent from terminal/container state and has no
     // implicit outcome. Rollover only clears the stale workflow projection;
@@ -437,8 +442,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     recurrenceAnchor = actionDate;
   }
 
-  const completed = task.lifecycle === "complete" || [...byDate.values()].some((row) => row.outcome === "complete");
-  const latestHandledRow = [...byDate.values()]
+  const completed = task.lifecycle === "complete" || [...recurrenceByDate.values()].some((row) => row.outcome === "complete");
+  const latestHandledRow = [...recurrenceByDate.values()]
     .filter((row) => row.outcome !== "missed")
     .sort((left, right) => right.logicalDate.localeCompare(left.logicalDate) || right.occurredAt.localeCompare(left.occurredAt))[0] ?? null;
   const oneOffHandled = task.recurrence.kind === "none"
@@ -452,8 +457,10 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   }
 
   const currentRow = byDate.get(today) ?? null;
+  const currentRecurrenceRow = recurrenceByDate.get(today) ?? null;
   const currentOutcome = currentRow?.outcome ?? null;
-  const delayedRow = [...byDate.values()]
+  const currentRecurrenceOutcome = currentRecurrenceRow?.outcome ?? null;
+  const delayedRow = [...recurrenceByDate.values()]
     .filter((row) => row.outcome === "delayed")
     .sort((a, b) => b.logicalDate.localeCompare(a.logicalDate))[0] ?? null;
   let activeStatus: TaskActiveStatus;
@@ -461,21 +468,21 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     activeStatus = task.activeStatus;
   } else if (completed) {
     activeStatus = "complete";
-  } else if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRow) {
+  } else if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow) {
     activeStatus = "in_progress";
-  } else if (currentOutcome === "missed" || activeMissedOccurrence || overdueAnchor) {
+  } else if (currentRecurrenceOutcome === "missed" || activeMissedOccurrence || overdueAnchor) {
     activeStatus = "missed";
   } else if (scheduleChange && (task.activeStatus === "done" || task.activeStatus === "did_my_best")) {
     activeStatus = task.activeStatus;
-  } else if (currentOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) {
+  } else if (currentRecurrenceOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) {
     activeStatus = nextDue ? statusForFutureDate(today, nextDue) : "delayed";
   } else if (unscheduled) {
     activeStatus = "unscheduled";
   } else if (nextDue && nextDue > today) {
     activeStatus = statusForFutureDate(today, nextDue);
-  } else if (oneOffHandled || currentOutcome === "done") {
+  } else if (oneOffHandled || currentRecurrenceOutcome === "done") {
     activeStatus = "done";
-  } else if (currentOutcome === "did_my_best") {
+  } else if (currentRecurrenceOutcome === "did_my_best") {
     activeStatus = "did_my_best";
   } else {
     activeStatus = "pending";
@@ -521,7 +528,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       }
     }
   }
-  if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRow) calendar[today] = "in_progress";
+  if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow) calendar[today] = "in_progress";
 
   const patch: ProposedTaskStatePatch = {};
   if (activeStatus !== task.activeStatus) patch.status = activeStatus;
@@ -552,8 +559,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     .filter((change): change is Extract<TaskHistoryChange, { type: "insert" }> => change.type === "insert")
     .map((change) => change.row)
     .findLast((row) => SUCCESS.has(row.outcome))
-    ?? currentRow;
-  const unscheduledInactive = task.lifecycle === "active" && unscheduled && !currentRow && !staleInProgress;
+    ?? currentRecurrenceRow;
+  const unscheduledInactive = task.lifecycle === "active" && unscheduled && !currentRecurrenceRow && !staleInProgress;
   const calculatedMissed = Boolean(overdueAnchor);
 
   return {
@@ -581,7 +588,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     proposedHistoryChanges: changes,
     proposedTaskPatch: patch,
     streakDisposition: streakFor(
-      currentOutcome ?? (calculatedMissed ? "missed" : null),
+      currentRecurrenceOutcome ?? (calculatedMissed ? "missed" : null),
       unscheduledInactive,
     ),
     rewardEligibility: rewardFor(task.id, rewardRow ?? null),

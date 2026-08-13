@@ -1,8 +1,8 @@
 import { adaptLegacyTaskState } from "../task-state-engine/legacy-adapter.ts";
-import type { TaskHistory } from "../database.types.ts";
 import type { TaskRecurrence, TaskStateEngineInput } from "../task-state-engine/types.ts";
 import type { CanonicalTaskScheduleBoundary } from "./types.ts";
 import type { CanonicalTaskStateReadModel } from "./read-model.ts";
+import { mapCanonicalTaskHistoryFacts } from "./history-projection.ts";
 import { latestCanonicalScheduleBoundary } from "./schedule-projection.ts";
 
 function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {
@@ -40,24 +40,16 @@ function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRe
   };
 }
 
-function historyRows(readModel: CanonicalTaskStateReadModel): TaskHistory[] {
+function historyRows(readModel: CanonicalTaskStateReadModel) {
   const occurrences = new Map(readModel.occurrences.map((occurrence) => [occurrence.id, occurrence]));
   return readModel.historyFacts.map((fact) => {
+    const projected = mapCanonicalTaskHistoryFacts([fact])[0]!;
     const occurrence = fact.occurrence_id ? occurrences.get(fact.occurrence_id) : null;
-    const completed = fact.outcome === "done" || fact.outcome === "did_my_best" || fact.outcome === "complete";
     return {
-      id: fact.id,
-      task_id: fact.entity_id,
-      entry_date: fact.logical_date,
-      status: fact.outcome,
-      event_type: fact.event_kind === "terminal_complete" ? "completed_permanently" : "status",
-      occurrence_key: occurrence?.occurrence_key ?? null,
+      ...projected,
+      occurrence_key: occurrence?.occurrence_key ?? projected.occurrence_key,
       occurrence_due_on: fact.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null,
-      counted_as_due_occurrence: fact.outcome !== "missed",
-      was_completed: completed,
-      created_at: fact.created_at,
-      updated_at: fact.updated_at,
-    } as TaskHistory;
+    };
   });
 }
 
