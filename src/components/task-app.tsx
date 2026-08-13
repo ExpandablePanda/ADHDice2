@@ -161,7 +161,7 @@ import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supab
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { getLevelProgress } from "@/lib/economy-levels";
-import { buildHealthReminderTemplate, type HealthReminderTemplateKey } from "@/lib/health-utils";
+import { buildHealthReminderTemplate, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
@@ -583,7 +583,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.8.9";
+const APP_VERSION = "7.8.10";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1232,7 +1232,7 @@ export function TaskApp() {
     handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory, handleSaveDailyGoalAdjustment,
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
     handleAdjustFocusCounter, handleCreateFocusCounter, handleDeleteFocusCounter, handleUpdateFocusCounter,
-  } = useFocus(supabase, session?.user?.id ?? null, setMessage, activePage === "Focus" || activePage === "Stats");
+  } = useFocus(supabase, session?.user?.id ?? null, setMessage, activePage === "Focus" || activePage === "Stats" || activePage === "Health");
   const {
     awards: healthAwards,
     checkIns: healthCheckIns,
@@ -1268,20 +1268,78 @@ export function TaskApp() {
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health");
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
-  const startSleepFocusClock = useCallback(() => {
-    const sleepCategory = focusCategories.find((category) => isSleepCategory(category));
+  const sleepCategory = useMemo(
+    () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
+    [focusCategories],
+  );
+  const sleepActiveSession = sleepCategory ? activeSessions[sleepCategory.id] ?? null : null;
+  const onToggleSleepClock = useCallback(() => {
     if (!sleepCategory) {
-      setActivePage("Focus");
       setMessage({ tone: "warn", text: "Create a Sleep Focus category first, then start the clock." });
       return;
     }
-    setActivePage("Focus");
-    if (activeSessions[sleepCategory.id]?.isRunning) {
-      setMessage({ tone: "neutral", text: "Sleep Focus clock is already running." });
+    void handleToggleTimer(sleepCategory.id, sleepActiveSession ? undefined : { mode: "countup" });
+  }, [handleToggleTimer, sleepActiveSession, sleepCategory, setMessage]);
+  const onFinishSleepClock = useCallback((kind: HealthSleepKind) => {
+    if (!sleepCategory || !sleepActiveSession) return;
+    void handleFinishTimer(sleepCategory.id, {
+      title: sleepCategory.title,
+      focusType: sleepCategory.focusType,
+      focusSubtype: kind,
+      focusSubtype2: sleepCategory.focusSubtype2,
+      notes: "",
+      date: sleepActiveSession.startTime ? getLogicalDayKey(new Date(sleepActiveSession.startTime)) : todayISO(),
+    });
+  }, [handleFinishTimer, sleepActiveSession, sleepCategory]);
+  const onLogManualSleep = useCallback(async (input: {
+    date: string;
+    durationSeconds: number;
+    endedAt: string;
+    kind: HealthSleepKind;
+    startedAt: string;
+  }) => {
+    if (!sleepCategory) {
+      setMessage({ tone: "warn", text: "Create a Sleep Focus category first, then log sleep." });
+      return false;
+    }
+    return handleManualFocusEntry({
+      categoryId: sleepCategory.id,
+      title: sleepCategory.title,
+      focusType: sleepCategory.focusType,
+      focusSubtype: input.kind,
+      focusSubtype2: sleepCategory.focusSubtype2,
+      durationSeconds: input.durationSeconds,
+      date: input.date,
+      notes: "",
+      startedAt: input.startedAt,
+      endedAt: input.endedAt,
+    });
+  }, [handleManualFocusEntry, setMessage, sleepCategory]);
+  const onUpdateSleepSession = useCallback(async (entryId: string, input: {
+    date: string;
+    durationSeconds: number;
+    endedAt: string;
+    kind: HealthSleepKind;
+    startedAt: string;
+  }) => {
+    if (!sleepCategory) {
+      setMessage({ tone: "warn", text: "Create a Sleep Focus category first, then edit sleep." });
       return;
     }
-    void handleToggleTimer(sleepCategory.id, { mode: "countup" });
-  }, [activeSessions, focusCategories, handleToggleTimer, setActivePage]);
+    const existing = focusHistory.find((entry) => entry.id === entryId);
+    await handleUpdateFocusHistoryEntry(entryId, {
+      categoryId: existing ? existing.categoryId : sleepCategory.id,
+      title: existing ? existing.title : sleepCategory.title,
+      focusType: existing ? existing.focusType : sleepCategory.focusType,
+      focusSubtype: input.kind,
+      focusSubtype2: existing ? existing.focusSubtype2 : sleepCategory.focusSubtype2,
+      durationSeconds: input.durationSeconds,
+      date: input.date,
+      notes: existing?.notes ?? "",
+      startedAt: input.startedAt,
+      endedAt: input.endedAt,
+    });
+  }, [focusHistory, handleUpdateFocusHistoryEntry, setMessage, sleepCategory]);
   const {
     reorderListColumns,
     setSelectedBucket,
@@ -7498,7 +7556,12 @@ export function TaskApp() {
             mealEntries={healthMealEntries}
             metricEntries={healthMetricEntries}
             onOpenReminderTemplate={openHealthReminderTemplate}
-            onStartSleepClock={startSleepFocusClock}
+            sleepCategory={sleepCategory}
+            sleepActiveSession={sleepActiveSession}
+            onToggleSleepClock={onToggleSleepClock}
+            onFinishSleepClock={onFinishSleepClock}
+            onLogManualSleep={onLogManualSleep}
+            onUpdateSleepSession={onUpdateSleepSession}
             profile={healthProfile}
             recipes={healthRecipes}
             saveCheckIn={saveCheckIn}

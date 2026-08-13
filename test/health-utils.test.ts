@@ -12,10 +12,16 @@ import {
   formatHealthMealSummary,
   formatHealthNutritionNumber,
   formatMealLoggedTime,
+  buildHealthSleepTimestamps,
+  getHealthSleepElapsedSeconds,
+  getHealthSleepStartTimestamp,
   getCurrentHealthDateTimeInputs,
   getEligibleHealthAchievements,
   getHealthSleepDayTotal,
   getSleepFocusSessions,
+  HEALTH_SLEEP_KINDS,
+  normalizeHealthSleepKind,
+  parseHealthSleepDuration,
   kilogramsToDisplayValue,
   isHealthMealTimestampFuture,
   sumMealNutritionForDate,
@@ -396,4 +402,35 @@ test("health sleep totals include imported sleep and sleep focus sessions", () =
     importedMinutes: 420,
     totalMinutes: 510,
   });
+});
+
+test("Health Sleep classifications normalize supported and legacy subtypes", () => {
+  assert.deepEqual(HEALTH_SLEEP_KINDS, ["CPAP Sleep", "CPAP Nap", "Sleep", "Nap"]);
+  assert.equal(normalizeHealthSleepKind("CPAP Sleep"), "CPAP Sleep");
+  assert.equal(normalizeHealthSleepKind("legacy-subtype"), "Sleep");
+  assert.equal(normalizeHealthSleepKind(null), "Sleep");
+});
+
+test("Health Sleep timestamps preserve local start plus duration across midnight", () => {
+  const durationSeconds = parseHealthSleepDuration("2", "30");
+  assert.equal(durationSeconds, 2.5 * 60 * 60);
+  const timestamps = buildHealthSleepTimestamps({ date: "2026-08-04", time: "23:30", durationSeconds: durationSeconds! });
+  assert.ok(timestamps);
+  assert.equal(Date.parse(timestamps!.endedAt) - Date.parse(timestamps!.startedAt), durationSeconds! * 1000);
+  const inferred = getHealthSleepStartTimestamp({ startedAt: null, endedAt: timestamps!.endedAt, durationSeconds: durationSeconds! });
+  assert.equal(Date.parse(inferred!), Date.parse(timestamps!.startedAt));
+});
+
+test("Health Sleep rejects invalid local date/time and recomputes edited duration", () => {
+  assert.equal(parseHealthSleepDuration("0", "0"), null);
+  assert.equal(parseHealthSleepDuration("1", "60"), null);
+  assert.equal(buildHealthSleepTimestamps({ date: "2026-02-30", time: "09:00", durationSeconds: 3600 }), null);
+  const edited = buildHealthSleepTimestamps({ date: "2026-08-04", time: "09:00", durationSeconds: 90 * 60 });
+  assert.ok(edited);
+  assert.equal(Date.parse(edited!.endedAt) - Date.parse(edited!.startedAt), 90 * 60 * 1000);
+});
+
+test("Health Sleep elapsed display derives from the canonical active session", () => {
+  assert.equal(getHealthSleepElapsedSeconds({ accumulatedSeconds: 120, isRunning: true, startTime: 100_000 }, 101_501), 121);
+  assert.equal(getHealthSleepElapsedSeconds({ accumulatedSeconds: 120, isRunning: false, startTime: 100_000 }, 101_501), 120);
 });

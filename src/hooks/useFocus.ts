@@ -226,6 +226,7 @@ export function mapFocusSessionRow(row: DbFocusSession): HistoricalFocusSession 
     categoryId: row.category_id,
     title: row.title_snapshot,
     date: row.session_date,
+    startedAt: row.started_at,
     endedAt: row.ended_at,
     durationSeconds: row.duration_seconds,
     focusType: row.focus_type_snapshot as FocusType,
@@ -1007,10 +1008,14 @@ export function useFocus(
     date: string;
     notes: string;
     completionTime?: string;
+    startedAt?: string | null;
+    endedAt?: string | null;
   }) {
     if (!client || !userId) return false;
 
-    const completedAt = completionIsoFromDateTime(data.date, data.completionTime);
+    const completedAt = data.endedAt !== undefined
+      ? data.endedAt
+      : completionIsoFromDateTime(data.date, data.completionTime);
     const payload = {
       user_id: userId,
       category_id: data.categoryId,
@@ -1023,6 +1028,7 @@ export function useFocus(
       notes: data.notes || null,
       ended_at: completedAt,
       source: "manual" as const,
+      ...(Object.prototype.hasOwnProperty.call(data, "startedAt") ? { started_at: data.startedAt ?? null } : {}),
     };
 
     const { data: inserted, error } = await client
@@ -1182,12 +1188,16 @@ export function useFocus(
       durationSeconds: number;
       date: string;
       completionTime?: string;
+      startedAt?: string | null;
+      endedAt?: string | null;
       notes: string;
     },
   ) {
     if (!client || !userId) return;
 
-    const completedAt = completionIsoFromDateTime(data.date, data.completionTime);
+    const completedAt = data.endedAt !== undefined
+      ? data.endedAt
+      : completionIsoFromDateTime(data.date, data.completionTime);
     const payload = {
       category_id: data.categoryId,
       title_snapshot: sanitizeFocusLabel(data.title, "Untitled Session"),
@@ -1198,6 +1208,7 @@ export function useFocus(
       duration_seconds: data.durationSeconds,
       ended_at: completedAt,
       notes: data.notes || null,
+      ...(Object.prototype.hasOwnProperty.call(data, "startedAt") ? { started_at: data.startedAt ?? null } : {}),
     };
 
     const { data: updated, error } = await client

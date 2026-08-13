@@ -67,6 +67,7 @@ export type HistoricalFocusSession = {
   categoryId: string | null;
   title: string;
   date: string; // YYYY-MM-DD
+  startedAt?: string | null;
   endedAt?: string | null;
   durationSeconds: number;
   focusType: FocusType;

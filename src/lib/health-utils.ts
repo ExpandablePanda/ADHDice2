@@ -18,9 +18,11 @@ export type HealthMealSlot = HealthMealEntry["meal_slot"];
 export type WeightUnit = HealthProfile["preferred_weight_unit"];
 export type HealthAchievementCode = HealthAchievementAward["achievement_code"];
 export type HealthReminderTemplateKey = "daily_check_in" | "meal_log" | "weigh_in" | "movement_intention";
+export type HealthSleepKind = "CPAP Sleep" | "CPAP Nap" | "Sleep" | "Nap";
 
 export const HEALTH_TABS: HealthTab[] = ["Today", "Food", "Water", "Journal", "Weight", "Sleep", "Insights", "Awards"];
 export const HEALTH_MEAL_SLOTS: HealthMealSlot[] = ["breakfast", "lunch", "dinner", "snack"];
+export const HEALTH_SLEEP_KINDS: readonly HealthSleepKind[] = ["CPAP Sleep", "CPAP Nap", "Sleep", "Nap"];
 export const HEALTH_MOOD_OPTIONS = [1, 2, 3, 4, 5] as const;
 export const HEALTH_SYMPTOM_TAGS = [
   "Calm",
@@ -240,6 +242,57 @@ export function getCurrentHealthDateTimeInputs(now = new Date()) {
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   return { date, time };
+}
+
+export function normalizeHealthSleepKind(value: string | null | undefined): HealthSleepKind {
+  return HEALTH_SLEEP_KINDS.includes(value as HealthSleepKind) ? value as HealthSleepKind : "Sleep";
+}
+
+export function parseHealthSleepDuration(hours: string, minutes: string) {
+  const parsedHours = Number(hours);
+  const parsedMinutes = Number(minutes);
+  if (
+    !Number.isFinite(parsedHours)
+    || !Number.isFinite(parsedMinutes)
+    || !Number.isInteger(parsedHours)
+    || !Number.isInteger(parsedMinutes)
+    || parsedHours < 0
+    || parsedMinutes < 0
+    || parsedMinutes > 59
+  ) {
+    return null;
+  }
+  const durationSeconds = (parsedHours * 60 + parsedMinutes) * 60;
+  return durationSeconds > 0 ? durationSeconds : null;
+}
+
+export function buildHealthSleepTimestamps({ date, time, durationSeconds }: { date: string; time: string; durationSeconds: number }) {
+  const startedAt = buildHealthMealLoggedAt(date, time);
+  if (!startedAt || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    return null;
+  }
+  const endedAtMs = Date.parse(startedAt) + durationSeconds * 1000;
+  if (!Number.isFinite(endedAtMs)) {
+    return null;
+  }
+  return { startedAt, endedAt: new Date(endedAtMs).toISOString() };
+}
+
+export function getHealthSleepStartTimestamp(session: Pick<HistoricalFocusSession, "startedAt" | "endedAt" | "durationSeconds">) {
+  if (session.startedAt && Number.isFinite(Date.parse(session.startedAt))) {
+    return session.startedAt;
+  }
+  if (session.endedAt && Number.isFinite(Date.parse(session.endedAt)) && Number.isFinite(session.durationSeconds) && session.durationSeconds > 0) {
+    return new Date(Date.parse(session.endedAt) - session.durationSeconds * 1000).toISOString();
+  }
+  return null;
+}
+
+export function getHealthSleepElapsedSeconds(session: { accumulatedSeconds: number; isRunning: boolean; startTime: number | null }, nowMs = Date.now()) {
+  const runningSeconds = session.isRunning && session.startTime !== null
+    ? Math.max(0, Math.floor((nowMs - session.startTime) / 1000))
+    : 0;
+  return Math.max(0, Math.floor(session.accumulatedSeconds)) + runningSeconds;
 }
 
 export function buildHealthMealLoggedAt(date: string, time: string) {

@@ -20,7 +20,7 @@ test("Focus History and full Task History are loaded only for explicit consumers
     readFile(new URL("../src/hooks/useFocus.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(app, /useFocus\([\s\S]*?activePage === "Focus" \|\| activePage === "Stats"/);
+  assert.match(app, /useFocus\([\s\S]*?activePage === "Focus" \|\| activePage === "Stats" \|\| activePage === "Health"/);
   assert.match(focus, /!historyActive \|\| loadedFocusHistoryUserIdRef\.current === userId/);
   assert.match(workspace, /activePage === "Stats" \|\| activePage === "Games" \|\| activePage === "Achievements"/);
   assert.doesNotMatch(workspace, /window\.setTimeout\([\s\S]*?loadTaskHistory/);

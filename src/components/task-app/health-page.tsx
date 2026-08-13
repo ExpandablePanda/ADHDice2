@@ -44,12 +44,15 @@ import {
   formatHealthNutritionNumber,
   formatWeight,
   getCurrentHealthDateTimeInputs,
+  getHealthSleepElapsedSeconds,
+  getHealthSleepStartTimestamp,
   getHealthSleepDayTotal,
   getSleepFocusSessions,
   getLatestWeight,
   getMealSlotLabel,
   getWeightTrend,
   HEALTH_MEAL_SLOTS,
+  HEALTH_SLEEP_KINDS,
   HEALTH_MOOD_OPTIONS,
   type HealthReminderTemplateKey,
   HEALTH_SYMPTOM_TAGS,
@@ -58,10 +61,14 @@ import {
   sumMealNutritionForDate,
   sumMetricValueForDate,
   todayHealthDate,
+  buildHealthSleepTimestamps,
+  normalizeHealthSleepKind,
+  parseHealthSleepDuration,
   isHealthMealTimestampFuture,
+  type HealthSleepKind,
   type HealthTab,
 } from "@/lib/health-utils";
-import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
+import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import {
   calculateHealthFoodNutrition,
   getHealthFoodMeasurementOptions,
@@ -110,6 +117,12 @@ type HealthPageProps = {
   isLoading: boolean;
   focusCategories: FocusCategory[];
   focusHistory: HistoricalFocusSession[];
+  sleepCategory: FocusCategory | null;
+  sleepActiveSession: ActiveFocusSession | null;
+  onToggleSleepClock: () => void;
+  onFinishSleepClock: (kind: HealthSleepKind) => void;
+  onLogManualSleep: (input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<boolean>;
+  onUpdateSleepSession: (entryId: string, input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<void>;
   mealEntries: HealthMealEntry[];
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile | null;
@@ -185,7 +198,6 @@ type HealthPageProps = {
   updateMealEntry: (entryId: string, input: HealthMealEntryUpdate) => Promise<boolean>;
   storageMode: "local" | "remote";
   onOpenReminderTemplate: (templateKey: HealthReminderTemplateKey) => void;
-  onStartSleepClock: () => void;
   weightEntries: HealthWeightEntry[];
   waterEntries: HealthWaterEntry[];
 };
@@ -212,6 +224,14 @@ type MealDraft = {
   servingMeasureValue: number | null;
   servingMeasureUnit: HealthServingMeasureUnit | null;
   servingLabel: string;
+  time: string;
+};
+
+type SleepDraft = {
+  date: string;
+  hours: string;
+  kind: HealthSleepKind;
+  minutes: string;
   time: string;
 };
 
@@ -365,7 +385,12 @@ export function HealthPage({
   addWaterEntry,
   updateWaterEntry,
   updateMealEntry,
-  onStartSleepClock,
+  sleepCategory,
+  sleepActiveSession,
+  onToggleSleepClock,
+  onFinishSleepClock,
+  onLogManualSleep,
+  onUpdateSleepSession,
   weightEntries,
   waterEntries,
 }: HealthPageProps) {
@@ -413,9 +438,28 @@ export function HealthPage({
   const [journalMood, setJournalMood] = useState<number | null>(null);
   const [journalEnergy, setJournalEnergy] = useState<number | null>(null);
   const [journalTags, setJournalTags] = useState<string[]>([]);
+  const initialSleepInputs = useMemo(() => getCurrentHealthDateTimeInputs(), []);
+  const [sleepKind, setSleepKind] = useState<HealthSleepKind>("Sleep");
+  const [manualSleepDraft, setManualSleepDraft] = useState<SleepDraft>(() => ({
+    date: initialSleepInputs.date,
+    hours: "8",
+    kind: "Sleep",
+    minutes: "0",
+    time: initialSleepInputs.time,
+  }));
+  const [editingSleepId, setEditingSleepId] = useState<string | null>(null);
+  const [sleepEditDraft, setSleepEditDraft] = useState<SleepDraft | null>(null);
+  const [sleepFormError, setSleepFormError] = useState<string | null>(null);
+  const [sleepClockNow, setSleepClockNow] = useState(() => Date.now());
   const scannerVideoRef = useRef<HTMLVideoElement | null>(null);
   const importAbortRef = useRef<AbortController | null>(null);
   const today = todayHealthDate();
+
+  useEffect(() => {
+    if (!sleepActiveSession?.isRunning) return;
+    const intervalId = window.setInterval(() => setSleepClockNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [sleepActiveSession?.isRunning]);
 
   useEffect(() => {
     if (!profile) {
@@ -494,6 +538,7 @@ export function HealthPage({
     () => getSleepFocusSessions(focusHistory, focusCategories),
     [focusCategories, focusHistory],
   );
+  const sleepClockSeconds = sleepActiveSession ? getHealthSleepElapsedSeconds(sleepActiveSession, sleepClockNow) : 0;
   const latestWeight = useMemo(() => getLatestWeight(weightEntries), [weightEntries]);
   const weightTrend30 = useMemo(() => getWeightTrend(weightEntries, 30), [weightEntries]);
   const weightForecast = useMemo(
@@ -602,6 +647,54 @@ export function HealthPage({
   const canSaveMeal = mealDraft.foodName.trim().length > 0 && mealCalculation !== null && mealTimestampError === null;
   const weightValue = Number.parseFloat(weightDraft);
   const canSaveWeight = Number.isFinite(weightValue) && weightValue > 0;
+
+  function resolveSleepDraft(draft: SleepDraft) {
+    const durationSeconds = parseHealthSleepDuration(draft.hours, draft.minutes);
+    const timestamps = durationSeconds === null
+      ? null
+      : buildHealthSleepTimestamps({ date: draft.date, time: draft.time, durationSeconds });
+    if (durationSeconds === null || !timestamps) {
+      setSleepFormError("Enter a valid local date and time with a duration greater than zero.");
+      return null;
+    }
+    setSleepFormError(null);
+    return { ...timestamps, durationSeconds, kind: draft.kind, date: draft.date };
+  }
+
+  async function handleSaveManualSleep() {
+    const payload = resolveSleepDraft(manualSleepDraft);
+    if (!payload) return;
+    const saved = await onLogManualSleep(payload);
+    if (saved) {
+      const nextInputs = getCurrentHealthDateTimeInputs();
+      setManualSleepDraft({ date: nextInputs.date, hours: "8", kind: sleepKind, minutes: "0", time: nextInputs.time });
+    }
+  }
+
+  function openSleepEdit(session: HistoricalFocusSession) {
+    const startTimestamp = getHealthSleepStartTimestamp(session);
+    const startDate = startTimestamp ? new Date(startTimestamp) : null;
+    setEditingSleepId(session.id);
+    setSleepEditDraft({
+      date: session.date,
+      hours: String(Math.floor(session.durationSeconds / 3600)),
+      kind: normalizeHealthSleepKind(session.focusSubtype),
+      minutes: String(Math.floor((session.durationSeconds % 3600) / 60)),
+      time: startDate && Number.isFinite(startDate.getTime())
+        ? `${String(startDate.getHours()).padStart(2, "0")}:${String(startDate.getMinutes()).padStart(2, "0")}`
+        : "",
+    });
+    setSleepFormError(null);
+  }
+
+  async function handleSaveSleepEdit() {
+    if (!editingSleepId || !sleepEditDraft) return;
+    const payload = resolveSleepDraft(sleepEditDraft);
+    if (!payload) return;
+    await onUpdateSleepSession(editingSleepId, payload);
+    setEditingSleepId(null);
+    setSleepEditDraft(null);
+  }
 
   useEffect(() => {
     if (!isScannerOpen || scannerSupport !== "ready" || typeof window === "undefined") {
@@ -1968,17 +2061,33 @@ export function HealthPage({
               <CompactStat detail="from Apple Health imports" label="Imported" value={formatSleepMinutes(todaySleepTotal.importedMinutes)} />
             </div>
             <div className="mt-4 rounded-[1.25rem] border border-[#e6ebfb] bg-white/80 px-4 py-4 dark:border-white/10 dark:bg-white/[0.04]">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-[#26324f] dark:text-white">Sleep Focus Clock</p>
                   <p className="mt-1 text-xs leading-5 text-[#73809c] dark:text-white/50">
-                    Start or resume a Sleep timer in Focus when you want a manual sleep record.
+                    {sleepCategory ? "The Focus Sleep runtime stays authoritative while you remain on Health." : "Create a Sleep Focus category to enable the clock."}
                   </p>
                 </div>
-                <button className="ui-pill-button-strong-light" onClick={onStartSleepClock} type="button">
-                  Start Sleep Clock
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-3xl font-black tabular-nums text-[#26324f] dark:text-white">{formatSleepClock(sleepClockSeconds)}</span>
+                  <button className="ui-pill-button-strong-light" onClick={onToggleSleepClock} type="button">
+                    {!sleepActiveSession ? "Start Sleep" : sleepActiveSession.isRunning ? "Pause" : "Resume"}
+                  </button>
+                  {sleepActiveSession ? (
+                    <button className="ui-pill-button-light" onClick={() => onFinishSleepClock(sleepKind)} type="button">Finish</button>
+                  ) : null}
+                </div>
               </div>
+              <div className="mt-4"><SleepKindSelector onChange={setSleepKind} value={sleepKind} /></div>
+            </div>
+          </HealthPanel>
+
+          <HealthPanel icon={<MoonStar />} subtitle="Manual entry" title="Log sleep">
+            <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
+            <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
+            {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
+            <div className="mt-4 flex justify-end">
+              <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveManualSleep(); }} type="button">Log Sleep</button>
             </div>
           </HealthPanel>
 
@@ -2007,17 +2116,34 @@ export function HealthPage({
           <HealthPanel icon={<Sparkles />} subtitle="Migrated history" title="Recent Sleep Focus sessions">
             <div className="space-y-3">
               {sleepFocusSessions.length === 0 ? (
-                <EmptyCopy text="Sleep Focus timer sessions will appear here after you log them from the Sleep clock." />
+                <EmptyCopy text="Sleep Focus sessions will appear here after you log or finish them from Health." />
               ) : (
                 sleepFocusSessions.slice(0, 8).map((session) => (
                   <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={session.id}>
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold text-[#26324f] dark:text-white">{session.title}</p>
-                        <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{formatHealthDateLabel(session.date)}</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <AdhdChip tone="purple">{normalizeHealthSleepKind(session.focusSubtype)}</AdhdChip>
+                          <span className="text-xs text-[#74809b] dark:text-white/45">{formatHealthDateLabel(session.date)}</span>
+                          <span className="text-xs text-[#74809b] dark:text-white/45">{formatHealthSleepStartTime(session)}</span>
+                        </div>
                       </div>
-                      <span className="text-sm font-semibold text-[#26324f] dark:text-white">{formatSleepMinutes(session.durationSeconds / 60)}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-[#26324f] dark:text-white">{formatSleepMinutes(session.durationSeconds / 60)}</span>
+                        <button className="ui-pill-button-light" onClick={() => openSleepEdit(session)} type="button">Edit</button>
+                      </div>
                     </div>
+                    {editingSleepId === session.id && sleepEditDraft ? (
+                      <div className="mt-3 border-t border-[#edf0fb] pt-3 dark:border-white/10">
+                        <SleepKindSelector onChange={(kind) => setSleepEditDraft((current) => current ? { ...current, kind } : current)} value={sleepEditDraft.kind} />
+                        <SleepDraftFields draft={sleepEditDraft} onChange={(next) => setSleepEditDraft(next)} />
+                        {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
+                        <div className="mt-3 flex justify-end gap-2">
+                          <button className="ui-pill-button-light" onClick={() => { setEditingSleepId(null); setSleepEditDraft(null); }} type="button">Cancel</button>
+                          <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveSleepEdit(); }} type="button">Save</button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}
@@ -2273,6 +2399,56 @@ function formatSleepMinutes(minutes: number) {
     return `${hours}h`;
   }
   return `${hours}h ${remainingMinutes}m`;
+}
+
+function formatSleepClock(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = safeSeconds % 60;
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function formatHealthSleepStartTime(session: HistoricalFocusSession) {
+  const startTimestamp = getHealthSleepStartTimestamp(session);
+  if (!startTimestamp) return "Time unavailable";
+  const startDate = new Date(startTimestamp);
+  return Number.isFinite(startDate.getTime())
+    ? startDate.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : "Time unavailable";
+}
+
+function SleepKindSelector({ onChange, value }: { onChange: (kind: HealthSleepKind) => void; value: HealthSleepKind }) {
+  return (
+    <div aria-label="Sleep Type" className="flex flex-wrap gap-2">
+      {HEALTH_SLEEP_KINDS.map((kind) => (
+        <AdhdChip key={kind} onClick={() => onChange(kind)} selected={kind === value} type="button">{kind}</AdhdChip>
+      ))}
+    </div>
+  );
+}
+
+function SleepDraftFields({ draft, onChange }: { draft: SleepDraft; onChange: (draft: SleepDraft) => void }) {
+  return (
+    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <label className="space-y-1">
+        <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Date</span>
+        <input aria-label="Sleep date" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => onChange({ ...draft, date: event.target.value })} type="date" value={draft.date} />
+      </label>
+      <label className="space-y-1">
+        <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Start Time</span>
+        <input aria-label="Sleep start time" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => onChange({ ...draft, time: event.target.value })} type="time" value={draft.time} />
+      </label>
+      <label className="space-y-1">
+        <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Duration hours</span>
+        <input aria-label="Sleep duration hours" className={HEALTH_COMPACT_INPUT_CLASS} min={0} onChange={(event) => onChange({ ...draft, hours: event.target.value })} type="number" value={draft.hours} />
+      </label>
+      <label className="space-y-1">
+        <span className="block text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Duration minutes</span>
+        <input aria-label="Sleep duration minutes" className={HEALTH_COMPACT_INPUT_CLASS} max={59} min={0} onChange={(event) => onChange({ ...draft, minutes: event.target.value })} type="number" value={draft.minutes} />
+      </label>
+    </div>
+  );
 }
 
 function ScorePicker({
