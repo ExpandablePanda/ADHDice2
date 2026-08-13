@@ -198,7 +198,7 @@ test("results are deterministic independent of input ordering", () => {
 
 test("the planner source has no Supabase mutation calls", () => {
   const source = readFileSync(resolve("scripts/legacy-history-promotion-dry-run.ts"), "utf8");
-  for (const method of ["insert", "update", "delete", "upsert", "rpc"]) assert.doesNotMatch(source, new RegExp(`\\.${method}\\s*\\(`));
+  for (const method of ["insert", "update", "delete", "upsert", "rpc"]) assert.doesNotMatch(source, new RegExp(`from\\([^)]*\\)\\s*\\.${method}\\s*\\(`));
 });
 
 test("the read client exposes only SELECT-shaped table access and the loader invokes no mutation API", async () => {

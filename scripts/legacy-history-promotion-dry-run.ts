@@ -1,11 +1,14 @@
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 export const PROMOTION_REPORT_VERSION = "legacy-history-promotion-dry-run-v1" as const;
 export const PROMOTION_SOURCE = "legacy_history_promotion_v1" as const;
 export const PROMOTION_PROVENANCE = "migration_reconstruction" as const;
+export const PROMOTION_MIGRATION_VERSION = "legacy-history-promotion-v1" as const;
+export const PROMOTION_SCHEMA_CONTRACT_VERSION = "task-state-schema-v1" as const;
 export const PROMOTION_MIGRATION_OPERATION_REQUIREMENT = "required_at_execution" as const;
 export const DEFAULT_BATCH_SIZE = 100;
 export const MAX_BATCH_SIZE = 1000;
@@ -13,7 +16,7 @@ export const MAX_BATCH_SIZE = 1000;
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const UUID_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HISTORY_OUTCOMES = new Set(["done", "did_my_best", "missed", "delayed", "complete"]);
-const SOURCE_TABLES = [
+export const SOURCE_TABLES = [
   "adhdice_task_history",
   "adhdice_task_legacy_history_evidence",
   "adhdice_task_history_facts",
@@ -118,6 +121,7 @@ export type PromotionReport = {
   plannedRewardWrites: 0;
   plannedCurrentTaskStateWrites: 0;
   plannedWrites: 0;
+  sourceFingerprint: string;
 };
 
 type ReportOptions = { generatedAt?: string };
@@ -158,7 +162,7 @@ function objectValue(row: PromotionRow | null | undefined, ...keys: string[]): P
   return candidate && typeof candidate === "object" && !Array.isArray(candidate) ? candidate as PromotionRow : null;
 }
 
-function stableStringify(input: unknown): string {
+export function stableStringify(input: unknown): string {
   if (input === null || typeof input === "string" || typeof input === "boolean") return JSON.stringify(input);
   if (typeof input === "number") return Number.isFinite(input) ? JSON.stringify(input) : JSON.stringify(String(input));
   if (Array.isArray(input)) return `[${input.map(stableStringify).join(",")}]`;
@@ -195,6 +199,27 @@ function compareStrings(left: string, right: string): number {
 
 function sortRows(rows: readonly PromotionRow[]): PromotionRow[] {
   return [...rows].sort((left, right) => compareStrings(rowId(left) ?? stableStringify(left), rowId(right) ?? stableStringify(right)));
+}
+
+export function buildPromotionSourceFingerprint(sources: PromotionSources): string {
+  // Facts created by this migration are deliberately excluded so a retry can
+  // retain the original operation identity while the planner sees them as
+  // already promoted canonical wins. New non-migration canonical facts remain
+  // covered and therefore still fail the execution fingerprint guard.
+  const canonicalAuthority = sources.canonicalFacts.filter((fact) =>
+    !(stringValue(fact, "provenance_kind") === PROMOTION_PROVENANCE &&
+      stringValue(fact, "source") === PROMOTION_SOURCE &&
+      stringValue(fact, "source_legacy_history_id")),
+  );
+  const payload = {
+    legacyHistory: sortRows(sources.legacyHistory),
+    legacyEvidence: sortRows(sources.legacyEvidence),
+    canonicalFacts: sortRows(canonicalAuthority),
+    migrationEntities: sortRows(sources.migrationEntities),
+    tasks: sortRows(sources.tasks),
+    profile: sources.profile,
+  };
+  return `sha256:${createHash("sha256").update(stableStringify(payload), "utf8").digest("hex")}`;
 }
 
 function historyKey(row: PromotionRow): string | null {
@@ -484,6 +509,10 @@ export function buildLegacyHistoryPromotionDryRun(
         effective_due_on: target,
         reason: null,
       });
+      // Delayed remains a separate later-handling disposition even when the
+      // source happens to expose an exact target. This promotion is only for
+      // straightforward recorded outcomes and never imports Delayed facts.
+      continue;
     }
     const plan = makePlan(row, task, migrationEntity, profileValues(sources.profile), target);
     if (!plan) {
@@ -547,6 +576,7 @@ export function buildLegacyHistoryPromotionDryRun(
     plannedRewardWrites: 0,
     plannedCurrentTaskStateWrites: 0,
     plannedWrites: 0,
+    sourceFingerprint: buildPromotionSourceFingerprint(sources),
   };
 }
 
@@ -581,13 +611,19 @@ export function comparePromotionBaseline(report: PromotionReport): string[] {
 export function formatPromotionSummary(report: PromotionReport, baselineMismatches: readonly string[] = []): string {
   const lines = [
     `TOTAL LEGACY: ${report.sourceCounts.legacyHistory}`,
-    `STRAIGHTFORWARD CANDIDATES: ${report.candidateCounts.straightforward}`,
+    `STRAIGHTFORWARD: ${report.candidateCounts.straightforward}`,
     `CANONICAL WINS: ${report.candidateCounts.canonicalWins}`,
     `OWNER-EXCLUDED: ${report.candidateCounts.ownerExcluded}`,
-    `DELAYED NEEDING DECISION: ${report.candidateCounts.delayedNeedingDecision}`,
-    `SNAPSHOT DIVERGENCES: ${report.candidateCounts.snapshotDiverged}`,
-    `ORPHANS/MALFORMED: ${report.candidateCounts.orphansMalformed}`,
-    "PLANNED WRITES = 0",
+    `DELAYED SKIPPED: ${report.delayedSummary.total}`,
+    `DUPLICATES: ${report.candidateCounts.duplicateTaskDates}`,
+    `CONFLICTING LEGACY STATUSES: ${report.candidateCounts.conflictingLegacyStatuses}`,
+    `LIVE-LEGACY-ONLY: ${report.candidateCounts.liveLegacyOnly}`,
+    `EVIDENCE-ONLY: ${report.candidateCounts.evidenceOnly}`,
+    `SNAPSHOT-DIVERGED: ${report.candidateCounts.snapshotDiverged}`,
+    `PLANNED INSERTS: ${report.plannedFacts.length}`,
+    "PLANNED REWARD WRITES = 0",
+    "PLANNED TASK STATE WRITES = 0",
+    `SOURCE FINGERPRINT: ${report.sourceFingerprint}`,
   ];
   if (baselineMismatches.length > 0) lines.push(`STOP: LIVE BASELINE MISMATCH (${baselineMismatches.join("; ")})`);
   return `${lines.join("\n")}\n`;

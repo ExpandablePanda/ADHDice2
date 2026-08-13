@@ -1,6 +1,6 @@
 {
   "name": "adhdice-clean-prototype",
-  "version": "7.8.16",
+  "version": "7.8.17",
   "private": true,
   "scripts": {
     "dev": "node --experimental-strip-types ./scripts/dev-server.mjs",
@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "typecheck:taskapp-wave": "tsc --noEmit -p tsconfig.typecheck.json",
     "history:promotion-dry-run": "node --experimental-strip-types ./scripts/legacy-history-promotion-dry-run.ts",
+    "history:promotion-execute": "node --experimental-strip-types ./scripts/legacy-history-promotion-execute.ts",
     "test": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/*.test.ts",
     "test:records-reconciliation-nonblocking": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-reconciliation-timeout.test.ts",
     "test:records-reconciliation-temp-spill": "node --import ./test/register-alias.mjs --experimental-strip-types --test test/records-reconciliation-timeout.test.ts",
