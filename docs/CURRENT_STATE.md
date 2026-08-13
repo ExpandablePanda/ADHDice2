@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.8.17`.
+- Current working app version: `7.8.18`.
 - Current release group: `7.8.x` Historical Outcome and Recurrence Authority Separation.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,10 @@ Role: active working
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 - This document summarizes current authority and known limits; it does not establish browser parity or gate activation.
 - Historical patch descriptions are intentionally excluded from this active document.
+
+### 7.8.18 Legacy History promotion rollback recovery
+
+- Added an unapplied, preview-first rollback tool for one exact `legacy-history-promotion-v1` migration operation. It validates the stored source fingerprint, user, operation identity, provenance markers, expected fact count, and migration contract before a future service-role RPC can delete canonical migration facts. The operation row is retained and marked `failed_retryable` with `ROLLBACK_COMPLETED` metadata; legacy History, legacy evidence, Task State, and rewards are not mutated. Live promotion, rollback, SQL/RPC application, and browser validation remain unrun.
 
 ### 7.7.38 Canonical In Progress read projection
 
