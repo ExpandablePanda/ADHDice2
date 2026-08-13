@@ -14,6 +14,7 @@ import {
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
   getHealthFoodAutocompleteValues,
+  getHealthFoodDisplaySuggestions,
   getHealthFoodIdentityKey,
   normalizeHealthFoodLibraryInput,
   normalizeHealthFoodLibraryItem,
@@ -315,6 +316,7 @@ test("custom-food search keeps the existing name, brand, category, serving, prov
     { ...food, id: "food-2", food_name: "Other food", food_category: "Snacks", category: "Snacks" },
   ], "snacks").map((item) => item.id), ["food-2"]);
   assert.deepEqual(searchHealthFoodLibrary([food], ""), [food]);
+  assert.deepEqual(searchHealthFoodLibrary([{ ...food, brand_name: "Acme", food_name: "Granola" }], "acme · granola").map((item) => item.food_name), ["Granola"]);
 });
 
 test("custom food ordering uses creation time and newer values win autocomplete deduplication", () => {
@@ -322,6 +324,11 @@ test("custom food ordering uses creation time and newer values win autocomplete 
   const newer = { ...food, id: "food-newer", food_name: "TEST FOOD", created_at: "2026-07-29T12:00:00.000Z" };
   assert.deepEqual(sortHealthFoodLibraryByCreatedAt([older, newer]).map((item) => item.id), ["food-newer", "food-older"]);
   assert.deepEqual(getHealthFoodAutocompleteValues([older, newer], "food_name"), ["TEST FOOD"]);
+  assert.deepEqual(getHealthFoodDisplaySuggestions([
+    { ...older, brand_name: "Acme" },
+    { ...newer, brand_name: "ACME" },
+    { ...food, brand_name: null, food_name: "Other" },
+  ]), ["Acme · Test food", "Other"]);
 });
 
 test("meal picker ordering prefers most recent matching log, then newest unlogged food", () => {
@@ -345,6 +352,12 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(library, /HealthAutocomplete/);
   assert.match(dropdown, /aria-autocomplete="list"/);
   assert.match(dropdown, /onChange\(event\.target\.value\)/);
+  assert.match(dropdown, /adhdice-scrollbar max-h-64 overflow-y-auto/);
+  assert.match(library, /HealthAutocomplete[\s\S]*ariaLabel="Search custom foods"/);
+  assert.match(source, /HealthAutocomplete[\s\S]*ariaLabel="Search custom foods"/);
+  assert.match(source, /formatHealthFoodDisplayName\(item\)/);
+  assert.match(source, /applyLookupResult\(/);
+  assert.match(source, /border-t border-\[#ece8f6\]/);
   assert.match(source, /sortHealthFoodsForMealPicker/);
   assert.match(source, /selectedCustomFoodCategory/);
   assert.doesNotMatch(source, /matchingCustomFoodGroups/);

@@ -172,6 +172,7 @@ export function searchHealthFoodLibrary(items: HealthFoodLibraryItem[], query: s
     return items;
   }
   return items.filter((food) => [
+    formatHealthFoodDisplayName(food),
     food.food_name,
     food.brand_name,
     food.food_category,
@@ -180,6 +181,31 @@ export function searchHealthFoodLibrary(items: HealthFoodLibraryItem[], query: s
     food.provider,
     food.barcode,
   ].some((value) => value?.toLowerCase().includes(normalizedQuery)));
+}
+
+export function formatHealthFoodDisplayName(
+  food: Pick<HealthFoodLibraryItem, "brand_name" | "food_name">,
+) {
+  return food.brand_name?.trim()
+    ? `${food.brand_name.trim()} · ${food.food_name}`
+    : food.food_name;
+}
+
+export function getHealthFoodDisplaySuggestions(
+  items: Array<Pick<HealthFoodLibraryItem, "brand_name" | "food_name">>,
+) {
+  const suggestions: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const suggestion = formatHealthFoodDisplayName(item);
+    const normalized = suggestion.toLocaleLowerCase();
+    if (!suggestion.trim() || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    suggestions.push(suggestion);
+  }
+  return suggestions;
 }
 
 export type HealthFoodAutocompleteField = "food_name" | "brand_name" | "food_category" | "serving_unit";

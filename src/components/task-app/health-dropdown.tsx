@@ -16,12 +16,14 @@ export function HealthAutocomplete({
   ariaLabel,
   id,
   onChange,
+  placeholder,
   suggestions,
   value,
 }: {
   ariaLabel: string;
   id?: string;
   onChange: (value: string) => void;
+  placeholder?: string;
   suggestions: string[];
   value: string;
 }) {
@@ -71,6 +73,7 @@ export function HealthAutocomplete({
           setHighlightedIndex(0);
           setIsOpen(true);
         }}
+        placeholder={placeholder}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" && matchingSuggestions.length > 0) {
             event.preventDefault();
@@ -94,7 +97,7 @@ export function HealthAutocomplete({
       {isOpen && matchingSuggestions.length > 0 ? (
         <AdhdDropdownPanel
           aria-label={`${ariaLabel} suggestions`}
-          className="max-h-64 overflow-y-auto"
+          className="adhdice-scrollbar max-h-64 overflow-y-auto"
           id={listboxId}
           role="listbox"
           widthClassName="w-full"
@@ -221,7 +224,7 @@ export function HealthDropdown({
       {isOpen ? (
         <AdhdDropdownPanel
           aria-label={ariaLabel}
-          className="max-h-64 overflow-y-auto"
+          className="adhdice-scrollbar max-h-64 overflow-y-auto"
           id={listboxId}
           role="listbox"
           widthClassName="w-full"

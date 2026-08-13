@@ -24,6 +24,7 @@ import {
   formatQuantity,
   getHealthFoodIdentityKey,
   getHealthFoodAutocompleteValues,
+  getHealthFoodDisplaySuggestions,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
   searchHealthFoodLibrary,
@@ -193,6 +194,7 @@ export function HealthLibraryPanel({
   const brandSuggestions = useMemo(() => getHealthFoodAutocompleteValues(orderedFoods, "brand_name"), [orderedFoods]);
   const categorySuggestions = useMemo(() => getHealthFoodAutocompleteValues(orderedFoods, "food_category"), [orderedFoods]);
   const servingUnitSuggestions = useMemo(() => getHealthFoodAutocompleteValues(orderedFoods, "serving_unit"), [orderedFoods]);
+  const foodSearchSuggestions = useMemo(() => getHealthFoodDisplaySuggestions(orderedFoods), [orderedFoods]);
   const filteredIngredientFoods = useMemo(() => {
     const query = ingredientSearchQuery.trim().toLowerCase();
     if (!query) {
@@ -475,10 +477,11 @@ export function HealthLibraryPanel({
           <div className="grid gap-4">
             <HealthCollapsiblePanel subtitle="Filter saved custom foods in this library." title="Search custom foods" variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-                <input
-                  className={HEALTH_COMPACT_INPUT_CLASS}
-                  onChange={(event) => setFoodSearchQuery(event.target.value)}
+                <HealthAutocomplete
+                  ariaLabel="Search custom foods"
+                  onChange={setFoodSearchQuery}
                   placeholder="Food, brand, category, serving, barcode"
+                  suggestions={foodSearchSuggestions}
                   value={foodSearchQuery}
                 />
                 <AdhdChip

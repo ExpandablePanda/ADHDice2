@@ -70,7 +70,9 @@ import {
 } from "@/lib/health-nutrition";
 import {
   composeHealthFoodServingDefinition,
+  formatHealthFoodDisplayName,
   formatHealthFoodQuantityUnit,
+  getHealthFoodDisplaySuggestions,
   getHealthFoodIdentityKey,
   sortHealthFoodsForMealPicker,
 } from "@/lib/health-library";
@@ -81,7 +83,7 @@ import {
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
-import { HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
+import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { HealthWaterPanel } from "./health-water-panel";
 import { PageShellHeader } from "./page-shell-header";
 
@@ -522,10 +524,18 @@ export function HealthPage({
     });
     return keys;
   }, [favoriteFoods]);
+  const orderedCustomFoods = useMemo(
+    () => sortHealthFoodsForMealPicker(favorites, mealEntries),
+    [favorites, mealEntries],
+  );
+  const mealFoodSuggestions = useMemo(
+    () => getHealthFoodDisplaySuggestions(orderedCustomFoods),
+    [orderedCustomFoods],
+  );
   const matchingCustomFoods = useMemo(() => {
     const query = customFoodSearchQuery.trim().toLowerCase();
     const category = selectedCustomFoodCategory;
-    return sortHealthFoodsForMealPicker(favorites, mealEntries).filter((item) => {
+    return orderedCustomFoods.filter((item) => {
       if (category && (item.food_category || "Uncategorized") !== category) {
         return false;
       }
@@ -533,6 +543,7 @@ export function HealthPage({
         return true;
       }
       return [
+      formatHealthFoodDisplayName(item),
       item.brand_name,
       item.category,
       item.food_category,
@@ -541,7 +552,7 @@ export function HealthPage({
       item.serving_label,
       ].some((value) => value?.toLowerCase().includes(query));
     });
-  }, [customFoodSearchQuery, favorites, mealEntries, selectedCustomFoodCategory]);
+  }, [customFoodSearchQuery, orderedCustomFoods, selectedCustomFoodCategory]);
   const customFoodCategories = useMemo(
     () => [...new Set(favorites.map((item) => item.food_category || "Uncategorized"))].sort((left, right) => left.localeCompare(right)),
     [favorites],
@@ -1404,10 +1415,11 @@ export function HealthPage({
                 />
               </Field>
               <Field label="Food">
-                <input
-                  className={HEALTH_COMPACT_INPUT_CLASS}
-                  onChange={(event) => setCustomFoodSearchQuery(event.target.value)}
+                <HealthAutocomplete
+                  ariaLabel="Search custom foods"
+                  onChange={setCustomFoodSearchQuery}
                   placeholder="Search custom foods"
+                  suggestions={mealFoodSuggestions}
                   value={customFoodSearchQuery}
                 />
               </Field>
@@ -1526,15 +1538,18 @@ export function HealthPage({
                 <div aria-label="Filter custom foods by category" className="flex flex-wrap gap-1.5">
                   {customFoodCategories.map((category) => (
                     <AdhdChip
+                      className="shrink-0"
                       key={category}
                       onClick={() => setSelectedCustomFoodCategory((current) => current === category ? null : category)}
                       selected={selectedCustomFoodCategory === category}
+                      toneClassName="border-[#e4deef] bg-white text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60"
                     >
                       {category}
                     </AdhdChip>
                   ))}
                 </div>
               ) : null}
+              {customFoodCategories.length > 0 ? <div aria-hidden="true" className="border-t border-[#ece8f6] dark:border-white/10" /> : null}
               {matchingCustomFoods.length === 0 ? (
                 <EmptyCopy text="No custom foods match this search." />
               ) : (
