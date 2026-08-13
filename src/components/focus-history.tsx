@@ -1684,6 +1684,7 @@ function FocusActivityLineCard({
       ariaLabel="Category focus line graph"
       emptyText="No category activity to graph for this range yet."
       eyebrow="Activity Summary"
+      formatAxisValue={(value) => value === 0 ? "0" : formatRoundedMinuteDuration(value)}
       formatValue={formatRoundedMinuteDuration}
       series={chartSeries}
       subtitle={`${range.label} • ${scope === "daily" ? "session points" : scope === "weekly" ? "daily points" : "weekly buckets"}`}

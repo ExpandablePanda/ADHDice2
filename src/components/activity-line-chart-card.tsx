@@ -23,6 +23,7 @@ type ActivityLineChartCardProps = {
   emptyText: string;
   emptyWhenAllZero?: boolean;
   eyebrow: string;
+  formatAxisValue?: (value: number) => string;
   formatValue: (value: number) => string;
   series: NumericLineChartSeries[];
   subtitle: string;
@@ -49,12 +50,36 @@ function getLinePointPosition(index: number, pointCount: number, value: number, 
   return { x, y };
 }
 
+export function getNearestNumericLineChartPoint(
+  points: ReadonlyArray<{ pointKey: string; x: number; y: number }>,
+  clientX: number,
+  clientY: number,
+  bounds: { left: number; top: number; width: number; height: number },
+) {
+  if (!points.length) {
+    return null;
+  }
+  const localX = ((clientX - bounds.left) / Math.max(bounds.width, 1)) * CHART_WIDTH;
+  const localY = ((clientY - bounds.top) / Math.max(bounds.height, 1)) * CHART_HEIGHT;
+  let nearestPoint = points[0];
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const point of points) {
+    const distance = Math.hypot(point.x - localX, point.y - localY);
+    if (distance < nearestDistance) {
+      nearestPoint = point;
+      nearestDistance = distance;
+    }
+  }
+  return nearestPoint.pointKey;
+}
+
 export function ActivityLineChartCard({
   activePointContext,
   ariaLabel,
   emptyText,
   emptyWhenAllZero = false,
   eyebrow,
+  formatAxisValue,
   formatValue,
   series,
   subtitle,
@@ -63,6 +88,7 @@ export function ActivityLineChartCard({
   const titleId = useId();
   const [hoveredPointKey, setHoveredPointKey] = useState<string | null>(null);
   const [pinnedPointKey, setPinnedPointKey] = useState<string | null>(null);
+  const axisValueFormatter = formatAxisValue ?? formatValue;
   const maxValue = Math.max(1, ...series.flatMap((item) => item.points.map((point) => point.value)));
   const axisPoints = series[0]?.points ?? [];
   const labelStep = Math.max(1, Math.ceil(axisPoints.length / 6));
@@ -84,22 +110,12 @@ export function ActivityLineChartCard({
     ?? null;
   const hasData = series.length > 0 && axisPoints.length > 0 && !(emptyWhenAllZero && series.every((item) => item.points.every((point) => point.value === 0)));
 
-  function setNearestPointFromPointer(clientX: number, bounds: DOMRect) {
-    if (!interactivePoints.length) {
-      return null;
+  function setNearestPointFromPointer(clientX: number, clientY: number, bounds: DOMRect) {
+    const nearestPointKey = getNearestNumericLineChartPoint(interactivePoints, clientX, clientY, bounds);
+    if (nearestPointKey) {
+      setHoveredPointKey(nearestPointKey);
     }
-    const localX = ((clientX - bounds.left) / Math.max(bounds.width, 1)) * CHART_WIDTH;
-    let nearestPoint = interactivePoints[0];
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    for (const point of interactivePoints) {
-      const distance = Math.abs(point.x - localX);
-      if (distance < nearestDistance) {
-        nearestPoint = point;
-        nearestDistance = distance;
-      }
-    }
-    setHoveredPointKey(nearestPoint.pointKey);
-    return nearestPoint.pointKey;
+    return nearestPointKey;
   }
 
   return (
@@ -151,9 +167,9 @@ export function ActivityLineChartCard({
                 aria-label={ariaLabel}
                 className="block min-w-[42rem]"
                 onPointerLeave={() => setHoveredPointKey(null)}
-                onPointerMove={(event) => { setNearestPointFromPointer(event.clientX, event.currentTarget.getBoundingClientRect()); }}
+                onPointerMove={(event) => { setNearestPointFromPointer(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect()); }}
                 onPointerUp={(event) => {
-                  const nextPointKey = setNearestPointFromPointer(event.clientX, event.currentTarget.getBoundingClientRect());
+                  const nextPointKey = setNearestPointFromPointer(event.clientX, event.clientY, event.currentTarget.getBoundingClientRect());
                   if (nextPointKey) setPinnedPointKey(nextPointKey);
                 }}
                 role="img"
@@ -164,7 +180,7 @@ export function ActivityLineChartCard({
                   return (
                     <g key={ratio}>
                       <line stroke="var(--border-soft)" strokeDasharray={ratio === 0 ? undefined : "4 8"} strokeWidth="1" x1={PADDING.left} x2={PADDING.left + PLOT_WIDTH} y1={y} y2={y} />
-                      <text fill="var(--text-muted)" fontSize="10" fontWeight="600" textAnchor="end" x={PADDING.left - 8} y={y + 3}>{formatValue(maxValue * ratio)}</text>
+                      <text fill="var(--text-muted)" fontSize="10" fontWeight="600" textAnchor="end" x={PADDING.left - 8} y={y + 3}>{axisValueFormatter(maxValue * ratio)}</text>
                     </g>
                   );
                 })}

@@ -98,3 +98,14 @@ test("Focus Activity Lines adapts its existing series into the shared chart card
   assert.match(sharedChart, /onPointerMove/);
   assert.match(sharedChart, /onPointerUp/);
 });
+
+test("shared line chart hover uses scaled X/Y distance for the nearest point", () => {
+  assert.match(sharedChart, /const localX = \(\(clientX - bounds\.left\) \/ Math\.max\(bounds\.width, 1\)\) \* CHART_WIDTH/);
+  assert.match(sharedChart, /const localY = \(\(clientY - bounds\.top\) \/ Math\.max\(bounds\.height, 1\)\) \* CHART_HEIGHT/);
+  assert.match(sharedChart, /Math\.hypot\(point\.x - localX, point\.y - localY\)/);
+});
+
+test("Focus config preserves a plain zero axis label and duration values", () => {
+  assert.match(source, /formatAxisValue=\{\(value\) => value === 0 \? "0" : formatRoundedMinuteDuration\(value\)\}/);
+  assert.match(sharedChart, /axisValueFormatter = formatAxisValue \?\? formatValue/);
+});
