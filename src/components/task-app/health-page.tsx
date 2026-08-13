@@ -40,6 +40,7 @@ import {
   formatEditableWeight,
   formatHealthDateLabel,
   formatHealthMealSummary,
+  formatMealLoggedTime,
   formatHealthNutritionNumber,
   formatWeight,
   getCurrentHealthDateTimeInputs,
@@ -70,11 +71,14 @@ import {
 } from "@/lib/health-nutrition";
 import {
   composeHealthFoodServingDefinition,
+  buildHealthDailyCalorieSeries,
+  buildHealthFoodLogHistoryIndex,
   formatHealthFoodDisplayName,
   formatHealthFoodQuantityUnit,
   getHealthFoodDisplaySuggestions,
   getHealthFoodIdentityKey,
   sortHealthFoodsForMealPicker,
+  type HealthFoodLogHistory,
 } from "@/lib/health-library";
 import {
   TASK_TABLE_CHIP_BASE_CLASS,
@@ -84,6 +88,7 @@ import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { HealthLibraryPanel } from "./health-library-panel";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
+import { HealthCalorieLineChart } from "./health-calorie-line-chart";
 import { HealthWaterPanel } from "./health-water-panel";
 import { PageShellHeader } from "./page-shell-header";
 
@@ -371,6 +376,7 @@ export function HealthPage({
   const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
   const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
   const [foodHistoryDate, setFoodHistoryDate] = useState(todayHealthDate());
+  const [expandedFavoriteId, setExpandedFavoriteId] = useState<string | null>(null);
   const [targetWeightDraft, setTargetWeightDraft] = useState("");
   const [barcodeLookup, setBarcodeLookup] = useState("");
   const [foodLookupResults, setFoodLookupResults] = useState<HealthFoodLookupResult[]>(EMPTY_FOOD_LOOKUP_RESULTS);
@@ -467,6 +473,14 @@ export function HealthPage({
     () => sumMealNutritionForDate(mealEntries, foodHistoryDate),
     [foodHistoryDate, mealEntries],
   );
+  const foodLogHistoryIndex = useMemo(
+    () => buildHealthFoodLogHistoryIndex(mealEntries),
+    [mealEntries],
+  );
+  const dailyCalorieSeries = useMemo(
+    () => buildHealthDailyCalorieSeries({ endDate: foodHistoryDate, mealEntries }),
+    [foodHistoryDate, mealEntries],
+  );
   const todayMovement = useMemo(
     () => sumMetricValueForDate(metricEntries, today, ["steps", "active_energy_kcal", "exercise_minutes"]),
     [metricEntries, today],
@@ -499,20 +513,13 @@ export function HealthPage({
       });
   }, [mealEntries]);
   const favoriteFoods = useMemo(
-    () => {
-      const loggedCountByIdentity = new Map<string, number>();
-      mealEntries.forEach((entry) => {
-        const identity = getHealthFoodIdentityKey(entry);
-        if (identity) loggedCountByIdentity.set(identity, (loggedCountByIdentity.get(identity) ?? 0) + 1);
-      });
-      return [...favorites]
-        .filter((item) => item.is_favorite)
-        .sort((left, right) => {
-          const countDifference = (loggedCountByIdentity.get(getHealthFoodIdentityKey(right) ?? "") ?? 0) - (loggedCountByIdentity.get(getHealthFoodIdentityKey(left) ?? "") ?? 0);
-          return countDifference || right.updated_at.localeCompare(left.updated_at);
-        });
-    },
-    [favorites, mealEntries],
+    () => [...favorites]
+      .filter((item) => item.is_favorite)
+      .sort((left, right) => {
+        const countDifference = (foodLogHistoryIndex.get(getHealthFoodIdentityKey(right) ?? "")?.count ?? 0) - (foodLogHistoryIndex.get(getHealthFoodIdentityKey(left) ?? "")?.count ?? 0);
+        return countDifference || right.updated_at.localeCompare(left.updated_at);
+      }),
+    [favorites, foodLogHistoryIndex],
   );
   const favoriteFoodKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -964,7 +971,10 @@ export function HealthPage({
   }
 
   async function handleRemoveFavorite(item: HealthFoodLibraryItem) {
-    await setFavoriteFoodStatus(item.id, false);
+    const saved = await setFavoriteFoodStatus(item.id, false);
+    if (saved && expandedFavoriteId === item.id) {
+      setExpandedFavoriteId(null);
+    }
   }
 
   async function handleSaveFavoriteFromMeal(entry: HealthMealEntry) {
@@ -1770,6 +1780,7 @@ export function HealthPage({
                 <CompactStat detail={profile.carbs_goal_grams ? `goal ${profile.carbs_goal_grams}g` : "set in goals"} label="Carbs" progressPercent={profile.carbs_goal_grams ? clampPercent((selectedNutrition.carbs / profile.carbs_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.carbs)}g`} />
                 <CompactStat detail={profile.fat_goal_grams ? `goal ${profile.fat_goal_grams}g` : "set in goals"} label="Fat" progressPercent={profile.fat_goal_grams ? clampPercent((selectedNutrition.fat / profile.fat_goal_grams) * 100) : null} value={`${formatHealthNutritionNumber(selectedNutrition.fat)}g`} />
               </div>
+              <HealthCalorieLineChart series={dailyCalorieSeries} />
             </HealthPanel>
 
             <HealthPanel icon={<Sparkles />} subtitle="Food shortcuts" title="Favorites & Recent Foods">
@@ -1783,10 +1794,19 @@ export function HealthPage({
                     favoriteFoods.map((item) => (
                       <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={item.id}>
                         <div className="flex items-start gap-3">
-                          <div className="min-w-0 flex-1">
+                          <button
+                            aria-controls={`favorite-history-${item.id}`}
+                            aria-expanded={expandedFavoriteId === item.id}
+                            className="min-w-0 flex-1 text-left"
+                            onClick={() => setExpandedFavoriteId((current) => current === item.id ? null : item.id)}
+                            type="button"
+                          >
                             <p className="break-words text-sm font-semibold text-[#26324f] dark:text-white">{formatBrandedFoodName(item)}</p>
-                            <p className="mt-1 text-xs text-[#74809b] dark:text-white/45">{item.serving_label || "Saved favorite"} / {item.calories} kcal</p>
-                          </div>
+                            <p className="mt-1 flex items-center gap-1.5 text-xs text-[#74809b] dark:text-white/45">
+                              <span>{item.serving_label || "Saved favorite"} / {item.calories} kcal</span>
+                              <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 shrink-0 transition-transform ${expandedFavoriteId === item.id ? "rotate-180" : ""}`} />
+                            </p>
+                          </button>
                           <div className="flex shrink-0 flex-nowrap gap-2">
                             <button className="ui-pill-button-strong-light shrink-0" onClick={() => { void handleFavoriteReuse(item); }} type="button">
                               Add Today
@@ -1796,6 +1816,12 @@ export function HealthPage({
                             </button>
                           </div>
                         </div>
+                        {expandedFavoriteId === item.id ? (
+                          <FavoriteFoodHistoryInlay
+                            history={foodLogHistoryIndex.get(getHealthFoodIdentityKey(item) ?? "")}
+                            id={`favorite-history-${item.id}`}
+                          />
+                        ) : null}
                       </div>
                     ))
                   )}
@@ -2281,6 +2307,58 @@ function ScorePicker({
       </div>
     </div>
   );
+}
+
+function FavoriteFoodHistoryInlay({
+  history,
+  id,
+}: {
+  history: HealthFoodLogHistory | undefined;
+  id: string;
+}) {
+  const latestEntry = history?.entries[0];
+  const latestDate = latestEntry
+    ? `${formatHealthDateLabel(latestEntry.entry_date)}${formatMealLoggedTime(latestEntry.logged_at) ? ` · ${formatMealLoggedTime(latestEntry.logged_at)}` : ""}`
+    : null;
+
+  return (
+    <div className="mt-3 grid gap-3 rounded-[1rem] border border-[#eeeaf8] bg-[#fbfaff] px-3 py-3 text-xs dark:border-white/10 dark:bg-white/[0.03]" id={id}>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[#68738c] dark:text-white/60">
+        <span className="font-semibold">Lifetime logs: {history?.count ?? 0}</span>
+        <span>Last logged: {latestDate ?? "Never logged"}</span>
+      </div>
+      {history?.entries.length ? (
+        <div className="grid gap-2">
+          {history.entries.slice(0, 5).map((entry) => {
+            const loggedTime = formatMealLoggedTime(entry.logged_at);
+            return (
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 border-t border-[#eeeaf8] pt-2 first:border-t-0 first:pt-0 dark:border-white/10" key={entry.id}>
+                <div className="min-w-0">
+                  <p className="font-medium text-[#5d6783] dark:text-white/70">{formatHealthDateLabel(entry.entry_date)}{loggedTime ? ` · ${loggedTime}` : ""}</p>
+                  <p className="mt-0.5 text-[#7d7598] dark:text-white/50">{getMealSlotLabel(entry.meal_slot)} · {formatFavoriteMealServing(entry)}</p>
+                </div>
+                <span className="shrink-0 font-semibold text-[#4f5872] dark:text-white/70">{formatHealthNutritionNumber(entry.calories)} kcal</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-[#7d7598] dark:text-white/50">No logged meals yet.</p>
+      )}
+    </div>
+  );
+}
+
+function formatFavoriteMealServing(entry: HealthMealEntry) {
+  if (
+    typeof entry.consumed_quantity === "number"
+    && Number.isFinite(entry.consumed_quantity)
+    && entry.consumed_quantity > 0
+    && entry.consumed_unit?.trim()
+  ) {
+    return formatHealthFoodQuantityUnit(entry.consumed_quantity, entry.consumed_unit);
+  }
+  return entry.serving_label?.trim() || "No serving";
 }
 
 function Field({

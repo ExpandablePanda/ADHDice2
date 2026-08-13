@@ -166,6 +166,98 @@ export function getHealthFoodIdentityKey(food: HealthFoodIdentityInput) {
   ].join(":");
 }
 
+export type HealthFoodLogHistory = {
+  count: number;
+  latestLoggedAt: string | null;
+  entries: HealthMealEntry[];
+};
+
+export type HealthDailyCaloriePoint = {
+  date: string;
+  label: string;
+  calories: number;
+};
+
+function compareHealthMealEntriesNewestFirst(left: HealthMealEntry, right: HealthMealEntry) {
+  const leftLoggedAt = Date.parse(left.logged_at);
+  const rightLoggedAt = Date.parse(right.logged_at);
+  if (Number.isFinite(leftLoggedAt) && Number.isFinite(rightLoggedAt) && leftLoggedAt !== rightLoggedAt) {
+    return rightLoggedAt - leftLoggedAt;
+  }
+  if (Number.isFinite(leftLoggedAt) !== Number.isFinite(rightLoggedAt)) {
+    return Number.isFinite(rightLoggedAt) ? 1 : -1;
+  }
+  return right.entry_date.localeCompare(left.entry_date)
+    || right.created_at.localeCompare(left.created_at)
+    || right.id.localeCompare(left.id);
+}
+
+export function buildHealthFoodLogHistoryIndex(mealEntries: HealthMealEntry[]) {
+  const history = new Map<string, HealthFoodLogHistory>();
+  mealEntries.forEach((entry) => {
+    const identity = getHealthFoodIdentityKey(entry);
+    if (!identity) {
+      return;
+    }
+    const current = history.get(identity);
+    if (current) {
+      current.entries.push(entry);
+      current.count += 1;
+      return;
+    }
+    history.set(identity, {
+      count: 1,
+      entries: [entry],
+      latestLoggedAt: null,
+    });
+  });
+
+  history.forEach((value) => {
+    value.entries.sort(compareHealthMealEntriesNewestFirst);
+    value.latestLoggedAt = value.entries
+      .map((entry) => entry.logged_at)
+      .find((loggedAt) => Number.isFinite(Date.parse(loggedAt))) ?? null;
+  });
+  return history;
+}
+
+function shiftHealthAnalyticsDate(dateKey: string, days: number) {
+  const [year, month, day] = dateKey.split("-").map((part) => Number.parseInt(part ?? "", 10));
+  const date = new Date(year, (month ?? 1) - 1, day ?? 1);
+  date.setDate(date.getDate() + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function formatHealthCaloriePointLabel(dateKey: string) {
+  const date = new Date(`${dateKey}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? dateKey : date.toLocaleDateString(undefined, { weekday: "short" });
+}
+
+export function buildHealthDailyCalorieSeries({
+  endDate,
+  mealEntries,
+  days = 7,
+}: {
+  endDate: string;
+  mealEntries: HealthMealEntry[];
+  days?: number;
+}) {
+  const pointCount = Number.isFinite(days) ? Math.max(1, Math.floor(days)) : 7;
+  const caloriesByDate = new Map<string, number>();
+  mealEntries.forEach((entry) => {
+    caloriesByDate.set(entry.entry_date, (caloriesByDate.get(entry.entry_date) ?? 0) + (Number.isFinite(entry.calories) ? entry.calories : 0));
+  });
+
+  return Array.from({ length: pointCount }, (_, index) => {
+    const date = shiftHealthAnalyticsDate(endDate, index - pointCount + 1);
+    return {
+      calories: caloriesByDate.get(date) ?? 0,
+      date,
+      label: formatHealthCaloriePointLabel(date),
+    } satisfies HealthDailyCaloriePoint;
+  });
+}
+
 export function searchHealthFoodLibrary(items: HealthFoodLibraryItem[], query: string) {
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) {

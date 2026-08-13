@@ -16,6 +16,8 @@ import {
   getHealthFoodAutocompleteValues,
   getHealthFoodDisplaySuggestions,
   getHealthFoodIdentityKey,
+  buildHealthDailyCalorieSeries,
+  buildHealthFoodLogHistoryIndex,
   normalizeHealthFoodLibraryInput,
   normalizeHealthFoodLibraryItem,
   searchHealthFoodLibrary,
@@ -343,8 +345,91 @@ test("meal picker ordering prefers most recent matching log, then newest unlogge
   assert.deepEqual(sortHealthFoodsForMealPicker([unloggedFood, loggedFood], [mealEntry]).map((item) => item.id), ["food-logged", "food-unlogged"]);
 });
 
+test("daily calorie series includes seven local dates, sums meals, and preserves empty dates", () => {
+  const entries = [
+    {
+      ...food,
+      calories: 120,
+      entry_date: "2026-08-12",
+      id: "meal-1",
+      logged_at: "2026-08-12T08:00:00.000Z",
+      meal_slot: "breakfast" as const,
+      source_food_id: "deleted-food",
+    },
+    {
+      ...food,
+      calories: 280,
+      entry_date: "2026-08-12",
+      id: "meal-2",
+      logged_at: "2026-08-12T18:00:00.000Z",
+      meal_slot: "dinner" as const,
+      source_food_id: "deleted-food",
+    },
+  ];
+  const originalEntries = [...entries];
+  const series = buildHealthDailyCalorieSeries({ endDate: "2026-08-13", mealEntries: entries });
+  assert.equal(series.length, 7);
+  assert.deepEqual(series.map((point) => point.date), [
+    "2026-08-07",
+    "2026-08-08",
+    "2026-08-09",
+    "2026-08-10",
+    "2026-08-11",
+    "2026-08-12",
+    "2026-08-13",
+  ]);
+  assert.deepEqual(series.map((point) => point.calories), [0, 0, 0, 0, 0, 400, 0]);
+  assert.deepEqual(entries, originalEntries);
+});
+
+test("food history index counts and sorts identity-matched meals without mutating input", () => {
+  const newest = {
+    ...food,
+    entry_date: "2026-08-12",
+    id: "meal-newest",
+    logged_at: "2026-08-12T20:00:00.000Z",
+    meal_slot: "dinner" as const,
+  };
+  const older = {
+    ...food,
+    entry_date: "2026-08-10",
+    id: "meal-older",
+    logged_at: "2026-08-10T20:00:00.000Z",
+    meal_slot: "dinner" as const,
+  };
+  const otherFood = { ...food, food_name: "Other food", id: "meal-other", logged_at: "2026-08-11T20:00:00.000Z" };
+  const noIdentity = { ...food, food_name: "", id: null, logged_at: "2026-08-13T20:00:00.000Z" };
+  const entries = [older, noIdentity, otherFood, newest];
+  const originalEntries = [...entries];
+  const index = buildHealthFoodLogHistoryIndex(entries);
+  const identity = getHealthFoodIdentityKey(food);
+  assert.ok(identity);
+  assert.equal(index.get(identity)?.count, 2);
+  assert.deepEqual(index.get(identity)?.entries.map((entry) => entry.id), ["meal-newest", "meal-older"]);
+  assert.equal(index.get(identity)?.latestLoggedAt, "2026-08-12T20:00:00.000Z");
+  assert.equal(index.get(getHealthFoodIdentityKey(otherFood) ?? "")?.count, 1);
+  assert.equal(index.size, 2);
+  assert.deepEqual(entries, originalEntries);
+
+  const topFiveHistory = buildHealthFoodLogHistoryIndex(Array.from({ length: 6 }, (_, index) => ({
+    ...food,
+    entry_date: `2026-08-${String(13 - index).padStart(2, "0")}`,
+    id: `meal-many-${index}`,
+    logged_at: `2026-08-${String(13 - index).padStart(2, "0")}T12:00:00.000Z`,
+    meal_slot: "lunch" as const,
+  })));
+  assert.deepEqual(topFiveHistory.get(identity)?.entries.slice(0, 5).map((entry) => entry.id), [
+    "meal-many-0",
+    "meal-many-1",
+    "meal-many-2",
+    "meal-many-3",
+    "meal-many-4",
+  ]);
+});
+
 test("Health Food preserves nutrition behavior while using flat category-filtered picker and local tab preference", () => {
   const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
+  const chart = readFileSync(new URL("../src/components/task-app/health-calorie-line-chart.tsx", import.meta.url), "utf8");
   const library = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
   const dropdown = readFileSync(new URL("../src/components/task-app/health-dropdown.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(library, /filteredFoodGroups/);
@@ -368,9 +453,19 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /adhdice-scrollbar max-h-24 overflow-y-auto/);
   assert.match(library, /grid items-start gap-5 xl:grid-cols-\[0\.9fr_1\.1fr\]/);
   assert.match(library, /adhdice-scrollbar max-h-\[36rem\] overflow-y-auto/);
-  assert.match(source, /loggedCountByIdentity/);
+  assert.match(source, /foodLogHistoryIndex/);
+  assert.doesNotMatch(source, /loggedCountByIdentity/);
   assert.match(source, /formatHealthNutritionNumber\(selectedNutrition\.calories\)/);
   assert.match(source, /formatHealthNutritionNumber\(slotCaloriesTotal\)/);
+  assert.match(source, /buildHealthDailyCalorieSeries/);
+  assert.match(source, /HealthCalorieLineChart/);
+  assert.match(source, /buildHealthFoodLogHistoryIndex/);
+  assert.match(source, /FavoriteFoodHistoryInlay/);
+  assert.match(source, /expandedFavoriteId/);
+  assert.match(chart, /aria-label="7-day calorie line graph"/);
+  assert.match(chart, /No calories logged in this 7-day range/);
+  assert.match(chart, /series\.map/);
+  assert.doesNotMatch(source, /Recent Foods[\s\S]{0,2500}FavoriteFoodHistoryInlay/);
   assert.match(source, /progressPercent=\{profile\.calorie_goal/);
   assert.match(source, /setFavoriteFoodStatus\(item\.id, false\)/);
   assert.match(source, /getHealthFoodMeasurementOptions/);
