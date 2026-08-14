@@ -81,8 +81,29 @@ export type TaskStateHistoryRow = {
   rewardClaimed?: boolean;
 };
 
-export type TaskEffectiveTimelineOrigin =
-  | "explicit_history"
+export type TaskCalendarOverrideState = "unscheduled" | "not_due" | "due_open";
+
+export type TaskCalendarOverride = {
+  id: string;
+  logicalDate: string;
+  overrideState: TaskCalendarOverrideState;
+  revision?: number | null;
+  source?: string | null;
+  provenance?: string | null;
+};
+
+export type TaskWorkflowState = {
+  state: "none" | "in_progress";
+  logicalDate: string | null;
+  occurrenceId?: string | null;
+  commandId?: string | null;
+  revision?: number | null;
+};
+
+export type TaskEffectiveTimelineSourceKind =
+  | "history_fact"
+  | "workflow"
+  | "calendar_override"
   | "calculated";
 
 export type TaskEffectiveTimelineObligation =
@@ -93,10 +114,14 @@ export type TaskEffectiveTimelineObligation =
 export type TaskEffectiveTimelineDay = {
   logicalDate: string;
   state: TaskCalendarState;
-  origin: TaskEffectiveTimelineOrigin;
+  sourceKind: TaskEffectiveTimelineSourceKind;
   handled: boolean;
   outcome: TaskHistoryOutcome | null;
   historyRowId: string | null;
+  calendarOverrideId: string | null;
+  workflowOccurrenceId: string | null;
+  workflowCommandId: string | null;
+  workflowRevision: number | null;
   occurrenceIdentity: string | null;
   occurrenceDueOn: string | null;
   obligation: TaskEffectiveTimelineObligation;
@@ -161,6 +186,8 @@ export type TaskStateEngineInput = {
   /** Optional Calendar window; state evaluation otherwise uses today + the next 40 days. */
   calendarStart?: string;
   calendarEnd?: string;
+  calendarOverrides?: TaskCalendarOverride[];
+  workflow?: TaskWorkflowState;
   action?: TaskStateAction;
 };
 

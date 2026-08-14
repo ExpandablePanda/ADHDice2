@@ -1,6 +1,6 @@
 import { adaptLegacyTaskState } from "../task-state-engine/legacy-adapter.ts";
-import type { TaskRecurrence, TaskStateEngineInput } from "../task-state-engine/types.ts";
-import type { CanonicalTaskScheduleBoundary } from "./types.ts";
+import type { TaskCalendarOverride, TaskRecurrence, TaskStateEngineInput } from "../task-state-engine/types.ts";
+import type { CanonicalTaskCalendarOverride, CanonicalTaskScheduleBoundary } from "./types.ts";
 import type { CanonicalTaskStateReadModel } from "./read-model.ts";
 import { mapCanonicalTaskHistoryFacts } from "./history-projection.ts";
 import { latestCanonicalScheduleBoundary } from "./schedule-projection.ts";
@@ -69,6 +69,31 @@ function canonicalEngineActiveStatus(readModel: CanonicalTaskStateReadModel): Ta
   return status === "archived" || status === "trashed" ? "pending" : status;
 }
 
+export function taskCalendarOverrideFromCanonical(
+  override: CanonicalTaskCalendarOverride,
+): TaskCalendarOverride {
+  return {
+    id: override.id,
+    logicalDate: override.logical_date,
+    overrideState: override.override_state,
+    revision: override.revision,
+    source: override.source,
+    provenance: override.provenance_kind,
+  };
+}
+
+function activeCalendarOverrides(readModel: CanonicalTaskStateReadModel): TaskCalendarOverride[] {
+  const active = (readModel.calendarOverrides ?? []).filter((override) => override.is_active);
+  const seenDates = new Set<string>();
+  for (const override of active) {
+    if (seenDates.has(override.logical_date)) {
+      throw new Error(`Canonical Calendar override state is ambiguous for ${override.logical_date}.`);
+    }
+    seenDates.add(override.logical_date);
+  }
+  return active.map(taskCalendarOverrideFromCanonical);
+}
+
 /**
  * Maps canonical facts into the existing pure engine input. This is a read
  * adapter only; recurrence and transition semantics remain in the engine.
@@ -117,12 +142,21 @@ export function buildCanonicalTaskStateEngineInput(
       lifecycle,
       activeStatus: canonicalEngineActiveStatus(readModel),
       dueOn,
+      activeStatusLogicalDate: readModel.task.workflow_logical_date ?? adapted.engineInput.task.activeStatusLogicalDate,
       historicalScheduleAnchor: boundary.schedule_model === "one_time"
         ? boundary.one_time_due_on
         : boundary.schedule_model === "unscheduled"
           ? null
           : boundary.anchor_date,
       recurrence: recurrenceFromBoundary(boundary),
+    },
+    calendarOverrides: activeCalendarOverrides(readModel),
+    workflow: {
+      state: readModel.task.workflow_state ?? "none",
+      logicalDate: readModel.task.workflow_logical_date ?? null,
+      occurrenceId: readModel.task.workflow_occurrence_id ?? null,
+      commandId: readModel.task.workflow_command_id ?? null,
+      revision: readModel.task.workflow_revision ?? null,
     },
   };
 }

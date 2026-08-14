@@ -14,9 +14,11 @@ import type {
   TaskEffectiveTimeline,
   TaskEffectiveTimelineDay,
   TaskEffectiveTimelineObligation,
+  TaskCalendarOverride,
   TaskHistoryOutcome,
   TaskStateHistoryRow,
   TaskStateSnapshot,
+  TaskWorkflowState,
   TaskTimelineCheckpoint,
   TaskTimelineReplayRequest,
 } from "./types.ts";
@@ -27,6 +29,8 @@ export type BuildTaskEffectiveTimelineInput = {
   logicalDate: string;
   calendarStart: string;
   calendarEnd: string;
+  calendarOverrides?: TaskCalendarOverride[];
+  workflow?: TaskWorkflowState;
   replay?: TaskTimelineReplayRequest;
 };
 
@@ -129,10 +133,14 @@ function calculatedDay(
   return {
     logicalDate,
     state,
-    origin: "calculated",
+    sourceKind: "calculated",
     handled: false,
     outcome: null,
     historyRowId: null,
+    calendarOverrideId: null,
+    workflowOccurrenceId: null,
+    workflowCommandId: null,
+    workflowRevision: null,
     occurrenceIdentity: hasOccurrence ? occurrenceIdentity(taskId, occurrenceDueOn as string) : null,
     occurrenceDueOn: hasOccurrence ? occurrenceDueOn : null,
     obligation,
@@ -143,13 +151,69 @@ function explicitDay(row: TaskStateHistoryRow): TaskEffectiveTimelineDay {
   return {
     logicalDate: row.logicalDate,
     state: calendarStateForOutcome(row.outcome),
-    origin: "explicit_history",
+    sourceKind: "history_fact",
     handled: true,
     outcome: row.outcome,
     historyRowId: row.id,
+    calendarOverrideId: null,
+    workflowOccurrenceId: null,
+    workflowCommandId: null,
+    workflowRevision: null,
     occurrenceIdentity: row.occurrenceIdentity ?? null,
     occurrenceDueOn: row.occurrenceDueOn ?? null,
     obligation: "none",
+  };
+}
+
+function workflowDay(
+  logicalDate: string,
+  baseDay: TaskEffectiveTimelineDay,
+  workflow: TaskWorkflowState,
+): TaskEffectiveTimelineDay {
+  return {
+    ...baseDay,
+    logicalDate,
+    state: "in_progress",
+    sourceKind: "workflow",
+    handled: false,
+    outcome: null,
+    historyRowId: null,
+    calendarOverrideId: null,
+    workflowOccurrenceId: workflow.occurrenceId ?? null,
+    workflowCommandId: workflow.commandId ?? null,
+    workflowRevision: workflow.revision ?? null,
+  };
+}
+
+function calendarOverrideDay(
+  taskId: string,
+  logicalDate: string,
+  override: TaskCalendarOverride,
+  currentLogicalDate: string,
+): TaskEffectiveTimelineDay {
+  if (override.overrideState === "unscheduled") {
+    return {
+      ...calculatedDay(taskId, logicalDate, "no_entry", "none"),
+      sourceKind: "calendar_override",
+      calendarOverrideId: override.id,
+    };
+  }
+  if (override.overrideState === "not_due") {
+    return {
+      ...calculatedDay(taskId, logicalDate, "not_due", "none"),
+      sourceKind: "calendar_override",
+      calendarOverrideId: override.id,
+    };
+  }
+  const state = logicalDate < currentLogicalDate
+    ? "missed"
+    : logicalDate === currentLogicalDate
+      ? "open"
+      : "scheduled";
+  return {
+    ...calculatedDay(taskId, logicalDate, state, logicalDate < currentLogicalDate ? "overdue" : "due", logicalDate),
+    sourceKind: "calendar_override",
+    calendarOverrideId: override.id,
   };
 }
 
@@ -190,6 +254,13 @@ export function buildTaskEffectiveTimeline(
     .filter((row) => row.taskId === input.task.id)
     .map((row) => ({ ...row }));
   const explicitByDate = authoritativeRowsByDate(rows);
+  const overrideByDate = new Map(
+    (input.calendarOverrides ?? []).map((override) => [override.logicalDate, override]),
+  );
+  const workflow = input.workflow
+    ?? (input.task.activeStatus === "in_progress"
+      ? { state: "in_progress" as const, logicalDate: input.task.activeStatusLogicalDate ?? null }
+      : { state: "none" as const, logicalDate: null });
   const recurrenceRows = rows.filter((row) => row.recurrenceAuthoritative !== false);
   const recurrenceByDate = authoritativeRowsByDate(recurrenceRows);
   const recurrenceExplicitRows = [...recurrenceByDate.values()];
@@ -310,46 +381,52 @@ export function buildTaskEffectiveTimeline(
     if (row) {
       day = explicitDay(row);
       if (recurrenceRow) applyExplicitRow(recurrenceRow);
-    } else if (historicalMissedDueOnByDate.has(date)) {
-      day = calculatedDay(
-        input.task.id,
-        date,
-        "missed",
-        "overdue",
-        historicalMissedDueOnByDate.get(date) ?? null,
-      );
-    } else if (completed) {
-      day = calculatedDay(input.task.id, date, "no_entry", "none");
-    } else if (!activeDueOn) {
-      day = calculatedDay(input.task.id, date, "no_entry", "none");
-    } else if (date < activeDueOn) {
-      day = calculatedDay(input.task.id, date, "not_due", "none");
-    } else if (date < input.logicalDate) {
-      unresolvedDueOn ??= activeDueOn;
-      day = calculatedDay(input.task.id, date, "missed", "overdue", unresolvedDueOn);
-    } else if (date === input.logicalDate) {
-      if (activeDueOn < input.logicalDate) {
-        unresolvedDueOn ??= activeDueOn;
-        day = calculatedDay(input.task.id, date, "open", "overdue", unresolvedDueOn);
-      } else if (activeDueOn === input.logicalDate) {
-        day = calculatedDay(input.task.id, date, "open", "due", activeDueOn);
-      } else {
-        day = calculatedDay(input.task.id, date, "not_due", "none");
-      }
-    } else if (date === activeDueOn || isProjectedFutureOccurrence(date)) {
-      day = calculatedDay(
-        input.task.id,
-        date,
-        "scheduled",
-        "due",
-        date,
-      );
     } else {
-      day = calculatedDay(input.task.id, date, "not_due", "none");
+      let calculated: TaskEffectiveTimelineDay;
+      if (historicalMissedDueOnByDate.has(date)) {
+        calculated = calculatedDay(
+          input.task.id,
+          date,
+          "missed",
+          "overdue",
+          historicalMissedDueOnByDate.get(date) ?? null,
+        );
+      } else if (completed || !activeDueOn) {
+        calculated = calculatedDay(input.task.id, date, "no_entry", "none");
+      } else if (date < activeDueOn) {
+        calculated = calculatedDay(input.task.id, date, "not_due", "none");
+      } else if (date < input.logicalDate) {
+        unresolvedDueOn ??= activeDueOn;
+        calculated = calculatedDay(input.task.id, date, "missed", "overdue", unresolvedDueOn);
+      } else if (date === input.logicalDate) {
+        if (activeDueOn < input.logicalDate) {
+          unresolvedDueOn ??= activeDueOn;
+          calculated = calculatedDay(input.task.id, date, "open", "overdue", unresolvedDueOn);
+        } else if (activeDueOn === input.logicalDate) {
+          calculated = calculatedDay(input.task.id, date, "open", "due", activeDueOn);
+        } else {
+          calculated = calculatedDay(input.task.id, date, "not_due", "none");
+        }
+      } else if (date === activeDueOn || isProjectedFutureOccurrence(date)) {
+        calculated = calculatedDay(input.task.id, date, "scheduled", "due", date);
+      } else {
+        calculated = calculatedDay(input.task.id, date, "not_due", "none");
+      }
+      const workflowApplies = workflow.state === "in_progress"
+        && workflow.logicalDate === input.logicalDate
+        && date === input.logicalDate;
+      const override = overrideByDate.get(date);
+      day = workflowApplies
+        ? workflowDay(date, calculated, workflow)
+        : override
+          ? calendarOverrideDay(input.task.id, date, override, input.logicalDate)
+          : calculated;
     }
 
     effectiveDays[date] = day;
-    if (date === input.logicalDate) currentUnresolvedDueOn = unresolvedDueOn;
+    if (date === input.logicalDate) {
+      currentUnresolvedDueOn = day.obligation === "overdue" ? unresolvedDueOn : null;
+    }
   }
 
   for (const date of dateRange(input.calendarStart, input.calendarEnd)) {
@@ -358,7 +435,9 @@ export function buildTaskEffectiveTimeline(
   }
 
   const currentDay = effectiveDays[input.logicalDate];
-  const currentObligation = currentDay?.state === "open" ? currentDay.obligation : "none";
+  const currentObligation = currentDay?.state === "open" || currentDay?.state === "in_progress"
+    ? currentDay.obligation
+    : "none";
   const streaks = computeTaskEffectiveTimelineStreaks(
     Object.fromEntries(Object.entries(effectiveDays).map(([date, day]) => [date, day.state])),
     input.logicalDate,
@@ -367,6 +446,7 @@ export function buildTaskEffectiveTimeline(
   const activeStatus = (() => {
     if (input.task.lifecycle !== "active") return input.task.activeStatus;
     if (currentDay?.state === "done" || currentDay?.state === "did_my_best" || currentDay?.state === "complete") return currentDay.state;
+    if (currentDay?.state === "in_progress") return "in_progress" as const;
     if (currentDay?.state === "missed" || currentDay?.obligation === "overdue") return "missed" as const;
     if (currentDay?.state === "delayed") return "delayed" as const;
     if (currentDay?.state === "scheduled") return daysBetween(input.logicalDate, currentDay.logicalDate) <= 7 ? "upcoming" as const : "not_due" as const;

@@ -26,7 +26,7 @@ import type {
 } from "./types.ts";
 import { sha256Digest } from "./digest.ts";
 import type { CanonicalTaskRow } from "./read-model.ts";
-import { recurrenceFromBoundary } from "./engine-input.ts";
+import { recurrenceFromBoundary, taskCalendarOverrideFromCanonical } from "./engine-input.ts";
 
 export type CanonicalHandledOutcome = Extract<TaskHistoryOutcome, "done" | "did_my_best" | "missed">;
 
@@ -386,6 +386,20 @@ function engineInputForScheduleBoundary(
   };
 }
 
+function engineInputForCalendarOverride(
+  engineInput: TaskStateEngineInput,
+  override: CanonicalTaskCalendarOverride,
+): TaskStateEngineInput {
+  const remaining = (engineInput.calendarOverrides ?? [])
+    .filter((candidate) => candidate.logicalDate !== override.logical_date);
+  return {
+    ...engineInput,
+    calendarOverrides: override.is_active
+      ? [...remaining, taskCalendarOverrideFromCanonical(override)]
+      : remaining,
+  };
+}
+
 function scheduleBoundaryDueOn(
   boundary: CanonicalTaskScheduleBoundary,
   fallback: string | null,
@@ -598,7 +612,7 @@ export function planTaskStateCommand(
                   : {}),
               }
             : input.type === "calendar_override"
-              ? { type: "recompute" as const, fromLogicalDate: input.logicalDay.logicalDate }
+              ? { type: "recompute" as const, fromLogicalDate: input.calendarOverride.logical_date }
               : input.type === "clear_outcome"
                 ? undefined
           : undefined;
@@ -626,6 +640,11 @@ export function planTaskStateCommand(
             ...engineInputForScheduleBoundary(state.engineInput!, input.scheduleBoundary),
             action,
           }
+        : input.type === "calendar_override"
+          ? {
+              ...engineInputForCalendarOverride(state.engineInput!, input.calendarOverride),
+              action,
+            }
         : { ...state.engineInput!, ...(action ? { action } : {}) };
     engineResult = evaluateTaskState(engineInput);
     if (engineResult.validationErrors.length > 0) {

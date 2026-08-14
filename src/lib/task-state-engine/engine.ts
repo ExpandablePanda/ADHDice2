@@ -537,6 +537,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     logicalDate: today,
     calendarStart,
     calendarEnd,
+    ...(input.calendarOverrides ? { calendarOverrides: input.calendarOverrides } : {}),
+    ...(input.workflow ? { workflow: input.workflow } : {}),
     ...(action
       ? { replay: { changedLogicalDate: actionDate, kind: "outcome" as const } }
       : scheduleChange
@@ -557,6 +559,11 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
           ? { replay: { changedLogicalDate: input.action.fromLogicalDate, kind: "recompute" as const } }
           : {}),
   });
+  const canonicalTimelineProjection = input.calendarOverrides !== undefined || input.workflow !== undefined;
+  if (canonicalTimelineProjection) {
+    activeStatus = replayTimeline.activeStatus;
+    calendar = Object.fromEntries(Object.entries(replayTimeline.days).map(([date, day]) => [date, day.state]));
+  }
   const hasOtherSuccessAfterReplacement = Boolean(action && rows.some((row) => (
     row.logicalDate !== actionDate && SUCCESS.has(row.outcome)
   )));
@@ -573,7 +580,17 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     || Boolean(action && (action.historicalOverride || action.replaceExisting) && !preservesManualFutureCursor);
   if (usesReplayTimeline) {
     nextDue = replayTimeline.nextDueOn;
-    if (!(task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow)
+    if (canonicalTimelineProjection) {
+      activeStatus = replayTimeline.activeStatus;
+    } else if (scheduleChange
+      && !activeMissedOccurrence
+      && task.activeStatus !== "done"
+      && task.activeStatus !== "did_my_best") {
+      activeStatus = nextDue && nextDue > today
+        ? statusForFutureDate(today, nextDue)
+        : replayTimeline.activeStatus;
+    } else if (
+      !(task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow)
       && !activeMissedOccurrence
       && !(task.activeStatus === "missed" && task.dueOn && task.dueOn <= today)) {
       activeStatus = replayTimeline.activeStatus;

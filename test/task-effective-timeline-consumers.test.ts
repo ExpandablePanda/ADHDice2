@@ -120,7 +120,7 @@ test("manual History Missed overrides the calculated Calendar state", () => {
   });
 
   assert.equal(result?.timeline?.days["2026-08-03"]?.state, "missed");
-  assert.equal(result?.timeline?.days["2026-08-03"]?.origin, "explicit_history");
+  assert.equal(result?.timeline?.days["2026-08-03"]?.sourceKind, "history_fact");
   assert.equal(result?.timeline?.days["2026-08-03"]?.handled, true);
   assert.equal(result?.timeline?.days["2026-08-03"]?.historyRowId, missed.id);
 });
@@ -140,7 +140,7 @@ test("pre-cutover migration Done remains visible in Calendar without affecting m
   });
 
   assert.equal(result?.timeline?.days["2026-08-07"]?.state, "done");
-  assert.equal(result?.timeline?.days["2026-08-07"]?.origin, "explicit_history");
+  assert.equal(result?.timeline?.days["2026-08-07"]?.sourceKind, "history_fact");
   assert.equal(result?.timeline?.days["2026-08-07"]?.historyRowId, done.id);
   assert.equal(result?.timeline?.days["2026-08-14"]?.state, "open");
 });

@@ -689,6 +689,26 @@ test("trusted repeat planner replays from the last success with the proposed cad
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
 });
 
+test("trusted Calendar override planner evaluates the proposed override before commit", () => {
+  const planningState = state({ due_on: "2026-08-10" });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, dueOn: "2026-08-10" },
+  };
+  const planned = trustedCommand({
+    type: "calendar_override",
+    task_id: "task-1",
+    replay_identity: "calendar:2026-08-10:not-due",
+    logical_date: "2026-08-10",
+    override_state: "not_due",
+  }, planningState.task, boundary("one_time"));
+
+  const plan = planTaskStateCommand(planningState, planned);
+
+  assert.equal(plan.normalizedResult.calendarOverride?.override_state, "not_due");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
+});
+
 test("trusted planner accepts the Appanda 8/8-8/12 replacement range without occurrences", () => {
   const appandaLogicalDay = { ...logicalDay, logicalDate: "2026-08-13", identity: "user-1:2026-08-13:America/New_York:06:00:3" };
   const planningState = state({ due_on: "2026-08-08", repeat_frequency: "daily", repeat_interval: 1 });
