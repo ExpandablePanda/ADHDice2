@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildLegacyHistoryPromotionDryRun,
   emptyPromotionSources,
+  loadAuthenticatedPromotionSources,
   loadPromotionSources,
   type PromotionRow,
   type PromotionSources,
@@ -201,15 +202,16 @@ test("the planner source has no Supabase mutation calls", () => {
   for (const method of ["insert", "update", "delete", "upsert", "rpc"]) assert.doesNotMatch(source, new RegExp(`from\\([^)]*\\)\\s*\\.${method}\\s*\\(`));
 });
 
-test("the read client exposes only SELECT-shaped table access and the loader invokes no mutation API", async () => {
+test("the read client uses id ordering for id-keyed tables and user_id for profiles", async () => {
   const calls: string[] = [];
+  const orders: Array<[string, string]> = [];
   const client = {
     from(table: string) {
       calls.push(table);
       const query = {
         select() { return query; },
         eq() { return query; },
-        order() { return query; },
+        order(column: string) { orders.push([table, column]); return query; },
         range: async () => ({ data: [], error: null }),
       };
       return query;
@@ -225,4 +227,55 @@ test("the read client exposes only SELECT-shaped table access and the loader inv
     "adhdice_task_state_migration_entities",
     "adhdice_user_profiles",
   ]);
+  assert.deepEqual(orders.sort(([left], [right]) => left.localeCompare(right)), [
+    ["adhdice_clean_tasks", "id"],
+    ["adhdice_task_history", "id"],
+    ["adhdice_task_history_facts", "id"],
+    ["adhdice_task_legacy_history_evidence", "id"],
+    ["adhdice_task_state_migration_entities", "id"],
+    ["adhdice_user_profiles", "user_id"],
+  ]);
+});
+
+test("profile loading remains deterministic under the user_id order contract", async () => {
+  const profile = { user_id: USER_ID, timezone: "America/New_York", day_start_time: "06:00", settings_revision: 3 };
+  const client = {
+    from(table: string) {
+      const query = {
+        select() { return query; },
+        eq() { return query; },
+        order(column: string) {
+          if (table === "adhdice_user_profiles") assert.equal(column, "user_id");
+          else assert.equal(column, "id");
+          return query;
+        },
+        range: async () => ({ data: table === "adhdice_user_profiles" ? [profile] : [], error: null }),
+      };
+      return query;
+    },
+  };
+  const loaded = await loadPromotionSources(client as never, USER_ID, 10);
+  assert.deepEqual(loaded.profile, profile);
+});
+
+test("authenticated promotion source loading succeeds with the profile table contract", async () => {
+  const profile = { user_id: USER_ID, timezone: "America/New_York", day_start_time: "06:00", settings_revision: 3 };
+  const client = {
+    auth: { getUser: async (accessToken: string) => ({ data: { user: { id: USER_ID } }, error: accessToken === "token" ? null : { message: "unexpected token" } }) },
+    from(table: string) {
+      const query = {
+        select() { return query; },
+        eq() { return query; },
+        order(column: string) {
+          if (table === "adhdice_user_profiles") assert.equal(column, "user_id");
+          else assert.equal(column, "id");
+          return query;
+        },
+        range: async () => ({ data: table === "adhdice_user_profiles" ? [profile] : [], error: null }),
+      };
+      return query;
+    },
+  };
+  const loaded = await loadAuthenticatedPromotionSources(client as never, USER_ID, "token", 10);
+  assert.deepEqual(loaded.profile, profile);
 });

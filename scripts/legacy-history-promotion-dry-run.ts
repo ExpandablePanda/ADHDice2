@@ -630,6 +630,14 @@ export function formatPromotionSummary(report: PromotionReport, baselineMismatch
 }
 
 type ReadTable = (typeof SOURCE_TABLES)[number];
+const READ_ORDER_COLUMN: Record<ReadTable, string> = {
+  adhdice_task_history: "id",
+  adhdice_task_legacy_history_evidence: "id",
+  adhdice_task_history_facts: "id",
+  adhdice_task_state_migration_entities: "id",
+  adhdice_clean_tasks: "id",
+  adhdice_user_profiles: "user_id",
+};
 type ReadFrom = { select(columns: string): ReadQuery };
 type ReadQuery = {
   eq(column: string, value: string): ReadQuery;
@@ -643,8 +651,9 @@ export type ReadOnlyPromotionClient = {
 
 async function readTable(client: Pick<ReadOnlyPromotionClient, "from">, table: ReadTable, userId: string, batchSize: number): Promise<PromotionRow[]> {
   const rows: PromotionRow[] = [];
+  const orderColumn = READ_ORDER_COLUMN[table];
   for (let offset = 0; ; offset += batchSize) {
-    const result = await client.from(table).select("*").eq("user_id", userId).order("id", { ascending: true }).range(offset, offset + batchSize - 1);
+    const result = await client.from(table).select("*").eq("user_id", userId).order(orderColumn, { ascending: true }).range(offset, offset + batchSize - 1);
     if (result.error) throw new HistoryPromotionDiagnostic(result.error.code ?? "SOURCE_QUERY_FAILED", `${table}: ${result.error.message}`);
     const page = result.data ?? [];
     rows.push(...page);
