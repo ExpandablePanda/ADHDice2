@@ -32,10 +32,7 @@ export function mapCanonicalTaskHistoryFact(fact: CanonicalTaskHistoryFact): Tas
     canonical_provenance_kind: fact.provenance_kind,
     canonical_command_id: fact.command_id,
     canonical_source: fact.source,
-    recurrence_authoritative: resolveTaskHistoryRecurrenceAuthority(
-      fact.logical_date,
-      !(fact.provenance_kind === "migration_reconstruction" && fact.occurrence_id === null),
-    ) ?? false,
+    recurrence_authoritative: resolveTaskHistoryRecurrenceAuthority(fact.logical_date, true) ?? true,
   };
 }
 

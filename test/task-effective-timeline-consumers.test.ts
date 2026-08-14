@@ -299,7 +299,7 @@ test("interval shared summary preserves completion streak across Not Due gaps", 
   ];
   const summary = buildTaskHistoryStreakSummary(nextTask, historyRows, "2026-08-07");
 
-  assert.equal(summary.currentStreak, 1);
+  assert.equal(summary.currentStreak, 3);
   assert.equal(summary.missedStreak, 0);
 });
 
@@ -328,7 +328,7 @@ test("summary uses the resolved Calendar outcome for every-three-days tasks", ()
   const summary = buildTaskHistoryStreakSummary(nextTask, [done], "2026-08-10");
 
   assert.equal(summary.currentStreak, 0);
-  assert.equal(summary.missedStreak, 8);
+  assert.equal(summary.missedStreak, 2);
 });
 
 test("archived summary retains the saved-History missed streak", () => {

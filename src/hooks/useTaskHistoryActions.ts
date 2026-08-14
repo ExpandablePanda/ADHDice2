@@ -3,6 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskHistory as DbTaskHistory, TaskHistoryInsert, TaskStatus, TaskUpdate } from "@/lib/database.types";
+import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { buildTaskUpdateConflictMessage, type TaskRowUpdateOptions, type UpdateTaskRowResult } from "@/lib/task-db-mutations";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { buildTaskHistoryOccurrenceMetadata } from "@/lib/task-duration-evidence";
@@ -68,6 +69,7 @@ type UseTaskHistoryActionsOptions = {
   mapTaskHistoryRow: (row: DbTaskHistory) => DbTaskHistory;
   now: Date;
   onHistoryMutation?: (taskId: string, taskHistory?: DbTaskHistory[]) => void | Promise<void>;
+  onTasksCompleted?: (candidates: TaskRewardCandidate[]) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTaskHistory: Dispatch<SetStateAction<DbTaskHistory[]>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
@@ -92,6 +94,7 @@ export function useTaskHistoryActions({
   mapTaskHistoryRow,
   now,
   onHistoryMutation,
+  onTasksCompleted,
   setMessage,
   setTaskHistory,
   setTasks,
@@ -352,6 +355,14 @@ export function useTaskHistoryActions({
 
     if (data) {
       setTasks((current) => sortTasksForUi(current.map((currentTask) => currentTask.id === taskId ? data : currentTask)));
+      if ((historicalOverride || historyReplacement) && engineState?.rewardEligibility.eligible) {
+        await onTasksCompleted?.([{
+          engineManaged: true,
+          previousStatus: task.status,
+          rewardEligible: true,
+          task: data,
+        }]);
+      }
     }
 
     return true;
@@ -515,13 +526,18 @@ export function useTaskHistoryActions({
           ?? options?.historySnapshot?.find((entry) => entry.task_id === taskId && entry.entry_date === entryDate)
           ?? null;
         const existingOccurrence = existingEntry?.canonical_occurrence_id ?? null;
+        const trustedOccurrenceFields = existingEntry?.canonical_occurrence_id
+          ? {
+              ...(existingEntry.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
+              ...(existingEntry.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
+            }
+          : {};
         let canonicalIntent: TaskStateRuntimeCanonicalIntent;
         if (status === "pending") {
           canonicalIntent = {
             type: "clear_outcome",
             logical_date: entryDate,
-            ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
-            ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
+            ...trustedOccurrenceFields,
           };
         } else if (status === "delayed") {
           const occurrenceResolution = await resolveCanonicalTaskOccurrence(client, currentUserId, taskId, {
@@ -549,15 +565,13 @@ export function useTaskHistoryActions({
           ? {
             type: "complete_task",
             logical_date: entryDate,
-            ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
-            ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
+            ...trustedOccurrenceFields,
           }
           : {
             type: "set_outcome",
             logical_date: entryDate,
             outcome: status,
-            ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
-            ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
+            ...trustedOccurrenceFields,
           };
         const replayAttempt = calendarReplayIdentity(taskId, entryDate, status);
         const action = classifyTaskStateRuntimeAction({
@@ -581,6 +595,14 @@ export function useTaskHistoryActions({
           return false;
         }
         retireCalendarReplayIdentity(replayAttempt.key);
+        const canonicalRewardEntitlementId = canonicalResult.response.side_effect_ids.reward_entitlement_id;
+        if (canonicalRewardEntitlementId && ["complete_task", "set_outcome"].includes(action.actionType)) {
+          await onTasksCompleted?.([{
+            canonicalRewardEntitlementId,
+            previousStatus: currentTask.status,
+            task: canonicalResult.task,
+          }]);
+        }
         currentTask = canonicalResult.task;
       }
 

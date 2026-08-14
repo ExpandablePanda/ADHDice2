@@ -15,6 +15,7 @@ import {
   recurrenceAfterSuccess,
   scheduledOccurrences,
 } from "./recurrence.ts";
+import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import type {
   ProposedTaskStatePatch,
   RewardEligibility,
@@ -488,7 +489,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     activeStatus = "pending";
   }
 
-  const calendar: Record<string, ReturnType<typeof calendarStateForOutcome>> = {};
+  let calendar: Record<string, ReturnType<typeof calendarStateForOutcome>> = {};
   for (const [date, row] of byDate) calendar[date] = calendarStateForOutcome(row.outcome);
   const calendarStart = input.calendarStart ?? (task.dueOn && task.dueOn < today ? task.dueOn : today);
   const calendarEnd = input.calendarEnd ?? shiftDateKey(today, 40);
@@ -529,6 +530,56 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     }
   }
   if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow) calendar[today] = "in_progress";
+
+  const replayTimeline = buildTaskEffectiveTimeline({
+    task,
+    history: rows,
+    logicalDate: today,
+    calendarStart,
+    calendarEnd,
+    ...(action
+      ? { replay: { changedLogicalDate: actionDate, kind: "outcome" as const } }
+      : scheduleChange
+        ? {
+            replay: {
+              changedLogicalDate: input.action?.type === "change_schedule" && input.action.changedLogicalDate
+                ? input.action.changedLogicalDate
+                : today,
+              kind: input.action?.type === "change_schedule" && input.action.replayKind
+                ? input.action.replayKind
+                : "recurrence" as const,
+              ...(input.action?.type === "change_schedule" && input.action.manualDueOn !== undefined
+                ? { manualDueOn: input.action.manualDueOn }
+                : {}),
+            },
+          }
+        : input.action?.type === "recompute"
+          ? { replay: { changedLogicalDate: input.action.fromLogicalDate, kind: "recompute" as const } }
+          : {}),
+  });
+  const hasOtherSuccessAfterReplacement = Boolean(action && rows.some((row) => (
+    row.logicalDate !== actionDate && SUCCESS.has(row.outcome)
+  )));
+  const preservesManualFutureCursor = Boolean(
+    action
+    && action.outcome === "missed"
+    && action.previousOutcome
+    && SUCCESS.has(action.previousOutcome)
+    && task.dueOn
+    && task.dueOn > actionDate
+    && !hasOtherSuccessAfterReplacement,
+  );
+  const usesReplayTimeline = scheduleChange
+    || Boolean(action && (action.historicalOverride || action.replaceExisting) && !preservesManualFutureCursor);
+  if (usesReplayTimeline) {
+    nextDue = replayTimeline.nextDueOn;
+    if (!(task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow)
+      && !activeMissedOccurrence
+      && !(task.activeStatus === "missed" && task.dueOn && task.dueOn <= today)) {
+      activeStatus = replayTimeline.activeStatus;
+    }
+    calendar = Object.fromEntries(Object.entries(replayTimeline.days).map(([date, day]) => [date, day.state]));
+  }
 
   const patch: ProposedTaskStatePatch = {};
   if (activeStatus !== task.activeStatus) patch.status = activeStatus;
@@ -592,6 +643,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       unscheduledInactive,
     ),
     rewardEligibility: rewardFor(task.id, rewardRow ?? null),
+    timeline: replayTimeline,
     validationErrors: errors,
   };
 }

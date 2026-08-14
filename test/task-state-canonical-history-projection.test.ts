@@ -57,17 +57,17 @@ test("canonical History facts project into the existing read shape with identity
     canonical_provenance_kind: "user",
     canonical_command_id: "command-1",
     canonical_source: "task-state-command",
-    recurrence_authoritative: false,
+    recurrence_authoritative: true,
   });
 });
 
-test("migration reconstruction without a canonical occurrence is non-authoritative for recurrence", () => {
-  assert.equal(mapCanonicalTaskHistoryFact(fact({ provenance_kind: "migration_reconstruction", occurrence_id: null, command_id: null })).recurrence_authoritative, false);
-  assert.equal(mapCanonicalTaskHistoryFact(fact({ provenance_kind: "migration_reconstruction", occurrence_id: "occurrence-1", command_id: null })).recurrence_authoritative, false);
+test("recovered migration outcomes remain valid recurrence inputs without accomplishment timestamps", () => {
+  assert.equal(mapCanonicalTaskHistoryFact(fact({ provenance_kind: "migration_reconstruction", occurrence_id: null, command_id: null })).recurrence_authoritative, true);
+  assert.equal(mapCanonicalTaskHistoryFact(fact({ provenance_kind: "migration_reconstruction", occurrence_id: "occurrence-1", command_id: null })).recurrence_authoritative, true);
   assert.equal(mapCanonicalTaskHistoryFact(fact({ logical_date: "2026-08-14", provenance_kind: "migration_reconstruction", occurrence_id: "occurrence-1", command_id: null })).recurrence_authoritative, true);
 });
 
-test("pre-cutover canonical History cannot become recurrence-authoritative through the legacy adapter", () => {
+test("pre-cutover canonical History remains recurrence-authoritative through the legacy adapter", () => {
   const projected = mapCanonicalTaskHistoryFact(fact({ provenance_kind: "user", occurrence_id: "occurrence-1" }));
   projected.recurrence_authoritative = true;
   const adapted = adaptLegacyTaskState({
@@ -82,7 +82,7 @@ test("pre-cutover canonical History cannot become recurrence-authoritative throu
     logicalDayRollover: "00:00",
   });
 
-  assert.equal(adapted.engineInput.history[0]?.recurrenceAuthoritative, false);
+  assert.equal(adapted.engineInput.history[0]?.recurrenceAuthoritative, true);
 });
 
 test("post-cutover canonical History remains modern Task State input", () => {
@@ -122,7 +122,7 @@ test("canonical recurrence-authority metadata survives the legacy engine adapter
     timezone: "UTC",
     logicalDayRollover: "00:00",
   });
-  assert.equal(adapted.engineInput.history[0]?.recurrenceAuthoritative, false);
+  assert.equal(adapted.engineInput.history[0]?.recurrenceAuthoritative, true);
 });
 
 test("projection does not manufacture calculated Missed rows", () => {

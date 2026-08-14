@@ -561,6 +561,83 @@ test("explicit History overrides a reconstructed Missed date", () => {
   assert.equal(result.days["2026-08-04"]?.historyRowId, done.id);
 });
 
+test("replay selects the last success checkpoint for a recurrence edit", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-13", recurrence: { kind: "rolling", intervalDays: 6 } },
+    history: [history("2026-08-08", "done", { occurrenceDueOn: "2026-08-08" })],
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-08",
+    calendarEnd: "2026-08-14",
+  });
+  const replayed = buildTaskEffectiveTimeline({
+    task: task({ dueOn: "2026-08-13", recurrence: { kind: "rolling", intervalDays: 6 } }),
+    history: [history("2026-08-08", "done", { occurrenceDueOn: "2026-08-08" })],
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-08",
+    calendarEnd: "2026-08-14",
+    replay: { changedLogicalDate: "2026-08-13", kind: "recurrence" },
+  });
+  assert.equal(result.days["2026-08-08"]?.state, "done");
+  for (const date of ["2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13"]) {
+    assert.equal(replayed.days[date]?.state, "not_due", date);
+  }
+  assert.equal(replayed.days["2026-08-14"]?.state, "open");
+  assert.equal(replayed.nextDueOn, "2026-08-14");
+  assert.deepEqual(replayed.replayCheckpoint, { kind: "success", logicalDate: "2026-08-08", occurrenceDueOn: "2026-08-08" });
+});
+
+test("manual due-date replay preserves earlier History and derives the future obligation", () => {
+  const historyRows = [history("2026-08-08", "done", { occurrenceDueOn: "2026-08-08" })];
+  const before = structuredClone(historyRows);
+  const result = buildTaskEffectiveTimeline({
+    task: task({ dueOn: "2026-08-20", recurrence: { kind: "rolling", intervalDays: 5 } }),
+    history: historyRows,
+    logicalDate: "2026-08-20",
+    calendarStart: "2026-08-08",
+    calendarEnd: "2026-08-20",
+    replay: { changedLogicalDate: "2026-08-13", kind: "due_date", manualDueOn: "2026-08-20" },
+  });
+  for (const date of ["2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16", "2026-08-17", "2026-08-18", "2026-08-19"]) {
+    assert.equal(result.days[date]?.state, "not_due", date);
+  }
+  assert.equal(result.days["2026-08-20"]?.state, "open");
+  assert.equal(result.nextDueOn, "2026-08-20");
+  assert.deepEqual(historyRows, before);
+});
+
+test("removing a later success replays from the prior success checkpoint", () => {
+  const result = buildTaskEffectiveTimeline({
+    task: task({ dueOn: "2026-08-18", recurrence: { kind: "rolling", intervalDays: 5 } }),
+    history: [
+      history("2026-08-08", "done", { occurrenceDueOn: "2026-08-08" }),
+      history("2026-08-13", "missed", { occurrenceDueOn: "2026-08-13" }),
+    ],
+    logicalDate: "2026-08-18",
+    calendarStart: "2026-08-08",
+    calendarEnd: "2026-08-18",
+    replay: { changedLogicalDate: "2026-08-13", kind: "outcome" },
+  });
+  assert.equal(result.replayCheckpoint?.logicalDate, "2026-08-08");
+  assert.equal(result.days["2026-08-13"]?.state, "missed");
+  assert.equal(result.currentMissedStreak, 1);
+  assert.equal(result.nextDueOn, "2026-08-13");
+});
+
+test("replay is deterministic and does not mutate explicit History", () => {
+  const historyRows = [history("2026-08-08", "done", { occurrenceDueOn: "2026-08-08" })];
+  const before = structuredClone(historyRows);
+  const input = {
+    task: task({ dueOn: "2026-08-14", recurrence: { kind: "rolling", intervalDays: 6 } }),
+    history: historyRows,
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-08",
+    calendarEnd: "2026-08-14",
+    replay: { changedLogicalDate: "2026-08-14", kind: "recurrence" as const },
+  };
+  assert.deepEqual(buildTaskEffectiveTimeline(input), buildTaskEffectiveTimeline(input));
+  assert.deepEqual(historyRows, before);
+});
+
 test("an old explicit Missed row does not rewind a future cursor", () => {
   const missed = history("2026-08-03", "missed", {
     occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-03`,
@@ -710,7 +787,7 @@ test("History Done before the visible window rebases current facts", () => {
   assert.equal(result.currentObligation, "overdue");
 });
 
-test("every three days rebases from Done and leaves the next occurrence overdue", () => {
+test("every three days rebases from Done and keeps non-occurrence gaps Not Due", () => {
   const done = history("2026-08-01", "done", {
     occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
     occurrenceDueOn: "2026-08-01",
@@ -722,12 +799,15 @@ test("every three days rebases from Done and leaves the next occurrence overdue"
 
   assert.equal(result.days["2026-08-01"]?.state, "done");
   for (const date of ["2026-08-02", "2026-08-03"]) assert.equal(result.days[date]?.state, "not_due", date);
-  for (const date of ["2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08", "2026-08-09"]) {
-    assert.equal(result.days[date]?.state, "missed", date);
-  }
+  assert.equal(result.days["2026-08-04"]?.state, "missed");
+  assert.equal(result.days["2026-08-05"]?.state, "not_due");
+  assert.equal(result.days["2026-08-06"]?.state, "not_due");
+  assert.equal(result.days["2026-08-07"]?.state, "missed");
+  assert.equal(result.days["2026-08-08"]?.state, "not_due");
+  assert.equal(result.days["2026-08-09"]?.state, "not_due");
   assert.equal(result.days["2026-08-10"]?.state, "open");
   assert.equal(result.days["2026-08-10"]?.obligation, "overdue");
-  assert.equal(result.currentMissedStreak, 6);
+  assert.equal(result.currentMissedStreak, 2);
   assert.equal(result.unresolvedDueOn, "2026-08-04");
 });
 

@@ -833,6 +833,31 @@ test("one outcome and one reward identity are allowed per task/logical day", () 
   assert.equal(result.rewardEligibility.identity, "task-reward:task-1:2026-07-30:done");
 });
 
+test("historical Missed to Did My Best produces one stable reward identity", () => {
+  const base = input({
+    now: "2026-08-13T14:00:00.000Z",
+    task: task({ dueOn: "2026-08-08", recurrence: { kind: "rolling", intervalDays: 5 } }),
+    history: [history("2026-08-08", "missed", { occurrenceDueOn: "2026-08-08" })],
+    action: {
+      type: "record_outcome",
+      historicalOverride: true,
+      replaceExisting: true,
+      logicalDate: "2026-08-08",
+      outcome: "did_my_best",
+      previousOutcome: "missed",
+      occurrenceDueOn: "2026-08-08",
+    },
+  });
+  const first = evaluateTaskState(base);
+  const second = evaluateTaskState(base);
+  assert.equal(first.validationErrors.length, 0);
+  assert.equal(first.rewardEligibility.eligible, true);
+  assert.equal(first.rewardEligibility.outcome, "did_my_best");
+  assert.equal(first.rewardEligibility.identity, "task-reward:task-1:2026-08-08:did_my_best");
+  assert.deepEqual(second.rewardEligibility, first.rewardEligibility);
+  assert.equal(first.timeline.days["2026-08-08"]?.state, "did_my_best");
+});
+
 test("a recurring occurrence rejects a second successful resolution", () => {
   const occurrenceIdentity = "task:task-1:occurrence:2026-07-30";
   const result = evaluateTaskState(input({

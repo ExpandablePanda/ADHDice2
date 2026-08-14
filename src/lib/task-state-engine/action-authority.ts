@@ -1,10 +1,10 @@
 import type { Task, TaskHistory, TaskHistoryInsert, TaskUpdate } from "@/lib/database.types";
+import { logicalDateForTimestamp } from "./calendar.ts";
 import { adaptLegacyTaskState } from "./legacy-adapter.ts";
 import { evaluateTaskState } from "./engine.ts";
 import { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
-import type { TaskHistoryOutcome } from "./types.ts";
-import type { TaskStateHistoryRow } from "./types.ts";
+import type { TaskHistoryChange, TaskHistoryOutcome, TaskStateHistoryRow } from "./types.ts";
 
 const OCCURRENCE_SENSITIVE_TASK_UPDATE_FIELDS = [
   "status",
@@ -153,11 +153,10 @@ export function evaluateTaskActionAuthority(input: {
   };
   const actionHistoryDate = input.outcomeDate ?? result.logicalDate;
   const historyOutcome = input.outcome
-    ? result.proposedHistoryChanges.find((change) => (
-      change.type === "insert"
-      && change.row.logicalDate === actionHistoryDate
-      && change.row.outcome === input.outcome
-    ))?.row.outcome ?? null
+    ? result.proposedHistoryChanges
+      .filter((change): change is Extract<TaskHistoryChange, { type: "insert" }> => change.type === "insert")
+      .find((change) => change.row.logicalDate === actionHistoryDate && change.row.outcome === input.outcome)
+      ?.row.outcome ?? null
     : null;
   return {
     ...result,
@@ -189,9 +188,16 @@ export function evaluateTaskScheduleAuthority(input: {
 }) {
   if (!(input.enabled ?? TASK_STATE_ENGINE_INTEGRATION_ENABLED)) return null;
   const adapted = adaptLegacyTaskState(input.proposedTask, input.history, input);
+  const changedLogicalDate = logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover);
+  const dueDateChanged = input.proposedTask.due_on !== input.task.due_on;
   const result = evaluateTaskState({
     ...adapted.engineInput,
-    action: { type: "change_schedule" },
+    action: {
+      type: "change_schedule",
+      changedLogicalDate,
+      replayKind: dueDateChanged ? "due_date" : "recurrence",
+      ...(dueDateChanged ? { manualDueOn: input.proposedTask.due_on } : {}),
+    },
   });
   const persistableTaskPatch = projectPersistableTaskStatePatch(result.proposedTaskPatch, input.task);
   const taskUpdate: TaskUpdate = {

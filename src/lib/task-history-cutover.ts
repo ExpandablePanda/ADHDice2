@@ -27,6 +27,8 @@ export function resolveTaskHistoryRecurrenceAuthority(
   logicalDate: string | null | undefined,
   requestedAuthority: boolean | null | undefined,
 ) {
-  if (isPreCutoverTaskStateHistoryDate(logicalDate)) return false;
+  // The cutover remains provenance/timestamp context only. Recovered explicit
+  // outcomes are valid timeline inputs; checkpoint replay prevents ancient
+  // facts from rewriting newer state.
   return requestedAuthority === null ? undefined : requestedAuthority;
 }

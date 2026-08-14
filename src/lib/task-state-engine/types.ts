@@ -102,10 +102,29 @@ export type TaskEffectiveTimelineDay = {
 
 export type TaskEffectiveTimeline = {
   days: Record<string, TaskEffectiveTimelineDay>;
+  activeStatus: TaskActiveStatus;
+  activeOccurrenceDueOn: string | null;
   currentCompletedStreak: number;
   currentMissedStreak: number;
   currentObligation: TaskEffectiveTimelineObligation;
+  nextDueOn: string | null;
+  recurrenceAnchor: string | null;
+  replayCheckpoint: TaskTimelineCheckpoint | null;
   unresolvedDueOn: string | null;
+};
+
+export type TaskTimelineReplayKind = "outcome" | "due_date" | "recurrence" | "recompute";
+
+export type TaskTimelineReplayRequest = {
+  changedLogicalDate: string;
+  kind: TaskTimelineReplayKind;
+  manualDueOn?: string | null;
+};
+
+export type TaskTimelineCheckpoint = {
+  kind: "success" | "schedule_boundary" | "task_snapshot";
+  logicalDate: string | null;
+  occurrenceDueOn: string | null;
 };
 
 export type TaskStateAction =
@@ -123,7 +142,12 @@ export type TaskStateAction =
       occurrenceIdentity?: string | null;
       historicalOverride?: boolean;
     }
-  | { type: "change_schedule" }
+  | {
+      type: "change_schedule";
+      changedLogicalDate?: string;
+      replayKind?: Extract<TaskTimelineReplayKind, "due_date" | "recurrence">;
+      manualDueOn?: string | null;
+    }
   | { type: "recompute"; fromLogicalDate: string };
 
 export type TaskStateEngineInput = {
@@ -200,5 +224,6 @@ export type TaskStateEngineResult = {
   proposedTaskPatch: ProposedTaskStatePatch;
   streakDisposition: StreakDisposition;
   rewardEligibility: RewardEligibility;
+  timeline: TaskEffectiveTimeline;
   validationErrors: string[];
 };

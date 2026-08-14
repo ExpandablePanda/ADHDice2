@@ -2,6 +2,7 @@ import {
   authoritativeRowsByDate,
   calendarStateForOutcome,
   dateRange,
+  daysBetween,
   shiftDateKey,
 } from "./calendar.ts";
 import {
@@ -16,6 +17,8 @@ import type {
   TaskHistoryOutcome,
   TaskStateHistoryRow,
   TaskStateSnapshot,
+  TaskTimelineCheckpoint,
+  TaskTimelineReplayRequest,
 } from "./types.ts";
 
 export type BuildTaskEffectiveTimelineInput = {
@@ -24,6 +27,7 @@ export type BuildTaskEffectiveTimelineInput = {
   logicalDate: string;
   calendarStart: string;
   calendarEnd: string;
+  replay?: TaskTimelineReplayRequest;
 };
 
 const SUCCESSFUL_OUTCOMES = new Set<TaskHistoryOutcome>(["done", "did_my_best", "complete"]);
@@ -85,6 +89,34 @@ function earliestDate(values: Array<string | null | undefined>) {
     .sort()[0] ?? null;
 }
 
+function checkpointForReplay(
+  rows: TaskStateHistoryRow[],
+  replay: TaskTimelineReplayRequest | undefined,
+): TaskTimelineCheckpoint | null {
+  if (!replay) return null;
+  const includeChangedDate = replay.kind !== "outcome";
+  const checkpoint = rows
+    .filter((row) => SUCCESSFUL_OUTCOMES.has(row.outcome))
+    .filter((row) => includeChangedDate
+      ? row.logicalDate <= replay.changedLogicalDate
+      : row.logicalDate < replay.changedLogicalDate)
+    .sort((left, right) => left.logicalDate.localeCompare(right.logicalDate) || left.occurredAt.localeCompare(right.occurredAt))
+    .at(-1);
+  if (checkpoint) {
+    return {
+      kind: "success",
+      logicalDate: checkpoint.logicalDate,
+      occurrenceDueOn: checkpoint.occurrenceDueOn
+        ?? occurrenceDateFromIdentity(checkpoint.occurrenceIdentity)
+        ?? checkpoint.logicalDate,
+    };
+  }
+  if (replay.manualDueOn !== undefined) {
+    return { kind: "schedule_boundary", logicalDate: replay.changedLogicalDate, occurrenceDueOn: replay.manualDueOn };
+  }
+  return { kind: "task_snapshot", logicalDate: null, occurrenceDueOn: null };
+}
+
 function calculatedDay(
   taskId: string,
   logicalDate: string,
@@ -124,7 +156,21 @@ function explicitDay(row: TaskStateHistoryRow): TaskEffectiveTimelineDay {
 function initialOccurrenceDueOn(
   task: TaskStateSnapshot,
   explicitRows: TaskStateHistoryRow[],
+  replay: TaskTimelineReplayRequest | undefined,
+  checkpoint: TaskTimelineCheckpoint | null,
 ) {
+  if (replay && checkpoint?.kind === "success") return checkpoint.occurrenceDueOn;
+  if (replay && replay.manualDueOn !== undefined) return replay.manualDueOn;
+  if (replay?.kind === "outcome") {
+    const changedSuccess = explicitRows.find((row) => (
+      row.logicalDate === replay.changedLogicalDate && SUCCESSFUL_OUTCOMES.has(row.outcome)
+    ));
+    if (changedSuccess) {
+      return changedSuccess.occurrenceDueOn
+        ?? occurrenceDateFromIdentity(changedSuccess.occurrenceIdentity)
+        ?? changedSuccess.logicalDate;
+    }
+  }
   return task.dueOn
     ?? task.activeOccurrenceDueOn
     ?? earliestDate(explicitRows.map((row) => row.occurrenceDueOn))
@@ -146,7 +192,8 @@ export function buildTaskEffectiveTimeline(
   const recurrenceRows = rows.filter((row) => row.recurrenceAuthoritative !== false);
   const recurrenceByDate = authoritativeRowsByDate(recurrenceRows);
   const recurrenceExplicitRows = [...recurrenceByDate.values()];
-  const initialDueOn = initialOccurrenceDueOn(input.task, recurrenceExplicitRows);
+  const replayCheckpoint = checkpointForReplay(recurrenceExplicitRows, input.replay);
+  const initialDueOn = initialOccurrenceDueOn(input.task, recurrenceExplicitRows, input.replay, replayCheckpoint);
   const simulationStart = earliestDate([
     input.calendarStart,
     input.logicalDate,
@@ -190,7 +237,12 @@ export function buildTaskEffectiveTimeline(
       ?? row.logicalDate;
     const result = recurrenceAfterSuccess(input.task.recurrence, successDueOn, row.logicalDate, consumed);
     unresolvedDueOn = null;
-    if (input.task.recurrence.kind === "none") {
+    if (input.replay?.kind === "due_date"
+      && input.replay.manualDueOn !== undefined
+      && replayCheckpoint?.kind === "success"
+      && row.logicalDate === replayCheckpoint.logicalDate) {
+      activeDueOn = input.replay.manualDueOn;
+    } else if (input.task.recurrence.kind === "none") {
       activeDueOn = null;
     } else {
       activeDueOn = result.nextDue;
@@ -245,6 +297,11 @@ export function buildTaskEffectiveTimeline(
     ).includes(date);
   };
 
+  const isScheduledDate = (date: string) => {
+    if (!activeDueOn) return false;
+    return scheduledOccurrences(input.task.recurrence, activeDueOn, date, date, { includeBeforeDueOn: true }).includes(date);
+  };
+
   let currentUnresolvedDueOn: string | null = null;
   for (const date of simulationDates) {
     const row = explicitByDate.get(date);
@@ -269,12 +326,21 @@ export function buildTaskEffectiveTimeline(
     } else if (date < activeDueOn) {
       day = calculatedDay(input.task.id, date, "not_due", "none");
     } else if (date < input.logicalDate) {
+      if (!isScheduledDate(date)) {
+        day = calculatedDay(input.task.id, date, "not_due", "none");
+        effectiveDays[date] = day;
+        continue;
+      }
       unresolvedDueOn ??= activeDueOn;
       day = calculatedDay(input.task.id, date, "missed", "overdue", unresolvedDueOn);
     } else if (date === input.logicalDate) {
       if (activeDueOn < input.logicalDate) {
-        unresolvedDueOn ??= activeDueOn;
-        day = calculatedDay(input.task.id, date, "open", "overdue", unresolvedDueOn);
+        if (!isScheduledDate(date)) {
+          day = calculatedDay(input.task.id, date, "not_due", "none");
+        } else {
+          unresolvedDueOn ??= activeDueOn;
+          day = calculatedDay(input.task.id, date, "open", "overdue", unresolvedDueOn);
+        }
       } else if (activeDueOn === input.logicalDate) {
         day = calculatedDay(input.task.id, date, "open", "due", activeDueOn);
       } else {
@@ -308,11 +374,31 @@ export function buildTaskEffectiveTimeline(
     input.logicalDate,
   );
 
+  const activeStatus = (() => {
+    if (input.task.lifecycle !== "active") return input.task.activeStatus;
+    if (currentDay?.state === "done" || currentDay?.state === "did_my_best" || currentDay?.state === "complete") return currentDay.state;
+    if (currentDay?.state === "missed" || currentDay?.obligation === "overdue") return "missed" as const;
+    if (currentDay?.state === "delayed") return "delayed" as const;
+    if (currentDay?.state === "scheduled") return daysBetween(input.logicalDate, currentDay.logicalDate) <= 7 ? "upcoming" as const : "not_due" as const;
+    if (currentDay?.state === "not_due" || currentDay?.state === "no_entry") {
+      if (!activeDueOn && input.task.recurrence.kind === "none") return "unscheduled" as const;
+      return activeDueOn && activeDueOn > input.logicalDate && daysBetween(input.logicalDate, activeDueOn) <= 7
+        ? "upcoming" as const
+        : "not_due" as const;
+    }
+    return "pending" as const;
+  })();
+
   return {
     days,
+    activeStatus,
+    activeOccurrenceDueOn: currentDay?.occurrenceDueOn ?? activeDueOn,
     currentCompletedStreak: streaks.currentCompletedStreak,
     currentMissedStreak: streaks.currentMissedStreak,
     currentObligation,
+    nextDueOn: completed ? null : activeDueOn,
+    recurrenceAnchor: replayCheckpoint?.kind === "success" ? replayCheckpoint.logicalDate : null,
+    replayCheckpoint,
     unresolvedDueOn: currentUnresolvedDueOn,
   };
 }

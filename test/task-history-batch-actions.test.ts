@@ -96,11 +96,17 @@ test("canonical History Calendar outcome uses set_outcome and never writes legac
   };
   let fromCalls = 0;
   let actionType = "";
+  let requestedOccurrenceKey: string | undefined;
+  let requestedScheduledDueOn: string | undefined;
+  let rewardCalls = 0;
+  let rewardEntitlementId: string | undefined;
   let localTask: TaskStateRuntimeLocalTask = task;
   const actions = useTaskHistoryActions({
     canonicalCommandsEnabled: true,
     canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => {
       actionType = action.actionType;
+      requestedOccurrenceKey = action.intent?.occurrence_key;
+      requestedScheduledDueOn = action.intent?.scheduled_due_on;
       return {
         success: true,
         task: { ...currentTask, status: "done", canonical_revision: 5 },
@@ -115,7 +121,7 @@ test("canonical History Calendar outcome uses set_outcome and never writes legac
           conflict_code: null,
           canonical_task_patch: {},
           compatibility_projection: {},
-          side_effect_ids: {},
+          side_effect_ids: { reward_entitlement_id: "entitlement-calendar-1" },
           error: null,
         },
       };
@@ -128,6 +134,10 @@ test("canonical History Calendar outcome uses set_outcome and never writes legac
     isTaskHistoryStatus: (status) => status === "done" || status === "did_my_best" || status === "missed" || status === "complete",
     mapTaskHistoryRow: (row) => row,
     now: new Date("2026-08-10T12:00:00.000Z"),
+    onTasksCompleted: async (candidates) => {
+      rewardCalls += candidates.length;
+      rewardEntitlementId = candidates[0]?.canonicalRewardEntitlementId;
+    },
     setMessage: () => {},
     setTaskHistory: () => {},
     setTasks: (updater) => { localTask = (typeof updater === "function" ? updater([localTask]) : updater)[0] as TaskStateRuntimeLocalTask; },
@@ -140,6 +150,10 @@ test("canonical History Calendar outcome uses set_outcome and never writes legac
 
   assert.equal(await actions.syncTaskHistoryEntries(task.id, "done", [existing.entry_date], { historicalOverride: true }), true);
   assert.equal(actionType, "set_outcome");
+  assert.equal(requestedOccurrenceKey, undefined);
+  assert.equal(requestedScheduledDueOn, undefined);
+  assert.equal(rewardCalls, 1);
+  assert.equal(rewardEntitlementId, "entitlement-calendar-1");
   assert.equal(fromCalls, 0);
   assert.equal(localTask.status, "done");
 });

@@ -70,6 +70,28 @@ test("trusted Delay materializes the current canonical occurrence for the RPC wi
   assert.equal(command.override?.occurrence_id, command.occurrence?.id);
 });
 
+test("historical outcome commands do not infer phantom occurrences from a scheduled date", () => {
+  const intent: TaskStateCommandIntent = {
+    type: "set_outcome",
+    task_id: "task-1",
+    replay_identity: "calendar:task-1:2026-08-08:did_my_best",
+    outcome: "did_my_best",
+    logical_date: "2026-08-08",
+    scheduled_due_on: "2026-08-08",
+  };
+  const command = buildTrustedTaskStateCommand({
+    intent,
+    userId: "owner-1",
+    readModel: canonicalReadModel,
+    logicalDay: { logicalDate: "2026-08-10", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 },
+    now: "2026-08-10T12:00:00.000Z",
+  });
+  assert.equal(command.type, "handled_outcome");
+  assert.equal(command.occurrenceId, null);
+  assert.equal(command.occurrenceKey, null);
+  assert.equal(command.scheduledDueOn, "2026-08-08");
+});
+
 const canonicalReadModel = {
   task: {
     id: "task-1",
