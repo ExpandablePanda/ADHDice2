@@ -14,7 +14,9 @@ import {
   APPROVED_EXECUTION_MUTATION_TABLES,
   buildPromotionFactInsert,
   buildPromotionOperationIdentity,
+  buildPromotionVerificationSources,
   executeLegacyHistoryPromotion,
+  equivalentPromotionDayStartTime,
   parsePromotionExecutionArgs,
   verifyLegacyHistoryPromotion,
   type PromotionExecutionClient,
@@ -284,6 +286,103 @@ test("partial retry reuses operation and does not duplicate facts", async () => 
   assert.equal(result.alreadyPresentSkips, 0);
   assert.equal(client.facts.length, 1);
   assert.equal(client.operations[0]?.state, "committed");
+});
+
+test("PostgreSQL TIME equality accepts 06:00 and 06:00:00 but rejects a different second", () => {
+  assert.equal(equivalentPromotionDayStartTime("06:00", "06:00:00"), true);
+  assert.equal(equivalentPromotionDayStartTime("06:00", "06:00:01"), false);
+});
+
+test("failed_retryable recovery reconstructs its original plan after current candidates reach zero", async () => {
+  const inputSources = sources({ legacyHistory: [history("h-recovery", "task-1", "done")] });
+  const client = new FakeClient();
+  const first = await run(client, inputSources);
+  client.operations[0]!.state = "failed_retryable";
+  client.facts[0]!.day_start_time = "06:00:00";
+  const callsBeforeRecovery = client.calls.length;
+  const recovered = await run(client, inputSources, { expectedCandidateCount: 0 });
+  assert.equal(first.insertedFacts, 1);
+  assert.equal(recovered.plannedInserts, 0);
+  assert.equal(recovered.postflight.expectedFacts, 1);
+  assert.equal(recovered.postflight.verifiedFacts, 1);
+  assert.equal(recovered.insertedFacts, 0);
+  assert.equal(client.facts.length, 1);
+  assert.equal(client.operations[0]?.state, "committed");
+  assert.equal(client.calls.slice(callsBeforeRecovery).includes("insert:adhdice_task_history_facts"), false);
+});
+
+test("recovery validation does not treat zero current candidates as proof of valid facts", async () => {
+  const inputSources = sources({ legacyHistory: [history("h-bad-time", "task-1", "done")] });
+  const client = new FakeClient();
+  await run(client, inputSources);
+  client.operations[0]!.state = "failed_retryable";
+  client.facts[0]!.day_start_time = "06:00:01";
+  await assert.rejects(run(client, inputSources, { expectedCandidateCount: 0 }), /RECOVERY_VERIFICATION_FAILED.*day_start_time/);
+  assert.equal(client.operations[0]?.state, "failed_retryable");
+  assert.equal(client.facts.length, 1);
+  assert.equal(client.calls.includes("insert:adhdice_task_history_facts"), true);
+});
+
+test("recovery blocks a missing operation-owned fact and preserves unrelated canonical facts", () => {
+  const inputSources = sources({
+    legacyHistory: [history("h-missing", "task-1", "done"), history("h-unrelated", "task-2", "missed")],
+    canonicalFacts: [{ id: "unrelated-canonical", user_id: USER_ID, entity_id: "task-2", logical_date: "2026-06-20", outcome: "missed", source: "manual" }],
+  });
+  const report = buildLegacyHistoryPromotionDryRun(inputSources, USER_ID);
+  const operationFact = buildPromotionFactInsert(report.plannedFacts[0]!, "operation-1");
+  const verificationSources = buildPromotionVerificationSources({ ...inputSources, canonicalFacts: [operationFact, ...inputSources.canonicalFacts] }, "operation-1");
+  const verificationReport = buildLegacyHistoryPromotionDryRun(verificationSources, USER_ID);
+  const verification = verifyLegacyHistoryPromotion({
+    beforeSources: verificationSources,
+    afterSources: { ...inputSources, canonicalFacts: inputSources.canonicalFacts },
+    beforeReport: verificationReport,
+    operationId: "operation-1",
+    mutationCounts: { operationWrites: 1, factWrites: 0, rewardWrites: 0, taskStateWrites: 0 },
+    requireOperationOwnership: true,
+  });
+  assert.equal(verification.ok, false);
+  assert.match(verification.issues.join(";"), /missing promoted fact/);
+  assert.equal(verificationReport.candidateCounts.canonicalWins, 1);
+  assert.equal(verificationSources.canonicalFacts.some((fact) => fact.id === "unrelated-canonical"), true);
+});
+
+test("recovery validates all operation-owned contract fields and blocks malformed facts", () => {
+  const inputSources = sources({ legacyHistory: [history("h-contract", "task-1", "done")] });
+  const report = buildLegacyHistoryPromotionDryRun(inputSources, USER_ID);
+  const expected = buildPromotionFactInsert(report.plannedFacts[0]!, "operation-1");
+  const malformed = { ...expected, entity_kind: "step" };
+  const verification = verifyLegacyHistoryPromotion({
+    beforeSources: inputSources,
+    afterSources: { ...inputSources, canonicalFacts: [malformed] },
+    beforeReport: report,
+    operationId: "operation-1",
+    mutationCounts: { operationWrites: 1, factWrites: 0, rewardWrites: 0, taskStateWrites: 0 },
+    requireOperationOwnership: true,
+  });
+  assert.equal(verification.ok, false);
+  assert.match(verification.issues.join(";"), /entity_kind/);
+  assert.equal(verification.verifiedFacts, 0);
+});
+
+test("partial existing operation facts cannot be committed or reimported", async () => {
+  const inputSources = sources({ legacyHistory: [history("h-partial-a", "task-1", "done"), history("h-partial-b", "task-2", "missed")] });
+  const client = new FakeClient();
+  const report = buildLegacyHistoryPromotionDryRun(inputSources, USER_ID);
+  client.operations.push({
+    id: "operation-1",
+    user_id: USER_ID,
+    operation_kind: "backfill",
+    operation_identity: buildPromotionOperationIdentity(USER_ID, report.sourceFingerprint),
+    input_fingerprint: report.sourceFingerprint,
+    state: "started",
+    migration_version: MIGRATION_VERSION,
+    classifier_version: MIGRATION_VERSION,
+    schema_contract_version: "task-state-schema-v1",
+  });
+  client.facts.push({ ...buildPromotionFactInsert(report.plannedFacts[0]!, "operation-1"), id: "fact-1" });
+  await assert.rejects(run(client, inputSources, { expectedCandidateCount: 1 }), /RECOVERY_CURRENT_PLAN_NOT_EMPTY/);
+  assert.equal(client.facts.length, 1);
+  assert.equal(client.operations[0]?.state, "started");
 });
 
 test("postflight detects missing, wrong-outcome, and bad-source-linkage facts", () => {

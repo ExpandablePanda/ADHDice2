@@ -93,8 +93,27 @@ function asNullableString(row: PromotionRow | null | undefined, key: string): st
   return value === null || value === undefined ? null : typeof value === "string" ? value : null;
 }
 
+function normalizePostgresTime(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?$/.exec(value.trim());
+  if (!match) return null;
+  const [, hours, minutes, seconds = "00", fraction = ""] = match;
+  if (Number(hours) > 23 || Number(minutes) > 59 || Number(seconds) > 59) return null;
+  return `${hours}:${minutes}:${seconds}.${fraction.padEnd(6, "0")}`;
+}
+
+export function equivalentPromotionDayStartTime(left: unknown, right: unknown): boolean {
+  const normalizedLeft = normalizePostgresTime(left);
+  const normalizedRight = normalizePostgresTime(right);
+  return normalizedLeft !== null && normalizedLeft === normalizedRight;
+}
+
 function sameJson(left: unknown, right: unknown): boolean {
   return stableStringify(left) === stableStringify(right);
+}
+
+function samePromotionField(key: string, left: unknown, right: unknown): boolean {
+  return key === "day_start_time" ? equivalentPromotionDayStartTime(left, right) : sameJson(left, right);
 }
 
 function sourceId(row: PromotionRow): string | null {
@@ -210,6 +229,28 @@ async function readCanonicalAtKey(client: PromotionExecutionClient, plan: Promot
   return result.data;
 }
 
+export function buildPromotionVerificationSources(sources: PromotionSources, operationId: string): PromotionSources {
+  return {
+    ...sources,
+    canonicalFacts: sources.canonicalFacts.filter((fact) => asNullableString(fact, "migration_operation_id") !== operationId),
+  };
+}
+
+function operationContractFailures(operation: PromotionOperation, userId: string, fingerprint: string): string[] {
+  const expected: Record<string, unknown> = {
+    user_id: userId,
+    operation_kind: "backfill",
+    operation_identity: buildPromotionOperationIdentity(userId, fingerprint),
+    input_fingerprint: fingerprint,
+    migration_version: PROMOTION_MIGRATION_VERSION,
+    classifier_version: PROMOTION_MIGRATION_VERSION,
+    schema_contract_version: PROMOTION_SCHEMA_CONTRACT_VERSION,
+  };
+  return Object.entries(expected)
+    .filter(([key, value]) => !sameJson(operation[key], value))
+    .map(([key]) => `migration operation contract mismatch: ${key}`);
+}
+
 function executionGuardFailures(report: PromotionReport, confirmation: PromotionExecutionConfirmation): string[] {
   const failures: string[] = [];
   if (!confirmation.execute) failures.push("explicit --execute confirmation is required");
@@ -235,8 +276,9 @@ export function verifyLegacyHistoryPromotion(input: {
   beforeReport: PromotionReport;
   operationId: string;
   mutationCounts: PromotionExecutionMutationCounts;
+  requireOperationOwnership?: boolean;
 }): PromotionVerificationResult {
-  const { beforeSources, afterSources, beforeReport, operationId, mutationCounts } = input;
+  const { beforeSources, afterSources, beforeReport, operationId, mutationCounts, requireOperationOwnership = false } = input;
   const issues: string[] = [];
   const facts = afterSources.canonicalFacts;
   const factsByKey = new Map(facts.map((fact) => [canonicalKey(fact), fact] as const));
@@ -263,11 +305,29 @@ export function verifyLegacyHistoryPromotion(input: {
       }
       continue;
     }
-    const expected = buildPromotionFactInsert(plan, operationId);
-    for (const key of ["outcome", "event_kind", "occurrence_id", "scheduled_due_on", "provenance_kind", "actor_kind", "actor_id", "command_id", "source", "migration_operation_id", "source_legacy_history_id", "revision", "logical_day_settings_revision", "timezone", "day_start_time", "idempotence_identity"] as const) {
-      if (!sameJson(fact[key], expected[key])) addIssue(issues, `malformed promoted fact ${plan.source_legacy_history_id}: ${key}`);
+    if (requireOperationOwnership && asNullableString(fact, "migration_operation_id") !== operationId) {
+      addIssue(issues, `malformed promoted fact ${plan.source_legacy_history_id}: migration_operation_id`);
+      continue;
     }
-    verifiedFacts += 1;
+    const expected = buildPromotionFactInsert(plan, operationId);
+    let matches = true;
+    for (const key of ["user_id", "entity_id", "entity_kind", "logical_date", "outcome", "event_kind", "occurrence_id", "scheduled_due_on", "effective_due_on", "schedule_boundary_id", "recurrence_source_fingerprint", "provenance_kind", "actor_kind", "actor_id", "source", "logical_day_settings_revision", "timezone", "day_start_time", "command_id", "idempotence_identity", "migration_operation_id", "source_legacy_history_id", "revision"] as const) {
+      if (!samePromotionField(key, fact[key], expected[key])) {
+        matches = false;
+        addIssue(issues, `malformed promoted fact ${plan.source_legacy_history_id}: ${key}`);
+      }
+    }
+    if (matches) verifiedFacts += 1;
+  }
+
+  if (requireOperationOwnership) {
+    const expectedSourceIds = new Set(beforeReport.plannedFacts.map((plan) => plan.source_legacy_history_id));
+    const operationFacts = facts.filter((fact) => asNullableString(fact, "migration_operation_id") === operationId);
+    for (const fact of operationFacts) {
+      const sourceHistoryId = asNullableString(fact, "source_legacy_history_id");
+      if (!sourceHistoryId || !expectedSourceIds.has(sourceHistoryId)) addIssue(issues, `unexpected operation-owned fact: ${sourceHistoryId ?? "<missing source>"}`);
+    }
+    if (operationFacts.length !== beforeReport.plannedFacts.length) addIssue(issues, `operation-owned fact count mismatch: expected ${beforeReport.plannedFacts.length}, got ${operationFacts.length}`);
   }
 
   const beforeCanonicalByKey = new Map(beforeSources.canonicalFacts.map((fact) => [canonicalKey(fact), fact] as const));
@@ -327,6 +387,35 @@ export async function executeLegacyHistoryPromotion(input: {
     const postflight = verifyLegacyHistoryPromotion({ beforeSources: currentSources, afterSources, beforeReport: report, operationId: operation.id, mutationCounts: { operationWrites: 0, factWrites: 0, rewardWrites: 0, taskStateWrites: 0 } });
     if (!postflight.ok) throw new HistoryPromotionDiagnostic("COMMITTED_OPERATION_POSTFLIGHT_FAILED", postflight.issues.join("; "));
     return { mode: "execution", operationId: operation.id, operationIdentity: identity, sourceFingerprint: report.sourceFingerprint, plannedInserts: report.plannedFacts.length, insertedFacts: 0, canonicalRaceSkips: 0, alreadyPresentSkips: report.plannedFacts.length, mutationCounts: { operationWrites: 0, factWrites: 0, rewardWrites: 0, taskStateWrites: 0 }, postflight };
+  }
+
+  const existingOperationFacts = currentSources.canonicalFacts.filter((fact) => asNullableString(fact, "migration_operation_id") === operation.id);
+  if (operation.state === "failed_retryable" || existingOperationFacts.length > 0) {
+    if (report.plannedFacts.length !== 0) throw new HistoryPromotionDiagnostic("RECOVERY_CURRENT_PLAN_NOT_EMPTY", `recovery requires zero current planned inserts; got ${report.plannedFacts.length}`);
+    const contractFailures = operationContractFailures(operation, input.confirmation.userId, report.sourceFingerprint);
+    if (contractFailures.length > 0) throw new HistoryPromotionDiagnostic("RECOVERY_OPERATION_CONTRACT_INVALID", contractFailures.join("; "));
+    const verificationSources = buildPromotionVerificationSources(currentSources, operation.id);
+    const verificationReport = buildLegacyHistoryPromotionDryRun(verificationSources, input.confirmation.userId);
+    const postflight = verifyLegacyHistoryPromotion({
+      beforeSources: verificationSources,
+      afterSources: currentSources,
+      beforeReport: verificationReport,
+      operationId: operation.id,
+      mutationCounts: { operationWrites: 1, factWrites: 0, rewardWrites: 0, taskStateWrites: 0 },
+      requireOperationOwnership: true,
+    });
+    if (!postflight.ok) throw new HistoryPromotionDiagnostic("RECOVERY_VERIFICATION_FAILED", postflight.issues.join("; "));
+    await updateOperation(input.client, operation, operationPatch("committed", {
+      result_fingerprint: report.sourceFingerprint,
+      insertedFacts: 0,
+      canonicalRaceSkips: 0,
+      alreadyPresentSkips: 0,
+      recovery: true,
+      expectedFacts: postflight.expectedFacts,
+      verifiedFacts: postflight.verifiedFacts,
+      newFactInserts: 0,
+    }));
+    return { mode: "execution", operationId: operation.id, operationIdentity: identity, sourceFingerprint: report.sourceFingerprint, plannedInserts: 0, insertedFacts: 0, canonicalRaceSkips: 0, alreadyPresentSkips: 0, mutationCounts: { operationWrites: 1, factWrites: 0, rewardWrites: 0, taskStateWrites: 0 }, postflight };
   }
 
   let insertedFacts = 0;
