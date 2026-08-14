@@ -7,6 +7,7 @@ import {
   type TaskHistoryOutcome,
   type TaskStateHistoryRow,
   type TaskStateSnapshot,
+  type TaskWorkflowState,
 } from "../src/lib/task-state-engine/index.ts";
 
 const TASK_ID = "task-effective-timeline";
@@ -46,6 +47,7 @@ function timeline(
     calendarStart?: string;
     calendarEnd?: string;
     calendarOverrides?: TaskCalendarOverride[];
+    workflow?: TaskWorkflowState;
   } = {},
 ) {
   return buildTaskEffectiveTimeline({
@@ -55,6 +57,7 @@ function timeline(
     calendarStart: overrides.calendarStart ?? "2026-08-01",
     calendarEnd: overrides.calendarEnd ?? "2026-08-10",
     calendarOverrides: overrides.calendarOverrides,
+    workflow: overrides.workflow,
   });
 }
 
@@ -805,6 +808,92 @@ test("Unscheduled cancels the active occurrence without leaving a hidden obligat
   assert.equal(result.unresolvedDueOn, "2026-08-12");
 });
 
+test("Due/Open remains causal beneath current In Progress workflow", () => {
+  const override = calendarOverride("2026-08-14", "due_open");
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-15",
+      activeOccurrenceDueOn: "2026-08-15",
+      activeStatus: "in_progress",
+      activeStatusLogicalDate: "2026-08-14",
+    },
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-14",
+    calendarEnd: "2026-08-15",
+    calendarOverrides: [override],
+    workflow: {
+      state: "in_progress",
+      logicalDate: "2026-08-14",
+      occurrenceId: "workflow-occurrence",
+      commandId: "workflow-command",
+      revision: 2,
+    },
+  });
+
+  const day = result.days["2026-08-14"];
+  assert.equal(day?.state, "in_progress");
+  assert.equal(day?.sourceKind, "workflow");
+  assert.equal(day?.obligation, "due");
+  assert.equal(day?.calendarOverrideId, override.id);
+  assert.equal(day?.occurrenceDueOn, "2026-08-14");
+  assert.equal(result.activeOccurrenceDueOn, "2026-08-14");
+  assert.equal(result.nextDueOn, "2026-08-14");
+});
+
+test("Not Due cancels the occurrence beneath current In Progress workflow", () => {
+  const override = calendarOverride("2026-08-14", "not_due");
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-14",
+      activeOccurrenceDueOn: "2026-08-14",
+      activeStatus: "in_progress",
+      activeStatusLogicalDate: "2026-08-14",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-14",
+    calendarEnd: "2026-08-15",
+    calendarOverrides: [override],
+    workflow: { state: "in_progress", logicalDate: "2026-08-14" },
+  });
+
+  const day = result.days["2026-08-14"];
+  assert.equal(day?.state, "in_progress");
+  assert.equal(day?.sourceKind, "workflow");
+  assert.equal(day?.obligation, "none");
+  assert.equal(day?.calendarOverrideId, override.id);
+  assert.equal(result.days["2026-08-15"]?.state, "scheduled");
+  assert.equal(result.nextDueOn, "2026-08-15");
+  assert.equal(result.unresolvedDueOn, null);
+});
+
+test("Unscheduled cancels the occurrence beneath current In Progress workflow", () => {
+  const override = calendarOverride("2026-08-14", "unscheduled");
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-14",
+      activeOccurrenceDueOn: "2026-08-14",
+      activeStatus: "in_progress",
+      activeStatusLogicalDate: "2026-08-14",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-14",
+    calendarEnd: "2026-08-15",
+    calendarOverrides: [override],
+    workflow: { state: "in_progress", logicalDate: "2026-08-14" },
+  });
+
+  const day = result.days["2026-08-14"];
+  assert.equal(day?.state, "in_progress");
+  assert.equal(day?.sourceKind, "workflow");
+  assert.equal(day?.obligation, "none");
+  assert.equal(day?.calendarOverrideId, override.id);
+  assert.equal(result.days["2026-08-15"]?.state, "scheduled");
+  assert.equal(result.nextDueOn, "2026-08-15");
+  assert.equal(result.unresolvedDueOn, null);
+});
+
 test("History and current workflow take precedence over Calendar overrides", () => {
   const historyRow = history("2026-08-10", "done");
   const result = buildTaskEffectiveTimeline({
@@ -841,6 +930,8 @@ test("History and current workflow take precedence over Calendar overrides", () 
   assert.equal(result.days["2026-08-10"]?.state, "done");
   assert.equal(result.days["2026-08-10"]?.sourceKind, "history_fact");
   assert.equal(result.days["2026-08-10"]?.historyRowId, historyRow.id);
+  assert.equal(result.days["2026-08-10"]?.calendarOverrideId, null);
+  assert.equal(result.days["2026-08-10"]?.workflowCommandId, null);
   assert.equal(result.nextDueOn, "2026-08-11");
   assert.equal(workflowResult.days["2026-08-10"]?.state, "in_progress");
   assert.equal(workflowResult.days["2026-08-10"]?.sourceKind, "workflow");

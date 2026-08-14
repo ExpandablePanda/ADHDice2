@@ -178,7 +178,7 @@ function workflowDay(
     handled: false,
     outcome: null,
     historyRowId: null,
-    calendarOverrideId: null,
+    calendarOverrideId: baseDay.calendarOverrideId,
     workflowOccurrenceId: workflow.occurrenceId ?? null,
     workflowCommandId: workflow.commandId ?? null,
     workflowRevision: workflow.revision ?? null,
@@ -417,7 +417,7 @@ export function buildTaskEffectiveTimeline(
     const workflowApplies = workflow.state === "in_progress"
       && workflow.logicalDate === input.logicalDate
       && date === input.logicalDate;
-    if (!row && !workflowApplies && override) {
+    if (!row && override) {
       applyCalendarOverrideToCursor(date, override);
     }
     let day: TaskEffectiveTimelineDay;
@@ -456,11 +456,12 @@ export function buildTaskEffectiveTimeline(
       } else {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       }
+      const baseDay = override
+        ? calendarOverrideDay(input.task.id, date, override, input.logicalDate)
+        : calculated;
       day = workflowApplies
-        ? workflowDay(date, calculated, workflow)
-        : override
-          ? calendarOverrideDay(input.task.id, date, override, input.logicalDate)
-          : calculated;
+        ? workflowDay(date, baseDay, workflow)
+        : baseDay;
     }
 
     effectiveDays[date] = day;
