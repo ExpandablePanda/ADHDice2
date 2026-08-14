@@ -9,6 +9,7 @@ import {
   canTaskBeMarkedComplete,
   getTaskCompleteConfirmationCopy,
   getTaskHistoryCalendarActionStatuses,
+  getTaskHistoryCalendarOverrideActions,
   getTaskHistoryCalendarVisibleActionStatuses,
   getSelectableTaskStatusesForRepeatFrequency,
   isArchiveLikeTask,
@@ -83,6 +84,27 @@ test("History Calendar multi-select exposes batch occurrence actions independent
     isMultiSelect: true,
     task: { repeat_frequency: "daily_until_complete" },
   }), ["done", "did_my_best", "missed"]);
+});
+
+test("History Calendar exposes Not Due and Due / Open only for one past/current date", () => {
+  assert.deepEqual(getTaskHistoryCalendarOverrideActions({
+    isMultiSelect: false,
+    selectedDate: "2026-08-10",
+    task: { status: "pending" },
+    todayDateKey: "2026-08-10",
+  }), ["not_due", "due_open"]);
+  assert.deepEqual(getTaskHistoryCalendarOverrideActions({
+    isMultiSelect: true,
+    selectedDate: "2026-08-10",
+    task: { status: "pending" },
+    todayDateKey: "2026-08-10",
+  }), []);
+  assert.deepEqual(getTaskHistoryCalendarOverrideActions({
+    isMultiSelect: false,
+    selectedDate: "2026-08-11",
+    task: { status: "pending" },
+    todayDateKey: "2026-08-10",
+  }), []);
 });
 
 test("complete eligibility blocks parents until all descendants recursively are complete", () => {

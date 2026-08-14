@@ -231,6 +231,8 @@ import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOp
 import { classifyTaskStateRuntimeAction, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import { TASK_STATE_CANONICAL_COMMANDS_ENABLED } from "@/lib/task-state-runtime-gate";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
+import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
+import type { CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
 import {
@@ -582,7 +584,7 @@ function formatHudDateTime(nowMs: number) {
 
 const FOCUS_ALARM_STORAGE_KEY_PREFIX = "adhdice:focus-alarm";
 const FOCUS_ALARM_BLOCKED_MESSAGE = "Focus alarm sound was blocked. Tap the alarm widget again to re-arm audio.";
-const APP_VERSION = "7.8.31";
+const APP_VERSION = "7.8.32";
 const HUD_VERSION = APP_VERSION;
 const APP_VERSION_ENDPOINT = "/app-version.json";
 const OPEN_TASK_QUERY_PARAM = "openTask";
@@ -1353,6 +1355,7 @@ export function TaskApp() {
   const previousTaskListFoldersRef = useRef<DbTaskListFolder[]>([]);
   const [taskListManualMemberships, setTaskListManualMemberships] = useState<TaskListManualMembership[]>([]);
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
+  const [taskCalendarOverridesByTaskId, setTaskCalendarOverridesByTaskId] = useState<Record<string, TaskCalendarOverride[]>>({});
   const [taskActualTimeEntries, setTaskActualTimeEntries] = useState<TaskActualTimeEntry[]>([]);
   const [taskSubtasks, setTaskSubtasks] = useState<DbTaskSubtask[]>([]);
   const [taskLegacySubtaskPromotions, setTaskLegacySubtaskPromotions] = useState<DbLegacySubtaskPromotion[]>([]);
@@ -1966,6 +1969,7 @@ export function TaskApp() {
         setActiveSessions({});
         setFocusHistory([]);
         setTaskHistory([]);
+        setTaskCalendarOverridesByTaskId({});
         setTaskSubtasks([]);
         setTaskLegacySubtaskPromotions([]);
         setAvailableTaskNotes([]);
@@ -2819,6 +2823,33 @@ export function TaskApp() {
     );
   }, [client, prepareTaskMutation]);
   const currentUserIdText = session?.user?.id ?? "";
+  const loadTaskCalendarOverridesForTask = useCallback(async (taskId: string) => {
+    if (!currentUserIdText) return false;
+    const result = await client
+      .from("adhdice_task_calendar_overrides")
+      .select("*")
+      .eq("user_id", currentUserIdText)
+      .eq("entity_id", taskId)
+      .eq("is_active", true)
+      .order("logical_date", { ascending: false });
+    if (result.error) {
+      setMessage({ tone: "warn", text: result.error.message ?? "Could not refresh the task Calendar overrides." });
+      return false;
+    }
+    const activeOverrides = (result.data ?? []).map((row) => {
+      const override = row as CanonicalTaskCalendarOverride;
+      return {
+        id: override.id,
+        logicalDate: override.logical_date,
+        overrideState: override.override_state,
+        revision: override.revision,
+        source: override.source,
+        provenance: override.provenance_kind,
+      } satisfies TaskCalendarOverride;
+    });
+    setTaskCalendarOverridesByTaskId((current) => ({ ...current, [taskId]: activeOverrides }));
+    return true;
+  }, [client, currentUserIdText, setMessage]);
   const {
     handleAddGridWidget,
     handleDropGridWidget,
@@ -5424,6 +5455,7 @@ export function TaskApp() {
     if (selectedTaskForEditor) {
       setTaskHistoryModalTaskId(selectedTaskForEditor.id);
       void loadTaskHistoryForTask(selectedTaskForEditor.id);
+      void loadTaskCalendarOverridesForTask(selectedTaskForEditor.id);
       if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED && shouldReconcileOverdueTaskMisses(selectedTaskForEditor, todayKey)) {
         void reconcileOverdueTaskMisses(selectedTaskForEditor);
       }
@@ -5433,6 +5465,7 @@ export function TaskApp() {
   function openTaskHistoryForTask(taskId: string) {
     setTaskHistoryModalTaskId(taskId);
     void loadTaskHistoryForTask(taskId);
+    void loadTaskCalendarOverridesForTask(taskId);
     const task = tasks.find((entry) => entry.id === taskId);
     if (!TASK_STATE_CANONICAL_COMMANDS_ENABLED && task && shouldReconcileOverdueTaskMisses(task, todayKey)) {
       void reconcileOverdueTaskMisses(task);
@@ -6335,6 +6368,22 @@ export function TaskApp() {
     : null;
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
+    onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "due_open") => {
+      if (!taskHistoryModalTaskId) return;
+      const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskHistoryModalTaskId) ?? taskHistoryModalTask;
+      const committed = await updateTask(taskHistoryModalTaskId, {}, {
+        canonicalIntent: {
+          type: "calendar_override",
+          logical_date: logicalDate,
+          override_state: overrideState,
+        },
+        expectedTask: currentTask,
+        replayIdentity: `calendar-override:${taskHistoryModalTaskId}:${logicalDate}:${overrideState}`,
+      });
+      if (committed) {
+        await loadTaskCalendarOverridesForTask(taskHistoryModalTaskId);
+      }
+    },
     onSetStatuses: async (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => {
       if (!taskHistoryModalTaskId) {
         return;
@@ -6382,6 +6431,7 @@ export function TaskApp() {
     },
     task: taskHistoryModalTask,
     taskHistory: taskHistoryModalHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+    calendarOverrides: taskCalendarOverridesByTaskId[taskHistoryModalTaskId] ?? [],
     taskTitle: taskHistoryModalTask.title,
     taskHistoryLoadError: taskHistoryLoadStateByTaskId[taskHistoryModalTaskId]?.error ?? null,
     taskHistoryLoadStatus: taskHistoryLoadStateByTaskId[taskHistoryModalTaskId]?.status ?? "loading",

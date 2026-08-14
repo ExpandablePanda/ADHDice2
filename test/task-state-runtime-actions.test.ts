@@ -82,13 +82,17 @@ test("explicit Delay, Calendar override, and rollover intents retain canonical o
   assert.equal(delay.actionType, "delay_occurrence");
   assert.equal(delay.intent?.replay_identity, "delay-action-1");
 
-  const calendar = classifyTaskStateRuntimeAction({
-    task: task(),
-    canonicalIntent: { type: "calendar_override", logical_date: "2026-08-10", override_state: "due_open" },
-    replayIdentity: "calendar-action-1",
-  });
-  assert.equal(calendar.kind, "canonical_action");
-  assert.equal(calendar.actionType, "calendar_override");
+  for (const overrideState of ["not_due", "due_open"] as const) {
+    const calendar = classifyTaskStateRuntimeAction({
+      task: task(),
+      canonicalIntent: { type: "calendar_override", logical_date: "2026-08-10", override_state: overrideState },
+      replayIdentity: `calendar-action-${overrideState}`,
+    });
+    assert.equal(calendar.kind, "canonical_action");
+    assert.equal(calendar.actionType, "calendar_override");
+    assert.equal(calendar.intent?.type, "calendar_override");
+    assert.equal(calendar.intent?.override_state, overrideState);
+  }
 
   const rollover = classifyTaskStateRuntimeAction({
     task: task(),

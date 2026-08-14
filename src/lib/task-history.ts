@@ -3,7 +3,7 @@ import { shiftDateKey } from "@/lib/task-grid-layout";
 import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
 import { shouldExposeHistoryEventTimestamp } from "@/lib/task-history-cutover";
 import { isScheduledOccurrence, scheduledOccurrences } from "@/lib/task-state-engine/recurrence";
-import type { TaskRecurrence } from "@/lib/task-state-engine/types";
+import type { TaskEffectiveTimelineDay, TaskRecurrence } from "@/lib/task-state-engine/types";
 
 export type TaskHistoryLoadResult =
   | { status: "ready"; history: DbTaskHistory[]; error: null }
@@ -25,6 +25,56 @@ export function isTaskHistoryStreakMissedStatus(status: TaskStatus) {
 
 export function isTaskHistoryStatus(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "delayed" || status === "missed" || status === "complete";
+}
+
+const FINALIZED_TASK_HISTORY_STATES = new Set<TaskStatus>(["done", "did_my_best", "delayed", "missed", "complete"]);
+type FinalizedTaskHistoryStatus = Extract<TaskStatus, "done" | "did_my_best" | "delayed" | "missed" | "complete">;
+
+function isFinalizedTaskHistoryStatus(status: TaskStatus): status is FinalizedTaskHistoryStatus {
+  return FINALIZED_TASK_HISTORY_STATES.has(status);
+}
+
+export type TaskHistoryRowProjection = {
+  entry: DbTaskHistory | null;
+  isCalculated: boolean;
+  isDueOpportunity: boolean;
+  logicalDate: string;
+  status: FinalizedTaskHistoryStatus;
+};
+
+/** Merge explicit History metadata with finalized Effective Timeline days for the modal list. */
+export function buildTaskHistoryRowProjections(
+  history: readonly DbTaskHistory[],
+  effectiveDays: Readonly<Record<string, Pick<TaskEffectiveTimelineDay, "state" | "obligation">>> = {},
+  dueDateKeys: ReadonlySet<string> = new Set(),
+): TaskHistoryRowProjection[] {
+  const normalizedHistory = deduplicateTaskHistoryByLogicalDate(history);
+  const rowsByDate = new Map<string, TaskHistoryRowProjection>();
+
+  for (const entry of normalizedHistory) {
+    if (!isFinalizedTaskHistoryStatus(entry.status)) continue;
+    const day = effectiveDays[entry.entry_date];
+    rowsByDate.set(entry.entry_date, {
+      entry,
+      isCalculated: false,
+      isDueOpportunity: dueDateKeys.has(entry.entry_date) || day?.obligation === "due" || day?.obligation === "overdue",
+      logicalDate: entry.entry_date,
+      status: entry.status,
+    });
+  }
+
+  for (const [logicalDate, day] of Object.entries(effectiveDays)) {
+    if (rowsByDate.has(logicalDate) || day.state !== "missed") continue;
+    rowsByDate.set(logicalDate, {
+      entry: null,
+      isCalculated: true,
+      isDueOpportunity: true,
+      logicalDate,
+      status: "missed",
+    });
+  }
+
+  return [...rowsByDate.values()].sort((left, right) => right.logicalDate.localeCompare(left.logicalDate));
 }
 
 export type TaskHistoryStats = {

@@ -6,6 +6,7 @@ const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
+const calendarAuthoritySource = readFileSync(new URL("../src/lib/task-state-engine/calendar-authority.ts", import.meta.url), "utf8");
 const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
 test("opening Task History stores the requested task ID before loading details", () => {
@@ -15,6 +16,30 @@ test("opening Task History stores the requested task ID before loading details",
   assert.match(handler, /setTaskHistoryModalTaskId\(taskId\)/);
   assert.match(handler, /loadTaskHistoryForTask\(taskId\)/);
   assert.match(handler, /tasks\.find\(\(entry\) => entry\.id === taskId\)/);
+  assert.match(handler, /loadTaskCalendarOverridesForTask\(taskId\)/);
+});
+
+test("Task History Calendar overrides use the canonical calendar_override intent and refresh the task-scoped read", () => {
+  const flowStart = appSource.indexOf("const taskHistoryFlow");
+  const flowEnd = appSource.indexOf("\n  function togglePinnedFilter", flowStart);
+  const flow = appSource.slice(flowStart, flowEnd);
+  assert.match(flow, /type: "calendar_override"/);
+  assert.match(flow, /override_state: overrideState/);
+  assert.match(flow, /await loadTaskCalendarOverridesForTask\(taskHistoryModalTaskId\)/);
+  assert.doesNotMatch(flow, /syncTaskHistoryEntries\(taskHistoryModalTaskId,.*overrideState/s);
+});
+
+test("Task History modal passes active Calendar overrides into the Calendar read bridge", () => {
+  assert.match(appSource, /calendarOverrides: taskCalendarOverridesByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
+  assert.match(modalSource, /calendarOverrides,/);
+  assert.match(calendarAuthoritySource, /calendarOverrides: input\.calendarOverrides/);
+});
+
+test("Task Status History projects calculated Missed rows and uses neutral entry count copy", () => {
+  assert.match(modalSource, /buildTaskHistoryRowProjections/);
+  assert.match(modalSource, /\{historyRows\.length\} entries/);
+  assert.match(modalSource, /Calculated from task timeline/);
+  assert.doesNotMatch(modalSource, /\{sortedHistory\.length\} logged/);
 });
 
 test("parent, Step, Substep, and context-menu History actions preserve their row IDs", () => {

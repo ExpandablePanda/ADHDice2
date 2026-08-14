@@ -39,6 +39,8 @@ const HISTORY_OVERRIDE_ACTION_STATUSES = [
   "complete",
 ] as const;
 
+const HISTORY_CALENDAR_OVERRIDE_ACTIONS = ["not_due", "due_open"] as const;
+
 export function getSelectableTaskStatusesForRepeatFrequency(repeatFrequency: TaskRepeatFrequency) {
   return repeatFrequency === "none"
     ? [...ONE_OFF_SELECTABLE_STATUSES]
@@ -82,6 +84,23 @@ export function getTaskHistoryCalendarVisibleActionStatuses({
   return configuredStatuses.filter((status) => (
     engineStatuses.includes(status)
   ));
+}
+
+export function getTaskHistoryCalendarOverrideActions({
+  isMultiSelect,
+  selectedDate,
+  task,
+  todayDateKey,
+}: {
+  isMultiSelect: boolean;
+  selectedDate: string;
+  task: Pick<Task, "status">;
+  todayDateKey: string;
+}) {
+  if (isMultiSelect || selectedDate > todayDateKey || task.status === "complete" || task.status === "archived" || task.status === "trashed") {
+    return [] as Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]>;
+  }
+  return [...HISTORY_CALENDAR_OVERRIDE_ACTIONS];
 }
 
 export function getIncompleteCompletionDescendants(taskId: string, tasks: Task[]) {

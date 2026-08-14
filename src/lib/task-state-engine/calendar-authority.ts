@@ -6,7 +6,7 @@ import { evaluateTaskState } from "./engine.ts";
 import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
 import { evaluateTaskActionAuthority } from "./action-authority.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
-import type { TaskHistoryOutcome } from "./types.ts";
+import type { TaskCalendarOverride, TaskHistoryOutcome } from "./types.ts";
 import type { TaskEffectiveTimeline } from "./types.ts";
 
 export type TaskHistoryCalendarActionStatus = "done" | "did_my_best" | "delayed" | "missed" | "complete";
@@ -35,6 +35,7 @@ export type TaskHistoryCalendarReadResult = {
 export function resolveTaskHistoryCalendarRead(input: {
   enabled?: boolean;
   history: TaskHistory[];
+  calendarOverrides?: TaskCalendarOverride[];
   calendarStart?: string;
   calendarEnd?: string;
   logicalDayRollover: string;
@@ -53,6 +54,7 @@ export function resolveTaskHistoryCalendarRead(input: {
     const timeline = buildTaskEffectiveTimeline({
       task: adapted.engineInput.task,
       history: adapted.engineInput.history,
+      calendarOverrides: input.calendarOverrides,
       logicalDate,
       calendarStart,
       calendarEnd,
@@ -81,6 +83,7 @@ export function resolveTaskHistoryCalendarRead(input: {
 export function resolveTaskHistoryCalendarStates(input: {
   enabled?: boolean;
   history: TaskHistory[];
+  calendarOverrides?: TaskCalendarOverride[];
   calendarStart?: string;
   calendarEnd?: string;
   logicalDayRollover: string;
