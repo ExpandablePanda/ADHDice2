@@ -14,6 +14,7 @@ import {
   computeTaskSpecificHistoryStats,
   formatTaskHistoryEntryLabel,
   getTaskFocusFilterFacts,
+  getTaskHistoryLastDone,
   getTaskHistoryCalendarVirtualState,
   resolveLiveTaskStatusFromHistory,
 } from "../src/lib/task-history.ts";
@@ -598,6 +599,71 @@ test("history facts count only actual today rows for today flags and current str
   assert.equal(facts.completedWithinLast["1"], false);
   assert.equal(facts.currentCompletedStreak, 2);
   assert.equal(facts.currentMissedStreak, 0);
+});
+
+test("Last Done orders by logical date and normalizes retroactive success time", () => {
+  const editedAfterward = {
+    ...createHistoryEntry({ entryDate: "2026-08-11", id: "last-done-earlier", status: "done", wasCompleted: true }),
+    created_at: "2026-08-11T10:00:00.000Z",
+    updated_at: "2026-08-14T15:01:00.000Z",
+  };
+  const laterEditedAfterward = {
+    ...createHistoryEntry({ entryDate: "2026-08-13", id: "last-done-later", status: "done", wasCompleted: true }),
+    created_at: "2026-08-13T10:00:00.000Z",
+    updated_at: "2026-08-14T15:00:00.000Z",
+  };
+
+  const lastDone = getTaskHistoryLastDone([editedAfterward, laterEditedAfterward], "2026-08-14");
+
+  assert.deepEqual(lastDone, {
+    dateKey: "2026-08-13",
+    timestamp: "2026-08-13T00:00:00",
+  });
+  assert.deepEqual(
+    buildTaskHistoryFacts([editedAfterward, laterEditedAfterward], "2026-08-14").lastDone,
+    lastDone,
+  );
+});
+
+test("Last Done preserves trustworthy same-day event times for Done and Did My Best", () => {
+  const historicalDone = {
+    ...createHistoryEntry({ entryDate: "2026-08-11", id: "same-day-done", status: "done", wasCompleted: true }),
+    created_at: "2026-08-11T14:35:00.000Z",
+    updated_at: "2026-08-11T14:35:00.000Z",
+  };
+  const currentDone = {
+    ...createHistoryEntry({ entryDate: "2026-08-14", id: "current-day-done", status: "done", wasCompleted: true }),
+    created_at: "2026-08-14T14:35:00.000Z",
+    updated_at: "2026-08-14T14:35:00.000Z",
+  };
+  const didMyBest = {
+    ...createHistoryEntry({ entryDate: "2026-08-13", id: "retroactive-best", status: "did_my_best", wasCompleted: true }),
+    created_at: "2026-08-13T10:00:00.000Z",
+    updated_at: "2026-08-14T16:00:00.000Z",
+  };
+
+  assert.equal(getTaskHistoryLastDone([historicalDone], "2026-08-14")?.timestamp, historicalDone.updated_at);
+  assert.equal(getTaskHistoryLastDone([currentDone], "2026-08-14")?.timestamp, currentDone.updated_at);
+  assert.deepEqual(getTaskHistoryLastDone([didMyBest], "2026-08-14"), {
+    dateKey: "2026-08-13",
+    timestamp: "2026-08-13T00:00:00",
+  });
+});
+
+test("Missed rows never qualify as Last Done and migration timestamps stay suppressed", () => {
+  const missed = createHistoryEntry({ entryDate: "2026-08-14", id: "last-done-missed", status: "missed", wasCompleted: false });
+  assert.equal(getTaskHistoryLastDone([missed], "2026-08-14"), null);
+
+  const migrationSuccess = {
+    ...createHistoryEntry({ entryDate: "2026-08-13", id: "migration-success", status: "done", wasCompleted: true }),
+    canonical_provenance_kind: "migration_reconstruction",
+    created_at: "2026-08-14T17:00:00.000Z",
+    updated_at: "2026-08-14T17:00:00.000Z",
+  };
+  assert.deepEqual(getTaskHistoryLastDone([migrationSuccess], "2026-08-14"), {
+    dateKey: "2026-08-13",
+    timestamp: null,
+  });
 });
 
 test("recurring live status may remain missed while today still has no saved history row", () => {

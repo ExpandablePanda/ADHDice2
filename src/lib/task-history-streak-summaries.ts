@@ -61,7 +61,7 @@ export function buildTaskHistoryStreakSummary(
     : calendarRead
       ? computeTaskEffectiveTimelineStreaks(calendarRead.states, todayDateKey)
       : { currentCompletedStreak: 0, currentMissedStreak: 0 };
-  const lastDone = getTaskHistoryLastDone(normalizedHistory);
+  const lastDone = getTaskHistoryLastDone(normalizedHistory, todayDateKey);
   return {
     currentStreak: streaks.currentCompletedStreak,
     lastDoneAt: lastDone?.timestamp ?? null,

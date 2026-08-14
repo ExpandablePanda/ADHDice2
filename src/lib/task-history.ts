@@ -289,24 +289,51 @@ function getHistoryPresentationTimestamp(
 }
 
 function compareLastDoneEntries(left: TaskHistoryStreakEntry, right: TaskHistoryStreakEntry) {
+  const dateOrder = compareDateKeys(left.entry_date, right.entry_date);
+  if (dateOrder !== 0) {
+    return dateOrder;
+  }
+
   const leftTimestamp = getHistoryPresentationTimestamp(left);
   const rightTimestamp = getHistoryPresentationTimestamp(right);
-  if (leftTimestamp && rightTimestamp && leftTimestamp !== rightTimestamp) {
+  if (leftTimestamp !== rightTimestamp) {
+    if (!leftTimestamp) {
+      return -1;
+    }
+    if (!rightTimestamp) {
+      return 1;
+    }
     return leftTimestamp < rightTimestamp ? -1 : 1;
   }
-  if (leftTimestamp && !rightTimestamp) {
-    const dateOrder = compareDateKeys(left.entry_date, right.entry_date);
-    return dateOrder !== 0 ? dateOrder : 1;
-  }
-  if (!leftTimestamp && rightTimestamp) {
-    const dateOrder = compareDateKeys(left.entry_date, right.entry_date);
-    return dateOrder !== 0 ? dateOrder : -1;
-  }
-  const dateOrder = compareDateKeys(left.entry_date, right.entry_date);
-  return dateOrder !== 0 ? dateOrder : left.id.localeCompare(right.id);
+
+  return left.id.localeCompare(right.id);
 }
 
-export function getTaskHistoryLastDone(history: readonly TaskHistoryStreakEntry[]): TaskHistoryLastDone | null {
+function getTimestampDateKey(timestamp: string | null) {
+  return timestamp?.slice(0, 10) ?? null;
+}
+
+function getLastDonePresentationTimestamp(
+  entry: TaskHistoryStreakEntry,
+  currentLogicalDateKey?: string,
+) {
+  const timestamp = getHistoryPresentationTimestamp(entry);
+  if (!timestamp || !currentLogicalDateKey || entry.entry_date >= currentLogicalDateKey) {
+    return timestamp;
+  }
+
+  const timestampDateKey = getTimestampDateKey(timestamp);
+  return timestampDateKey === entry.entry_date
+    ? timestamp
+    // Keep the semantic time in the History surface's logical day rather than
+    // shifting midnight through the user's local timezone from a UTC suffix.
+    : `${entry.entry_date}T00:00:00`;
+}
+
+export function getTaskHistoryLastDone(
+  history: readonly TaskHistoryStreakEntry[],
+  currentLogicalDateKey?: string,
+): TaskHistoryLastDone | null {
   const latestEntry = deduplicateTaskHistoryByLogicalDate(history)
     .filter(isLastDoneHistoryEntry)
     .sort(compareLastDoneEntries)
@@ -315,7 +342,7 @@ export function getTaskHistoryLastDone(history: readonly TaskHistoryStreakEntry[
   return latestEntry
     ? {
       dateKey: latestEntry.entry_date,
-      timestamp: getHistoryPresentationTimestamp(latestEntry),
+      timestamp: getLastDonePresentationTimestamp(latestEntry, currentLogicalDateKey),
     }
     : null;
 }
@@ -694,7 +721,7 @@ export function buildTaskHistoryFacts(history: DbTaskHistory[], todayDateKey: st
 
   return {
     handledToday: byDate.get(todayDateKey)?.completed === true || byDate.get(todayDateKey)?.missed === true,
-    lastDone: getTaskHistoryLastDone(history),
+    lastDone: getTaskHistoryLastDone(history, todayDateKey),
     completedToday: byDate.get(todayDateKey)?.completed ?? false,
     completedWithinLast,
     currentCompletedStreak,

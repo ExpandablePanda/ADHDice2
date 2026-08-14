@@ -456,7 +456,7 @@ export function buildChildTaskPreviewLookup(
             dateKey: streakSummary.lastDoneDate,
             timestamp: streakSummary.lastDoneAt,
           }
-          : getTaskHistoryLastDone(taskHistoryByTaskId[descendant.id] ?? []);
+          : getTaskHistoryLastDone(taskHistoryByTaskId[descendant.id] ?? [], todayDateKey);
 
         return {
           actualSeconds: descendant.actual_seconds,

@@ -631,7 +631,7 @@ export function TaskHistoryModal({
       missedStreak: resolvedStreaks.currentMissedStreak,
     }
     : savedHistoryStats;
-  const lastDone = getTaskHistoryLastDone(normalizedTaskHistory);
+  const lastDone = getTaskHistoryLastDone(normalizedTaskHistory, today);
   const sortedHistory = [...normalizedTaskHistory].sort((left, right) => right.entry_date.localeCompare(left.entry_date));
   const selectedEntry = historyByDate.get(selectedDate) ?? null;
   const selectedDateSet = new Set(selectedDates);
