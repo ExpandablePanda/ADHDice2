@@ -634,7 +634,7 @@ const READ_ORDER_COLUMN: Record<ReadTable, string> = {
   adhdice_task_history: "id",
   adhdice_task_legacy_history_evidence: "id",
   adhdice_task_history_facts: "id",
-  adhdice_task_state_migration_entities: "id",
+  adhdice_task_state_migration_entities: "entity_id",
   adhdice_clean_tasks: "id",
   adhdice_user_profiles: "user_id",
 };

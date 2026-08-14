@@ -232,7 +232,7 @@ test("the read client uses id ordering for id-keyed tables and user_id for profi
     ["adhdice_task_history", "id"],
     ["adhdice_task_history_facts", "id"],
     ["adhdice_task_legacy_history_evidence", "id"],
-    ["adhdice_task_state_migration_entities", "id"],
+    ["adhdice_task_state_migration_entities", "entity_id"],
     ["adhdice_user_profiles", "user_id"],
   ]);
 });
@@ -246,6 +246,7 @@ test("profile loading remains deterministic under the user_id order contract", a
         eq() { return query; },
         order(column: string) {
           if (table === "adhdice_user_profiles") assert.equal(column, "user_id");
+          else if (table === "adhdice_task_state_migration_entities") assert.equal(column, "entity_id");
           else assert.equal(column, "id");
           return query;
         },
@@ -268,6 +269,7 @@ test("authenticated promotion source loading succeeds with the profile table con
         eq() { return query; },
         order(column: string) {
           if (table === "adhdice_user_profiles") assert.equal(column, "user_id");
+          else if (table === "adhdice_task_state_migration_entities") assert.equal(column, "entity_id");
           else assert.equal(column, "id");
           return query;
         },
