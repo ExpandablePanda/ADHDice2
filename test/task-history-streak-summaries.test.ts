@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { TaskHistory } from "../src/lib/database.types.ts";
+import { TASK_STATE_HISTORY_CUTOVER_DATE } from "../src/lib/task-history-cutover.ts";
 import { adaptLegacyTaskState } from "../src/lib/task-state-engine/legacy-adapter.ts";
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
 import {
@@ -95,6 +96,53 @@ test("missed streaks combine recorded Missed outcomes across calendar gaps", () 
   ], "2026-06-20");
 
   assert.equal(summaries[currentTask.id]?.missedStreak, 3);
+});
+
+test("pre-cutover migration Done and Did My Best expose only their historical date", () => {
+  const currentTask = task();
+  for (const [index, status] of (["done", "did_my_best"] as const).entries()) {
+    const row = history(`migration-success-${index}`, "2026-08-07", status, true);
+    row.canonical_provenance_kind = "migration_reconstruction";
+    row.recurrence_authoritative = false;
+    const summary = buildTaskHistoryStreakSummaryMap([currentTask], [row], TASK_STATE_HISTORY_CUTOVER_DATE)[currentTask.id];
+
+    assert.equal(summary?.lastDoneDate, "2026-08-07");
+    assert.equal(summary?.lastDoneAt, null);
+  }
+});
+
+test("Appanda historical sequence ends with Missed and does not use migration insertion time", () => {
+  const currentTask = task("appanda");
+  const done = history("appanda-best", "2026-08-07", "did_my_best", true, currentTask.id);
+  const missed = history("appanda-missed", "2026-08-08", "missed", false, currentTask.id);
+  for (const row of [done, missed]) {
+    row.canonical_provenance_kind = "migration_reconstruction";
+    row.recurrence_authoritative = false;
+    row.created_at = "2026-08-13T23:02:00.000Z";
+    row.updated_at = "2026-08-13T23:02:00.000Z";
+  }
+  const historyBefore = structuredClone([done, missed]);
+
+  const summary = buildTaskHistoryStreakSummaryMap([currentTask], [done, missed], "2026-08-14")[currentTask.id];
+
+  assert.equal(summary?.currentStreak, 0);
+  assert.equal(summary?.missedStreak, 1);
+  assert.equal(summary?.lastDoneDate, "2026-08-07");
+  assert.equal(summary?.lastDoneAt, null);
+  assert.notEqual(summary?.lastDoneAt, done.updated_at);
+  assert.deepEqual([done, missed], historyBefore);
+});
+
+test("post-cutover modern Done and Did My Best preserve legitimate event timestamps", () => {
+  const currentTask = task();
+  for (const [index, status] of (["done", "did_my_best"] as const).entries()) {
+    const row = history(`modern-success-${index}`, TASK_STATE_HISTORY_CUTOVER_DATE, status, true, currentTask.id);
+    row.canonical_provenance_kind = "user";
+    const summary = buildTaskHistoryStreakSummaryMap([currentTask], [row], TASK_STATE_HISTORY_CUTOVER_DATE)[currentTask.id];
+
+    assert.equal(summary?.lastDoneDate, TASK_STATE_HISTORY_CUTOVER_DATE);
+    assert.equal(summary?.lastDoneAt, row.updated_at);
+  }
 });
 
 test("Complete and Delayed outcomes break both recorded streaks", () => {

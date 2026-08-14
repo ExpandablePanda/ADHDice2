@@ -3,6 +3,7 @@ import test from "node:test";
 import { mapCanonicalTaskHistoryFact, mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
 import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
 import { adaptLegacyTaskState } from "@/lib/task-state-engine/legacy-adapter";
+import { evaluateTaskState } from "@/lib/task-state-engine/engine";
 
 function fact(overrides: Partial<CanonicalTaskHistoryFact> = {}): CanonicalTaskHistoryFact {
   return {
@@ -56,13 +57,56 @@ test("canonical History facts project into the existing read shape with identity
     canonical_provenance_kind: "user",
     canonical_command_id: "command-1",
     canonical_source: "task-state-command",
-    recurrence_authoritative: true,
+    recurrence_authoritative: false,
   });
 });
 
 test("migration reconstruction without a canonical occurrence is non-authoritative for recurrence", () => {
   assert.equal(mapCanonicalTaskHistoryFact(fact({ provenance_kind: "migration_reconstruction", occurrence_id: null, command_id: null })).recurrence_authoritative, false);
-  assert.equal(mapCanonicalTaskHistoryFact(fact({ provenance_kind: "migration_reconstruction", occurrence_id: "occurrence-1", command_id: null })).recurrence_authoritative, true);
+  assert.equal(mapCanonicalTaskHistoryFact(fact({ provenance_kind: "migration_reconstruction", occurrence_id: "occurrence-1", command_id: null })).recurrence_authoritative, false);
+  assert.equal(mapCanonicalTaskHistoryFact(fact({ logical_date: "2026-08-14", provenance_kind: "migration_reconstruction", occurrence_id: "occurrence-1", command_id: null })).recurrence_authoritative, true);
+});
+
+test("pre-cutover canonical History cannot become recurrence-authoritative through the legacy adapter", () => {
+  const projected = mapCanonicalTaskHistoryFact(fact({ provenance_kind: "user", occurrence_id: "occurrence-1" }));
+  projected.recurrence_authoritative = true;
+  const adapted = adaptLegacyTaskState({
+    id: "task-1",
+    status: "pending",
+    due_on: "2026-08-10",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+  }, [projected], {
+    now: "2026-08-14T12:00:00.000Z",
+    timezone: "UTC",
+    logicalDayRollover: "00:00",
+  });
+
+  assert.equal(adapted.engineInput.history[0]?.recurrenceAuthoritative, false);
+});
+
+test("post-cutover canonical History remains modern Task State input", () => {
+  const projected = mapCanonicalTaskHistoryFact(fact({
+    logical_date: "2026-08-14",
+    scheduled_due_on: "2026-08-14",
+    effective_due_on: "2026-08-14",
+    provenance_kind: "user",
+    occurrence_id: "occurrence-1",
+  }));
+  const adapted = adaptLegacyTaskState({
+    id: "task-1",
+    status: "pending",
+    due_on: "2026-08-14",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+  }, [projected], {
+    now: "2026-08-14T12:00:00.000Z",
+    timezone: "UTC",
+    logicalDayRollover: "00:00",
+  });
+
+  assert.equal(adapted.engineInput.history[0]?.recurrenceAuthoritative, true);
+  assert.equal(evaluateTaskState(adapted.engineInput).nextDueDate, "2026-08-15");
 });
 
 test("canonical recurrence-authority metadata survives the legacy engine adapter", () => {

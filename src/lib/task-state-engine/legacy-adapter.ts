@@ -1,4 +1,5 @@
 import type { Task, TaskHistory } from "../database.types.ts";
+import { resolveTaskHistoryRecurrenceAuthority } from "../task-history-cutover.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
 import type {
   TaskActiveStatus,
@@ -267,9 +268,10 @@ function mapHistory(
         : `${logicalDate}T12:00:00.000Z`,
       occurrenceIdentity: occurrenceKey ?? (occurrenceDueOn ? occurrenceIdentity(taskId, occurrenceDueOn) : null),
       occurrenceDueOn,
-      recurrenceAuthoritative: typeof row.recurrence_authoritative === "boolean"
-        ? row.recurrence_authoritative
-        : undefined,
+      recurrenceAuthoritative: resolveTaskHistoryRecurrenceAuthority(
+        logicalDate,
+        typeof row.recurrence_authoritative === "boolean" ? row.recurrence_authoritative : undefined,
+      ),
       countedAsDueOccurrence: typeof row.counted_as_due_occurrence === "boolean"
         ? row.counted_as_due_occurrence
         : undefined,

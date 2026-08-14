@@ -1,6 +1,7 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
+import { shouldExposeHistoryEventTimestamp } from "@/lib/task-history-cutover";
 import { isScheduledOccurrence, scheduledOccurrences } from "@/lib/task-state-engine/recurrence";
 import type { TaskRecurrence } from "@/lib/task-state-engine/types";
 
@@ -78,6 +79,8 @@ export type TaskHistoryStreakEntry = Pick<
   | "was_completed"
   | "created_at"
   | "updated_at"
+  | "canonical_provenance_kind"
+  | "recurrence_authoritative"
 >;
 
 type TaskHistoryIdentityEntry = Pick<DbTaskHistory, "id" | "task_id" | "entry_date" | "created_at" | "updated_at">;
@@ -279,9 +282,15 @@ function getHistoryTimestamp(entry: Pick<DbTaskHistory, "created_at" | "entry_da
   return entry.updated_at || entry.created_at || null;
 }
 
+function getHistoryPresentationTimestamp(
+  entry: Pick<DbTaskHistory, "created_at" | "entry_date" | "updated_at" | "canonical_provenance_kind">,
+) {
+  return shouldExposeHistoryEventTimestamp(entry) ? getHistoryTimestamp(entry) : null;
+}
+
 function compareLastDoneEntries(left: TaskHistoryStreakEntry, right: TaskHistoryStreakEntry) {
-  const leftTimestamp = getHistoryTimestamp(left);
-  const rightTimestamp = getHistoryTimestamp(right);
+  const leftTimestamp = getHistoryPresentationTimestamp(left);
+  const rightTimestamp = getHistoryPresentationTimestamp(right);
   if (leftTimestamp && rightTimestamp && leftTimestamp !== rightTimestamp) {
     return leftTimestamp < rightTimestamp ? -1 : 1;
   }
@@ -306,7 +315,7 @@ export function getTaskHistoryLastDone(history: readonly TaskHistoryStreakEntry[
   return latestEntry
     ? {
       dateKey: latestEntry.entry_date,
-      timestamp: getHistoryTimestamp(latestEntry),
+      timestamp: getHistoryPresentationTimestamp(latestEntry),
     }
     : null;
 }

@@ -108,8 +108,10 @@ test("History override mode exposes Missed for a calculated Not Due date", () =>
 
 test("manual History Missed overrides the calculated Calendar state", () => {
   const missed = history("2026-08-03", "missed", {
+    canonical_provenance_kind: "migration_reconstruction",
     occurrence_due_on: "2026-08-03",
     occurrence_key: `task:${TASK_ID}:occurrence:2026-08-03`,
+    recurrence_authoritative: false,
   });
   const result = resolveTaskHistoryCalendarRead({
     ...calendarInput(task({ due_on: "2026-08-10" }), [missed]),
@@ -121,6 +123,26 @@ test("manual History Missed overrides the calculated Calendar state", () => {
   assert.equal(result?.timeline?.days["2026-08-03"]?.origin, "explicit_history");
   assert.equal(result?.timeline?.days["2026-08-03"]?.handled, true);
   assert.equal(result?.timeline?.days["2026-08-03"]?.historyRowId, missed.id);
+});
+
+test("pre-cutover migration Done remains visible in Calendar without affecting modern recurrence", () => {
+  const done = history("2026-08-07", "done", {
+    canonical_provenance_kind: "migration_reconstruction",
+    occurrence_due_on: "2026-08-07",
+    occurrence_key: `task:${TASK_ID}:occurrence:2026-08-07`,
+    recurrence_authoritative: false,
+  });
+  const result = resolveTaskHistoryCalendarRead({
+    ...calendarInput(task({ due_on: "2026-08-14" }), [done]),
+    calendarStart: "2026-08-07",
+    calendarEnd: "2026-08-14",
+    now: "2026-08-14T12:00:00.000Z",
+  });
+
+  assert.equal(result?.timeline?.days["2026-08-07"]?.state, "done");
+  assert.equal(result?.timeline?.days["2026-08-07"]?.origin, "explicit_history");
+  assert.equal(result?.timeline?.days["2026-08-07"]?.historyRowId, done.id);
+  assert.equal(result?.timeline?.days["2026-08-14"]?.state, "open");
 });
 
 test("Calendar read shows calculated Missed without History mutation", () => {
@@ -213,20 +235,21 @@ test("archived Calendar reads retain the existing engine fallback", () => {
   assert.deepEqual(result?.states, expected);
 });
 
-test("summary uses the Effective Timeline for a backdated daily task", () => {
+test("summary does not infer a recorded streak from a backdated daily task", () => {
   const summary = buildTaskHistoryStreakSummary(task(), [], "2026-08-10");
 
-  assert.equal(summary.missedStreak, 9);
+  assert.equal(summary.currentStreak, 0);
+  assert.equal(summary.missedStreak, 0);
 });
 
 test("summary Done keeps saved-History metadata while splitting missed streak", () => {
   const done = history("2026-08-05", "done");
   const summary = buildTaskHistoryStreakSummary(task(), [done], "2026-08-10");
 
-  assert.equal(summary.missedStreak, 4);
+  assert.equal(summary.missedStreak, 0);
   assert.equal(summary.lastDoneDate, "2026-08-05");
   assert.equal(summary.lastDoneAt, done.updated_at);
-  assert.equal(summary.currentStreak, 0);
+  assert.equal(summary.currentStreak, 1);
 });
 
 test("summary resets the current Missed streak after Done today", () => {
@@ -240,7 +263,7 @@ test("summary resets the current Missed streak after Done today", () => {
   assert.equal(summary.missedStreak, 0);
 });
 
-test("Test V5 shared summary uses the Effective Timeline completion streak", () => {
+test("shared summary uses recorded completion outcomes across calendar gaps", () => {
   const doneBefore = history("2026-08-03", "done");
   const doneToday = history("2026-08-06", "done", {
     occurrence_due_on: "2026-08-04",
@@ -250,7 +273,7 @@ test("Test V5 shared summary uses the Effective Timeline completion streak", () 
   const historyBefore = structuredClone(historyRows);
   const summary = buildTaskHistoryStreakSummary(task(), historyRows, "2026-08-06");
 
-  assert.equal(summary.currentStreak, 1);
+  assert.equal(summary.currentStreak, 2);
   assert.equal(summary.missedStreak, 0);
   assert.equal(summary.lastDoneDate, "2026-08-06");
   assert.equal(summary.lastDoneAt, doneToday.updated_at);
@@ -284,10 +307,10 @@ test("shared summary keeps current positive and Missed streaks mutually exclusiv
   const summary = buildTaskHistoryStreakSummary(task(), [], "2026-08-06");
 
   assert.equal(summary.currentStreak, 0);
-  assert.ok(summary.missedStreak > 0);
+  assert.equal(summary.missedStreak, 0);
 });
 
-test("summary restores the saved positive streak when Effective Timeline has no misses", () => {
+test("summary reports the saved positive recorded streak", () => {
   const done = history("2026-08-10", "done", {
     occurrence_due_on: "2026-08-10",
     occurrence_key: `task:${TASK_ID}:occurrence:2026-08-10`,
@@ -299,12 +322,13 @@ test("summary restores the saved positive streak when Effective Timeline has no 
   assert.equal(summary.lastDoneDate, "2026-08-10");
 });
 
-test("summary uses Effective Timeline cadence for every-three-days tasks", () => {
+test("summary uses recorded outcomes rather than inferred cadence for every-three-days tasks", () => {
   const nextTask = task({ repeat_interval: 3 });
   const done = history("2026-08-01", "done");
   const summary = buildTaskHistoryStreakSummary(nextTask, [done], "2026-08-10");
 
-  assert.equal(summary.missedStreak, 6);
+  assert.equal(summary.currentStreak, 1);
+  assert.equal(summary.missedStreak, 0);
 });
 
 test("archived summary retains the saved-History missed streak", () => {
@@ -314,7 +338,7 @@ test("archived summary retains the saved-History missed streak", () => {
   assert.equal(summary.missedStreak, 1);
 });
 
-test("compact streak query includes Effective Timeline occurrence fields", () => {
+test("compact streak query includes recorded occurrence identity fields", () => {
   for (const column of ["occurrence_key", "occurrence_due_on", "event_type", "counted_as_due_occurrence"]) {
     assert.ok(TASK_HISTORY_STREAK_SUMMARY_COLUMNS.split(",").includes(column), column);
   }
