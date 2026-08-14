@@ -54,6 +54,8 @@ export type TaskStateSnapshot = {
   lifecycle: TaskLifecycleState;
   activeStatus: TaskActiveStatus;
   dueOn: string | null;
+  /** Stable schedule seed for read-only reconstruction; current due is derived output. */
+  historicalScheduleAnchor?: string | null;
   activeStatusLogicalDate?: string | null;
   activeOccurrenceDueOn?: string | null;
   /** Optional persisted comparison inputs. Undefined means the source model cannot expose them. */

@@ -293,6 +293,7 @@ export function adaptLegacyTaskState(
   const id = stringValue(task, "id") ?? "legacy-task:missing-id";
   if (!stringValue(task, "id")) warnings.push(issue("missing_task_id", "id", "Task row has no stable id.", task.id));
   const dueOn = nullableDate(task, "due_on", warnings);
+  const historicalScheduleAnchor = optionalDateValue(task, "canonical_schedule_anchor_date", warnings);
   const activeStatusLogicalDate = nullableDate(task, "active_status_logical_date", warnings);
   const activeOccurrenceDueOn = nullableDate(task, "active_occurrence_due_on", warnings);
   const state = lifecycleAndStatus(task, dueOn, warnings, unsupported);
@@ -342,6 +343,7 @@ export function adaptLegacyTaskState(
         lifecycle: state.lifecycle,
         activeStatus: state.activeStatus,
         dueOn,
+        ...(historicalScheduleAnchor !== undefined ? { historicalScheduleAnchor } : {}),
         activeStatusLogicalDate,
         activeOccurrenceDueOn,
         ...(recurrenceCursor !== undefined ? { recurrenceCursor } : {}),

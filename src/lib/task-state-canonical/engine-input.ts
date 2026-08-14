@@ -117,6 +117,11 @@ export function buildCanonicalTaskStateEngineInput(
       lifecycle,
       activeStatus: canonicalEngineActiveStatus(readModel),
       dueOn,
+      historicalScheduleAnchor: boundary.schedule_model === "one_time"
+        ? boundary.one_time_due_on
+        : boundary.schedule_model === "unscheduled"
+          ? null
+          : boundary.anchor_date,
       recurrence: recurrenceFromBoundary(boundary),
     },
   };

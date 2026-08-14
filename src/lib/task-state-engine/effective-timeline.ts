@@ -171,7 +171,8 @@ function initialOccurrenceDueOn(
         ?? changedSuccess.logicalDate;
     }
   }
-  return task.dueOn
+  return task.historicalScheduleAnchor
+    ?? task.dueOn
     ?? task.activeOccurrenceDueOn
     ?? earliestDate(explicitRows.map((row) => row.occurrenceDueOn))
     ?? earliestDate(explicitRows.map((row) => occurrenceDateFromIdentity(row.occurrenceIdentity)))
@@ -258,6 +259,9 @@ export function buildTaskEffectiveTimeline(
       unresolvedDueOn = null;
       return;
     }
+    // Keep this guard for rows that predate the replay seed; normal reads now
+    // seed from historicalScheduleAnchor, so a later current due cursor cannot
+    // hide legitimate History that must advance the reconstructed timeline.
     const predatesActiveCursor = Boolean(
       activeDueOn
       && row.logicalDate < activeDueOn,

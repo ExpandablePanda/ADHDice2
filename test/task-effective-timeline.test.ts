@@ -141,6 +141,42 @@ test("current schedule anchor wins over stale Done History metadata", () => {
   assert.deepEqual(historyRows, historyBefore);
 });
 
+test("stable historical schedule anchor replays the current due cursor without erasing overdue history", () => {
+  const historyRows = [
+    history("2026-08-03", "did_my_best", { occurrenceDueOn: "2026-08-03" }),
+    history("2026-08-04", "missed", { occurrenceDueOn: "2026-08-04" }),
+    history("2026-08-07", "done", { occurrenceDueOn: "2026-08-07" }),
+    history("2026-08-08", "done", { occurrenceDueOn: "2026-08-08" }),
+    history("2026-08-13", "done", { occurrenceDueOn: "2026-08-13" }),
+  ];
+  const historyBefore = structuredClone(historyRows);
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-14",
+      historicalScheduleAnchor: "2026-08-04",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    history: historyRows,
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-03",
+    calendarEnd: "2026-08-14",
+  });
+
+  assert.equal(result.days["2026-08-03"]?.state, "did_my_best");
+  assert.equal(result.days["2026-08-04"]?.state, "missed");
+  for (const date of ["2026-08-05", "2026-08-06", "2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12"]) {
+    assert.equal(result.days[date]?.state, "missed", date);
+  }
+  assert.equal(result.days["2026-08-07"]?.state, "done");
+  assert.equal(result.days["2026-08-08"]?.state, "done");
+  assert.equal(result.days["2026-08-13"]?.state, "done");
+  assert.equal(result.days["2026-08-14"]?.state, "open");
+  assert.equal(result.days["2026-08-14"]?.obligation, "due");
+  assert.equal(result.nextDueOn, "2026-08-14");
+  assert.equal(result.currentCompletedStreak, 1);
+  assert.deepEqual(historyRows, historyBefore);
+});
+
 test("a handled overdue occurrence preserves earlier calculated Missed dates", () => {
   const done = history("2026-08-03", "done", {
     occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,

@@ -1,13 +1,23 @@
 import type { Task } from "../database.types.ts";
 import type { CanonicalTaskScheduleBoundary } from "./types.ts";
 
+export type CanonicalProjectedTask = Task & {
+  /** Read-only schedule seed; never persisted back to the legacy Task row. */
+  canonical_schedule_anchor_date?: string | null;
+};
+
 export function latestCanonicalScheduleBoundary(boundaries: CanonicalTaskScheduleBoundary[]) {
   return [...boundaries].sort((left, right) => right.boundary_sequence - left.boundary_sequence)[0] ?? null;
 }
 
-export function projectTaskWithCanonicalScheduleBoundary(task: Task, boundary: CanonicalTaskScheduleBoundary): Task {
+export function projectTaskWithCanonicalScheduleBoundary(task: Task, boundary: CanonicalTaskScheduleBoundary): CanonicalProjectedTask {
   return {
     ...task,
+    canonical_schedule_anchor_date: boundary.schedule_model === "one_time"
+      ? boundary.one_time_due_on
+      : boundary.schedule_model === "unscheduled"
+        ? null
+        : boundary.anchor_date,
     due_on: boundary.schedule_model === "one_time" ? boundary.one_time_due_on : boundary.schedule_model === "unscheduled" ? null : task.due_on,
     due_time: boundary.due_time,
     repeat_frequency: boundary.repeat_frequency,
@@ -37,7 +47,7 @@ export function projectTaskWithCanonicalScheduleChanges(task: Task, changes: Can
   };
 }
 
-export function projectTasksWithCanonicalScheduleBoundaries(tasks: Task[], boundaries: CanonicalTaskScheduleBoundary[]) {
+export function projectTasksWithCanonicalScheduleBoundaries(tasks: Task[], boundaries: CanonicalTaskScheduleBoundary[]): CanonicalProjectedTask[] {
   const latestByTaskId = new Map<string, CanonicalTaskScheduleBoundary>();
   for (const boundary of boundaries) {
     const current = latestByTaskId.get(boundary.entity_id);

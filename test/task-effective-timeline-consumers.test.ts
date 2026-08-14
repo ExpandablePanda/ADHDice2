@@ -173,6 +173,62 @@ test("Calendar explicit Done splits calculated Missed", () => {
   assert.equal(result?.timeline?.currentMissedStreak, 4);
 });
 
+test("normal Calendar refresh replays Refill Water from the canonical schedule anchor", () => {
+  const nextTask = {
+    ...task({ due_on: "2026-08-14", status: "pending" }),
+    canonical_schedule_anchor_date: "2026-08-04",
+  };
+  const nextHistory = [
+    history("2026-08-03", "did_my_best", { occurrence_due_on: "2026-08-03", occurrence_key: `task:${TASK_ID}:occurrence:2026-08-03` }),
+    history("2026-08-04", "missed", { occurrence_due_on: "2026-08-04", occurrence_key: `task:${TASK_ID}:occurrence:2026-08-04` }),
+    history("2026-08-07", "done", { occurrence_due_on: "2026-08-07", occurrence_key: `task:${TASK_ID}:occurrence:2026-08-07` }),
+    history("2026-08-08", "done", { occurrence_due_on: "2026-08-08", occurrence_key: `task:${TASK_ID}:occurrence:2026-08-08` }),
+    history("2026-08-13", "done", { occurrence_due_on: "2026-08-13", occurrence_key: `task:${TASK_ID}:occurrence:2026-08-13` }),
+  ];
+  const result = resolveTaskHistoryCalendarRead({
+    ...calendarInput(nextTask, nextHistory),
+    calendarStart: "2026-08-03",
+    calendarEnd: "2026-08-14",
+    now: "2026-08-14T12:00:00.000Z",
+  });
+
+  assert.equal(result?.authority, "effective_timeline");
+  assert.equal(result?.states["2026-08-04"], "missed");
+  for (const date of ["2026-08-05", "2026-08-06", "2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12"]) {
+    assert.equal(result?.states[date], "missed", date);
+    assert.notEqual(result?.states[date], "not_due", date);
+  }
+  assert.equal(result?.states["2026-08-07"], "done");
+  assert.equal(result?.states["2026-08-08"], "done");
+  assert.equal(result?.states["2026-08-13"], "done");
+  assert.equal(result?.states["2026-08-14"], "open");
+  assert.equal(result?.timeline?.nextDueOn, "2026-08-14");
+  assert.equal(result?.timeline?.currentCompletedStreak, 1);
+
+  const summary = buildTaskHistoryStreakSummary(nextTask, nextHistory, "2026-08-14");
+  assert.equal(summary.currentStreak, result?.timeline?.currentCompletedStreak);
+  assert.equal(summary.missedStreak, result?.timeline?.currentMissedStreak);
+});
+
+test("normal Calendar refresh preserves an intentional manual due-date Not Due span", () => {
+  const nextTask = {
+    ...task({ due_on: "2026-08-20", status: "upcoming" }),
+    canonical_schedule_anchor_date: "2026-08-20",
+  };
+  const result = resolveTaskHistoryCalendarRead({
+    ...calendarInput(nextTask, [history("2026-08-08", "done", { occurrence_due_on: "2026-08-08", occurrence_key: `task:${TASK_ID}:occurrence:2026-08-08` })]),
+    calendarStart: "2026-08-08",
+    calendarEnd: "2026-08-20",
+    now: "2026-08-20T12:00:00.000Z",
+  });
+
+  for (const date of ["2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16", "2026-08-17", "2026-08-18", "2026-08-19"]) {
+    assert.equal(result?.states[date], "not_due", date);
+  }
+  assert.equal(result?.states["2026-08-20"], "open");
+  assert.equal(result?.timeline?.nextDueOn, "2026-08-20");
+});
+
 test("Calendar read preserves stale Done metadata while using the current schedule anchor", () => {
   const nextTask = task({ active_occurrence_due_on: "2026-08-01" });
   const done = history("2026-08-06", "done", {
