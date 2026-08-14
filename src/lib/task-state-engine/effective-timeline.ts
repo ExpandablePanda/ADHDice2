@@ -217,6 +217,23 @@ function calendarOverrideDay(
   };
 }
 
+function nextDueAfterCalendarCancellation(
+  recurrence: TaskStateSnapshot["recurrence"],
+  cancelledDueOn: string,
+  consumed: Set<string>,
+) {
+  if (recurrence.kind === "none") return null;
+  if (recurrence.kind === "rolling") {
+    return shiftDateKey(cancelledDueOn, Math.max(1, recurrence.intervalDays));
+  }
+  return scheduledOccurrences(
+    recurrence,
+    cancelledDueOn,
+    shiftDateKey(cancelledDueOn, 1),
+    shiftDateKey(cancelledDueOn, 800),
+  ).find((date) => !consumed.has(date)) ?? null;
+}
+
 function initialOccurrenceDueOn(
   task: TaskStateSnapshot,
   explicitRows: TaskStateHistoryRow[],
@@ -270,6 +287,7 @@ export function buildTaskEffectiveTimeline(
     input.calendarStart,
     input.logicalDate,
     initialDueOn,
+    ...(input.calendarOverrides ?? []).map((override) => override.logicalDate),
     ...recurrenceExplicitRows.flatMap((row) => [
       row.logicalDate,
       row.occurrenceDueOn,
@@ -321,6 +339,25 @@ export function buildTaskEffectiveTimeline(
     }
     if (successDueOn) consumed.add(successDueOn);
     if (result.satisfied) consumed.add(result.satisfied);
+  };
+
+  const applyCalendarOverrideToCursor = (date: string, override: TaskCalendarOverride) => {
+    if (completed) return;
+    if (override.overrideState === "due_open") {
+      // An override cannot skip an already-active earlier obligation. When the
+      // date is the next causal opportunity, it becomes the active occurrence
+      // rather than a display-only Calendar fact.
+      if (!activeDueOn || activeDueOn >= date) {
+        activeDueOn = date;
+        if (date < input.logicalDate) unresolvedDueOn ??= date;
+      }
+      return;
+    }
+    if (activeDueOn !== date) return;
+
+    consumed.add(date);
+    unresolvedDueOn = null;
+    activeDueOn = nextDueAfterCalendarCancellation(input.task.recurrence, date, consumed);
   };
 
   const applyExplicitRow = (row: TaskStateHistoryRow) => {
@@ -376,6 +413,13 @@ export function buildTaskEffectiveTimeline(
   for (const date of simulationDates) {
     const row = explicitByDate.get(date);
     const recurrenceRow = recurrenceByDate.get(date);
+    const override = overrideByDate.get(date);
+    const workflowApplies = workflow.state === "in_progress"
+      && workflow.logicalDate === input.logicalDate
+      && date === input.logicalDate;
+    if (!row && !workflowApplies && override) {
+      applyCalendarOverrideToCursor(date, override);
+    }
     let day: TaskEffectiveTimelineDay;
 
     if (row) {
@@ -412,10 +456,6 @@ export function buildTaskEffectiveTimeline(
       } else {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       }
-      const workflowApplies = workflow.state === "in_progress"
-        && workflow.logicalDate === input.logicalDate
-        && date === input.logicalDate;
-      const override = overrideByDate.get(date);
       day = workflowApplies
         ? workflowDay(date, calculated, workflow)
         : override

@@ -577,6 +577,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     && !hasOtherSuccessAfterReplacement,
   );
   const usesReplayTimeline = scheduleChange
+    || input.calendarOverrides !== undefined
     || Boolean(action && (action.historicalOverride || action.replaceExisting) && !preservesManualFutureCursor);
   if (usesReplayTimeline) {
     nextDue = replayTimeline.nextDueOn;

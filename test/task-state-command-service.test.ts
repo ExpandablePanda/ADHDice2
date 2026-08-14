@@ -693,7 +693,11 @@ test("trusted Calendar override planner evaluates the proposed override before c
   const planningState = state({ due_on: "2026-08-10" });
   planningState.engineInput = {
     ...planningState.engineInput!,
-    task: { ...planningState.engineInput!.task, dueOn: "2026-08-10" },
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: "2026-08-10",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
   };
   const planned = trustedCommand({
     type: "calendar_override",
@@ -706,7 +710,8 @@ test("trusted Calendar override planner evaluates the proposed override before c
   const plan = planTaskStateCommand(planningState, planned);
 
   assert.equal(plan.normalizedResult.calendarOverride?.override_state, "not_due");
-  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-11");
 });
 
 test("trusted planner accepts the Appanda 8/8-8/12 replacement range without occurrences", () => {

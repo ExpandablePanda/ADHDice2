@@ -45,6 +45,7 @@ function timeline(
     logicalDate?: string;
     calendarStart?: string;
     calendarEnd?: string;
+    calendarOverrides?: TaskCalendarOverride[];
   } = {},
 ) {
   return buildTaskEffectiveTimeline({
@@ -53,6 +54,7 @@ function timeline(
     logicalDate: overrides.logicalDate ?? "2026-08-10",
     calendarStart: overrides.calendarStart ?? "2026-08-01",
     calendarEnd: overrides.calendarEnd ?? "2026-08-10",
+    calendarOverrides: overrides.calendarOverrides,
   });
 }
 
@@ -676,6 +678,133 @@ test("Calendar override states preserve due/open rollover semantics", () => {
   assert.equal(historicalOverride.days["2026-08-09"]?.obligation, "overdue");
 });
 
+test("historical Due/Open remains continuously overdue through the current day", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-11", activeOccurrenceDueOn: "2026-08-11" },
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-11",
+    calendarEnd: "2026-08-14",
+    calendarOverrides: [calendarOverride("2026-08-11", "due_open")],
+  });
+
+  assert.deepEqual(
+    ["2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14"].map((date) => result.days[date]?.state),
+    ["missed", "missed", "missed", "open"],
+  );
+  assert.deepEqual(
+    ["2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14"].map((date) => result.days[date]?.obligation),
+    ["overdue", "overdue", "overdue", "overdue"],
+  );
+  assert.equal(result.nextDueOn, "2026-08-11");
+  assert.equal(result.unresolvedDueOn, "2026-08-11");
+  assert.equal(result.currentMissedStreak, 3);
+});
+
+test("Due/Open becomes handled and recurrence advances from the explicit success", () => {
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-11",
+      activeOccurrenceDueOn: "2026-08-11",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+    },
+    history: [history("2026-08-13", "done")],
+    logicalDate: "2026-08-13",
+    calendarStart: "2026-08-11",
+    calendarEnd: "2026-08-18",
+    calendarOverrides: [calendarOverride("2026-08-11", "due_open")],
+  });
+
+  assert.equal(result.days["2026-08-11"]?.state, "missed");
+  assert.equal(result.days["2026-08-12"]?.state, "missed");
+  assert.equal(result.days["2026-08-13"]?.state, "done");
+  assert.equal(result.days["2026-08-13"]?.sourceKind, "history_fact");
+  assert.equal(result.days["2026-08-18"]?.state, "scheduled");
+  assert.equal(result.nextDueOn, "2026-08-18");
+  assert.equal(result.unresolvedDueOn, null);
+});
+
+test("Daily Not Due cancels the active occurrence and advances to the next day", () => {
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-11",
+      activeOccurrenceDueOn: "2026-08-11",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    logicalDate: "2026-08-11",
+    calendarStart: "2026-08-11",
+    calendarEnd: "2026-08-12",
+    calendarOverrides: [calendarOverride("2026-08-11", "not_due")],
+  });
+
+  assert.equal(result.days["2026-08-11"]?.state, "not_due");
+  assert.equal(result.days["2026-08-11"]?.obligation, "none");
+  assert.equal(result.days["2026-08-12"]?.state, "scheduled");
+  assert.equal(result.nextDueOn, "2026-08-12");
+  assert.equal(result.unresolvedDueOn, null);
+});
+
+test("Every-five-days Not Due cancels the active occurrence and advances by five days", () => {
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-13",
+      activeOccurrenceDueOn: "2026-08-13",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+    },
+    logicalDate: "2026-08-13",
+    calendarStart: "2026-08-13",
+    calendarEnd: "2026-08-18",
+    calendarOverrides: [calendarOverride("2026-08-13", "not_due")],
+  });
+
+  assert.equal(result.days["2026-08-13"]?.state, "not_due");
+  assert.equal(result.days["2026-08-18"]?.state, "scheduled");
+  assert.equal(result.nextDueOn, "2026-08-18");
+  assert.equal(result.unresolvedDueOn, null);
+});
+
+test("Not Due does not leave the canceled occurrence as a hidden overdue obligation", () => {
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-11",
+      activeOccurrenceDueOn: "2026-08-11",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-11",
+    calendarEnd: "2026-08-14",
+    calendarOverrides: [calendarOverride("2026-08-11", "not_due")],
+  });
+
+  assert.equal(result.days["2026-08-11"]?.state, "not_due");
+  assert.equal(result.days["2026-08-12"]?.state, "missed");
+  assert.equal(result.days["2026-08-13"]?.state, "missed");
+  assert.equal(result.days["2026-08-14"]?.state, "open");
+  assert.equal(result.days["2026-08-14"]?.obligation, "overdue");
+  assert.equal(result.nextDueOn, "2026-08-12");
+  assert.equal(result.unresolvedDueOn, "2026-08-12");
+});
+
+test("Unscheduled cancels the active occurrence without leaving a hidden obligation", () => {
+  const result = timeline({
+    task: {
+      dueOn: "2026-08-11",
+      activeOccurrenceDueOn: "2026-08-11",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+    logicalDate: "2026-08-14",
+    calendarStart: "2026-08-11",
+    calendarEnd: "2026-08-14",
+    calendarOverrides: [calendarOverride("2026-08-11", "unscheduled")],
+  });
+
+  assert.equal(result.days["2026-08-11"]?.state, "no_entry");
+  assert.equal(result.days["2026-08-12"]?.state, "missed");
+  assert.equal(result.days["2026-08-13"]?.state, "missed");
+  assert.equal(result.days["2026-08-14"]?.state, "open");
+  assert.equal(result.nextDueOn, "2026-08-12");
+  assert.equal(result.unresolvedDueOn, "2026-08-12");
+});
+
 test("History and current workflow take precedence over Calendar overrides", () => {
   const historyRow = history("2026-08-10", "done");
   const result = buildTaskEffectiveTimeline({
@@ -712,6 +841,7 @@ test("History and current workflow take precedence over Calendar overrides", () 
   assert.equal(result.days["2026-08-10"]?.state, "done");
   assert.equal(result.days["2026-08-10"]?.sourceKind, "history_fact");
   assert.equal(result.days["2026-08-10"]?.historyRowId, historyRow.id);
+  assert.equal(result.nextDueOn, "2026-08-11");
   assert.equal(workflowResult.days["2026-08-10"]?.state, "in_progress");
   assert.equal(workflowResult.days["2026-08-10"]?.sourceKind, "workflow");
   assert.equal(workflowResult.days["2026-08-10"]?.workflowCommandId, "workflow-command");
