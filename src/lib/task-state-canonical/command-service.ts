@@ -26,6 +26,7 @@ import type {
 } from "./types.ts";
 import { sha256Digest } from "./digest.ts";
 import type { CanonicalTaskRow } from "./read-model.ts";
+import { recurrenceFromBoundary } from "./engine-input.ts";
 
 export type CanonicalHandledOutcome = Extract<TaskHistoryOutcome, "done" | "did_my_best" | "missed">;
 
@@ -366,6 +367,34 @@ function projectionFromEngine(
   };
 }
 
+function engineInputForScheduleBoundary(
+  engineInput: TaskStateEngineInput,
+  boundary: CanonicalTaskScheduleBoundary,
+): TaskStateEngineInput {
+  const dueOn = boundary.schedule_model === "unscheduled"
+    ? null
+    : boundary.schedule_model === "one_time"
+      ? boundary.one_time_due_on
+      : boundary.anchor_date ?? engineInput.task.dueOn;
+  return {
+    ...engineInput,
+    task: {
+      ...engineInput.task,
+      dueOn,
+      recurrence: recurrenceFromBoundary(boundary),
+    },
+  };
+}
+
+function scheduleBoundaryDueOn(
+  boundary: CanonicalTaskScheduleBoundary,
+  fallback: string | null,
+): string | null {
+  if (boundary.schedule_model === "unscheduled") return null;
+  if (boundary.schedule_model === "one_time") return boundary.one_time_due_on;
+  return boundary.anchor_date ?? fallback;
+}
+
 function projectionForWorkflowClear(task: Task, logicalDate: string): CanonicalCompatibilityProjection {
   let status: TaskStatus = task.status;
   if (task.status === "in_progress") {
@@ -536,20 +565,38 @@ export function planTaskStateCommand(
     || (input.type === "restore" && task.container_state !== "active")
   ));
   if (shouldEvaluateEngine) {
+    const existingOutcomeRow = input.type === "handled_outcome" && state.engineInput
+      ? state.engineInput.history.find((row) => row.logicalDate === (input.logicalDate ?? input.logicalDay.logicalDate)) ?? null
+      : null;
+    const outcomeDate = input.type === "handled_outcome"
+      ? input.logicalDate ?? input.logicalDay.logicalDate
+      : null;
     const action = input.type === "handled_outcome"
       ? {
           type: "record_outcome" as const,
           outcome: input.outcome,
-          logicalDate: input.logicalDate,
-          occurrenceDueOn: input.scheduledDueOn,
-          occurrenceIdentity: input.occurrenceKey,
+          logicalDate: outcomeDate,
+          occurrenceDueOn: input.scheduledDueOn ?? existingOutcomeRow?.occurrenceDueOn ?? null,
+          occurrenceIdentity: input.occurrenceKey ?? existingOutcomeRow?.occurrenceIdentity ?? null,
+          ...(existingOutcomeRow ? {
+            replaceExisting: true,
+            previousOutcome: existingOutcomeRow.outcome,
+          } : {}),
+          ...(outcomeDate < input.logicalDay.logicalDate ? { historicalOverride: true } : {}),
         }
       : input.type === "complete"
         ? { type: "record_outcome" as const, outcome: "complete" as const, logicalDate: input.logicalDate }
         : input.type === "delay"
           ? { type: "record_outcome" as const, outcome: "delayed" as const, logicalDate: input.logicalDate, delayUntilDate: input.effectiveDueOn }
-          : input.type === "schedule_change"
-            ? { type: "change_schedule" as const }
+        : input.type === "schedule_change"
+            ? {
+                type: "change_schedule" as const,
+                changedLogicalDate: input.scheduleBoundary.effective_from_logical_date,
+                replayKind: (input.changeKind === "due_date" ? "due_date" : "recurrence") as "due_date" | "recurrence",
+                ...(input.changeKind === "due_date"
+                  ? { manualDueOn: scheduleBoundaryDueOn(input.scheduleBoundary, state.engineInput?.task.dueOn ?? null) }
+                  : {}),
+              }
             : input.type === "calendar_override"
               ? { type: "recompute" as const, fromLogicalDate: input.logicalDay.logicalDate }
               : input.type === "clear_outcome"
@@ -574,6 +621,11 @@ export function planTaskStateCommand(
             history: state.engineInput!.history.filter((row) => row.logicalDate !== input.logicalDate),
             action: undefined,
           }
+      : input.type === "schedule_change"
+        ? {
+            ...engineInputForScheduleBoundary(state.engineInput!, input.scheduleBoundary),
+            action,
+          }
         : { ...state.engineInput!, ...(action ? { action } : {}) };
     engineResult = evaluateTaskState(engineInput);
     if (engineResult.validationErrors.length > 0) {
@@ -593,6 +645,10 @@ export function planTaskStateCommand(
     case "handled_outcome": {
       projection = requireProjection(engineResult, task);
       historyFact = historyFactFor(input, command, input.logicalDate ?? command.logicalDay.logicalDate, input.outcome, input.effectiveDueOn ?? null);
+      const existingOutcomeRow = state.engineInput?.history.find((row) => row.logicalDate === (input.logicalDate ?? input.logicalDay.logicalDate));
+      if (historyFact && existingOutcomeRow) {
+        historyFact.scheduled_due_on = input.scheduledDueOn ?? existingOutcomeRow.occurrenceDueOn ?? null;
+      }
       occurrence = input.occurrence ?? null;
       patch.workflow_state = "none";
       patch.workflow_started_at = null;

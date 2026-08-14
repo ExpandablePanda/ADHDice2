@@ -5,7 +5,7 @@ import type { CanonicalTaskStateReadModel } from "./read-model.ts";
 import { mapCanonicalTaskHistoryFacts } from "./history-projection.ts";
 import { latestCanonicalScheduleBoundary } from "./schedule-projection.ts";
 
-function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {
+export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {
   if (boundary.schedule_model === "unscheduled" || boundary.schedule_model === "one_time") return { kind: "none" };
   if (boundary.schedule_model === "rolling") {
     return {
@@ -47,7 +47,9 @@ function historyRows(readModel: CanonicalTaskStateReadModel) {
     const occurrence = fact.occurrence_id ? occurrences.get(fact.occurrence_id) : null;
     return {
       ...projected,
-      occurrence_key: occurrence?.occurrence_key ?? projected.occurrence_key,
+      // A scheduled_due_on is historical metadata, not proof that a
+      // canonical occurrence row was materialized for this fact.
+      occurrence_key: occurrence?.occurrence_key ?? null,
       occurrence_due_on: fact.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null,
     };
   });

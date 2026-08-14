@@ -297,11 +297,6 @@ export function buildTaskEffectiveTimeline(
     ).includes(date);
   };
 
-  const isScheduledDate = (date: string) => {
-    if (!activeDueOn) return false;
-    return scheduledOccurrences(input.task.recurrence, activeDueOn, date, date, { includeBeforeDueOn: true }).includes(date);
-  };
-
   let currentUnresolvedDueOn: string | null = null;
   for (const date of simulationDates) {
     const row = explicitByDate.get(date);
@@ -326,21 +321,12 @@ export function buildTaskEffectiveTimeline(
     } else if (date < activeDueOn) {
       day = calculatedDay(input.task.id, date, "not_due", "none");
     } else if (date < input.logicalDate) {
-      if (!isScheduledDate(date)) {
-        day = calculatedDay(input.task.id, date, "not_due", "none");
-        effectiveDays[date] = day;
-        continue;
-      }
       unresolvedDueOn ??= activeDueOn;
       day = calculatedDay(input.task.id, date, "missed", "overdue", unresolvedDueOn);
     } else if (date === input.logicalDate) {
       if (activeDueOn < input.logicalDate) {
-        if (!isScheduledDate(date)) {
-          day = calculatedDay(input.task.id, date, "not_due", "none");
-        } else {
-          unresolvedDueOn ??= activeDueOn;
-          day = calculatedDay(input.task.id, date, "open", "overdue", unresolvedDueOn);
-        }
+        unresolvedDueOn ??= activeDueOn;
+        day = calculatedDay(input.task.id, date, "open", "overdue", unresolvedDueOn);
       } else if (activeDueOn === input.logicalDate) {
         day = calculatedDay(input.task.id, date, "open", "due", activeDueOn);
       } else {

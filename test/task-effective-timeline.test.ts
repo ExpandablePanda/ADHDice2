@@ -619,7 +619,7 @@ test("removing a later success replays from the prior success checkpoint", () =>
   });
   assert.equal(result.replayCheckpoint?.logicalDate, "2026-08-08");
   assert.equal(result.days["2026-08-13"]?.state, "missed");
-  assert.equal(result.currentMissedStreak, 1);
+  assert.equal(result.currentMissedStreak, 5);
   assert.equal(result.nextDueOn, "2026-08-13");
 });
 
@@ -787,7 +787,7 @@ test("History Done before the visible window rebases current facts", () => {
   assert.equal(result.currentObligation, "overdue");
 });
 
-test("every three days rebases from Done and keeps non-occurrence gaps Not Due", () => {
+test("every three days rebases from Done and keeps an unresolved overdue span continuously Missed", () => {
   const done = history("2026-08-01", "done", {
     occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-08-01`,
     occurrenceDueOn: "2026-08-01",
@@ -800,14 +800,12 @@ test("every three days rebases from Done and keeps non-occurrence gaps Not Due",
   assert.equal(result.days["2026-08-01"]?.state, "done");
   for (const date of ["2026-08-02", "2026-08-03"]) assert.equal(result.days[date]?.state, "not_due", date);
   assert.equal(result.days["2026-08-04"]?.state, "missed");
-  assert.equal(result.days["2026-08-05"]?.state, "not_due");
-  assert.equal(result.days["2026-08-06"]?.state, "not_due");
-  assert.equal(result.days["2026-08-07"]?.state, "missed");
-  assert.equal(result.days["2026-08-08"]?.state, "not_due");
-  assert.equal(result.days["2026-08-09"]?.state, "not_due");
+  for (const date of ["2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08", "2026-08-09"]) {
+    assert.equal(result.days[date]?.state, "missed", date);
+  }
   assert.equal(result.days["2026-08-10"]?.state, "open");
   assert.equal(result.days["2026-08-10"]?.obligation, "overdue");
-  assert.equal(result.currentMissedStreak, 2);
+  assert.equal(result.currentMissedStreak, 6);
   assert.equal(result.unresolvedDueOn, "2026-08-04");
 });
 

@@ -11,6 +11,8 @@ import { sha256Hex } from "../src/lib/task-state-canonical/digest.ts";
 import type { CanonicalTaskRow } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import type { TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts";
+import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
+import { buildTrustedTaskStateCommand } from "../supabase/functions/task-state-command/domain.ts";
 
 const logicalDay = {
   identity: "user-1:2026-08-10:America/New_York:06:00:3",
@@ -117,6 +119,14 @@ function missedHistory(logicalDate: string, occurrenceDueOn = logicalDate): Task
     occurredAt: `${logicalDate}T12:00:00.000Z`,
     occurrenceIdentity: `task-state:task-1:${occurrenceDueOn}`,
     occurrenceDueOn,
+  };
+}
+
+function doneHistory(logicalDate: string, occurrenceDueOn = logicalDate): TaskStateHistoryRow {
+  return {
+    ...missedHistory(logicalDate, occurrenceDueOn),
+    id: `done-${logicalDate}`,
+    outcome: "done",
   };
 }
 
@@ -560,6 +570,169 @@ test("rolling and fixed schedule plans preserve their model authority", () => {
   assert.equal(rolling.normalizedResult.scheduleBoundary?.schedule_model, "rolling");
   assert.equal(fixed.normalizedResult.scheduleBoundary?.schedule_model, "fixed");
   assert.deepEqual(fixed.normalizedResult.scheduleBoundary?.repeat_days_of_week, [1, 3, 5]);
+});
+
+function trustedReadModel(row: CanonicalTaskRow, schedule: CanonicalTaskScheduleBoundary) {
+  return {
+    task: row,
+    scheduleBoundaries: [schedule],
+    occurrences: [],
+    occurrenceEffectiveOverrides: [],
+    historyFacts: [],
+    commandOperations: [],
+    calendarOverrides: [],
+    rewardEntitlements: [],
+    rewardGrants: [],
+    rewardClaimConsumptions: [],
+    legacyHistoryEvidence: [],
+    logicalDayProfile: { timezone: logicalDay.timezone, day_start_time: logicalDay.dayStartTime, settings_revision: logicalDay.settingsRevision },
+  };
+}
+
+function trustedCommand(
+  intent: Parameters<typeof buildTrustedTaskStateCommand>[0]["intent"],
+  row: CanonicalTaskRow,
+  schedule: CanonicalTaskScheduleBoundary,
+  commandLogicalDay = logicalDay,
+) {
+  return buildTrustedTaskStateCommand({
+    intent,
+    userId: row.user_id,
+    readModel: trustedReadModel(row, schedule),
+    logicalDay: commandLogicalDay,
+    now: "2026-08-10T12:00:00.000Z",
+  });
+}
+
+test("trusted historical replacement derives replaceExisting and previous outcome from engine history", () => {
+  const planningState = state({ due_on: "2026-08-08" });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, dueOn: "2026-08-08", recurrence: { kind: "rolling", intervalDays: 3 } },
+    history: [missedHistory("2026-08-08", "2026-08-08")],
+  };
+  const command = trustedCommand({
+    type: "set_outcome",
+    task_id: "task-1",
+    replay_identity: "appanda:2026-08-08:did-my-best",
+    outcome: "did_my_best",
+    logical_date: "2026-08-08",
+  }, planningState.task, boundary("rolling"));
+
+  const plan = planTaskStateCommand(planningState, command);
+  assert.equal(plan.normalizedResult.historyFact?.outcome, "did_my_best");
+  assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, "2026-08-08");
+  assert.equal(plan.normalizedResult.rewardEntitlement?.logicalDate, "2026-08-08");
+  assert.equal(plan.command.payload.occurrenceKey, null);
+});
+
+test("trusted planner accepts calculated-only historical success without an occurrence", () => {
+  const planningState = state({ due_on: "2026-08-08" });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, dueOn: "2026-08-08", recurrence: { kind: "rolling", intervalDays: 3 } },
+    history: [],
+  };
+  const command = trustedCommand({
+    type: "set_outcome",
+    task_id: "task-1",
+    replay_identity: "appanda:calculated:2026-08-08:done",
+    outcome: "done",
+    logical_date: "2026-08-08",
+  }, planningState.task, boundary("rolling"));
+
+  const plan = planTaskStateCommand(planningState, command);
+  assert.equal(plan.normalizedResult.historyFact?.outcome, "done");
+  assert.equal(plan.normalizedResult.occurrence, null);
+  assert.equal(plan.normalizedResult.rewardEntitlement?.logicalDate, "2026-08-08");
+});
+
+test("trusted due-date planner replays with the proposed due date", () => {
+  const planningState = state({ due_on: "2026-08-13", repeat_frequency: "daily", repeat_interval: 5 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, dueOn: "2026-08-13", recurrence: { kind: "rolling", intervalDays: 5 } },
+    history: [doneHistory("2026-08-08")],
+  };
+  const currentBoundary = { ...boundary("rolling"), repeat_interval: 5, anchor_date: "2026-08-13" };
+  const command = trustedCommand({
+    type: "set_due_date",
+    task_id: "task-1",
+    replay_identity: "table:due:2026-08-20",
+    logical_date: "2026-08-13",
+    schedule: { schedule_model: "one_time", repeat_frequency: "none", one_time_due_on: "2026-08-20" },
+  }, planningState.task, currentBoundary);
+  const plan = planTaskStateCommand(planningState, command);
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
+});
+
+test("trusted repeat planner replays from the last success with the proposed cadence", () => {
+  const planningState = state({ due_on: "2026-08-13", repeat_frequency: "daily", repeat_interval: 5 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, dueOn: "2026-08-13", recurrence: { kind: "rolling", intervalDays: 5 } },
+    history: [doneHistory("2026-08-08")],
+  };
+  const currentBoundary = { ...boundary("rolling"), repeat_interval: 5, anchor_date: "2026-08-13" };
+  const command = trustedCommand({
+    type: "set_repeat",
+    task_id: "task-1",
+    replay_identity: "table:repeat:6",
+    logical_date: "2026-08-13",
+    schedule: { schedule_model: "rolling", repeat_frequency: "daily", repeat_interval: 6, anchor_date: "2026-08-13" },
+  }, planningState.task, currentBoundary);
+  const plan = planTaskStateCommand(planningState, command);
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-14");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+});
+
+test("trusted planner accepts the Appanda 8/8-8/12 replacement range without occurrences", () => {
+  const appandaLogicalDay = { ...logicalDay, logicalDate: "2026-08-13", identity: "user-1:2026-08-13:America/New_York:06:00:3" };
+  const planningState = state({ due_on: "2026-08-08", repeat_frequency: "daily", repeat_interval: 1 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, dueOn: "2026-08-08", recurrence: { kind: "rolling", intervalDays: 1 } },
+    now: "2026-08-13T12:00:00.000Z",
+    history: [
+      doneHistory("2026-08-07"),
+      ...["2026-08-08", "2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12"].map((date) => missedHistory(date)),
+    ],
+  };
+  const rewardIdentities = new Set<string>();
+
+  for (const date of ["2026-08-08", "2026-08-09", "2026-08-10", "2026-08-11", "2026-08-12"]) {
+    const command = trustedCommand({
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: `appanda:range:${date}:did-my-best`,
+      outcome: "did_my_best",
+      logical_date: date,
+    }, planningState.task, boundary("rolling"), appandaLogicalDay);
+    const plan = planTaskStateCommand(planningState, command);
+    assert.equal(plan.normalizedResult.historyFact?.outcome, "did_my_best", date);
+    assert.equal(plan.normalizedResult.occurrence, null, date);
+    assert.ok(plan.normalizedResult.rewardEntitlement, date);
+    rewardIdentities.add(plan.normalizedResult.rewardEntitlement!.identity);
+  }
+
+  const finalHistory = planningState.engineInput.history.map((row) => (
+    row.logicalDate >= "2026-08-08" && row.logicalDate <= "2026-08-12"
+      ? { ...row, outcome: "did_my_best" as const }
+      : row
+  ));
+  const timeline = buildTaskEffectiveTimeline({
+    task: planningState.engineInput.task,
+    history: finalHistory,
+    logicalDate: "2026-08-13",
+    calendarStart: "2026-08-07",
+    calendarEnd: "2026-08-13",
+  });
+  assert.equal(rewardIdentities.size, 5);
+  assert.equal(timeline.currentMissedStreak, 0);
+  assert.equal(timeline.currentCompletedStreak, 6);
 });
 
 test("Delay preserves origin occurrence identity and only changes effective date", () => {

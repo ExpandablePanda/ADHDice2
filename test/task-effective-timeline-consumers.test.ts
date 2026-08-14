@@ -328,7 +328,7 @@ test("summary uses the resolved Calendar outcome for every-three-days tasks", ()
   const summary = buildTaskHistoryStreakSummary(nextTask, [done], "2026-08-10");
 
   assert.equal(summary.currentStreak, 0);
-  assert.equal(summary.missedStreak, 2);
+  assert.equal(summary.missedStreak, 6);
 });
 
 test("archived summary retains the saved-History missed streak", () => {
